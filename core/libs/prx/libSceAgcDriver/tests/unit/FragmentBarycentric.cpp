@@ -1,33 +1,38 @@
+#include <Testing/Test.hpp>
 #include "prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp"
-#include <cstdio>
+
+#include <string>
 
 namespace {
 
-struct Case {
+using Testing::Case;
+using Testing::RequireEqual;
+
+struct Driver {
     VkDriverId driver;
     bool reported;
     bool usable;
 };
 
-constexpr Case Cases[]{
-    {VK_DRIVER_ID_MOLTENVK, true, false},
-    {VK_DRIVER_ID_MOLTENVK, false, false},
-    {VK_DRIVER_ID_MESA_RADV, true, true},
-    {VK_DRIVER_ID_MESA_RADV, false, false},
-    {VK_DRIVER_ID_NVIDIA_PROPRIETARY, true, true},
-    {VK_DRIVER_ID_AMD_PROPRIETARY, true, true},
-    {VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, false, false},
-};
-
+void RequireUsability(const Driver& item) {
+    RequireEqual(AgcDriver::FragmentShaderBarycentricUsable(item.driver, item.reported), item.usable,
+                 "driver " + std::to_string(static_cast<int>(item.driver)) + " reported " + std::to_string(item.reported ? 1 : 0) + " fragment barycentric usability");
 }
 
-int main() {
-    int failures = 0;
-    for (const auto& item : Cases) {
-        if (AgcDriver::FragmentShaderBarycentricUsable(item.driver, item.reported) != item.usable) {
-            std::fprintf(stderr, "driver %d reported %d: expected %s fragment barycentric\n", static_cast<int>(item.driver), item.reported ? 1 : 0, item.usable ? "usable" : "unusable");
-            ++failures;
-        }
-    }
-    return failures == 0 ? 0 : 1;
-}
+const Case moltenVk{"FragmentShaderBarycentricUsable_MoltenVk_IsUnusableEvenWhenReported", [] {
+    RequireUsability({VK_DRIVER_ID_MOLTENVK, true, false});
+    RequireUsability({VK_DRIVER_ID_MOLTENVK, false, false});
+}};
+
+const Case reportingDrivers{"FragmentShaderBarycentricUsable_ReportedByRadvNvidiaOrAmd_IsUsable", [] {
+    RequireUsability({VK_DRIVER_ID_MESA_RADV, true, true});
+    RequireUsability({VK_DRIVER_ID_NVIDIA_PROPRIETARY, true, true});
+    RequireUsability({VK_DRIVER_ID_AMD_PROPRIETARY, true, true});
+}};
+
+const Case unreported{"FragmentShaderBarycentricUsable_NotReported_IsUnusable", [] {
+    RequireUsability({VK_DRIVER_ID_MESA_RADV, false, false});
+    RequireUsability({VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS, false, false});
+}};
+
+} // namespace

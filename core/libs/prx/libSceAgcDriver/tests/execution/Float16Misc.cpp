@@ -12,7 +12,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -372,22 +372,14 @@ void Check(std::uint32_t first, std::uint32_t count) {
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        constexpr std::uint32_t total = sizeof(Vectors) / sizeof(Vectors[0]);
-        for (std::uint32_t first = 0; first < total; first += Threads) {
-            const auto count = std::min(Threads, total - first);
-            Run(*device, first, count);
-            Check(first, count);
-        }
-        std::puts("f16 misc tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case vectors{"Float16Misc_HalfPrecisionAndLegacyOps_MatchReferenceVectors", [] {
+    auto& device = SharedVulkanTestDevice();
+    constexpr std::uint32_t total = sizeof(Vectors) / sizeof(Vectors[0]);
+    for (std::uint32_t first = 0; first < total; first += Threads) {
+        const auto count = std::min(Threads, total - first);
+        Run(device, first, count);
+        Check(first, count);
     }
-}
+}};
+
+} // namespace

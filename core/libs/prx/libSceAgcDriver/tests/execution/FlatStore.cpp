@@ -19,7 +19,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -123,21 +123,22 @@ void RunReadOnly(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
     }
 }
 
-}
+const Testing::Case wave32Stores{"FlatStore_Wave32_WritesEveryStoreWidthAndMask", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock writable(true);
+    RunStores(device, writable, 32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock writable(true);
-        const GuestBlock readOnly(false);
-        RunStores(*device, writable, 32);
-        RunStores(*device, writable, 64);
-        RunReadOnly(*device, readOnly);
-        std::puts("flat store tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64Stores{"FlatStore_Wave64_WritesEveryStoreWidthAndMask", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock writable(true);
+    RunStores(device, writable, 64);
+}};
+
+const Testing::Case readOnlyRange{"FlatStore_ReadOnlyRange_LeavesMemoryUnchanged", [] {
+    auto& device = SharedVulkanTestDevice();
+    const GuestBlock readOnly(false);
+    RunReadOnly(device, readOnly);
+}};
+
+} // namespace

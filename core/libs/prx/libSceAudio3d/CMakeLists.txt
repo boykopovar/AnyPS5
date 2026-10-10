@@ -3,22 +3,12 @@ target_include_directories(libSceAudio3d PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAudio3d)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_audio3d_parameters_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudio3dParameters.cpp)
-    target_include_directories(guest_audio3d_parameters_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_audio3d_parameters_tests PRIVATE libSceAudio3d libc)
-    configure_windows_unwind(guest_audio3d_parameters_tests)
-    add_test(NAME guest_audio3d_parameters COMMAND guest_audio3d_parameters_tests)
-    if(WIN32)
-        set_tests_properties(guest_audio3d_parameters PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudio3d>")
-    endif()
-    add_test_executable(guest_audio3d_port_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudio3dPort.cpp)
-    target_include_directories(guest_audio3d_port_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_audio3d_port_tests PRIVATE libSceAudio3d libc)
-    configure_windows_unwind(guest_audio3d_port_tests)
-    add_test(NAME guest_audio3d_port COMMAND guest_audio3d_port_tests)
-    if(WIN32)
-        set_tests_properties(guest_audio3d_port PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudio3d>")
-    endif()
+    anyps5_add_library_test(guest_audio3d_parameters_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAudio3dParameters.cpp
+        LINK libSceAudio3d libc
+    )
+    anyps5_add_library_test(guest_audio3d_port_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAudio3dPort.cpp
+        LINK libSceAudio3d libc
+    )
 endif()

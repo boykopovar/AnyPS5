@@ -11,7 +11,7 @@ import tempfile
 def run(executable):
     result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=25)
     assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
-    assert "Windows dependency machine-code tests passed" in result.stdout, result.stdout
+    assert ", 0 failed, 0 skipped" in result.stdout, result.stdout
 
 
 def main():

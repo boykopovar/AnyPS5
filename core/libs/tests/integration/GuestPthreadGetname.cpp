@@ -1,6 +1,8 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <array>
-#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -12,40 +14,84 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
 }
 
-static constexpr int GUEST_ESRCH = 3;
-static constexpr int GUEST_EFAULT = 14;
+namespace {
 
-static void Require(bool value) { if (!value) std::abort(); }
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
 
-static std::array<unsigned char, 64> Read(Pthread thread, int expected) {
-    std::array<unsigned char, 64> buffer{};
-    buffer.fill(0xAA);
-    Require(pthread_getname_np_nid_postfix(thread, reinterpret_cast<char*>(buffer.data())) == expected);
-    return buffer;
+constexpr int GUEST_ESRCH = 3;
+constexpr int GUEST_EFAULT = 14;
+constexpr unsigned char poison = 0xAA;
+
+using NameBuffer = std::array<unsigned char, 64>;
+
+struct NameRead {
+    int result = -1;
+    NameBuffer buffer{};
+};
+
+NameRead ReadName(Pthread thread) {
+    NameRead read;
+    read.buffer.fill(poison);
+    read.result = pthread_getname_np_nid_postfix(thread, reinterpret_cast<char*>(read.buffer.data()));
+    return read;
 }
 
-static void RequireName(Pthread thread, const std::string& name) {
-    const auto buffer = Read(thread, 0);
-    Require(std::memcmp(buffer.data(), name.c_str(), name.size() + 1) == 0);
-    for (std::size_t index = name.size() + 1; index < buffer.size(); ++index) Require(buffer[index] == 0xAA);
+void RequireName(const NameRead& read, const std::string& name) {
+    RequireEqual(read.result, 0, "getname result for '" + name + "'");
+    Require(std::memcmp(read.buffer.data(), name.c_str(), name.size() + 1) == 0, "name bytes for '" + name + "'");
+    for (std::size_t index = name.size() + 1; index < read.buffer.size(); ++index) {
+        RequireEqual(read.buffer[index], poison, "byte " + std::to_string(index) + " after '" + name + "'");
+    }
 }
 
-static void* APS5_VABI Unnamed(void*) {
-    RequireName(pthread_self_nid_postfix(), "");
+class MainThreadNameRestore {
+public:
+    MainThreadNameRestore() {
+        const NameRead read = ReadName(pthread_self_nid_postfix());
+        if (read.result == 0) original.assign(reinterpret_cast<const char*>(read.buffer.data()));
+    }
+    ~MainThreadNameRestore() { pthread_rename_np_nid_postfix(pthread_self_nid_postfix(), original.c_str()); }
+    MainThreadNameRestore(const MainThreadNameRestore&) = delete;
+    MainThreadNameRestore& operator=(const MainThreadNameRestore&) = delete;
+
+private:
+    std::string original;
+};
+
+void* APS5_VABI ReadOwnName(void* arg) {
+    *static_cast<NameRead*>(arg) = ReadName(pthread_self_nid_postfix());
     return nullptr;
 }
 
-int main() {
+const Case renamed{"PthreadGetname_AfterRename_ReturnsNameWithoutWritingPastTerminator", [] {
+    const MainThreadNameRestore restore;
     const Pthread self = pthread_self_nid_postfix();
     for (const char* name : {"", "A", "AnyPS5Probe", "0123456789012345678901234567890"}) {
-        Require(pthread_rename_np_nid_postfix(self, name) == 0);
-        RequireName(self, name);
+        RequireEqual(pthread_rename_np_nid_postfix(self, name), 0, std::string("rename to '") + name + "'");
+        RequireName(ReadName(self), name);
     }
-    Pthread worker = nullptr;
-    Require(scePthreadCreate(&worker, nullptr, Unnamed, nullptr, nullptr) == 0);
-    Require(scePthreadJoin(worker, nullptr) == 0);
+}};
 
-    const auto untouched = Read(nullptr, GUEST_ESRCH);
-    for (unsigned char byte : untouched) Require(byte == 0xAA);
-    Require(pthread_getname_np_nid_postfix(self, nullptr) == GUEST_EFAULT);
-}
+const Case unnamedThread{"PthreadGetname_ThreadCreatedWithoutName_ReturnsEmptyName", [] {
+    NameRead read;
+    Pthread worker = nullptr;
+    RequireEqual(scePthreadCreate(&worker, nullptr, ReadOwnName, &read, nullptr), 0, "create thread");
+    RequireEqual(scePthreadJoin(worker, nullptr), 0, "join thread");
+    RequireName(read, "");
+}};
+
+const Case nullThread{"PthreadGetname_NullThread_FailsWithEsrchAndLeavesBuffer", [] {
+    const NameRead read = ReadName(nullptr);
+    RequireEqual(read.result, GUEST_ESRCH, "getname result");
+    for (std::size_t index = 0; index < read.buffer.size(); ++index) {
+        RequireEqual(read.buffer[index], poison, "byte " + std::to_string(index));
+    }
+}};
+
+const Case nullBuffer{"PthreadGetname_NullBuffer_FailsWithEfault", [] {
+    RequireEqual(pthread_getname_np_nid_postfix(pthread_self_nid_postfix(), nullptr), GUEST_EFAULT, "getname result");
+}};
+
+} // namespace

@@ -1,54 +1,65 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "VulkanTestDevice.hpp"
 #include <cctype>
-#include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 
 namespace {
 
-void SetRequest(const std::string& value) {
+using Testing::Require;
+
+int WriteRequest(const std::string& value) {
 #ifdef _WIN32
-    if (_putenv_s("ANYPS5_GPU", value.c_str()) != 0) throw std::runtime_error("cannot set ANYPS5_GPU");
+    return _putenv_s("ANYPS5_GPU", value.c_str());
 #else
-    if (setenv("ANYPS5_GPU", value.c_str(), 1) != 0) throw std::runtime_error("cannot set ANYPS5_GPU");
+    return setenv("ANYPS5_GPU", value.c_str(), 1);
 #endif
 }
 
-void Require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-}
-
-int main() {
-    try {
-        SetRequest("");
-        const auto defaultDevice = OpenVulkanTestDevice();
-        if (!defaultDevice) return VulkanTestSkipped;
-        const std::string name = defaultDevice->DeviceName();
-        Require(!name.empty(), "the default device has no name");
-
-        std::string request = name;
-        for (auto& character : request) character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
-        SetRequest(request);
-        const AgcDriver::VulkanDevice requested;
-        Require(requested.DeviceName() == name, "ANYPS5_GPU=" + request + " selected " + requested.DeviceName() + " instead of " + name);
-
-        SetRequest("no such device 1d3d154f");
-        try {
-            const AgcDriver::VulkanDevice missing;
-            throw std::runtime_error("ANYPS5_GPU naming no device selected " + missing.DeviceName());
-        } catch (const std::runtime_error& error) {
-            const std::string message = error.what();
-            Require(message.find("ANYPS5_GPU=\"no such device 1d3d154f\"") != std::string::npos && message.find(name) != std::string::npos, "unexpected error: " + message);
-        }
-        std::puts("device selection tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+class Request {
+public:
+    explicit Request(const std::string& value) {
+        Require(WriteRequest(value) == 0, "cannot set ANYPS5_GPU");
     }
+
+    ~Request() {
+        static_cast<void>(WriteRequest(""));
+    }
+
+    Request(const Request&) = delete;
+    Request& operator=(const Request&) = delete;
+};
+
+std::string DefaultName() {
+    const Request request("");
+    const std::string name = SharedVulkanTestDevice().DeviceName();
+    Require(!name.empty(), "the default device has no name");
+    return name;
 }
+
+const Testing::Case defaultDevice{"DeviceSelection_EmptyRequest_SelectsNamedDevice", [] {
+    static_cast<void>(DefaultName());
+}};
+
+const Testing::Case uppercaseName{"DeviceSelection_UppercaseName_SelectsDefaultDevice", [] {
+    const std::string name = DefaultName();
+    std::string upper = name;
+    for (auto& character : upper) character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    const Request request(upper);
+    const AgcDriver::VulkanDevice requested;
+    Require(requested.DeviceName() == name, "ANYPS5_GPU=" + upper + " selected " + requested.DeviceName() + " instead of " + name);
+}};
+
+const Testing::Case unknownName{"DeviceSelection_UnknownName_ThrowsNamingRequestAndDevices", [] {
+    const std::string name = DefaultName();
+    const Request request("no such device 1d3d154f");
+    const auto error = Testing::RequireThrows<std::runtime_error>([] {
+        const AgcDriver::VulkanDevice missing;
+        Testing::Fail("ANYPS5_GPU naming no device selected " + missing.DeviceName());
+    }, "ANYPS5_GPU naming no device");
+    const std::string message = error.what();
+    Require(message.find("ANYPS5_GPU=\"no such device 1d3d154f\"") != std::string::npos && message.find(name) != std::string::npos, "unexpected error: " + message);
+}};
+
+} // namespace

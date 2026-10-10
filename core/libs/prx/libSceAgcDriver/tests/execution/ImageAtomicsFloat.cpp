@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxLanes = 64;
@@ -536,28 +535,36 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRe
     }
 }
 
-}
+const Testing::Case uintTexels{"ImageAtomicsFloat_R32UintTexels_ReturnPreviousAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, 32, device.Target(), "wave32", Format32UInt);
+    Run(device, 64, device.Target(), "wave64", Format32UInt);
+    Run(device, 64, device.ComputeTarget(32), "wave64 split", Format32UInt);
+}};
 
-int main() {
+const Testing::Case sintTexels{"ImageAtomicsFloat_R32SintTexels_ReturnPreviousAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, 32, device.Target(), "wave32", Format32SInt);
+    Run(device, 64, device.Target(), "wave64", Format32SInt);
+    Run(device, 64, device.ComputeTarget(32), "wave64 split", Format32SInt);
+}};
+
+const Testing::Case floatTexels{"ImageAtomicsFloat_R32FloatTexels_ReturnPreviousAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, 32, device.Target(), "wave32", Format32Float);
+    Run(device, 64, device.Target(), "wave64", Format32Float);
+    Run(device, 64, device.ComputeTarget(32), "wave64 split", Format32Float);
+}};
+
+const Testing::Case halfFloatTexels{"ImageAtomicsFloat_Rg16FloatSurface_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    bool refused = false;
     try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto format : {Format32UInt, Format32SInt, Format32Float}) {
-            Run(*device, 32, device->Target(), "wave32", format);
-            Run(*device, 64, device->Target(), "wave64", format);
-            Run(*device, 64, device->ComputeTarget(32), "wave64 split", format);
-        }
-        bool refused = false;
-        try {
-            static_cast<void>(Compile(32, device->Target(), Format16_16Float));
-        } catch (const std::exception& error) {
-            refused = std::string(error.what()).find("atomic image descriptor uses an unsupported format 29") != std::string::npos;
-        }
-        Require(refused, "image float atomics on a 16_16 float surface were not refused");
-        std::puts("image float atomics tests passed");
-        return 0;
+        static_cast<void>(Compile(32, device.Target(), Format16_16Float));
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        refused = std::string(error.what()).find("atomic image descriptor uses an unsupported format 29") != std::string::npos;
     }
-}
+    Require(refused, "image float atomics on a 16_16 float surface were not refused");
+}};
+
+} // namespace

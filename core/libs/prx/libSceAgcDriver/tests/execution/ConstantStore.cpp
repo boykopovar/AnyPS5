@@ -20,7 +20,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using namespace NarrowConstantStoreFixture;
 
 constexpr std::size_t BlockBytes = 65536;
@@ -77,24 +77,19 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::uint32_t
     device.WaitIdle();
     for (std::size_t offset = 0; offset < BlockBytes; ++offset) {
         const auto expected = offset < Threads * LaneBytes ? ExpectedLane[offset % LaneBytes] : Fill;
-        Require(guest.Data()[offset] == expected, "constant store: wave" + std::to_string(waveSize) + " byte " + std::to_string(offset) + " is " +
-                std::to_string(guest.Data()[offset]) + ", expected " + std::to_string(expected));
+        Testing::RequireEqual(static_cast<unsigned>(guest.Data()[offset]), static_cast<unsigned>(expected),
+                "constant store: wave" + std::to_string(waveSize) + " byte " + std::to_string(offset));
     }
 }
 
-}
+const Testing::Case wave32{"ConstantStore_Wave32_WritesEveryLaneConstantAndKeepsFill", [] {
+    const GuestBlock guest;
+    Run(SharedVulkanTestDevice(), guest, 32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const GuestBlock guest;
-        Run(*device, guest, 32);
-        Run(*device, guest, 64);
-        std::puts("constant store Vulkan readback passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
+const Testing::Case wave64{"ConstantStore_Wave64_WritesEveryLaneConstantAndKeepsFill", [] {
+    const GuestBlock guest;
+    Run(SharedVulkanTestDevice(), guest, 64);
+}};
+
+} // namespace

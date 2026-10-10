@@ -14,14 +14,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -164,29 +163,54 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
     CheckRejected(device, vccHiAddtid, "global_load_dword_addtid supports only an SGPR pair as base address");
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        CheckRejections(*device);
-        GuestBlock guest;
-        const auto base = ExpectedBase();
-        Run(*device, guest, VccBaseCode, 32, device->Target(), base, "wave32");
-        Run(*device, guest, VccBaseCode, 64, device->Target(), base, "wave64");
-        Run(*device, guest, VccBaseCode, 64, device->ComputeTarget(32), base, "wave64 split");
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("addtid cases skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
-        } else {
-            Run(*device, guest, VccAddtidCode, 32, device->Target(), ExpectedAddtid(32), "addtid wave32");
-            Run(*device, guest, VccAddtidCode, 64, device->Target(), ExpectedAddtid(64), "addtid wave64");
-            Run(*device, guest, VccAddtidCode, 64, device->ComputeTarget(32), ExpectedAddtid(64), "addtid wave64 split");
-        }
-        std::puts("global vcc base tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void SkipUnlessWaveFitsSubgroup(const AgcDriver::VulkanDevice& device) {
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("the device's subgroups are narrower than a wave (" + std::to_string(device.Target().subgroupSize) + " lanes)");
     }
 }
+
+const Testing::Case outOfRangeBases{"GlobalVccBase_OutOfRangeScalarBase_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckRejections(device);
+}};
+
+const Testing::Case wave32Accesses{"GlobalVccBase_Wave32_AccessesThroughVccBase", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Run(device, guest, VccBaseCode, 32, device.Target(), ExpectedBase(), "wave32");
+}};
+
+const Testing::Case wave64Accesses{"GlobalVccBase_Wave64_AccessesThroughVccBase", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Run(device, guest, VccBaseCode, 64, device.Target(), ExpectedBase(), "wave64");
+}};
+
+const Testing::Case wave64SplitAccesses{"GlobalVccBase_Wave64SplitAcrossSubgroups_AccessesThroughVccBase", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Run(device, guest, VccBaseCode, 64, device.ComputeTarget(32), ExpectedBase(), "wave64 split");
+}};
+
+const Testing::Case wave32Addtid{"GlobalVccBase_AddtidWave32_AccessesThroughVccBase", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWaveFitsSubgroup(device);
+    GuestBlock guest;
+    Run(device, guest, VccAddtidCode, 32, device.Target(), ExpectedAddtid(32), "addtid wave32");
+}};
+
+const Testing::Case wave64Addtid{"GlobalVccBase_AddtidWave64_AccessesThroughVccBase", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWaveFitsSubgroup(device);
+    GuestBlock guest;
+    Run(device, guest, VccAddtidCode, 64, device.Target(), ExpectedAddtid(64), "addtid wave64");
+}};
+
+const Testing::Case wave64SplitAddtid{"GlobalVccBase_AddtidWave64SplitAcrossSubgroups_AccessesThroughVccBase", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWaveFitsSubgroup(device);
+    GuestBlock guest;
+    Run(device, guest, VccAddtidCode, 64, device.ComputeTarget(32), ExpectedAddtid(64), "addtid wave64 split");
+}};
+
+} // namespace

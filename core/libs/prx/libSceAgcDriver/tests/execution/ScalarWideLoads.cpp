@@ -17,13 +17,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -158,7 +156,7 @@ public:
 #else
         block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
 #endif
-        Require(block != nullptr, "scalar wide loads: cannot allocate the guest block");
+        Testing::Require(block != nullptr, "scalar wide loads: cannot allocate the guest block");
         GuestAllocations::Mutation().Add(block, BlockBytes, true, false);
     }
 
@@ -192,7 +190,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("scalar wide loads: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("scalar wide loads: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -232,18 +230,10 @@ void Check() {
     }
 }
 
-}
+const Testing::Case scalarWideLoads{"ScalarWideLoads_BufferAndScalarWideLoads_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("scalar wide loads tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

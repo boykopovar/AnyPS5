@@ -1,9 +1,9 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <stdexcept>
 
 extern "C" {
@@ -15,30 +15,52 @@ std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "DeviceService: %s\n", message);
-        std::abort();
+using Testing::Case;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
+
+constexpr std::int32_t deviceClass = 0x7001;
+
+class DeviceService {
+public:
+    DeviceService() {
+        RequireEqual(sceDeviceServiceInitialize(3, 0), 0, "initialization");
     }
-}
 
-}
+    ~DeviceService() {
+        sceDeviceServiceTerminate();
+    }
 
-int main() {
-    Require(sceDeviceServiceInitialize(3, 0) == 0, "initialization failed");
-    Require(sceDeviceServiceGetEventState(1) == 0, "a device event was reported");
+    DeviceService(const DeviceService&) = delete;
+    DeviceService& operator=(const DeviceService&) = delete;
+};
+
+const Case initializeAndTerminate{"Initialize_ThenTerminate_BothSucceed", [] {
+    RequireEqual(sceDeviceServiceInitialize(3, 0), 0, "initialization");
+    RequireEqual(sceDeviceServiceTerminate(), 0, "termination");
+}};
+
+const Case eventState{"GetEventState_NoDevices_ReportsNoEvent", [] {
+    const DeviceService service;
+    RequireEqual(sceDeviceServiceGetEventState(1), 0, "device event state");
+}};
+
+const Case queryDevices{"QueryDeviceInfo_NoDevices_ListsNothing", [] {
+    const DeviceService service;
     std::array<std::uint8_t, 0x70> info{};
     std::int32_t count = 7;
     std::int32_t reserved = 0;
-    Require(sceDeviceServiceQueryDeviceInfo_(0x7001, 0, 0, info.data(), 1, &count, &reserved, info.size()) == 0 && count == 0, "a device was listed");
-    bool threw = false;
-    try {
-        sceDeviceServiceQueryDeviceInfo_(0x7001, 0, 0, info.data(), 1, nullptr, &reserved, info.size());
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw, "a null count was accepted");
-    Require(sceDeviceServiceTerminate() == 0, "termination failed");
-    std::puts("DeviceService tests passed");
-    return 0;
-}
+    RequireEqual(sceDeviceServiceQueryDeviceInfo_(deviceClass, 0, 0, info.data(), 1, &count, &reserved, info.size()), 0, "query result");
+    RequireEqual(count, 0, "listed device count");
+}};
+
+const Case queryNullCount{"QueryDeviceInfo_NullCount_ThrowsInvalidArgument", [] {
+    const DeviceService service;
+    std::array<std::uint8_t, 0x70> info{};
+    std::int32_t reserved = 0;
+    RequireThrows<std::invalid_argument>([&] {
+        sceDeviceServiceQueryDeviceInfo_(deviceClass, 0, 0, info.data(), 1, nullptr, &reserved, info.size());
+    }, "query with a null count");
+}};
+
+} // namespace

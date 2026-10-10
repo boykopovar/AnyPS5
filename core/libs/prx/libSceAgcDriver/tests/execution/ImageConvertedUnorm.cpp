@@ -18,14 +18,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -332,40 +331,96 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32
     Require(refusal.find(reason) != std::string::npos, what + " of a converted image was not refused: " + refusal);
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock block;
-        auto* texels = block.Data();
-        for (std::uint32_t index = 0; index < LoadWidth; ++index) {
-            const auto texel = LoadTexel(index);
-            std::memcpy(texels + index * 4u, &texel, 4u);
-        }
-        CheckLoad(*device, texels, LoadXyzw, 0xfu, UnormFormat, SwizzleXYZ1, "image_load dmask:0xf X Y Z 1");
-        CheckLoad(*device, texels, LoadXy, 0x3u, UnormFormat, SwizzleXZY1, "image_load dmask:0x3 X Z Y 1");
-        CheckLoad(*device, texels, LoadXyzw, 0xfu, UnormFormat, SwizzleZYX1, "image_load dmask:0xf Z Y X 1");
-        CheckLoad(*device, texels, LoadXyzw, 0xfu, UnormFormat, SwizzleX011, "image_load dmask:0xf X 0 1 1");
-        CheckLoad(*device, texels, LoadXyz, 0x7u, UintFormat, SwizzleYXZ1, "image_load of 10_11_11_UINT dmask:0x7 Y X Z 1");
-        CheckRoundTrip(*device, texels);
-        CheckStore(*device, texels + StoreOffset, StoreXyz, 0x7u, "image_store dmask:0x7");
-        CheckStore(*device, texels + StoreOffset, StoreXz, 0x5u, "image_store dmask:0x5");
-        CheckFloatStore(*device, texels + FloatOffset);
-        CheckFloatLoad(*device, texels + FloatOffset);
-        RequireRefused(*device, SampleLz, texels + FloatOffset, SwizzleXYZ1, PointSampler, "samples or gathers a converted float image", "image_sample_lz of R10_G11_B11_FLOAT", FloatFormat);
-        RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_sample_lz");
-        RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
-        RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_get_lod");
-        RequireRefused(*device, LoadD16, texels, SwizzleXYZ1, {}, "converted unorm image with 16-bit data", "image_load d16");
-        RequireRefused(*device, StoreD16, texels + StoreOffset, SwizzleXYZ1, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), "converted unorm image with 16-bit data", "image_store d16");
-        RequireRefused(*device, LoadXyzw, texels, SwizzleXYZW, {}, "selects a channel the converted image format does not have", "image_load with DST_SEL X Y Z W");
-        RequireRefused(*device, StoreXyz, texels + StoreOffset, SwizzleXYZW, BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), "selects a channel the converted image format does not have", "image_store with DST_SEL X Y Z W");
-        std::puts("image converted unorm tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void FillLoadTexels(std::uint8_t* texels) {
+    for (std::uint32_t index = 0; index < LoadWidth; ++index) {
+        const auto texel = LoadTexel(index);
+        std::memcpy(texels + index * 4u, &texel, 4u);
     }
 }
+
+std::array<std::uint32_t, 4> InputDescriptor() {
+    return BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
+}
+
+const Testing::Case unormLoad{"ImageConvertedUnorm_LoadWithSwizzles_ReturnsNormalizedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    FillLoadTexels(texels);
+    CheckLoad(device, texels, LoadXyzw, 0xfu, UnormFormat, SwizzleXYZ1, "image_load dmask:0xf X Y Z 1");
+    CheckLoad(device, texels, LoadXy, 0x3u, UnormFormat, SwizzleXZY1, "image_load dmask:0x3 X Z Y 1");
+    CheckLoad(device, texels, LoadXyzw, 0xfu, UnormFormat, SwizzleZYX1, "image_load dmask:0xf Z Y X 1");
+    CheckLoad(device, texels, LoadXyzw, 0xfu, UnormFormat, SwizzleX011, "image_load dmask:0xf X 0 1 1");
+}};
+
+const Testing::Case uintLoad{"ImageConvertedUnorm_LoadUintFormat_ReturnsRawFields", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    FillLoadTexels(texels);
+    CheckLoad(device, texels, LoadXyz, 0x7u, UintFormat, SwizzleYXZ1, "image_load of 10_11_11_UINT dmask:0x7 Y X Z 1");
+}};
+
+const Testing::Case roundTrip{"ImageConvertedUnorm_LoadThenStore_PreservesTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    FillLoadTexels(texels);
+    CheckRoundTrip(device, texels);
+}};
+
+const Testing::Case unormStore{"ImageConvertedUnorm_StoreWithDmasks_PacksNormalizedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    CheckStore(device, texels + StoreOffset, StoreXyz, 0x7u, "image_store dmask:0x7");
+    CheckStore(device, texels + StoreOffset, StoreXz, 0x5u, "image_store dmask:0x5");
+}};
+
+const Testing::Case floatStore{"ImageConvertedUnorm_StoreSmallFloatFormat_PacksFloatComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    CheckFloatStore(device, block.Data() + FloatOffset);
+}};
+
+const Testing::Case floatLoad{"ImageConvertedUnorm_LoadSmallFloatFormat_ReturnsFloatComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    CheckFloatLoad(device, block.Data() + FloatOffset);
+}};
+
+const Testing::Case floatSampleRefused{"ImageConvertedUnorm_SampleSmallFloatFormat_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, SampleLz, block.Data() + FloatOffset, SwizzleXYZ1, PointSampler, "samples or gathers a converted float image", "image_sample_lz of R10_G11_B11_FLOAT", FloatFormat);
+}};
+
+const Testing::Case unormSampleRefused{"ImageConvertedUnorm_SampleGatherOrGetLod_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    FillLoadTexels(texels);
+    RequireRefused(device, SampleLz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_sample_lz");
+    RequireRefused(device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
+    RequireRefused(device, GetLod, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_get_lod");
+}};
+
+const Testing::Case d16Refused{"ImageConvertedUnorm_D16LoadOrStore_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    FillLoadTexels(texels);
+    RequireRefused(device, LoadD16, texels, SwizzleXYZ1, {}, "converted unorm image with 16-bit data", "image_load d16");
+    RequireRefused(device, StoreD16, texels + StoreOffset, SwizzleXYZ1, InputDescriptor(), "converted unorm image with 16-bit data", "image_store d16");
+}};
+
+const Testing::Case missingChannelRefused{"ImageConvertedUnorm_SwizzleSelectsMissingChannel_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    auto* texels = block.Data();
+    FillLoadTexels(texels);
+    RequireRefused(device, LoadXyzw, texels, SwizzleXYZW, {}, "selects a channel the converted image format does not have", "image_load with DST_SEL X Y Z W");
+    RequireRefused(device, StoreXyz, texels + StoreOffset, SwizzleXYZW, InputDescriptor(), "selects a channel the converted image format does not have", "image_store with DST_SEL X Y Z W");
+}};
+
+} // namespace

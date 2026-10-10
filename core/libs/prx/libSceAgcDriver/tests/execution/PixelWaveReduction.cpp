@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdio>
 #include <functional>
-#include <iostream>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
@@ -162,51 +161,51 @@ std::uint32_t Check(const Reduction& reduction, std::uint32_t subgroupSize) {
     return partial;
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const auto target = device->Target();
-        if (!TargetHasCapability(target, spv::CapabilityGroupNonUniformArithmetic)) {
-            std::puts("skipped, the device has no subgroup arithmetic");
-            return VulkanTestSkipped;
+void CheckReduction(const Reduction& reduction) {
+    auto& device = SharedVulkanTestDevice();
+    const auto target = device.Target();
+    SkipUnlessCapability(target, spv::CapabilityGroupNonUniformArithmetic, "the device has no subgroup arithmetic");
+    if (target.subgroupSize > 64u) {
+        Testing::Skip("the " + std::to_string(target.subgroupSize) + "-lane subgroup is wider than the wave, so the half-wave scan throws");
+    }
+    std::vector<ShaderRecompiler::SpirvTarget> layouts;
+    if (target.subgroupSize >= 32u) layouts.push_back(target);
+    else std::printf("the device's own layout is skipped, v_permlanex16_b32 reads lanes 16-31, outside the %u-lane subgroup\n", target.subgroupSize);
+    if (target.subgroupSize < 64u) {
+        auto wide = target;
+        wide.subgroupSize = 64u;
+        layouts.push_back(wide);
+    }
+    const auto code = PixelCode(reduction);
+    for (const auto& layout : layouts) {
+        std::uint32_t partial = 0;
+        for (std::uint32_t pass = 0; pass < 4; ++pass) {
+            Draw(device, code, layout);
+            partial += Check(reduction, target.subgroupSize);
         }
-        if (target.subgroupSize > 64u) {
-            std::printf("skipped, the %u-lane subgroup is wider than the wave, so the half-wave scan throws\n", target.subgroupSize);
-            return VulkanTestSkipped;
-        }
-        std::vector<ShaderRecompiler::SpirvTarget> layouts;
-        if (target.subgroupSize >= 32u) layouts.push_back(target);
-        else std::printf("the device's own layout is skipped, v_permlanex16_b32 reads lanes 16-31, outside the %u-lane subgroup\n", target.subgroupSize);
-        if (target.subgroupSize < 64u) {
-            auto wide = target;
-            wide.subgroupSize = 64u;
-            layouts.push_back(wide);
-        }
-        const std::array<Reduction, 5> reductions{{
-            {"UMin", 0xffffffffu, 0x26000000u, 0x83800000u, [](std::uint32_t left, std::uint32_t right) { return std::min(left, right); }},
-            {"UMax", 0u, 0x28000000u, 0x84800000u, [](std::uint32_t left, std::uint32_t right) { return std::max(left, right); }},
-            {"IAdd", 0u, 0x4a000000u, 0x80000000u, [](std::uint32_t left, std::uint32_t right) { return left + right; }},
-            {"AND", 0xffffffffu, 0x36000000u, 0x87000000u, [](std::uint32_t left, std::uint32_t right) { return left & right; }},
-            {"OR", 0u, 0x38000000u, 0x88000000u, [](std::uint32_t left, std::uint32_t right) { return left | right; }},
-        }};
-        for (const auto& layout : layouts) {
-            for (const auto& reduction : reductions) {
-                const auto code = PixelCode(reduction);
-                std::uint32_t partial = 0;
-                for (std::uint32_t pass = 0; pass < 4; ++pass) {
-                    Draw(*device, code, layout);
-                    partial += Check(reduction, target.subgroupSize);
-                }
-                std::printf("%s, laid out for %u lanes on %u-lane subgroups: %u partial waves over 4 draws\n", reduction.name, layout.subgroupSize, target.subgroupSize, partial);
-            }
-        }
-        std::puts("pixel wave reduction tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        std::printf("%s, laid out for %u lanes on %u-lane subgroups: %u partial waves over 4 draws\n", reduction.name, layout.subgroupSize, target.subgroupSize, partial);
     }
 }
+
+const Testing::Case unsignedMinimum{"PixelWaveReduction_UMin_ReducesOverCoveredLanes", [] {
+    CheckReduction({"UMin", 0xffffffffu, 0x26000000u, 0x83800000u, [](std::uint32_t left, std::uint32_t right) { return std::min(left, right); }});
+}};
+
+const Testing::Case unsignedMaximum{"PixelWaveReduction_UMax_ReducesOverCoveredLanes", [] {
+    CheckReduction({"UMax", 0u, 0x28000000u, 0x84800000u, [](std::uint32_t left, std::uint32_t right) { return std::max(left, right); }});
+}};
+
+const Testing::Case integerAdd{"PixelWaveReduction_IAdd_ReducesOverCoveredLanes", [] {
+    CheckReduction({"IAdd", 0u, 0x4a000000u, 0x80000000u, [](std::uint32_t left, std::uint32_t right) { return left + right; }});
+}};
+
+const Testing::Case bitwiseAnd{"PixelWaveReduction_And_ReducesOverCoveredLanes", [] {
+    CheckReduction({"AND", 0xffffffffu, 0x36000000u, 0x87000000u, [](std::uint32_t left, std::uint32_t right) { return left & right; }});
+}};
+
+const Testing::Case bitwiseOr{"PixelWaveReduction_Or_ReducesOverCoveredLanes", [] {
+    CheckReduction({"OR", 0u, 0x38000000u, 0x88000000u, [](std::uint32_t left, std::uint32_t right) { return left | right; }});
+}};
+
+} // namespace

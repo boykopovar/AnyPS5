@@ -1,13 +1,27 @@
+#include <Testing/Test.hpp>
 #include "BdaShader.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <limits>
+#include <string>
 
 namespace {
 
 using namespace AgcDriver::Graphics;
+namespace Abi = ShaderRecompiler::BdaAbi;
+using Testing::Case;
+using Testing::Require;
+
+constexpr auto AddressableUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+constexpr std::uint64_t Guest = 0x7fff12340001ULL;
+constexpr std::uint64_t SpanGuest = 0x7fff56780000ULL;
+constexpr std::uint32_t Sentinel = 0xdeadbeef;
+constexpr std::array<std::uint32_t, 4> Sentinels{Sentinel, Sentinel, Sentinel, Sentinel};
+constexpr Abi::FaultReason NoFault = static_cast<Abi::FaultReason>(0);
 
 class Pipeline {
 public:
@@ -52,6 +66,8 @@ public:
         } catch (...) { release(); throw; }
     }
 
+    Pipeline(const Pipeline&) = delete;
+    Pipeline& operator=(const Pipeline&) = delete;
     ~Pipeline() { release(); }
 
     void Run(std::uint32_t groups) {
@@ -85,125 +101,188 @@ private:
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
 
+std::string Hex(std::uint64_t value) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
+    return text;
 }
 
-void RunBdaExecutionTests(const Context& context) {
-    namespace Abi = ShaderRecompiler::BdaAbi;
-    Buffer first(context, 3, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    Buffer second(context, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    first.Bytes()[0] = std::byte{0x11};
-    first.Bytes()[1] = std::byte{0x22};
-    first.Bytes()[2] = std::byte{0x33};
-    second.Bytes()[0] = std::byte{0x44};
-    second.Bytes()[1] = std::byte{0x55};
-    constexpr std::uint64_t guest = 0x7fff12340001ULL;
-    std::array<Abi::Range, 2> ranges{{{guest, guest + 3, first.DeviceAddress(), Abi::Read, 0}, {guest + 3, guest + 5, second.DeviceAddress(), Abi::Read, 0}}};
-    Buffer table(context, sizeof(Abi::Header) + sizeof(ranges), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    Buffer fault(context, sizeof(Abi::Fault), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const auto run = [&](std::uint64_t address, std::uint32_t bits, std::uint32_t expected, Abi::FaultReason reason, std::uint32_t count = 2, std::uint32_t groups = 1, std::int64_t offset = 0) {
+class BdaExecution {
+public:
+    BdaExecution() : context(GpuContext()) {
+        first.Bytes()[0] = std::byte{0x11};
+        first.Bytes()[1] = std::byte{0x22};
+        first.Bytes()[2] = std::byte{0x33};
+        second.Bytes()[0] = std::byte{0x44};
+        second.Bytes()[1] = std::byte{0x55};
+        for (std::uint32_t dword = 0; dword < 8u; ++dword) {
+            const std::uint32_t value = At(dword);
+            std::memcpy(wide.Bytes().data() + dword * 4u, &value, sizeof(value));
+        }
+    }
+
+    static std::uint32_t At(std::uint32_t dword) {
+        return 0xa0b0c000u + dword;
+    }
+
+    void RemoveReadPermission() {
+        ranges[0].permissions = 0;
+    }
+
+    void Read(std::uint64_t address, std::uint32_t bits, std::uint32_t expected, Abi::FaultReason reason, std::uint32_t count = 2, std::uint32_t groups = 1, std::int64_t offset = 0) {
+        const auto label = "read of " + std::to_string(bits) + " bits at " + Hex(address) + " offset " + std::to_string(offset) + " with " + std::to_string(count) + " table ranges";
         const Abi::Header header{Abi::Version, count, sizeof(Abi::Range), 0};
         std::memcpy(table.Bytes().data(), &header, sizeof(header));
         std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
         std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
-        const std::uint32_t sentinel = 0xdeadbeef;
-        std::memcpy(output.Bytes().data(), &sentinel, sizeof(sentinel));
+        std::memcpy(output.Bytes().data(), &Sentinel, sizeof(Sentinel));
         Pipeline pipeline(context, MakeBdaTestShader(address, bits, offset), {&table, &fault, &output});
         pipeline.Run(groups);
         Abi::Fault report{};
         std::uint32_t result = 0;
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));
         std::memcpy(&result, output.Bytes().data(), sizeof(result));
-        if (static_cast<std::uint32_t>(reason) == 0) {
-            Require(report.state == Abi::FaultState::Empty && result == expected, "BDA GPU read produced incorrect data or a fault");
+        if (reason == NoFault) {
+            Require(report.state == Abi::FaultState::Empty && result == expected, label + ": BDA GPU read produced incorrect data or a fault");
         } else {
-            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.instruction == 0x1234, "BDA GPU fault was not published correctly");
-            Require(result == sentinel, "faulting BDA shader continued to output a substitute value");
+            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.instruction == 0x1234, label + ": BDA GPU fault was not published correctly");
+            Require(result == Sentinel, label + ": faulting BDA shader continued to output a substitute value");
         }
-    };
-    run(guest, 8, 0x11, static_cast<Abi::FaultReason>(0));
-    run(guest + 1, 16, 0x3322, static_cast<Abi::FaultReason>(0));
-    run(guest + 1, 32, 0x55443322, static_cast<Abi::FaultReason>(0));
-    run(guest + 5, 8, 0, Abi::FaultReason::Unmapped, 2, 64);
-    run(guest - 1, 8, 0, Abi::FaultReason::Unmapped);
-    run(std::numeric_limits<std::uint64_t>::max() - 1, 32, 0, Abi::FaultReason::Overflow);
-    run(guest, 8, 0, Abi::FaultReason::InvalidTable, 3);
-    run(std::numeric_limits<std::uint64_t>::max() - 2, 8, 0, Abi::FaultReason::Overflow, 2, 1, 4);
-    run(1, 8, 0, Abi::FaultReason::Overflow, 2, 1, -4);
-    Buffer words(context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const auto read = [&](std::uint64_t address, std::uint32_t dwords, bool coherent, bool stops, std::uint32_t value, bool faults) {
+    }
+
+    void ReadDwords(std::uint64_t address, std::uint32_t dwords, bool coherent, bool stops, std::uint32_t value, bool faults) {
+        const auto label = "read of " + std::to_string(dwords) + " dwords at " + Hex(address) + (coherent ? " coherent" : "") + (stops ? " stopping" : " continuing");
         const Abi::Header header{Abi::Version, 2, sizeof(Abi::Range), 0};
         std::memcpy(table.Bytes().data(), &header, sizeof(header));
         std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
         std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
-        const std::array<std::uint32_t, 4> sentinel{0xdeadbeef, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
-        std::memcpy(words.Bytes().data(), sentinel.data(), sizeof(sentinel));
+        std::memcpy(words.Bytes().data(), Sentinels.data(), sizeof(Sentinels));
         Pipeline pipeline(context, MakeBdaDwordReadTestShader(address, dwords, coherent, stops), {&table, &fault, &words});
         pipeline.Run(1);
         Abi::Fault report{};
         std::array<std::uint32_t, 4> result{};
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));
         std::memcpy(result.data(), words.Bytes().data(), sizeof(result));
-        auto expected = sentinel;
+        auto expected = Sentinels;
         if (!faults || !stops) {
             expected[0] = value;
             for (std::uint32_t dword = 1; dword < dwords; ++dword) expected[dword] = 0;
         }
         if (faults) {
-            Require(report.state == Abi::FaultState::Ready && report.reason == Abi::FaultReason::Unmapped && report.address == guest + 5 && report.bytes == 1 && report.instruction == 0x1234, "BDA dword read did not publish its first fault");
+            Require(report.state == Abi::FaultState::Ready && report.reason == Abi::FaultReason::Unmapped && report.address == Guest + 5 && report.bytes == 1 && report.instruction == 0x1234, label + ": BDA dword read did not publish its first fault");
         } else {
-            Require(report.state == Abi::FaultState::Empty, "mapped BDA dword read published a fault");
+            Require(report.state == Abi::FaultState::Empty, label + ": mapped BDA dword read published a fault");
         }
-        Require(result == expected, faults && stops ? "faulting BDA dword read continued to output a substitute value" : "BDA dword read produced incorrect data");
-    };
-    for (const bool stops : {true, false}) {
-        for (const bool coherent : {false, true}) {
-            read(guest + 1, 1, coherent, stops, 0x55443322, false);
-            read(guest + 3, 1, coherent, stops, 0x5544, true);
-            read(guest + 1, 4, coherent, stops, 0x55443322, true);
-        }
+        Require(result == expected, label + (faults && stops ? ": faulting BDA dword read continued to output a substitute value" : ": BDA dword read produced incorrect data"));
     }
-    Buffer wide(context, 32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    for (std::uint32_t dword = 0; dword < 8u; ++dword) {
-        const std::uint32_t value = 0xa0b0c000u + dword;
-        std::memcpy(wide.Bytes().data() + dword * 4u, &value, sizeof(value));
-    }
-    constexpr std::uint64_t spanGuest = 0x7fff56780000ULL;
-    const std::array<Abi::Range, 3> spanRanges{{ranges[0], ranges[1], {spanGuest, spanGuest + 32, wide.DeviceAddress(), Abi::Read, 0}}};
-    Buffer spanTable(context, sizeof(Abi::Header) + sizeof(spanRanges), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    const auto span = [&](std::uint64_t address, std::int32_t offset, std::uint32_t extracted, bool coherent, bool stops, std::array<std::uint32_t, 4> values, Abi::FaultReason reason = {}, std::uint64_t faultAddress = 0, std::uint32_t faultBytes = 0) {
+
+    void ReadSpan(std::uint64_t address, std::int32_t offset, std::uint32_t extracted, bool coherent, bool stops, std::array<std::uint32_t, 4> values, Abi::FaultReason reason = NoFault, std::uint64_t faultAddress = 0, std::uint32_t faultBytes = 0) {
+        const auto label = "span read at " + Hex(address) + " offset " + std::to_string(offset) + " dwords mask " + std::to_string(extracted) + (coherent ? " coherent" : "") + (stops ? " stopping" : " continuing");
+        const std::array<Abi::Range, 3> spanRanges{{ranges[0], ranges[1], {SpanGuest, SpanGuest + 32, wide.DeviceAddress(), Abi::Read, 0}}};
         const Abi::Header header{Abi::Version, 3, sizeof(Abi::Range), 0};
         std::memcpy(spanTable.Bytes().data(), &header, sizeof(header));
         std::memcpy(spanTable.Bytes().data() + sizeof(header), spanRanges.data(), sizeof(spanRanges));
         std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
-        const std::array<std::uint32_t, 4> sentinel{0xdeadbeef, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
-        std::memcpy(words.Bytes().data(), sentinel.data(), sizeof(sentinel));
+        std::memcpy(words.Bytes().data(), Sentinels.data(), sizeof(Sentinels));
         Pipeline pipeline(context, MakeBdaSpanReadTestShader(address, static_cast<std::uint32_t>(offset), extracted, coherent, stops), {&spanTable, &fault, &words});
         pipeline.Run(1);
         Abi::Fault report{};
         std::array<std::uint32_t, 4> result{};
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));
         std::memcpy(result.data(), words.Bytes().data(), sizeof(result));
-        const bool faults = static_cast<std::uint32_t>(reason) != 0u;
+        const bool faults = reason != NoFault;
         if (faults) {
-            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.instruction == 0x1234, "BDA span read did not publish its first fault");
+            Require(report.state == Abi::FaultState::Ready && report.reason == reason && report.address == faultAddress && report.bytes == faultBytes && report.instruction == 0x1234, label + ": BDA span read did not publish its first fault");
         } else {
-            Require(report.state == Abi::FaultState::Empty, "mapped BDA span read published a fault");
+            Require(report.state == Abi::FaultState::Empty, label + ": mapped BDA span read published a fault");
         }
-        Require(result == (faults && stops ? sentinel : values), faults && stops ? "faulting BDA span read continued to output a substitute value" : "BDA span read produced incorrect data");
-    };
-    const auto at = [&](std::uint32_t dword) { return 0xa0b0c000u + dword; };
+        Require(result == (faults && stops ? Sentinels : values), label + (faults && stops ? ": faulting BDA span read continued to output a substitute value" : ": BDA span read produced incorrect data"));
+    }
+
+private:
+    static const Context& GpuContext() {
+        const auto& device = SharedBdaTestDevice();
+        if (device.runsOnCpu) Testing::Skip("CPU Vulkan device: BDA execution not tested");
+        return device.context;
+    }
+
+    const Context& context;
+    Buffer first{context, 3, AddressableUsage};
+    Buffer second{context, 2, AddressableUsage};
+    std::array<Abi::Range, 2> ranges{{{Guest, Guest + 3, first.DeviceAddress(), Abi::Read, 0}, {Guest + 3, Guest + 5, second.DeviceAddress(), Abi::Read, 0}}};
+    Buffer table{context, sizeof(Abi::Header) + sizeof(ranges), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    Buffer fault{context, sizeof(Abi::Fault), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    Buffer output{context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    Buffer words{context, 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    Buffer wide{context, 32, AddressableUsage};
+    Buffer spanTable{context, sizeof(Abi::Header) + 3 * sizeof(Abi::Range), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+};
+
+const Case mappedReads{"EmitBdaRead_MappedRanges_ReadsBytesAcrossRanges", [] {
+    BdaExecution execution;
+    execution.Read(Guest, 8, 0x11, NoFault);
+    execution.Read(Guest + 1, 16, 0x3322, NoFault);
+    execution.Read(Guest + 1, 32, 0x55443322, NoFault);
+}};
+
+const Case unmappedReads{"EmitBdaRead_UnmappedAddress_PublishesUnmappedFault", [] {
+    BdaExecution execution;
+    execution.Read(Guest + 5, 8, 0, Abi::FaultReason::Unmapped, 2, 64);
+    execution.Read(Guest - 1, 8, 0, Abi::FaultReason::Unmapped);
+}};
+
+const Case overflowingReads{"EmitBdaRead_AddressOverflow_PublishesOverflowFault", [] {
+    BdaExecution execution;
+    execution.Read(std::numeric_limits<std::uint64_t>::max() - 1, 32, 0, Abi::FaultReason::Overflow);
+    execution.Read(std::numeric_limits<std::uint64_t>::max() - 2, 8, 0, Abi::FaultReason::Overflow, 2, 1, 4);
+    execution.Read(1, 8, 0, Abi::FaultReason::Overflow, 2, 1, -4);
+}};
+
+const Case invalidTable{"EmitBdaRead_TableCountPastItsRanges_PublishesInvalidTableFault", [] {
+    BdaExecution execution;
+    execution.Read(Guest, 8, 0, Abi::FaultReason::InvalidTable, 3);
+}};
+
+const Case withoutPermission{"EmitBdaRead_RangeWithoutReadPermission_PublishesPermissionFault", [] {
+    BdaExecution execution;
+    execution.RemoveReadPermission();
+    execution.Read(Guest, 8, 0, Abi::FaultReason::Permission);
+}};
+
+const Case dwordReads{"EmitBdaDwordReads_MappedOrUnmappedTail_ReadsDataOrPublishesFirstFault", [] {
+    BdaExecution execution;
     for (const bool stops : {true, false}) {
         for (const bool coherent : {false, true}) {
-            span(spanGuest + 16, -12, 0b1010u, coherent, stops, {0, at(2), 0, at(4)});
-            span(spanGuest, 4, 0b0101u, coherent, stops, {at(1), 0, at(3), 0});
-            span(spanGuest + 24, 0, 0b0011u, coherent, stops, {at(6), at(7), 0, 0});
-            span(spanGuest + 20, 8, 0b0001u, coherent, stops, {at(7), 0, 0, 0});
-            span(spanGuest + 28, 0, 0b0101u, coherent, stops, {at(7), 0, 0, 0}, Abi::FaultReason::Unmapped, spanGuest + 36, 1);
-            span(guest, 1, 0b1001u, coherent, stops, {0x55443322, 0, 0, 0}, Abi::FaultReason::Unmapped, guest + 13, 1);
-            span(4, -8, 0b0001u, coherent, stops, {0, 0, 0, 0}, Abi::FaultReason::Overflow, 4, 0);
+            execution.ReadDwords(Guest + 1, 1, coherent, stops, 0x55443322, false);
+            execution.ReadDwords(Guest + 3, 1, coherent, stops, 0x5544, true);
+            execution.ReadDwords(Guest + 1, 4, coherent, stops, 0x55443322, true);
         }
     }
-    ranges[0].permissions = 0;
-    run(guest, 8, 0, Abi::FaultReason::Permission);
-}
+}};
+
+const Case mappedSpans{"EmitBdaDwordReads_MappedSpan_ReadsOnlyExtractedDwords", [] {
+    BdaExecution execution;
+    const auto at = BdaExecution::At;
+    for (const bool stops : {true, false}) {
+        for (const bool coherent : {false, true}) {
+            execution.ReadSpan(SpanGuest + 16, -12, 0b1010u, coherent, stops, {0, at(2), 0, at(4)});
+            execution.ReadSpan(SpanGuest, 4, 0b0101u, coherent, stops, {at(1), 0, at(3), 0});
+            execution.ReadSpan(SpanGuest + 24, 0, 0b0011u, coherent, stops, {at(6), at(7), 0, 0});
+            execution.ReadSpan(SpanGuest + 20, 8, 0b0001u, coherent, stops, {at(7), 0, 0, 0});
+        }
+    }
+}};
+
+const Case faultingSpans{"EmitBdaDwordReads_SpanPastMappingOrOverflowing_PublishesFirstFault", [] {
+    BdaExecution execution;
+    const auto at = BdaExecution::At;
+    for (const bool stops : {true, false}) {
+        for (const bool coherent : {false, true}) {
+            execution.ReadSpan(SpanGuest + 28, 0, 0b0101u, coherent, stops, {at(7), 0, 0, 0}, Abi::FaultReason::Unmapped, SpanGuest + 36, 1);
+            execution.ReadSpan(Guest, 1, 0b1001u, coherent, stops, {0x55443322, 0, 0, 0}, Abi::FaultReason::Unmapped, Guest + 13, 1);
+            execution.ReadSpan(4, -8, 0b0001u, coherent, stops, {0, 0, 0, 0}, Abi::FaultReason::Overflow, 4, 0);
+        }
+    }
+}};
+
+} // namespace

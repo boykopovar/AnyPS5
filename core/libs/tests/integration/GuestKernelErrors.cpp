@@ -1,8 +1,11 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceKernelCreateSema(KernelSema*, const char*, std::uint32_t, int, int, void*);
@@ -31,132 +34,368 @@ int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
 }
 
-static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_EDEADLK = static_cast<int>(0x8002000B);
-static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
-static constexpr int MUTEX_TYPE_ERRORCHECK = 1;
-static constexpr int PRIO_NONE = 0;
-static constexpr int PRIO_INHERIT = 1;
-static constexpr int PRIO_PROTECT = 2;
-static constexpr int MUTEX_TYPE_ADAPTIVE = 4;
-static constexpr int POSIX_EDEADLK = 11;
+namespace {
 
-static void Require(bool value) { if (!value) std::abort(); }
+using MutexOperation = int (APS5_VABI *)(PthreadMutex*);
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
 
-int main() {
-    constexpr int maximum = std::numeric_limits<int>::max();
-    KernelSema semaphore = nullptr;
-    Require(sceKernelCreateSema(&semaphore, "overflow", 1, maximum - 1, maximum, nullptr) == SCE_OK);
-    Require(sceKernelSignalSema(semaphore, 2) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelSignalSema(semaphore, maximum) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelPollSema(semaphore, maximum - 1) == SCE_OK);
-    Require(sceKernelSignalSema(semaphore, maximum) == SCE_OK);
-    Require(sceKernelSignalSema(semaphore, 1) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelPollSema(semaphore, maximum) == SCE_OK);
-    Require(sceKernelDeleteSema(semaphore) == SCE_OK);
-    Require(sceKernelCreateSema(&semaphore, "limit", 1, 1, 3, nullptr) == SCE_OK);
-    Require(sceKernelSignalSema(semaphore, 3) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelSignalSema(semaphore, 2) == SCE_OK);
-    Require(sceKernelPollSema(semaphore, 3) == SCE_OK);
-    Require(sceKernelDeleteSema(semaphore) == SCE_OK);
+constexpr int sceOk = 0;
+constexpr int sceKernelErrorEnoent = static_cast<int>(0x80020002);
+constexpr int sceKernelErrorEbadf = static_cast<int>(0x80020009);
+constexpr int sceKernelErrorEdeadlk = static_cast<int>(0x8002000B);
+constexpr int sceKernelErrorEfault = static_cast<int>(0x8002000E);
+constexpr int sceKernelErrorEinval = static_cast<int>(0x80020016);
+constexpr int sceKernelErrorEbusy = static_cast<int>(0x80020010);
+constexpr int sceKernelErrorEtimedout = static_cast<int>(0x8002003C);
+constexpr int mutexTypeErrorcheck = 1;
+constexpr int prioNone = 0;
+constexpr int prioInherit = 1;
+constexpr int prioProtect = 2;
+constexpr int mutexTypeAdaptive = 4;
+constexpr int posixEdeadlk = 11;
+constexpr int maximum = std::numeric_limits<int>::max();
+constexpr KernelUseconds shortTimeout = 1000;
 
-    KernelEqueue eq = 0;
-    Require(sceKernelCreateEqueue(&eq, "errors") == SCE_OK);
+PthreadMutex StaticAdaptiveInitializer() {
+    return reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+}
+
+class Semaphore {
+public:
+    Semaphore(const char* name, int initial, int max) {
+        RequireEqual(sceKernelCreateSema(&handle, name, 1, initial, max, nullptr), sceOk, std::string("create semaphore ") + name);
+    }
+
+    ~Semaphore() {
+        if (!deleted) sceKernelDeleteSema(handle);
+    }
+
+    Semaphore(const Semaphore&) = delete;
+    Semaphore& operator=(const Semaphore&) = delete;
+
+    KernelSema Handle() const noexcept { return handle; }
+
+    int Delete() {
+        deleted = true;
+        return sceKernelDeleteSema(handle);
+    }
+
+private:
+    KernelSema handle = nullptr;
+    bool deleted = false;
+};
+
+class Equeue {
+public:
+    Equeue() {
+        RequireEqual(sceKernelCreateEqueue(&handle, "errors"), sceOk, "create equeue");
+    }
+
+    ~Equeue() {
+        if (!deleted) sceKernelDeleteEqueue(handle);
+    }
+
+    Equeue(const Equeue&) = delete;
+    Equeue& operator=(const Equeue&) = delete;
+
+    KernelEqueue Handle() const noexcept { return handle; }
+
+    int Delete() {
+        deleted = true;
+        return sceKernelDeleteEqueue(handle);
+    }
+
+private:
+    KernelEqueue handle = 0;
+    bool deleted = false;
+};
+
+class SceMutexattr {
+public:
+    SceMutexattr() {
+        RequireEqual(scePthreadMutexattrInit(&handle), sceOk, "scePthreadMutexattrInit");
+    }
+
+    ~SceMutexattr() {
+        if (!destroyed) scePthreadMutexattrDestroy(&handle);
+    }
+
+    SceMutexattr(const SceMutexattr&) = delete;
+    SceMutexattr& operator=(const SceMutexattr&) = delete;
+
+    PthreadMutexattr* Get() noexcept { return &handle; }
+
+    int Destroy() {
+        destroyed = true;
+        return scePthreadMutexattrDestroy(&handle);
+    }
+
+private:
+    PthreadMutexattr handle = nullptr;
+    bool destroyed = false;
+};
+
+class PosixMutexattr {
+public:
+    PosixMutexattr() {
+        RequireEqual(pthread_mutexattr_init_nid_postfix(&handle), 0, "pthread_mutexattr_init");
+    }
+
+    ~PosixMutexattr() {
+        if (!destroyed) pthread_mutexattr_destroy_nid_postfix(&handle);
+    }
+
+    PosixMutexattr(const PosixMutexattr&) = delete;
+    PosixMutexattr& operator=(const PosixMutexattr&) = delete;
+
+    PthreadMutexattr* Get() noexcept { return &handle; }
+
+    int Destroy() {
+        destroyed = true;
+        return pthread_mutexattr_destroy_nid_postfix(&handle);
+    }
+
+private:
+    PthreadMutexattr handle = nullptr;
+    bool destroyed = false;
+};
+
+struct MutexApi {
+    MutexOperation lock;
+    MutexOperation trylock;
+    MutexOperation unlock;
+    MutexOperation destroy;
+    int ok;
+};
+
+const MutexApi sceApi{scePthreadMutexLock, scePthreadMutexTrylock, scePthreadMutexUnlock, scePthreadMutexDestroy, sceOk};
+const MutexApi posixApi{pthread_mutex_lock_nid_postfix, nullptr, pthread_mutex_unlock_nid_postfix,
+                            pthread_mutex_destroy_nid_postfix, 0};
+
+class Mutex {
+public:
+    Mutex(const MutexApi& api, PthreadMutex initial) : api(api), handle(initial) {}
+
+    ~Mutex() {
+        if (held) api.unlock(&handle);
+        if (!destroyed) api.destroy(&handle);
+    }
+
+    Mutex(const Mutex&) = delete;
+    Mutex& operator=(const Mutex&) = delete;
+
+    PthreadMutex* Get() noexcept { return &handle; }
+    PthreadMutex Value() const noexcept { return handle; }
+
+    int Lock() { return Track(api.lock(&handle)); }
+    int Trylock() { return Track(api.trylock(&handle)); }
+
+    int Unlock() {
+        const int result = api.unlock(&handle);
+        if (result == api.ok) held = false;
+        return result;
+    }
+
+    int Destroy() {
+        const int result = api.destroy(&handle);
+        if (result == api.ok) destroyed = true;
+        return result;
+    }
+
+private:
+    int Track(int result) {
+        if (result == api.ok) held = true;
+        return result;
+    }
+
+    const MutexApi& api;
+    PthreadMutex handle;
+    bool held = false;
+    bool destroyed = false;
+};
+
+void RequireRelockDeadlocks(Mutex& mutex, int ok, int deadlock) {
+    RequireEqual(mutex.Lock(), ok, "first lock");
+    RequireEqual(mutex.Lock(), deadlock, "relock by owner");
+    RequireEqual(mutex.Unlock(), ok, "unlock");
+    RequireEqual(mutex.Destroy(), ok, "destroy");
+}
+
+const Case semaOverflowRejected{"SignalSema_CountWouldExceedIntMaximum_FailsWithEinval", [] {
+    Semaphore semaphore("overflow", maximum - 1, maximum);
+    RequireEqual(sceKernelSignalSema(semaphore.Handle(), 2), sceKernelErrorEinval, "signal 2 at maximum - 1");
+    RequireEqual(sceKernelSignalSema(semaphore.Handle(), maximum), sceKernelErrorEinval, "signal maximum at maximum - 1");
+}};
+
+const Case semaReachesMaximum{"SignalSema_ToIntMaximumFromZero_SucceedsAndFurtherSignalFailsWithEinval", [] {
+    Semaphore semaphore("overflow", maximum - 1, maximum);
+    RequireEqual(sceKernelPollSema(semaphore.Handle(), maximum - 1), sceOk, "poll maximum - 1");
+    RequireEqual(sceKernelSignalSema(semaphore.Handle(), maximum), sceOk, "signal maximum at zero");
+    RequireEqual(sceKernelSignalSema(semaphore.Handle(), 1), sceKernelErrorEinval, "signal 1 at maximum");
+    RequireEqual(sceKernelPollSema(semaphore.Handle(), maximum), sceOk, "poll maximum");
+    RequireEqual(semaphore.Delete(), sceOk, "delete");
+}};
+
+const Case semaLimit{"SignalSema_SmallMaxCount_RejectsOverflowAndAcceptsUpToMax", [] {
+    Semaphore semaphore("limit", 1, 3);
+    RequireEqual(sceKernelSignalSema(semaphore.Handle(), 3), sceKernelErrorEinval, "signal 3 at 1 of 3");
+    RequireEqual(sceKernelSignalSema(semaphore.Handle(), 2), sceOk, "signal 2 at 1 of 3");
+    RequireEqual(sceKernelPollSema(semaphore.Handle(), 3), sceOk, "poll 3");
+    RequireEqual(semaphore.Delete(), sceOk, "delete");
+}};
+
+const Case waitEmpty{"WaitEqueue_EmptyQueue_TimesOutWithZeroCount", [] {
+    Equeue queue;
     KernelEvent event{};
     int count = -1;
-    const KernelUseconds timeout = 1000;
-    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
-    Require(count == 0);
-    Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelDeleteUserEvent(eq, 7) == SCE_KERNEL_ERROR_ENOENT);
-    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
-    Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
-    Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
-    Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), &event, 1, &count, &shortTimeout), sceKernelErrorEtimedout, "wait");
+    RequireEqual(count, 0, "event count");
+}};
 
-    PthreadMutexattr attr = nullptr;
-    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
-    Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_ERRORCHECK) == SCE_OK);
-    Require(scePthreadMutexattrSettype(&attr, 0) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadMutexattrSettype(&attr, 5) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadMutexattrSetprotocol(&attr, PRIO_NONE) == SCE_OK);
-    Require(scePthreadMutexattrSetprotocol(&attr, PRIO_INHERIT) == SCE_OK);
-    bool protectionRejected = false;
-    try {
-        scePthreadMutexattrSetprotocol(&attr, PRIO_PROTECT);
-    } catch (const std::invalid_argument&) {
-        protectionRejected = true;
+const Case waitNullEvents{"WaitEqueue_NullEvents_FailsWithEfault", [] {
+    Equeue queue;
+    int count = -1;
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), nullptr, 1, &count, &shortTimeout), sceKernelErrorEfault, "wait");
+}};
+
+const Case waitZeroEvents{"WaitEqueue_ZeroEventCapacity_FailsWithEinval", [] {
+    Equeue queue;
+    KernelEvent event{};
+    int count = -1;
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), &event, 0, &count, &shortTimeout), sceKernelErrorEinval, "wait");
+}};
+
+const Case deleteMissingUserEvent{"DeleteUserEvent_NotAdded_FailsWithEnoent", [] {
+    Equeue queue;
+    RequireEqual(sceKernelDeleteUserEvent(queue.Handle(), 7), sceKernelErrorEnoent, "delete user event 7");
+}};
+
+const Case deleteEqueueTwice{"DeleteEqueue_AlreadyDeleted_FailsWithEbadf", [] {
+    Equeue queue;
+    RequireEqual(queue.Delete(), sceOk, "first delete");
+    RequireEqual(sceKernelDeleteEqueue(queue.Handle()), sceKernelErrorEbadf, "second delete");
+}};
+
+const Case waitDeleted{"WaitEqueue_DeletedQueue_FailsWithEbadf", [] {
+    Equeue queue;
+    RequireEqual(queue.Delete(), sceOk, "delete");
+    KernelEvent event{};
+    int count = -1;
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), &event, 1, &count, &shortTimeout), sceKernelErrorEbadf, "wait");
+}};
+
+const Case createNullEqueue{"CreateEqueue_NullOutput_FailsWithEinval", [] {
+    RequireEqual(sceKernelCreateEqueue(nullptr, "errors"), sceKernelErrorEinval, "create");
+}};
+
+const Case settypeErrorcheck{"MutexattrSettype_Errorcheck_Succeeds", [] {
+    SceMutexattr attr;
+    RequireEqual(scePthreadMutexattrSettype(attr.Get(), mutexTypeErrorcheck), sceOk, "settype errorcheck");
+}};
+
+const Case settypeInvalid{"MutexattrSettype_OutOfRangeType_FailsWithEinval", [] {
+    SceMutexattr attr;
+    for (const int type : {0, 5}) {
+        RequireEqual(scePthreadMutexattrSettype(attr.Get(), type), sceKernelErrorEinval, "type " + std::to_string(type));
     }
-    Require(protectionRejected);
-    PthreadMutex mutex = nullptr;
-    Require(scePthreadMutexInit(&mutex, &attr, nullptr) == SCE_OK);
-    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
-    Require(scePthreadMutexLock(&mutex) == SCE_OK);
-    Require(scePthreadMutexLock(&mutex) == SCE_KERNEL_ERROR_EDEADLK);
-    Require(scePthreadMutexDestroy(&mutex) == SCE_KERNEL_ERROR_EBUSY);
-    Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
-    Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
+}};
 
-    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
-    Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_ADAPTIVE) == SCE_OK);
-    PthreadMutex adaptive = nullptr;
-    Require(scePthreadMutexInit(&adaptive, &attr, nullptr) == SCE_OK);
-    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
-    Require(scePthreadMutexLock(&adaptive) == SCE_OK);
-    Require(scePthreadMutexLock(&adaptive) == SCE_KERNEL_ERROR_EDEADLK);
-    Require(scePthreadMutexUnlock(&adaptive) == SCE_OK);
-    Require(scePthreadMutexDestroy(&adaptive) == SCE_OK);
+const Case setprotocolSupported{"MutexattrSetprotocol_NoneAndInherit_Succeed", [] {
+    SceMutexattr attr;
+    RequireEqual(scePthreadMutexattrSetprotocol(attr.Get(), prioNone), sceOk, "protocol none");
+    RequireEqual(scePthreadMutexattrSetprotocol(attr.Get(), prioInherit), sceOk, "protocol inherit");
+}};
 
-    PthreadMutex adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
-    Require(scePthreadMutexLock(&adaptiveStatic) == SCE_OK);
-    Require(adaptiveStatic != reinterpret_cast<PthreadMutex>(std::uintptr_t{1}));
-    Require(scePthreadMutexLock(&adaptiveStatic) == SCE_KERNEL_ERROR_EDEADLK);
-    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EBUSY);
-    Require(scePthreadMutexUnlock(&adaptiveStatic) == SCE_OK);
-    Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
-    adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
-    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_OK);
-    Require(scePthreadMutexTrylock(&adaptiveStatic) == SCE_KERNEL_ERROR_EBUSY);
-    Require(scePthreadMutexUnlock(&adaptiveStatic) == SCE_OK);
-    Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
-    adaptiveStatic = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
-    Require(scePthreadMutexDestroy(&adaptiveStatic) == SCE_OK);
+const Case setprotocolProtect{"MutexattrSetprotocol_Protect_ThrowsInvalidArgument", [] {
+    SceMutexattr attr;
+    RequireThrows<std::invalid_argument>([&attr] { scePthreadMutexattrSetprotocol(attr.Get(), prioProtect); },
+                                         "protocol protect");
+}};
 
-    Require(scePthreadMutexattrInit(&attr) == SCE_OK);
-    PthreadMutex defaulted = nullptr;
-    Require(scePthreadMutexInit(&defaulted, &attr, nullptr) == SCE_OK);
-    Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
-    Require(scePthreadMutexLock(&defaulted) == SCE_OK);
-    Require(scePthreadMutexLock(&defaulted) == SCE_KERNEL_ERROR_EDEADLK);
-    Require(scePthreadMutexUnlock(&defaulted) == SCE_OK);
-    Require(scePthreadMutexDestroy(&defaulted) == SCE_OK);
-
-    PthreadMutex unattributed = nullptr;
-    Require(scePthreadMutexInit(&unattributed, nullptr, nullptr) == SCE_OK);
-    Require(scePthreadMutexLock(&unattributed) == SCE_OK);
-    Require(scePthreadMutexLock(&unattributed) == SCE_KERNEL_ERROR_EDEADLK);
-    Require(scePthreadMutexUnlock(&unattributed) == SCE_OK);
-    Require(scePthreadMutexDestroy(&unattributed) == SCE_OK);
-
-    Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
-    Require(pthread_mutexattr_settype_nid_postfix(&attr, MUTEX_TYPE_ADAPTIVE) == 0);
-    PthreadMutex posixAdaptive = nullptr;
-    Require(pthread_mutex_init_nid_postfix(&posixAdaptive, &attr) == 0);
-    Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
-    Require(pthread_mutex_lock_nid_postfix(&posixAdaptive) == 0);
-    Require(pthread_mutex_lock_nid_postfix(&posixAdaptive) == POSIX_EDEADLK);
-    Require(pthread_mutex_unlock_nid_postfix(&posixAdaptive) == 0);
-    Require(pthread_mutex_destroy_nid_postfix(&posixAdaptive) == 0);
-
-    auto staticAdaptive = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
-    Require(pthread_mutex_lock_nid_postfix(&staticAdaptive) == 0);
-    Require(pthread_mutex_lock_nid_postfix(&staticAdaptive) == POSIX_EDEADLK);
-    Require(pthread_mutex_unlock_nid_postfix(&staticAdaptive) == 0);
-    Require(pthread_mutex_destroy_nid_postfix(&staticAdaptive) == 0);
+void InitErrorcheckInheritMutex(Mutex& mutex) {
+    SceMutexattr attr;
+    RequireEqual(scePthreadMutexattrSettype(attr.Get(), mutexTypeErrorcheck), sceOk, "settype errorcheck");
+    RequireEqual(scePthreadMutexattrSetprotocol(attr.Get(), prioInherit), sceOk, "protocol inherit");
+    RequireEqual(scePthreadMutexInit(mutex.Get(), attr.Get(), nullptr), sceOk, "init");
+    RequireEqual(attr.Destroy(), sceOk, "attr destroy");
 }
+
+const Case errorcheckRelock{"SceMutexLock_ErrorcheckRelockByOwner_FailsWithEdeadlk", [] {
+    Mutex mutex(sceApi, nullptr);
+    InitErrorcheckInheritMutex(mutex);
+    RequireRelockDeadlocks(mutex, sceOk, sceKernelErrorEdeadlk);
+}};
+
+const Case destroyLocked{"SceMutexDestroy_LockedErrorcheckMutex_FailsWithEbusy", [] {
+    Mutex mutex(sceApi, nullptr);
+    InitErrorcheckInheritMutex(mutex);
+    RequireEqual(mutex.Lock(), sceOk, "lock");
+    RequireEqual(mutex.Destroy(), sceKernelErrorEbusy, "destroy while locked");
+    RequireEqual(mutex.Unlock(), sceOk, "unlock");
+    RequireEqual(mutex.Destroy(), sceOk, "destroy after unlock");
+}};
+
+const Case adaptiveRelock{"SceMutexLock_AdaptiveRelockByOwner_FailsWithEdeadlk", [] {
+    Mutex mutex(sceApi, nullptr);
+    SceMutexattr attr;
+    RequireEqual(scePthreadMutexattrSettype(attr.Get(), mutexTypeAdaptive), sceOk, "settype adaptive");
+    RequireEqual(scePthreadMutexInit(mutex.Get(), attr.Get(), nullptr), sceOk, "init");
+    RequireEqual(attr.Destroy(), sceOk, "attr destroy");
+    RequireRelockDeadlocks(mutex, sceOk, sceKernelErrorEdeadlk);
+}};
+
+const Case staticAdaptiveLock{"SceMutexLock_StaticAdaptiveInitializer_InitializesAndRejectsRelock", [] {
+    Mutex mutex(sceApi, StaticAdaptiveInitializer());
+    RequireEqual(mutex.Lock(), sceOk, "lock");
+    Require(mutex.Value() != StaticAdaptiveInitializer(), "lock replaces the static initializer");
+    RequireEqual(mutex.Lock(), sceKernelErrorEdeadlk, "relock");
+    RequireEqual(mutex.Trylock(), sceKernelErrorEbusy, "trylock while locked");
+    RequireEqual(mutex.Unlock(), sceOk, "unlock");
+    RequireEqual(mutex.Destroy(), sceOk, "destroy");
+}};
+
+const Case staticAdaptiveTrylock{"SceMutexTrylock_StaticAdaptiveInitializer_InitializesAndRejectsSecondTrylock", [] {
+    Mutex mutex(sceApi, StaticAdaptiveInitializer());
+    RequireEqual(mutex.Trylock(), sceOk, "trylock");
+    RequireEqual(mutex.Trylock(), sceKernelErrorEbusy, "second trylock");
+    RequireEqual(mutex.Unlock(), sceOk, "unlock");
+    RequireEqual(mutex.Destroy(), sceOk, "destroy");
+}};
+
+const Case staticAdaptiveDestroy{"SceMutexDestroy_UnusedStaticAdaptiveInitializer_Succeeds", [] {
+    Mutex mutex(sceApi, StaticAdaptiveInitializer());
+    RequireEqual(mutex.Destroy(), sceOk, "destroy");
+}};
+
+const Case defaultAttrRelock{"SceMutexLock_DefaultAttributeRelockByOwner_FailsWithEdeadlk", [] {
+    Mutex mutex(sceApi, nullptr);
+    SceMutexattr attr;
+    RequireEqual(scePthreadMutexInit(mutex.Get(), attr.Get(), nullptr), sceOk, "init");
+    RequireEqual(attr.Destroy(), sceOk, "attr destroy");
+    RequireRelockDeadlocks(mutex, sceOk, sceKernelErrorEdeadlk);
+}};
+
+const Case nullAttrRelock{"SceMutexLock_NullAttributeRelockByOwner_FailsWithEdeadlk", [] {
+    Mutex mutex(sceApi, nullptr);
+    RequireEqual(scePthreadMutexInit(mutex.Get(), nullptr, nullptr), sceOk, "init");
+    RequireRelockDeadlocks(mutex, sceOk, sceKernelErrorEdeadlk);
+}};
+
+const Case posixAdaptiveRelock{"PthreadMutexLock_AdaptiveRelockByOwner_FailsWithEdeadlk", [] {
+    Mutex mutex(posixApi, nullptr);
+    PosixMutexattr attr;
+    RequireEqual(pthread_mutexattr_settype_nid_postfix(attr.Get(), mutexTypeAdaptive), 0, "settype adaptive");
+    RequireEqual(pthread_mutex_init_nid_postfix(mutex.Get(), attr.Get()), 0, "init");
+    RequireEqual(attr.Destroy(), 0, "attr destroy");
+    RequireRelockDeadlocks(mutex, 0, posixEdeadlk);
+}};
+
+const Case posixStaticAdaptiveRelock{"PthreadMutexLock_StaticAdaptiveInitializerRelock_FailsWithEdeadlk", [] {
+    Mutex mutex(posixApi, StaticAdaptiveInitializer());
+    RequireRelockDeadlocks(mutex, 0, posixEdeadlk);
+}};
+
+} // namespace

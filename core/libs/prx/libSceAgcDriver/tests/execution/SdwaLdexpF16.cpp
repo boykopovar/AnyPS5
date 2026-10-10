@@ -8,13 +8,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <exception>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -137,7 +138,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("sdwa ldexp f16: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("sdwa ldexp f16: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
@@ -168,28 +169,20 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void CheckRefused(AgcDriver::VulkanDevice& device) {
-    struct Refused {
-        std::uint32_t modifier;
-        const char* error;
-    };
-    constexpr std::array<Refused, 5> forms{{
-        {0x04042004u, "VOP2 SDWA clamp with byte selectors is not implemented"},
-        {0x06022504u, "VOP2 SDWA clamp with byte selectors is not implemented"},
-        {0x01062604u, "VOP2 SDWA clamp with byte selectors is not implemented"},
-        {0x10050404u, "VOP2 SDWA source modifiers are not supported"},
-        {0x26060604u, "VOP2 SDWA source modifiers are not supported"},
-    }};
-    for (const auto& form : forms) {
-        alignas(256) const std::array<std::uint32_t, 3> code{0x76140af9u, form.modifier, 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find(form.error) != std::string::npos, "v_ldexp_f16 SDWA form " + Hex(form.modifier) + " was not refused");
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
     }
+    Testing::Fail(message);
+}
+
+void RequireRefused(AgcDriver::VulkanDevice& device, std::uint32_t modifier, std::string_view expected) {
+    alignas(256) const std::array<std::uint32_t, 3> code{0x76140af9u, modifier, 0xbf810000u};
+    const auto refusal = RequireRefusal([&] { static_cast<void>(Compile(device, code)); }, "v_ldexp_f16 SDWA form " + Hex(modifier) + " was not refused");
+    Testing::Require(refusal.find(expected) != std::string::npos, "v_ldexp_f16 SDWA form " + Hex(modifier) + " was refused for another reason: " + refusal);
 }
 
 void Check() {
@@ -204,19 +197,30 @@ void Check() {
     }
 }
 
-}
+const Testing::Case ldexpDispatch{"SdwaLdexpF16_SelectorClampAndOmodForms_MatchExpectedTable", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        CheckRefused(*device);
-        std::puts("sdwa ldexp f16 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case refuseClampByteDestination{"SdwaLdexpF16_ClampWithByteDestination_IsRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0x04042004u, "VOP2 SDWA clamp with byte selectors is not implemented");
+}};
+
+const Testing::Case refuseClampByteSource0{"SdwaLdexpF16_ClampWithByteSource0_IsRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0x06022504u, "VOP2 SDWA clamp with byte selectors is not implemented");
+}};
+
+const Testing::Case refuseClampByteSource1{"SdwaLdexpF16_ClampWithByteSource1_IsRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0x01062604u, "VOP2 SDWA clamp with byte selectors is not implemented");
+}};
+
+const Testing::Case refuseSource1Negate{"SdwaLdexpF16_Source1Negate_IsRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0x10050404u, "VOP2 SDWA source modifiers are not supported");
+}};
+
+const Testing::Case refuseSource1Absolute{"SdwaLdexpF16_Source1Absolute_IsRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0x26060604u, "VOP2 SDWA source modifiers are not supported");
+}};
+
+} // namespace

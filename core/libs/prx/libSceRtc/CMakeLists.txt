@@ -3,13 +3,8 @@ target_include_directories(libSceRtc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceRtc)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_rtc_tests ${LIBS_INCLUDE_DIR}/tests/GuestRtc.cpp)
-    target_include_directories(guest_rtc_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_rtc_tests PRIVATE libSceRtc libc)
-    configure_windows_unwind(guest_rtc_tests)
-    add_test(NAME guest_rtc COMMAND guest_rtc_tests)
-    if(WIN32)
-        set_tests_properties(guest_rtc PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRtc>")
-    endif()
+    anyps5_add_library_test(guest_rtc_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestRtc.cpp
+        LINK libSceRtc libc
+    )
 endif()

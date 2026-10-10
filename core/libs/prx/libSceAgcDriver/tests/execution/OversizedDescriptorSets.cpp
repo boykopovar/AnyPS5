@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -21,7 +20,7 @@ namespace {
 using AgcDriver::Graphics::Check;
 using AgcDriver::Graphics::Context;
 using AgcDriver::Graphics::DescriptorCache;
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 
 constexpr std::uint32_t Buffers = 4097;
 constexpr std::uint32_t Spacing = 256;
@@ -166,7 +165,7 @@ std::uint32_t Input(std::uint32_t buffer) {
     return buffer * 3u + 1u;
 }
 
-void Run(const Context& context) {
+void CheckAllocation(const Context& context) {
     DescriptorCache cache(context);
     const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Buffers, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     const std::array<std::uint32_t, 4> key{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Buffers, VK_SHADER_STAGE_COMPUTE_BIT};
@@ -176,6 +175,22 @@ void Run(const Context& context) {
     const auto second = cache.Allocate(setLayout, sizes);
     Require(first.set != VK_NULL_HANDLE && second.set != VK_NULL_HANDLE, "a set of " + std::to_string(Buffers) + " storage buffers, above the chain pool's capacity, got no descriptor set");
     Require(first.pool != second.pool && cache.Counters().pools == 0, "the oversized sets do not have a pool each");
+    cache.Free(first);
+    cache.Free(second);
+    const auto again = cache.Allocate(setLayout, sizes);
+    Require(again.set != VK_NULL_HANDLE && again.pool != VK_NULL_HANDLE && cache.Counters().pools == 0, "an oversized set after the others were freed got no descriptor set");
+    cache.Free(again);
+}
+
+void CheckDispatch(const Context& context) {
+    DescriptorCache cache(context);
+    const VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Buffers, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const std::array<std::uint32_t, 4> key{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Buffers, VK_SHADER_STAGE_COMPUTE_BIT};
+    auto setLayout = cache.Layout(key, std::span(&binding, 1));
+    const std::array<VkDescriptorPoolSize, 1> sizes{{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Buffers}}};
+    const auto first = cache.Allocate(setLayout, sizes);
+    const auto second = cache.Allocate(setLayout, sizes);
+    Require(first.set != VK_NULL_HANDLE && second.set != VK_NULL_HANDLE, "a set of " + std::to_string(Buffers) + " storage buffers, above the chain pool's capacity, got no descriptor set");
 
     AgcDriver::Graphics::Buffer storage(context, static_cast<std::size_t>(Buffers) * Spacing, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto* words = reinterpret_cast<std::uint32_t*>(storage.Bytes().data());
@@ -226,33 +241,33 @@ void Run(const Context& context) {
 
     cache.Free(first);
     cache.Free(second);
-    const auto again = cache.Allocate(setLayout, sizes);
-    Require(again.set != VK_NULL_HANDLE && again.pool != VK_NULL_HANDLE && cache.Counters().pools == 0, "an oversized set after the others were freed got no descriptor set");
-    cache.Free(again);
 }
 
-}
-
-int main() {
-    try {
-        std::unique_ptr<Device> device;
+const Context& SharedContext() {
+    static std::unique_ptr<Device> device;
+    static std::string failure;
+    if (!device && failure.empty()) {
         try {
             device = std::make_unique<Device>();
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-            std::printf("skipped, no usable Vulkan device: %s\n", error.what());
-            return VulkanTestSkipped;
+            failure = error.what();
         }
-        const auto& limits = device->GetContext().limits;
-        if (limits.maxPerStageDescriptorStorageBuffers < Buffers || limits.maxPerStageResources < Buffers || limits.maxDescriptorSetStorageBuffers < Buffers) {
-            std::printf("skipped, the device binds fewer than %u storage buffers per stage or set\n", Buffers);
-            return VulkanTestSkipped;
-        }
-        Run(device->GetContext());
-        std::puts("oversized descriptor set tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
     }
+    if (!device) Testing::Skip("no usable Vulkan device: " + failure);
+    const auto& limits = device->GetContext().limits;
+    if (limits.maxPerStageDescriptorStorageBuffers < Buffers || limits.maxPerStageResources < Buffers || limits.maxDescriptorSetStorageBuffers < Buffers) {
+        Testing::Skip("the device binds fewer than " + std::to_string(Buffers) + " storage buffers per stage or set");
+    }
+    return device->GetContext();
 }
+
+const Testing::Case oversizedAllocation{"OversizedDescriptorSets_SetsAboveChainCapacity_GetAPoolEachAndCanBeReallocated", [] {
+    CheckAllocation(SharedContext());
+}};
+
+const Testing::Case oversizedDispatch{"OversizedDescriptorSets_DispatchThroughOversizedSet_ReadsItsLastBuffers", [] {
+    CheckDispatch(SharedContext());
+}};
+
+} // namespace

@@ -1,7 +1,9 @@
+#include <Testing/Test.hpp>
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include <spirv-tools/libspirv.hpp>
 #include <spirv/unified1/spirv.hpp>
+
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -13,17 +15,13 @@
 
 namespace {
 
-int failures = 0;
+using Testing::Case;
+using Testing::Fail;
+using Testing::Require;
+
 constexpr std::uint32_t Vulkan11 = 0x00401000u;
 constexpr std::uint32_t Spirv11 = 0x00010100u;
 constexpr std::uint32_t Spirv13 = 0x00010300u;
-
-void check(bool condition, const std::string& message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message.c_str());
-        ++failures;
-    }
-}
 
 struct NarrowType {
     const char* name;
@@ -107,7 +105,7 @@ std::vector<std::uint32_t> assemble(const std::string& source) {
         std::fprintf(stderr, "SPIRV-Tools: %s\n", message);
     });
     std::vector<std::uint32_t> words;
-    check(tools.Assemble(source, &words), "test shader did not assemble");
+    Require(tools.Assemble(source, &words), "test shader did not assemble");
     return words;
 }
 
@@ -135,44 +133,43 @@ std::vector<std::uint32_t> swapByteOrder(std::vector<std::uint32_t> words) {
     return words;
 }
 
-void testNarrowConversions(bool optimizationEnabled) {
+bool OptimizationEnabled() {
+    const char* mode = std::getenv("APS5_SPIRV_OPT");
+    return mode == nullptr || std::string(mode) != "none";
+}
+
+void RequireNarrowConversions(const NarrowType& type) {
+    const bool optimizationEnabled = OptimizationEnabled();
     spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_1);
-    for (const auto& type : Types) {
-        for (const bool vector : {false, true}) {
-            for (const auto support : {ArithmeticSupport::StorageOnly, ArithmeticSupport::Explicit, ArithmeticSupport::ImpliedInt8}) {
-                if (support == ArithmeticSupport::ImpliedInt8 && (type.width != 8 || !vector)) continue;
-                const bool arithmetic = support != ArithmeticSupport::StorageOnly;
-                const std::string name = std::string(type.name) + (vector ? " vector" : " scalar") +
-                    (support == ArithmeticSupport::ImpliedInt8 ? " implied Int8" : (arithmetic ? " arithmetic" : " storage only"));
-                auto native = assemble(moduleSource(type, vector, support));
-                for (const auto& [version, swapped] : {std::pair{Spirv13, false}, std::pair{Spirv11, false}, std::pair{Spirv11, true}}) {
-                    native[1] = version;
-                    const auto input = swapped ? swapByteOrder(native) : native;
-                    const auto label = name + (version == Spirv13 ? " SPIR-V 1.3" : " SPIR-V 1.1") + (swapped ? " swapped" : " native");
-                    if (!validator.Validate(input)) {
-                        check(false, label + ": invalid test input");
-                        continue;
-                    }
-                    try {
-                        const auto output = ShaderRecompiler::ValidateAndOptimizeSpirv(input, Vulkan11, Spirv13, false);
-                        if (!validator.Validate(output)) {
-                            check(false, label + ": optimizer returned invalid SPIR-V");
-                            continue;
-                        }
-                        const auto normalized = output.front() == spv::MagicNumber ? output : swapByteOrder(output);
-                        check(capabilities(normalized) == capabilities(native), label + ": optimizer changed device capabilities");
-                        check(opcodeCount(normalized, spv::OpStore) == (vector ? 1u : 2u), label + ": optimizer lost buffer stores");
-                        if (!optimizationEnabled) {
-                            check(output == input, label + ": none mode changed the shader");
-                        } else {
-                            check(opcodeCount(normalized, spv::OpIAdd) == 0, label + ": optimizer did not remove dead arithmetic");
-                            if (arithmetic && !type.floating) {
-                                const auto conversion = type.signedInteger ? spv::OpSConvert : spv::OpUConvert;
-                                check(opcodeCount(normalized, conversion) == 0, label + ": safe constant folding was disabled");
-                            }
-                        }
-                    } catch (const std::exception& error) {
-                        check(false, label + ": " + error.what());
+    for (const bool vector : {false, true}) {
+        for (const auto support : {ArithmeticSupport::StorageOnly, ArithmeticSupport::Explicit, ArithmeticSupport::ImpliedInt8}) {
+            if (support == ArithmeticSupport::ImpliedInt8 && (type.width != 8 || !vector)) continue;
+            const bool arithmetic = support != ArithmeticSupport::StorageOnly;
+            const std::string name = std::string(type.name) + (vector ? " vector" : " scalar") +
+                (support == ArithmeticSupport::ImpliedInt8 ? " implied Int8" : (arithmetic ? " arithmetic" : " storage only"));
+            auto native = assemble(moduleSource(type, vector, support));
+            for (const auto& [version, swapped] : {std::pair{Spirv13, false}, std::pair{Spirv11, false}, std::pair{Spirv11, true}}) {
+                native[1] = version;
+                const auto input = swapped ? swapByteOrder(native) : native;
+                const auto label = name + (version == Spirv13 ? " SPIR-V 1.3" : " SPIR-V 1.1") + (swapped ? " swapped" : " native");
+                Require(validator.Validate(input), label + ": invalid test input");
+                std::vector<std::uint32_t> output;
+                try {
+                    output = ShaderRecompiler::ValidateAndOptimizeSpirv(input, Vulkan11, Spirv13, false);
+                } catch (const std::exception& error) {
+                    Fail(label + ": " + error.what());
+                }
+                Require(validator.Validate(output), label + ": optimizer returned invalid SPIR-V");
+                const auto normalized = output.front() == spv::MagicNumber ? output : swapByteOrder(output);
+                Require(capabilities(normalized) == capabilities(native), label + ": optimizer changed device capabilities");
+                Require(opcodeCount(normalized, spv::OpStore) == (vector ? 1u : 2u), label + ": optimizer lost buffer stores");
+                if (!optimizationEnabled) {
+                    Require(output == input, label + ": none mode changed the shader");
+                } else {
+                    Require(opcodeCount(normalized, spv::OpIAdd) == 0, label + ": optimizer did not remove dead arithmetic");
+                    if (arithmetic && !type.floating) {
+                        const auto conversion = type.signedInteger ? spv::OpSConvert : spv::OpUConvert;
+                        Require(opcodeCount(normalized, conversion) == 0, label + ": safe constant folding was disabled");
                     }
                 }
             }
@@ -180,17 +177,13 @@ void testNarrowConversions(bool optimizationEnabled) {
     }
 }
 
-void expectRejected(const std::vector<std::uint32_t>& words, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, const char* reason, const char* diagnostic = nullptr) {
-    try {
-        static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(words, vulkanVersion, spirvVersion, false));
-        check(false, std::string("accepted ") + reason);
-    } catch (const std::exception& error) {
-        if (diagnostic != nullptr) check(std::string(error.what()).starts_with(diagnostic), std::string(reason) + ": unexpected rejection: " + error.what());
-    }
+void expectRejected(const std::vector<std::uint32_t>& words, std::uint32_t vulkanVersion, std::uint32_t spirvVersion, const std::string& reason, const char* diagnostic = nullptr) {
+    const auto text = Testing::RequireThrowsMessage<std::exception>([&] { static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(words, vulkanVersion, spirvVersion, false)); }, "accepted " + reason);
+    if (diagnostic != nullptr) Require(text.starts_with(diagnostic), reason + ": unexpected rejection: " + text);
 }
 
-void testSpecializedSelectionExit() {
-    for (const bool useSwitch : {false, true}) {
+void RequireSpecializedSelectionExit(bool useSwitch) {
+    {
         const std::string source = std::string(R"(OpCapability Shader
 OpMemoryModel Logical GLSL450
 OpEntryPoint GLCompute %main "main" %index
@@ -228,41 +221,64 @@ OpBranch %exit
 OpReturn
 OpFunctionEnd
 )";
+        const auto words = assemble(source);
+        std::vector<std::uint32_t> specialized;
         try {
-            const auto words = assemble(source);
             static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(words, Vulkan11, Spirv13, false, false));
-            const auto specialized = ShaderRecompiler::SpecializeSpirv(words);
+            specialized = ShaderRecompiler::SpecializeSpirv(words);
             static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specialized, Vulkan11, Spirv13, false, false));
-            check(opcodeCount(specialized, spv::OpStore) == 1u, "specialization retained the dead selection arm");
-            check(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "selection exit specialization is not stable");
         } catch (const std::exception& error) {
-            check(false, std::string("specialized selection exit: ") + error.what());
+            Fail(std::string("specialized selection exit: ") + error.what());
         }
+        Require(opcodeCount(specialized, spv::OpStore) == 1u, "specialization retained the dead selection arm");
+        Require(ShaderRecompiler::SpecializeSpirv(specialized) == specialized, "selection exit specialization is not stable");
     }
 }
 
-void testInvalidInputIsRejected() {
-    const auto valid = assemble(moduleSource(Types.front(), false, ArithmeticSupport::StorageOnly));
+void rejectMalformed(const std::vector<std::uint32_t>& words, const char* reason) {
+    auto native = words;
+    if (native.size() > 1) native[1] = Spirv11;
+    constexpr auto diagnostic = "SPIR-V validation before optimization failed:";
+    expectRejected(native, Vulkan11, Spirv13, reason, diagnostic);
+    expectRejected(swapByteOrder(native), Vulkan11, Spirv13, std::string(reason) + " (swapped)", diagnostic);
+}
+
+std::vector<std::uint32_t> ValidModule() {
+    return assemble(moduleSource(Types.front(), false, ArithmeticSupport::StorageOnly));
+}
+
+const Case u8Conversions{"ValidateAndOptimizeSpirv_U8Conversions_KeepCapabilitiesAndStores", [] { RequireNarrowConversions(Types[0]); }};
+const Case i8Conversions{"ValidateAndOptimizeSpirv_I8Conversions_KeepCapabilitiesAndStores", [] { RequireNarrowConversions(Types[1]); }};
+const Case u16Conversions{"ValidateAndOptimizeSpirv_U16Conversions_KeepCapabilitiesAndStores", [] { RequireNarrowConversions(Types[2]); }};
+const Case i16Conversions{"ValidateAndOptimizeSpirv_I16Conversions_KeepCapabilitiesAndStores", [] { RequireNarrowConversions(Types[3]); }};
+const Case f16Conversions{"ValidateAndOptimizeSpirv_F16Conversions_KeepCapabilitiesAndStores", [] { RequireNarrowConversions(Types[4]); }};
+
+const Case incompatibleVersions{"ValidateAndOptimizeSpirv_IncompatibleVulkanOrSpirvVersion_IsRejected", [] {
+    const auto valid = ValidModule();
     expectRejected(valid, 0x00400000u, Spirv13, "SPIR-V 1.3 with Vulkan 1.0");
     expectRejected(valid, Vulkan11, 0x00010200u, "a module newer than the requested SPIR-V version");
     expectRejected(valid, 0u, Spirv13, "an unsupported Vulkan version");
+}};
+
+const Case illegalConstant{"ValidateAndOptimizeSpirv_UnusedStorageOnlyNarrowConstant_IsRejected", [] {
     auto invalid = moduleSource(Types.front(), false, ArithmeticSupport::StorageOnly);
     invalid.insert(invalid.find("%main = OpFunction"), "%illegal = OpConstantNull %small\n");
     expectRejected(assemble(invalid), Vulkan11, Spirv13, "an illegal storage-only narrow constant even when unused");
-    const auto rejectMalformed = [](const std::vector<std::uint32_t>& words, const char* reason) {
-        auto native = words;
-        if (native.size() > 1) native[1] = Spirv11;
-        constexpr auto diagnostic = "SPIR-V validation before optimization failed:";
-        expectRejected(native, Vulkan11, Spirv13, reason, diagnostic);
-        expectRejected(swapByteOrder(native), Vulkan11, Spirv13, (std::string(reason) + " (swapped)").c_str(), diagnostic);
-    };
+}};
+
+const Case malformedHeader{"ValidateAndOptimizeSpirv_MalformedHeader_IsRejectedBeforeOptimization", [] {
+    const auto valid = ValidModule();
     for (std::size_t length = 0; length < 5; ++length) {
         rejectMalformed(std::vector<std::uint32_t>(valid.begin(), valid.begin() + length), "an incomplete module header");
     }
     auto malformed = valid;
     malformed[0] = 0;
     rejectMalformed(malformed, "an invalid module magic");
-    malformed = valid;
+}};
+
+const Case malformedInstructions{"ValidateAndOptimizeSpirv_MalformedInstruction_IsRejectedBeforeOptimization", [] {
+    const auto valid = ValidModule();
+    auto malformed = valid;
     malformed[5] = spv::OpCapability;
     rejectMalformed(malformed, "a zero-length SPIR-V instruction");
     malformed[5] = (0xffffu << spv::WordCountShift) | spv::OpCapability;
@@ -275,20 +291,14 @@ void testInvalidInputIsRejected() {
         malformed.insert(malformed.end(), instruction.begin(), instruction.end());
         rejectMalformed(malformed, "truncated capability or type operands");
     }
-}
+}};
 
-}
+const Case conditionalSelectionExit{"SpecializeSpirv_ConstantConditionalSelectionExit_DropsTheDeadArmStably", [] {
+    RequireSpecializedSelectionExit(false);
+}};
 
-int main() {
-    const char* mode = std::getenv("APS5_SPIRV_OPT");
-    const bool optimizationEnabled = mode == nullptr || std::string(mode) != "none";
-    testNarrowConversions(optimizationEnabled);
-    testInvalidInputIsRejected();
-    testSpecializedSelectionExit();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d optimizer check(s) failed\n", failures);
-        return 1;
-    }
-    std::puts("SPIR-V optimizer checks passed");
-    return 0;
-}
+const Case switchSelectionExit{"SpecializeSpirv_ConstantSwitchSelectionExit_DropsTheDeadArmStably", [] {
+    RequireSpecializedSelectionExit(true);
+}};
+
+} // namespace

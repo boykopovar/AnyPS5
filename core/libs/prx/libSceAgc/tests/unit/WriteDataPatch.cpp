@@ -1,10 +1,11 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <stdexcept>
 
 extern "C" {
@@ -24,18 +25,11 @@ constexpr std::array<std::uint32_t, 3> Payload{0x11111111u, 0x22222222u, 0x33333
 constexpr std::uint64_t Address = 0x0000123456789ab0ull;
 constexpr std::uint64_t OtherAddress = 0x0000fedcba987650ull;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using Testing::Require;
 
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("expected invalid input to fail");
+template<typename TAction>
+void ExpectFailure(TAction action) {
+    Testing::RequireThrows<std::runtime_error>(action, "expected invalid input to fail");
 }
 
 struct Packet {
@@ -69,15 +63,15 @@ std::uint32_t* build(Packet& packet, const Variant& variant, const Fields& field
 void expectPatched(const Variant& variant, const Fields& from, const Fields& to, const char* message) {
     Packet patched;
     auto* packet = build(patched, variant, from);
-    if (from.address != to.address) check(variant.setAddress(packet, to.address) == 0, "address patch failed");
-    if (from.dst != to.dst) check(variant.setDst(packet, to.dst) == 0, "destination patch failed");
-    if (from.cachePolicy != to.cachePolicy) check(variant.setCachePolicy(packet, to.cachePolicy) == 0, "cache policy patch failed");
+    if (from.address != to.address) Require(variant.setAddress(packet, to.address) == 0, "address patch failed");
+    if (from.dst != to.dst) Require(variant.setDst(packet, to.dst) == 0, "destination patch failed");
+    if (from.cachePolicy != to.cachePolicy) Require(variant.setCachePolicy(packet, to.cachePolicy) == 0, "cache policy patch failed");
     Packet expected;
     build(expected, variant, to);
-    check(patched.words == expected.words, message);
+    Require(patched.words == expected.words, message);
 }
 
-void testVariant(const Variant& variant) {
+void VerifyVariant(const Variant& variant) {
     for (std::uint8_t from = 1; from <= variant.maxDst; ++from) {
         for (std::uint8_t to = 1; to <= variant.maxDst; ++to) {
             expectPatched(variant, {from, 1, Address, 1}, {to, 1, Address, 1}, "destination patch does not match a packet built with that destination");
@@ -95,29 +89,29 @@ void testVariant(const Variant& variant) {
     Packet packet;
     auto* written = build(packet, variant, {5, 1, Address, 1});
     const auto before = packet.words;
-    expectFailure([&] { variant.setDst(written, static_cast<std::uint8_t>(variant.maxDst + 1u)); });
-    expectFailure([&] { variant.setDst(written, 0); });
-    expectFailure([&] { variant.setCachePolicy(written, 4); });
-    check(packet.words == before, "rejected patch modified the packet");
+    ExpectFailure([&] { variant.setDst(written, static_cast<std::uint8_t>(variant.maxDst + 1u)); });
+    ExpectFailure([&] { variant.setDst(written, 0); });
+    ExpectFailure([&] { variant.setCachePolicy(written, 4); });
+    Require(packet.words == before, "rejected patch modified the packet");
 
     std::array<std::uint32_t, 8> nop{0xc0021000u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     const auto nopBefore = nop;
-    expectFailure([&] { variant.setAddress(nop.data(), Address); });
-    expectFailure([&] { variant.setDst(nop.data(), 5); });
-    expectFailure([&] { variant.setCachePolicy(nop.data(), 1); });
-    check(nop == nopBefore, "patch of another packet modified it");
+    ExpectFailure([&] { variant.setAddress(nop.data(), Address); });
+    ExpectFailure([&] { variant.setDst(nop.data(), 5); });
+    ExpectFailure([&] { variant.setCachePolicy(nop.data(), 1); });
+    Require(nop == nopBefore, "patch of another packet modified it");
 }
 
 }
 
-int main() {
-    try {
-        testVariant({sceAgcDcbWriteData, sceAgcWriteDataPatchSetAddressOrOffset, sceAgcWriteDataPatchSetDst, sceAgcWriteDataPatchSetCachePolicy, 0x1f});
-        testVariant({sceAgcAcbWriteData, sceAgcAsyncWriteDataPatchSetAddressOrOffset, sceAgcAsyncWriteDataPatchSetDst, sceAgcAsyncWriteDataPatchSetCachePolicy, 0xf});
-        std::puts("AGC write data patch tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
+namespace {
+
+const Testing::Case draw{"DcbWriteDataPatches_ValidOrInvalidInput_PatchOrReject", [] {
+    VerifyVariant({sceAgcDcbWriteData, sceAgcWriteDataPatchSetAddressOrOffset, sceAgcWriteDataPatchSetDst, sceAgcWriteDataPatchSetCachePolicy, 0x1f});
+}};
+
+const Testing::Case compute{"AcbWriteDataPatches_ValidOrInvalidInput_PatchOrReject", [] {
+    VerifyVariant({sceAgcAcbWriteData, sceAgcAsyncWriteDataPatchSetAddressOrOffset, sceAgcAsyncWriteDataPatchSetDst, sceAgcAsyncWriteDataPatchSetCachePolicy, 0xf});
+}};
+
+} // namespace

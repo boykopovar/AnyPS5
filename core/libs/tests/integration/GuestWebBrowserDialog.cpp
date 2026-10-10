@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdlib>
 
 extern "C" {
 int APS5_VABI sceWebBrowserDialogInitialize(void);
@@ -12,23 +14,48 @@ int APS5_VABI sceWebBrowserDialogUpdateStatus(void);
 
 namespace {
 
-constexpr int COMMON_DIALOG_STATUS_NONE = 0;
-constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
-constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
+using Testing::Case;
+using Testing::RequireEqual;
 
-void Require(bool value) { if (!value) std::abort(); }
+constexpr int statusNone = 0;
+constexpr int statusInitialized = 1;
+constexpr int statusFinished = 3;
 
-}
+class InitializedDialog {
+public:
+    InitializedDialog() {
+        RequireEqual(sceWebBrowserDialogInitialize(), 0, "initialize");
+    }
 
-int main() {
-    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
-    Require(sceWebBrowserDialogInitialize() == 0);
-    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
-    Require(sceWebBrowserDialogTerminate() == 0);
-    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
-    Require(sceWebBrowserDialogInitialize() == 0);
+    ~InitializedDialog() {
+        if (sceWebBrowserDialogGetStatus() == statusInitialized) sceWebBrowserDialogTerminate();
+    }
+
+    InitializedDialog(const InitializedDialog&) = delete;
+    InitializedDialog& operator=(const InitializedDialog&) = delete;
+};
+
+const Case statusBeforeInit{"GetStatus_BeforeInitialize_ReturnsNone", [] {
+    RequireEqual(sceWebBrowserDialogGetStatus(), statusNone, "status before initialize");
+}};
+
+const Case initialize{"Initialize_FromNone_ReportsInitialized", [] {
+    const InitializedDialog dialog;
+    RequireEqual(sceWebBrowserDialogGetStatus(), statusInitialized, "status after initialize");
+}};
+
+const Case terminate{"Terminate_AfterInitialize_ReturnsToNone", [] {
+    RequireEqual(sceWebBrowserDialogInitialize(), 0, "initialize");
+    RequireEqual(sceWebBrowserDialogTerminate(), 0, "terminate");
+    RequireEqual(sceWebBrowserDialogGetStatus(), statusNone, "status after terminate");
+}};
+
+const Case open{"Open_AfterInitialize_FinishesImmediately", [] {
+    const InitializedDialog dialog;
     std::uint8_t param[64] = {};
-    Require(sceWebBrowserDialogOpen(param) == 0);
-    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
-    Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
-}
+    RequireEqual(sceWebBrowserDialogOpen(param), 0, "open");
+    RequireEqual(sceWebBrowserDialogGetStatus(), statusFinished, "status after open");
+    RequireEqual(sceWebBrowserDialogUpdateStatus(), statusFinished, "updated status after open");
+}};
+
+} // namespace

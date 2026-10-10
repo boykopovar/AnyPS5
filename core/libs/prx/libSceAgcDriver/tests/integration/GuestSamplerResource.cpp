@@ -1,11 +1,14 @@
+#include <Testing/Test.hpp>
 #include "GraphicsTests.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -13,7 +16,8 @@
 namespace {
 
 using namespace AgcDriver::Graphics;
-
+using Testing::Case;
+using Testing::Require;
 struct Fields {
     std::uint32_t clampX = 2;
     std::uint32_t clampY = 2;
@@ -58,31 +62,20 @@ std::array<std::uint32_t, 4> pack(const Fields& f) {
     return words;
 }
 
-template<typename TAction>
-void reject(TAction action, std::string_view reason) {
-    try {
-        action();
-    } catch (const std::runtime_error& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected guest sampler test error: ") + error.what());
-        return;
-    }
-    throw std::runtime_error(std::string("expected guest sampler rejection: ") + std::string(reason));
-}
-
-void rejectFields(const Fields& f, std::string_view reason) {
+void rejectFields(const Fields& f, std::string_view reason, std::source_location location = std::source_location::current()) {
     const auto words = pack(f);
-    reject([&] { DecodeSamplerResource(words); }, reason);
+    RequireRejection([&] { DecodeSamplerResource(words); }, reason, location);
 }
 
-void rejectUnnormalized(const Fields& f, std::string_view reason) {
+void rejectUnnormalized(const Fields& f, std::string_view reason, std::source_location location = std::source_location::current()) {
     const auto words = pack(f);
-    reject([&] { DecodeSamplerResource(words, true); }, reason);
+    RequireRejection([&] { DecodeSamplerResource(words, true); }, reason, location);
 }
 
-void requireUnnormalized(const GuestSamplerResource& result, const char* what) {
-    Require(result.unnormalizedCoordinates, std::string(what) + ": unnormalized coordinates were not decoded");
-    Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST && result.minLod == 0.0f && result.maxLod == 0.0f, std::string(what) + ": unnormalized coordinates need nearest mips and a zero LOD range");
-    Require(result.lodBias == 0.0f && !result.anisotropyEnable && result.maxAnisotropy == 1.0f, std::string(what) + ": unnormalized coordinates need no LOD bias and no anisotropy");
+void requireUnnormalized(const GuestSamplerResource& result, const char* what, std::source_location location = std::source_location::current()) {
+    Require(result.unnormalizedCoordinates, std::string(what) + ": unnormalized coordinates were not decoded", location);
+    Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST && result.minLod == 0.0f && result.maxLod == 0.0f, std::string(what) + ": unnormalized coordinates need nearest mips and a zero LOD range", location);
+    Require(result.lodBias == 0.0f && !result.anisotropyEnable && result.maxAnisotropy == 1.0f, std::string(what) + ": unnormalized coordinates need no LOD bias and no anisotropy", location);
 }
 
 bool nearlyEqual(float a, float b) {
@@ -126,14 +119,29 @@ SamplerCapture createSampler(const Context& context, const GuestSamplerResource&
     return samplerCapture;
 }
 
-void RunSamplerReductionTests(const Fields& base) {
+Context reductionContext() {
     Context context{};
     context.limits.maxSamplerAnisotropy = 1.0f;
     context.deviceProc = captureProc;
     context.samplerFilterMinmax = true;
+    return context;
+}
 
-    const std::array<std::uint32_t, 4> capturedSampler{0x20000092u, 0x00fff000u, 0x05500000u, 0u};
-    const auto captured = DecodeSamplerResource(capturedSampler);
+constexpr std::array<std::uint32_t, 4> CapturedMinSampler{0x20000092u, 0x00fff000u, 0x05500000u, 0u};
+
+Fields minPointFields() {
+    Fields minPoint{};
+    minPoint.filterMode = 1;
+    minPoint.xyMagFilter = 0;
+    minPoint.xyMinFilter = 0;
+    minPoint.mipFilter = 1;
+    return minPoint;
+}
+
+const Case reductionModes{"Sampler_ReductionModes_ChainTheirReductionIntoTheSampler", [] {
+    const Fields base{};
+    const auto context = reductionContext();
+    const auto captured = DecodeSamplerResource(CapturedMinSampler);
     Require(captured.reductionMode == VK_SAMPLER_REDUCTION_MODE_MIN_EXT, "captured min-reduction sampler decoded to another reduction mode");
     Require(captured.magFilter == VK_FILTER_LINEAR && captured.minFilter == VK_FILTER_LINEAR && captured.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST, "captured min-reduction sampler filters decoded incorrectly");
     Require(captured.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && captured.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && captured.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "captured min-reduction sampler address modes decoded incorrectly");
@@ -157,6 +165,10 @@ void RunSamplerReductionTests(const Fields& base) {
             Require(sampler.RequiresFilterMinmax() == (mode != 0u && filter == 1u), "sampler min/max format requirement is wrong");
         }
     }
+}};
+
+const Case unsupportedReductions{"DecodeSamplerResource_UnsupportedReductionCombinations_AreRejected", [] {
+    const Fields base{};
     Fields noMip = base;
     noMip.filterMode = 2;
     noMip.mipFilter = 0;
@@ -180,17 +192,27 @@ void RunSamplerReductionTests(const Fields& base) {
     rejectFields(anisoReduction, "min or max reduction with anisotropic filtering");
     anisoReduction.filterMode = 0;
     Require(DecodeSamplerResource(pack(anisoReduction)).anisotropyEnable, "anisotropic weighted-average sampler was rejected");
+}};
 
+const Case reductionSupport{"Sampler_MinMaxReduction_NeedsDeviceSupportAndNoComparison", [] {
+    const Fields base{};
+    auto context = reductionContext();
+    const auto captured = DecodeSamplerResource(CapturedMinSampler);
     auto compared = captured;
     compared.compareEnable = true;
-    reject([&] { createSampler(context, compared); }, "min or max reduction with depth comparison");
+    RequireRejection([&] { createSampler(context, compared); }, "min or max reduction with depth comparison");
     auto weightedCompare = DecodeSamplerResource(pack(base));
     weightedCompare.compareEnable = true;
     Require(createSampler(context, weightedCompare).created, "weighted-average comparison sampler was rejected");
     context.samplerFilterMinmax = false;
-    reject([&] { createSampler(context, captured); }, "min or max reduction which the device does not support");
+    RequireRejection([&] { createSampler(context, captured); }, "min or max reduction which the device does not support");
     Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "weighted-average sampler needs min/max support");
+}};
 
+const Case filterMinmax{"RequireFilterMinmax_MinMaxSampledFormats_NeedTheMinmaxFeature", [] {
+    const Fields base{};
+    auto context = reductionContext();
+    const auto captured = DecodeSamplerResource(CapturedMinSampler);
     context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
         *properties = {};
         if (format == VK_FORMAT_R32_SFLOAT) properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT;
@@ -198,48 +220,32 @@ void RunSamplerReductionTests(const Fields& base) {
         if (format == VK_FORMAT_R8G8B8A8_UNORM) properties->linearTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT_EXT;
     };
     context.samplerFilterMinmax = true;
-    Fields minPoint = base;
-    minPoint.filterMode = 1;
-    minPoint.xyMagFilter = 0;
-    minPoint.xyMinFilter = 0;
-    minPoint.mipFilter = 1;
+    const auto minPoint = minPointFields();
     const std::array samplers{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, captured), std::make_shared<Sampler>(context, DecodeSamplerResource(pack(minPoint)))};
     RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b010u, samplers);
     RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0u, samplers);
     RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b101u, samplers);
-    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b010u, samplers); }, "format 37 does not support min/max filtering is sampled through a min or max reduction sampler");
-    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32G32_SFLOAT, 0b011u, samplers); }, "does not support min/max filtering");
-    reject([&] { RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
+    RequireRejection([&] { RequireFilterMinmax(context, VK_FORMAT_R8G8B8A8_UNORM, 0b010u, samplers); }, "format 37 does not support min/max filtering is sampled through a min or max reduction sampler");
+    RequireRejection([&] { RequireFilterMinmax(context, VK_FORMAT_R32G32_SFLOAT, 0b011u, samplers); }, "does not support min/max filtering");
+    RequireRejection([&] { RequireFilterMinmax(context, VK_FORMAT_R32_SFLOAT, 0b1000u, samplers); }, "sampler element 3, which its shader does not bind");
+}};
 
+const Case pointFilteredWord{"PointFilteredSamplerWord_ReductionSamplers_NeedPointFiltering", [] {
+    const Fields base{};
+    const auto minPoint = minPointFields();
+    const auto& capturedSampler = CapturedMinSampler;
     const auto pointFiltered = [](const std::array<std::uint32_t, 4>& words) { return ShaderRecompiler::PointFilteredSamplerWord(words[0], words[2]); };
     Require(pointFiltered(pack(base)) == 0x05000000u, "a point-filtered weighted-average sampler kept its bilinear or linear mip filter");
     Require(pointFiltered(pack(minPoint)) == pack(minPoint)[2], "a point-filtered min sampler that already point-samples changed");
-    reject([&] { pointFiltered(capturedSampler); }, "needs point filtering");
+    RequireRejection([&] { pointFiltered(capturedSampler); }, "needs point filtering");
     Fields maxLinearMip = minPoint;
     maxLinearMip.filterMode = 2;
     maxLinearMip.mipFilter = 2;
-    reject([&] { pointFiltered(pack(maxLinearMip)); }, "needs point filtering");
-}
+    RequireRejection([&] { pointFiltered(pack(maxLinearMip)); }, "needs point filtering");
+}};
 
-void RunSamplerCacheDegammaTests(const Fields& base) {
-    Context context{};
-    context.limits.maxSamplerAnisotropy = 1.0f;
-    context.deviceProc = captureProc;
-    Fields forcedSrgb = base;
-    forcedSrgb.forceSrgb = true;
-    const auto words = pack(forcedSrgb);
-    SamplerCache unpaired;
-    reject([&] { unpaired.Get(context, words, false); }, "forces sRGB decoding");
-    SamplerCache cache;
-    const auto paired = cache.Get(context, words, false, false, true);
-    Require(paired->ForcesDegamma() && cache.Get(context, words, false, false, true) == paired && cache.Misses() == 1u, "a paired FORCE_DEGAMMA sampler must be created once and then served from the cache");
-    reject([&] { cache.Get(context, words, false); }, "forces sRGB decoding");
-}
-
-}
-
-void RunGuestSamplerResourceTests() {
-    Fields base;
+const Case filterAndAddress{"DecodeSamplerResource_FilterAndAddressFields_DecodeToVulkanState", [] {
+    const Fields base{};
     auto result = DecodeSamplerResource(pack(base));
     Require(result.magFilter == VK_FILTER_LINEAR && result.minFilter == VK_FILTER_LINEAR, "linear filter fields decoded incorrectly");
     Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR, "linear mip filter must decode to linear mipmap mode");
@@ -277,7 +283,10 @@ void RunGuestSamplerResourceTests() {
     Require(nearlyEqual(result.maxAnisotropy, 8.0f), "anisotropy ratio 3 must decode to 8x");
     aniso.maxAnisoRatio = 5;
     rejectFields(aniso, "unknown anisotropy ratio");
+}};
 
+const Case lodAndMips{"DecodeSamplerResource_LodAndMipFields_DecodeOrAreRejected", [] {
+    const Fields base{};
     Fields badLod = base;
     badLod.minLodRaw = 100;
     badLod.maxLodRaw = 50;
@@ -298,7 +307,10 @@ void RunGuestSamplerResourceTests() {
     Fields badMipFilter = base;
     badMipFilter.mipFilter = 3;
     rejectFields(badMipFilter, "unknown mip filter");
+}};
 
+const Case comparison{"DecodeSamplerResource_DepthCompareFunction_DecodesWithoutEnablingComparison", [] {
+    const Fields base{};
     const std::array compareOps{VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS};
     for (std::uint32_t function = 0; function < compareOps.size(); ++function) {
         Fields comparison = base;
@@ -307,13 +319,16 @@ void RunGuestSamplerResourceTests() {
         Require(decoded.compareOp == compareOps.at(function), "sampler depth comparison function decoded incorrectly");
         Require(!decoded.compareEnable, "sampler descriptor enabled comparison without shader metadata");
     }
+}};
 
+const Case unnormalizedCoordinates{"DecodeSamplerResource_UnnormalizedCoordinates_NeedPointClampedSamplers", [] {
+    const Fields base{};
     Fields badUnorm = base;
     badUnorm.forceUnormCoords = true;
     rejectFields(badUnorm, "unnormalized coordinates");
 
     const std::array<std::uint32_t, 4> capturedUnnormalized{0x00008092u, 0x00fff000u, 0x05500000u, 0u};
-    reject([&] { DecodeSamplerResource(capturedUnnormalized); }, "uses unnormalized coordinates which are not implemented");
+    RequireRejection([&] { DecodeSamplerResource(capturedUnnormalized); }, "uses unnormalized coordinates which are not implemented");
     const auto unnormalized = DecodeSamplerResource(capturedUnnormalized, true);
     requireUnnormalized(unnormalized, "captured unnormalized S#");
     Require(unnormalized.magFilter == VK_FILTER_LINEAR && unnormalized.minFilter == VK_FILTER_LINEAR, "captured unnormalized S# filters decoded incorrectly");
@@ -372,9 +387,12 @@ void RunGuestSamplerResourceTests() {
     rejectUnnormalized(unnormalizedTruncated, "unnormalized coordinates with TRUNC_COORD");
     auto truncatedBlend = pack(unnormalizedBase);
     truncatedBlend[0] |= 1u << 19u;
-    reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");
+    RequireRejection([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");
     rejectUnnormalized(base, "bound as unnormalized without FORCE_UNNORMALIZED");
+}};
 
+const Case forcedSrgbDecode{"DecodeSamplerResource_ForcedSrgb_DecodesOnlyWhenPairedWithDegamma", [] {
+    const Fields base{};
     Fields forcedSrgb = base;
     forcedSrgb.forceSrgb = true;
     rejectFields(forcedSrgb, "forces sRGB decoding");
@@ -382,8 +400,20 @@ void RunGuestSamplerResourceTests() {
     const auto plain = DecodeSamplerResource(pack(base));
     Require(forced.forceDegamma && !plain.forceDegamma, "FORCE_DEGAMMA must be decoded into forceDegamma");
     Require(forced.magFilter == plain.magFilter && forced.minFilter == plain.minFilter && forced.mipmapMode == plain.mipmapMode && forced.maxLod == plain.maxLod, "FORCE_DEGAMMA must not change the host sampler state");
-    RunSamplerCacheDegammaTests(base);
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    const auto words = pack(forcedSrgb);
+    SamplerCache unpaired;
+    RequireRejection([&] { unpaired.Get(context, words, false); }, "forces sRGB decoding");
+    SamplerCache cache;
+    const auto paired = cache.Get(context, words, false, false, true);
+    Require(paired->ForcesDegamma() && cache.Get(context, words, false, false, true) == paired && cache.Misses() == 1u, "a paired FORCE_DEGAMMA sampler must be created once and then served from the cache");
+    RequireRejection([&] { cache.Get(context, words, false); }, "forces sRGB decoding");
+}};
 
+const Case unsupportedFields{"DecodeSamplerResource_UnsupportedFields_AreRejected", [] {
+    const Fields base{};
     Fields truncated = base;
     truncated.truncCoord = true;
     truncated.perfMip = 1;
@@ -395,8 +425,6 @@ void RunGuestSamplerResourceTests() {
     Fields badCubeWrap = base;
     badCubeWrap.disableCubeWrap = true;
     rejectFields(badCubeWrap, "seamless cube filtering");
-
-    RunSamplerReductionTests(base);
 
     Fields badDegamma = base;
     badDegamma.disableDegamma = true;
@@ -417,7 +445,10 @@ void RunGuestSamplerResourceTests() {
     Fields badBlendZero = base;
     badBlendZero.blendZeroPrt = true;
     rejectFields(badBlendZero, "PRT blend-zero");
+}};
 
+const Case borderColors{"DecodeSamplerResource_BorderColors_DecodeAndTheTableIsRefusedWhenRead", [] {
+    const Fields base{};
     Fields unusedTable = base;
     unusedTable.borderColorType = 3;
     const auto unread = DecodeSamplerResource(pack(unusedTable));
@@ -447,7 +478,10 @@ void RunGuestSamplerResourceTests() {
     Fields opaqueWhite = base;
     opaqueWhite.borderColorType = 2;
     Require(DecodeSamplerResource(pack(opaqueWhite)).borderColor == VK_BORDER_COLOR_INT_OPAQUE_WHITE, "border color type 2 must decode to opaque white");
+}};
 
+const Case lodBias{"DecodeSamplerResource_LodBias_DecodesSignedValues", [] {
+    const Fields base{};
     Fields positiveBias = base;
     positiveBias.lodBiasRaw = 256;
     Require(nearlyEqual(DecodeSamplerResource(pack(positiveBias)).lodBias, 1.0f), "positive LOD bias decoded incorrectly");
@@ -456,5 +490,7 @@ void RunGuestSamplerResourceTests() {
     Require(nearlyEqual(DecodeSamplerResource(pack(negativeBias)).lodBias, -1.0f), "negative LOD bias decoded incorrectly");
 
     std::array<std::uint32_t, 3> shortWords{};
-    reject([&] { DecodeSamplerResource(shortWords); }, "4 dwords");
-}
+    RequireRejection([&] { DecodeSamplerResource(shortWords); }, "4 dwords");
+}};
+
+} // namespace

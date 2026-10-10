@@ -1,8 +1,10 @@
+#include <Testing/Test.hpp>
 #include "ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -21,6 +23,8 @@
 namespace {
 
 using namespace ShaderRecompiler;
+using Testing::Case;
+using Testing::Require;
 
 enum class Split {
     None,
@@ -38,10 +42,6 @@ struct Program {
 };
 
 using RouteState = std::map<std::uint32_t, bool>;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> constructBlocks(const ControlFlowGraph& graph, std::uint32_t header, std::uint32_t exclude) {
     std::vector<std::uint32_t> blocks;
@@ -66,7 +66,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
         if (terminator.mergeBlock == InvalidControlFlowId) continue;
-        require(mergeOwners.emplace(terminator.mergeBlock, block.id).second, prefix + "block " + std::to_string(terminator.mergeBlock) + " merges two constructs");
+        Require(mergeOwners.emplace(terminator.mergeBlock, block.id).second, prefix + "block " + std::to_string(terminator.mergeBlock) + " merges two constructs");
         if (terminator.loopHeader) loopExits.emplace_back(terminator.mergeBlock, terminator.continueBlock);
     }
     for (const auto& block : graph.blocks) {
@@ -77,7 +77,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
             for (const auto successor : graph.FindBlock(member).successors) {
                 if (successor == terminator.mergeBlock || (graph.Dominates(block.id, successor) && !graph.Dominates(terminator.mergeBlock, successor))) continue;
                 const bool loopExit = std::any_of(loopExits.begin(), loopExits.end(), [&](const auto& exits) { return successor == exits.first || successor == exits.second; });
-                require(loopExit, prefix + "block " + std::to_string(member) + " of the selection at block " + std::to_string(block.id) + " branches to block " + std::to_string(successor) + " outside the construct");
+                Require(loopExit, prefix + "block " + std::to_string(member) + " of the selection at block " + std::to_string(block.id) + " branches to block " + std::to_string(successor) + " outside the construct");
             }
         }
     }
@@ -87,7 +87,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
         for (const auto member : constructBlocks(graph, loop.id, loop.terminator.mergeBlock)) {
             const auto& terminator = graph.FindBlock(member).terminator;
             if (terminator.loopHeader || graph.Dominates(continueBlock, member)) continue;
-            require(terminator.mergeBlock != continueBlock, prefix + "the selection at block " + std::to_string(member) + " in the loop at block " + std::to_string(loop.id) + " merges at the loop's continue block " + std::to_string(continueBlock));
+            Require(terminator.mergeBlock != continueBlock, prefix + "the selection at block " + std::to_string(member) + " in the loop at block " + std::to_string(loop.id) + " merges at the loop's continue block " + std::to_string(continueBlock));
         }
     }
 }
@@ -97,20 +97,20 @@ std::uint32_t followEmptyBlocks(const std::string& prefix, const ControlFlowGrap
         const auto& block = graph.FindBlock(blockId);
         const auto& terminator = block.terminator;
         const bool empty = block.instructionBegin == block.instructionEnd;
-        require(terminator.gotoValue < 0 || empty, prefix + "block " + std::to_string(block.id) + " sets a route variable after guest instructions");
+        Require(terminator.gotoValue < 0 || empty, prefix + "block " + std::to_string(block.id) + " sets a route variable after guest instructions");
         if (terminator.gotoValue >= 0) routes[terminator.gotoVariable] = terminator.gotoValue != 0;
         if (!empty) return blockId;
         if (terminator.kind == TerminatorKind::Branch) {
             blockId = terminator.trueBlock;
         } else if (terminator.kind == TerminatorKind::ConditionalBranch && terminator.condition == BranchCondition::GotoVariable) {
             const auto route = routes.find(terminator.gotoVariable);
-            require(route != routes.end(), prefix + "block " + std::to_string(block.id) + " reads route variable " + std::to_string(terminator.gotoVariable) + " before any path sets it");
+            Require(route != routes.end(), prefix + "block " + std::to_string(block.id) + " reads route variable " + std::to_string(terminator.gotoVariable) + " before any path sets it");
             blockId = route->second ? terminator.trueBlock : terminator.falseBlock;
         } else {
             return blockId;
         }
     }
-    throw std::runtime_error(prefix + "a cycle of empty blocks");
+    Testing::Fail(prefix + "a cycle of empty blocks");
 }
 
 void verifySameExecutions(const std::string& prefix, const ControlFlowGraph& original, const ControlFlowGraph& structured) {
@@ -127,8 +127,8 @@ void verifySameExecutions(const std::string& prefix, const ControlFlowGraph& ori
         visited.push_back(state);
         const auto& copy = structured.FindBlock(copyId);
         const auto& source = original.FindBlock(sourceId);
-        require(copy.instructionBegin == source.instructionBegin && copy.instructionEnd == source.instructionEnd, prefix + "block " + std::to_string(copy.id) + " runs other instructions than block " + std::to_string(source.id));
-        require(copy.terminator.kind == source.terminator.kind && copy.terminator.condition == source.terminator.condition, prefix + "block " + std::to_string(copy.id) + " branches differently from block " + std::to_string(source.id));
+        Require(copy.instructionBegin == source.instructionBegin && copy.instructionEnd == source.instructionEnd, prefix + "block " + std::to_string(copy.id) + " runs other instructions than block " + std::to_string(source.id));
+        Require(copy.terminator.kind == source.terminator.kind && copy.terminator.condition == source.terminator.condition, prefix + "block " + std::to_string(copy.id) + " branches differently from block " + std::to_string(source.id));
         if (source.terminator.kind == TerminatorKind::Branch || source.terminator.kind == TerminatorKind::ConditionalBranch) pending.emplace_back(copy.terminator.trueBlock, source.terminator.trueBlock, routes);
         if (source.terminator.kind == TerminatorKind::ConditionalBranch) pending.emplace_back(copy.terminator.falseBlock, source.terminator.falseBlock, routes);
     }
@@ -173,13 +173,14 @@ std::vector<std::uint32_t> Store(std::vector<std::uint32_t> code) {
     return code;
 }
 
-void verifyRequest(const char* path) {
+void verifyRequest(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
+    Require(file.is_open(), path + ": cannot open the request file");
     std::ostringstream text;
     text << file.rdbuf();
     const auto request = RequestSerializer{}.Deserialize(text.str());
     const auto result = verifyGraph(path, request.request.shader.code);
-    std::printf("%s: structured with %zu added blocks, %zu cloned instructions, %zu route variables\n", path, result.addedBlocks, result.clonedInstructions, result.routeVariables);
+    std::printf("%s: structured with %zu added blocks, %zu cloned instructions, %zu route variables\n", path.c_str(), result.addedBlocks, result.clonedInstructions, result.routeVariables);
 }
 
 std::size_t recompile(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t subgroupSize) {
@@ -204,7 +205,7 @@ std::size_t recompile(const std::string& name, std::span<const std::uint32_t> co
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     const auto result = Recompile(request);
-    require(!result.spirv.empty(), name + ": no SPIR-V for a " + std::to_string(subgroupSize) + "-lane subgroup");
+    Require(!result.spirv.empty(), name + ": no SPIR-V for a " + std::to_string(subgroupSize) + "-lane subgroup");
     return result.spirv.size();
 }
 
@@ -212,17 +213,17 @@ void verifyProgram(const Program& program) {
     const std::string name(program.name);
     const auto result = verifyGraph(name, program.code);
     if (program.split == Split::None) {
-        require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else if (program.split == Split::Clone) {
-        require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else {
-        require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0, name + ": expected routing with at most " + std::to_string(program.clonedLimit) + " cloned instructions, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0, name + ": expected routing with at most " + std::to_string(program.clonedLimit) + " cloned instructions, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     }
     const auto words = recompile(name, program.code, 64u);
     static_cast<void>(recompile(name, program.code, 32u));
     if (!program.reference.empty()) {
         const auto reference = recompile(name, program.reference, 64u);
-        require(words * 10u <= reference * 11u, name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " + std::to_string(reference) + " of the program without the entering branch");
+        Require(words * 10u <= reference * 11u, name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " + std::to_string(reference) + " of the program without the entering branch");
     }
 }
 
@@ -256,66 +257,24 @@ std::string refusal(std::span<const std::uint32_t> code) {
 
 void verifyJumpTable(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t loadPc, const std::vector<std::uint64_t>& values, const std::vector<std::uint32_t>& targets) {
     const auto graph = GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(code));
-    require(graph.codeTableLoads.size() == 1u && graph.codeTableLoads.front().programCounter == loadPc && graph.codeTableLoads.front().values == values, name + ": wrong code table");
+    Require(graph.codeTableLoads.size() == 1u && graph.codeTableLoads.front().programCounter == loadPc && graph.codeTableLoads.front().values == values, name + ": wrong code table");
     std::vector<std::uint32_t> lowered;
     for (const auto& block : graph.blocks) {
         if (block.terminator.indirectPcSgpr != InvalidControlFlowId) lowered.insert(lowered.end(), block.terminator.indirectTargetProgramCounters.begin(), block.terminator.indirectTargetProgramCounters.end());
     }
     std::sort(lowered.begin(), lowered.end());
-    require(lowered == targets, name + ": the jump does not reach exactly the table targets");
+    Require(lowered == targets, name + ": the jump does not reach exactly the table targets");
 }
 
 void verifyLongBranch(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t branchPc, std::uint32_t target) {
     const auto decoded = RdnaInstructionDecoder{}.Decode(code);
     const auto graph = GraphBuilder{}.Build(decoded);
     const auto source = std::find_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) { return block.instructionEnd != block.instructionBegin && decoded.instructions[block.instructionEnd - 1u].programCounter == branchPc; });
-    require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
+    Require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
 }
 
-void verifyNullSwappc() {
-    const std::array<std::uint32_t, 2> jump{0xbefd210cu, 0xbf810000u};
-    const auto swappc = RdnaInstructionDecoder{}.Decode(jump).instructions.front();
-    require(swappc.op == RdnaOpcode::SSetpcB64 && swappc.opcodeId == 0x21u && swappc.destination.kind == RdnaOperandKind::Null &&
-        swappc.source0.kind == RdnaOperandKind::ScalarRegister && swappc.source0.reg == 12u, "s_swappc_b64 null, s[12:13] does not decode as s_setpc_b64 s[12:13]");
-    const std::array<std::uint32_t, 3> front{0x7e020281u, 0xbefd2106u, 0xbf810000u};
-    require(DecodeRdnaFrontProgram(front).code.size() == 2u, "a front program ending in s_swappc_b64 null, s[6:7] does not end there");
-    verifyJumpTable("dword jump table after its base", DwordTableGetpcFirst, 0x20u, {0x20u, 0x18u, 0x10u}, {0x3cu, 0x44u, 0x4cu});
-    verifyJumpTable("dword jump table after its index", DwordTableIndexFirst, 0x1cu, {0x18u, 0x10u, 0x08u}, {0x38u, 0x40u, 0x48u});
-    verifyLongBranch("long branch through vcc", LongBranchVcc, 0x10u, 0x18u);
-    verifyLongBranch("backward long branch", LongBranchBack, 0x24u, 0x08u);
-    const std::array<std::uint32_t, 3> call{0xbe8c1f00u, 0xbe8e210cu, 0xbf810000u};
-    const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
-        {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unclosable scalar call/return pairing"},
-        {"index rewritten after the bound", patched(DwordTableGetpcFirst, 5, {0xbe9203ffu, 0x00000040u}), "unsupported dynamic s_setpc_b64"},
-        {"index scaled for two-dword entries", patched(DwordTableGetpcFirst, 7, {0x8f128312u}), "unsupported dynamic s_setpc_b64"},
-        {"entry rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8e0380u}), "unsupported dynamic s_setpc_b64"},
-        {"base rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8d0380u}), "unsupported dynamic s_setpc_b64"},
-        {"borrow other than zero", patched(DwordTableGetpcFirst, 13, {0x828d810du}), "unsupported dynamic s_setpc_b64"},
-        {"long branch with a register high half", patched(LongBranchVcc, 3, {0x826b046bu}), "unsupported dynamic s_setpc_b64"},
-        {"branch into a long branch", patched(LongBranchVcc, 0, {0xbf850001u}), "does not start in its block"},
-    };
-    for (const auto& [name, code, message] : refused) {
-        const auto error = refusal(code);
-        require(error.find(message) != std::string::npos, std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
-    }
-}
-
-}
-
-int main(int argc, char** argv) {
-    if (argc > 1) {
-        int failures = 0;
-        for (int i = 1; i < argc; ++i) {
-            try {
-                verifyRequest(argv[i]);
-            } catch (const std::exception& error) {
-                std::fprintf(stderr, "%s: %s\n", argv[i], error.what());
-                ++failures;
-            }
-        }
-        return failures == 0 ? 0 : 1;
-    }
-    const std::vector<Program> programs{
+const std::vector<Program>& Programs() {
+    static const std::vector<Program> programs{
         {"shared tail", R"(
   v_cmp_gt_u32 vcc, 16, v0
   s_cbranch_vccz outer_else
@@ -923,22 +882,78 @@ done:
   s_endpgm)",
          LongBranchBack, Split::None},
     };
-    int failures = 0;
-    for (const auto& program : programs) {
+    return programs;
+}
+
+void verifyPrograms(Split split) {
+    std::size_t verified = 0;
+    for (const auto& program : Programs()) {
+        if (program.split != split) continue;
+        ++verified;
         try {
             verifyProgram(program);
+        } catch (const Testing::Failure&) {
+            throw;
         } catch (const std::exception& error) {
-            std::fprintf(stderr, "%s\n%.*s\n", error.what(), static_cast<int>(program.source.size()), program.source.data());
-            ++failures;
+            Testing::Fail(std::string(program.name) + ": " + error.what());
         }
     }
-    try {
-        verifyNullSwappc();
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        ++failures;
-    }
-    if (failures != 0) return 1;
-    std::puts("Control flow structurization tests passed");
-    return 0;
+    Require(verified != 0, "no program of this kind was verified");
 }
+
+const Case unsplitPrograms{"Structurize_StructurablePrograms_NeedNoCloneOrRouting", [] {
+    verifyPrograms(Split::None);
+}};
+
+const Case clonedPrograms{"Structurize_SharedCode_IsCloned", [] {
+    verifyPrograms(Split::Clone);
+}};
+
+const Case routedPrograms{"Structurize_EnteredRegions_AreRoutedThroughVariables", [] {
+    verifyPrograms(Split::Route);
+}};
+
+const Case nullSwappc{"Decode_SwappcWithNullDestination_IsSetpc", [] {
+    const std::array<std::uint32_t, 2> jump{0xbefd210cu, 0xbf810000u};
+    const auto swappc = RdnaInstructionDecoder{}.Decode(jump).instructions.front();
+    Require(swappc.op == RdnaOpcode::SSetpcB64 && swappc.opcodeId == 0x21u && swappc.destination.kind == RdnaOperandKind::Null &&
+        swappc.source0.kind == RdnaOperandKind::ScalarRegister && swappc.source0.reg == 12u, "s_swappc_b64 null, s[12:13] does not decode as s_setpc_b64 s[12:13]");
+    const std::array<std::uint32_t, 3> front{0x7e020281u, 0xbefd2106u, 0xbf810000u};
+    Require(DecodeRdnaFrontProgram(front).code.size() == 2u, "a front program ending in s_swappc_b64 null, s[6:7] does not end there");
+}};
+
+const Case jumpTables{"Build_DwordJumpTables_ReachExactlyTheTableTargets", [] {
+    verifyJumpTable("dword jump table after its base", DwordTableGetpcFirst, 0x20u, {0x20u, 0x18u, 0x10u}, {0x3cu, 0x44u, 0x4cu});
+    verifyJumpTable("dword jump table after its index", DwordTableIndexFirst, 0x1cu, {0x18u, 0x10u, 0x08u}, {0x38u, 0x40u, 0x48u});
+}};
+
+const Case longBranches{"Build_LongBranches_BranchToTheirTarget", [] {
+    verifyLongBranch("long branch through vcc", LongBranchVcc, 0x10u, 0x18u);
+    verifyLongBranch("backward long branch", LongBranchBack, 0x24u, 0x08u);
+}};
+
+const Case unsupportedJumps{"Build_UnsupportedDynamicJumps_AreRefused", [] {
+    const std::array<std::uint32_t, 3> call{0xbe8c1f00u, 0xbe8e210cu, 0xbf810000u};
+    const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
+        {"s_swappc_b64 with a return address", {call.begin(), call.end()}, "unclosable scalar call/return pairing"},
+        {"index rewritten after the bound", patched(DwordTableGetpcFirst, 5, {0xbe9203ffu, 0x00000040u}), "unsupported dynamic s_setpc_b64"},
+        {"index scaled for two-dword entries", patched(DwordTableGetpcFirst, 7, {0x8f128312u}), "unsupported dynamic s_setpc_b64"},
+        {"entry rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8e0380u}), "unsupported dynamic s_setpc_b64"},
+        {"base rewritten after the load", patched(DwordTableGetpcFirst, 11, {0xbe8d0380u}), "unsupported dynamic s_setpc_b64"},
+        {"borrow other than zero", patched(DwordTableGetpcFirst, 13, {0x828d810du}), "unsupported dynamic s_setpc_b64"},
+        {"long branch with a register high half", patched(LongBranchVcc, 3, {0x826b046bu}), "unsupported dynamic s_setpc_b64"},
+        {"branch into a long branch", patched(LongBranchVcc, 0, {0xbf850001u}), "does not start in its block"},
+    };
+    for (const auto& [name, code, message] : refused) {
+        const auto error = refusal(code);
+        Require(error.find(message) != std::string::npos, std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
+    }
+}};
+
+const Case requestFiles{"Structurize_RequestFilesGivenAsArguments_KeepTheirExecutions", [] {
+    const auto& paths = Testing::Arguments();
+    if (paths.empty()) Testing::Skip("no request files were given as arguments");
+    for (const auto& path : paths) verifyRequest(path);
+}};
+
+} // namespace

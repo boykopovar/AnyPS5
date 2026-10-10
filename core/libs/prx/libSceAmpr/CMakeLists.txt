@@ -4,13 +4,9 @@ target_link_libraries(libSceAmpr PRIVATE libkernel)
 configure_windows_unwind(libSceAmpr)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_ampr_tests ${LIBS_INCLUDE_DIR}/tests/GuestAmpr.cpp)
-    target_include_directories(guest_ampr_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ampr_tests PRIVATE libSceAmpr libkernel libc)
-    configure_windows_unwind(guest_ampr_tests)
-    add_test(NAME guest_ampr_markers COMMAND guest_ampr_tests)
-    if(WIN32)
-        set_tests_properties(guest_ampr_markers PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")
-    endif()
+    anyps5_add_library_test(guest_ampr_tests
+        NAME guest_ampr_markers
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAmpr.cpp
+        LINK libSceAmpr libkernel libc
+    )
 endif()

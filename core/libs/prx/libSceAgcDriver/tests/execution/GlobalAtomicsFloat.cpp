@@ -14,13 +14,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -730,25 +729,25 @@ void RunReadOnly(AgcDriver::VulkanDevice& device, GuestBlock& guest) {
     }
 }
 
-}
+const Testing::Case wave32Atomics{"GlobalAtomicsFloat_Wave32_ReturnPreviousAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64Atomics, "the device has no shaderBufferInt64Atomics");
+    GuestBlock writable(true);
+    RunAtomics(device, writable, 32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
-        GuestBlock writable(true);
-        GuestBlock readOnly(false);
-        RunAtomics(*device, writable, 32);
-        RunAtomics(*device, writable, 64);
-        RunReadOnly(*device, readOnly);
-        std::puts("global float atomics tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64Atomics{"GlobalAtomicsFloat_Wave64_ReturnPreviousAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64Atomics, "the device has no shaderBufferInt64Atomics");
+    GuestBlock writable(true);
+    RunAtomics(device, writable, 64);
+}};
+
+const Testing::Case readOnlyRange{"GlobalAtomicsFloat_ReadOnlyRange_IsLeftUnchanged", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64Atomics, "the device has no shaderBufferInt64Atomics");
+    GuestBlock readOnly(false);
+    RunReadOnly(device, readOnly);
+}};
+
+} // namespace

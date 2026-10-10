@@ -9,14 +9,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -81,7 +80,7 @@ void FillInput() {
     }
 }
 
-void Expect(std::uint32_t tid, const char* name, const float* actual, const std::array<std::uint8_t, 4>& expected) {
+void RequireTexel(std::uint32_t tid, const char* name, const float* actual, const std::array<std::uint8_t, 4>& expected) {
     for (std::uint32_t component = 0; component < 4u; ++component) {
         const float scaled = actual[component] * 255.0f;
         Require(std::fabs(scaled - std::round(scaled)) < 1e-3f && std::lround(scaled) == expected[component], std::string(name) + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + std::to_string(scaled) + "/255, expected " + std::to_string(expected[component]) + "/255");
@@ -116,24 +115,16 @@ void Run(AgcDriver::VulkanDevice& device) {
         const float u = std::bit_cast<float>(Input[tid * 4u + 0u]);
         const float layer = std::clamp(std::nearbyint(std::bit_cast<float>(Input[tid * 4u + 1u])), 0.0f, static_cast<float>(Layers - 1u));
         const auto x = static_cast<std::uint32_t>(std::clamp(static_cast<int>(std::floor(u * static_cast<float>(Width))), 0, static_cast<int>(Width) - 1));
-        Expect(tid, "image_sample_lz on a 1D array", &Output[tid * 8u], Texel(x, static_cast<std::uint32_t>(layer)));
-        Expect(tid, "image_load on a 1D array", &Output[tid * 8u + 4u], Texel(Input[tid * 4u + 2u], Input[tid * 4u + 3u]));
+        RequireTexel(tid, "image_sample_lz on a 1D array", &Output[tid * 8u], Texel(x, static_cast<std::uint32_t>(layer)));
+        RequireTexel(tid, "image_load on a 1D array", &Output[tid * 8u + 4u], Texel(Input[tid * 4u + 2u], Input[tid * 4u + 3u]));
     }
 }
 
-}
+const Testing::Case sampleAndLoad{"ImageOneDimensionalArray_SampleAndLoad_ReturnLayerTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexels();
+    FillInput();
+    Run(device);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillInput();
-        Run(*device);
-        std::puts("image 1D array tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

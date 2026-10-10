@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -139,7 +138,6 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         Expect(tid, out[0], Expected[tid][0], "cvt f64 f32 lo");
         Expect(tid, out[1], Expected[tid][1], "cvt f64 f32 hi");
@@ -147,22 +145,11 @@ void Check() {
     }
 }
 
-}
+const Testing::Case nanConversions{"F64NanConversions_NanInputs_ConvertToReferenceBits", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityFloat64, "the device has no shaderFloat64");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
-            std::puts("skipped, the device has no shaderFloat64");
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("f64 nan conversions tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

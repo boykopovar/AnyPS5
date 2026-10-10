@@ -6,14 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -293,29 +291,36 @@ void Check(const std::uint32_t (&expected)[Lanes][Checked], bool wholeWave) {
         for (std::uint32_t index = 0; index < Checked; ++index) {
             if (CrossLane[index] && !wholeWave) continue;
             const auto actual = Output[tid * Results + index];
-            Require(actual == expected[tid][index], "program flow wave" + std::to_string(Lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected[tid][index]));
+            Testing::Require(actual == expected[tid][index], "program flow wave" + std::to_string(Lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected[tid][index]));
         }
     }
 }
 
+bool WholeWave(AgcDriver::VulkanDevice& device) {
+    const bool wholeWave = device.Target().subgroupSize >= 32u;
+    if (!wholeWave) std::printf("subgroup size %u cannot hold a wave32, checking only the columns without a wave-wide branch\n", device.Target().subgroupSize);
+    return wholeWave;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const bool wholeWave = device->Target().subgroupSize >= 32u;
-        if (!wholeWave) std::printf("subgroup size %u cannot hold a wave32, checking only the columns without a wave-wide branch\n", device->Target().subgroupSize);
-        Run(*device, Wave32Code, 32, device->ComputeTarget(32));
-        Check(Expected32, wholeWave);
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(Expected64, wholeWave);
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(Expected64, wholeWave);
-        std::puts("scalar program flow tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32{"ScalarProgramFlow_Wave32_BranchesMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool wholeWave = WholeWave(device);
+    Run(device, Wave32Code, 32, device.ComputeTarget(32));
+    Check(Expected32, wholeWave);
+}};
+
+const Testing::Case wave64{"ScalarProgramFlow_Wave64_BranchesMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool wholeWave = WholeWave(device);
+    Run(device, Wave64Code, 64, device.Target());
+    Check(Expected64, wholeWave);
+}};
+
+const Testing::Case wave64OnWave32Target{"ScalarProgramFlow_Wave64OnWave32Target_BranchesMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool wholeWave = WholeWave(device);
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(Expected64, wholeWave);
+}};
+
+} // namespace

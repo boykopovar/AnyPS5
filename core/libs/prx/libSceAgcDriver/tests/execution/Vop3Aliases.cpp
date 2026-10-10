@@ -6,14 +6,14 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -41,7 +41,7 @@ std::uint16_t HalfBits(float value) {
     int exponent = 0;
     const float mantissa = std::frexp(std::fabs(value), &exponent);
     const auto fraction = static_cast<std::uint32_t>(std::ldexp(mantissa, 11));
-    Require(exponent >= -13 && exponent <= 16 && std::ldexp(static_cast<float>(fraction), exponent - 11) == std::fabs(value), "vop3 aliases: a model value is not a normal f16");
+    Testing::Require(exponent >= -13 && exponent <= 16 && std::ldexp(static_cast<float>(fraction), exponent - 11) == std::fabs(value), "vop3 aliases: a model value is not a normal f16");
     return static_cast<std::uint16_t>((std::signbit(value) ? 0x8000u : 0u) | (static_cast<std::uint32_t>(exponent + 14) << 10u) | (fraction & 0x3ffu));
 }
 
@@ -79,6 +79,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
+    FillInput();
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -120,28 +121,19 @@ void Check() {
         };
         const auto where = [&](std::uint32_t result) { return "vop3 aliases: thread " + std::to_string(tid) + " result " + std::to_string(result); };
         for (std::uint32_t j = 0; j < halves.size(); ++j) {
-            Require(Low(out[j]) == halves[j], where(j) + " is " + std::to_string(Low(out[j])) + ", expected " + std::to_string(halves[j]));
+            Testing::Require(Low(out[j]) == halves[j], where(j) + " is " + std::to_string(Low(out[j])) + ", expected " + std::to_string(halves[j]));
         }
         for (std::uint32_t j = 0; j < floats.size(); ++j) {
             const float actual = std::bit_cast<float>(out[halves.size() + j]);
-            Require(actual == floats[j], where(halves.size() + j) + " is " + std::to_string(actual) + ", expected " + std::to_string(floats[j]));
+            Testing::Require(actual == floats[j], where(halves.size() + j) + " is " + std::to_string(actual) + ", expected " + std::to_string(floats[j]));
         }
     }
 }
 
-}
+const Testing::Case vop3Aliases{"Vop3Aliases_F16MinMaxMulAndByteConversions_MatchModel", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device);
-        Check();
-        std::puts("vop3 aliases tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

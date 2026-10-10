@@ -1,10 +1,14 @@
+#include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -15,12 +19,11 @@
 #include <mutex>
 #include <new>
 #include <optional>
-#include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
-#include "SceTypes.hpp"
-#include "prx/libc/include/general/VabiMacros.hpp"
 
 extern "C" {
 AvPlayerInternal* APS5_VABI sceAvPlayerInit(AvPlayerInitData*);
@@ -53,6 +56,10 @@ int APS5_VABI sceAvPlayerClose(AvPlayerInternal*);
 
 namespace {
 
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
 constexpr int Width = 100;
 constexpr int Height = 60;
 constexpr int Pitch = 256;
@@ -71,9 +78,13 @@ constexpr std::int32_t EventReady = 2;
 constexpr std::int32_t EventPlay = 3;
 constexpr std::int32_t EventPause = 4;
 constexpr std::int32_t EventWarning = 0x20;
-const char* const MoviePath = "app0/avplayer.mp4";
+constexpr std::uint32_t SyncModeNone = 1;
+const char* const GuestMount = "/app0";
+const char* const GuestMovie = "/app0/avplayer.mp4";
+const char* const GuestMissingMovie = "/app0/missing.mp4";
+const char* const GuestReplacedMovie = "/app0/replaced.mp4";
 
-constexpr std::array<std::uint8_t, 5986> Movie{
+constexpr std::array<std::uint8_t, 5986> MovieBytes{
     0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
     0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32, 0x61, 0x76, 0x63, 0x31, 0x6d, 0x70, 0x34, 0x31,
     0x00, 0x00, 0x0b, 0x56, 0x6d, 0x6f, 0x6f, 0x76, 0x00, 0x00, 0x00, 0x6c, 0x6d, 0x76, 0x68, 0x64,
@@ -451,19 +462,25 @@ constexpr std::array<std::uint8_t, 5986> Movie{
     0x5b, 0xdc
 };
 
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 int LumaFor(int frame) {
     return 20 + frame * 7;
 }
 
-void WriteMovie() {
-    std::filesystem::create_directories("app0");
-    std::ofstream file(MoviePath, std::ios::binary | std::ios::trunc);
-    file.write(reinterpret_cast<const char*>(Movie.data()), static_cast<std::streamsize>(Movie.size()));
-    Check(static_cast<bool>(file), "cannot write the movie");
+int FrameIndex(std::uint64_t timestamp) {
+    return static_cast<int>((timestamp * FrameRate + 500) / 1000);
+}
+
+bool WaitFor(const std::function<bool()>& condition, int milliseconds = 5000) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (condition()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return condition();
+}
+
+void SleepFor(int milliseconds) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
 struct Block {
@@ -471,70 +488,98 @@ struct Block {
     std::align_val_t alignment;
 };
 
-struct Allocations {
+class AllocationTracker {
+public:
+    AllocationTracker() = default;
+
+    ~AllocationTracker() {
+        for (const auto& [memory, block] : blocks) ::operator delete(memory, block.alignment);
+    }
+
+    AllocationTracker(const AllocationTracker&) = delete;
+    AllocationTracker& operator=(const AllocationTracker&) = delete;
+
+    void* Allocate(std::uint32_t alignment, std::uint32_t size, bool texture) {
+        const auto aligned = static_cast<std::align_val_t>(std::max<std::uint32_t>(alignment, 16));
+        {
+            std::lock_guard lock(mutex);
+            if (texture && textureLimit && ActiveTexturesLocked() >= *textureLimit) return nullptr;
+        }
+        void* memory = ::operator new(size, aligned);
+        std::lock_guard lock(mutex);
+        blocks[memory] = {texture, aligned};
+        if (texture) ++texturesAllocated;
+        return memory;
+    }
+
+    void Release(void* memory, bool texture) {
+        std::align_val_t aligned{};
+        {
+            std::lock_guard lock(mutex);
+            const auto found = blocks.find(memory);
+            if (found == blocks.end() || found->second.texture != texture) {
+                violation = std::string(texture ? "texture" : "memory") + " deallocator received a block its allocator did not hand out";
+                return;
+            }
+            aligned = found->second.alignment;
+            blocks.erase(found);
+        }
+        ::operator delete(memory, aligned);
+    }
+
+    bool Contains(const void* memory, bool texture) {
+        std::lock_guard lock(mutex);
+        const auto found = blocks.find(const_cast<void*>(memory));
+        return found != blocks.end() && found->second.texture == texture;
+    }
+
+    void SetTextureLimit(int limit) {
+        std::lock_guard lock(mutex);
+        textureLimit = limit;
+    }
+
+    int ActiveTextures() {
+        std::lock_guard lock(mutex);
+        return ActiveTexturesLocked();
+    }
+
+    int TexturesAllocated() {
+        std::lock_guard lock(mutex);
+        return texturesAllocated;
+    }
+
+    std::size_t LiveBlocks() {
+        std::lock_guard lock(mutex);
+        return blocks.size();
+    }
+
+    std::string Violation() {
+        std::lock_guard lock(mutex);
+        return violation;
+    }
+
+private:
+    int ActiveTexturesLocked() const {
+        return static_cast<int>(std::count_if(blocks.begin(), blocks.end(), [](const auto& allocation) { return allocation.second.texture; }));
+    }
+
     std::mutex mutex;
     std::map<void*, Block> blocks;
-    int textures = 0;
+    int texturesAllocated = 0;
     std::optional<int> textureLimit;
+    std::string violation;
 };
 
-Allocations allocations;
-
-int ActiveTextureCountLocked() {
-    return static_cast<int>(std::count_if(allocations.blocks.begin(), allocations.blocks.end(), [](const auto& allocation) {
-        return allocation.second.texture;
-    }));
-}
-
-void* Allocate(std::uint32_t alignment, std::uint32_t size, bool texture) {
-    const auto aligned = static_cast<std::align_val_t>(std::max<std::uint32_t>(alignment, 16));
-    {
-        std::lock_guard lock(allocations.mutex);
-        if (texture && allocations.textureLimit && ActiveTextureCountLocked() >= *allocations.textureLimit) return nullptr;
+class EventLog {
+public:
+    void Record(std::int32_t id, std::int32_t source, void* data) {
+        std::lock_guard lock(mutex);
+        if (source != 0 || (id == EventWarning) != (data != nullptr)) {
+            violation = "event " + std::to_string(id) + " arrived from source " + std::to_string(source) + (data ? " with" : " without") + " data";
+            return;
+        }
+        received.emplace_back(id, id == EventWarning ? *static_cast<std::int32_t*>(data) : 0);
     }
-    void* memory = ::operator new(size, aligned);
-    std::lock_guard lock(allocations.mutex);
-    allocations.blocks[memory] = {texture, aligned};
-    if (texture) ++allocations.textures;
-    return memory;
-}
-
-void Release(void* memory, bool texture) {
-    std::align_val_t aligned{};
-    {
-        std::lock_guard lock(allocations.mutex);
-        const auto found = allocations.blocks.find(memory);
-        if (found == allocations.blocks.end() || found->second.texture != texture) std::abort();
-        aligned = found->second.alignment;
-        allocations.blocks.erase(found);
-    }
-    ::operator delete(memory, aligned);
-}
-
-void* APS5_VABI AllocateMemory(void*, std::uint32_t alignment, std::uint32_t size) { return Allocate(alignment, size, false); }
-void APS5_VABI DeallocateMemory(void*, void* memory) { Release(memory, false); }
-void* APS5_VABI AllocateTexture(void*, std::uint32_t alignment, std::uint32_t size) { return Allocate(alignment, size, true); }
-void APS5_VABI DeallocateTexture(void*, void* memory) { Release(memory, true); }
-
-bool IsAllocation(const void* memory, bool texture) {
-    std::lock_guard lock(allocations.mutex);
-    const auto found = allocations.blocks.find(const_cast<void*>(memory));
-    return found != allocations.blocks.end() && found->second.texture == texture;
-}
-
-void SetTextureLimit(std::optional<int> limit) {
-    std::lock_guard lock(allocations.mutex);
-    allocations.textureLimit = limit;
-}
-
-int TextureCount() {
-    std::lock_guard lock(allocations.mutex);
-    return ActiveTextureCountLocked();
-}
-
-struct Events {
-    std::mutex mutex;
-    std::vector<std::pair<std::int32_t, std::int32_t>> received;
 
     bool Seen(std::int32_t id, std::int32_t warning = 0) {
         std::lock_guard lock(mutex);
@@ -545,28 +590,53 @@ struct Events {
         std::lock_guard lock(mutex);
         received.clear();
     }
+
+    std::string Violation() {
+        std::lock_guard lock(mutex);
+        return violation;
+    }
+
+private:
+    std::mutex mutex;
+    std::vector<std::pair<std::int32_t, std::int32_t>> received;
+    std::string violation;
 };
 
+void* APS5_VABI AllocateMemory(void* object, std::uint32_t alignment, std::uint32_t size) {
+    return static_cast<AllocationTracker*>(object)->Allocate(alignment, size, false);
+}
+
+void APS5_VABI DeallocateMemory(void* object, void* memory) {
+    static_cast<AllocationTracker*>(object)->Release(memory, false);
+}
+
+void* APS5_VABI AllocateTexture(void* object, std::uint32_t alignment, std::uint32_t size) {
+    return static_cast<AllocationTracker*>(object)->Allocate(alignment, size, true);
+}
+
+void APS5_VABI DeallocateTexture(void* object, void* memory) {
+    static_cast<AllocationTracker*>(object)->Release(memory, true);
+}
+
 void APS5_VABI OnEvent(void* object, std::int32_t id, std::int32_t source, void* data) {
-    auto* events = static_cast<Events*>(object);
-    if (source != 0 || (id == EventWarning) != (data != nullptr)) std::abort();
-    std::lock_guard lock(events->mutex);
-    events->received.emplace_back(id, id == EventWarning ? *static_cast<std::int32_t*>(data) : 0);
+    static_cast<EventLog*>(object)->Record(id, source, data);
 }
 
 void APS5_VABI OnLog(void*, const char*) {}
 
 struct HostFile {
+    std::filesystem::path movie;
     std::ifstream stream;
     std::uint64_t size = 0;
 };
 
 std::int32_t APS5_VABI OpenFile(void* object, const char* path) {
     auto* file = static_cast<HostFile*>(object);
-    if (std::strcmp(path, "/app0/replaced.mp4") != 0) return -1;
-    file->stream.open(MoviePath, std::ios::binary);
-    file->size = std::filesystem::file_size(MoviePath);
-    return file->stream ? 0 : -1;
+    if (std::strcmp(path, GuestReplacedMovie) != 0) return -1;
+    file->stream.open(file->movie, std::ios::binary);
+    std::error_code error;
+    file->size = std::filesystem::file_size(file->movie, error);
+    return file->stream && !error ? 0 : -1;
 }
 
 std::int32_t APS5_VABI CloseFile(void* object) {
@@ -586,51 +656,123 @@ std::uint64_t APS5_VABI FileSize(void* object) {
     return static_cast<HostFile*>(object)->size;
 }
 
-bool WaitFor(const std::function<bool()>& condition, int milliseconds = 5000) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (condition()) return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+class MovieMount {
+public:
+    MovieMount() : movie(directory.Path() / "avplayer.mp4") {
+        std::ofstream file(movie, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(MovieBytes.data()), static_cast<std::streamsize>(MovieBytes.size()));
+        file.close();
+        Require(static_cast<bool>(file), "write the movie into the temporary app0 directory");
+        AddPathAlias_nid_no_patch(GuestMount, directory.Path().string().c_str());
     }
-    return condition();
-}
 
-AvPlayerInitData InitData(Events* events) {
-    AvPlayerInitData init{};
-    init.memory_replacement = {nullptr, AllocateMemory, DeallocateMemory, AllocateTexture, DeallocateTexture};
-    init.event_replacement = {events, events ? OnEvent : nullptr};
-    init.num_output_video_framebuffers = 4;
-    init.default_language = "eng";
-    return init;
-}
+    ~MovieMount() {
+        RemovePathAlias_nid_no_patch(GuestMount);
+    }
 
-int FrameIndex(std::uint64_t timestamp) {
-    return static_cast<int>((timestamp * FrameRate + 500) / 1000);
-}
+    MovieMount(const MovieMount&) = delete;
+    MovieMount& operator=(const MovieMount&) = delete;
+
+    const std::filesystem::path& MoviePath() const noexcept {
+        return movie;
+    }
+
+private:
+    Testing::TemporaryDirectory directory;
+    std::filesystem::path movie;
+};
+
+class Harness {
+public:
+    Harness() = default;
+
+    ~Harness() {
+        if (player != nullptr) sceAvPlayerClose(player);
+    }
+
+    Harness(const Harness&) = delete;
+    Harness& operator=(const Harness&) = delete;
+
+    AvPlayerInitData InitData(bool withEvents = true) {
+        AvPlayerInitData init{};
+        init.memory_replacement = {&allocations, AllocateMemory, DeallocateMemory, AllocateTexture, DeallocateTexture};
+        init.event_replacement = {withEvents ? &events : nullptr, withEvents ? OnEvent : nullptr};
+        init.num_output_video_framebuffers = 4;
+        init.default_language = "eng";
+        return init;
+    }
+
+    AvPlayerInternal* Open(AvPlayerInitData init) {
+        player = sceAvPlayerInit(&init);
+        Require(player != nullptr, "sceAvPlayerInit returns a player");
+        return player;
+    }
+
+    AvPlayerInternal* Adopt(AvPlayerInternal* handle) {
+        player = handle;
+        return player;
+    }
+
+    int Close() {
+        const int result = sceAvPlayerClose(player);
+        player = nullptr;
+        return result;
+    }
+
+    void Finish() {
+        if (player != nullptr) RequireEqual(Close(), 0, "close the player");
+        RequireEqual(allocations.Violation(), std::string(), "allocator callback contract");
+        RequireEqual(events.Violation(), std::string(), "event callback contract");
+    }
+
+    AllocationTracker& Allocations() noexcept {
+        return allocations;
+    }
+
+    EventLog& Events() noexcept {
+        return events;
+    }
+
+    const std::filesystem::path& MoviePath() const noexcept {
+        return mount.MoviePath();
+    }
+
+private:
+    MovieMount mount;
+    AllocationTracker allocations;
+    EventLog events;
+    AvPlayerInternal* player = nullptr;
+};
 
 void CheckVideoPicture(const AvPlayerFrameInfoEx& info) {
     const auto& video = info.details.video;
-    Check(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected frame geometry");
-    Check(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected crop offsets");
-    Check(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8, "unexpected bit depth");
-    Check(std::fabs(video.aspect_ratio - static_cast<float>(Width) / Height) < 0.01f, "unexpected aspect ratio");
-    Check(std::memcmp(video.language_code, "eng", 4) == 0, "missing video language");
+    RequireEqual(video.width, 112u, "frame width");
+    RequireEqual(video.height, 64u, "frame height");
+    RequireEqual(video.pitch, static_cast<std::uint32_t>(Pitch), "frame pitch");
+    RequireEqual(video.crop_left_offset, 0u, "frame left crop");
+    RequireEqual(video.crop_top_offset, 0u, "frame top crop");
+    RequireEqual(video.crop_right_offset, static_cast<std::uint32_t>(Pitch - Width), "frame right crop");
+    RequireEqual(video.crop_bottom_offset, 4u, "frame bottom crop");
+    RequireEqual(video.luma_bit_depth, 8, "frame luma bit depth");
+    RequireEqual(video.chroma_bit_depth, 8, "frame chroma bit depth");
+    Require(std::fabs(video.aspect_ratio - static_cast<float>(Width) / Height) < 0.01f, "frame aspect ratio is 100:60, got " + std::to_string(video.aspect_ratio));
+    Require(std::memcmp(video.language_code, "eng", 4) == 0, "frame video language is eng");
     const int index = FrameIndex(info.timestamp);
-    Check(index >= 0 && index < FrameCount, "frame timestamp out of range");
+    Require(index >= 0 && index < FrameCount, "frame timestamp " + std::to_string(info.timestamp) + " is inside the movie");
     const auto* luma = static_cast<const std::uint8_t*>(info.p_data);
     const auto* chroma = luma + Pitch * 64;
     for (const int row : {2, 30, 57, 63}) {
-        Check(std::abs(luma[row * Pitch + 10] - LumaFor(index)) <= 6, "left luma mismatch for frame " + std::to_string(index));
-        Check(std::abs(luma[row * Pitch + 90] - (255 - LumaFor(index))) <= 6, "right luma mismatch for frame " + std::to_string(index));
+        Require(std::abs(luma[row * Pitch + 10] - LumaFor(index)) <= 6, "left luma of frame " + std::to_string(index) + " row " + std::to_string(row));
+        Require(std::abs(luma[row * Pitch + 90] - (255 - LumaFor(index))) <= 6, "right luma of frame " + std::to_string(index) + " row " + std::to_string(row));
     }
     for (const int row : {0, 15, 31}) {
-        Check(std::abs(chroma[row * Pitch + 20] - 128) <= 6 && std::abs(chroma[row * Pitch + 21] - 128) <= 6, "chroma mismatch");
+        Require(std::abs(chroma[row * Pitch + 20] - 128) <= 6 && std::abs(chroma[row * Pitch + 21] - 128) <= 6, "neutral chroma of frame " + std::to_string(index) + " row " + std::to_string(row));
     }
 }
 
-void CheckVideoFrame(const AvPlayerFrameInfoEx& info) {
+void CheckVideoFrame(const AvPlayerFrameInfoEx& info, AllocationTracker& allocations) {
     CheckVideoPicture(info);
-    Check(IsAllocation(info.p_data, true), "video frame is not a texture allocation");
+    Require(allocations.Contains(info.p_data, true), "video frame lives in a texture allocation");
 }
 
 int Loudest(const AvPlayerFrameInfo& info) {
@@ -640,417 +782,853 @@ int Loudest(const AvPlayerFrameInfo& info) {
     return loudest;
 }
 
-void CheckAudioFrame(const AvPlayerFrameInfo& info, std::uint16_t channels, const char* language) {
-    Check(info.details.audio.channel_count == channels && info.details.audio.sample_rate == SampleRate, "unexpected audio format");
-    Check(info.details.audio.size > 0 && info.details.audio.size <= 1024u * channels * 2 && info.details.audio.size % (channels * 2u) == 0, "unexpected audio size");
-    Check(std::memcmp(info.details.audio.language_code, language, 4) == 0, "unexpected audio language");
-    Check(IsAllocation(info.p_data, false), "audio frame is not a plain allocation");
+void CheckAudioFrame(const AvPlayerFrameInfo& info, std::uint16_t channels, const char* language, AllocationTracker& allocations) {
+    const auto& audio = info.details.audio;
+    RequireEqual(audio.channel_count, channels, "audio channel count");
+    RequireEqual(audio.sample_rate, static_cast<std::uint32_t>(SampleRate), "audio sample rate");
+    Require(audio.size > 0 && audio.size <= 1024u * channels * 2 && audio.size % (channels * 2u) == 0, "audio frame size " + std::to_string(audio.size) + " holds whole samples of at most 1024 frames");
+    Require(std::memcmp(audio.language_code, language, 4) == 0, std::string("audio language is ") + language);
+    Require(allocations.Contains(info.p_data, false), "audio frame lives in a plain allocation");
 }
 
-void CheckEnglishAudio(const AvPlayerFrameInfo& info) {
-    CheckAudioFrame(info, 2, "eng");
-    Check(Loudest(info) <= 16, "the English track is not silent");
+void CheckEnglishAudio(const AvPlayerFrameInfo& info, AllocationTracker& allocations) {
+    CheckAudioFrame(info, 2, "eng", allocations);
+    Require(Loudest(info) <= 16, "the English track is silent, loudest sample " + std::to_string(Loudest(info)));
 }
 
-void CheckStreamInfo(AvPlayerInternal* player) {
-    Check(sceAvPlayerStreamCount(player) == 3, "unexpected stream count");
-    for (std::uint32_t index = 0; index < 3; ++index) {
-        AvPlayerStreamInfo info{};
-        Check(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "stream info failed");
-        Check(info.duration >= 950 && info.duration <= 1100, "unexpected stream duration");
-        if (index == VideoStream) {
-            Check(info.type == 1, "video stream type");
-            Check(info.details.video.width == 112 && info.details.video.height == 64, "unexpected video stream size");
-            Check(std::strcmp(info.details.video.language_code, "eng") == 0, "unexpected video language");
-        } else {
-            const bool english = index == EnglishAudioStream;
-            Check(info.type == 0, "audio stream type");
-            Check(info.details.audio.channel_count == (english ? 2 : 1) && info.details.audio.sample_rate == SampleRate, "unexpected audio stream");
-            Check(std::strcmp(info.details.audio.language_code, english ? "eng" : "fra") == 0, "unexpected audio language");
-        }
+AvPlayerInternal* OpenReady(Harness& harness, bool withPostInit) {
+    auto* player = harness.Open(harness.InitData());
+    if (withPostInit) {
+        AvPlayerPostInitData post{};
+        post.demux_video_buffer_size = 64 * 1024;
+        RequireEqual(sceAvPlayerPostInit(player, &post), 0, "post init with a 64 KiB demux video buffer");
     }
-    AvPlayerStreamInfo unused{};
-    Check(sceAvPlayerGetStreamInfo(player, 3, &unused) == OperationFailed, "invalid stream accepted");
-    Check(sceAvPlayerGetStreamInfo(player, 0, nullptr) == InvalidParams, "null stream info accepted");
+    RequireEqual(sceAvPlayerAddSource(player, GuestMovie), 0, "add the movie source");
+    Require(WaitFor([&] { return harness.Events().Seen(EventReady); }), "ready event after adding the movie");
+    return player;
 }
 
-void CheckStreamInfoEx(AvPlayerInternal* player) {
-    for (std::uint32_t index = 0; index < 3; ++index) {
-        AvPlayerStreamInfoEx info{};
-        info.this_size = sizeof(info);
-        Check(sceAvPlayerGetStreamInfoEx(player, index, &info) == 0, "extended stream info failed");
-        Check(info.this_size == sizeof(info), "extended stream info size overwritten");
-        Check(info.duration >= 950 && info.duration <= 1100, "unexpected extended stream duration");
-        if (index == VideoStream) {
-            const auto& video = info.details.video;
-            Check(info.type == 1, "extended video stream type");
-            Check(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected extended video geometry");
-            Check(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected extended crop offsets");
-            Check(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8 && !video.video_full_range_flag, "unexpected extended video format");
-            Check(std::fabs(video.aspect_ratio - static_cast<float>(Width) / Height) < 0.01f, "unexpected extended aspect ratio");
-            Check(std::memcmp(video.language_code, "eng", 4) == 0, "unexpected extended video language");
-        } else {
-            const bool english = index == EnglishAudioStream;
-            const auto& audio = info.details.audio;
-            Check(info.type == 0, "extended audio stream type");
-            Check(audio.channel_count == (english ? 2 : 1) && audio.sample_rate == SampleRate, "unexpected extended audio stream");
-            Check(std::memcmp(audio.language_code, english ? "eng" : "fra", 4) == 0, "unexpected extended audio language");
-        }
-    }
-    AvPlayerStreamInfoEx unused{};
-    Check(sceAvPlayerGetStreamInfoEx(player, 3, &unused) == OperationFailed, "invalid extended stream accepted");
-    Check(sceAvPlayerGetStreamInfoEx(player, 0, nullptr) == InvalidParams, "null extended stream info accepted");
-    Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
+void EnableVideoAndEnglish(AvPlayerInternal* player) {
+    RequireEqual(sceAvPlayerEnableStream(player, VideoStream), 0, "enable the video stream");
+    RequireEqual(sceAvPlayerEnableStream(player, EnglishAudioStream), 0, "enable the English audio stream");
 }
 
-void TestPlayback() {
-    Events events;
-    AvPlayerInitData init = InitData(&events);
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    AvPlayerPostInitData post{};
-    post.demux_video_buffer_size = 64 * 1024;
-    Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
-    Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
-    Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
-    Check(!sceAvPlayerIsActive(player), "active without a source");
-    Check(sceAvPlayerAddSource(player, "/app0/missing.mp4") == OperationFailed, "missing file accepted");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == OperationFailed, "second source accepted");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
+AvPlayerInternal* OpenPlaying(Harness& harness) {
+    auto* player = OpenReady(harness, true);
+    EnableVideoAndEnglish(player);
+    RequireEqual(sceAvPlayerStart(player), 0, "start playback");
+    Require(WaitFor([&] { return harness.Events().Seen(EventPlay); }), "play event after start");
+    return player;
+}
 
-    CheckStreamInfo(player);
-    Check(sceAvPlayerEnableStream(player, 7) == OperationFailed, "invalid stream enabled");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerIsActive(player), "not active before start");
-    Check(sceAvPlayerPause(player) == OperationFailed, "pause accepted before start");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
-
+bool PlayFrames(Harness& harness, AvPlayerInternal* player) {
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
     int frames = 0;
     int sounds = 0;
     std::uint64_t last = 0;
-    Check(WaitFor([&] {
+    return WaitFor([&] {
         if (sceAvPlayerGetAudioData(player, &sound)) {
-            CheckEnglishAudio(sound);
+            CheckEnglishAudio(sound, harness.Allocations());
             ++sounds;
         }
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
-            CheckVideoFrame(frame);
-            Check(frames == 0 || frame.timestamp > last, "video timestamps not increasing");
+            CheckVideoFrame(frame, harness.Allocations());
+            Require(frames == 0 || frame.timestamp > last, "video timestamp " + std::to_string(frame.timestamp) + " follows " + std::to_string(last));
             last = frame.timestamp;
             ++frames;
         }
         return frames >= 8 && sounds >= 8;
-    }), "playback stalled");
-    Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
-    Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
+    });
+}
 
-    Check(sceAvPlayerPause(player) == 0, "pause failed");
-    Check(WaitFor([&] { return events.Seen(EventPause); }), "pause event missing");
-    const auto paused = sceAvPlayerCurrentTime(player);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered while paused");
-    Check(sceAvPlayerCurrentTime(player) == paused, "clock moved while paused");
-    Check(sceAvPlayerIsActive(player), "inactive while paused");
-    Check(sceAvPlayerJumpToTime(player, 300) == 0, "jump while paused failed");
-    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing while paused");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame at a jump while paused");
-    CheckVideoFrame(frame);
-    Check(frame.timestamp >= 300 && frame.timestamp <= 367, "paused jump landed at " + std::to_string(frame.timestamp));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered after the frame at a paused jump");
-    events.Clear();
-    Check(sceAvPlayerResume(player) == 0, "resume failed");
-    Check(sceAvPlayerResume(player) == OperationFailed, "resume accepted while playing");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "resume event missing");
+AvPlayerInternal* OpenPlayed(Harness& harness) {
+    auto* player = OpenPlaying(harness);
+    Require(PlayFrames(harness, player), "eight video and eight audio frames are delivered");
+    return player;
+}
 
-    Check(sceAvPlayerJumpToTime(player, 700) == 0, "jump failed");
-    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the jump");
-    CheckVideoFrame(frame);
-    Check(frame.timestamp >= 700 && frame.timestamp <= 767, "jump landed at " + std::to_string(frame.timestamp));
+AvPlayerInternal* OpenPaused(Harness& harness) {
+    auto* player = OpenPlayed(harness);
+    RequireEqual(sceAvPlayerPause(player), 0, "pause playback");
+    Require(WaitFor([&] { return harness.Events().Seen(EventPause); }), "pause event after pausing");
+    return player;
+}
 
-    events.Clear();
+bool DataDelivered(AvPlayerInternal* player) {
+    AvPlayerFrameInfoEx frame{};
+    AvPlayerFrameInfo sound{};
+    const bool video = sceAvPlayerGetVideoDataEx(player, &frame) != 0;
+    const bool audio = sceAvPlayerGetAudioData(player, &sound) != 0;
+    return video || audio;
+}
+
+AvPlayerFrameInfoEx NextFrame(AvPlayerInternal* player, const std::string& description) {
+    AvPlayerFrameInfoEx frame{};
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "a video frame " + description);
+    return frame;
+}
+
+AvPlayerFrameInfoEx JumpAndWait(Harness& harness, AvPlayerInternal* player, std::uint64_t target) {
+    RequireEqual(sceAvPlayerJumpToTime(player, target), 0, "jump to " + std::to_string(target) + " ms");
+    Require(WaitFor([&] { return harness.Events().Seen(EventWarning, JumpComplete); }), "jump completion warning after jumping to " + std::to_string(target) + " ms");
+    return NextFrame(player, "after jumping to " + std::to_string(target) + " ms");
+}
+
+struct Rewind {
+    std::uint64_t forward;
+    std::uint64_t rewound;
+    bool delivered;
+};
+
+Rewind RewindFromJump(Harness& harness, AvPlayerInternal* player) {
+    JumpAndWait(harness, player, 700);
+    harness.Events().Clear();
     const auto forward = sceAvPlayerCurrentTime(player);
-    Check(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
-    const auto rewound = sceAvPlayerCurrentTime(player);
-    Check(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));
-    Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "forward trick speed rejected after reverse");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after reverse");
-    CheckVideoFrame(frame);
-    Check(frame.timestamp + 100 >= rewound && frame.timestamp <= rewound + 100, "playback resumed at " + std::to_string(frame.timestamp) + " after rewinding to " + std::to_string(rewound));
-    Check(!events.Seen(EventWarning, JumpComplete), "rewinding reported a jump");
+    RequireEqual(sceAvPlayerSetTrickSpeed(player, -100), 0, "reverse trick speed");
+    SleepFor(200);
+    const bool delivered = DataDelivered(player);
+    return {forward, sceAvPlayerCurrentTime(player), delivered};
+}
 
-    Check(sceAvPlayerSetAvSyncMode(player, 2) == InvalidParams, "invalid sync mode accepted");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
-    Check(WaitFor([&] {
+std::uint64_t PlayToEnd(Harness& harness, AvPlayerInternal* player) {
+    RequireEqual(sceAvPlayerSetAvSyncMode(player, SyncModeNone), 0, "disable audio/video sync");
+    AvPlayerFrameInfoEx frame{};
+    AvPlayerFrameInfo sound{};
+    std::uint64_t last = 0;
+    Require(WaitFor([&] {
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
-            CheckVideoFrame(frame);
+            CheckVideoFrame(frame, harness.Allocations());
             last = frame.timestamp;
         }
-        while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound);
+        while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound, harness.Allocations());
         return !sceAvPlayerIsActive(player);
-    }), "playback never ended");
-    Check(FrameIndex(last) >= FrameCount - 2, "last frame missing");
-    Check(WaitFor([&] { return events.Seen(EventStop); }), "end of stream stop event missing");
-    Check(sceAvPlayerCurrentTime(player) >= 950, "clock not at the end");
-    Check(sceAvPlayerStop(player) == 0, "stop after the end failed");
+    }), "playback reaches the end of the movie");
+    return last;
+}
 
-    events.Clear();
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "looping rejected");
-    Check(sceAvPlayerStart(player) == 0, "restart failed");
+AvPlayerInternal* OpenEnded(Harness& harness) {
+    auto* player = OpenPlayed(harness);
+    PlayToEnd(harness, player);
+    return player;
+}
+
+bool RestartLooping(Harness& harness, AvPlayerInternal* player) {
+    RequireEqual(sceAvPlayerStop(player), 0, "stop after the end of the movie");
+    harness.Events().Clear();
+    RequireEqual(sceAvPlayerSetLooping(player, 1), 0, "enable looping");
+    RequireEqual(sceAvPlayerStart(player), 0, "restart playback");
+    AvPlayerFrameInfoEx frame{};
+    AvPlayerFrameInfo sound{};
     bool wrapped = false;
-    last = 0;
-    frames = 0;
-    Check(WaitFor([&] {
-        while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound);
+    std::uint64_t last = 0;
+    int frames = 0;
+    return WaitFor([&] {
+        while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound, harness.Allocations());
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
-            CheckVideoFrame(frame);
+            CheckVideoFrame(frame, harness.Allocations());
             if (frames > 0 && frame.timestamp < last) wrapped = true;
             last = frame.timestamp;
             ++frames;
         }
         return wrapped && frames > FrameCount + 5;
-    }), "looping never wrapped");
-    Check(events.Seen(EventWarning, LoopingBack), "looping warning missing");
-    Check(sceAvPlayerIsActive(player), "looping player went inactive");
-    Check(sceAvPlayerStop(player) == 0, "stop failed");
-    Check(sceAvPlayerStop(player) == OperationFailed, "second stop accepted");
-    Check(!sceAvPlayerIsActive(player), "active after stop");
-    Check(WaitFor([&] { return events.Seen(EventStop); }), "stop event missing");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-    Check(sceAvPlayerClose(nullptr) == InvalidParams, "null close accepted");
-    std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "allocations leaked");
-    Check(allocations.textures >= 4, "video buffers not allocated as textures");
+    });
 }
 
-void TestChangeStream() {
-    Events events;
-    AvPlayerInitData init = InitData(&events);
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == OperationFailed, "stream changed without a source");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
-    Check(sceAvPlayerChangeStream(nullptr, EnglishAudioStream, FrenchAudioStream) == InvalidParams, "null player accepted");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerChangeStream(player, VideoStream, FrenchAudioStream) == OperationFailed, "video changed to audio");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, 9) == OperationFailed, "changed to a missing stream");
-    Check(sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream) == OperationFailed, "changed from a disabled stream");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == 0, "change before start failed");
-    Check(sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream) == 0, "change back before start failed");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
+void CheckStreamInfo(const AvPlayerStreamInfo& info, std::uint32_t index) {
+    const auto stream = " of stream " + std::to_string(index);
+    Require(info.duration >= 950 && info.duration <= 1100, "duration" + stream + " is about one second, got " + std::to_string(info.duration));
+    if (index == VideoStream) {
+        RequireEqual(info.type, 1u, "type" + stream);
+        RequireEqual(info.details.video.width, 112u, "width" + stream);
+        RequireEqual(info.details.video.height, 64u, "height" + stream);
+        RequireEqual(std::string(info.details.video.language_code), std::string("eng"), "language" + stream);
+        return;
+    }
+    const bool english = index == EnglishAudioStream;
+    RequireEqual(info.type, 0u, "type" + stream);
+    RequireEqual(info.details.audio.channel_count, static_cast<std::uint16_t>(english ? 2 : 1), "channel count" + stream);
+    RequireEqual(info.details.audio.sample_rate, static_cast<std::uint32_t>(SampleRate), "sample rate" + stream);
+    RequireEqual(std::string(info.details.audio.language_code), std::string(english ? "eng" : "fra"), "language" + stream);
+}
 
+void CheckStreamInfoEx(const AvPlayerStreamInfoEx& info, std::uint32_t index) {
+    const auto stream = " of extended stream " + std::to_string(index);
+    RequireEqual(info.this_size, sizeof(AvPlayerStreamInfoEx), "this_size" + stream + " is preserved");
+    Require(info.duration >= 950 && info.duration <= 1100, "duration" + stream + " is about one second, got " + std::to_string(info.duration));
+    if (index == VideoStream) {
+        const auto& video = info.details.video;
+        RequireEqual(info.type, 1u, "type" + stream);
+        RequireEqual(video.width, 112u, "width" + stream);
+        RequireEqual(video.height, 64u, "height" + stream);
+        RequireEqual(video.pitch, static_cast<std::uint32_t>(Pitch), "pitch" + stream);
+        RequireEqual(video.crop_left_offset, 0u, "left crop" + stream);
+        RequireEqual(video.crop_top_offset, 0u, "top crop" + stream);
+        RequireEqual(video.crop_right_offset, static_cast<std::uint32_t>(Pitch - Width), "right crop" + stream);
+        RequireEqual(video.crop_bottom_offset, 4u, "bottom crop" + stream);
+        RequireEqual(video.luma_bit_depth, 8, "luma bit depth" + stream);
+        RequireEqual(video.chroma_bit_depth, 8, "chroma bit depth" + stream);
+        Require(!video.video_full_range_flag, "limited range" + stream);
+        Require(std::fabs(video.aspect_ratio - static_cast<float>(Width) / Height) < 0.01f, "aspect ratio" + stream + " is 100:60, got " + std::to_string(video.aspect_ratio));
+        Require(std::memcmp(video.language_code, "eng", 4) == 0, "language" + stream + " is eng");
+        return;
+    }
+    const bool english = index == EnglishAudioStream;
+    const auto& audio = info.details.audio;
+    RequireEqual(info.type, 0u, "type" + stream);
+    RequireEqual(audio.channel_count, static_cast<std::uint16_t>(english ? 2 : 1), "channel count" + stream);
+    RequireEqual(audio.sample_rate, static_cast<std::uint32_t>(SampleRate), "sample rate" + stream);
+    Require(std::memcmp(audio.language_code, english ? "eng" : "fra", 4) == 0, "language" + stream + " is " + (english ? "eng" : "fra"));
+}
+
+const Case postInitValid{"PostInit_ValidData_Succeeds", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+    AvPlayerPostInitData post{};
+    post.demux_video_buffer_size = 64 * 1024;
+
+    const int result = sceAvPlayerPostInit(player, &post);
+
+    RequireEqual(result, 0, "post init with a 64 KiB demux video buffer");
+    harness.Finish();
+}};
+
+const Case postInitNull{"PostInit_NullData_FailsWithInvalidParams", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+
+    const int result = sceAvPlayerPostInit(player, nullptr);
+
+    RequireEqual(result, InvalidParams, "post init with null data");
+    harness.Finish();
+}};
+
+const Case streamCountWithoutSource{"StreamCount_WithoutSource_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+
+    const int result = sceAvPlayerStreamCount(player);
+
+    RequireEqual(result, OperationFailed, "stream count without a source");
+    harness.Finish();
+}};
+
+const Case isActiveWithoutSource{"IsActive_WithoutSource_ReturnsFalse", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+
+    const bool active = sceAvPlayerIsActive(player) != 0;
+
+    Require(!active, "a player without a source is inactive");
+    harness.Finish();
+}};
+
+const Case addSourceMissing{"AddSource_MissingFile_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+
+    const int result = sceAvPlayerAddSource(player, GuestMissingMovie);
+
+    RequireEqual(result, OperationFailed, "add a missing file");
+    harness.Finish();
+}};
+
+const Case addSourceExisting{"AddSource_ExistingFile_ReportsReady", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+
+    const int result = sceAvPlayerAddSource(player, GuestMovie);
+
+    RequireEqual(result, 0, "add the movie source");
+    Require(WaitFor([&] { return harness.Events().Seen(EventReady); }), "ready event after adding the movie");
+    harness.Finish();
+}};
+
+const Case addSourceSecond{"AddSource_SecondSource_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+    RequireEqual(sceAvPlayerAddSource(player, GuestMovie), 0, "add the first source");
+
+    const int result = sceAvPlayerAddSource(player, GuestMovie);
+
+    RequireEqual(result, OperationFailed, "add a second source");
+    harness.Finish();
+}};
+
+const Case streamInfoReady{"GetStreamInfo_ReadySource_DescribesVideoEnglishAndFrenchStreams", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, true);
+
+    RequireEqual(sceAvPlayerStreamCount(player), 3, "stream count of the movie");
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        AvPlayerStreamInfo info{};
+        RequireEqual(sceAvPlayerGetStreamInfo(player, index, &info), 0, "stream info of stream " + std::to_string(index));
+        CheckStreamInfo(info, index);
+    }
+    harness.Finish();
+}};
+
+const Case streamInfoInvalid{"GetStreamInfo_InvalidArguments_Fail", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, true);
+    AvPlayerStreamInfo info{};
+
+    const int missingStream = sceAvPlayerGetStreamInfo(player, 3, &info);
+    const int nullInfo = sceAvPlayerGetStreamInfo(player, 0, nullptr);
+
+    RequireEqual(missingStream, OperationFailed, "stream info of stream 3");
+    RequireEqual(nullInfo, InvalidParams, "stream info into a null pointer");
+    harness.Finish();
+}};
+
+const Case enableInvalidStream{"EnableStream_InvalidIndex_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, true);
+
+    const int result = sceAvPlayerEnableStream(player, 7);
+
+    RequireEqual(result, OperationFailed, "enable stream 7");
+    harness.Finish();
+}};
+
+const Case enableStreams{"EnableStream_VideoAndEnglishAudio_ActivatesPlayerBeforeStart", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, true);
+
+    const int video = sceAvPlayerEnableStream(player, VideoStream);
+    const int audio = sceAvPlayerEnableStream(player, EnglishAudioStream);
+
+    RequireEqual(video, 0, "enable the video stream");
+    RequireEqual(audio, 0, "enable the English audio stream");
+    Require(sceAvPlayerIsActive(player) != 0, "a ready player with enabled streams is active before start");
+    harness.Finish();
+}};
+
+const Case pauseBeforeStart{"Pause_BeforeStart_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, true);
+    EnableVideoAndEnglish(player);
+
+    const int result = sceAvPlayerPause(player);
+
+    RequireEqual(result, OperationFailed, "pause before start");
+    harness.Finish();
+}};
+
+const Case start{"Start_EnabledStreams_PlaysSilentEnglishAudioAndIncreasingVideo", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, true);
+    EnableVideoAndEnglish(player);
+
+    const int result = sceAvPlayerStart(player);
+
+    RequireEqual(result, 0, "start playback");
+    Require(WaitFor([&] { return harness.Events().Seen(EventPlay); }), "play event after start");
+    Require(PlayFrames(harness, player), "eight video and eight audio frames are delivered");
+    Require(sceAvPlayerCurrentTime(player) > 0, "the playback clock runs");
+    harness.Finish();
+}};
+
+const Case trickSpeed{"SetTrickSpeed_ZeroOrNormal_RejectsZeroAndAcceptsNormal", [] {
+    Harness harness;
+    auto* player = OpenPlayed(harness);
+
+    const int zero = sceAvPlayerSetTrickSpeed(player, 0);
+    const int normal = sceAvPlayerSetTrickSpeed(player, 100);
+
+    RequireEqual(zero, InvalidParams, "trick speed 0");
+    RequireEqual(normal, 0, "trick speed 100");
+    harness.Finish();
+}};
+
+const Case pause{"Pause_Playing_FreezesDataAndClockButStaysActive", [] {
+    Harness harness;
+    auto* player = OpenPlayed(harness);
+
+    const int result = sceAvPlayerPause(player);
+
+    RequireEqual(result, 0, "pause playback");
+    Require(WaitFor([&] { return harness.Events().Seen(EventPause); }), "pause event after pausing");
+    const auto paused = sceAvPlayerCurrentTime(player);
+    SleepFor(100);
+    Require(!DataDelivered(player), "no audio or video is delivered while paused");
+    RequireEqual(sceAvPlayerCurrentTime(player), paused, "clock while paused");
+    Require(sceAvPlayerIsActive(player) != 0, "a paused player is active");
+    harness.Finish();
+}};
+
+const Case pausedJump{"JumpToTime_Paused_DeliversOnlyTheFrameAtTarget", [] {
+    Harness harness;
+    auto* player = OpenPaused(harness);
+
+    const auto frame = JumpAndWait(harness, player, 300);
+
+    CheckVideoFrame(frame, harness.Allocations());
+    Require(frame.timestamp >= 300 && frame.timestamp <= 367, "paused jump to 300 ms landed at " + std::to_string(frame.timestamp));
+    SleepFor(100);
+    Require(!DataDelivered(player), "no audio or video after the frame at a paused jump");
+    harness.Finish();
+}};
+
+const Case resume{"Resume_Paused_ResumesOnceAndReportsPlay", [] {
+    Harness harness;
+    auto* player = OpenPaused(harness);
+    harness.Events().Clear();
+
+    const int first = sceAvPlayerResume(player);
+    const int second = sceAvPlayerResume(player);
+
+    RequireEqual(first, 0, "resume playback");
+    RequireEqual(second, OperationFailed, "resume while playing");
+    Require(WaitFor([&] { return harness.Events().Seen(EventPlay); }), "play event after resuming");
+    harness.Finish();
+}};
+
+const Case playingJump{"JumpToTime_Playing_DeliversFrameAtTarget", [] {
+    Harness harness;
+    auto* player = OpenPlayed(harness);
+
+    const auto frame = JumpAndWait(harness, player, 700);
+
+    CheckVideoFrame(frame, harness.Allocations());
+    Require(frame.timestamp >= 700 && frame.timestamp <= 767, "jump to 700 ms landed at " + std::to_string(frame.timestamp));
+    harness.Finish();
+}};
+
+const Case reverse{"SetTrickSpeed_ReverseThenForward_RewindsAndResumesWithoutJump", [] {
+    Harness harness;
+    auto* player = OpenPlayed(harness);
+
+    const auto rewind = RewindFromJump(harness, player);
+
+    Require(!rewind.delivered, "no audio or video is delivered in reverse");
+    Require(rewind.rewound + 150 <= rewind.forward, "clock ran backwards from " + std::to_string(rewind.forward) + " to " + std::to_string(rewind.rewound));
+    RequireEqual(sceAvPlayerSetTrickSpeed(player, 100), 0, "forward trick speed after reverse");
+    const auto frame = NextFrame(player, "after reverse playback");
+    CheckVideoFrame(frame, harness.Allocations());
+    Require(frame.timestamp + 100 >= rewind.rewound && frame.timestamp <= rewind.rewound + 100, "playback resumed at " + std::to_string(frame.timestamp) + " after rewinding to " + std::to_string(rewind.rewound));
+    Require(!harness.Events().Seen(EventWarning, JumpComplete), "rewinding reports no jump completion");
+    harness.Finish();
+}};
+
+const Case syncMode{"SetAvSyncMode_UnknownOrNone_RejectsUnknownAndAcceptsNone", [] {
+    Harness harness;
+    auto* player = OpenPlaying(harness);
+
+    const int unknown = sceAvPlayerSetAvSyncMode(player, 2);
+    const int none = sceAvPlayerSetAvSyncMode(player, SyncModeNone);
+
+    RequireEqual(unknown, InvalidParams, "sync mode 2");
+    RequireEqual(none, 0, "sync mode 1");
+    harness.Finish();
+}};
+
+const Case playToEnd{"Playback_UnsyncedToEnd_StopsAfterFinalFrame", [] {
+    Harness harness;
+    auto* player = OpenPlayed(harness);
+
+    const auto last = PlayToEnd(harness, player);
+
+    Require(FrameIndex(last) >= FrameCount - 2, "last delivered frame " + std::to_string(FrameIndex(last)) + " is one of the final frames");
+    Require(WaitFor([&] { return harness.Events().Seen(EventStop); }), "stop event at the end of the stream");
+    Require(sceAvPlayerCurrentTime(player) >= 950, "clock at the end is at least 950 ms, got " + std::to_string(sceAvPlayerCurrentTime(player)));
+    RequireEqual(sceAvPlayerStop(player), 0, "stop after the end of the movie");
+    harness.Finish();
+}};
+
+const Case looping{"SetLooping_RestartAfterEnd_LoopsUntilStopped", [] {
+    Harness harness;
+    auto* player = OpenEnded(harness);
+
+    const bool wrapped = RestartLooping(harness, player);
+
+    Require(wrapped, "looping playback wraps to the start");
+    Require(harness.Events().Seen(EventWarning, LoopingBack), "looping back warning after wrapping");
+    Require(sceAvPlayerIsActive(player) != 0, "a looping player stays active");
+    RequireEqual(sceAvPlayerStop(player), 0, "stop looping playback");
+    RequireEqual(sceAvPlayerStop(player), OperationFailed, "second stop");
+    Require(!sceAvPlayerIsActive(player), "a stopped player is inactive");
+    Require(WaitFor([&] { return harness.Events().Seen(EventStop); }), "stop event after stopping");
+    harness.Finish();
+}};
+
+const Case closeReleases{"Close_AfterPlayback_ReleasesEveryAllocation", [] {
+    Harness harness;
+    OpenPlayed(harness);
+
+    const int result = harness.Close();
+
+    RequireEqual(result, 0, "close after playback");
+    RequireEqual(harness.Allocations().LiveBlocks(), std::size_t{0}, "allocations alive after close");
+    Require(harness.Allocations().TexturesAllocated() >= 4, "at least four video buffers were texture allocations, got " + std::to_string(harness.Allocations().TexturesAllocated()));
+    harness.Finish();
+}};
+
+const Case closeNull{"Close_NullPlayer_FailsWithInvalidParams", [] {
+    const int result = sceAvPlayerClose(nullptr);
+
+    RequireEqual(result, InvalidParams, "close a null player");
+}};
+
+AvPlayerInternal* OpenChangeReady(Harness& harness) {
+    auto* player = OpenReady(harness, false);
+    EnableVideoAndEnglish(player);
+    return player;
+}
+
+bool PlayEnglish(Harness& harness, AvPlayerInternal* player) {
     AvPlayerFrameInfo sound{};
-    AvPlayerFrameInfoEx frame{};
     int english = 0;
-    Check(WaitFor([&] {
+    return WaitFor([&] {
         if (sceAvPlayerGetAudioData(player, &sound)) {
-            CheckEnglishAudio(sound);
+            CheckEnglishAudio(sound, harness.Allocations());
             ++english;
         }
         return english >= 2;
-    }), "no English audio");
+    });
+}
 
-    events.Clear();
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == 0, "change to the French track failed");
+AvPlayerInternal* OpenChangePlaying(Harness& harness) {
+    auto* player = OpenChangeReady(harness);
+    RequireEqual(sceAvPlayerStart(player), 0, "start playback");
+    Require(PlayEnglish(harness, player), "two English audio frames after start");
+    return player;
+}
+
+int SwitchToFrench(Harness& harness, AvPlayerInternal* player) {
+    harness.Events().Clear();
+    RequireEqual(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream), 0, "change to the French track");
+    AvPlayerFrameInfo sound{};
     int french = 0;
     int loudest = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (sceAvPlayerGetAudioData(player, &sound)) {
             if (french == 0 && std::memcmp(sound.details.audio.language_code, "eng", 4) == 0) {
-                CheckEnglishAudio(sound);
+                CheckEnglishAudio(sound, harness.Allocations());
             } else {
-                CheckAudioFrame(sound, 1, "fra");
+                CheckAudioFrame(sound, 1, "fra", harness.Allocations());
                 loudest = std::max(loudest, Loudest(sound));
                 ++french;
             }
         }
         return french >= 4;
-    }), "no French audio after the change");
-    Check(loudest > 1000, "the French track decoded silent");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after the change");
-    CheckVideoFrame(frame);
-    Check(!events.Seen(EventWarning, JumpComplete), "changing streams reported a jump");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == OperationFailed, "changed from the replaced stream");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-    std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "allocations leaked");
+    }), "four French audio frames after the change");
+    return loudest;
 }
 
-void TestExtendedExports() {
-    Events events;
-    AvPlayerInitData init = InitData(&events);
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerSetLogCallback(reinterpret_cast<void*>(&OnLog), nullptr) == 0, "log callback rejected");
-    Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == 0, "bandwidth rejected");
-    Check(sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000) == InvalidParams, "bandwidth accepted for a null player");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
-    CheckStreamInfoEx(player);
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
-    Check(sceAvPlayerStartEx(player, nullptr) == 0, "extended start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
-    AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the extended start");
-    CheckVideoFrame(frame);
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-}
+const Case changeWithoutSource{"ChangeStream_WithoutSource_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
 
-void TestWithoutAllocators() {
-    AvPlayerInitData init = InitData(nullptr);
+    const int result = sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream);
+
+    RequireEqual(result, OperationFailed, "change streams without a source");
+    harness.Finish();
+}};
+
+const Case changeNullPlayer{"ChangeStream_NullPlayer_FailsWithInvalidParams", [] {
+    const int result = sceAvPlayerChangeStream(nullptr, EnglishAudioStream, FrenchAudioStream);
+
+    RequireEqual(result, InvalidParams, "change streams of a null player");
+}};
+
+const Case changeRejected{"ChangeStream_InvalidPair_FailsWithOperationFailed", [] {
+    struct Pair {
+        std::uint32_t from;
+        std::uint32_t to;
+        const char* description;
+    };
+    constexpr std::array<Pair, 3> pairs{{
+        {VideoStream, FrenchAudioStream, "video stream 0 to audio stream 2"},
+        {EnglishAudioStream, 9, "enabled audio stream 1 to missing stream 9"},
+        {FrenchAudioStream, EnglishAudioStream, "disabled audio stream 2 to stream 1"},
+    }};
+    Harness harness;
+    auto* player = OpenChangeReady(harness);
+
+    for (const auto& pair : pairs) {
+        RequireEqual(sceAvPlayerChangeStream(player, pair.from, pair.to), OperationFailed, std::string("change ") + pair.description);
+    }
+    harness.Finish();
+}};
+
+const Case changeBeforeStart{"ChangeStream_BeforeStart_SwitchesToFrenchAndBackToEnglish", [] {
+    Harness harness;
+    auto* player = OpenChangeReady(harness);
+
+    const int toFrench = sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream);
+    const int toEnglish = sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream);
+
+    RequireEqual(toFrench, 0, "change to the French track before start");
+    RequireEqual(toEnglish, 0, "change back to the English track before start");
+    RequireEqual(sceAvPlayerStart(player), 0, "start playback");
+    Require(PlayEnglish(harness, player), "two English audio frames after start");
+    harness.Finish();
+}};
+
+const Case changeDuringPlayback{"ChangeStream_DuringPlayback_SwitchesToAudibleFrenchAndKeepsVideo", [] {
+    Harness harness;
+    auto* player = OpenChangePlaying(harness);
+
+    const int loudest = SwitchToFrench(harness, player);
+
+    Require(loudest > 1000, "the French track is audible, loudest sample " + std::to_string(loudest));
+    CheckVideoFrame(NextFrame(player, "after the stream change"), harness.Allocations());
+    Require(!harness.Events().Seen(EventWarning, JumpComplete), "changing streams reports no jump completion");
+    harness.Finish();
+}};
+
+const Case changeFromReplaced{"ChangeStream_FromReplacedStream_FailsWithOperationFailed", [] {
+    Harness harness;
+    auto* player = OpenChangePlaying(harness);
+    SwitchToFrench(harness, player);
+
+    const int result = sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream);
+
+    RequireEqual(result, OperationFailed, "change from the replaced English stream");
+    RequireEqual(harness.Close(), 0, "close after the stream change");
+    RequireEqual(harness.Allocations().LiveBlocks(), std::size_t{0}, "allocations alive after close");
+    harness.Finish();
+}};
+
+const Case logCallback{"SetLogCallback_Function_Succeeds", [] {
+    const int result = sceAvPlayerSetLogCallback(reinterpret_cast<void*>(&OnLog), nullptr);
+
+    RequireEqual(result, 0, "set the log callback");
+}};
+
+const Case bandwidth{"SetAvailableBandwidth_Player_Succeeds", [] {
+    Harness harness;
+    auto* player = harness.Open(harness.InitData());
+
+    const int result = sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000);
+
+    RequireEqual(result, 0, "set the available bandwidth");
+    harness.Finish();
+}};
+
+const Case bandwidthNull{"SetAvailableBandwidth_NullPlayer_FailsWithInvalidParams", [] {
+    const int result = sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000);
+
+    RequireEqual(result, InvalidParams, "set the available bandwidth of a null player");
+}};
+
+const Case streamInfoExReady{"GetStreamInfoEx_ReadySource_DescribesVideoEnglishAndFrenchStreams", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, false);
+
+    for (std::uint32_t index = 0; index < 3; ++index) {
+        AvPlayerStreamInfoEx info{};
+        info.this_size = sizeof(info);
+        RequireEqual(sceAvPlayerGetStreamInfoEx(player, index, &info), 0, "extended stream info of stream " + std::to_string(index));
+        CheckStreamInfoEx(info, index);
+    }
+    harness.Finish();
+}};
+
+const Case streamInfoExInvalid{"GetStreamInfoEx_InvalidArguments_Fail", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, false);
+    AvPlayerStreamInfoEx info{};
+
+    const int missingStream = sceAvPlayerGetStreamInfoEx(player, 3, &info);
+    const int nullInfo = sceAvPlayerGetStreamInfoEx(player, 0, nullptr);
+    const int nullPlayer = sceAvPlayerGetStreamInfoEx(nullptr, 0, &info);
+
+    RequireEqual(missingStream, OperationFailed, "extended stream info of stream 3");
+    RequireEqual(nullInfo, InvalidParams, "extended stream info into a null pointer");
+    RequireEqual(nullPlayer, InvalidParams, "extended stream info of a null player");
+    harness.Finish();
+}};
+
+const Case startExNull{"StartEx_NullPlayer_FailsWithInvalidParams", [] {
+    const int result = sceAvPlayerStartEx(nullptr, nullptr);
+
+    RequireEqual(result, InvalidParams, "extended start of a null player");
+}};
+
+const Case startEx{"StartEx_EnabledVideo_ReportsPlayAndDeliversFrame", [] {
+    Harness harness;
+    auto* player = OpenReady(harness, false);
+    RequireEqual(sceAvPlayerEnableStream(player, VideoStream), 0, "enable the video stream");
+
+    const int result = sceAvPlayerStartEx(player, nullptr);
+
+    RequireEqual(result, 0, "extended start");
+    Require(WaitFor([&] { return harness.Events().Seen(EventPlay); }), "play event after the extended start");
+    CheckVideoFrame(NextFrame(player, "after the extended start"), harness.Allocations());
+    harness.Finish();
+}};
+
+const Case withoutAllocators{"Init_WithoutAllocators_DeliversFramesFromGuestHeap", [] {
+    Harness harness;
+    auto init = harness.InitData(false);
     init.memory_replacement = {};
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init without allocators failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame without allocators");
-    CheckVideoPicture(frame);
-    Check(!IsAllocation(frame.p_data, true) && !IsAllocation(frame.p_data, false), "frame came from a missing allocator");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    auto* player = harness.Open(init);
+    RequireEqual(sceAvPlayerAddSource(player, GuestMovie), 0, "add the movie source");
 
+    const auto frame = NextFrame(player, "without allocators");
+
+    CheckVideoPicture(frame);
+    Require(!harness.Allocations().Contains(frame.p_data, true) && !harness.Allocations().Contains(frame.p_data, false), "the frame does not come from the absent allocators");
+    harness.Finish();
+}};
+
+const Case initExWithoutAllocators{"InitEx_WithoutAllocators_Succeeds", [] {
+    Harness harness;
     AvPlayerInitDataEx extended{};
     extended.this_size = sizeof(extended);
     AvPlayerInternal* handle = nullptr;
-    Check(sceAvPlayerInitEx(&extended, &handle) == 0 && handle != nullptr, "extended init without allocators failed");
-    Check(sceAvPlayerInitEx(nullptr, &handle) == InvalidParams, "extended init accepted null data");
-    Check(sceAvPlayerClose(handle) == 0, "close failed");
-}
 
-void TestOptionalVideoBuffersRespectMemoryLimit() {
-    const auto run = [](int textureLimit, int expectedTextures) {
-        SetTextureLimit(textureLimit);
-        AvPlayerInitData init = InitData(nullptr);
-        init.num_output_video_framebuffers = 2;
-        auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "init with limited texture memory failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source with limited texture memory failed");
-        Check(WaitFor([&] { return TextureCount() == expectedTextures && sceAvPlayerIsActive(player); }), "unexpected optional video buffer count");
-        AvPlayerFrameInfoEx frame{};
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame with limited texture memory");
-        CheckVideoPicture(frame);
-        Check(sceAvPlayerClose(player) == 0, "close with limited texture memory failed");
-        Check(TextureCount() == 0, "limited texture allocations were not released");
+    const int result = sceAvPlayerInitEx(&extended, &handle);
+
+    harness.Adopt(handle);
+    RequireEqual(result, 0, "extended init without allocators");
+    Require(handle != nullptr, "extended init without allocators returns a player");
+    harness.Finish();
+}};
+
+const Case initExNull{"InitEx_NullData_FailsWithInvalidParams", [] {
+    AvPlayerInternal* handle = nullptr;
+
+    const int result = sceAvPlayerInitEx(nullptr, &handle);
+
+    RequireEqual(result, InvalidParams, "extended init with null data");
+}};
+
+const Case textureLimit{"VideoBuffers_LimitedTextureMemory_AllocatesOnlyAffordableOptionalBuffers", [] {
+    struct Limit {
+        int textureLimit;
+        int expectedTextures;
     };
+    constexpr std::array<Limit, 3> limits{{{2, 2}, {4, 2}, {6, 6}}};
+    for (const auto& limit : limits) {
+        const auto label = " with a limit of " + std::to_string(limit.textureLimit) + " textures";
+        Harness harness;
+        harness.Allocations().SetTextureLimit(limit.textureLimit);
+        auto init = harness.InitData(false);
+        init.num_output_video_framebuffers = 2;
+        auto* player = harness.Open(init);
+        RequireEqual(sceAvPlayerAddSource(player, GuestMovie), 0, "add the movie source" + label);
 
-    run(2, 2);
-    run(4, 2);
-    run(6, 6);
-    SetTextureLimit(std::nullopt);
-}
+        const bool settled = WaitFor([&] { return harness.Allocations().ActiveTextures() == limit.expectedTextures && sceAvPlayerIsActive(player); });
 
-void TestFileReplacementAutoStart() {
+        Require(settled, std::to_string(limit.expectedTextures) + " video buffers are allocated" + label + ", got " + std::to_string(harness.Allocations().ActiveTextures()));
+        CheckVideoPicture(NextFrame(player, label));
+        RequireEqual(harness.Close(), 0, "close" + label);
+        RequireEqual(harness.Allocations().ActiveTextures(), 0, "textures alive after close" + label);
+        harness.Finish();
+    }
+}};
+
+const Case replaced{"AddSource_FileReplacementWithoutEvents_AutoStartsAndClosesReplacedFile", [] {
     HostFile file;
-    AvPlayerInitData init = InitData(nullptr);
+    Harness harness;
+    file.movie = harness.MoviePath();
+    auto init = harness.InitData(false);
     init.file_replacement = {&file, OpenFile, CloseFile, ReadFile, FileSize};
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/replaced.mp4") == 0, "replaced source failed");
+    auto* player = harness.Open(init);
     AvPlayerFrameInfo frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "auto start never produced a frame");
-    Check(frame.details.video.width == 112 && frame.details.video.height == 64 && IsAllocation(frame.p_data, true), "unexpected auto start frame");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-    Check(!file.stream.is_open(), "replaced file left open");
-}
 
-void TestHandedOutFramesStayIntact() {
+    const int result = sceAvPlayerAddSource(player, GuestReplacedMovie);
+
+    RequireEqual(result, 0, "add the replaced source");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "auto start produces a frame");
+    RequireEqual(frame.details.video.width, 112u, "auto start frame width");
+    RequireEqual(frame.details.video.height, 64u, "auto start frame height");
+    Require(harness.Allocations().Contains(frame.p_data, true), "auto start frame lives in a texture allocation");
+    RequireEqual(harness.Close(), 0, "close the player");
+    Require(!file.stream.is_open(), "the replaced file is closed");
+    harness.Finish();
+}};
+
+const Case framesIntact{"GetVideoDataEx_RetainedFrames_StayIntact", [] {
     constexpr int Buffers = 6;
     constexpr int Retained = Buffers - 2;
-    AvPlayerInitData init = InitData(nullptr);
-    init.num_output_video_framebuffers = Buffers;
-    auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
     struct Taken {
         const std::uint8_t* luma;
         int index;
     };
+    Harness harness;
+    auto init = harness.InitData(false);
+    init.num_output_video_framebuffers = Buffers;
+    auto* player = harness.Open(init);
+    RequireEqual(sceAvPlayerSetAvSyncMode(player, SyncModeNone), 0, "disable audio/video sync");
+    RequireEqual(sceAvPlayerAddSource(player, GuestMovie), 0, "add the movie source");
     std::deque<Taken> taken;
+
     for (int round = 0; round < 16; ++round) {
-        AvPlayerFrameInfoEx frame{};
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame for round " + std::to_string(round));
-        CheckVideoFrame(frame);
+        const auto frame = NextFrame(player, "for round " + std::to_string(round));
+        CheckVideoFrame(frame, harness.Allocations());
         taken.push_back({static_cast<const std::uint8_t*>(frame.p_data), FrameIndex(frame.timestamp)});
         if (taken.size() > Retained) taken.pop_front();
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        SleepFor(30);
         for (std::size_t k = 0; k < taken.size(); ++k) {
-            for (std::size_t other = k + 1; other < taken.size(); ++other) Check(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(Retained) + " frames");
+            for (std::size_t other = k + 1; other < taken.size(); ++other) Require(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(Retained) + " frames");
             const int index = taken[k].index;
-            Check(std::abs(taken[k].luma[30 * Pitch + 10] - LumaFor(index)) <= 6, "frame " + std::to_string(index) + " was overwritten " + std::to_string(taken.size() - 1 - k) + " frames after it was handed out");
+            Require(std::abs(taken[k].luma[30 * Pitch + 10] - LumaFor(index)) <= 6, "frame " + std::to_string(index) + " was overwritten " + std::to_string(taken.size() - 1 - k) + " frames after it was handed out");
         }
     }
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+
+    harness.Finish();
+}};
+
+constexpr std::size_t Ps5Size = 0x230;
+constexpr std::size_t Ps5AutoStart = 0x74;
+constexpr std::size_t Ps5ThreadParameters = 0x78;
+constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
+constexpr std::int32_t Ps5Buffers = 3;
+constexpr int DecodeAheadBuffers = 4;
+static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
+
+AvPlayerInternal* OpenPs5Layout(Harness& harness, bool autoStart) {
+    const AvPlayerInitData common = harness.InitData();
+    AvPlayerInitDataEx head{};
+    head.this_size = Ps5Size;
+    head.memory_replacement = common.memory_replacement;
+    head.event_replacement = common.event_replacement;
+    head.default_language = common.default_language;
+    alignas(AvPlayerInitDataEx) std::array<std::uint8_t, Ps5Size> raw{};
+    std::memcpy(raw.data(), &head, Ps5AutoStart);
+    raw[Ps5AutoStart] = autoStart ? 1 : 0;
+    if (!autoStart) std::fill(raw.begin() + static_cast<std::ptrdiff_t>(Ps5ThreadParameters), raw.end(), std::uint8_t{1});
+    std::memcpy(raw.data() + Ps5VideoFrameBuffers, &Ps5Buffers, sizeof(Ps5Buffers));
+    AvPlayerInternal* handle = nullptr;
+    const int result = sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(raw.data()), &handle);
+    auto* player = harness.Adopt(handle);
+    RequireEqual(result, 0, "PS5 extended init");
+    Require(player != nullptr, "PS5 extended init returns a player");
+    RequireEqual(sceAvPlayerAddSource(player, GuestMovie), 0, "add the movie source after the PS5 extended init");
+    return player;
 }
 
-void TestPs5ExtendedInitLayout() {
-    constexpr std::size_t Ps5Size = 0x230;
-    constexpr std::size_t Ps5AutoStart = 0x74;
-    constexpr std::size_t Ps5ThreadParameters = 0x78;
-    constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
-    constexpr std::int32_t Buffers = 3;
-    constexpr int DecodeAheadBuffers = 4;
-    static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
-    const auto run = [&](bool autoStart) {
-        Events events;
-        const AvPlayerInitData common = InitData(&events);
-        AvPlayerInitDataEx head{};
-        head.this_size = Ps5Size;
-        head.memory_replacement = common.memory_replacement;
-        head.event_replacement = common.event_replacement;
-        head.default_language = common.default_language;
-        alignas(AvPlayerInitDataEx) std::array<std::uint8_t, Ps5Size> raw{};
-        std::memcpy(raw.data(), &head, Ps5AutoStart);
-        raw[Ps5AutoStart] = autoStart ? 1 : 0;
-        if (!autoStart) std::fill(raw.begin() + static_cast<std::ptrdiff_t>(Ps5ThreadParameters), raw.end(), std::uint8_t{1});
-        std::memcpy(raw.data() + Ps5VideoFrameBuffers, &Buffers, sizeof(Buffers));
-        AvPlayerInternal* player = nullptr;
-        Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(raw.data()), &player) == 0 && player != nullptr, "PS5 extended init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source after the PS5 extended init failed");
-        if (autoStart) {
-            Check(WaitFor([&] { return events.Seen(EventPlay); }), "auto start at 0x74 of the PS5 extended init did not start playback");
-        } else {
-            Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing after the PS5 extended init");
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            Check(!events.Seen(EventPlay), "playback started although auto start at 0x74 of the PS5 extended init is 0");
-            Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
-            Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
-        }
-        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
-        Check(sceAvPlayerClose(player) == 0, "close after the PS5 extended init failed");
-    };
-    run(false);
-    run(true);
+bool UsesPs5FrameBufferCount(Harness& harness) {
+    return WaitFor([&] { return harness.Allocations().ActiveTextures() == Ps5Buffers + DecodeAheadBuffers; });
 }
 
-}
+const Case ps5NoAutoStart{"InitEx_Ps5LayoutAutoStartZero_WaitsForStartAndUsesFrameBufferCount", [] {
+    Harness harness;
+    auto* player = OpenPs5Layout(harness, false);
 
-int main() {
-    try {
-        WriteMovie();
-        TestPlayback();
-        TestChangeStream();
-        TestExtendedExports();
-        TestWithoutAllocators();
-        TestOptionalVideoBuffersRespectMemoryLimit();
-        TestFileReplacementAutoStart();
-        TestHandedOutFramesStayIntact();
-        TestPs5ExtendedInitLayout();
-        std::puts("AvPlayer tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
+    Require(WaitFor([&] { return harness.Events().Seen(EventReady); }), "ready event after the PS5 extended init");
+    SleepFor(200);
+
+    Require(!harness.Events().Seen(EventPlay), "playback does not start when auto start at 0x74 of the PS5 extended init is 0");
+    RequireEqual(sceAvPlayerEnableStream(player, VideoStream), 0, "enable video after the PS5 extended init");
+    RequireEqual(sceAvPlayerStart(player), 0, "start after the PS5 extended init");
+    Require(UsesPs5FrameBufferCount(harness), "video frame buffer count at 0x228 of the PS5 extended init is used, got " + std::to_string(harness.Allocations().ActiveTextures()) + " textures");
+    harness.Finish();
+}};
+
+const Case ps5AutoStart{"InitEx_Ps5LayoutAutoStartOne_StartsPlaybackAndUsesFrameBufferCount", [] {
+    Harness harness;
+    OpenPs5Layout(harness, true);
+
+    const bool playing = WaitFor([&] { return harness.Events().Seen(EventPlay); });
+
+    Require(playing, "auto start at 0x74 of the PS5 extended init starts playback");
+    Require(UsesPs5FrameBufferCount(harness), "video frame buffer count at 0x228 of the PS5 extended init is used, got " + std::to_string(harness.Allocations().ActiveTextures()) + " textures");
+    harness.Finish();
+}};
+
+} // namespace

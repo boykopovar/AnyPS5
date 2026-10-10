@@ -3,12 +3,8 @@ target_include_directories(libScePsml_debug PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libScePsml_debug)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_psml_tests ${LIBS_INCLUDE_DIR}/tests/GuestPsml.cpp)
-    target_include_directories(guest_psml_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_psml_tests PRIVATE libScePsml_debug)
-    add_test(NAME guest_psml COMMAND guest_psml_tests)
-    if(WIN32)
-        set_tests_properties(guest_psml PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePsml_debug>")
-    endif()
+    anyps5_add_library_test(guest_psml_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPsml.cpp
+        LINK libScePsml_debug libc
+    )
 endif()

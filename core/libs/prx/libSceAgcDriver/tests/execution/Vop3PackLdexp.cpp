@@ -8,13 +8,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -118,7 +116,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("vop3 pack ldexp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("vop3 pack ldexp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -144,26 +142,43 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void Check() {
+void CheckColumns(std::uint32_t first, std::uint32_t last) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t i = 0; i < 14; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
+        for (std::uint32_t i = first; i < last; ++i) {
+            Expect(tid, out[i], Expected[tid][i], Names[i]);
+        }
     }
 }
 
-}
+const Testing::Case pknorm{"Vop3PackLdexp_CvtPknorm_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(0, 4);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("vop3 pack ldexp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case ldexp{"Vop3PackLdexp_Ldexp_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(4, 7);
+}};
+
+const Testing::Case lerp{"Vop3PackLdexp_LerpU8_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(7, 8);
+}};
+
+const Testing::Case pack{"Vop3PackLdexp_PackB32F16_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(8, 12);
+}};
+
+const Testing::Case mulLo{"Vop3PackLdexp_MulLoI32_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(12, 14);
+}};
+
+} // namespace

@@ -9,12 +9,8 @@ if(MINGW)
 endif()
 
 if(BUILD_TESTING)
-    add_test_executable(guest_player_review_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestPlayerReviewDialog.cpp)
-    target_include_directories(guest_player_review_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_player_review_dialog_tests PRIVATE libSceCdlgPlayerReview)
-    add_test(NAME guest_player_review_dialog COMMAND guest_player_review_dialog_tests)
-    if(WIN32)
-        set_tests_properties(guest_player_review_dialog PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCdlgPlayerReview>")
-    endif()
+    anyps5_add_library_test(guest_player_review_dialog_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPlayerReviewDialog.cpp
+        LINK libSceCdlgPlayerReview libc
+    )
 endif()

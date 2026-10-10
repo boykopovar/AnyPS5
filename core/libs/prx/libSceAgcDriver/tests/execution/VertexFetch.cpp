@@ -5,12 +5,11 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
+#include <stdexcept>
 #include <string>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Extent = 64u;
@@ -21,23 +20,27 @@ constexpr std::array<std::array<float, 4>, 3> positions{{{-1.0f, -1.0f, 0.0f, 1.
 constexpr std::array<std::uint32_t, 11> vertexCode{0xf4080100u, 0xfa000000u, 0x4a0a0a02u, 0x4a0a0b08u, 0x4a0a0a03u, 0xe00c2000u, 0x80010005u, 0xbf8c3f70u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 5> pixelCode{0x7e0002f2u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
 
-void Run(AgcDriver::VulkanDevice& device) {
+void RequireIncompatibleAbiRejected(AgcDriver::VulkanDevice& device) {
     ShaderRecompiler::RecompileResult incompatible;
     incompatible.runtimeAbiVersion = ShaderRecompiler::RuntimeAbi::Version + 1u;
     const auto rejectAbi = [](auto action) {
+        std::string failure;
         try {
             action();
         } catch (const std::runtime_error& error) {
-            Require(std::string(error.what()).find("incompatible version") != std::string::npos, "unexpected runtime ABI validation error");
-            return;
+            failure = error.what();
         }
-        throw std::runtime_error("driver accepted an incompatible shader runtime ABI");
+        Testing::Require(!failure.empty(), "driver accepted an incompatible shader runtime ABI");
+        Testing::Require(failure.find("incompatible version") != std::string::npos, "unexpected runtime ABI validation error: " + failure);
     };
     rejectAbi([&] { device.PrepareDispatch(incompatible, {}); });
     rejectAbi([&] { device.Dispatch(incompatible, 1u, 1u, 1u); });
     rejectAbi([&] { device.DispatchIndirect(incompatible, 0u); });
     const std::array<AgcDriver::Graphics::CompiledShader, 1> incompatibleShaders{{{ShaderStage::Vertex, &incompatible, 0u}}};
     rejectAbi([&] { device.Draw({}, {}, incompatibleShaders); });
+}
+
+void DrawWithRuntimeFetch(AgcDriver::VulkanDevice& device) {
     std::array<std::uint32_t, 4> descriptor{};
     const auto tableAddress = reinterpret_cast<std::uintptr_t>(descriptor.data());
     std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u), 1u, 1u};
@@ -75,11 +78,11 @@ void Run(AgcDriver::VulkanDevice& device) {
         descriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) | (value.stride << 16u), 8u, 0x01000facu | (value.format << 12u)};
         request.context.vertex->resources[0].fields = descriptor;
         const auto vertex = ShaderRecompiler::Recompile(request);
-        Require(vertex.vertexInputs.empty() && vertex.vertexAttributes.empty(), "runtime vertex fetch created Vulkan vertex attributes");
-        Require(vertex.vertexOffsetSgpr == -1 && vertex.instanceOffsetSgpr == -1, "runtime vertex fetch requested draw offset folding");
-        Require(vertex.runtimeAbiVersion == ShaderRecompiler::RuntimeAbi::Version, "runtime vertex fetch has an incompatible runtime ABI");
+        Testing::Require(vertex.vertexInputs.empty() && vertex.vertexAttributes.empty(), "runtime vertex fetch created Vulkan vertex attributes");
+        Testing::Require(vertex.vertexOffsetSgpr == -1 && vertex.instanceOffsetSgpr == -1, "runtime vertex fetch requested draw offset folding");
+        Testing::Require(vertex.runtimeAbiVersion == ShaderRecompiler::RuntimeAbi::Version, "runtime vertex fetch has an incompatible runtime ABI");
         if (first.spirv.empty()) first = vertex;
-        else Require(vertex.cacheHit && vertex.variantId == first.variantId, "runtime vertex descriptor changed the artifact");
+        else Testing::Require(vertex.cacheHit && vertex.variantId == first.variantId, "runtime vertex descriptor changed the artifact");
         const auto pushBytes = static_cast<std::uint32_t>(vertex.pushConstants.size());
         ShaderRecompiler::ShaderPixelStageInfo pixelInfo{};
         pixelInfo.wave32 = true;
@@ -108,22 +111,18 @@ void Run(AgcDriver::VulkanDevice& device) {
         device.Draw(state, draw, shaders);
         device.WaitIdle();
         for (std::size_t index = 0; index < pixels.size(); index += 4u) {
-            Require(pixels[index] == std::byte{255} && pixels[index + 1u] == std::byte{0} && pixels[index + 2u] == std::byte{0} && pixels[index + 3u] == std::byte{255}, "runtime vertex fetch produced the wrong triangle");
+            Testing::Require(pixels[index] == std::byte{255} && pixels[index + 1u] == std::byte{0} && pixels[index + 2u] == std::byte{0} && pixels[index + 3u] == std::byte{255}, "runtime vertex fetch produced the wrong triangle");
         }
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        std::cout << "runtime vertex fetch tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case incompatibleAbi{"RuntimeAbi_IncompatibleVersion_IsRejectedByEveryEntryPoint", [] {
+    RequireIncompatibleAbiRejected(SharedVulkanTestDevice());
+}};
+
+const Testing::Case runtimeVertexFetch{"RuntimeVertexFetch_DescriptorVariants_DrawTheTriangleWithOneArtifact", [] {
+    DrawWithRuntimeFetch(SharedVulkanTestDevice());
+}};
+
+} // namespace

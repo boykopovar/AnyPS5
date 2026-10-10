@@ -3,13 +3,9 @@ target_include_directories(libSceAudioPropagation PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAudioPropagation)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_audio_propagation_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioPropagation.cpp)
-    target_include_directories(guest_audio_propagation_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_audio_propagation_tests PRIVATE libSceAudioPropagation libc)
-    configure_windows_unwind(guest_audio_propagation_tests)
-    add_test(NAME guest_audio_propagation COMMAND guest_audio_propagation_tests)
-    if(WIN32)
-        set_tests_properties(guest_audio_propagation PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioPropagation>")
-    endif()
+    anyps5_add_library_test(guest_audio_propagation_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAudioPropagation.cpp
+        LINK libSceAudioPropagation libc
+        RUNTIME libSceAudioPropagation
+    )
 endif()

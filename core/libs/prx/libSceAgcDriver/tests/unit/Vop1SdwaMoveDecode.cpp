@@ -1,13 +1,17 @@
+#include <Testing/Test.hpp>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <exception>
 #include <stdexcept>
-
-using namespace ShaderRecompiler;
+#include <string>
 
 namespace {
+
+using namespace ShaderRecompiler;
+using Testing::Case;
+using Testing::Require;
 
 constexpr std::uint32_t MoveSdwa = 0x7e0602f9u;
 constexpr std::uint32_t SourceVector = 4;
@@ -27,28 +31,28 @@ bool Matches(const RdnaInstruction& instruction, std::uint32_t destinationSelect
         !instruction.source0.negate && !instruction.source0.absolute;
 }
 
-}
-
-int main() {
-    int failures = 0;
+const Case validSelectors{"DecodeRdnaInstruction_SdwaMoveWithValidSelectors_DecodesEveryOperand", [] {
     for (std::uint32_t sourceSelector = 0; sourceSelector < 7u; ++sourceSelector) {
         for (std::uint32_t signExtend = 0; signExtend < 2u; ++signExtend) {
             for (std::uint32_t destinationSelector = 0; destinationSelector < 7u; ++destinationSelector) {
                 for (std::uint32_t unused = 0; unused < 3u; ++unused) {
                     const std::array<std::uint32_t, 2> words{MoveSdwa, Modifier(destinationSelector, unused, sourceSelector, signExtend)};
+                    const auto name = "dst_sel " + std::to_string(destinationSelector) + " dst_unused " + std::to_string(unused) +
+                        " src0_sel " + std::to_string(sourceSelector) + " sext " + std::to_string(signExtend);
+                    RdnaInstruction instruction{};
                     try {
-                        if (!Matches(DecodeRdnaInstruction(0u, words, 0u), destinationSelector, unused, sourceSelector, signExtend)) {
-                            std::fprintf(stderr, "dst_sel %u dst_unused %u src0_sel %u sext %u decodes with the wrong operands\n", destinationSelector, unused, sourceSelector, signExtend);
-                            ++failures;
-                        }
+                        instruction = DecodeRdnaInstruction(0u, words, 0u);
                     } catch (const std::exception& error) {
-                        std::fprintf(stderr, "dst_sel %u dst_unused %u src0_sel %u sext %u: %s\n", destinationSelector, unused, sourceSelector, signExtend, error.what());
-                        ++failures;
+                        Testing::Fail(name + ": " + error.what());
                     }
+                    Require(Matches(instruction, destinationSelector, unused, sourceSelector, signExtend), name + " decodes with the wrong operands");
                 }
             }
         }
     }
+}};
+
+const Case reservedEncodings{"DecodeRdnaInstruction_SdwaMoveWithReservedOrInvalidModifier_ThrowsInvalidArgument", [] {
     struct Rejected {
         const char* name;
         std::uint32_t modifier;
@@ -63,15 +67,8 @@ int main() {
     }};
     for (const auto& entry : rejected) {
         const std::array<std::uint32_t, 2> words{MoveSdwa, entry.modifier};
-        try {
-            static_cast<void>(DecodeRdnaInstruction(0u, words, 0u));
-            std::fprintf(stderr, "%s decodes\n", entry.name);
-            ++failures;
-        } catch (const std::invalid_argument&) {
-        } catch (const std::exception& error) {
-            std::fprintf(stderr, "%s: %s\n", entry.name, error.what());
-            ++failures;
-        }
+        Testing::RequireThrows<std::invalid_argument>([&] { static_cast<void>(DecodeRdnaInstruction(0u, words, 0u)); }, std::string(entry.name) + " decodes");
     }
-    return failures == 0 ? 0 : 1;
-}
+}};
+
+} // namespace

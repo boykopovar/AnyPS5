@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -114,22 +113,11 @@ void Check() {
     }
 }
 
-}
+const Testing::Case wrapAnd64BitOps{"BufferAtomics_IncDecAnd64BitOps_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64Atomics, "the device has no shaderBufferInt64Atomics");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("buffer atomics tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

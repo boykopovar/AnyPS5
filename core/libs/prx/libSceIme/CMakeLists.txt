@@ -3,23 +3,15 @@ target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIme)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_ime_parameters_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeParameters.cpp)
-    target_include_directories(guest_ime_parameters_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ime_parameters_tests PRIVATE libSceIme libc)
-    configure_windows_unwind(guest_ime_parameters_tests)
-    add_test(NAME guest_ime_parameters COMMAND guest_ime_parameters_tests)
-    if(WIN32)
-        set_tests_properties(guest_ime_parameters PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
-    endif()
+    anyps5_add_library_test(guest_ime_parameters_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestImeParameters.cpp
+        LINK libSceIme libc
+        RUNTIME libSceIme
+    )
 
-    add_test_executable(guest_ime_keyboard_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeKeyboard.cpp)
-    target_include_directories(guest_ime_keyboard_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ime_keyboard_tests PRIVATE libSceIme libc)
-    configure_windows_unwind(guest_ime_keyboard_tests)
-    add_test(NAME guest_ime_keyboard COMMAND guest_ime_keyboard_tests)
-    if(WIN32)
-        set_tests_properties(guest_ime_keyboard PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
-    endif()
+    anyps5_add_library_test(guest_ime_keyboard_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestImeKeyboard.cpp
+        LINK libSceIme libc
+        RUNTIME libSceIme
+    )
 endif()

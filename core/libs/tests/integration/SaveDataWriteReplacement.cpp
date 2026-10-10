@@ -1,15 +1,16 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
-#include <cstdio>
-#include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <system_error>
 #include <vector>
 
 extern "C" {
@@ -21,71 +22,84 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void*);
 #endif
 }
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Save-data replacement check failed at line %d\n", line);
-        std::abort();
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr std::int32_t userId = 7531;
+
+class WorkingDirectory {
+public:
+    WorkingDirectory() : previous(std::filesystem::current_path()) {
+        std::filesystem::current_path(directory.Path());
     }
-}
-#define Require(value) Check((value), __LINE__)
 
-int main() {
-    const auto originalDirectory = std::filesystem::current_path();
-    const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-savedata-replacement-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
-    std::filesystem::current_path(root);
+    ~WorkingDirectory() {
+        std::error_code ignored;
+        std::filesystem::current_path(previous, ignored);
+    }
 
-    constexpr std::int32_t userId = 7531;
+    WorkingDirectory(const WorkingDirectory&) = delete;
+    WorkingDirectory& operator=(const WorkingDirectory&) = delete;
+
+private:
+    Testing::TemporaryDirectory directory;
+    std::filesystem::path previous;
+};
+
+std::filesystem::path SavePath() {
 #ifdef SAVEDATA_NATIVE_BACKEND
-    const auto savePath = std::filesystem::path("_sd_mem") / ("u" + std::to_string(userId)) / "slot0.bin";
+    return std::filesystem::path("_sd_mem") / ("u" + std::to_string(userId)) / "slot0.bin";
 #else
-    const auto savePath = std::filesystem::path("_sd") / "sce_sdmemory" /
-        std::to_string(userId) / "memory.dat";
+    return std::filesystem::path("_sd") / "sce_sdmemory" / std::to_string(userId) / "memory.dat";
 #endif
-    std::filesystem::create_directories(savePath.parent_path());
-    const std::vector<char> oldData{'o', 'l', 'd'};
-    {
-        std::ofstream file(savePath, std::ios::binary);
-        Require(file.is_open());
-        file.write(oldData.data(), static_cast<std::streamsize>(oldData.size()));
-        Require(static_cast<bool>(file));
-    }
+}
 
-    Require(sceSaveDataInitialize3(nullptr) == 0);
+void WriteFile(const std::filesystem::path& path, const std::vector<char>& data) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::binary);
+    Require(file.is_open(), "open the existing save file for writing");
+    file.write(data.data(), static_cast<std::streamsize>(data.size()));
+    Require(static_cast<bool>(file), "write the existing save file");
+}
+
+std::vector<char> ReadFile(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+const Case growExisting{"SetupSaveDataMemory_ExistingSmallerFile_KeepsDataAndZeroFillsGrowth", [] {
+    const WorkingDirectory workingDirectory;
+    const auto savePath = SavePath();
+    const std::vector<char> oldData{'o', 'l', 'd'};
+    WriteFile(savePath, oldData);
+    RequireEqual(sceSaveDataInitialize3(nullptr), 0, "initialize");
     SaveDataMemorySetup2 setup{};
     setup.user_id = userId;
     setup.memory_size = oldData.size() + 3;
     SaveDataMemorySetupResult result{};
     int status = sceSaveDataSetupSaveDataMemory2(&setup, &result);
-
 #ifndef SAVEDATA_NATIVE_BACKEND
     struct MemorySyncParam {
         std::int32_t user_id;
         std::uint32_t slot_id;
         std::uint32_t option;
     } sync{userId, 0, 0};
-    if (status == 0) {
-        status = sceSaveDataSyncSaveDataMemory(&sync);
-    }
+    if (status == 0) status = sceSaveDataSyncSaveDataMemory(&sync);
 #endif
-
-    Require(result.existed_memory_size == oldData.size());
-    Require(status == 0);
-    std::vector<char> savedData;
-    {
-        std::ifstream savedFile(savePath, std::ios::binary);
-        savedData.assign(std::istreambuf_iterator<char>(savedFile), std::istreambuf_iterator<char>());
-    }
-    Require(savedData.size() == setup.memory_size);
-    Require(std::equal(oldData.begin(), oldData.end(), savedData.begin()));
-    Require(std::all_of(savedData.begin() + static_cast<std::ptrdiff_t>(oldData.size()),
-                        savedData.end(), [](char byte) { return byte == 0; }));
-
+    RequireEqual(result.existed_memory_size, static_cast<decltype(result.existed_memory_size)>(oldData.size()),
+        "existing memory size");
+    RequireEqual(status, 0, "setup and sync status");
+    const auto savedData = ReadFile(savePath);
+    RequireEqual(savedData.size(), static_cast<std::size_t>(setup.memory_size), "saved size");
+    Require(std::equal(oldData.begin(), oldData.end(), savedData.begin()), "existing bytes are kept");
+    Require(std::all_of(savedData.begin() + static_cast<std::ptrdiff_t>(oldData.size()), savedData.end(),
+                        [](char byte) { return byte == 0; }), "grown bytes are zero");
 #ifdef SAVEDATA_NATIVE_BACKEND
-    Require(sceSaveDataTerminate() == 0);
+    RequireEqual(sceSaveDataTerminate(), 0, "terminate");
 #endif
-    std::filesystem::current_path(originalDirectory);
-    std::filesystem::remove_all(root);
-}
+}};
+
+} // namespace

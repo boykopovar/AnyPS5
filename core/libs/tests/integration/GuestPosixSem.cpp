@@ -1,10 +1,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <initializer_list>
+#include <string>
 
 extern "C" {
 int APS5_VABI sem_init_nid_postfix(void*, int, unsigned int);
@@ -15,47 +15,104 @@ int APS5_VABI sem_getvalue_nid_postfix(void*, int*);
 int* APS5_VABI __error_nid_postfix();
 }
 
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
+namespace {
+
+using Testing::Case;
+using Testing::RequireEqual;
+
+constexpr unsigned int maximum = 0x7fffffffu;
+constexpr int einval = 22;
+constexpr int eagain = 35;
+constexpr int eoverflow = 84;
+
+class Semaphore {
+public:
+    explicit Semaphore(unsigned int initial) {
+        RequireEqual(sem_init_nid_postfix(&storage, 0, initial), 0, "sem_init(" + std::to_string(initial) + ")");
+        initialized = true;
     }
+    ~Semaphore() {
+        if (initialized) sem_destroy_nid_postfix(&storage);
+    }
+    Semaphore(const Semaphore&) = delete;
+    Semaphore& operator=(const Semaphore&) = delete;
+
+    int Post() { return sem_post_nid_postfix(&storage); }
+    int TryWait() { return sem_trywait_nid_postfix(&storage); }
+
+    int Value() {
+        int value = -1;
+        RequireEqual(sem_getvalue_nid_postfix(&storage, &value), 0, "sem_getvalue");
+        return value;
+    }
+
+    int Destroy() {
+        initialized = false;
+        return sem_destroy_nid_postfix(&storage);
+    }
+
+private:
+    std::uintptr_t storage = 0;
+    bool initialized = false;
+};
+
+void RequireFailure(int result, int expectedError, const std::string& message) {
+    RequireEqual(result, -1, message + " result");
+    RequireEqual(*__error_nid_postfix(), expectedError, message + " errno");
 }
 
-int main(int argc, char** argv) {
-    constexpr unsigned int maximum = 0x7fffffffu;
-    std::uintptr_t sem = 0;
-    int value = -1;
-    if (argc > 1 && std::strcmp(argv[1], "init") == 0) {
-        for (const unsigned int initial : {maximum + 1, 0xffffffffu}) {
-            sem = 0x1234;
-            *__error_nid_postfix() = 0;
-            const int result = sem_init_nid_postfix(&sem, 0, initial);
-            std::fprintf(stderr, "sem_init(%u): result=%d errno=%d\n", initial, result, *__error_nid_postfix());
-            Require(result == -1 && *__error_nid_postfix() == 22, "initial count above maximum must fail with EINVAL");
-            Require(sem == 0x1234, "failed initialization changed semaphore storage");
-        }
-        return 0;
+const Case initAboveMaximum{"SemInit_CountAboveMaximum_FailsWithEinvalAndLeavesStorage", [] {
+    for (const unsigned int initial : {maximum + 1, 0xffffffffu}) {
+        std::uintptr_t storage = 0x1234;
+        *__error_nid_postfix() = 0;
+        RequireFailure(sem_init_nid_postfix(&storage, 0, initial), einval, "sem_init(" + std::to_string(initial) + ")");
+        RequireEqual(storage, std::uintptr_t{0x1234}, "storage after sem_init(" + std::to_string(initial) + ")");
     }
-    Require(sem_init_nid_postfix(&sem, 0, maximum) == 0, "maximum count must initialize");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "maximum count must be readable");
+}};
+
+const Case initMaximum{"SemInit_MaximumCount_ReportsMaximumValue", [] {
+    Semaphore semaphore(maximum);
+    RequireEqual(semaphore.Value(), static_cast<int>(maximum), "value");
+}};
+
+const Case postAtMaximum{"SemPost_AtMaximum_FailsWithEoverflowAndKeepsCount", [] {
+    Semaphore semaphore(maximum);
     *__error_nid_postfix() = 0;
-    const int result = sem_post_nid_postfix(&sem);
-    std::fprintf(stderr, "sem_post(maximum): result=%d errno=%d\n", result, *__error_nid_postfix());
-    Require(result == -1 && *__error_nid_postfix() == 84, "post at maximum must fail with guest EOVERFLOW");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "overflow changed count");
-    Require(sem_trywait_nid_postfix(&sem) == 0, "wait at maximum must succeed");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum - 1), "wait must decrement");
-    Require(sem_post_nid_postfix(&sem) == 0, "post below maximum must succeed");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "post must reach maximum");
-    Require(sem_post_nid_postfix(&sem) == -1 && *__error_nid_postfix() == 84, "repeated overflow must fail");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == static_cast<int>(maximum), "repeated overflow changed count");
-    Require(sem_destroy_nid_postfix(&sem) == 0, "destroy must succeed");
-    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "zero count must initialize");
-    Require(sem_trywait_nid_postfix(&sem) == -1 && *__error_nid_postfix() == 35, "empty semaphore must report EAGAIN");
-    Require(sem_post_nid_postfix(&sem) == 0, "normal post must succeed");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "normal post must increment");
-    Require(sem_trywait_nid_postfix(&sem) == 0, "normal wait must succeed");
-    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "normal wait must decrement");
-    Require(sem_destroy_nid_postfix(&sem) == 0, "normal destroy must succeed");
-}
+    RequireFailure(semaphore.Post(), eoverflow, "post at maximum");
+    RequireEqual(semaphore.Value(), static_cast<int>(maximum), "value after overflow");
+}};
+
+const Case waitAtMaximum{"SemTrywait_AtMaximum_DecrementsAndPostRestoresMaximum", [] {
+    Semaphore semaphore(maximum);
+    RequireEqual(semaphore.TryWait(), 0, "trywait at maximum");
+    RequireEqual(semaphore.Value(), static_cast<int>(maximum - 1), "value after trywait");
+    RequireEqual(semaphore.Post(), 0, "post below maximum");
+    RequireEqual(semaphore.Value(), static_cast<int>(maximum), "value after post");
+}};
+
+const Case repeatedOverflow{"SemPost_AtMaximumAgainAfterWaitAndPost_FailsWithEoverflow", [] {
+    Semaphore semaphore(maximum);
+    *__error_nid_postfix() = 0;
+    RequireFailure(semaphore.Post(), eoverflow, "first overflow");
+    RequireEqual(semaphore.TryWait(), 0, "trywait");
+    RequireEqual(semaphore.Post(), 0, "post");
+    RequireFailure(semaphore.Post(), eoverflow, "repeated overflow");
+    RequireEqual(semaphore.Value(), static_cast<int>(maximum), "value after repeated overflow");
+    RequireEqual(semaphore.Destroy(), 0, "destroy");
+}};
+
+const Case emptyWait{"SemTrywait_ZeroCount_FailsWithEagain", [] {
+    Semaphore semaphore(0);
+    RequireFailure(semaphore.TryWait(), eagain, "trywait on empty semaphore");
+}};
+
+const Case normalCount{"SemPostTrywait_BelowMaximum_IncrementAndDecrement", [] {
+    Semaphore semaphore(0);
+    RequireEqual(semaphore.Post(), 0, "post");
+    RequireEqual(semaphore.Value(), 1, "value after post");
+    RequireEqual(semaphore.TryWait(), 0, "trywait");
+    RequireEqual(semaphore.Value(), 0, "value after trywait");
+    RequireEqual(semaphore.Destroy(), 0, "destroy");
+}};
+
+} // namespace

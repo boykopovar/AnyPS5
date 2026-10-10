@@ -8,14 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -217,22 +216,22 @@ void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     }
 }
 
-}
+const Testing::Case noFloatMode{"F32ArithmeticNan_NoFloatMode_MatchesNonIeeeResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, std::nullopt);
+    Check(ExpectedNoIeee, "no float mode");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check(ExpectedNoIeee, "no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check(ExpectedNoIeee, "IEEE=0");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
-        Check(ExpectedIeee, "IEEE=1");
-        std::puts("f32 arithmetic nan tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case ieeeDisabled{"F32ArithmeticNan_IeeeDisabled_MatchesNonIeeeResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+    Check(ExpectedNoIeee, "IEEE=0");
+}};
+
+const Testing::Case ieeeEnabled{"F32ArithmeticNan_IeeeEnabled_QuietsNans", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
+    Check(ExpectedIeee, "IEEE=1");
+}};
+
+} // namespace

@@ -7,13 +7,12 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -138,23 +137,24 @@ void CheckAddressOffsetRejected(AgcDriver::VulkanDevice& device) {
     } catch (const std::exception&) {
         return;
     }
-    Require(false, "lds src2: an offset taken from the address was accepted");
+    Testing::Fail("lds src2: an offset taken from the address was accepted");
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        CheckLanes();
-        CheckAddressOffsetRejected(*device);
-        CheckFloatRejected(*device);
-        std::puts("lds src2 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case integerOperations{"LdsSrc2_IntegerOperations_MatchReferenceResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckLanes();
+}};
+
+const Testing::Case addressOffsetRejected{"LdsSrc2_OffsetFromAddress_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckAddressOffsetRejected(device);
+}};
+
+const Testing::Case floatRejected{"LdsSrc2_FloatOperations_AreRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckFloatRejected(device);
+}};
+
+} // namespace

@@ -7,13 +7,12 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
-#include <iostream>
 #include <stdexcept>
 
 namespace {
 
 using namespace ShaderRecompiler;
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 
 constexpr std::uint32_t Extent = 16;
 alignas(256) std::array<std::uint32_t, Extent * Extent * 4> pixels{};
@@ -107,17 +106,15 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
     }
 }
 
-}
 
-int main() {
-    try {
-        auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, false);
-        Run(*device, true);
-        std::cout << "prepared fragment export mapping tests passed\n";
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case floatExports{"PreparedExports_FloatTargets_MaterializeEachExportMapping", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, false);
+}};
+
+const Testing::Case integerExports{"PreparedExports_IntegerTargets_MaterializeEachExportMapping", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, true);
+}};
+
+} // namespace

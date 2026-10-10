@@ -1,8 +1,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
+#include <array>
+#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <initializer_list>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceShareCaptureScreenshotExtended(const void* extended_param, std::int32_t* req_id);
@@ -16,56 +19,98 @@ int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+using Testing::Case;
+using Testing::RequireEqual;
 
+constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81960007);
+constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x81960002);
+constexpr std::uint8_t filler = 0x5a;
+
+using Capture = int(APS5_VABI*)(const void*, std::int32_t*);
+
+struct NamedCapture {
+    const char* name;
+    Capture capture;
+};
+
+const std::array<NamedCapture, 3> captures{{
+    {"sceShareCaptureScreenshotExtended", sceShareCaptureScreenshotExtended},
+    {"sceShareCaptureScreenshot", sceShareCaptureScreenshot},
+    {"sceShareCaptureVideoClip", sceShareCaptureVideoClip},
+}};
+
+std::array<std::uint8_t, 18> FilledStatus() {
+    std::array<std::uint8_t, 18> status{};
+    status.fill(filler);
+    return status;
 }
 
-int main() {
-    constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81960007);
-    std::uint8_t param[64]{};
-
-    std::int32_t reqId = 7;
-    Require(sceShareCaptureScreenshotExtended(param, &reqId) == notSupported);
-    Require(reqId == -1);
-
-    reqId = 7;
-    Require(sceShareCaptureScreenshotExtended(nullptr, &reqId) == notSupported);
-    Require(reqId == -1);
-
-    Require(sceShareCaptureScreenshotExtended(param, nullptr) == notSupported);
-    Require(sceShareCaptureScreenshotExtended(nullptr, nullptr) == notSupported);
-
-    using Capture = int (APS5_VABI*)(const void*, std::int32_t*);
-    for (Capture capture : {sceShareCaptureScreenshot, sceShareCaptureVideoClip}) {
-        reqId = 7;
-        Require(capture(param, &reqId) == notSupported);
-        Require(reqId == -1);
-        reqId = 7;
-        Require(capture(nullptr, &reqId) == notSupported);
-        Require(reqId == -1);
-        Require(capture(param, nullptr) == notSupported);
+const Case captureWithRequestId{"Capture_WithOrWithoutParam_ReturnsNotSupportedAndInvalidatesRequestId", [] {
+    const std::uint8_t param[64]{};
+    for (const auto& entry : captures) {
+        for (const void* argument : {static_cast<const void*>(param), static_cast<const void*>(nullptr)}) {
+            std::int32_t reqId = 7;
+            const std::string label = std::string(entry.name) + (argument ? " with a param" : " without a param");
+            RequireEqual(entry.capture(argument, &reqId), notSupported, label);
+            RequireEqual(reqId, -1, label + ": request id");
+        }
     }
+}};
 
-    Require(sceShareOpenMenuForContent(param) == notSupported);
-    Require(sceShareOpenMenuForContent(nullptr) == notSupported);
+const Case captureWithoutRequestId{"Capture_NullRequestId_ReturnsNotSupported", [] {
+    const std::uint8_t param[64]{};
+    for (const auto& entry : captures) {
+        RequireEqual(entry.capture(param, nullptr), notSupported, std::string(entry.name) + " with a null request id");
+    }
+    RequireEqual(sceShareCaptureScreenshotExtended(nullptr, nullptr), notSupported, "extended screenshot with null arguments");
+}};
 
-    constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x81960002);
-    std::uint8_t status[18];
-    std::memset(status, 0x5a, sizeof(status));
-    Require(sceShareGetCurrentStatus(1, status) == 0);
-    for (std::size_t index = 0; index < sizeof(status); ++index) Require(status[index] == (index < 16 ? 0 : 0x5a));
-    std::memset(status, 0x5a, sizeof(status));
-    Require(sceShareGetCurrentStatus(0xffffffffu, status) == 0);
-    Require(status[0] == 0 && status[15] == 0 && status[16] == 0x5a);
-    std::memset(status, 0x5a, sizeof(status));
-    Require(sceShareGetCurrentStatus(0, status) == invalidParam);
-    Require(status[0] == 0x5a);
-    Require(sceShareGetCurrentStatus(1, nullptr) == invalidParam);
+const Case openMenu{"OpenMenuForContent_AnyContent_ReturnsNotSupported", [] {
+    const std::uint8_t param[64]{};
+    RequireEqual(sceShareOpenMenuForContent(param), notSupported, "open menu with a content id");
+    RequireEqual(sceShareOpenMenuForContent(nullptr), notSupported, "open menu without a content id");
+}};
+
+const Case currentStatus{"GetCurrentStatus_SingleFeature_ZeroesSixteenBytesOnly", [] {
+    auto status = FilledStatus();
+    RequireEqual(sceShareGetCurrentStatus(1, status.data()), 0, "get current status");
+    for (std::size_t index = 0; index < status.size(); ++index) {
+        RequireEqual(status[index], index < 16 ? std::uint8_t{0} : filler, "status byte " + std::to_string(index));
+    }
+}};
+
+const Case currentStatusAllFeatures{"GetCurrentStatus_AllFeatures_ZeroesSixteenBytesOnly", [] {
+    auto status = FilledStatus();
+    RequireEqual(sceShareGetCurrentStatus(0xffffffffu, status.data()), 0, "get current status");
+    RequireEqual(status[0], std::uint8_t{0}, "status byte 0");
+    RequireEqual(status[15], std::uint8_t{0}, "status byte 15");
+    RequireEqual(status[16], filler, "status byte 16");
+}};
+
+const Case currentStatusNoFeature{"GetCurrentStatus_NoFeature_ReturnsInvalidParamWithoutWriting", [] {
+    auto status = FilledStatus();
+    RequireEqual(sceShareGetCurrentStatus(0, status.data()), invalidParam, "get current status");
+    RequireEqual(status[0], filler, "status byte 0");
+}};
+
+const Case currentStatusNull{"GetCurrentStatus_NullOutput_ReturnsInvalidParam", [] {
+    RequireEqual(sceShareGetCurrentStatus(1, nullptr), invalidParam, "get current status");
+}};
+
+const Case runningStatus{"GetRunningStatus_ValidOutput_ZeroesFirstWordOnly", [] {
     std::uint32_t running[2]{0xffffffffu, 0x5a5a5a5au};
-    Require(sceShareGetRunningStatus(running) == 0);
-    Require(running[0] == 0 && running[1] == 0x5a5a5a5au);
-    Require(sceShareGetRunningStatus(nullptr) == invalidParam);
-    Require(sceShareSetContentParamForApplicationTitle("title") == 0);
-    Require(sceShareSetContentParamForApplicationTitle(nullptr) == invalidParam);
-    return 0;
-}
+    RequireEqual(sceShareGetRunningStatus(running), 0, "get running status");
+    RequireEqual(running[0], 0u, "running status");
+    RequireEqual(running[1], 0x5a5a5a5au, "word after the running status");
+}};
+
+const Case runningStatusNull{"GetRunningStatus_NullOutput_ReturnsInvalidParam", [] {
+    RequireEqual(sceShareGetRunningStatus(nullptr), invalidParam, "get running status");
+}};
+
+const Case applicationTitle{"SetContentParamForApplicationTitle_TitleOrNull_SucceedsOrReturnsInvalidParam", [] {
+    RequireEqual(sceShareSetContentParamForApplicationTitle("title"), 0, "set a title");
+    RequireEqual(sceShareSetContentParamForApplicationTitle(nullptr), invalidParam, "set a null title");
+}};
+
+} // namespace

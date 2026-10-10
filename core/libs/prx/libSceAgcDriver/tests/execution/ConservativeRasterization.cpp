@@ -4,9 +4,9 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <set>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,7 +14,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -129,32 +129,26 @@ void Check(const std::set<Pixel>& covered, std::string_view what) {
     }
 }
 
-}
+const Testing::Case disabled{"ConservativeRasterization_Disabled_CoversPixelCenters", [] {
+    auto& device = SharedVulkanTestDevice();
+    Draw(device, VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
+    Check(CentersCovered, "conservative rasterization off");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Draw(*device, VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
-        Check(CentersCovered, "conservative rasterization off");
-        if (!device->ConservativeRasterization()) {
-            try {
-                Draw(*device, VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT);
-            } catch (const std::exception& error) {
-                Require(std::string_view(error.what()).find("requires VK_EXT_conservative_rasterization") != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
-                std::puts("skipped, the device has no VK_EXT_conservative_rasterization overestimation within 1/256 pixel that rasterizes degenerate triangles");
-                return VulkanTestSkipped;
-            }
-            Require(false, "overestimation was drawn without device support");
-        }
-        Draw(*device, VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT);
-        Check(AreasTouched, "overestimation");
-        Draw(*device, VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
-        Check(CentersCovered, "conservative rasterization off after overestimation");
-        std::puts("conservative rasterization tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case overestimateUnsupported{"ConservativeRasterization_OverestimateWithoutSupport_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.ConservativeRasterization()) Testing::Skip("the device reports VK_EXT_conservative_rasterization overestimation, there is no rejection to test");
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { Draw(device, VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT); }, "overestimation was drawn without device support");
+    Require(std::string_view(error.what()).find("requires VK_EXT_conservative_rasterization") != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
+}};
+
+const Testing::Case overestimate{"ConservativeRasterization_Overestimate_CoversTouchedAreasThenCentersWhenDisabled", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (!device.ConservativeRasterization()) Testing::Skip("the device has no VK_EXT_conservative_rasterization overestimation within 1/256 pixel that rasterizes degenerate triangles");
+    Draw(device, VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT);
+    Check(AreasTouched, "overestimation");
+    Draw(device, VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
+    Check(CentersCovered, "conservative rasterization off after overestimation");
+}};
+
+} // namespace

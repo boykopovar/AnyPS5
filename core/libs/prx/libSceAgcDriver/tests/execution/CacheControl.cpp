@@ -10,7 +10,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -60,18 +60,10 @@ void Check() {
     }
 }
 
-}
+const Testing::Case glcSlcDlcLoadAndStore{"CacheControl_GlcSlcDlcLoadAndStore_StoresEachLoadPlusOne", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("cache control tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

@@ -1,14 +1,19 @@
-#include "ColorTransferTests.hpp"
+#include <Testing/Test.hpp>
+#include "BdaShader.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace {
 
 using namespace AgcDriver::Graphics;
+using Testing::Case;
+using Testing::Require;
 
 void checkConversion(const Context& context, std::uint32_t width, std::uint32_t height, ColorTileMode mode, bool swap) {
     static_assert(std::endian::native == std::endian::little);
@@ -75,14 +80,8 @@ void checkDeviceBuffer(const Context& context) {
     {
         Buffer local(context, bytes, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         handle = local.Handle();
-        bool rejected = false;
-        try { static_cast<void>(local.Bytes()); }
-        catch (const std::runtime_error&) { rejected = true; }
-        Require(rejected, "GPU-only buffer exposed a CPU mapping");
-        rejected = false;
-        try { local.Invalidate(); }
-        catch (const std::runtime_error&) { rejected = true; }
-        Require(rejected, "GPU-only buffer accepted host invalidation");
+        Testing::RequireThrows<std::runtime_error>([&] { static_cast<void>(local.Bytes()); }, "GPU-only buffer exposed a CPU mapping");
+        Testing::RequireThrows<std::runtime_error>([&] { local.Invalidate(); }, "GPU-only buffer accepted host invalidation");
         Buffer upload(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         std::fill(upload.Bytes().begin(), upload.Bytes().end(), std::byte{0x5a});
@@ -107,12 +106,24 @@ void checkDeviceBuffer(const Context& context) {
     Require(reused.Handle() == handle, "device-local buffer was not retained for reuse");
 }
 
-}
+const Case bufferReuse{"Buffer_CompletedAllocation_IsReusedButActiveOneIsNot", [] {
+    checkBufferReuse(SharedBdaTestDevice().context);
+}};
 
-void RunColorTransferTests(const AgcDriver::Graphics::Context& context) {
-    checkBufferReuse(context);
-    checkDeviceBuffer(context);
-    checkConversion(context, 130, 129, AgcDriver::Graphics::ColorTileMode::RenderTarget, false);
-    checkConversion(context, 257, 17, AgcDriver::Graphics::ColorTileMode::RenderTarget, true);
-    checkConversion(context, 192, 13, AgcDriver::Graphics::ColorTileMode::Linear, false);
-}
+const Case deviceBuffer{"Buffer_DeviceLocal_RejectsHostAccessAndIsRetainedForReuse", [] {
+    checkDeviceBuffer(SharedBdaTestDevice().context);
+}};
+
+const Case renderTarget{"GpuColorTransfer_RenderTargetSurface_MatchesCpuTiling", [] {
+    checkConversion(SharedBdaTestDevice().context, 130, 129, ColorTileMode::RenderTarget, false);
+}};
+
+const Case swappedRenderTarget{"GpuColorTransfer_RenderTargetSurfaceWithSwap_MatchesSwappedCpuTiling", [] {
+    checkConversion(SharedBdaTestDevice().context, 257, 17, ColorTileMode::RenderTarget, true);
+}};
+
+const Case linearSurface{"GpuColorTransfer_LinearSurface_MatchesCpuTiling", [] {
+    checkConversion(SharedBdaTestDevice().context, 192, 13, ColorTileMode::Linear, false);
+}};
+
+} // namespace

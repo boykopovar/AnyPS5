@@ -1,11 +1,19 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <chrono>
-#include <cstdio>
-#include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <string>
+#include <system_error>
+#include <utility>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <io.h>
 #endif
@@ -23,127 +31,371 @@ int APS5_VABI pipe_nid_postfix(int*);
 int* APS5_VABI __error_nid_postfix();
 }
 
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s (guest errno %d)\n", message, *__error_nid_postfix());
-        std::exit(1);
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int posixEnoent = 2;
+constexpr int posixEinval = 22;
+constexpr int sceKernelErrorEinval = static_cast<int>(0x80020016u);
+constexpr KernelTimeval first[2]{{1000000000, 123456}, {1000000001, 500000}};
+constexpr KernelTimeval second[2]{{1000000002, 1}, {1000000003, 999999}};
+
+int Errno() {
+    return *__error_nid_postfix();
+}
+
+void RequireSuccess(std::int64_t result, const std::string& context) {
+    const int error = Errno();
+    RequireEqual(result, std::int64_t{0}, context + " (guest errno " + std::to_string(error) + ")");
+}
+
+void RequirePosixFailure(int result, int error, const std::string& context) {
+    RequireEqual(result, -1, context + " result");
+    RequireEqual(Errno(), error, context + " errno");
+}
+
+std::string TimeText(const KernelTimeval& time) {
+    return std::to_string(time.tv_sec) + "s " + std::to_string(time.tv_usec) + "us";
+}
+
+void RequireSame(const KernelTimespec& actual, const KernelTimeval& expected, const std::string& context) {
+    RequireEqual(actual.tv_sec, expected.tv_sec, context + " seconds for " + TimeText(expected));
+    RequireEqual(actual.tv_nsec, expected.tv_usec * 1000, context + " nanoseconds for " + TimeText(expected));
+}
+
+class Descriptor {
+public:
+    explicit Descriptor(const std::string& path) : value(open_nid_postfix(path.c_str(), 0, 0)) {
+        Require(value >= 0, "open read-only descriptor for " + path + " (guest errno " + std::to_string(Errno()) + ")");
     }
+
+    ~Descriptor() {
+        if (open) close_nid_postfix(value);
+    }
+
+    Descriptor(const Descriptor&) = delete;
+    Descriptor& operator=(const Descriptor&) = delete;
+
+    int Get() const noexcept { return value; }
+
+    int Close() {
+        open = false;
+        return close_nid_postfix(value);
+    }
+
+private:
+    int value;
+    bool open = true;
+};
+
+class RootDirectory {
+public:
+    RootDirectory()
+        : path("anyps5-file-times-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())) {
+        Require(std::filesystem::create_directory(path), "create fixture directory " + path.string());
+    }
+
+    ~RootDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+
+    RootDirectory(const RootDirectory&) = delete;
+    RootDirectory& operator=(const RootDirectory&) = delete;
+
+    const std::filesystem::path path;
+};
+
+std::string MakeFile(const RootDirectory& root) {
+    const auto path = (root.path / "file.txt").string();
+    { std::ofstream file(path); file << "timestamp fixture"; }
+    return path;
 }
 
-static bool Same(const KernelTimespec& actual, const KernelTimeval& expected) {
-    return actual.tv_sec == expected.tv_sec && actual.tv_nsec == expected.tv_usec * 1000;
+std::string MakeDirectory(const RootDirectory& root) {
+    const auto path = (root.path / "directory").string();
+    Require(std::filesystem::create_directory(path), "create timestamp directory");
+    return path;
 }
 
-static void CheckTimes(const std::string& path, int fd, const KernelTimeval* expected) {
-    FileStat byPath{}, byFd{}, byKernel{};
-    Require(stat_nid_postfix(path.c_str(), &byPath) == 0, "stat");
-    Require(fstat_nid_disambig1_nid_postfix(fd, &byFd) == 0, "fstat");
-    Require(sceKernelFstat(fd, &byKernel) == 0, "sceKernelFstat");
-    for (const auto* status : {&byPath, &byFd, &byKernel}) {
-        Require(Same(status->st_atim, expected[0]), "access time preserves microseconds");
-        Require(Same(status->st_mtim, expected[1]), "modification time preserves microseconds");
+class FileFixture {
+public:
+    FileFixture() : path(MakeFile(root)), descriptor(path) {}
+
+    int Fd() const noexcept { return descriptor.Get(); }
+    int Close() { return descriptor.Close(); }
+
+private:
+    RootDirectory root;
+
+public:
+    const std::string path;
+
+private:
+    Descriptor descriptor;
+};
+
+class DirectoryFixture {
+public:
+    DirectoryFixture() : path(MakeDirectory(root)), descriptor(path) {}
+
+    int Fd() const noexcept { return descriptor.Get(); }
+    int Close() { return descriptor.Close(); }
+
+private:
+    RootDirectory root;
+
+public:
+    const std::string path;
+
+private:
+    Descriptor descriptor;
+};
+
+void CheckTimes(const FileFixture& fixture, const KernelTimeval* expected, const std::string& context) {
+    FileStat byPath{};
+    FileStat byFd{};
+    FileStat byKernel{};
+    RequireSuccess(stat_nid_postfix(fixture.path.c_str(), &byPath), context + ": stat");
+    RequireSuccess(fstat_nid_disambig1_nid_postfix(fixture.Fd(), &byFd), context + ": fstat");
+    RequireSuccess(sceKernelFstat(fixture.Fd(), &byKernel), context + ": sceKernelFstat");
+    const std::pair<const char*, const FileStat*> statuses[] = {{"stat", &byPath}, {"fstat", &byFd}, {"sceKernelFstat", &byKernel}};
+    for (const auto& [name, status] : statuses) {
+        RequireSame(status->st_atim, expected[0], context + ": " + name + " access time");
+        RequireSame(status->st_mtim, expected[1], context + ": " + name + " modification time");
     }
 #ifdef _WIN32
-    FILETIME access{}, modified{};
-    Require(GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), nullptr, &access, &modified), "native GetFileTime");
+    FILETIME access{};
+    FILETIME modified{};
+    Require(GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(fixture.Fd())), nullptr, &access, &modified),
+            context + ": native GetFileTime");
     const auto ticks = [](FILETIME time) {
         return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
     };
-    Require(ticks(access) == static_cast<std::uint64_t>(expected[0].tv_sec + 11644473600LL) * 10000000 + expected[0].tv_usec * 10,
-        "native access time preserves microseconds");
-    Require(ticks(modified) == static_cast<std::uint64_t>(expected[1].tv_sec + 11644473600LL) * 10000000 + expected[1].tv_usec * 10,
-        "native modification time preserves microseconds");
+    const auto expectedTicks = [](const KernelTimeval& time) {
+        return static_cast<std::uint64_t>(time.tv_sec + 11644473600LL) * 10000000 + time.tv_usec * 10;
+    };
+    RequireEqual(ticks(access), expectedTicks(expected[0]), context + ": native access time");
+    RequireEqual(ticks(modified), expectedTicks(expected[1]), context + ": native modification time");
 #endif
 }
 
-int main() {
-    const auto root = std::filesystem::path("anyps5-file-times-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root), "create fixture directory");
-    const auto path = (root / "file.txt").string();
-    { std::ofstream file(path); file << "timestamp fixture"; }
-    const int fd = open_nid_postfix(path.c_str(), 0, 0);
-    Require(fd >= 0, "open read-only descriptor");
+const Case utimesFractional{"Utimes_FractionalTimes_PreservesMicroseconds", [] {
+    const FileFixture fixture;
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), first), "utimes");
+    CheckTimes(fixture, first, "after utimes");
+}};
 
-    const KernelTimeval first[2]{{1000000000, 123456}, {1000000001, 500000}};
-    Require(utimes_nid_postfix(path.c_str(), first) == 0, "utimes fractional timestamp");
-    CheckTimes(path, fd, first);
-    const KernelTimeval second[2]{{1000000002, 1}, {1000000003, 999999}};
-    Require(futimes_nid_postfix(fd, second) == 0, "futimes on read-only descriptor");
-    CheckTimes(path, fd, second);
-    Require(sceKernelUtimes_nid_postfix(path.c_str(), first) == 0, "sceKernelUtimes fractional timestamp");
-    CheckTimes(path, fd, first);
+const Case futimesReadOnly{"Futimes_ReadOnlyDescriptor_PreservesMicroseconds", [] {
+    const FileFixture fixture;
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), first), "utimes");
+    RequireSuccess(futimes_nid_postfix(fixture.Fd(), second), "futimes");
+    CheckTimes(fixture, second, "after futimes");
+}};
 
+const Case sceUtimesFractional{"SceKernelUtimes_FractionalTimes_PreservesMicroseconds", [] {
+    const FileFixture fixture;
+    RequireSuccess(futimes_nid_postfix(fixture.Fd(), second), "futimes");
+    RequireSuccess(sceKernelUtimes_nid_postfix(fixture.path.c_str(), first), "sceKernelUtimes");
+    CheckTimes(fixture, first, "after sceKernelUtimes");
+}};
+
+template<typename TSetter>
+void RequireInvalidMicrosecondsRejected(const FileFixture& fixture, const TSetter& setter) {
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), first), "utimes");
     for (int index = 0; index < 2; ++index) {
         for (const auto micros : {-1LL, 1000000LL}) {
+            const std::string context = "time " + std::to_string(index) + " with " + std::to_string(micros) + " microseconds";
             KernelTimeval invalid[2]{first[0], first[1]};
             invalid[index].tv_usec = micros;
-            Require(utimes_nid_postfix(path.c_str(), invalid) == -1 && *__error_nid_postfix() == 22, "utimes rejects invalid microseconds");
-            Require(futimes_nid_postfix(fd, invalid) == -1 && *__error_nid_postfix() == 22, "futimes rejects invalid microseconds");
-            Require(sceKernelUtimes_nid_postfix(path.c_str(), invalid) == static_cast<int>(0x80020016u), "sceKernelUtimes rejects invalid microseconds");
-            CheckTimes(path, fd, first);
+            setter(invalid, context);
+            CheckTimes(fixture, first, context);
+        }
+    }
+}
+
+const Case utimesInvalid{"Utimes_InvalidMicroseconds_FailsWithEinvalAndKeepsTimes", [] {
+    const FileFixture fixture;
+    RequireInvalidMicrosecondsRejected(fixture, [&fixture](const KernelTimeval* invalid, const std::string& context) {
+        RequirePosixFailure(utimes_nid_postfix(fixture.path.c_str(), invalid), posixEinval, "utimes " + context);
+    });
+}};
+
+const Case futimesInvalid{"Futimes_InvalidMicroseconds_FailsWithEinvalAndKeepsTimes", [] {
+    const FileFixture fixture;
+    RequireInvalidMicrosecondsRejected(fixture, [&fixture](const KernelTimeval* invalid, const std::string& context) {
+        RequirePosixFailure(futimes_nid_postfix(fixture.Fd(), invalid), posixEinval, "futimes " + context);
+    });
+}};
+
+const Case sceUtimesInvalid{"SceKernelUtimes_InvalidMicroseconds_FailsWithEinvalAndKeepsTimes", [] {
+    const FileFixture fixture;
+    RequireInvalidMicrosecondsRejected(fixture, [&fixture](const KernelTimeval* invalid, const std::string& context) {
+        RequireEqual(sceKernelUtimes_nid_postfix(fixture.path.c_str(), invalid), sceKernelErrorEinval, "sceKernelUtimes " + context);
+    });
+}};
+
+#ifdef _WIN32
+class NativeHandle {
+public:
+    explicit NativeHandle(const std::string& path)
+        : handle(CreateFileW(std::filesystem::path(path).c_str(), FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr)) {
+        Require(handle != INVALID_HANDLE_VALUE, "open native timestamp handle");
+    }
+
+    ~NativeHandle() {
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
+
+    NativeHandle(const NativeHandle&) = delete;
+    NativeHandle& operator=(const NativeHandle&) = delete;
+
+    HANDLE Get() const noexcept { return handle; }
+
+    bool Close() {
+        const HANDLE closing = handle;
+        handle = INVALID_HANDLE_VALUE;
+        return CloseHandle(closing) != 0;
+    }
+
+private:
+    HANDLE handle;
+};
+
+const Case nativePrecision{"Stat_NativeHundredNanosecondTimes_RetainsNativePrecision", [] {
+    const FileFixture fixture;
+    NativeHandle handle(fixture.path);
+    constexpr std::uint64_t ticks = 116444736000000000ULL + 1000000000ULL * 10000000 + 1234567;
+    const FILETIME precise{static_cast<DWORD>(ticks), static_cast<DWORD>(ticks >> 32)};
+    Require(SetFileTime(handle.Get(), &precise, &precise, &precise), "set native 100-nanosecond timestamps");
+    FILE_BASIC_INFO native{};
+    Require(GetFileInformationByHandleEx(handle.Get(), FileBasicInfo, &native, sizeof(native)), "read native basic info");
+    FileStat status{};
+    RequireSuccess(stat_nid_postfix(fixture.path.c_str(), &status), "stat");
+    RequireEqual(status.st_birthtim.tv_sec, std::int64_t{1000000000}, "creation seconds");
+    RequireEqual(status.st_birthtim.tv_nsec, std::int64_t{123456700}, "creation nanoseconds");
+    RequireEqual(status.st_atim.tv_sec, std::int64_t{1000000000}, "access seconds");
+    RequireEqual(status.st_atim.tv_nsec, std::int64_t{123456700}, "access nanoseconds");
+    RequireEqual(status.st_mtim.tv_sec, std::int64_t{1000000000}, "modification seconds");
+    RequireEqual(status.st_mtim.tv_nsec, std::int64_t{123456700}, "modification nanoseconds");
+    RequireEqual(status.st_ctim.tv_sec, static_cast<std::int64_t>(native.ChangeTime.QuadPart / 10000000 - 11644473600LL),
+                 "change seconds from native change time");
+    RequireEqual(status.st_ctim.tv_nsec, static_cast<std::int64_t>(native.ChangeTime.QuadPart % 10000000 * 100),
+                 "change nanoseconds from native change time");
+    Require(handle.Close(), "close native timestamp handle");
+}};
+
+const Case aroundEpoch{"Utimes_TimesAroundUnixEpoch_PreservesMicroseconds", [] {
+    const FileFixture fixture;
+    const KernelTimeval preEpoch[2]{{-1, 500000}, {0, 1}};
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), preEpoch), "utimes around epoch");
+    CheckTimes(fixture, preEpoch, "after utimes around epoch");
+}};
+
+const Case unrepresentable{"UtimesAndFutimes_UnrepresentableWindowsTime_FailWithEinvalAndKeepTimes", [] {
+    const FileFixture fixture;
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), first), "utimes valid times");
+    for (const auto seconds : {std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max(),
+                               std::int64_t{-11644473601LL}, std::int64_t{-11644473600LL}}) {
+        const std::string context = "modification seconds " + std::to_string(seconds);
+        const KernelTimeval invalid[2]{first[0], {seconds, 0}};
+        RequirePosixFailure(utimes_nid_postfix(fixture.path.c_str(), invalid), posixEinval, "utimes " + context);
+        RequirePosixFailure(futimes_nid_postfix(fixture.Fd(), invalid), posixEinval, "futimes " + context);
+        CheckTimes(fixture, first, context);
+    }
+}};
+#endif
+
+const Case futimesNow{"Futimes_NullTimes_UsesCurrentClock", [] {
+    const FileFixture fixture;
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), first), "utimes");
+    const auto before = std::chrono::system_clock::now();
+    RequireSuccess(futimes_nid_postfix(fixture.Fd(), nullptr), "futimes current time");
+    const auto after = std::chrono::system_clock::now();
+    FileStat now{};
+    RequireSuccess(stat_nid_postfix(fixture.path.c_str(), &now), "stat current time");
+    const auto recorded = std::chrono::seconds(now.st_mtim.tv_sec) + std::chrono::nanoseconds(now.st_mtim.tv_nsec);
+    Require(recorded >= before.time_since_epoch() - std::chrono::seconds(1) &&
+            recorded <= after.time_since_epoch() + std::chrono::seconds(1),
+            "modification time " + std::to_string(now.st_mtim.tv_sec) + "s within one second of the current clock");
+}};
+
+const Case utimesNow{"Utimes_NullTimes_Succeeds", [] {
+    FileFixture fixture;
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), nullptr), "utimes current time");
+    RequireSuccess(fixture.Close(), "close fixture descriptor");
+}};
+
+const Case directoryUtimes{"Utimes_Directory_PreservesMicroseconds", [] {
+    DirectoryFixture fixture;
+    RequireSuccess(utimes_nid_postfix(fixture.path.c_str(), first), "directory utimes");
+    FileStat status{};
+    RequireSuccess(stat_nid_postfix(fixture.path.c_str(), &status), "directory stat");
+    RequireSame(status.st_mtim, first[1], "directory stat modification time");
+}};
+
+const Case directoryFutimes{"Futimes_DirectoryDescriptor_PreservesMicroseconds", [] {
+    DirectoryFixture fixture;
+    RequireSuccess(futimes_nid_postfix(fixture.Fd(), second), "directory futimes");
+    FileStat status{};
+    RequireSuccess(sceKernelFstat(fixture.Fd(), &status), "directory fstat");
+    RequireSame(status.st_mtim, second[1], "directory fstat modification time");
+    RequireSuccess(fixture.Close(), "close directory descriptor");
+}};
+
+const Case missingPath{"Utimes_MissingPath_FailsWithEnoent", [] {
+    const RootDirectory root;
+    RequirePosixFailure(utimes_nid_postfix((root.path / "missing").string().c_str(), first), posixEnoent, "utimes missing");
+}};
+
+class Pipe {
+public:
+    Pipe() {
+        RequireSuccess(pipe_nid_postfix(descriptors), "create pipe");
+        open = true;
+    }
+
+    ~Pipe() {
+        if (open) {
+            close_nid_postfix(descriptors[0]);
+            close_nid_postfix(descriptors[1]);
         }
     }
 
-#ifdef _WIN32
-    const auto handle = CreateFileW(std::filesystem::path(path).c_str(), FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-    Require(handle != INVALID_HANDLE_VALUE, "open native timestamp handle");
-    constexpr std::uint64_t ticks = 116444736000000000ULL + 1000000000ULL * 10000000 + 1234567;
-    const FILETIME precise{static_cast<DWORD>(ticks), static_cast<DWORD>(ticks >> 32)};
-    Require(SetFileTime(handle, &precise, &precise, &precise), "set native 100-nanosecond timestamps");
-    FILE_BASIC_INFO native{};
-    Require(GetFileInformationByHandleEx(handle, FileBasicInfo, &native, sizeof(native)), "read native basic info");
-    FileStat status{};
-    Require(stat_nid_postfix(path.c_str(), &status) == 0, "stat native timestamps");
-    Require(status.st_birthtim.tv_sec == 1000000000 && status.st_birthtim.tv_nsec == 123456700, "creation time retains native precision");
-    Require(status.st_atim.tv_sec == 1000000000 && status.st_atim.tv_nsec == 123456700, "access time retains native precision");
-    Require(status.st_mtim.tv_sec == 1000000000 && status.st_mtim.tv_nsec == 123456700, "modification time retains native precision");
-    Require(status.st_ctim.tv_sec == native.ChangeTime.QuadPart / 10000000 - 11644473600LL &&
-        status.st_ctim.tv_nsec == native.ChangeTime.QuadPart % 10000000 * 100, "change time uses native metadata change time");
-    Require(CloseHandle(handle), "close native timestamp handle");
+    Pipe(const Pipe&) = delete;
+    Pipe& operator=(const Pipe&) = delete;
 
-    const KernelTimeval preEpoch[2]{{-1, 500000}, {0, 1}};
-    Require(utimes_nid_postfix(path.c_str(), preEpoch) == 0, "timestamps around Unix epoch");
-    CheckTimes(path, fd, preEpoch);
-    Require(utimes_nid_postfix(path.c_str(), first) == 0, "restore valid times");
-    for (const auto seconds : {std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max(), -11644473601LL, -11644473600LL}) {
-        const KernelTimeval invalid[2]{first[0], {seconds, 0}};
-        Require(utimes_nid_postfix(path.c_str(), invalid) == -1 && *__error_nid_postfix() == 22, "reject unrepresentable Windows timestamp");
-        Require(futimes_nid_postfix(fd, invalid) == -1 && *__error_nid_postfix() == 22, "futimes rejects unrepresentable Windows timestamp");
-        CheckTimes(path, fd, first);
+    int Read() const noexcept { return descriptors[0]; }
+
+    bool Close() {
+        open = false;
+        const bool readClosed = close_nid_postfix(descriptors[0]) == 0;
+        const bool writeClosed = close_nid_postfix(descriptors[1]) == 0;
+        return readClosed && writeClosed;
     }
-#endif
 
-    const auto before = std::chrono::system_clock::now();
-    Require(futimes_nid_postfix(fd, nullptr) == 0, "futimes current time");
-    const auto after = std::chrono::system_clock::now();
-    FileStat now{};
-    Require(stat_nid_postfix(path.c_str(), &now) == 0, "stat current time");
-    const auto recorded = std::chrono::seconds(now.st_mtim.tv_sec) + std::chrono::nanoseconds(now.st_mtim.tv_nsec);
-    Require(recorded >= before.time_since_epoch() - std::chrono::seconds(1) &&
-        recorded <= after.time_since_epoch() + std::chrono::seconds(1), "null times use current clock");
-    Require(utimes_nid_postfix(path.c_str(), nullptr) == 0, "utimes current time");
-    Require(close_nid_postfix(fd) == 0, "close fixture descriptor");
+private:
+    int descriptors[2] = {-1, -1};
+    bool open = false;
+};
 
-    const auto directory = (root / "directory").string();
-    Require(std::filesystem::create_directory(directory), "create timestamp directory");
-    const int directoryFd = open_nid_postfix(directory.c_str(), 0, 0);
-    Require(directoryFd >= 0, "open directory descriptor");
-    Require(utimes_nid_postfix(directory.c_str(), first) == 0, "directory utimes");
-    FileStat directoryStatus{};
-    Require(stat_nid_postfix(directory.c_str(), &directoryStatus) == 0 && Same(directoryStatus.st_mtim, first[1]), "directory stat precision");
-    Require(futimes_nid_postfix(directoryFd, second) == 0, "directory futimes");
-    Require(sceKernelFstat(directoryFd, &directoryStatus) == 0 && Same(directoryStatus.st_mtim, second[1]), "directory fstat precision");
-    Require(close_nid_postfix(directoryFd) == 0, "close directory descriptor");
+const Case pipeFstat{"SceKernelFstat_Pipe_Succeeds", [] {
+    Pipe pipe;
+    FileStat status{};
+    RequireSuccess(sceKernelFstat(pipe.Read(), &status), "pipe fstat");
+    Require(pipe.Close(), "close pipe");
+}};
 
-    Require(utimes_nid_postfix((root / "missing").string().c_str(), first) == -1 && *__error_nid_postfix() == 2, "missing path reports ENOENT");
-    int pipe[2];
-    Require(pipe_nid_postfix(pipe) == 0, "create pipe");
-    FileStat pipeStatus{};
-    Require(sceKernelFstat(pipe[0], &pipeStatus) == 0, "pipe stat still works");
 #ifdef _WIN32
-    Require(futimes_nid_postfix(pipe[0], first) == -1 && *__error_nid_postfix() == 22, "pipe timestamp update fails");
+const Case pipeFutimes{"Futimes_Pipe_FailsWithEinval", [] {
+    Pipe pipe;
+    RequirePosixFailure(futimes_nid_postfix(pipe.Read(), first), posixEinval, "pipe futimes");
+    Require(pipe.Close(), "close pipe");
+}};
 #endif
-    Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0, "close pipe");
-    std::filesystem::remove_all(root);
-}
+
+} // namespace

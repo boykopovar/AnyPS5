@@ -3,43 +3,54 @@ target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceSystemService)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_system_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemExit.cpp)
-    target_include_directories(guest_system_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_system_exit_tests PRIVATE libSceSystemService libc)
-    configure_windows_unwind(guest_system_exit_tests)
-    add_test(NAME guest_system_exit_parameters COMMAND guest_system_exit_tests)
-    add_test(NAME guest_system_exit COMMAND guest_system_exit_tests --exit)
-    add_test(NAME guest_quick_exit COMMAND guest_system_exit_tests --quick-exit)
-    add_test(NAME guest_immediate_exit COMMAND guest_system_exit_tests --immediate)
-    add_test(NAME guest_return_from_main COMMAND guest_system_exit_tests --return-from-main)
-    set_tests_properties(guest_system_exit PROPERTIES
+    anyps5_add_library_test(guest_system_exit_tests
+        NAME guest_system_exit_parameters
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSystemExit.cpp
+        LINK libSceSystemService libc
+        RUNTIME libc
+    )
+    set(guestSystemExitModes
+        "guest_system_exit|LoadExec_Exit_RunsShutdownAndAtexitHandlers|exit|Guest shutdown and atexit completed"
+        "guest_quick_exit|QuickExit_TwoHandlers_RunInReverseOrder|quick-exit|Guest quick_exit handlers completed"
+        "guest_immediate_exit|Exit_Immediate_SkipsShutdownAndAtexitHandlers|immediate|"
+        "guest_return_from_main|CatchReturnFromMain_ZeroStatus_EndsProcessSuccessfully|return-from-main|")
+    foreach(exitMode IN LISTS guestSystemExitModes)
+        string(REPLACE "|" ";" exitMode "${exitMode}")
+        list(GET exitMode 0 exitTestName)
+        list(GET exitMode 1 exitCaseName)
+        list(GET exitMode 2 exitArgument)
+        list(GET exitMode 3 exitOutput)
+        add_test(NAME ${exitTestName} COMMAND guest_system_exit_tests --case ${exitCaseName} ${exitArgument})
+        set(exitProperties)
+        if(exitOutput)
+            set(exitProperties PASS_REGULAR_EXPRESSION "${exitOutput}")
+        endif()
+        anyps5_set_test_properties(${exitTestName} integration "" ${exitProperties})
+        if(WIN32)
+            set_tests_properties(${exitTestName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    anyps5_add_library_test(guest_system_service_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSystemService.cpp
+        LINK libSceSystemService libc
+        RUNTIME libc
+    )
+    anyps5_add_library_test(guest_system_kill_app_tests
+        NAME guest_system_kill_app_parameters
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSystemKillApp.cpp
+        LINK libSceSystemService libc
+        RUNTIME libc
+    )
+    foreach(killTestName IN ITEMS guest_system_kill_app guest_system_kill_app_status)
+        add_test(NAME ${killTestName} COMMAND guest_system_kill_app_tests
+            --case KillApp_RunningTitle_RunsShutdownAndAtexitHandlers kill)
+        if(WIN32)
+            set_tests_properties(${killTestName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    anyps5_set_test_properties(guest_system_kill_app integration ""
         PASS_REGULAR_EXPRESSION "Guest shutdown and atexit completed")
-    set_tests_properties(guest_quick_exit PROPERTIES
-        PASS_REGULAR_EXPRESSION "Guest quick_exit handlers completed")
-    if(WIN32)
-        set_tests_properties(guest_system_exit guest_system_exit_parameters guest_immediate_exit guest_return_from_main guest_quick_exit PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    add_test_executable(guest_system_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemService.cpp)
-    target_include_directories(guest_system_service_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_system_service_tests PRIVATE libSceSystemService libc)
-    configure_windows_unwind(guest_system_service_tests)
-    add_test(NAME guest_system_service COMMAND guest_system_service_tests)
-    if(WIN32)
-        set_tests_properties(guest_system_service PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    add_test_executable(guest_system_kill_app_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemKillApp.cpp)
-    target_include_directories(guest_system_kill_app_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_system_kill_app_tests PRIVATE libSceSystemService libc)
-    configure_windows_unwind(guest_system_kill_app_tests)
-    add_test(NAME guest_system_kill_app_parameters COMMAND guest_system_kill_app_tests)
-    add_test(NAME guest_system_kill_app COMMAND guest_system_kill_app_tests --kill)
-    add_test(NAME guest_system_kill_app_status COMMAND guest_system_kill_app_tests --kill)
-    set_tests_properties(guest_system_kill_app PROPERTIES
-        PASS_REGULAR_EXPRESSION "Guest shutdown and atexit completed")
-    if(WIN32)
-        set_tests_properties(guest_system_kill_app guest_system_kill_app_status guest_system_kill_app_parameters PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
+    anyps5_set_test_properties(guest_system_kill_app_status integration "")
 endif()

@@ -4,13 +4,11 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -63,26 +61,17 @@ void Check() {
     const auto uniform = Accumulated() + 7u;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = tid * 20u + uniform;
-        Require(Output[tid] == expected, "wave uniform: thread " + std::to_string(tid) + " stored " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
+        Testing::Require(Output[tid] == expected, "wave uniform: thread " + std::to_string(tid) + " stored " + std::to_string(Output[tid]) + ", expected " + std::to_string(expected));
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, subgroup size %u cannot hold a wave64 in two lanes\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("wave uniform tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case uniformLoop{"WaveUniform_Wave64ScalarLoop_StoresUniformValuePlusLaneOffset", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave64 in two lanes");
     }
-}
+    Run(device);
+    Check();
+}};
+
+} // namespace

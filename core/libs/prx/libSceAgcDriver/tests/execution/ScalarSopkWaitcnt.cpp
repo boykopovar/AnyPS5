@@ -7,14 +7,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 struct Wait {
@@ -161,28 +159,20 @@ void Check() {
                     const std::string label = "scalar sopk waitcnt: thread " + std::to_string(tid) + " " + wait.name + " register " + Hex(reg) + ", level " + Hex(level);
                     const std::uint32_t mask = Output[tid * Results + result++];
                     const std::uint32_t value = Output[tid * Results + result++];
-                    Require((mask & SccKept) != 0u, label + " cleared SCC");
-                    Require((mask & SccRaised) == 0u, label + " set SCC");
-                    Require(mask == SccKept, label + " left the flags at " + Hex(mask));
-                    Require(value == Value, label + " left s" + std::to_string(ValueRegister) + " at " + Hex(value) + ", expected " + Hex(Value));
+                    Testing::Require((mask & SccKept) != 0u, label + " cleared SCC");
+                    Testing::Require((mask & SccRaised) == 0u, label + " set SCC");
+                    Testing::Require(mask == SccKept, label + " left the flags at " + Hex(mask));
+                    Testing::Require(value == Value, label + " left s" + std::to_string(ValueRegister) + " at " + Hex(value) + ", expected " + Hex(Value));
                 }
             }
         }
     }
 }
 
-}
+const Testing::Case scalarSopkWaitcnt{"ScalarSopkWaitcnt_AllWaitVariants_KeepSccAndRegister", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("scalar sopk waitcnt tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

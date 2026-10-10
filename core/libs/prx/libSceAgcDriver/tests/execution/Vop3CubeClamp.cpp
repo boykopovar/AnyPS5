@@ -8,14 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <exception>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -136,7 +135,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("vop3 cube clamp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("vop3 cube clamp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
@@ -166,42 +165,58 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void CheckOmodRefused(AgcDriver::VulkanDevice& device) {
-    for (const std::uint32_t opcode : {0x144u, 0x145u, 0x146u, 0x147u}) {
-        alignas(256) const std::array<std::uint32_t, 3> code{0xd400000au | (opcode << 16u), 0x0c1a0b04u, 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find("VOP3 source modifiers are not implemented") != std::string::npos, "VOP3 opcode " + Hex(opcode) + " with omod was not refused");
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
     }
+    Testing::Fail(message);
 }
 
-void Check() {
+void RequireOmodRefused(AgcDriver::VulkanDevice& device, std::uint32_t opcode) {
+    alignas(256) const std::array<std::uint32_t, 3> code{0xd400000au | (opcode << 16u), 0x0c1a0b04u, 0xbf810000u};
+    const auto refusal = RequireRefusal([&] { static_cast<void>(Compile(device, code)); }, "VOP3 opcode " + Hex(opcode) + " with omod was not refused");
+    Testing::Require(refusal.find("VOP3 source modifiers are not implemented") != std::string::npos, "VOP3 opcode " + Hex(opcode) + " with omod was refused for another reason: " + refusal);
+}
+
+void Check(std::uint32_t first, std::uint32_t last) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t i = 0; i < 16; ++i) {
+        for (std::uint32_t i = first; i < last; ++i) {
             Expect(tid, out[i], Expected[tid][i], Names[i]);
         }
     }
 }
 
-}
+const Testing::Case cubePlainAndClamp{"Vop3CubeClamp_PlainAndClampForms_MatchExpectedTable", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check(0, 8);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        CheckOmodRefused(*device);
-        std::puts("vop3 cube clamp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case cubeSourceModifiers{"Vop3CubeClamp_SourceModifierForms_MatchExpectedTable", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check(8, 16);
+}};
+
+const Testing::Case refuseCubeidOmod{"Vop3CubeClamp_CubeidWithOmod_IsRefused", [] {
+    RequireOmodRefused(SharedVulkanTestDevice(), 0x144u);
+}};
+
+const Testing::Case refuseCubescOmod{"Vop3CubeClamp_CubescWithOmod_IsRefused", [] {
+    RequireOmodRefused(SharedVulkanTestDevice(), 0x145u);
+}};
+
+const Testing::Case refuseCubetcOmod{"Vop3CubeClamp_CubetcWithOmod_IsRefused", [] {
+    RequireOmodRefused(SharedVulkanTestDevice(), 0x146u);
+}};
+
+const Testing::Case refuseCubemaOmod{"Vop3CubeClamp_CubemaWithOmod_IsRefused", [] {
+    RequireOmodRefused(SharedVulkanTestDevice(), 0x147u);
+}};
+
+} // namespace

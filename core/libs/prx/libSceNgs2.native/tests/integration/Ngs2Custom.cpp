@@ -3,7 +3,16 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 #include <vector>
+
+namespace {
+
+using namespace Ngs2Testing;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
 
 struct Calls {
     std::vector<std::uint32_t> setupVoices;
@@ -11,12 +20,19 @@ struct Calls {
     std::vector<std::uint32_t> processFlags;
     std::vector<int> order;
     int processResult = SCE_NGS2_OK;
+    std::uint32_t contextMismatches = 0;
 };
-static Calls calls;
 
-static std::int32_t APS5_VABI Setup(Ngs2UserFx2SetupContext* context) {
-    Require(context->common != nullptr && context->param != nullptr && context->work != nullptr);
-    Require(context->user_data == 0x77 && context->max_voices == 2);
+Calls& CallsOf(std::uintptr_t userData) {
+    return *reinterpret_cast<Calls*>(userData);
+}
+
+std::int32_t APS5_VABI Setup(Ngs2UserFx2SetupContext* context) {
+    auto& calls = CallsOf(context->user_data);
+    if (context->common == nullptr || context->param == nullptr || context->work == nullptr || context->max_voices != 2) {
+        calls.contextMismatches++;
+        return SCE_NGS2_OK;
+    }
     std::memset(context->work, 0x5a, 8);
     *static_cast<float*>(context->param) = 1.0f;
     *static_cast<float*>(context->common) = 0.25f;
@@ -24,16 +40,19 @@ static std::int32_t APS5_VABI Setup(Ngs2UserFx2SetupContext* context) {
     return SCE_NGS2_OK;
 }
 
-static std::int32_t APS5_VABI Cleanup(Ngs2UserFx2CleanupContext* context) {
-    Require(context->user_data == 0x77 && context->max_voices == 2 && static_cast<std::uint8_t*>(context->work)[7] == 0x5a);
+std::int32_t APS5_VABI Cleanup(Ngs2UserFx2CleanupContext* context) {
+    auto& calls = CallsOf(context->user_data);
+    if (context->max_voices != 2 || static_cast<std::uint8_t*>(context->work)[7] != 0x5a) calls.contextMismatches++;
     calls.cleanupVoices.push_back(context->voice_index);
     return SCE_NGS2_OK;
 }
 
-static std::int32_t APS5_VABI Gain(Ngs2UserFx2ProcessContext* context) {
-    Require(context->user_data == 0x77 && context->num_input_channels == 2 && context->num_output_channels == 2);
-    Require(context->num_grain_samples == Grain && context->sample_rate == 48000 && context->state != nullptr);
-    Require(static_cast<const std::uint8_t*>(context->work)[0] == 0x5a);
+std::int32_t APS5_VABI Gain(Ngs2UserFx2ProcessContext* context) {
+    auto& calls = CallsOf(context->user_data);
+    if (context->num_input_channels != 2 || context->num_output_channels != 2 || context->num_grain_samples != Grain ||
+        context->sample_rate != 48000 || context->state == nullptr || static_cast<const std::uint8_t*>(context->work)[0] != 0x5a) {
+        calls.contextMismatches++;
+    }
     const float gain = *static_cast<const float*>(context->param);
     for (std::uint32_t c = 0; c < 2; c++) {
         for (std::uint32_t i = 0; i < Grain; i++) context->channel_data[c][i] *= gain;
@@ -44,22 +63,23 @@ static std::int32_t APS5_VABI Gain(Ngs2UserFx2ProcessContext* context) {
     return calls.processResult;
 }
 
-static std::int32_t APS5_VABI Offset(Ngs2UserFx2ProcessContext* context) {
+std::int32_t APS5_VABI Offset(Ngs2UserFx2ProcessContext* context) {
     const float offset = *static_cast<const float*>(context->common);
     for (std::uint32_t i = 0; i < Grain; i++) context->channel_data[1][i] += offset;
-    calls.order.push_back(1);
+    CallsOf(context->user_data).order.push_back(1);
     return SCE_NGS2_OK;
 }
 
-static std::int32_t APS5_VABI ControlHandler(Ngs2UserFx2ControlContext*) {
+std::int32_t APS5_VABI ControlHandler(Ngs2UserFx2ControlContext*) {
     return SCE_NGS2_OK;
 }
 
-static Ngs2CustomUserFx2ModuleOption Module(Ngs2UserFx2ProcessHandler process) {
-    return {{sizeof(Ngs2CustomUserFx2ModuleOption)}, Setup, Cleanup, nullptr, process, sizeof(float), sizeof(float), 8, 0x77};
+Ngs2CustomUserFx2ModuleOption Module(Ngs2UserFx2ProcessHandler process, Calls& calls) {
+    return {{sizeof(Ngs2CustomUserFx2ModuleOption)}, Setup, Cleanup, nullptr, process, sizeof(float), sizeof(float), 8,
+            reinterpret_cast<std::uintptr_t>(&calls)};
 }
 
-static Ngs2CustomSubmixerRackOption RackOption(const Ngs2CustomUserFx2ModuleOption* modules, std::uint32_t count) {
+Ngs2CustomSubmixerRackOption RackOption(const Ngs2CustomUserFx2ModuleOption* modules, std::uint32_t count) {
     Ngs2CustomSubmixerRackOption option{};
     auto& common = option.custom_rack_option.rack_option;
     common.size = sizeof(option);
@@ -79,153 +99,175 @@ static Ngs2CustomSubmixerRackOption RackOption(const Ngs2CustomUserFx2ModuleOpti
     return option;
 }
 
-template <typename TException>
-static bool CreateThrows(const Ngs2CustomSubmixerRackOption& option) {
+template<typename TException>
+void RequireQueryRejected(const Ngs2CustomSubmixerRackOption& option, const char* message) {
     Ngs2ContextBufferInfo query{};
-    try {
+    RequireThrows<TException>([&] {
         sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &query);
-    } catch (const TException&) {
-        return true;
-    }
-    return false;
+    }, message);
 }
 
-template <typename TException, typename TParam>
-static bool ControlThrows(uintptr_t voice, std::uint32_t id, TParam param) {
+template<typename TException, typename TParam>
+void RequireControlRejected(uintptr_t voice, std::uint32_t id, TParam param, const char* message) {
     param.header = {static_cast<std::uint16_t>(sizeof(TParam)), 0, id};
-    try {
-        sceNgs2VoiceControl(voice, &param.header);
-    } catch (const TException&) {
-        return true;
-    }
-    return false;
+    RequireThrows<TException>([&] { sceNgs2VoiceControl(voice, &param.header); }, message);
 }
 
-static uintptr_t CustomRack(uintptr_t system, const Ngs2CustomSubmixerRackOption& option) {
-    Ngs2ContextBufferInfo query{};
-    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
-    const auto info = Buffer(query);
-    uintptr_t rack = 0;
-    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
-    return rack;
-}
-
-static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm) {
-    const auto voice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
-    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0}});
+uintptr_t Sampler(Ngs2Fixture& ngs2, uintptr_t system, const std::vector<std::int16_t>& pcm) {
+    const auto voice = Voice(ngs2.CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP,
+            Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0, 0, 0}});
     const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size() / 2), 0, 0};
     Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
     return voice;
 }
 
-static std::vector<float> Render(uintptr_t system) {
+std::vector<float> Render(uintptr_t system) {
     std::vector<float> out(Grain * 2, -1.0f);
     const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2};
-    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    RequireEqual(sceNgs2SystemRender(system, &info, 1), SCE_NGS2_OK, "render");
     return out;
 }
 
-static void TestUserFxChain() {
-    calls = {};
-    const auto system = CreateSystem();
-    const auto master = Mastering(system, 2);
-    const Ngs2CustomUserFx2ModuleOption modules[2] = {Module(Gain), Module(Offset)};
-    const auto rack = CustomRack(system, RackOption(modules, 2));
-    Require(calls.setupVoices == (std::vector<std::uint32_t>{0, 1, 0, 1}));
-
-    const auto custom = Voice(rack);
-    Control(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 0, 0});
-    Patch(custom, master);
-    Event(custom, SCE_NGS2_VOICE_EVENT_PLAY);
-
-    std::vector<std::int16_t> pcm(Grain * 2 * 8, 16384);
-    const auto sampler = Sampler(system, pcm);
-    Patch(sampler, custom);
-    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
-
-    auto out = Render(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.5f && out[i * 2 + 1] == 0.75f);
-    Require(calls.processFlags == (std::vector<std::uint32_t>{1}) && calls.order == (std::vector<int>{0, 1}));
-
-    const float gain = 0.5f;
-    Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)});
-    out = Render(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.25f && out[i * 2 + 1] == 0.5f);
-    Require(calls.processFlags == (std::vector<std::uint32_t>{1, 2}));
-    out = Render(system);
-    Require(calls.processFlags == (std::vector<std::uint32_t>{1, 2, 0}));
-
-    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain) - 1}));
-    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 2, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)}));
-    Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 1, 0, 0}));
-    Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 1, 0}));
-    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 3, 3, 0, 0}));
-    Require(ControlThrows<std::invalid_argument>(sampler, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)}));
-
-    calls.processResult = -1;
-    bool failed = false;
-    try {
-        Render(system);
-    } catch (const std::runtime_error&) {
-        failed = true;
+void RequireFrames(const std::vector<float>& out, float left, float right, const char* message) {
+    for (std::uint32_t i = 0; i < Grain; i++) {
+        RequireEqual(out[i * 2], left, std::string(message) + " left frame " + std::to_string(i));
+        RequireEqual(out[i * 2 + 1], right, std::string(message) + " right frame " + std::to_string(i));
     }
-    Require(failed);
-    calls.processResult = SCE_NGS2_OK;
-
-    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
-    Require(calls.cleanupVoices == (std::vector<std::uint32_t>{0, 0, 1, 1}));
-    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
-static void TestRackOptions() {
-    calls = {};
-    const auto system = CreateSystem();
-    const Ngs2CustomUserFx2ModuleOption modules[1] = {Module(Gain)};
+class ChainFixture {
+public:
+    ChainFixture()
+        : modules{Module(Gain, calls), Module(Offset, calls)},
+          system(ngs2.CreateSystem()),
+          master(ngs2.Mastering(system, 2)),
+          rack(ngs2.CreateRack(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &rackOption.custom_rack_option.rack_option)),
+          custom(Voice(rack)),
+          pcm(Grain * 2 * 8, 16384) {
+        Control(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 0, 0});
+        Patch(custom, master);
+        Event(custom, SCE_NGS2_VOICE_EVENT_PLAY);
+        sampler = Sampler(ngs2, system, pcm);
+        Patch(sampler, custom);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    }
+
+    Calls calls;
+    const Ngs2CustomUserFx2ModuleOption modules[2];
+    const Ngs2CustomSubmixerRackOption rackOption = RackOption(modules, 2);
+    Ngs2Fixture ngs2;
+    const uintptr_t system;
+    const uintptr_t master;
+    const uintptr_t rack;
+    const uintptr_t custom;
+    const std::vector<std::int16_t> pcm;
+    uintptr_t sampler = 0;
+};
+
+const float halfGain = 0.5f;
+
+const Case chainSetup{"CustomRack_Create_RunsSetupForEveryModuleAndVoice", [] {
+    const ChainFixture fixture;
+    RequireEqual(fixture.calls.setupVoices == std::vector<std::uint32_t>{0, 1, 0, 1}, true, "setup voice order 0,1,0,1");
+    RequireEqual(fixture.calls.contextMismatches, 0u, "context mismatches");
+}};
+
+const Case chainRender{"CustomRack_Render_RunsModulesInOrderWithSharedCommon", [] {
+    ChainFixture fixture;
+    RequireFrames(Render(fixture.system), 0.5f, 0.75f, "first grain");
+    RequireEqual(fixture.calls.processFlags == std::vector<std::uint32_t>{1}, true, "process flags 1");
+    RequireEqual(fixture.calls.order == std::vector<int>{0, 1}, true, "module order 0,1");
+    RequireEqual(fixture.calls.contextMismatches, 0u, "context mismatches");
+}};
+
+const Case chainParam{"CustomVoice_UserFx2Param_UpdatesParamAndFlagsNextGrain", [] {
+    ChainFixture fixture;
+    Render(fixture.system);
+    Control(fixture.custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &halfGain, sizeof(halfGain)});
+    RequireFrames(Render(fixture.system), 0.25f, 0.5f, "after the param change");
+    RequireEqual(fixture.calls.processFlags == std::vector<std::uint32_t>{1, 2}, true, "process flags 1,2");
+    Render(fixture.system);
+    RequireEqual(fixture.calls.processFlags == std::vector<std::uint32_t>{1, 2, 0}, true, "process flags 1,2,0");
+}};
+
+const Case chainRejectedControls{"CustomVoice_InvalidControls_AreRejected", [] {
+    const ChainFixture fixture;
+    RequireControlRejected<std::invalid_argument>(fixture.custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0,
+        Ngs2CustomVoiceUserFx2Param{{}, &halfGain, sizeof(halfGain) - 1}, "short param");
+    RequireControlRejected<std::invalid_argument>(fixture.custom, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 2,
+        Ngs2CustomVoiceUserFx2Param{{}, &halfGain, sizeof(halfGain)}, "module index 2");
+    RequireControlRejected<std::runtime_error>(fixture.custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP,
+        Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 1, 0, 0}, "channel conversion");
+    RequireControlRejected<std::runtime_error>(fixture.custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP,
+        Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 1, 0}, "setup flags");
+    RequireControlRejected<std::invalid_argument>(fixture.custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP,
+        Ngs2CustomSubmixerVoiceSetupParam{{}, 3, 3, 0, 0}, "3 channels");
+    RequireControlRejected<std::invalid_argument>(fixture.sampler, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0,
+        Ngs2CustomVoiceUserFx2Param{{}, &halfGain, sizeof(halfGain)}, "user fx param on a sampler");
+}};
+
+const Case chainProcessFailure{"CustomRack_ProcessHandlerFails_RenderThrows", [] {
+    ChainFixture fixture;
+    fixture.calls.processResult = -1;
+    RequireThrows<std::runtime_error>([&] { Render(fixture.system); }, "failing process handler");
+}};
+
+const Case chainCleanup{"CustomRack_Destroy_RunsCleanupForEveryModuleAndVoice", [] {
+    ChainFixture fixture;
+    Render(fixture.system);
+    RequireEqual(sceNgs2RackDestroy(fixture.rack, nullptr), SCE_NGS2_OK, "destroy the rack");
+    RequireEqual(fixture.calls.cleanupVoices == std::vector<std::uint32_t>{0, 0, 1, 1}, true, "cleanup voice order 0,0,1,1");
+    RequireEqual(fixture.calls.contextMismatches, 0u, "context mismatches");
+}};
+
+const Case rackOptions{"CustomRack_UnsupportedOrInvalidOptions_AreRejected", [] {
+    Calls calls;
+    const Ngs2CustomUserFx2ModuleOption modules[1] = {Module(Gain, calls)};
     const auto good = RackOption(modules, 1);
     Ngs2ContextBufferInfo query{};
-    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &good.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    RequireEqual(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &good.custom_rack_option.rack_option, &query),
+                 SCE_NGS2_OK, "valid option");
 
     auto option = good;
     option.custom_rack_option.num_buffers = 2;
-    Require(CreateThrows<std::runtime_error>(option));
+    RequireQueryRejected<std::runtime_error>(option, "2 buffers");
     option = good;
     option.custom_rack_option.module[0].module_id = 0x10;
-    Require(CreateThrows<std::runtime_error>(option));
+    RequireQueryRejected<std::runtime_error>(option, "module id 0x10");
     option = good;
     option.custom_rack_option.module[0].dest_buffer_id = 1;
-    Require(CreateThrows<std::invalid_argument>(option));
+    RequireQueryRejected<std::invalid_argument>(option, "destination buffer 1");
     option = good;
     option.custom_rack_option.port[0].source_buffer_id = 1;
-    Require(CreateThrows<std::invalid_argument>(option));
+    RequireQueryRejected<std::invalid_argument>(option, "port source buffer 1");
     option = good;
     option.custom_rack_option.num_modules = SCE_NGS2_CUSTOM_MAX_MODULES + 1;
-    Require(CreateThrows<std::invalid_argument>(option));
-    auto noProcess = Module(nullptr);
-    option = RackOption(&noProcess, 1);
-    Require(CreateThrows<std::invalid_argument>(option));
-    auto badSize = Module(Gain);
+    RequireQueryRejected<std::invalid_argument>(option, "too many modules");
+    const auto noProcess = Module(nullptr, calls);
+    RequireQueryRejected<std::invalid_argument>(RackOption(&noProcess, 1), "missing process handler");
+    auto badSize = Module(Gain, calls);
     badSize.custom_module_option.size = 8;
-    option = RackOption(&badSize, 1);
-    Require(CreateThrows<std::invalid_argument>(option));
-    bool failed = false;
-    try {
-        sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, nullptr, &query);
-    } catch (const std::runtime_error&) {
-        failed = true;
-    }
-    Require(failed && calls.setupVoices.empty());
+    RequireQueryRejected<std::invalid_argument>(RackOption(&badSize, 1), "module option size 8");
+    RequireThrows<std::runtime_error>([&] { sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, nullptr, &query); },
+                                      "missing rack option");
+    Require(calls.setupVoices.empty(), "no setup handler ran");
+}};
 
-    auto withControl = Module(Gain);
+const Case controlHandler{"CustomVoice_ModuleWithControlHandler_RejectsParamAndCleansUp", [] {
+    Calls calls;
+    auto withControl = Module(Gain, calls);
     withControl.control_handler = ControlHandler;
-    const auto voice = Voice(CustomRack(system, RackOption(&withControl, 1)));
-    const float gain = 0.5f;
-    Require(ControlThrows<std::runtime_error>(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0, Ngs2CustomVoiceUserFx2Param{{}, &gain, sizeof(gain)}));
-    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
-    Require(calls.cleanupVoices == (std::vector<std::uint32_t>{0, 1}));
-}
+    const auto option = RackOption(&withControl, 1);
+    {
+        Ngs2Fixture ngs2;
+        const auto system = ngs2.CreateSystem();
+        const auto voice = Voice(ngs2.CreateRack(system, SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER, &option.custom_rack_option.rack_option));
+        RequireControlRejected<std::runtime_error>(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2 | 0,
+            Ngs2CustomVoiceUserFx2Param{{}, &halfGain, sizeof(halfGain)}, "param with a control handler");
+        RequireDestroyed(system);
+    }
+    RequireEqual(calls.cleanupVoices == std::vector<std::uint32_t>{0, 1}, true, "cleanup voice order 0,1");
+}};
 
-int main() {
-    TestUserFxChain();
-    TestRackOptions();
-    return 0;
-}
+} // namespace

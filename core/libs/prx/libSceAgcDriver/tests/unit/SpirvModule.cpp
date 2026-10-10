@@ -1,21 +1,20 @@
+#include <Testing/Test.hpp>
 #include "SpirvBackend/SpirvModule.hpp"
-#include <cstdio>
+
+#include <cstdint>
 #include <map>
 #include <set>
 #include <spirv/unified1/spirv.hpp>
+#include <string>
 #include <vector>
-
-using namespace ShaderRecompiler;
 
 namespace {
 
-int failures = 0;
+using namespace ShaderRecompiler;
+using Testing::Case;
 
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", what);
-        ++failures;
-    }
+void check(bool condition, const char* what, std::source_location location = std::source_location::current()) {
+    Testing::Require(condition, what, location);
 }
 
 std::map<std::uint32_t, std::size_t> opcodeCounts(const std::vector<std::uint32_t>& words) {
@@ -149,11 +148,7 @@ void testIdsStayUniqueBeyondCacheCapacity() {
     const std::set<std::uint32_t> distinct(ids.begin(), ids.end());
     check(distinct.size() == ids.size(), "distinct constants shared an id once the cache was overrun");
     for (std::uint32_t value = 0; value < 4096; ++value) {
-        if (module.Constant(spv::OpConstant, typeU32, value) != ids[value]) {
-            std::fprintf(stderr, "constant %u changed id after the cache was overrun\n", value);
-            ++failures;
-            break;
-        }
+        Testing::Require(module.Constant(spv::OpConstant, typeU32, value) == ids[value], "constant " + std::to_string(value) + " changed id after the cache was overrun");
     }
     std::uint32_t largest = 0;
     for (const auto id : distinct) {
@@ -182,22 +177,15 @@ void testEmittedWordsAreStable() {
     check(counts.at(spv::OpNop) == 32, "the function body lost instructions");
 }
 
-}
+const Case repeatedTypesShareOneIdCase{"Type_RepeatedType_SharesOneId", testRepeatedTypesShareOneId};
+const Case operandShapesDoNotCollideCase{"Type_DifferentOperandShapes_GetDistinctIds", testOperandShapesDoNotCollide};
+const Case operandKindsAgreeCase{"Type_EquivalentOperandKinds_ShareOneId", testOperandKindsAgree};
+const Case decoratedTypesStayDistinctCase{"DecoratedType_DecoratedAndPlainType_StayDistinct", testDecoratedTypesStayDistinct};
+const Case constantsShareOneIdCase{"Constant_RepeatedValue_SharesOneId", testConstantsShareOneId};
+const Case operandFreeConstantsShareOneIdCase{"Constant_OperandFreeConstants_ShareOneIdPerType", testOperandFreeConstantsShareOneId};
+const Case idsSurviveInterleavedAllocationCase{"AllocateId_Interleaved_KeepsMemoizedIds", testIdsSurviveInterleavedAllocation};
+const Case modulesAreIndependentCase{"Type_SeparateModules_NumberIdsIndependently", testModulesAreIndependent};
+const Case idsStayUniqueBeyondCacheCapacityCase{"Constant_BeyondCacheCapacity_KeepsIdsUniqueAndContiguous", testIdsStayUniqueBeyondCacheCapacity};
+const Case emittedWordsAreStableCase{"Finalize_RepeatedDeclarations_EmitsEachOnce", testEmittedWordsAreStable};
 
-int main() {
-    testRepeatedTypesShareOneId();
-    testOperandShapesDoNotCollide();
-    testOperandKindsAgree();
-    testDecoratedTypesStayDistinct();
-    testConstantsShareOneId();
-    testOperandFreeConstantsShareOneId();
-    testIdsSurviveInterleavedAllocation();
-    testModulesAreIndependent();
-    testIdsStayUniqueBeyondCacheCapacity();
-    testEmittedWordsAreStable();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d check(s) failed\n", failures);
-        return 1;
-    }
-    return 0;
-}
+} // namespace

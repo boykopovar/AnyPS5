@@ -19,11 +19,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -40,6 +40,10 @@ constexpr std::size_t Surfaces = 12;
 constexpr std::size_t BlockBytes = SurfaceBytes * Surfaces;
 constexpr std::uint64_t Budget = 1ull << 20u;
 
+void Ensure(bool condition, const char* reason) {
+    if (!condition) throw std::runtime_error(reason);
+}
+
 class Device {
 public:
     Device() {
@@ -48,10 +52,10 @@ public:
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
-        Require(library != nullptr, "cannot load Vulkan");
+        Ensure(library != nullptr, "cannot load Vulkan");
         try {
             instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
-            Require(instanceProc != nullptr, "missing Vulkan instance resolver");
+            Ensure(instanceProc != nullptr, "missing Vulkan instance resolver");
             VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -60,7 +64,7 @@ public:
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
             Check(enumerate(instance, &count, nullptr), "vkEnumeratePhysicalDevices");
-            Require(count != 0, "no Vulkan device");
+            Ensure(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             context.physical = devices.front();
@@ -82,7 +86,7 @@ public:
             queues(context.physical, &count, families.data());
             std::uint32_t family = 0;
             while (family < count && (families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0) ++family;
-            Require(family < count, "no Vulkan compute queue");
+            Ensure(family < count, "no Vulkan compute queue");
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -132,7 +136,7 @@ private:
     template<typename TFunction>
     TFunction function(const char* name) const {
         const auto result = reinterpret_cast<TFunction>(instanceProc(instance, name));
-        Require(result != nullptr, name);
+        Ensure(result != nullptr, name);
         return result;
     }
 
@@ -158,7 +162,7 @@ public:
 #else
         memory = std::aligned_alloc(65536, BlockBytes);
 #endif
-        Require(memory != nullptr, "cannot allocate the texture block");
+        Testing::Require(memory != nullptr, "cannot allocate the texture block");
         std::memset(memory, 0x5a, BlockBytes);
         GuestAllocations::Mutation().Add(memory, BlockBytes, true, true);
     }
@@ -204,7 +208,7 @@ GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side) 
     return DecodeTextureResource(words);
 }
 
-void viewTests(const Context& context) {
+void RequireStorageViews(const Context& context) {
     if (context.hostImportAlignment == 0) {
         std::puts("host imports unavailable: views of storage images not tested");
         return;
@@ -216,25 +220,25 @@ void viewTests(const Context& context) {
     }
     const auto before = TextureCacheUsage();
     auto view = Sampled(context, block.Surface(0));
-    Require(view->ViewsStorageImage(), "a sampled texture in host-imported memory is not a view of its storage image");
+    Testing::Require(view->ViewsStorageImage(), "a sampled texture in host-imported memory is not a view of its storage image");
     const std::weak_ptr<Texture> viewed = view;
     const auto* image = view->StorageSource();
     const auto after = TextureCacheUsage();
-    Require(after.sampledEntries == before.sampledEntries + 1u, "the view did not enter the sampled texture cache");
-    Require(after.sampledBytes == before.sampledBytes, "a view of a cached storage image counted " + std::to_string(after.sampledBytes - before.sampledBytes) + " bytes against the sampled texture cache");
-    Require(after.storageBytes > before.storageBytes, "the storage image of the view is not counted by the storage image cache");
-    Require(Sampled(context, block.Surface(0)) == view, "the second lookup of the surface did not hit its view");
+    Testing::Require(after.sampledEntries == before.sampledEntries + 1u, "the view did not enter the sampled texture cache");
+    Testing::Require(after.sampledBytes == before.sampledBytes, "a view of a cached storage image counted " + std::to_string(after.sampledBytes - before.sampledBytes) + " bytes against the sampled texture cache");
+    Testing::Require(after.storageBytes > before.storageBytes, "the storage image of the view is not counted by the storage image cache");
+    Testing::Require(Sampled(context, block.Surface(0)) == view, "the second lookup of the surface did not hit its view");
     view.reset();
     for (std::size_t surface = 1; surface < Surfaces; ++surface) CachedStorageSurface(context, Resource(block.Surface(surface)));
-    Require(!StorageImageCached(context, image), "the storage image cache never evicted the viewed image under a 1 MiB budget");
+    Testing::Require(!StorageImageCached(context, image), "the storage image cache never evicted the viewed image under a 1 MiB budget");
     const auto evicted = TextureCacheUsage();
-    Require(viewed.expired(), "the sampled texture cache kept the view of an evicted storage image");
-    Require(evicted.sampledEntries == after.sampledEntries - 1u && evicted.sampledBytes == before.sampledBytes, "dropping the view of the evicted storage image changed other sampled entries");
+    Testing::Require(viewed.expired(), "the sampled texture cache kept the view of an evicted storage image");
+    Testing::Require(evicted.sampledEntries == after.sampledEntries - 1u && evicted.sampledBytes == before.sampledBytes, "dropping the view of the evicted storage image changed other sampled entries");
     auto again = Sampled(context, block.Surface(0));
-    Require(again->ViewsStorageImage() && again->StorageSource() != nullptr && StorageImageCached(context, again->StorageSource()), "the surface's next lookup does not view its new cached storage image");
+    Testing::Require(again->ViewsStorageImage() && again->StorageSource() != nullptr && StorageImageCached(context, again->StorageSource()), "the surface's next lookup does not view its new cached storage image");
 }
 
-void reportedBudgetTests(const Context& context) {
+void ReportBudgets(const Context& context) {
     if (context.memoryProperties2 == nullptr) {
         std::puts("VK_EXT_memory_budget unavailable: the sampled texture cache keeps a quarter of the device-local heap");
         return;
@@ -244,7 +248,7 @@ void reportedBudgetTests(const Context& context) {
     properties.pNext = &reported;
     context.memoryProperties2(context.physical, &properties);
     const auto budget = SampledTextureBudget(context.memory, &reported, 0);
-    Require(budget >= (2048ull << 20u), "the sampled texture cache budget is below the 2 GiB floor");
+    Testing::Require(budget >= (2048ull << 20u), "the sampled texture cache budget is below the 2 GiB floor");
     for (std::uint32_t heap = 0; heap < context.memory.memoryHeapCount; ++heap) {
         if ((context.memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
         std::printf("device-local heap %u: %llu MiB, VK_EXT_memory_budget budget %llu MiB, usage %llu MiB\n", heap, static_cast<unsigned long long>(context.memory.memoryHeaps[heap].size >> 20u), static_cast<unsigned long long>(reported.heapBudget[heap] >> 20u), static_cast<unsigned long long>(reported.heapUsage[heap] >> 20u));
@@ -252,22 +256,25 @@ void reportedBudgetTests(const Context& context) {
     std::printf("sampled texture cache budget %llu MiB, storage image cache budget %llu MiB\n", static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(TextureCacheBudget(context.memory) >> 20u));
 }
 
-void snapshotTests(const Context& context) {
+void RequireSnapshotEviction(const Context& context) {
     Block block(context);
     auto first = Sampled(context, block.Surface(0));
-    Require(!first->ViewsStorageImage(), "a sampled texture outside host-imported memory is not a snapshot");
+    Testing::Require(!first->ViewsStorageImage(), "a sampled texture outside host-imported memory is not a snapshot");
     const auto held = TextureCacheUsage().sampledBytes;
-    Require(held == first->AllocationBytes(), "a snapshot counted " + std::to_string(held) + " bytes, not its image allocation of " + std::to_string(first->AllocationBytes()));
+    Testing::Require(held == first->AllocationBytes(), "a snapshot counted " + std::to_string(held) + " bytes, not its image allocation of " + std::to_string(first->AllocationBytes()));
     const std::weak_ptr<Texture> oldest = first;
     first.reset();
     const auto capacity = static_cast<std::size_t>(Budget / held);
-    Require(capacity >= 2u && capacity + 1u < Surfaces, "a snapshot of the 256 KiB surface counts " + std::to_string(held) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    Testing::Require(capacity >= 2u && capacity + 1u < Surfaces, "a snapshot of the 256 KiB surface counts " + std::to_string(held) + " bytes, which the test's 1 MiB budget does not fit as planned");
     for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
-    Require(!oldest.expired() && TextureCacheUsage().sampledEntries == capacity, "the sampled texture cache did not keep " + std::to_string(capacity) + " snapshots within its budget");
+    Testing::Require(!oldest.expired() && TextureCacheUsage().sampledEntries == capacity, "the sampled texture cache did not keep " + std::to_string(capacity) + " snapshots within its budget");
     Sampled(context, block.Surface(capacity));
-    Require(oldest.expired(), "the least recently used snapshot was not evicted past the budget");
-    Require(TextureCacheUsage().sampledBytes <= Budget, "the sampled texture cache holds more than its budget");
-    ClearCachedTextures(context.device);
+    Testing::Require(oldest.expired(), "the least recently used snapshot was not evicted past the budget");
+    Testing::Require(TextureCacheUsage().sampledBytes <= Budget, "the sampled texture cache holds more than its budget");
+}
+
+void RequireSmallSnapshotAccounting(const Context& context) {
+    Block block(context);
     constexpr std::uint32_t TinySide = 16;
     const auto tiny = Sampled(context, block.Surface(0), TinySide);
     const auto guestBytes = DescribeSurface(Resource(block.Surface(0), TinySide)).guestBytes;
@@ -275,7 +282,7 @@ void snapshotTests(const Context& context) {
         std::printf("the 16x16 snapshot's image takes %llu bytes, not less than its %llu guest bytes: counting the allocation alone not tested\n", static_cast<unsigned long long>(tiny->AllocationBytes()), static_cast<unsigned long long>(guestBytes));
         return;
     }
-    Require(TextureCacheUsage().sampledBytes == tiny->AllocationBytes(), "a snapshot whose " + std::to_string(tiny->AllocationBytes()) + "-byte image is smaller than its " + std::to_string(guestBytes) + " guest bytes counted " + std::to_string(TextureCacheUsage().sampledBytes) + " bytes, not its allocation");
+    Testing::Require(TextureCacheUsage().sampledBytes == tiny->AllocationBytes(), "a snapshot whose " + std::to_string(tiny->AllocationBytes()) + "-byte image is smaller than its " + std::to_string(guestBytes) + " guest bytes counted " + std::to_string(TextureCacheUsage().sampledBytes) + " bytes, not its allocation");
 }
 
 constexpr std::uint64_t ReportedBudget = 64ull << 30u;
@@ -301,62 +308,96 @@ std::uint64_t ReadBudget(const Context& context) {
     return SampledTextureCacheBudget(context);
 }
 
-void memoryTests(Context context) {
+void RequireCacheMemoryAccounting(Context context) {
     context.memoryProperties2 = &ReportBudget;
     const auto before = SampledTextureMemory();
     Block block(context);
     auto held = Sampled(context, block.Surface(0));
-    Require(!held->ViewsStorageImage() && held->AllocationBytes() != 0, "the test texture is not a snapshot with an image of its own");
-    Require(SampledTextureMemory() == before + held->AllocationBytes(), "the sampled texture memory grew by " + std::to_string(SampledTextureMemory() - before) + " bytes, not by the snapshot's allocation of " + std::to_string(held->AllocationBytes()));
-    Require(ReadBudget(context) == ExpectedBudget(context), "the sampled texture cache budget does not count its cached texture as the cache's own memory");
+    Testing::Require(!held->ViewsStorageImage() && held->AllocationBytes() != 0, "the test texture is not a snapshot with an image of its own");
+    Testing::Require(SampledTextureMemory() == before + held->AllocationBytes(), "the sampled texture memory grew by " + std::to_string(SampledTextureMemory() - before) + " bytes, not by the snapshot's allocation of " + std::to_string(held->AllocationBytes()));
+    Testing::Require(ReadBudget(context) == ExpectedBudget(context), "the sampled texture cache budget does not count its cached texture as the cache's own memory");
     ClearCachedTextures(context.device);
-    Require(TextureCacheUsage().sampledEntries == 0 && SampledTextureMemory() == before + held->AllocationBytes(), "a texture its caller still holds stopped counting as sampled texture memory when it left the cache");
+    Testing::Require(TextureCacheUsage().sampledEntries == 0 && SampledTextureMemory() == before + held->AllocationBytes(), "a texture its caller still holds stopped counting as sampled texture memory when it left the cache");
     const auto budget = ReadBudget(context);
-    Require(budget == ExpectedBudget(context), "the sampled texture cache budget counts a texture its caller still holds as memory in use outside the texture caches");
+    Testing::Require(budget == ExpectedBudget(context), "the sampled texture cache budget counts a texture its caller still holds as memory in use outside the texture caches");
     std::printf("reported heap budget %llu MiB with %llu MiB in use: sampled texture cache budget %llu MiB with a %llu KiB texture held outside the cache\n", static_cast<unsigned long long>(ReportedBudget >> 20u), static_cast<unsigned long long>(ReportedUsage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(held->AllocationBytes() >> 10u));
     held.reset();
-    Require(SampledTextureMemory() == before, "a released texture still counts as sampled texture memory");
+    Testing::Require(SampledTextureMemory() == before, "a released texture still counts as sampled texture memory");
 }
 
+
+bool MemoryMode() {
+    const auto& arguments = Testing::Arguments();
+    return !arguments.empty() && arguments.front() == "memory";
 }
+
+class Gpu {
+public:
+    Gpu() : context(device.GetContext()), detiler(context) {
+        context.detiler = &detiler;
+    }
+
+    Gpu(const Gpu&) = delete;
+    Gpu& operator=(const Gpu&) = delete;
+
+    ~Gpu() {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        ClearCachedTextures(context.device);
+    }
+
+    const Context& GetContext() const { return context; }
+
+private:
+    Device device;
+    Context context;
+    TextureDetiler detiler;
+};
+
+std::unique_ptr<Gpu> RequireGpu() {
+    try {
+        return std::make_unique<Gpu>();
+    } catch (const std::exception& error) {
+        if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+        Testing::Skip(std::string("no usable Vulkan device: ") + error.what());
+    }
+}
+
+template<typename TTest>
+void RunWithGpu(bool memoryMode, TTest test) {
+    if (MemoryMode() != memoryMode) Testing::Skip(memoryMode ? "the sampled texture memory checks run only with the memory argument" : "the 1 MiB budget checks run only without the memory argument");
+    const auto gpu = RequireGpu();
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    test(gpu->GetContext());
+}
+
+const Testing::Case reportedBudget{"SampledTextureBudget_ReportedHeapBudget_IsAtLeastTwoGiB", [] {
+    RunWithGpu(false, ReportBudgets);
+}};
+
+const Testing::Case snapshotEviction{"SampledSnapshot_PastTheBudget_EvictsTheLeastRecentlyUsed", [] {
+    RunWithGpu(false, RequireSnapshotEviction);
+}};
+
+const Testing::Case smallSnapshot{"SampledSnapshot_SmallerThanItsGuestBytes_CountsItsAllocation", [] {
+    RunWithGpu(false, RequireSmallSnapshotAccounting);
+}};
+
+const Testing::Case storageViews{"SampledView_OfCachedStorageImage_FollowsTheStorageImageLifetime", [] {
+    RunWithGpu(false, RequireStorageViews);
+}};
+
+const Testing::Case cacheMemory{"SampledTextureMemory_HeldAndCachedTextures_CountTowardTheBudget", [] {
+    RunWithGpu(true, RequireCacheMemoryAccounting);
+}};
+
+} // namespace
 
 int main(int argc, char** argv) {
-    try {
-        const bool memory = argc > 1 && std::string(argv[1]) == "memory";
+    const bool memory = argc > 1 && std::string_view(argv[1]) == "memory";
 #ifdef _WIN32
-        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", "1");
+    if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", "1");
 #else
-        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", "1", 1);
+    if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", "1", 1);
 #endif
-        std::unique_ptr<Device> device;
-        try {
-            device = std::make_unique<Device>();
-        } catch (const std::exception& error) {
-            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-            std::printf("skipped, no usable Vulkan device: %s\n", error.what());
-            return VulkanTestSkipped;
-        }
-        auto context = device->GetContext();
-        TextureDetiler detiler(context);
-        context.detiler = &detiler;
-        if (memory) {
-            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            memoryTests(context);
-            ClearCachedTextures(context.device);
-            std::puts("sampled texture memory budget tests passed");
-            return 0;
-        }
-        {
-            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            reportedBudgetTests(context);
-            snapshotTests(context);
-            viewTests(context);
-            ClearCachedTextures(context.device);
-        }
-        std::puts("sampled texture cache budget tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+    return Testing::Run(argc, argv);
 }

@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -420,8 +419,6 @@ constexpr std::uint32_t ExpectedIeee[128][7] = {
     {0x00000000u, 0x3f800000u, 0x00000000u, 0x3f800000u, 0x3f800000u, 0x00000000u, 0x3f800000u},
 };
 constexpr std::uint32_t Chunks = 4;
-std::uint32_t Chunk = 0;
-bool Ieee = false;
 constexpr const char* Names[7] = {
     "v_min_f32 v10, v4, v5",
     "v_max_f32 v11, v4, v5",
@@ -432,8 +429,8 @@ constexpr const char* Names[7] = {
     "v_max_f32_e64 v16, v4, v5",
 };
 
-void Fill(std::uint32_t tid, std::uint32_t* words) {
-    std::copy(std::begin(Rows[Chunk * Threads + tid]), std::end(Rows[Chunk * Threads + tid]), words);
+void Fill(std::uint32_t row, std::uint32_t* words) {
+    std::copy(std::begin(Rows[row]), std::end(Rows[row]), words);
 }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -447,12 +444,12 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string(Ieee ? "f32 min max nan, IEEE mode: row " : "f32 min max nan: row ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+void Expect(bool ieee, std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
+    Require(actual == expected, std::string(ieee ? "f32 min max nan, IEEE mode: row " : "f32 min max nan: row ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t chunk, bool ieee) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(chunk * Threads + tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -469,39 +466,35 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
+    if (ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
-void Check() {
+void Check(std::uint32_t chunk, bool ieee) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 7; ++i) {
-            Expect(Chunk * Threads + tid, out[i], (Ieee ? ExpectedIeee : Expected)[Chunk * Threads + tid][i], Names[i]);
+            Expect(ieee, chunk * Threads + tid, out[i], (ieee ? ExpectedIeee : Expected)[chunk * Threads + tid][i], Names[i]);
         }
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const bool ieee : {false, true}) {
-            Ieee = ieee;
-            for (Chunk = 0; Chunk < Chunks; ++Chunk) {
-                Run(*device);
-                Check();
-            }
-        }
-        std::puts("f32 min max nan tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case defaultMode{"F32MinMaxNan_DefaultMode_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (std::uint32_t chunk = 0; chunk < Chunks; ++chunk) {
+        Run(device, chunk, false);
+        Check(chunk, false);
     }
-}
+}};
+
+const Testing::Case ieeeMode{"F32MinMaxNan_IeeeMode_MatchesIeeeReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (std::uint32_t chunk = 0; chunk < Chunks; ++chunk) {
+        Run(device, chunk, true);
+        Check(chunk, true);
+    }
+}};
+
+} // namespace

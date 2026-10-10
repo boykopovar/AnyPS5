@@ -1,25 +1,33 @@
+#include <Testing/Test.hpp>
 #include "BdaShader.hpp"
-#include "ColorTransferTests.hpp"
-#include <fstream>
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
+
 #include <array>
 #include <cstdlib>
-#include <iostream>
+#include <fstream>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace AgcDriver::Graphics {
 Recorder* Recorder::Active() { return nullptr; }
-void Recorder::Submit() { Require(false, "the device tests have no recorder"); }
-bool Recorder::Reap() { Require(false, "the device tests have no recorder"); return false; }
-}
+void Recorder::Submit() { throw std::logic_error("the device tests have no recorder"); }
+bool Recorder::Reap() { throw std::logic_error("the device tests have no recorder"); }
+} // namespace AgcDriver::Graphics
 
 namespace {
 
 using namespace AgcDriver::Graphics;
+using Testing::Case;
+using Testing::Require;
+
+void RequireSetup(bool condition, const char* reason) {
+    if (!condition) throw std::runtime_error(reason);
+}
 
 class Device {
 public:
@@ -29,10 +37,10 @@ public:
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
-        Require(library != nullptr, "cannot load Vulkan");
+        RequireSetup(library != nullptr, "cannot load Vulkan");
         try {
             instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
-            Require(instanceProc != nullptr, "missing Vulkan instance resolver");
+            RequireSetup(instanceProc != nullptr, "missing Vulkan instance resolver");
             VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -41,7 +49,7 @@ public:
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
             Check(enumerate(instance, &count, nullptr), "vkEnumeratePhysicalDevices");
-            Require(count != 0, "no Vulkan device");
+            RequireSetup(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             const auto rankDeviceType = [](VkPhysicalDeviceType type) {
@@ -64,7 +72,7 @@ public:
                 selectedRank = rank;
                 cpu = candidate.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
             }
-            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
+            RequireSetup(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -77,7 +85,7 @@ public:
             queues(context.physical, &count, families.data());
             std::uint32_t family = 0;
             while (family < count && (families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0) ++family;
-            Require(family < count, "no Vulkan compute queue");
+            RequireSetup(family < count, "no Vulkan compute queue");
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -110,6 +118,8 @@ public:
         }
     }
 
+    Device(const Device&) = delete;
+    Device& operator=(const Device&) = delete;
     ~Device() { release(); }
     const Context& GetContext() const { return context; }
     bool RunsOnCpu() const { return cpu; }
@@ -118,7 +128,7 @@ private:
     template<typename TFunction>
     TFunction function(const char* name) const {
         const auto result = reinterpret_cast<TFunction>(instanceProc(instance, name));
-        Require(result != nullptr, name);
+        RequireSetup(result != nullptr, name);
         return result;
     }
 
@@ -137,40 +147,37 @@ private:
     bool cpu = false;
 };
 
-}
+const Case realBuffer{"Buffer_DeviceAddressStorage_IsAddressableAndHostMapped", [] {
+    const auto& device = SharedBdaTestDevice();
+    Buffer buffer(device.context, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");
+    buffer.Bytes()[255] = std::byte{0x5a};
+    Require(buffer.Bytes()[255] == std::byte{0x5a}, "real BDA buffer mapping failed");
+}};
 
-int main(int argc, char** argv) {
-    try {
-        RunBdaContractTests();
-        if (argc == 2) {
-            const auto shader = MakeBdaTestShader(0x7fff12340000ULL, 32);
-            std::ofstream file(argv[1], std::ios::binary);
-            file.write(reinterpret_cast<const char*>(shader.data()), static_cast<std::streamsize>(shader.size() * sizeof(std::uint32_t)));
-            Require(static_cast<bool>(file), "cannot save BDA test SPIR-V");
-            return 0;
-        }
-        std::unique_ptr<Device> device;
+const Case savedShader{"MakeBdaTestShader_OutputPathArgument_SavesTheSpirv", [] {
+    if (Testing::Arguments().empty()) Testing::Skip("no output path argument to save the BDA test SPIR-V to");
+    const auto shader = MakeBdaTestShader(0x7fff12340000ULL, 32);
+    std::ofstream file(Testing::Arguments().front(), std::ios::binary);
+    file.write(reinterpret_cast<const char*>(shader.data()), static_cast<std::streamsize>(shader.size() * sizeof(std::uint32_t)));
+    Require(static_cast<bool>(file), "cannot save BDA test SPIR-V");
+}};
+
+} // namespace
+
+const BdaTestDevice& SharedBdaTestDevice() {
+    static std::unique_ptr<Device> device;
+    static std::unique_ptr<BdaTestDevice> shared;
+    static std::string failure;
+    if (!device && failure.empty()) {
         try {
             device = std::make_unique<Device>();
+            shared = std::make_unique<BdaTestDevice>(BdaTestDevice{device->GetContext(), device->RunsOnCpu()});
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-            std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
-            return 77;
+            failure = error.what();
         }
-        Buffer buffer(device->GetContext(), 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-        Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");
-        buffer.Bytes()[255] = std::byte{0x5a};
-        Require(buffer.Bytes()[255] == std::byte{0x5a}, "real BDA buffer mapping failed");
-        if (device->RunsOnCpu()) {
-            std::cout << "CPU Vulkan device: BDA execution not tested\n";
-        } else {
-            RunBdaExecutionTests(device->GetContext());
-        }
-        RunColorTransferTests(device->GetContext());
-        std::cout << "Vulkan BDA allocation and execution tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
     }
+    if (!shared) Testing::Skip("no usable Vulkan device: " + failure);
+    return *shared;
 }

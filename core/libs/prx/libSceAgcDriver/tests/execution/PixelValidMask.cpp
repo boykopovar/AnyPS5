@@ -4,14 +4,13 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -112,26 +111,30 @@ void Check(std::uint32_t waveSize, bool masked) {
     }
 }
 
+
+void DrawAndCheck(std::uint32_t waveSize, bool masked) {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    Draw(device, waveSize, masked ? std::span<const std::uint32_t>(MaskedPixelCode) : std::span<const std::uint32_t>(FullPixelCode));
+    Check(waveSize, masked);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        for (const auto waveSize : {64u, 32u}) {
-            Draw(*device, waveSize, FullPixelCode);
-            Check(waveSize, false);
-            Draw(*device, waveSize, MaskedPixelCode);
-            Check(waveSize, true);
-        }
-        std::puts("pixel valid mask tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64Full{"PixelValidMask_Wave64FullMask_ExportsEveryPixel", [] {
+    DrawAndCheck(64u, false);
+}};
+
+const Testing::Case wave64Masked{"PixelValidMask_Wave64PartialMask_ExportsOnlyValidPixels", [] {
+    DrawAndCheck(64u, true);
+}};
+
+const Testing::Case wave32Full{"PixelValidMask_Wave32FullMask_ExportsEveryPixel", [] {
+    DrawAndCheck(32u, false);
+}};
+
+const Testing::Case wave32Masked{"PixelValidMask_Wave32PartialMask_ExportsOnlyValidPixels", [] {
+    DrawAndCheck(32u, true);
+}};
+
+} // namespace

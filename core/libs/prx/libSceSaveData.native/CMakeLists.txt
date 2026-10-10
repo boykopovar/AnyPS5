@@ -3,41 +3,13 @@ target_include_directories(libSceSaveData.native PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceSaveData.native)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_savedata_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataSearch.cpp)
-    target_include_directories(guest_savedata_search_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_savedata_search_tests PRIVATE libSceSaveData.native libc)
-    configure_windows_unwind(guest_savedata_search_tests)
-    add_test(NAME guest_savedata_search COMMAND guest_savedata_search_tests)
-    if(WIN32)
-        set_tests_properties(guest_savedata_search PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
-    endif()
-
-    add_test_executable(guest_savedata_delete_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataDelete.cpp)
-    target_include_directories(guest_savedata_delete_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_savedata_delete_tests PRIVATE libSceSaveData.native libc)
-    add_test(NAME guest_savedata_delete COMMAND guest_savedata_delete_tests)
-    if(WIN32)
-        set_tests_properties(guest_savedata_delete PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
-    endif()
-
-    add_test_executable(guest_savedata_mount_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataMountStatus.cpp)
-    target_include_directories(guest_savedata_mount_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_savedata_mount_status_tests PRIVATE libSceSaveData.native libc)
-    add_test(NAME guest_savedata_mount_status COMMAND guest_savedata_mount_status_tests)
-    if(WIN32)
-        set_tests_properties(guest_savedata_mount_status PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
-    endif()
-
-    add_test_executable(guest_savedata_ps4_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataPs4.cpp)
-    target_include_directories(guest_savedata_ps4_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_savedata_ps4_tests PRIVATE libSceSaveData.native libc)
-    configure_windows_unwind(guest_savedata_ps4_tests)
-    add_test(NAME guest_savedata_ps4 COMMAND guest_savedata_ps4_tests)
-    if(WIN32)
-        set_tests_properties(guest_savedata_ps4 PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
-    endif()
+    foreach(saveDataTest IN ITEMS search:Search delete:Delete mount_status:MountStatus ps4:Ps4)
+        string(REPLACE ":" ";" saveDataTest "${saveDataTest}")
+        list(GET saveDataTest 0 saveDataTestName)
+        list(GET saveDataTest 1 saveDataTestSource)
+        anyps5_add_library_test(guest_savedata_${saveDataTestName}_tests
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSaveData${saveDataTestSource}.cpp
+            LINK libSceSaveData.native libc
+        )
+    endforeach()
 endif()

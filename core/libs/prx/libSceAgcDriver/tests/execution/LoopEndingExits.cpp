@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -27,13 +26,13 @@ alignas(256) constexpr std::array<std::uint32_t, 21> Code{
     0xbf0a8409, 0xbf85fffa, 0x4a0808c0, 0xe0702000, 0x80010401, 0xbf810000, 0x4a0808a0, 0xe0702000, 0x80010401, 0xbf810000,
 };
 
-struct Case {
+struct Scenario {
     const char* name;
     std::uint32_t selector;
     std::uint32_t added;
 };
 
-const std::array<Case, 5> Cases{{
+const std::array<Scenario, 5> Scenarios{{
     {"early exit before the loop", 0u, 32u},
     {"early exit from the first iteration", 1u, 33u},
     {"early exit from the third iteration", 3u, 35u},
@@ -46,7 +45,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x01016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Case& test, std::uint32_t waveSize) {
+void Run(AgcDriver::VulkanDevice& device, const Scenario& test, std::uint32_t waveSize) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid * Stride] = tid * 0x01010101u + 7u;
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(SelectorRegister + 1u, 0u);
@@ -70,7 +69,7 @@ void Run(AgcDriver::VulkanDevice& device, const Case& test, std::uint32_t waveSi
     device.WaitIdle();
 }
 
-void Check(const Case& test, std::uint32_t waveSize) {
+void Check(const Scenario& test, std::uint32_t waveSize) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Input[tid * Stride] + test.added;
         const auto actual = Output[tid * Stride];
@@ -78,22 +77,21 @@ void Check(const Case& test, std::uint32_t waveSize) {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto waveSize : {32u, 64u}) {
-            for (const auto& test : Cases) {
-                Run(*device, test, waveSize);
-                Check(test, waveSize);
-            }
-        }
-        std::puts("loop ending exits tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void RunScenarios(std::uint32_t waveSize) {
+    auto& device = SharedVulkanTestDevice();
+    for (const auto& test : Scenarios) {
+        Run(device, test, waveSize);
+        Check(test, waveSize);
     }
 }
+
+const Testing::Case wave32{"LoopEndingExits_Wave32_EveryExitAddsExpectedCount", [] {
+    RunScenarios(32u);
+}};
+
+const Testing::Case wave64{"LoopEndingExits_Wave64_EveryExitAddsExpectedCount", [] {
+    RunScenarios(64u);
+}};
+
+} // namespace

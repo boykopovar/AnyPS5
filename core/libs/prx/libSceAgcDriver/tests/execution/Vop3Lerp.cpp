@@ -6,13 +6,11 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -62,6 +60,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
+    FillInput();
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -114,24 +113,15 @@ void Check() {
         };
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
             const std::uint32_t actual = Output[tid * Results + j];
-            Require(actual == expected[j], std::string(names[j]) + ": thread " + std::to_string(tid) + " (" + Hex(a) + ", " + Hex(b) + ", " + Hex(c) + ") is " + Hex(actual) + ", expected " + Hex(expected[j]));
+            Testing::Require(actual == expected[j], std::string(names[j]) + ": thread " + std::to_string(tid) + " (" + Hex(a) + ", " + Hex(b) + ", " + Hex(c) + ") is " + Hex(actual) + ", expected " + Hex(expected[j]));
         }
     }
 }
 
-}
+const Testing::Case lerpVariants{"Vop3LerpU8_SourceAndRoundingVariants_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device);
-        Check();
-        std::puts("vop3 lerp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

@@ -5,13 +5,11 @@
 #include <array>
 #include <bit>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -51,6 +49,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
+    FillInput();
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -95,28 +94,16 @@ void Check() {
         };
         const auto* out = &Output[tid * Results];
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
-            Require(out[j] == expected[j], "scalar bit count: lane " + std::to_string(tid) + " result " + std::to_string(j) + " is " + std::to_string(out[j]) + ", expected " + std::to_string(expected[j]));
+            Testing::Require(out[j] == expected[j], "scalar bit count: lane " + std::to_string(tid) + " result " + std::to_string(j) + " is " + std::to_string(out[j]) + ", expected " + std::to_string(expected[j]));
         }
     }
 }
 
-}
+const Testing::Case scalarBitCount{"ScalarBitCount_EdgeAndRandomInputs_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < Threads) Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < Threads) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        FillInput();
-        Run(*device);
-        Check();
-        std::puts("scalar bit count tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

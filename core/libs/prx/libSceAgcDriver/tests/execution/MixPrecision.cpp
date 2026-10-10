@@ -6,13 +6,12 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -131,19 +130,12 @@ void Check() {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device);
-        Check();
-        std::puts("mix precision tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case mixedFma{"MixPrecision_MixedPrecisionFma_MatchesReferenceResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device);
+    Check();
+}};
+
+} // namespace

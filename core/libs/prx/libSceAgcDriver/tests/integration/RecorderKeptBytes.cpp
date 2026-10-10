@@ -1,9 +1,9 @@
+#include <Testing/Test.hpp>
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+
 #include <algorithm>
 #include <cstdint>
-#include <cstdio>
-#include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -11,17 +11,11 @@
 #include <string_view>
 #include <vector>
 
-using namespace AgcDriver::Graphics;
-
 namespace {
 
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
+using namespace AgcDriver::Graphics;
+using Testing::Case;
+using Testing::Require;
 
 constexpr std::size_t Budget = Recorder::KeptBytesBudget;
 
@@ -123,27 +117,41 @@ Context mockContext() {
     return context;
 }
 
-void OpenBatchUnderBudget() {
-    mock = MockDevice{};
-    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    Recorder recorder(mockContext());
+class MockRecorder {
+public:
+    MockRecorder() : recorder(mockContext()) {}
+
+    Recorder& Get() { return recorder; }
+
+private:
+    struct Reset {
+        Reset() { mock = MockDevice{}; }
+    };
+
+    std::lock_guard<AgcDriver::GuestMemory::GpuMutexType> gpu{AgcDriver::GuestMemory::GpuMutex()};
+    Reset reset;
+    Recorder recorder;
+};
+
+const Case openBatchUnderBudget{"KeepBytes_OpenBatchReachingTheBudget_IsSubmittedOnce", [] {
+    MockRecorder fixture;
+    auto& recorder = fixture.Get();
     recorder.Keep(std::make_shared<int>(0));
     recorder.Keep(std::make_shared<int>(1), Budget - 1);
     recorder.BoundKeptBytes();
-    Expect(recorder.Recording() && recorder.Submissions() == 0 && mock.submits == 0, "a batch keeping one byte less than the budget was submitted");
+    Require(recorder.Recording() && recorder.Submissions() == 0 && mock.submits == 0, "a batch keeping one byte less than the budget was submitted");
     recorder.Keep(std::make_shared<int>(2), 1);
     recorder.BoundKeptBytes();
-    Expect(!recorder.Recording() && recorder.Submissions() == 1 && mock.submits == 1, "the open batch was not submitted once its kept bytes reached the budget");
-    Expect(recorder.InFlightKeptBytes() == Budget, "the submitted batch counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight, not the budget");
-    Expect(mock.fenceWaits == 0, "the recorder waited for a batch with one budget in flight");
+    Require(!recorder.Recording() && recorder.Submissions() == 1 && mock.submits == 1, "the open batch was not submitted once its kept bytes reached the budget");
+    Require(recorder.InFlightKeptBytes() == Budget, "the submitted batch counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight, not the budget");
+    Require(mock.fenceWaits == 0, "the recorder waited for a batch with one budget in flight");
     recorder.Sync();
-    Expect(recorder.InFlightKeptBytes() == 0, "a synced recorder still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
-}
+    Require(recorder.InFlightKeptBytes() == 0, "a synced recorder still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
+}};
 
-void InFlightWithinTwiceTheBudget() {
-    mock = MockDevice{};
-    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    Recorder recorder(mockContext());
+const Case inFlightWithinTwiceTheBudget{"KeepBytes_BudgetBatches_StayWithinTwiceTheBudgetInFlight", [] {
+    MockRecorder fixture;
+    auto& recorder = fixture.Get();
     std::vector<std::weak_ptr<int>> batches;
     for (int batch = 0; batch < 6; ++batch) {
         auto object = std::make_shared<int>(batch);
@@ -151,21 +159,20 @@ void InFlightWithinTwiceTheBudget() {
         recorder.Keep(std::move(object), Budget / 2);
         recorder.Keep(std::make_shared<int>(batch), Budget / 2);
         recorder.BoundKeptBytes();
-        Expect(recorder.InFlightKeptBytes() <= 2 * Budget, "batch " + std::to_string(batch) + " left " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight, more than twice the budget");
+        Require(recorder.InFlightKeptBytes() <= 2 * Budget, "batch " + std::to_string(batch) + " left " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight, more than twice the budget");
     }
-    Expect(recorder.Submissions() == 6, "six budget batches made " + std::to_string(recorder.Submissions()) + " submissions");
-    Expect(recorder.InFlightBatches() == 2 && recorder.InFlightKeptBytes() == 2 * Budget, "the newest two batches are not the ones in flight");
-    Expect(mock.fenceWaits == 4, "the recorder waited for " + std::to_string(mock.fenceWaits) + " batches, not the four oldest");
+    Require(recorder.Submissions() == 6, "six budget batches made " + std::to_string(recorder.Submissions()) + " submissions");
+    Require(recorder.InFlightBatches() == 2 && recorder.InFlightKeptBytes() == 2 * Budget, "the newest two batches are not the ones in flight");
+    Require(mock.fenceWaits == 4, "the recorder waited for " + std::to_string(mock.fenceWaits) + " batches, not the four oldest");
     for (std::size_t batch = 0; batch < batches.size(); ++batch) {
         const bool released = batches[batch].expired();
-        Expect(released == (batch < 4), "batch " + std::to_string(batch) + (released ? " released its kept objects while in flight" : " still holds its kept objects under the GPU mutex after the wait for it"));
+        Require(released == (batch < 4), "batch " + std::to_string(batch) + (released ? " released its kept objects while in flight" : " still holds its kept objects under the GPU mutex after the wait for it"));
     }
-}
+}};
 
-void SyncedWithinTwiceTheBudget() {
-    mock = MockDevice{};
-    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    Recorder recorder(mockContext());
+const Case syncedWithinTwiceTheBudget{"KeepBytes_SyncedBudgetBatches_HoldAtMostTwoBatchesOfObjects", [] {
+    MockRecorder fixture;
+    auto& recorder = fixture.Get();
     std::vector<std::weak_ptr<int>> batches;
     const auto alive = [&] { return std::count_if(batches.begin(), batches.end(), [](const auto& batch) { return !batch.expired(); }); };
     for (int batch = 0; batch < 6; ++batch) {
@@ -174,42 +181,23 @@ void SyncedWithinTwiceTheBudget() {
         recorder.Keep(std::move(object), Budget);
         recorder.BoundKeptBytes();
         recorder.Sync();
-        Expect(alive() <= 2, "after batch " + std::to_string(batch) + ", " + std::to_string(alive()) + " synced budget batches still hold their kept objects under the GPU mutex");
+        Require(alive() <= 2, "after batch " + std::to_string(batch) + ", " + std::to_string(alive()) + " synced budget batches still hold their kept objects under the GPU mutex");
     }
-    Expect(recorder.Submissions() == 6 && recorder.InFlightKeptBytes() == 0, "six synced budget batches made " + std::to_string(recorder.Submissions()) + " submissions and left " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
-    Expect(!batches[4].expired() && !batches[5].expired(), "the newest two synced batches released their kept objects before the unlock");
-}
+    Require(recorder.Submissions() == 6 && recorder.InFlightKeptBytes() == 0, "six synced budget batches made " + std::to_string(recorder.Submissions()) + " submissions and left " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
+    Require(!batches[4].expired() && !batches[5].expired(), "the newest two synced batches released their kept objects before the unlock");
+}};
 
-void CountFollowsEveryPath() {
-    mock = MockDevice{};
-    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    Recorder recorder(mockContext());
+const Case countFollowsEveryPath{"KeepBytes_SubmitSyncAndReap_KeepTheInFlightCountExact", [] {
+    MockRecorder fixture;
+    auto& recorder = fixture.Get();
     recorder.Keep(std::make_shared<int>(0), 3 * Budget);
     recorder.BoundKeptBytes();
-    Expect(recorder.Submissions() == 1 && recorder.InFlightBatches() == 0 && recorder.InFlightKeptBytes() == 0, "a batch keeping three budgets was not submitted, waited for and released");
+    Require(recorder.Submissions() == 1 && recorder.InFlightBatches() == 0 && recorder.InFlightKeptBytes() == 0, "a batch keeping three budgets was not submitted, waited for and released");
     recorder.Keep(std::make_shared<int>(1), Budget);
     recorder.Submit();
-    Expect(recorder.InFlightKeptBytes() == Budget, "a plain Submit did not count the batch's kept bytes in flight");
+    Require(recorder.InFlightKeptBytes() == Budget, "a plain Submit did not count the batch's kept bytes in flight");
     for (auto& [fence, signaled] : mock.signaled) signaled = true;
-    Expect(recorder.Reap() && recorder.InFlightKeptBytes() == 0, "a reaped batch still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
-}
+    Require(recorder.Reap() && recorder.InFlightKeptBytes() == 0, "a reaped batch still counts " + std::to_string(recorder.InFlightKeptBytes()) + " kept bytes in flight");
+}};
 
-}
-
-int main() {
-    try {
-        OpenBatchUnderBudget();
-        InFlightWithinTwiceTheBudget();
-        SyncedWithinTwiceTheBudget();
-        CountFollowsEveryPath();
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-    if (failures != 0) {
-        std::fprintf(stderr, "%d recorder kept bytes checks failed\n", failures);
-        return 1;
-    }
-    std::printf("recorder kept bytes tests passed\n");
-    return 0;
-}
+} // namespace

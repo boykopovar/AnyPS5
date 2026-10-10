@@ -7,14 +7,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 struct Compare {
@@ -161,29 +159,21 @@ void Check() {
         for (std::uint32_t value = 0; value < Values.size(); ++value) {
             for (std::uint32_t immediate = 0; immediate < Immediates.size(); ++immediate) {
                 const std::uint32_t mask = Output[tid * Results + value * Immediates.size() + immediate];
-                Require((mask >> Compares.size()) == 0u, "scalar sopk compare: thread " + std::to_string(tid) + " result for " + Hex(Values[value]) + ", " + Hex(Immediates[immediate]) + " is " + Hex(mask));
+                Testing::Require((mask >> Compares.size()) == 0u, "scalar sopk compare: thread " + std::to_string(tid) + " result for " + Hex(Values[value]) + ", " + Hex(Immediates[immediate]) + " is " + Hex(mask));
                 for (std::uint32_t compare = 0; compare < Compares.size(); ++compare) {
                     const bool actual = ((mask >> compare) & 1u) != 0u;
                     const bool expected = Compares[compare].evaluate(Values[value], Immediates[immediate]);
-                    Require(actual == expected, "scalar sopk compare: thread " + std::to_string(tid) + " " + Compares[compare].name + " " + Hex(Values[value]) + ", " + Hex(Immediates[immediate]) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+                    Testing::Require(actual == expected, "scalar sopk compare: thread " + std::to_string(tid) + " " + Compares[compare].name + " " + Hex(Values[value]) + ", " + Hex(Immediates[immediate]) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
                 }
             }
         }
     }
 }
 
-}
+const Testing::Case scalarSopkCompare{"ScalarSopkCompare_AllValueImmediatePairs_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("scalar sopk compare tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

@@ -9,14 +9,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -161,19 +160,11 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t dmask) {
     }
 }
 
-}
+const Testing::Case dmasks{"ImagePackedHorizontalGather_GatherWithDmasks_ReturnsPackedTexelRow", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexels();
+    FillInput();
+    for (const std::uint32_t dmask : {0xfu, 0x1u, 0x5u, 0xau, 0x8u}) Run(device, dmask);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillInput();
-        for (const std::uint32_t dmask : {0xfu, 0x1u, 0x5u, 0xau, 0x8u}) Run(*device, dmask);
-        std::puts("image packed horizontal gather tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

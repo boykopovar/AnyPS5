@@ -8,14 +8,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Selectors = 7;
@@ -208,6 +206,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target) {
+    FillInput();
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -243,7 +242,7 @@ void Check(std::uint32_t waveSize, const char* run, bool masked) {
                     for (std::uint32_t unused = 0; unused < UnusedModes; ++unused) {
                         const std::uint32_t index = CombinationIndex(sourceSelector, signExtend, destinationSelector, unused);
                         const std::uint32_t expected = PlaceDestination(selected, destinationSelector, unused, previous);
-                        Require(out[index] == expected, where(index) + ", expected " + Hex(expected) + ": " + Describe(sourceSelector, signExtend != 0u, destinationSelector, unused));
+                        Testing::Require(out[index] == expected, where(index) + ", expected " + Hex(expected) + ": " + Describe(sourceSelector, signExtend != 0u, destinationSelector, unused));
                     }
                 }
             }
@@ -251,32 +250,38 @@ void Check(std::uint32_t waveSize, const char* run, bool masked) {
         if (!masked) continue;
         if (BroadcastActive(tid)) {
             const std::uint32_t broadcast = (source & 0xffu) * 0x01010101u;
-            Require(out[BroadcastResult] == broadcast, where(BroadcastResult) + ", expected " + Hex(broadcast) + ": in-place v_mov_b32_sdwa v3, v3 dst_sel:BYTE_1/2/3 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_0 must copy byte 0 into the other bytes");
+            Testing::Require(out[BroadcastResult] == broadcast, where(BroadcastResult) + ", expected " + Hex(broadcast) + ": in-place v_mov_b32_sdwa v3, v3 dst_sel:BYTE_1/2/3 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_0 must copy byte 0 into the other bytes");
         } else {
-            Require(out[BroadcastResult] == source, where(BroadcastResult) + ", expected " + Hex(source) + ": the in-place v_mov_b32_sdwa must not write an inactive lane");
+            Testing::Require(out[BroadcastResult] == source, where(BroadcastResult) + ", expected " + Hex(source) + ": the in-place v_mov_b32_sdwa must not write an inactive lane");
         }
     }
 }
 
+bool BroadcastChecked(const AgcDriver::VulkanDevice& device) {
+    const bool masked = device.Target().subgroupSize >= 32u;
+    if (!masked) std::printf("EXEC-masked broadcast skipped, subgroup size %u cannot hold a wave32\n", device.Target().subgroupSize);
+    return masked;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const bool masked = device->Target().subgroupSize >= 32u;
-        if (!masked) std::printf("EXEC-masked broadcast skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-        FillInput();
-        Run(*device, Wave32Code, 32, device->Target());
-        Check(32, "wave32", masked);
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(64, "wave64", masked);
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(64, "wave64 split", masked);
-        std::puts("sdwa move selector tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32Selectors{"SdwaMoveSelectors_Wave32_MatchModel", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool masked = BroadcastChecked(device);
+    Run(device, Wave32Code, 32, device.Target());
+    Check(32, "wave32", masked);
+}};
+
+const Testing::Case wave64Selectors{"SdwaMoveSelectors_Wave64_MatchModel", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool masked = BroadcastChecked(device);
+    Run(device, Wave64Code, 64, device.Target());
+    Check(64, "wave64", masked);
+}};
+
+const Testing::Case wave64SplitSelectors{"SdwaMoveSelectors_Wave64OnComputeTarget32_MatchModel", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool masked = BroadcastChecked(device);
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(64, "wave64 split", masked);
+}};
+
+} // namespace

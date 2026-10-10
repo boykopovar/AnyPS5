@@ -1,10 +1,13 @@
+#include <Testing/Test.hpp>
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+
 #include <algorithm>
 #include <array>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,6 +17,9 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 using Shape = ShaderRecompiler::DescriptorImageShape;
+using Testing::Case;
+using Testing::Require;
+
 
 struct Fields {
     std::uint64_t base40 = 0x123456ull;
@@ -76,26 +82,13 @@ std::array<std::uint32_t, 8> pack(const Fields& f) {
     return words;
 }
 
-template<typename TAction>
-void reject(TAction action, std::string_view reason) {
-    try {
-        action();
-    } catch (const std::runtime_error& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected guest texture test error: ") + error.what());
-        return;
-    }
-    throw std::runtime_error(std::string("expected guest texture rejection: ") + std::string(reason));
-}
-
-void rejectFields(const Fields& f, std::string_view reason) {
+void rejectFields(const Fields& f, std::string_view reason, std::source_location location = std::source_location::current()) {
     const auto words = pack(f);
-    reject([&] { DecodeTextureResource(words); }, reason);
+    RequireRejection([&] { DecodeTextureResource(words); }, reason, location);
 }
 
-}
-
-void RunGuestTextureResourceTests() {
-    Fields base;
+const Case linearDescriptor{"DecodeTextureResource_LinearDescriptor_DecodesEveryField", [] {
+    const Fields base{};
     auto result = DecodeTextureResource(pack(base));
     Require(result.baseAddress == (base.base40 << 8u), "decoded base address changed");
     Require(result.width == 16 && result.height == 16, "decoded width or height changed");
@@ -111,7 +104,10 @@ void RunGuestTextureResourceTests() {
     wide.height = 4096;
     result = DecodeTextureResource(pack(wide));
     Require(result.width == 8192 && result.height == 4096, "wide texture dimensions were split across dwords incorrectly");
+}};
 
+const Case tileModeDecode{"DecodeTextureResource_TileModes_DecodeAndCheckTheXorBase", [] {
+    const Fields base{};
     Fields tileModes = base;
     tileModes.tileModeRaw = 0x01;
     Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard256B, "tile mode 0x01 must decode to standard 256B");
@@ -139,11 +135,14 @@ void RunGuestTextureResourceTests() {
     tileModes.base40 = base.base40;
     tileModes.tileModeRaw = 0x03;
     rejectFields(tileModes, "unsupported tile mode");
+}};
 
+const Case oneAndTwoDimensional{"DecodeTextureResource_OneAndTwoDimensionalLayouts_CheckTheirArrayFields", [] {
+    const Fields base{};
     Fields oneD = base;
     oneD.typeRaw = 8;
     oneD.height = 1;
-    result = DecodeTextureResource(pack(oneD));
+    auto result = DecodeTextureResource(pack(oneD));
     Require(result.dimension == TextureDimension::k1D, "1D descriptor did not decode to 1D dimension");
     oneD.height = 2;
     rejectFields(oneD, "nonzero height, depth or base array");
@@ -187,14 +186,17 @@ void RunGuestTextureResourceTests() {
     rejectFields(oneDArray, "tile mode other than linear, Z or R");
     oneDArray.tileModeRaw = 0x19;
     rejectFields(oneDArray, "tile mode other than linear, Z or R");
+}};
 
+const Case cubeDescriptor{"DecodeTextureResource_CubeDescriptor_ExposesSixSquareFaces", [] {
+    const Fields base{};
     Fields cube = base;
     cube.typeRaw = 11;
     cube.width = 32;
     cube.height = 32;
     cube.depth = 5;
     cube.baseArray = 0;
-    result = DecodeTextureResource(pack(cube));
+    auto result = DecodeTextureResource(pack(cube));
     Require(result.dimension == TextureDimension::kCube, "cube descriptor did not decode to cube dimension");
     for (const auto first : {0u, 5u, 6u}) {
         auto singleCube = cube;
@@ -214,22 +216,10 @@ void RunGuestTextureResourceTests() {
     Fields cubeNotMultiple = cube;
     cubeNotMultiple.depth = 4;
     rejectFields(cubeNotMultiple, "multiple of 6");
+}};
 
-    Fields badType = base;
-    badType.typeRaw = 0;
-    rejectFields(badType, "unsupported image type");
-
-    Fields badSel = base;
-    badSel.dstSelX = 2;
-    rejectFields(badSel, "invalid destination channel selector");
-    badSel = base;
-    badSel.dstSelW = 3;
-    rejectFields(badSel, "invalid destination channel selector");
-
-    Fields zeroAddress = base;
-    zeroAddress.base40 = 0;
-    rejectFields(zeroAddress, "null base address");
-
+const Case minLodClamp{"EffectiveMinLod_MinLodClamp_IsBoundedByTheViewLevels", [] {
+    const Fields base{};
     Fields minLod = base;
     minLod.maxMip = 4;
     minLod.baseLevel = 1;
@@ -251,8 +241,10 @@ void RunGuestTextureResourceTests() {
     clamped = DecodeTextureResource(pack(minLod));
     Require(EffectiveMinLod(clamped) == 1.0f / 256.0f, "the smallest MIN_LOD step above level 0 was lost");
     Require(DecodeTextureResource(pack(base)).minLod == 0 && EffectiveMinLod(DecodeTextureResource(pack(base))) == 0.0f, "an unclamped descriptor gained a MIN_LOD");
+}};
 
-    // Streaming feedback fields decode; nothing is reported back.
+const Case ignoredFields{"DecodeTextureResource_FeedbackPerformanceAndBlockSizeFields_DoNotChangeTheStorage", [] {
+    const Fields base{};
     Fields feedback = base;
     feedback.minLodWarn = 1;
     feedback.mipStatsCntId = 1;
@@ -271,7 +263,28 @@ void RunGuestTextureResourceTests() {
         modulated.cornerSample = true;
         rejectFields(modulated, "corner sampling");
     }
+    Fields blockSize = base;
+    blockSize.maxUncompBlkSize = 1;
+    blockSize.maxCompBlkSize = 1;
+    Require(DecodeTextureResource(pack(blockSize)).baseAddress == DecodeTextureResource(pack(base)).baseAddress, "DCC block size overrides changed texture storage");
+}};
 
+const Case unsupportedFields{"DecodeTextureResource_UnsupportedFields_AreRejected", [] {
+    const Fields base{};
+    Fields badType = base;
+    badType.typeRaw = 0;
+    rejectFields(badType, "unsupported image type");
+
+    Fields badSel = base;
+    badSel.dstSelX = 2;
+    rejectFields(badSel, "invalid destination channel selector");
+    badSel = base;
+    badSel.dstSelW = 3;
+    rejectFields(badSel, "invalid destination channel selector");
+
+    Fields zeroAddress = base;
+    zeroAddress.base40 = 0;
+    rejectFields(zeroAddress, "null base address");
     Fields badCorner = base;
     badCorner.cornerSample = true;
     rejectFields(badCorner, "corner sampling");
@@ -288,11 +301,21 @@ void RunGuestTextureResourceTests() {
     badMsaa.msaaDepth = true;
     rejectFields(badMsaa, "MSAA");
 
-    Fields blockSize = base;
-    blockSize.maxUncompBlkSize = 1;
-    blockSize.maxCompBlkSize = 1;
-    Require(DecodeTextureResource(pack(blockSize)).baseAddress == DecodeTextureResource(pack(base)).baseAddress, "DCC block size overrides changed texture storage");
+    Fields badSwizzle = base;
+    badSwizzle.bcSwizzle = 1;
+    rejectFields(badSwizzle, "BC swizzle");
 
+    Fields badLevels = base;
+    badLevels.baseLevel = 2;
+    badLevels.lastLevel = 1;
+    badLevels.maxMip = 1;
+    rejectFields(badLevels, "base mip level past its last mip level");
+    std::array<std::uint32_t, 4> shortWords{};
+    RequireRejection([&] { DecodeTextureResource(shortWords); }, "8 dwords");
+}};
+
+const Case dccMetadata{"DecodeTextureResource_DccMetadata_DecodesOnlyWithCompression", [] {
+    const Fields base{};
     Fields meta = base;
     meta.metaPipeAligned = true;
     meta.writeCompress = true;
@@ -304,7 +327,10 @@ void RunGuestTextureResourceTests() {
     meta.dccAlphaPos = true;
     const auto compressed = DecodeTextureResource(pack(meta));
     Require(compressed.dccAddress == 0x100 && compressed.dccAlphaOnMsb, "DCC metadata was decoded wrongly");
+}};
 
+const Case storageDccKeys{"MarkDccUncompressed_StorageImage_StoresKeysOverTheDccExtent", [] {
+    const Fields base{};
     Fields storage = base;
     storage.base40 = 0x1000;
     storage.width = 1920;
@@ -326,17 +352,10 @@ void RunGuestTextureResourceTests() {
         const auto stored = static_cast<std::size_t>(std::count(keys, keys + extentKeys, std::uint8_t{0xff}));
         Require(image.dccPipeAligned == pipeAligned && stored == expected && std::all_of(keys, keys + expected, [](std::uint8_t key) { return key == 0xff; }), std::string("a 1920x1080 SW_64KB_R_X storage image with ") + (pipeAligned ? "pipe-aligned" : "unaligned") + " DCC stored " + std::to_string(stored) + " uncompressed keys, expected " + std::to_string(expected));
     }
+}};
 
-    Fields badSwizzle = base;
-    badSwizzle.bcSwizzle = 1;
-    rejectFields(badSwizzle, "BC swizzle");
-
-    Fields badLevels = base;
-    badLevels.baseLevel = 2;
-    badLevels.lastLevel = 1;
-    badLevels.maxMip = 1;
-    rejectFields(badLevels, "base mip level past its last mip level");
-
+const Case pastTheLastMip{"DescribeSurface_ViewsPastTheLastMip_AddressTheChainLikeAddrlib", [] {
+    const Fields base{};
     Fields partialMips = base;
     partialMips.lastLevel = 1;
     partialMips.maxMip = 2;
@@ -393,10 +412,9 @@ void RunGuestTextureResourceTests() {
     const auto untailedAllocated = DescribeSurface(untailedChain).guestBytes;
     untailedChain.mipCount = 2;
     Require(untailedAllocated == 0xff0000u && DescribeSurface(untailedChain).guestBytes == 0x1470000u, "a second level must grow a 1920x1080 64 bpp SW_64KB_R_X surface from addrlib's 0xff0000 to 0x1470000 bytes");
+}};
 
-    std::array<std::uint32_t, 4> shortWords{};
-    reject([&] { DecodeTextureResource(shortWords); }, "8 dwords");
-
+const Case guestDimensions{"MatchesGuestDimension_ShaderImageShapes_MatchTheirGuestDimensions", [] {
     Require(MatchesGuestDimension(Shape::Image1D, TextureDimension::k1D), "1D shape must match 1D dimension");
     Require(!MatchesGuestDimension(Shape::Image1D, TextureDimension::k2D), "1D shape must not match 2D dimension");
     Require(MatchesGuestDimension(Shape::Image2D, TextureDimension::k2D), "2D shape must match 2D dimension");
@@ -409,7 +427,10 @@ void RunGuestTextureResourceTests() {
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2D), "3D shape must never match a guest dimension");
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2DArray), "3D shape must never match a guest dimension");
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::kCube), "3D shape must never match a guest dimension");
+}};
 
+const Case sharedEntries{"SampledTexturesShareEntry_StreamingFeedbackFields_AreIgnored", [] {
+    const Fields base{};
     Fields streamed = base;
     streamed.minLodWarn = 0xabc;
     streamed.mipStatsCntEn = true;
@@ -429,4 +450,6 @@ void RunGuestTextureResourceTests() {
     Fields cornered = base;
     cornered.cornerSample = true;
     Require(!SampledTexturesShareEntry(pack(base), pack(cornered)), "T#s differing in a field next to the feedback fields must not share a sampled texture entry");
-}
+}};
+
+} // namespace

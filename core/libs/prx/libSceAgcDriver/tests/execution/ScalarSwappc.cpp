@@ -6,14 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -117,27 +115,27 @@ void Check(std::uint32_t lanes) {
         for (std::uint32_t index = 0; index < Results; ++index) {
             const auto actual = Output[tid * Results + index];
             const auto expected = Expected(tid, index);
-            Require(actual == expected, "swappc wave" + std::to_string(lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected));
+            Testing::Require(actual == expected, "swappc wave" + std::to_string(lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
 }
 
-}
+const Testing::Case wave32{"ScalarSwappc_Wave32_JumpTablesAndLongBranchesMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave32Code, 32, device.ComputeTarget(32));
+    Check(32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, Wave32Code, 32, device->ComputeTarget(32));
-        Check(32);
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(64);
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(64);
-        std::puts("swappc tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64{"ScalarSwappc_Wave64_JumpTablesAndLongBranchesMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave64Code, 64, device.Target());
+    Check(64);
+}};
+
+const Testing::Case wave64OnWave32Target{"ScalarSwappc_Wave64OnWave32Target_JumpTablesAndLongBranchesMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(64);
+}};
+
+} // namespace

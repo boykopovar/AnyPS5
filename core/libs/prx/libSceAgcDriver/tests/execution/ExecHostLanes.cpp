@@ -4,13 +4,12 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Vertices = 189;
@@ -159,26 +158,18 @@ void Check(const std::string& name, std::uint32_t lanes) {
     }
 }
 
-}
+const Testing::Case computeLanes{"ExecHostLanes_ComputeWaterfallOverCopiedExec_LoadsEachLaneKey", [] {
+    auto& device = SharedVulkanTestDevice();
+    Dispatch(device);
+    Check("compute lane", Threads);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Dispatch(*device);
-        Check("compute lane", Threads);
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("vertex draw skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-        } else if ((device->SubgroupStages() & VK_SHADER_STAGE_VERTEX_BIT) == 0u) {
-            std::puts("vertex draw skipped, the device has no subgroup operations in vertex shaders");
-        } else {
-            Draw(*device);
-            Check("vertex", Vertices);
-        }
-        std::puts("exec host lane tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case vertexLanes{"ExecHostLanes_VertexWaterfallOverCopiedExec_LoadsEachLaneKey", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) Testing::Skip("vertex draw skipped, subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    if ((device.SubgroupStages() & VK_SHADER_STAGE_VERTEX_BIT) == 0u) Testing::Skip("vertex draw skipped, the device has no subgroup operations in vertex shaders");
+    Draw(device);
+    Check("vertex", Vertices);
+}};
+
+} // namespace

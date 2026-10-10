@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -247,30 +246,37 @@ void Check() {
     }
 }
 
+
+void SetMode(bool ieee, bool flushHalf) {
+    Ieee = ieee;
+    FlushHalf = flushHalf;
 }
 
-int main() {
+const Testing::Case ieeeOff{"PackedAlu_IeeeOff_MatchesHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    SetMode(false, false);
+    Run(device);
+    Check();
+}};
+
+const Testing::Case ieeeOn{"PackedAlu_IeeeOn_MatchesHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    SetMode(true, false);
+    Run(device);
+    Check();
+}};
+
+const Testing::Case flushedHalfDenormals{"PackedAlu_FlushedHalfDenormals_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    SetMode(false, true);
+    bool refused = false;
     try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const bool ieee : {false, true}) {
-            Ieee = ieee;
-            Run(*device);
-            Check();
-        }
-        Ieee = false;
-        FlushHalf = true;
-        bool refused = false;
-        try {
-            Run(*device);
-        } catch (const std::exception& error) {
-            refused = std::string(error.what()).find("f16 denormals not kept") != std::string::npos;
-        }
-        Require(refused, "packed alu: flushed f16 denormals were not refused");
-        std::puts("packed alu tests passed");
-        return 0;
+        Run(device);
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        refused = std::string(error.what()).find("f16 denormals not kept") != std::string::npos;
     }
-}
+    SetMode(false, false);
+    Require(refused, "packed alu: flushed f16 denormals were not refused");
+}};
+
+} // namespace

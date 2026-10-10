@@ -1,9 +1,10 @@
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-#include <cstdio>
-#include <cstdlib>
+#include <Testing/Test.hpp>
+
 #include <cstring>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceSaveDataDialogInitialize();
@@ -18,61 +19,116 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result);
 int APS5_VABI sceSaveDataDialogTerminate();
 }
 
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+class SaveDialogFixture {
+public:
+    SaveDialogFixture() {
+        RequireEqual(sceSaveDataDialogInitialize(), 0, "initialize");
+        items.dir_names = names;
+        items.dir_names_num = 2;
+        param.size = sizeof(param);
+        param.mode = SAVE_DATA_DIALOG_MODE_PROGRESS_BAR;
+        param.items = &items;
+        param.user_data = &context;
     }
-}
 
-static void RequireRunning() {
-    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_RUNNING,
-            "save progress must remain running until closed");
-    Require(sceSaveDataDialogUpdateStatus() == SAVE_DATA_DIALOG_STATUS_RUNNING,
-            "polling save progress must not finish the dialog");
-    Require(sceSaveDataDialogIsReadyToDisplay() == 1, "save progress must be ready");
-}
+    ~SaveDialogFixture() {
+        sceSaveDataDialogTerminate();
+    }
 
-int main() {
-    Require(sceSaveDataDialogInitialize() == 0, "initialize");
+    SaveDialogFixture(const SaveDialogFixture&) = delete;
+    SaveDialogFixture& operator=(const SaveDialogFixture&) = delete;
 
     SaveDataDirName names[2]{{}, {"SDU1"}};
     SaveDataDialogItems items{};
-    items.dir_names = names;
-    items.dir_names_num = 2;
     int context = 42;
     SaveDataDialogParam param{};
-    param.size = sizeof(param);
-    param.mode = SAVE_DATA_DIALOG_MODE_PROGRESS_BAR;
-    param.items = &items;
-    param.user_data = &context;
+};
 
-    for (int save = 0; save < 2; ++save) {
-        Require(sceSaveDataDialogOpen(&param) == 0, "open save progress");
-        for (int poll = 0; poll < 8; ++poll) RequireRunning();
-        Require(sceSaveDataDialogOpen(&param) == SAVE_DATA_DIALOG_ERROR_INVALID_STATE,
-                "opening another dialog must not interrupt an active save");
-        Require(sceSaveDataDialogProgressBarSetValue(0, 25) == 0, "set progress");
-        Require(sceSaveDataDialogProgressBarInc(0, 25) == 0, "increment progress");
-        RequireRunning();
-        Require(sceSaveDataDialogProgressBarSetValue(0, 100) == 0, "complete progress");
-        RequireRunning();
-        Require(sceSaveDataDialogClose(nullptr) == 0, "close save progress");
-        Require(sceSaveDataDialogUpdateStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
-                "closing save progress must finish it");
-        SaveDataDirName selected{};
-        SaveDataDialogResult result{};
-        result.dir_name = &selected;
-        Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
-        Require(result.mode == param.mode && result.result == SAVE_DATA_DIALOG_RESULT_OK &&
-                result.user_data == &context && std::strcmp(selected.data, "SDU1") == 0,
-                "save result must preserve its mode, directory and caller context");
-    }
-
-    param.mode = 1;
-    Require(sceSaveDataDialogOpen(&param) == 0, "open selection dialog");
-    Require(sceSaveDataDialogUpdateStatus() == SAVE_DATA_DIALOG_STATUS_FINISHED,
-            "selection dialog must retain the existing automatic response");
-    Require(sceSaveDataDialogTerminate() == 0, "terminate");
-    Require(sceSaveDataDialogGetStatus() == SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
+void RequireRunning(const std::string& context) {
+    RequireEqual(sceSaveDataDialogGetStatus(), SAVE_DATA_DIALOG_STATUS_RUNNING, context + ": save progress must remain running until closed");
+    RequireEqual(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_RUNNING, context + ": polling save progress must not finish the dialog");
+    RequireEqual(sceSaveDataDialogIsReadyToDisplay(), 1, context + ": save progress must be ready");
 }
+
+void OpenAndClose(SaveDialogFixture& fixture) {
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), 0, "open save progress");
+    RequireEqual(sceSaveDataDialogClose(nullptr), 0, "close save progress");
+}
+
+void RequireSaveResult(const SaveDialogFixture& fixture) {
+    SaveDataDirName selected{};
+    SaveDataDialogResult result{};
+    result.dir_name = &selected;
+    RequireEqual(sceSaveDataDialogGetResult(&result), 0, "read completed result");
+    RequireEqual(result.mode, fixture.param.mode, "result mode");
+    RequireEqual(result.result, SAVE_DATA_DIALOG_RESULT_OK, "result code");
+    Require(result.user_data == &fixture.context, "save result must preserve the caller context");
+    RequireEqual(std::string(selected.data), std::string("SDU1"), "selected directory");
+}
+
+const Case pollingKeepsRunning{"Open_ProgressBarMode_StaysRunningWhilePolled", [] {
+    SaveDialogFixture fixture;
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), 0, "open save progress");
+    for (int poll = 0; poll < 8; ++poll) RequireRunning("poll " + std::to_string(poll));
+}};
+
+const Case openWhileRunning{"Open_WhileSaveRunning_ReturnsInvalidState", [] {
+    SaveDialogFixture fixture;
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), 0, "open save progress");
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), SAVE_DATA_DIALOG_ERROR_INVALID_STATE, "opening another dialog must not interrupt an active save");
+}};
+
+const Case progressUpdates{"ProgressBar_SetAndIncrement_KeepDialogRunning", [] {
+    SaveDialogFixture fixture;
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), 0, "open save progress");
+    RequireEqual(sceSaveDataDialogProgressBarSetValue(0, 25), 0, "set progress");
+    RequireEqual(sceSaveDataDialogProgressBarInc(0, 25), 0, "increment progress");
+    RequireRunning("after partial progress");
+    RequireEqual(sceSaveDataDialogProgressBarSetValue(0, 100), 0, "complete progress");
+    RequireRunning("after complete progress");
+}};
+
+const Case closeFinishes{"Close_RunningSave_FinishesDialog", [] {
+    SaveDialogFixture fixture;
+    OpenAndClose(fixture);
+    RequireEqual(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_FINISHED, "closing save progress must finish it");
+}};
+
+const Case resultAfterClose{"GetResult_AfterClose_PreservesModeDirectoryAndContext", [] {
+    SaveDialogFixture fixture;
+    OpenAndClose(fixture);
+    RequireSaveResult(fixture);
+}};
+
+const Case secondSave{"Open_AfterPreviousSaveFinished_RunsSecondSave", [] {
+    SaveDialogFixture fixture;
+    OpenAndClose(fixture);
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), 0, "open the second save");
+    RequireRunning("second save");
+    RequireEqual(sceSaveDataDialogClose(nullptr), 0, "close the second save");
+    RequireEqual(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_FINISHED, "second save finished");
+    RequireSaveResult(fixture);
+}};
+
+const Case selectionDialog{"Open_SelectionModeAfterSave_FinishesImmediately", [] {
+    SaveDialogFixture fixture;
+    OpenAndClose(fixture);
+    fixture.param.mode = 1;
+    RequireEqual(sceSaveDataDialogOpen(&fixture.param), 0, "open selection dialog");
+    RequireEqual(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_FINISHED, "selection dialog must retain the existing automatic response");
+}};
+
+const Case terminate{"Terminate_AfterDialog_ReturnsToNone", [] {
+    SaveDialogFixture fixture;
+    OpenAndClose(fixture);
+    RequireEqual(sceSaveDataDialogTerminate(), 0, "terminate");
+    RequireEqual(sceSaveDataDialogGetStatus(), SAVE_DATA_DIALOG_STATUS_NONE, "terminated state");
+}};
+
+} // namespace

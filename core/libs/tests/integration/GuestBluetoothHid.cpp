@@ -1,8 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <stdexcept>
 
 extern "C" {
@@ -16,43 +16,63 @@ int APS5_VABI sceBluetoothHidGetInputReport();
 
 namespace {
 
+using Testing::Case;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
+
+constexpr std::uint16_t vendorId = 0x44f;
+constexpr std::uint16_t productId = 0x1000;
+
 int callbackCalls = 0;
 
 void APS5_VABI Callback() {
     ++callbackCalls;
 }
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "BluetoothHid: %s\n", message);
-        std::abort();
+void* CallbackPointer() {
+    return reinterpret_cast<void*>(&Callback);
+}
+
+class RegisteredCallback {
+public:
+    RegisteredCallback() {
+        RequireEqual(sceBluetoothHidInit(), 0, "initialization");
+        RequireEqual(sceBluetoothHidRegisterCallback(CallbackPointer(), 0, param), 0, "callback registration");
     }
-}
 
-}
+    ~RegisteredCallback() {
+        sceBluetoothHidUnregisterCallback();
+    }
 
-int main() {
-    Require(sceBluetoothHidInit() == 0, "initialization failed");
+    RegisteredCallback(const RegisteredCallback&) = delete;
+    RegisteredCallback& operator=(const RegisteredCallback&) = delete;
+
     std::uint8_t param[16]{};
-    Require(sceBluetoothHidRegisterCallback(reinterpret_cast<void*>(&Callback), 0, param) == 0, "callback registration failed");
-    Require(sceBluetoothHidRegisterDevice(0x44f, 0x1000) == 0, "device registration failed");
-    Require(callbackCalls == 0, "a device connection was reported");
-    bool threw = false;
-    try {
-        sceBluetoothHidRegisterCallback(nullptr, 0, param);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw, "a null callback was accepted");
-    threw = false;
-    try {
-        sceBluetoothHidGetInputReport();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "an input report without a device did not throw");
-    Require(sceBluetoothHidUnregisterDevice(0x44f, 0x1000) == 0, "device unregistration failed");
-    Require(sceBluetoothHidUnregisterCallback() == 0, "callback unregistration failed");
-    std::puts("BluetoothHid tests passed");
-    return 0;
-}
+};
+
+const Case registerDevice{"RegisterDevice_WithCallback_SucceedsWithoutReportingConnection", [] {
+    const RegisteredCallback callback;
+    callbackCalls = 0;
+    RequireEqual(sceBluetoothHidRegisterDevice(vendorId, productId), 0, "device registration");
+    RequireEqual(callbackCalls, 0, "device connection callbacks");
+    RequireEqual(sceBluetoothHidUnregisterDevice(vendorId, productId), 0, "device unregistration");
+}};
+
+const Case nullCallback{"RegisterCallback_NullCallback_ThrowsInvalidArgument", [] {
+    RegisteredCallback callback;
+    RequireThrows<std::invalid_argument>([&] { sceBluetoothHidRegisterCallback(nullptr, 0, callback.param); }, "null callback registration");
+}};
+
+const Case inputReport{"GetInputReport_NoDevice_ThrowsRuntimeError", [] {
+    const RegisteredCallback callback;
+    RequireThrows<std::runtime_error>([] { sceBluetoothHidGetInputReport(); }, "input report without a device");
+}};
+
+const Case unregisterCallback{"UnregisterCallback_AfterRegister_Succeeds", [] {
+    std::uint8_t param[16]{};
+    RequireEqual(sceBluetoothHidInit(), 0, "initialization");
+    RequireEqual(sceBluetoothHidRegisterCallback(CallbackPointer(), 0, param), 0, "callback registration");
+    RequireEqual(sceBluetoothHidUnregisterCallback(), 0, "callback unregistration");
+}};
+
+} // namespace

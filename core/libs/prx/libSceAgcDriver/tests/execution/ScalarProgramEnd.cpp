@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <exception>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -51,7 +50,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("scalar program end: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("scalar program end: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 ShaderRecompiler::RecompileRequest Request(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, std::span<const ShaderRecompiler::MemoryRegion> memory) {
@@ -66,17 +65,21 @@ ShaderRecompiler::RecompileRequest Request(AgcDriver::VulkanDevice& device, std:
     return request;
 }
 
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    Testing::Fail(message);
+}
+
 void ExpectRefused(AgcDriver::VulkanDevice& device) {
     const std::span<const std::uint32_t> code(RoundTowardZeroCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const std::vector<std::uint32_t> userData(8, 0u);
-    bool refused = false;
-    try {
-        static_cast<void>(ShaderRecompiler::Recompile(Request(device, code, userData, memory)));
-    } catch (const std::exception&) {
-        refused = true;
-    }
-    Require(refused, "scalar program end: s_round_mode 3 was translated");
+    static_cast<void>(RequireRefusal([&] { static_cast<void>(ShaderRecompiler::Recompile(Request(device, code, userData, memory))); }, "scalar program end: s_round_mode 3 was translated"));
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
@@ -102,21 +105,20 @@ void Check() {
     }
 }
 
-}
+const Testing::Case programEndVariants{"ScalarProgramEnd_EndProgramVariants_StopBeforeLaterStores", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Code);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, Code);
-        Check();
-        Run(*device, SetkillCode);
-        Check();
-        ExpectRefused(*device);
-        std::puts("scalar program end tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case setkill{"ScalarProgramEnd_Setkill_StopsBeforeLaterStores", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, SetkillCode);
+    Check();
+}};
+
+const Testing::Case roundTowardZeroRefused{"ScalarProgramEnd_RoundModeTowardZero_IsRefused", [] {
+    ExpectRefused(SharedVulkanTestDevice());
+}};
+
+} // namespace

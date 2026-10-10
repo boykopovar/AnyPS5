@@ -3,12 +3,8 @@ target_include_directories(ulobjmgr PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(ulobjmgr)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_ulobjmgr_tests ${LIBS_INCLUDE_DIR}/tests/GuestUlobjmgr.cpp)
-    target_include_directories(guest_ulobjmgr_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ulobjmgr_tests PRIVATE ulobjmgr)
-    add_test(NAME guest_ulobjmgr COMMAND guest_ulobjmgr_tests)
-    if(WIN32)
-        set_tests_properties(guest_ulobjmgr PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:ulobjmgr>")
-    endif()
+    anyps5_add_library_test(guest_ulobjmgr_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestUlobjmgr.cpp
+        LINK ulobjmgr libc
+    )
 endif()

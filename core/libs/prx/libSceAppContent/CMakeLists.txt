@@ -3,7 +3,7 @@ target_include_directories(libSceAppContent PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAppContent)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_appcontent_tests ${LIBS_INCLUDE_DIR}/tests/GuestAppContent.cpp)
+    add_test_executable(guest_appcontent_tests ${LIBS_INCLUDE_DIR}/tests/integration/GuestAppContent.cpp)
     target_include_directories(guest_appcontent_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_appcontent_tests PRIVATE libSceAppContent libc)
     configure_windows_unwind(guest_appcontent_tests)

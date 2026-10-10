@@ -1,24 +1,31 @@
 #include "prx/libkernel/Time/include/Time.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <string>
 
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
+namespace {
 
-int main(int argc, char** argv) {
-    constexpr std::uint64_t minuteMicros = 60ULL * 1000 * 1000;
-    if (argc > 1 && std::strcmp(argv[1], "counter") == 0) {
-        Require(sceKernelGetProcessTimeCounter() < minuteMicros * 1000, "first process time counter wrapped");
-        return 0;
-    }
+using Testing::Case;
+using Testing::Require;
+
+constexpr std::uint64_t minuteMicros = 60ULL * 1000 * 1000;
+
+const Case counterStartsNearZero{"ProcessTimeCounter_FirstRead_IsRelativeToProcessStart", [] {
+    const std::uint64_t counter = sceKernelGetProcessTimeCounter();
+    Require(counter < minuteMicros * 1000, "process time counter wrapped: " + std::to_string(counter));
+}};
+
+const Case timeStartsNearZero{"ProcessTime_Read_IsRelativeToProcessStart", [] {
+    const std::uint64_t time = sceKernelGetProcessTime();
+    Require(time < minuteMicros, "process time wrapped: " + std::to_string(time));
+}};
+
+const Case timeIsMonotonic{"ProcessTime_ConsecutiveReads_NeverGoBackwards", [] {
     const std::uint64_t first = sceKernelGetProcessTime();
-    Require(first < minuteMicros, "first process time wrapped");
-    Require(sceKernelGetProcessTime() >= first, "process time went backwards");
-    return 0;
-}
+    const std::uint64_t second = sceKernelGetProcessTime();
+    Require(second >= first, "process time went backwards");
+}};
+
+} // namespace

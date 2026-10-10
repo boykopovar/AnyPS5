@@ -8,13 +8,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -124,7 +123,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(const void* data, std::uint32_t f
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t swizzle) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t swizzle, ShaderRecompiler::CompiledShaderArtifact& first) {
     Buffer.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
@@ -141,7 +140,6 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t sw
         {0, 0, 0, 128}
     };
     const auto result = ShaderRecompiler::Recompile(request);
-    static ShaderRecompiler::CompiledShaderArtifact first;
     if (first.variantId == 0u) first = result;
     else Require(result.cacheHit && result.variantId == first.variantId, "runtime image format changed the compiled artifact");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -180,32 +178,35 @@ void Check(const Format& format) {
 
 void RequireRefused(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t swizzle, const std::string& reason, const std::string& what) {
     std::string refusal;
+    ShaderRecompiler::CompiledShaderArtifact first;
     try {
-        Run(device, format, swizzle);
+        Run(device, format, swizzle, first);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
     Require(refusal.find(reason) != std::string::npos, "image_load_pck of " + what + " was not refused: " + refusal);
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto& format : Formats) {
-            FillTexture(format);
-            Run(*device, format.format, IdentitySwizzle);
-            Check(format);
-        }
-        FillTexture(Formats[6]);
-        RequireRefused(*device, 57u, IdentitySwizzle, "not recoverable", "8_8_8_8_SNORM");
-        RequireRefused(*device, 56u, 0xf2eu, "identity swizzle", "a swizzled texture");
-        std::puts("image load packed tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case allFormats{"ImageLoadPacked_AllFormats_ReturnRawTexelsWithOneArtifact", [] {
+    auto& device = SharedVulkanTestDevice();
+    ShaderRecompiler::CompiledShaderArtifact first;
+    for (const auto& format : Formats) {
+        FillTexture(format);
+        Run(device, format.format, IdentitySwizzle, first);
+        Check(format);
     }
-}
+}};
+
+const Testing::Case snormRefused{"ImageLoadPacked_SnormFormat_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexture(Formats[6]);
+    RequireRefused(device, 57u, IdentitySwizzle, "not recoverable", "8_8_8_8_SNORM");
+}};
+
+const Testing::Case swizzleRefused{"ImageLoadPacked_SwizzledTexture_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexture(Formats[6]);
+    RequireRefused(device, 56u, 0xf2eu, "identity swizzle", "a swizzled texture");
+}};
+
+} // namespace

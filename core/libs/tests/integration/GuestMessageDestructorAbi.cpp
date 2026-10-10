@@ -1,8 +1,14 @@
 #include "prx/libc/include/exceptions/Runtime.hpp"
+
+#include <Testing/Test.hpp>
+
+#include <array>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <regex>
+#include <string>
+#include <string_view>
 #include <windows.h>
 
 using GuestWhat = const char* (APS5_VABI *)(const void*);
@@ -46,7 +52,8 @@ unsigned FixtureCaught = 0;
 unsigned FixtureWhatChecked = 0;
 
 [[noreturn]] void APS5_VABI FixtureFail(unsigned code) {
-    std::fprintf(stderr, "guest exception failure %u\n", code);
+    std::fprintf(stderr, "guest exception failure %u inside a guest frame\n", code);
+    std::fflush(stderr);
     ExitProcess(code);
 }
 const char* APS5_VABI FixtureWhat(const void* object) { return static_cast<const Object*>(object)->message; }
@@ -61,42 +68,63 @@ void APS5_VABI FixtureCheckWhat(const char* message) {
 }
 }
 
-static Object decoy{}, retained{};
-static GuestDestroy registeredDestructor;
-static void* expectedObject;
-static void* poison;
-static unsigned callbacks;
-static bool regularRelease;
-static bool keepMessage;
-static const char* expectedMessage = FixtureMessage;
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr std::array<std::string_view, 9> captureModes{
+    "decoy", "zero", "release", "regex-decoy", "regex-zero",
+    "unshared-decoy", "unshared-zero", "regex-unshared-decoy", "regex-unshared-zero"};
+
+Object decoy{};
+Object retained{};
+GuestDestroy registeredDestructor;
+void* expectedObject;
+void* poison;
+unsigned callbacks;
+bool regularRelease;
+bool keepMessage;
+const char* expectedMessage = FixtureMessage;
 
 using NativeFree = void (*)(void*);
-static NativeFree originalFree;
-static std::uintptr_t* freeSlot;
-static void* watchedObject;
-static void* watchedMessage;
-static void* foreignObject;
-static void* foreignMessage;
-static unsigned objectFrees, messageFrees;
+NativeFree originalFree;
+std::uintptr_t* freeSlot;
+void* watchedObject;
+void* watchedMessage;
+void* foreignObject;
+void* foreignMessage;
+unsigned objectFrees;
+unsigned messageFrees;
 
-static void TrackedFree(void* pointer) {
+std::string_view SelectedMode() {
+    const auto& arguments = Testing::Arguments();
+    return arguments.empty() ? std::string_view{} : std::string_view(arguments.front());
+}
+
+bool Contains(std::string_view text, std::string_view part) {
+    return text.find(part) != std::string_view::npos;
+}
+
+void TrackedFree(void* pointer) {
     if (pointer && (pointer == foreignObject || pointer == foreignMessage)) FixtureFail(50);
     if (pointer && pointer == watchedObject && ++objectFrees != 1) FixtureFail(51);
     if (pointer && pointer == watchedMessage && ++messageFrees != 1) FixtureFail(52);
     originalFree(pointer);
 }
 
-static void ReplaceFree(std::uintptr_t address) {
+void ReplaceFree(std::uintptr_t address) {
     DWORD protection;
-    if (!VirtualProtect(freeSlot, sizeof(*freeSlot), PAGE_READWRITE, &protection)) FixtureFail(53);
+    Require(VirtualProtect(freeSlot, sizeof(*freeSlot), PAGE_READWRITE, &protection) != 0, "unprotect the free import slot");
     *freeSlot = address;
     DWORD ignored;
-    if (!VirtualProtect(freeSlot, sizeof(*freeSlot), protection, &ignored)) FixtureFail(54);
+    Require(VirtualProtect(freeSlot, sizeof(*freeSlot), protection, &ignored) != 0, "reprotect the free import slot");
 }
 
-static void TrackFree() {
+std::uintptr_t* FindFreeImport() {
     auto* image = reinterpret_cast<unsigned char*>(GetModuleHandleW(L"libc.prx"));
-    if (!image) FixtureFail(55);
+    Require(image != nullptr, "libc.prx is loaded");
     auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(image);
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
     auto* imports = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(image +
@@ -109,67 +137,51 @@ static void TrackFree() {
             if (IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal)) continue;
             auto* name = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(image + names->u1.AddressOfData);
             if (std::strcmp(name->Name, "free")) continue;
-            freeSlot = reinterpret_cast<std::uintptr_t*>(&slots->u1.Function);
-            originalFree = reinterpret_cast<NativeFree>(*freeSlot);
-            ReplaceFree(reinterpret_cast<std::uintptr_t>(TrackedFree));
-            return;
+            return reinterpret_cast<std::uintptr_t*>(&slots->u1.Function);
         }
     }
-    FixtureFail(56);
+    Testing::Fail("libc.prx imports free");
 }
 
-static int TestVtable(const char* mode) {
-    const bool plain = std::strstr(mode, "plain") != nullptr;
-    const bool deleting = std::strstr(mode, "delete") != nullptr;
-    const bool destroying = deleting || std::strstr(mode, "destroy") != nullptr;
-    auto* actual = static_cast<Object*>(std::malloc(sizeof(Object)));
-    auto* other = static_cast<Object*>(std::malloc(sizeof(Object)));
-    if (!actual || !other) FixtureFail(57);
-    actual->message = other->message = nullptr;
-    if (plain) {
-        _ZNSt9bad_allocC1Ev_nid_postfix(actual);
-        _ZNSt8bad_castC1Ev_nid_postfix(other);
-    } else {
-        _ZNSt12out_of_rangeC1EPKc_nid_postfix(actual, "actual virtual message");
-        _ZNSt12out_of_rangeC1EPKc_nid_postfix(other, "unrelated virtual message");
+class FreeTracker {
+public:
+    FreeTracker() {
+        freeSlot = FindFreeImport();
+        originalFree = reinterpret_cast<NativeFree>(*freeSlot);
+        ReplaceFree(reinterpret_cast<std::uintptr_t>(TrackedFree));
+        active = true;
     }
-    const Object originalOther = *other;
-    watchedObject = actual;
-    watchedMessage = plain ? nullptr : reinterpret_cast<Message*>(const_cast<char*>(actual->message)) - 1;
-    foreignObject = other;
-    foreignMessage = plain ? nullptr : reinterpret_cast<Message*>(const_cast<char*>(other->message)) - 1;
-    TrackFree();
-    auto* unused = std::strstr(mode, "zero") ? nullptr : other;
-    GuestDestroy destroy, deleteObject;
-    GuestWhat what;
-    auto* slots = static_cast<const unsigned char*>(actual->vtable);
-    std::memcpy(&destroy, slots, sizeof(destroy));
-    std::memcpy(&deleteObject, slots + sizeof(void*), sizeof(deleteObject));
-    std::memcpy(&what, slots + 2 * sizeof(void*), sizeof(what));
-    if (destroying) {
-        ProbeDestroy(deleting ? deleteObject : destroy, actual, unused);
-        if (objectFrees != (deleting ? 1u : 0u) || messageFrees != (plain ? 0u : 1u)) FixtureFail(58);
-        if (!deleting && actual->message) FixtureFail(59);
-    } else {
-        const char* result = ProbeWhat(what, actual, unused);
-        if (!result || std::strcmp(result, plain ? "std::bad_alloc" : "actual virtual message") ||
-            objectFrees || messageFrees) FixtureFail(60);
-    }
-    if (other->vtable != originalOther.vtable || other->message != originalOther.message ||
-        (!plain && std::strcmp(other->message, "unrelated virtual message"))) FixtureFail(61);
-    ReplaceFree(reinterpret_cast<std::uintptr_t>(originalFree));
-    if (!plain) {
-        if (!deleting) _ZNSt12out_of_rangeD1Ev_nid_postfix(actual);
-        _ZNSt12out_of_rangeD1Ev_nid_postfix(other);
-    }
-    if (!deleting) std::free(actual);
-    std::free(other);
-    return 0;
-}
 
-static Message* MessageHeader(const Object& object) {
+    ~FreeTracker() {
+        if (active) Restore();
+    }
+
+    FreeTracker(const FreeTracker&) = delete;
+    FreeTracker& operator=(const FreeTracker&) = delete;
+
+    void Restore() {
+        active = false;
+        DWORD protection;
+        if (VirtualProtect(freeSlot, sizeof(*freeSlot), PAGE_READWRITE, &protection)) {
+            *freeSlot = reinterpret_cast<std::uintptr_t>(originalFree);
+            DWORD ignored;
+            VirtualProtect(freeSlot, sizeof(*freeSlot), protection, &ignored);
+        }
+    }
+
+private:
+    bool active = false;
+};
+
+Message* MessageHeader(const Object& object) {
     return reinterpret_cast<Message*>(const_cast<char*>(object.message)) - 1;
 }
+
+void SuppressErrorDialogs() {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+}
+
+} // namespace
 
 extern "C" void APS5_VABI ObserveDestroy(void* pointer) {
     if (pointer != expectedObject || ++callbacks != 1) FixtureFail(40);
@@ -196,18 +208,27 @@ extern "C" void APS5_VABI FixtureInspect(void* pointer) {
     if (!regularRelease) header->destructor = reinterpret_cast<HostDestroy>(ObserveDestroy);
 }
 
-int main(int argc, char** argv) {
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-    if (argc != 2) return 2;
-    if (std::strncmp(argv[1], "vtable-", 7) == 0) return TestVtable(argv[1]);
-    if (std::strcmp(argv[1], "control") == 0) {
-        if (GuestOuter() != 0 || FixtureDestroyed != 1 || FixtureGuardDestroyed != 1 ||
-            FixtureCaught != 2 || FixtureWhatChecked != 2) return 10;
-        return 0;
-    }
-    const bool regex = std::strstr(argv[1], "regex") != nullptr;
-    regularRelease = std::strcmp(argv[1], "release") == 0;
-    keepMessage = std::strstr(argv[1], "unshared") == nullptr;
+namespace {
+
+const Case control{"GuestException_ThrowCatchRethrow_DestroysOnceAndChecksWhat", [] {
+    if (SelectedMode() != "control") Testing::Skip("needs its own process, selected by the argument 'control'");
+    SuppressErrorDialogs();
+    RequireEqual(GuestOuter(), 0, "guest outer frame result");
+    RequireEqual(FixtureDestroyed, 1u, "exception object destructions");
+    RequireEqual(FixtureGuardDestroyed, 1u, "cleanup landing pads run");
+    RequireEqual(FixtureCaught, 2u, "catch handlers entered");
+    RequireEqual(FixtureWhatChecked, 2u, "what() checks in guest handlers");
+}};
+
+const Case capture{"GuestStdException_CaughtWithPoisonedRegisters_RetainsAndReleasesMessageOnce", [] {
+    const std::string_view mode = SelectedMode();
+    bool known = false;
+    for (const auto candidate : captureModes) known = known || candidate == mode;
+    if (!known) Testing::Skip("needs its own process, selected by a capture mode argument such as 'decoy'");
+    SuppressErrorDialogs();
+    const bool regex = Contains(mode, "regex");
+    regularRelease = mode == "release";
+    keepMessage = !Contains(mode, "unshared");
     FixtureArgument = reinterpret_cast<std::uintptr_t>(FixtureMessage);
     if (regex) {
         expectedMessage = "regular expression error";
@@ -216,15 +237,78 @@ int main(int argc, char** argv) {
         FixtureArgument = static_cast<std::uintptr_t>(std::regex_constants::error_collate);
     }
     _ZNSt12out_of_rangeC1EPKc_nid_postfix(&decoy, "unrelated message");
-    poison = std::strstr(argv[1], "zero") ? nullptr : &decoy;
+    poison = Contains(mode, "zero") ? nullptr : &decoy;
     GuestStdCapture();
-    if (callbacks != (regularRelease ? 0u : 1u) ||
-        (keepMessage && (MessageHeader(retained)->references.load() != 0 ||
-            std::strcmp(retained.message, regex ? "regular expression error" : FixtureMessage))) ||
-        !decoy.message || std::strcmp(decoy.message, "unrelated message")) return 44;
+    RequireEqual(callbacks, regularRelease ? 0u : 1u, "observed destructor callbacks");
+    if (keepMessage) {
+        RequireEqual(MessageHeader(retained)->references.load(), std::ptrdiff_t{0}, "retained message references");
+        RequireEqual(std::string_view(retained.message), std::string_view(regex ? "regular expression error" : FixtureMessage),
+            "retained message");
+    }
+    Require(decoy.message != nullptr, "unrelated exception keeps its message");
+    RequireEqual(std::string_view(decoy.message), std::string_view("unrelated message"), "unrelated exception message");
     _ZNSt12out_of_rangeD1Ev_nid_postfix(&retained);
     _ZNSt12out_of_rangeD1Ev_nid_postfix(&decoy);
-    if (retained.message || decoy.message) return 45;
-    std::puts("guest message callback, retained ownership and release: PASS");
-    return 0;
-}
+    Require(retained.message == nullptr, "destroying the retained copy clears its message");
+    Require(decoy.message == nullptr, "destroying the unrelated exception clears its message");
+}};
+
+const Case vtable{"GuestStdException_VirtualSlotsWithPoisonedRegisters_TouchOnlyTheirObject", [] {
+    const std::string_view mode = SelectedMode();
+    if (!mode.starts_with("vtable-")) Testing::Skip("needs its own process, selected by a 'vtable-*' argument");
+    SuppressErrorDialogs();
+    const bool plain = Contains(mode, "plain");
+    const bool deleting = Contains(mode, "delete");
+    const bool destroying = deleting || Contains(mode, "destroy");
+    auto* actual = static_cast<Object*>(std::malloc(sizeof(Object)));
+    auto* other = static_cast<Object*>(std::malloc(sizeof(Object)));
+    Require(actual != nullptr && other != nullptr, "allocate exception objects");
+    actual->message = other->message = nullptr;
+    if (plain) {
+        _ZNSt9bad_allocC1Ev_nid_postfix(actual);
+        _ZNSt8bad_castC1Ev_nid_postfix(other);
+    } else {
+        _ZNSt12out_of_rangeC1EPKc_nid_postfix(actual, "actual virtual message");
+        _ZNSt12out_of_rangeC1EPKc_nid_postfix(other, "unrelated virtual message");
+    }
+    const Object originalOther = *other;
+    watchedObject = actual;
+    watchedMessage = plain ? nullptr : reinterpret_cast<Message*>(const_cast<char*>(actual->message)) - 1;
+    foreignObject = other;
+    foreignMessage = plain ? nullptr : reinterpret_cast<Message*>(const_cast<char*>(other->message)) - 1;
+    FreeTracker tracker;
+    auto* unused = Contains(mode, "zero") ? nullptr : other;
+    GuestDestroy destroy;
+    GuestDestroy deleteObject;
+    GuestWhat what;
+    auto* slots = static_cast<const unsigned char*>(actual->vtable);
+    std::memcpy(&destroy, slots, sizeof(destroy));
+    std::memcpy(&deleteObject, slots + sizeof(void*), sizeof(deleteObject));
+    std::memcpy(&what, slots + 2 * sizeof(void*), sizeof(what));
+    if (destroying) {
+        ProbeDestroy(deleting ? deleteObject : destroy, actual, unused);
+        RequireEqual(objectFrees, deleting ? 1u : 0u, "object frees");
+        RequireEqual(messageFrees, plain ? 0u : 1u, "message frees");
+        if (!deleting) Require(actual->message == nullptr, "destroying clears the message");
+    } else {
+        const char* result = ProbeWhat(what, actual, unused);
+        Require(result != nullptr, "what() result");
+        RequireEqual(std::string_view(result), std::string_view(plain ? "std::bad_alloc" : "actual virtual message"), "what()");
+        RequireEqual(objectFrees, 0u, "object frees");
+        RequireEqual(messageFrees, 0u, "message frees");
+    }
+    Require(other->vtable == originalOther.vtable, "unrelated object keeps its vtable");
+    Require(other->message == originalOther.message, "unrelated object keeps its message");
+    if (!plain) {
+        RequireEqual(std::string_view(other->message), std::string_view("unrelated virtual message"), "unrelated message text");
+    }
+    tracker.Restore();
+    if (!plain) {
+        if (!deleting) _ZNSt12out_of_rangeD1Ev_nid_postfix(actual);
+        _ZNSt12out_of_rangeD1Ev_nid_postfix(other);
+    }
+    if (!deleting) std::free(actual);
+    std::free(other);
+}};
+
+} // namespace

@@ -9,13 +9,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -159,24 +158,13 @@ void Check() {
     }
 }
 
-}
+const Testing::Case lodClamp{"ImageSampleLodClamp_SampleWithClamp_SelectsClampedLevel", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityMinLod, "the device has no shaderResourceMinLod");
+    FillInput();
+    FillTexture();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
-            std::puts("skipped, the device has no shaderResourceMinLod");
-            return VulkanTestSkipped;
-        }
-        FillInput();
-        FillTexture();
-        Run(*device);
-        Check();
-        std::puts("image sample LOD clamp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

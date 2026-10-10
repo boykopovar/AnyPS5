@@ -9,14 +9,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -149,22 +148,33 @@ void Run(AgcDriver::VulkanDevice& device, const Variant& variant) {
     }
 }
 
+void Prepare() {
+    FillTexels();
+    FillInput();
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillInput();
-        Run(*device, {Gather1D, false, ClampEdge, "1D gather, clamp to edge"});
-        Run(*device, {Gather1D, false, ClampWrap, "1D gather, wrap"});
-        Run(*device, {Gather1DOffset, true, ClampEdge, "1D gather with offsets, clamp to edge"});
-        Run(*device, {Gather1DOffset, true, ClampWrap, "1D gather with offsets, wrap"});
-        std::puts("image 1D gather tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case clampEdge{"ImageGatherOneDimensional_GatherClampToEdge_ReturnsNeighborTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    Run(device, {Gather1D, false, ClampEdge, "1D gather, clamp to edge"});
+}};
+
+const Testing::Case wrap{"ImageGatherOneDimensional_GatherWrap_ReturnsWrappedTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    Run(device, {Gather1D, false, ClampWrap, "1D gather, wrap"});
+}};
+
+const Testing::Case offsetClampEdge{"ImageGatherOneDimensional_GatherOffsetClampToEdge_ReturnsOffsetTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    Run(device, {Gather1DOffset, true, ClampEdge, "1D gather with offsets, clamp to edge"});
+}};
+
+const Testing::Case offsetWrap{"ImageGatherOneDimensional_GatherOffsetWrap_ReturnsWrappedOffsetTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    Run(device, {Gather1DOffset, true, ClampWrap, "1D gather with offsets, wrap"});
+}};
+
+} // namespace

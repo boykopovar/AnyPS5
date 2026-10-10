@@ -23,7 +23,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -229,21 +229,28 @@ void CheckRejected(const AgcDriver::VulkanDevice& device, GuestBlock& guest, std
     Require(failure.find(reason) != std::string::npos, "global atomic csub: expected '" + reason + "', got '" + failure + "'");
 }
 
-}
+const Testing::Case wave32{"GlobalAtomicCsub_Wave32_ReturnsOldValuesAndStoresClampedDifferences", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Run(device, guest, 32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        Run(*device, guest, 32);
-        Run(*device, guest, 64);
-        CheckRejected(*device, guest, NoReturnCode, "global_atomic_csub without glc is not supported");
-        CheckRejected(*device, guest, FlatSegmentCode, "global_atomic_csub is available only in the global segment");
-        std::puts("global atomic csub tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64{"GlobalAtomicCsub_Wave64_ReturnsOldValuesAndStoresClampedDifferences", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Run(device, guest, 64);
+}};
+
+const Testing::Case withoutGlc{"GlobalAtomicCsub_WithoutGlc_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    CheckRejected(device, guest, NoReturnCode, "global_atomic_csub without glc is not supported");
+}};
+
+const Testing::Case flatSegment{"GlobalAtomicCsub_FlatSegment_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    CheckRejected(device, guest, FlatSegmentCode, "global_atomic_csub is available only in the global segment");
+}};
+
+} // namespace

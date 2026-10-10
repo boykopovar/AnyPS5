@@ -15,14 +15,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -134,26 +133,29 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, bool coherent, bool
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        const auto native = device->Target();
-        const auto split = device->ComputeTarget(32);
-        for (const bool coherent : {false, true}) {
-            for (const bool barrier : {false, true}) {
-                Run(*device, guest, coherent, barrier, 32, native, "wave32");
-                Run(*device, guest, coherent, barrier, 64, native, "wave64");
-                if (split.subgroupSize != native.subgroupSize) Run(*device, guest, coherent, barrier, 64, split, "wave64 split");
-            }
-        }
-        std::puts("BDA span read tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void RunModes(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, const ShaderRecompiler::SpirvTarget& target, const std::string& name) {
+    GuestBlock guest;
+    for (const bool coherent : {false, true}) {
+        for (const bool barrier : {false, true}) Run(device, guest, coherent, barrier, waveSize, target, name);
     }
 }
+
+const Testing::Case wave32{"BdaSpanReads_Wave32_ReadsUnalignedSpans", [] {
+    auto& device = SharedVulkanTestDevice();
+    RunModes(device, 32, device.Target(), "wave32");
+}};
+
+const Testing::Case wave64{"BdaSpanReads_Wave64_ReadsUnalignedSpans", [] {
+    auto& device = SharedVulkanTestDevice();
+    RunModes(device, 64, device.Target(), "wave64");
+}};
+
+const Testing::Case wave64Split{"BdaSpanReads_Wave64Split_ReadsUnalignedSpans", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto native = device.Target();
+    const auto split = device.ComputeTarget(32);
+    if (split.subgroupSize == native.subgroupSize) Testing::Skip("the wave32 compute subgroup size matches the native subgroup size " + std::to_string(native.subgroupSize) + ", wave64 is not split");
+    RunModes(device, 64, split, "wave64 split");
+}};
+
+} // namespace

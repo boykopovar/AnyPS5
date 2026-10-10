@@ -6,13 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -135,21 +134,25 @@ void Check(std::uint32_t format) {
     }
 }
 
-}
+const Testing::Case uintTexels{"ImageAtomics_R32UintTexels_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, Format32UInt);
+    Check(Format32UInt);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        for (const auto format : {Format32UInt, Format32SInt, Format32Float}) {
-            Run(*device, format);
-            Check(format);
-        }
-        std::puts("image atomics tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case sintTexels{"ImageAtomics_R32SintTexels_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, Format32SInt);
+    Check(Format32SInt);
+}};
+
+const Testing::Case floatTexels{"ImageAtomics_R32FloatTexels_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, Format32Float);
+    Check(Format32Float);
+}};
+
+} // namespace

@@ -17,7 +17,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <map>
 #include <span>
 #include <string>
@@ -25,7 +24,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -207,7 +206,7 @@ void Check(const std::uint8_t* texels, const Format& format, bool mip, const std
                     if (actual != wanted) {
                         char message[200];
                         std::snprintf(message, sizeof(message), "%s %s: level %u texel (%u, %u) dword %u is 0x%08x, expected 0x%08x", what.c_str(), format.name, level, x, y, word, actual, wanted);
-                        Require(false, message);
+                        Testing::Fail(message);
                     }
                 }
             }
@@ -225,30 +224,42 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, const
     Require(refusal.find(reason) != std::string::npos, std::string("image_store_pck of ") + format.name + " was not refused: " + refusal);
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock block;
-        auto* texels = block.Data();
-        for (const auto& format : Formats) {
-            Run(*device, texels, StoreCode, format, IdentitySwizzle, false);
-            Check(texels, format, false, "image_store_pck");
-        }
-        Run(*device, texels, StoreCode, Formats[6], ReversedSwizzle, false);
-        Check(texels, Formats[6], false, "image_store_pck with a swizzled descriptor");
-        for (const auto& format : {Formats[6], Formats[9]}) {
-            Run(*device, texels, MipCode, format, IdentitySwizzle, true);
-            Check(texels, format, true, "image_store_mip_pck");
-        }
-        RequireRefused(*device, texels, {"8_8_8_8_UNORM", 56u, 4u}, "not reproducible");
-        RequireRefused(*device, texels, {"32_32_32_FLOAT", 74u, 12u}, "does not write");
-        std::puts("image store packed tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case storePackedFormats{"ImageStorePacked_EachUintAndFloatFormat_WritesMaskedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    for (const auto& format : Formats) {
+        Run(device, block.Data(), StoreCode, format, IdentitySwizzle, false);
+        Check(block.Data(), format, false, "image_store_pck");
     }
-}
+}};
+
+const Testing::Case storePackedSwizzled{"ImageStorePacked_SwizzledDescriptor_WritesUnswizzledComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    Run(device, block.Data(), StoreCode, Formats[6], ReversedSwizzle, false);
+    Check(block.Data(), Formats[6], false, "image_store_pck with a swizzled descriptor");
+}};
+
+const Testing::Case storeMipPacked{"ImageStorePacked_MipStore_WritesSelectedLevel", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    for (const auto& format : {Formats[6], Formats[9]}) {
+        Run(device, block.Data(), MipCode, format, IdentitySwizzle, true);
+        Check(block.Data(), format, true, "image_store_mip_pck");
+    }
+}};
+
+const Testing::Case unormRefused{"ImageStorePacked_UnormFormat_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), {"8_8_8_8_UNORM", 56u, 4u}, "not reproducible");
+}};
+
+const Testing::Case threeComponentRefused{"ImageStorePacked_ThreeComponentFormat_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), {"32_32_32_FLOAT", 74u, 12u}, "does not write");
+}};
+
+} // namespace

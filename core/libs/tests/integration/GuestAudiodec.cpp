@@ -1,9 +1,13 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
+#include <string>
 #include <vector>
 
 extern "C" {
@@ -15,11 +19,13 @@ std::int32_t APS5_VABI sceAudiodecDecode(std::int32_t, AudiodecCtrl*);
 std::int32_t APS5_VABI sceAudiodecClearContext(std::int32_t);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
-
 namespace {
 
-const std::uint8_t AAC_ADTS[] = {
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+const std::uint8_t aacAdts[] = {
     0xFF, 0xF1, 0x4C, 0x80, 0x0F, 0x9F, 0xFC, 0xDC, 0x00, 0x4C, 0x61, 0x76, 0x63, 0x36, 0x33, 0x2E, 0x31, 0x2E, 0x31, 0x30, 0x32, 0x00, 0x42, 0x4D,
     0x9F, 0xFF, 0xFF, 0xE1, 0x40, 0xC9, 0xA1, 0xA2, 0xF4, 0x44, 0x23, 0x8E, 0xEA, 0x91, 0x95, 0xA9, 0x2E, 0xE5, 0xDC, 0x92, 0x3B, 0x65, 0xC0, 0xCE,
     0xCF, 0x8E, 0x0C, 0xEC, 0xEC, 0xEC, 0xEC, 0xED, 0x59, 0x49, 0x61, 0xBC, 0xA3, 0x44, 0xEA, 0x53, 0xA7, 0x08, 0x22, 0x06, 0x36, 0x6C, 0xD9, 0xB0,
@@ -48,7 +54,7 @@ const std::uint8_t AAC_ADTS[] = {
     0x33, 0x50, 0x8E, 0x34, 0xA2, 0x64, 0xA6, 0xBB, 0xDF, 0xD5, 0xAA, 0xE4, 0xB4, 0x97, 0x1D, 0x72, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1C,
 };
 
-const std::uint8_t AAC_RAW_51[] = {
+const std::uint8_t aacRaw51[] = {
     0x00, 0xDE, 0x34, 0xAC, 0xF1, 0x1D, 0x0C, 0x05, 0x89, 0xA2, 0x61, 0x40,
     0xB4, 0x4A, 0x37, 0x8D, 0xFF, 0x7F, 0xFD, 0x3F, 0xCF, 0xFB, 0x79, 0xE7,
     0xE3, 0xCE, 0x4C, 0x8B, 0x5D, 0xD5, 0xD5, 0x3F, 0xE9, 0x47, 0x6A, 0x5D,
@@ -116,7 +122,7 @@ const std::uint8_t AAC_RAW_51[] = {
     0x19, 0x60, 0x33, 0x3A, 0x38,
 };
 
-const std::uint8_t MP3_MONO[] = {
+const std::uint8_t mp3Mono[] = {
     0xFF, 0xFB, 0x14, 0xC4, 0x00, 0x00, 0x03, 0xB0, 0x21, 0x5E, 0xF4, 0x30, 0x80, 0x30, 0x98, 0x88, 0xA9, 0x83, 0x34, 0x70, 0x00, 0x18, 0x89, 0xCB,
     0x20, 0x00, 0x3B, 0xBB, 0xB9, 0x9F, 0xD7, 0x0E, 0x06, 0x06, 0x06, 0x2C, 0x3E, 0xEF, 0x83, 0xE7, 0xF1, 0x00, 0x63, 0x83, 0xFD, 0x4E, 0xFC, 0xFF,
     0x29, 0xE1, 0xF7, 0xD9, 0x87, 0x7E, 0xFF, 0x65, 0x9E, 0x21, 0xAF, 0x46, 0x58, 0xBB, 0x46, 0x58, 0xBA, 0x64, 0x40, 0x21, 0xB2, 0x6C, 0xFA, 0x6C,
@@ -156,6 +162,127 @@ constexpr std::int32_t errorInvalidAuSize = static_cast<std::int32_t>(0x807F0011
 constexpr std::int32_t errorInvalidPcmSize = static_cast<std::int32_t>(0x807F0012);
 constexpr std::int32_t errorInvalidConfigNumber = static_cast<std::int32_t>(0x807F0303);
 constexpr std::int32_t errorInvalidAt9Config = static_cast<std::int32_t>(0x807F1000);
+constexpr std::int32_t aacResultDecodeError = -4;
+constexpr std::int32_t aacResultInsufficientData = -5;
+
+constexpr std::uint32_t typeAt9 = 1;
+constexpr std::uint32_t typeMp3 = 2;
+constexpr std::uint32_t typeM4aac = 3;
+constexpr std::uint32_t aacConfigAdts = 1;
+constexpr std::uint32_t aacConfigRaw = 2;
+
+std::string TypeMessage(const char* action, std::uint32_t type) {
+    return std::string(action) + " for codec type " + std::to_string(type);
+}
+
+class LibraryReferences {
+public:
+    LibraryReferences() = default;
+
+    ~LibraryReferences() {
+        for (std::uint32_t type = 0; type < counts.size(); ++type) {
+            for (; counts[type] > 0; --counts[type]) sceAudiodecTermLibrary(type);
+        }
+    }
+
+    LibraryReferences(const LibraryReferences&) = delete;
+    LibraryReferences& operator=(const LibraryReferences&) = delete;
+
+    std::int32_t Initialize(std::uint32_t type) {
+        const std::int32_t result = sceAudiodecInitLibrary(type);
+        if (result == 0 && type < counts.size()) ++counts[type];
+        return result;
+    }
+
+    std::int32_t Terminate(std::uint32_t type) {
+        const std::int32_t result = sceAudiodecTermLibrary(type);
+        if (result == 0 && type < counts.size() && counts[type] > 0) --counts[type];
+        return result;
+    }
+
+private:
+    std::array<std::uint32_t, 4> counts{};
+};
+
+class InitializedLibrary : public LibraryReferences {
+public:
+    InitializedLibrary() {
+        for (std::uint32_t type = typeAt9; type <= typeM4aac; ++type) {
+            RequireEqual(Initialize(type), 0, TypeMessage("initialize the library", type));
+        }
+    }
+};
+
+class Decoder {
+public:
+    Decoder(AudiodecCtrl& ctrl, std::uint32_t type) : handle(sceAudiodecCreateDecoder(&ctrl, type)) {
+        Require(handle > 0, TypeMessage("create a decoder", type) + " returned " + std::to_string(handle));
+    }
+
+    ~Decoder() {
+        if (handle > 0) sceAudiodecDeleteDecoder(handle);
+    }
+
+    Decoder(const Decoder&) = delete;
+    Decoder& operator=(const Decoder&) = delete;
+
+    std::int32_t Handle() const {
+        return handle;
+    }
+
+    std::int32_t Delete() {
+        const std::int32_t result = sceAudiodecDeleteDecoder(handle);
+        if (result == 0) handle = 0;
+        return result;
+    }
+
+private:
+    std::int32_t handle;
+};
+
+std::int32_t CreateExpectingFailure(AudiodecCtrl* ctrl, std::uint32_t type) {
+    const std::int32_t result = sceAudiodecCreateDecoder(ctrl, type);
+    if (result > 0) sceAudiodecDeleteDecoder(result);
+    return result;
+}
+
+struct Mp3Setup {
+    explicit Mp3Setup(std::int32_t wordSize) : param{sizeof(AudiodecParamMp3), wordSize} {
+        info.ui_size = sizeof(AudiodecMp3Info);
+    }
+
+    Mp3Setup(const Mp3Setup&) = delete;
+    Mp3Setup& operator=(const Mp3Setup&) = delete;
+
+    AudiodecParamMp3 param;
+    AudiodecMp3Info info{};
+    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+};
+
+struct AacSetup {
+    AacSetup(std::uint32_t configNumber, std::uint32_t maxChannels)
+        : param{sizeof(AudiodecParamM4aac), 1, configNumber, 3, maxChannels, 0} {}
+
+    AacSetup(const AacSetup&) = delete;
+    AacSetup& operator=(const AacSetup&) = delete;
+
+    AudiodecParamM4aac param;
+    AudiodecM4aacInfo info{sizeof(AudiodecM4aacInfo), 0, 0, 0, 0};
+    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+};
+
+struct At9Setup {
+    At9Setup() : param{sizeof(AudiodecParamAt9), 1, {0xFE, 0x72, 0x1F, 0xF0}} {
+        info.ui_size = sizeof(AudiodecAt9Info);
+    }
+
+    At9Setup(const At9Setup&) = delete;
+    At9Setup& operator=(const At9Setup&) = delete;
+
+    AudiodecParamAt9 param;
+    AudiodecAt9Info info{};
+    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
+};
 
 struct Streams {
     AudiodecAuInfo au{sizeof(AudiodecAuInfo), nullptr, 0};
@@ -183,139 +310,420 @@ std::size_t AdtsLength(const std::uint8_t* frame) {
     return static_cast<std::size_t>((frame[3] & 3) << 11 | frame[4] << 3 | frame[5] >> 5);
 }
 
-void TestAac(bool adts, std::uint32_t maxChannels = 2) {
-    AudiodecParamM4aac param{sizeof(param), 1, adts ? 1u : 2u, 3, maxChannels, 0};
-    AudiodecM4aacInfo info{sizeof(info), 0, 0, 0, 0};
-    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
-    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 3);
-    Require(handle > 0 && info.ui_sampling_freq == 48000 && info.ui_number_of_channels == maxChannels);
-    Streams streams;
+struct AacMode {
+    const char* name;
+    bool adts;
+    std::uint32_t maxChannels;
+};
+
+constexpr AacMode aacModes[] = {
+    {"adts with 2 max channels", true, 2},
+    {"raw with 2 max channels", false, 2},
+    {"raw with 6 max channels", false, 6},
+    {"raw with 8 max channels", false, 8},
+};
+
+constexpr std::uint32_t raw51MaxChannels[] = {6, 8};
+
+std::uint32_t AacConfig(const AacMode& mode) {
+    return mode.adts ? aacConfigAdts : aacConfigRaw;
+}
+
+int DecodeAacStream(const AacMode& mode, std::int32_t handle, AacSetup& setup, Streams& streams) {
     int crossings = 0;
-    for (std::size_t offset = 0, frame = 0; offset < sizeof(AAC_ADTS); offset += AdtsLength(AAC_ADTS + offset), ++frame) {
-        const std::size_t length = AdtsLength(AAC_ADTS + offset);
-        const std::uint8_t* data = adts ? AAC_ADTS + offset : AAC_ADTS + offset + 7;
-        const std::size_t size = adts ? sizeof(AAC_ADTS) - offset : length - 7;
-        Require(Decode(handle, ctrl, streams, data, size) == 0);
-        Require(streams.au.ui_au_size == (adts ? length : length - 7));
-        Require(streams.pcm.ui_pcm_size == 1024 * 2 * 2 && info.i_result == 0);
-        Require(info.ui_sampling_freq == 48000 && info.ui_number_of_channels == 2 && info.ui_heaac == 0);
+    for (std::size_t offset = 0, frame = 0; offset < sizeof(aacAdts); offset += AdtsLength(aacAdts + offset), ++frame) {
+        const std::size_t length = AdtsLength(aacAdts + offset);
+        const std::uint8_t* data = mode.adts ? aacAdts + offset : aacAdts + offset + 7;
+        const std::size_t size = mode.adts ? sizeof(aacAdts) - offset : length - 7;
+        const std::string where = std::string(mode.name) + ", frame " + std::to_string(frame);
+        RequireEqual(Decode(handle, setup.ctrl, streams, data, size), 0, "decode " + where);
+        RequireEqual(streams.au.ui_au_size, static_cast<std::uint32_t>(mode.adts ? length : length - 7), "consumed bytes, " + where);
+        RequireEqual(streams.pcm.ui_pcm_size, 1024u * 2 * 2, "produced bytes, " + where);
+        RequireEqual(setup.info.i_result, 0, "decode result, " + where);
+        RequireEqual(setup.info.ui_sampling_freq, 48000u, "sampling frequency, " + where);
+        RequireEqual(setup.info.ui_number_of_channels, 2u, "channel count, " + where);
+        RequireEqual(setup.info.ui_heaac, 0u, "HE-AAC flag, " + where);
         if (frame == 2) crossings = ZeroCrossings(reinterpret_cast<const std::int16_t*>(streams.output.data()), 1024, 2);
     }
-    Require(crossings >= 38 && crossings <= 46);
-    Require(Decode(handle, ctrl, streams, AAC_ADTS, sizeof(AAC_ADTS), 1024) == errorInvalidPcmSize);
-    if (adts) {
-        Require(Decode(handle, ctrl, streams, AAC_ADTS, 50) == errorApiFail && info.i_result == -5);
-        Require(Decode(handle, ctrl, streams, AAC_ADTS + 1, 50) == errorApiFail && info.i_result == -4);
-    }
-    Require(sceAudiodecClearContext(handle) == 0);
-    Require(sceAudiodecDeleteDecoder(handle) == 0);
+    return crossings;
 }
 
-void TestAacRaw51(std::uint32_t maxChannels) {
-    AudiodecParamM4aac param{sizeof(param), 1, 2, 3, maxChannels, 0};
-    AudiodecM4aacInfo info{sizeof(info), 0, 0, 0, 0};
-    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
-    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 3);
-    Require(handle > 0 && info.ui_number_of_channels == maxChannels);
-    Streams streams;
-    Require(Decode(handle, ctrl, streams, AAC_RAW_51, sizeof(AAC_RAW_51)) == 0);
-    Require(streams.pcm.ui_pcm_size == 1024 * 6 * 2);
-    Require(info.ui_sampling_freq == 48000 && info.ui_number_of_channels == 6 && info.i_result == 0);
-    Require(sceAudiodecClearContext(handle) == 0);
-    Require(sceAudiodecDeleteDecoder(handle) == 0);
-}
-
-void TestMp3() {
-    AudiodecParamMp3 param{sizeof(param), 2};
-    AudiodecMp3Info info{};
-    info.ui_size = sizeof(info);
-    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
-    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
-    Require(handle > 0);
-    Streams streams;
-    std::size_t offset = 0;
+struct Mp3StreamResult {
+    std::size_t consumed = 0;
     int frames = 0;
     float peak = 0;
-    while (offset < sizeof(MP3_MONO)) {
-        Require(Decode(handle, ctrl, streams, MP3_MONO + offset, sizeof(MP3_MONO) - offset) == 0);
-        Require(streams.au.ui_au_size == 144 * 32000 / 48000 + (MP3_MONO[offset + 2] >> 1 & 1));
-        Require(streams.pcm.ui_pcm_size == 1152 * 4);
-        Require(info.ui_header >> 21 == 0x7FF && info.uc_mode == 3 && info.i_result == 0);
-        for (std::size_t i = 0; i < 1152; ++i) peak = std::fmax(peak, std::fabs(reinterpret_cast<const float*>(streams.output.data())[i]));
-        offset += streams.au.ui_au_size;
-        ++frames;
+};
+
+Mp3StreamResult DecodeMp3Stream(std::int32_t handle, Mp3Setup& setup, Streams& streams) {
+    Mp3StreamResult result;
+    while (result.consumed < sizeof(mp3Mono)) {
+        const std::size_t offset = result.consumed;
+        const std::string where = "frame " + std::to_string(result.frames) + " at offset " + std::to_string(offset);
+        RequireEqual(Decode(handle, setup.ctrl, streams, mp3Mono + offset, sizeof(mp3Mono) - offset), 0, "decode " + where);
+        RequireEqual(streams.au.ui_au_size, static_cast<std::uint32_t>(144 * 32000 / 48000 + (mp3Mono[offset + 2] >> 1 & 1)), "consumed bytes, " + where);
+        RequireEqual(streams.pcm.ui_pcm_size, 1152u * 4, "produced bytes, " + where);
+        RequireEqual(setup.info.ui_header >> 21, 0x7FFu, "frame sync, " + where);
+        RequireEqual(setup.info.uc_mode, 3, "channel mode, " + where);
+        RequireEqual(setup.info.i_result, 0, "decode result, " + where);
+        for (std::size_t i = 0; i < 1152; ++i) {
+            result.peak = std::fmax(result.peak, std::fabs(reinterpret_cast<const float*>(streams.output.data())[i]));
+        }
+        result.consumed += streams.au.ui_au_size;
+        ++result.frames;
     }
-    Require(offset == sizeof(MP3_MONO) && frames == 6 && peak > 0.1f && peak < 0.15f);
-    Require(Decode(handle, ctrl, streams, MP3_MONO, 10) == errorApiFail);
-    Require(Decode(handle, ctrl, streams, MP3_MONO + 1, 100) == errorApiFail);
-    Require(sceAudiodecDeleteDecoder(handle) == 0);
+    return result;
 }
 
-void TestAt9() {
-    AudiodecParamAt9 param{sizeof(param), 1, {0xFE, 0x72, 0x1F, 0xF0}};
-    AudiodecAt9Info info{};
-    info.ui_size = sizeof(info);
-    AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
-    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 1);
-    Require(handle > 0);
-    Require(info.ui_channel == 2 && info.ui_sampling_rate == 48000 && info.ui_frame_samples == 256);
-    Require(info.ui_super_frame_size == 1024 && info.ui_frames_in_super_frame == 4 && info.ui_bitrate == 384000);
+const Case initUnknownType{"Audiodec_InitLibraryUnknownType_FailsWithInvalidType", [] {
+    LibraryReferences library;
+    RequireEqual(library.Initialize(4), errorInvalidType, "initialize codec type 4");
+}};
+
+const Case termUnknownType{"Audiodec_TermLibraryUnknownType_FailsWithInvalidType", [] {
+    LibraryReferences library;
+    RequireEqual(library.Terminate(0), errorInvalidType, "terminate codec type 0");
+}};
+
+const Case createBeforeInit{"Audiodec_CreateDecoderBeforeInitLibrary_FailsWithArg", [] {
+    Mp3Setup setup(1);
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, typeMp3), errorArg, "create an MP3 decoder without initializing the library");
+}};
+
+const Case initValidTypes{"Audiodec_InitLibraryValidTypes_Succeeds", [] {
+    LibraryReferences library;
+    for (std::uint32_t type = typeAt9; type <= typeM4aac; ++type) {
+        RequireEqual(library.Initialize(type), 0, TypeMessage("initialize the library", type));
+    }
+}};
+
+const Case termValidTypes{"Audiodec_TermLibraryValidTypes_Succeeds", [] {
+    InitializedLibrary library;
+    for (std::uint32_t type = typeAt9; type <= typeM4aac; ++type) {
+        RequireEqual(library.Terminate(type), 0, TypeMessage("terminate the library", type));
+    }
+}};
+
+const Case createNullCtrl{"Audiodec_CreateDecoderNullCtrl_FailsWithInvalidCtrlPointer", [] {
+    const InitializedLibrary library;
+    RequireEqual(CreateExpectingFailure(nullptr, typeMp3), errorInvalidCtrlPointer, "create a decoder without a control block");
+}};
+
+const Case createUnknownType{"Audiodec_CreateDecoderUnknownType_FailsWithInvalidType", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, 5), errorInvalidType, "create a decoder of codec type 5");
+}};
+
+const Case createSmallParam{"Audiodec_CreateDecoderMp3ParamSizeTooSmall_FailsWithInvalidParamSize", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    setup.param.ui_size = 12;
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, typeMp3), errorInvalidParamSize, "create an MP3 decoder with a 12 byte param");
+}};
+
+const Case createWrongInfoSize{"Audiodec_CreateDecoderMp3InfoSizeWrong_FailsWithInvalidBsiInfoSize", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    setup.info.ui_size = 16;
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, typeMp3), errorInvalidBsiInfoSize, "create an MP3 decoder with a 16 byte info");
+}};
+
+const Case createWordLength{"Audiodec_CreateDecoderWordLengthThree_FailsWithInvalidWordLength", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(3);
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, typeMp3), errorInvalidWordLength, "create an MP3 decoder with word length 3");
+}};
+
+const Case createAacConfig{"Audiodec_CreateDecoderAacConfigNumberThree_FailsWithInvalidConfigNumber", [] {
+    const InitializedLibrary library;
+    AacSetup setup(3, 2);
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, typeM4aac), errorInvalidConfigNumber, "create an AAC decoder with config number 3");
+}};
+
+const Case decodeMissingAuInfo{"Audiodec_DecodeWithoutAuInfo_FailsWithInvalidAuInfoPointer", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    RequireEqual(sceAudiodecDecode(decoder.Handle(), &setup.ctrl), errorInvalidAuInfoPointer, "decode without an AU info");
+}};
+
+const Case decodeZeroAuSize{"Audiodec_DecodeZeroAuSize_FailsWithInvalidAuSize", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, mp3Mono, 0), errorInvalidAuSize, "decode an empty AU");
+}};
+
+const Case decodeZeroPcmSize{"Audiodec_DecodeZeroPcmSize_FailsWithInvalidPcmSize", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, mp3Mono, sizeof(mp3Mono), 0), errorInvalidPcmSize, "decode into an empty PCM buffer");
+}};
+
+const Case decodeUnknownHandle{"Audiodec_DecodeUnknownHandle_FailsWithInvalidHandle", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle() + 1, setup.ctrl, streams, mp3Mono, sizeof(mp3Mono)), errorInvalidHandle, "decode with the next unused handle");
+}};
+
+const Case deleteOpenHandle{"Audiodec_DeleteDecoderOpenHandle_Succeeds", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    Decoder decoder(setup.ctrl, typeMp3);
+    RequireEqual(decoder.Delete(), 0, "delete an open decoder");
+}};
+
+const Case deleteDeletedHandle{"Audiodec_DeleteDecoderDeletedHandle_FailsWithInvalidHandle", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    Decoder decoder(setup.ctrl, typeMp3);
+    const std::int32_t handle = decoder.Handle();
+    RequireEqual(decoder.Delete(), 0, "delete the decoder once");
+    RequireEqual(sceAudiodecDeleteDecoder(handle), errorInvalidHandle, "delete the decoder twice");
+}};
+
+const Case clearDeletedHandle{"Audiodec_ClearContextDeletedHandle_FailsWithInvalidHandle", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(1);
+    Decoder decoder(setup.ctrl, typeMp3);
+    const std::int32_t handle = decoder.Handle();
+    RequireEqual(decoder.Delete(), 0, "delete the decoder");
+    RequireEqual(sceAudiodecClearContext(handle), errorInvalidHandle, "clear the context of a deleted decoder");
+}};
+
+const Case aacCreate{"AacDecoder_Create_ReportsSampleRateAndMaxChannels", [] {
+    for (const AacMode& mode : aacModes) {
+        const InitializedLibrary library;
+        AacSetup setup(AacConfig(mode), mode.maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        RequireEqual(setup.info.ui_sampling_freq, 48000u, std::string("sampling frequency, ") + mode.name);
+        RequireEqual(setup.info.ui_number_of_channels, mode.maxChannels, std::string("channel count, ") + mode.name);
+    }
+}};
+
+const Case aacStream{"AacDecoder_DecodeStream_ReportsFrameSizesAndStereoFormat", [] {
+    for (const AacMode& mode : aacModes) {
+        const InitializedLibrary library;
+        AacSetup setup(AacConfig(mode), mode.maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        DecodeAacStream(mode, decoder.Handle(), setup, streams);
+    }
+}};
+
+const Case aacCrossings{"AacDecoder_DecodeStream_ThirdFrameHasExpectedZeroCrossings", [] {
+    for (const AacMode& mode : aacModes) {
+        const InitializedLibrary library;
+        AacSetup setup(AacConfig(mode), mode.maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        const int crossings = DecodeAacStream(mode, decoder.Handle(), setup, streams);
+        Require(crossings >= 38 && crossings <= 46,
+                "zero crossings of the third frame should be in [38, 46], got " + std::to_string(crossings) + ", " + mode.name);
+    }
+}};
+
+const Case aacSmallRoom{"AacDecoder_PcmRoomTooSmallAfterStream_FailsWithInvalidPcmSize", [] {
+    for (const AacMode& mode : aacModes) {
+        const InitializedLibrary library;
+        AacSetup setup(AacConfig(mode), mode.maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        DecodeAacStream(mode, decoder.Handle(), setup, streams);
+        RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, aacAdts, sizeof(aacAdts), 1024), errorInvalidPcmSize,
+                     std::string("decode into 1024 bytes, ") + mode.name);
+    }
+}};
+
+const Case adtsTruncated{"AdtsDecoder_TruncatedFrame_FailsWithInsufficientData", [] {
+    const InitializedLibrary library;
+    AacSetup setup(aacConfigAdts, 2);
+    const Decoder decoder(setup.ctrl, typeM4aac);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, aacAdts, 50), errorApiFail, "decode the first 50 bytes of an ADTS frame");
+    RequireEqual(setup.info.i_result, aacResultInsufficientData, "AAC result of a truncated frame");
+}};
+
+const Case adtsMisaligned{"AdtsDecoder_MisalignedFrame_FailsWithDecodeError", [] {
+    const InitializedLibrary library;
+    AacSetup setup(aacConfigAdts, 2);
+    const Decoder decoder(setup.ctrl, typeM4aac);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, aacAdts + 1, 50), errorApiFail, "decode 50 bytes starting one byte into an ADTS frame");
+    RequireEqual(setup.info.i_result, aacResultDecodeError, "AAC result of a misaligned frame");
+}};
+
+const Case aacClear{"AacDecoder_ClearContextAfterStream_Succeeds", [] {
+    for (const AacMode& mode : aacModes) {
+        const InitializedLibrary library;
+        AacSetup setup(AacConfig(mode), mode.maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        DecodeAacStream(mode, decoder.Handle(), setup, streams);
+        RequireEqual(sceAudiodecClearContext(decoder.Handle()), 0, std::string("clear the context, ") + mode.name);
+    }
+}};
+
+const Case aacDelete{"AacDecoder_DeleteAfterStream_Succeeds", [] {
+    for (const AacMode& mode : aacModes) {
+        const InitializedLibrary library;
+        AacSetup setup(AacConfig(mode), mode.maxChannels);
+        Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        DecodeAacStream(mode, decoder.Handle(), setup, streams);
+        RequireEqual(decoder.Delete(), 0, std::string("delete the decoder, ") + mode.name);
+    }
+}};
+
+const Case raw51Create{"AacRaw51Decoder_Create_ReportsMaxChannels", [] {
+    for (const std::uint32_t maxChannels : raw51MaxChannels) {
+        const InitializedLibrary library;
+        AacSetup setup(aacConfigRaw, maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        RequireEqual(setup.info.ui_number_of_channels, maxChannels, "channel count with " + std::to_string(maxChannels) + " max channels");
+    }
+}};
+
+const Case raw51Decode{"AacRaw51Decoder_DecodeFrame_ProducesSixChannelPcm", [] {
+    for (const std::uint32_t maxChannels : raw51MaxChannels) {
+        const InitializedLibrary library;
+        AacSetup setup(aacConfigRaw, maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        const std::string where = "with " + std::to_string(maxChannels) + " max channels";
+        RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, aacRaw51, sizeof(aacRaw51)), 0, "decode the 5.1 frame " + where);
+        RequireEqual(streams.pcm.ui_pcm_size, 1024u * 6 * 2, "produced bytes " + where);
+        RequireEqual(setup.info.ui_sampling_freq, 48000u, "sampling frequency " + where);
+        RequireEqual(setup.info.ui_number_of_channels, 6u, "channel count " + where);
+        RequireEqual(setup.info.i_result, 0, "decode result " + where);
+    }
+}};
+
+const Case raw51Clear{"AacRaw51Decoder_ClearContextAfterFrame_Succeeds", [] {
+    for (const std::uint32_t maxChannels : raw51MaxChannels) {
+        const InitializedLibrary library;
+        AacSetup setup(aacConfigRaw, maxChannels);
+        const Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        const std::string where = "with " + std::to_string(maxChannels) + " max channels";
+        RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, aacRaw51, sizeof(aacRaw51)), 0, "decode the 5.1 frame " + where);
+        RequireEqual(sceAudiodecClearContext(decoder.Handle()), 0, "clear the context " + where);
+    }
+}};
+
+const Case raw51Delete{"AacRaw51Decoder_DeleteAfterFrame_Succeeds", [] {
+    for (const std::uint32_t maxChannels : raw51MaxChannels) {
+        const InitializedLibrary library;
+        AacSetup setup(aacConfigRaw, maxChannels);
+        Decoder decoder(setup.ctrl, typeM4aac);
+        Streams streams;
+        const std::string where = "with " + std::to_string(maxChannels) + " max channels";
+        RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, aacRaw51, sizeof(aacRaw51)), 0, "decode the 5.1 frame " + where);
+        RequireEqual(decoder.Delete(), 0, "delete the decoder " + where);
+    }
+}};
+
+const Case mp3Stream{"Mp3Decoder_DecodeStream_DecodesSixFramesExactly", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(2);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    const Mp3StreamResult result = DecodeMp3Stream(decoder.Handle(), setup, streams);
+    RequireEqual(result.consumed, sizeof(mp3Mono), "consumed bytes of the whole stream");
+    RequireEqual(result.frames, 6, "decoded frame count");
+}};
+
+const Case mp3Peak{"Mp3Decoder_DecodeStream_PeakIsInExpectedRange", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(2);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    const Mp3StreamResult result = DecodeMp3Stream(decoder.Handle(), setup, streams);
+    Require(result.peak > 0.1f && result.peak < 0.15f, "peak sample magnitude should be in (0.1, 0.15), got " + std::to_string(result.peak));
+}};
+
+const Case mp3Truncated{"Mp3Decoder_TruncatedFrame_FailsWithApiFail", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(2);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, mp3Mono, 10), errorApiFail, "decode the first 10 bytes of an MP3 frame");
+}};
+
+const Case mp3Misaligned{"Mp3Decoder_MisalignedFrame_FailsWithApiFail", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(2);
+    const Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, mp3Mono + 1, 100), errorApiFail, "decode 100 bytes starting one byte into an MP3 frame");
+}};
+
+const Case mp3Delete{"Mp3Decoder_DeleteAfterStream_Succeeds", [] {
+    const InitializedLibrary library;
+    Mp3Setup setup(2);
+    Decoder decoder(setup.ctrl, typeMp3);
+    Streams streams;
+    DecodeMp3Stream(decoder.Handle(), setup, streams);
+    RequireEqual(decoder.Delete(), 0, "delete the decoder");
+}};
+
+const Case at9Create{"At9Decoder_Create_ReportsCodecInfo", [] {
+    const InitializedLibrary library;
+    At9Setup setup;
+    const Decoder decoder(setup.ctrl, typeAt9);
+    RequireEqual(setup.info.ui_channel, 2u, "channel count");
+    RequireEqual(setup.info.ui_sampling_rate, 48000u, "sampling rate");
+    RequireEqual(setup.info.ui_frame_samples, 256u, "samples per frame");
+    RequireEqual(setup.info.ui_super_frame_size, 1024u, "superframe size");
+    RequireEqual(setup.info.ui_frames_in_super_frame, 4u, "frames per superframe");
+    RequireEqual(setup.info.ui_bitrate, 384000u, "bitrate");
+}};
+
+const Case at9Short{"At9Decoder_ShortSuperframe_FailsWithApiFail", [] {
+    const InitializedLibrary library;
+    At9Setup setup;
+    const Decoder decoder(setup.ctrl, typeAt9);
     Streams streams;
     const std::vector<std::uint8_t> silence(1024);
-    Require(Decode(handle, ctrl, streams, silence.data(), 1023) == errorApiFail);
-    Require(Decode(handle, ctrl, streams, silence.data(), silence.size(), 4095) == errorInvalidPcmSize);
-    Require(Decode(handle, ctrl, streams, silence.data(), silence.size()) == errorApiFail);
-    Require(sceAudiodecDeleteDecoder(handle) == 0);
-    param.ui_config_data[0] = 0xFD;
-    Require(sceAudiodecCreateDecoder(&ctrl, 1) == errorInvalidAt9Config);
-}
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, silence.data(), 1023), errorApiFail, "decode 1023 bytes of a 1024 byte superframe");
+}};
 
-}
-
-int main() {
-    Require(sceAudiodecInitLibrary(4) == errorInvalidType);
-    Require(sceAudiodecTermLibrary(0) == errorInvalidType);
-
-    AudiodecParamMp3 mp3{sizeof(mp3), 1};
-    AudiodecMp3Info mp3Info{};
-    mp3Info.ui_size = sizeof(mp3Info);
-    AudiodecCtrl ctrl{&mp3, &mp3Info, nullptr, nullptr};
-    Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorArg);
-    for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecInitLibrary(type) == 0);
-    Require(sceAudiodecCreateDecoder(nullptr, 2) == errorInvalidCtrlPointer);
-    Require(sceAudiodecCreateDecoder(&ctrl, 5) == errorInvalidType);
-    mp3.ui_size = 12;
-    Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorInvalidParamSize);
-    mp3.ui_size = sizeof(mp3);
-    mp3Info.ui_size = 16;
-    Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorInvalidBsiInfoSize);
-    mp3Info.ui_size = sizeof(mp3Info);
-    mp3.i_bw_pcm = 3;
-    Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorInvalidWordLength);
-    mp3.i_bw_pcm = 1;
-    AudiodecParamM4aac aac{sizeof(aac), 1, 3, 3, 2, 0};
-    AudiodecM4aacInfo aacInfo{sizeof(aacInfo), 0, 0, 0, 0};
-    AudiodecCtrl aacCtrl{&aac, &aacInfo, nullptr, nullptr};
-    Require(sceAudiodecCreateDecoder(&aacCtrl, 3) == errorInvalidConfigNumber);
-
-    const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
-    Require(handle > 0);
+const Case at9SmallRoom{"At9Decoder_PcmRoomTooSmall_FailsWithInvalidPcmSize", [] {
+    const InitializedLibrary library;
+    At9Setup setup;
+    const Decoder decoder(setup.ctrl, typeAt9);
     Streams streams;
-    Require(sceAudiodecDecode(handle, &ctrl) == errorInvalidAuInfoPointer);
-    Require(Decode(handle, ctrl, streams, MP3_MONO, 0) == errorInvalidAuSize);
-    Require(Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO), 0) == errorInvalidPcmSize);
-    Require(Decode(handle + 1, ctrl, streams, MP3_MONO, sizeof(MP3_MONO)) == errorInvalidHandle);
-    Require(sceAudiodecDeleteDecoder(handle) == 0);
-    Require(sceAudiodecDeleteDecoder(handle) == errorInvalidHandle);
-    Require(sceAudiodecClearContext(handle) == errorInvalidHandle);
+    const std::vector<std::uint8_t> silence(1024);
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, silence.data(), silence.size(), 4095), errorInvalidPcmSize,
+                 "decode a superframe into 4095 bytes");
+}};
 
-    TestAac(true);
-    TestAac(false);
-    TestAac(false, 6);
-    TestAac(false, 8);
-    TestAacRaw51(6);
-    TestAacRaw51(8);
-    TestMp3();
-    TestAt9();
-    for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecTermLibrary(type) == 0);
-}
+const Case at9Zeroes{"At9Decoder_ZeroFilledSuperframe_FailsWithApiFail", [] {
+    const InitializedLibrary library;
+    At9Setup setup;
+    const Decoder decoder(setup.ctrl, typeAt9);
+    Streams streams;
+    const std::vector<std::uint8_t> silence(1024);
+    RequireEqual(Decode(decoder.Handle(), setup.ctrl, streams, silence.data(), silence.size()), errorApiFail, "decode a zero-filled superframe");
+}};
+
+const Case at9Delete{"At9Decoder_Delete_Succeeds", [] {
+    const InitializedLibrary library;
+    At9Setup setup;
+    Decoder decoder(setup.ctrl, typeAt9);
+    RequireEqual(decoder.Delete(), 0, "delete the decoder");
+}};
+
+const Case at9InvalidConfig{"At9Decoder_InvalidConfigData_FailsWithInvalidAt9Config", [] {
+    const InitializedLibrary library;
+    At9Setup setup;
+    setup.param.ui_config_data[0] = 0xFD;
+    RequireEqual(CreateExpectingFailure(&setup.ctrl, typeAt9), errorInvalidAt9Config, "create an ATRAC9 decoder with config byte 0xFD");
+}};
+
+} // namespace

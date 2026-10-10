@@ -17,14 +17,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -278,27 +277,22 @@ void Check(bool addressInPointer) {
     }
 }
 
+void RunMode(bool addressInPointer) {
+    if (ShaderRecompiler::RayTracingStrict() || ShaderRecompiler::RayTracingMiss()) Testing::Skip("APS5_RAYTRACING replaces the node test");
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Require((guest.Address() >> 35u) != 0u, "bvh64 intersect ray: the guest block is not above 32 GiB, the node pointer would fit 32 bits");
+    FillNodes(guest);
+    Run(device, guest, addressInPointer);
+    Check(addressInPointer);
 }
 
-int main() {
-    try {
-        if (ShaderRecompiler::RayTracingStrict() || ShaderRecompiler::RayTracingMiss()) {
-            std::puts("skipped, APS5_RAYTRACING replaces the node test");
-            return VulkanTestSkipped;
-        }
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        Require((guest.Address() >> 35u) != 0u, "bvh64 intersect ray: the guest block is not above 32 GiB, the node pointer would fit 32 bits");
-        FillNodes(guest);
-        for (const bool addressInPointer : {true, false}) {
-            Run(*device, guest, addressInPointer);
-            Check(addressInPointer);
-        }
-        std::puts("bvh64 intersect ray tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case nodePointerAddress{"Bvh64IntersectRay_AddressInNodePointer_MatchesReference", [] {
+    RunMode(true);
+}};
+
+const Testing::Case descriptorBase{"Bvh64IntersectRay_BaseInDescriptor_MatchesReference", [] {
+    RunMode(false);
+}};
+
+} // namespace

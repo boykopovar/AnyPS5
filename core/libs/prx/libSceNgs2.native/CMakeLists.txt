@@ -4,14 +4,14 @@ add_sce_ngs2_library(libSceNgs2.native)
 if(BUILD_TESTING)
     foreach(ngs2Test IN ITEMS Render Atrac9 Filter Custom Parse Stream UserFx)
         string(TOLOWER ${ngs2Test} testName)
-        add_test_executable(ngs2_${testName}_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Ngs2${ngs2Test}.cpp)
-        target_include_directories(ngs2_${testName}_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src)
-        target_link_libraries(ngs2_${testName}_tests PRIVATE libSceNgs2.native atrac9 libkernel libc)
-        configure_windows_unwind(ngs2_${testName}_tests)
-        add_test(NAME ngs2_${testName} COMMAND ngs2_${testName}_tests)
-        if(WIN32)
-            set_tests_properties(ngs2_${testName} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNgs2.native>")
+        set(ngs2TestOptions)
+        if(ngs2Test STREQUAL "Render")
+            set(ngs2TestOptions CUSTOM_MAIN)
         endif()
+        anyps5_add_library_test(ngs2_${testName}_tests ${ngs2TestOptions}
+            SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/Ngs2${ngs2Test}.cpp
+            LINK libSceNgs2.native atrac9 libkernel libc
+            INCLUDES ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src
+        )
     endforeach()
 endif()

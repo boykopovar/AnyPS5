@@ -9,21 +9,12 @@ if(MINGW)
 endif()
 
 if(BUILD_TESTING)
-    add_test_executable(guest_np_reachability_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpReachability.cpp)
-    target_include_directories(guest_np_reachability_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_reachability_tests PRIVATE libSceNpManager)
-    configure_windows_unwind(guest_np_reachability_tests)
-    add_test(NAME guest_np_reachability COMMAND guest_np_reachability_tests)
-    if(WIN32)
-        set_tests_properties(guest_np_reachability PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpManager>")
-    endif()
-    add_test_executable(guest_np_manager_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpManager.cpp)
-    target_include_directories(guest_np_manager_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_manager_tests PRIVATE libSceNpManager)
-    add_test(NAME guest_np_manager COMMAND guest_np_manager_tests)
-    if(WIN32)
-        set_tests_properties(guest_np_manager PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpManager>")
-    endif()
+    anyps5_add_library_test(guest_np_reachability_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestNpReachability.cpp
+        LINK libSceNpManager libc
+    )
+    anyps5_add_library_test(guest_np_manager_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestNpManager.cpp
+        LINK libSceNpManager libc
+    )
 endif()

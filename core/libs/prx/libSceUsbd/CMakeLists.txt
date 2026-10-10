@@ -3,13 +3,8 @@ target_include_directories(libSceUsbd PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceUsbd)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_usbd_tests ${LIBS_INCLUDE_DIR}/tests/GuestUsbd.cpp)
-    target_include_directories(guest_usbd_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_usbd_tests PRIVATE libSceUsbd libc)
-    configure_windows_unwind(guest_usbd_tests)
-    add_test(NAME guest_usbd COMMAND guest_usbd_tests)
-    if(WIN32)
-        set_tests_properties(guest_usbd PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUsbd>")
-    endif()
+    anyps5_add_library_test(guest_usbd_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestUsbd.cpp
+        LINK libSceUsbd libc
+    )
 endif()

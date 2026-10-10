@@ -116,7 +116,7 @@ int main() {
     Require(std::strlen(gai_strerror_nid_postfix(14)) > 0);
     Require(std::strstr(gai_strerror_nid_postfix(-1), "Unknown") != nullptr);
     GuestResolver::AddressInfo hints{};
-    hints.flags = 12; // numeric host and service: no external DNS dependency
+    hints.flags = 12;
     hints.socketType = 1;
     for (const auto* numeric : {"127.0.0.1", "::1"}) {
         GuestResolver::AddressInfo* result = nullptr;

@@ -5,13 +5,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
@@ -149,29 +148,32 @@ void Check(std::uint32_t waveSize, bool bounded) {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        for (const auto waveSize : {64u, 32u}) {
-            for (const auto bounded : {true, false}) {
-                std::fprintf(stderr, "pixel LDS wave%u %s\n", waveSize, bounded ? "bounded" : "unbounded");
-                for (std::uint32_t pass = 0; pass < 3; ++pass) {
-                    Draw(*device, waveSize, bounded);
-                    Check(waveSize, bounded);
-                }
-            }
-        }
-        std::puts("pixel LDS tests passed: 12 draws, 24576 pixels, 73728 LDS results");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void DrawAndCheck(std::uint32_t waveSize, bool bounded) {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    for (std::uint32_t pass = 0; pass < 3; ++pass) {
+        Draw(device, waveSize, bounded);
+        Check(waveSize, bounded);
     }
 }
+
+const Testing::Case wave64Bounded{"PixelLds_Wave64Bounded_ExchangesThroughLds", [] {
+    DrawAndCheck(64u, true);
+}};
+
+const Testing::Case wave64Unbounded{"PixelLds_Wave64Unbounded_ExchangesThroughLds", [] {
+    DrawAndCheck(64u, false);
+}};
+
+const Testing::Case wave32Bounded{"PixelLds_Wave32Bounded_ExchangesThroughLds", [] {
+    DrawAndCheck(32u, true);
+}};
+
+const Testing::Case wave32Unbounded{"PixelLds_Wave32Unbounded_ExchangesThroughLds", [] {
+    DrawAndCheck(32u, false);
+}};
+
+} // namespace

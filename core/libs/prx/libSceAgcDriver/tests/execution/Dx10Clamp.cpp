@@ -8,14 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -222,22 +221,22 @@ void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     }
 }
 
-}
+const Testing::Case noFloatMode{"Dx10Clamp_NoFloatMode_ClampsLikeDx10", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, std::nullopt);
+    Check(ExpectedDx10, "no float mode");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check(ExpectedDx10, "no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check(ExpectedDx10, "DX10_CLAMP=1");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, false, false, false});
-        Check(ExpectedNoDx10, "DX10_CLAMP=0");
-        std::puts("dx10 clamp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case dx10ClampOn{"Dx10Clamp_Dx10ClampSet_ClampsNanToZero", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+    Check(ExpectedDx10, "DX10_CLAMP=1");
+}};
+
+const Testing::Case dx10ClampOff{"Dx10Clamp_Dx10ClampClear_PreservesNan", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, false, false, false});
+    Check(ExpectedNoDx10, "DX10_CLAMP=0");
+}};
+
+} // namespace

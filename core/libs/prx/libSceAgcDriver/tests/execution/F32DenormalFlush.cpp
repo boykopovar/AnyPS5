@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -16,7 +15,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -181,31 +180,33 @@ void Check(const char* mode) {
     }
 }
 
-}
+const Testing::Case noFloatMode{"F32DenormalFlush_NoFloatMode_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, std::nullopt);
+    Check("no float mode");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check("no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check("IEEE=0 f32 denormals flushed");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false});
-        Check("IEEE=1 all denormals flushed");
-        for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
-            bool refused = false;
-            try {
-                Run(*device, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
-            } catch (const std::runtime_error& error) {
-                refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
-            }
-            Require(refused, "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was not refused");
-        }
-        std::puts("f32 denormal flush tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case ieeeDisabledF32Flushed{"F32DenormalFlush_IeeeDisabledF32Flushed_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+    Check("IEEE=0 f32 denormals flushed");
+}};
+
+const Testing::Case ieeeEnabledAllFlushed{"F32DenormalFlush_IeeeEnabledAllFlushed_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false});
+    Check("IEEE=1 all denormals flushed");
+}};
+
+const Testing::Case unsupportedDenormalModes{"F32DenormalFlush_UnsupportedDenormalModes_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
+        const auto error = Testing::RequireThrows<std::runtime_error>([&] {
+            Run(device, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
+        }, "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was not refused");
+        Require(std::string(error.what()).find("f32 denormal mode") != std::string::npos,
+                "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was refused with an unexpected message: " + error.what());
     }
-}
+}};
+
+} // namespace

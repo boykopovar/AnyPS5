@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -18,7 +17,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -215,51 +214,87 @@ bool BindsDepthCompare(const ShaderRecompiler::RecompileResult& result) {
 }
 
 void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler& sampler, std::string_view reason, std::span<const std::uint32_t> code = Code, bool nativeSampleOffsets = true) {
-    try {
-        static_cast<void>(Compile(device, format, sampler, code, false, nativeSampleOffsets));
-    } catch (const std::exception& error) {
-        Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
-        return;
-    }
-    Require(false, std::string("expected rejection: ") + std::string(reason));
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { static_cast<void>(Compile(device, format, sampler, code, false, nativeSampleOffsets)); }, std::string("expected rejection: ") + std::string(reason));
+    Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
 }
 
+AgcDriver::VulkanDevice& PreparedDevice() {
+    auto& device = SharedVulkanTestDevice();
+    FillTexels();
+    FillInput();
+    return device;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillInput();
-        Require(BindsDepthCompare(Compile(*device, Format32Float, {ClampEdge, FilterBilinear})), "an R32 float texture left the native comparison path");
-        Require(!BindsDepthCompare(Compile(*device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture kept a depth-compare binding");
-        Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge");
-        Run(*device, {ClampEdge, FilterBilinear}, "bilinear, clamp to edge");
-        Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap");
-        Run(*device, {ClampBorder, FilterPoint, BorderWhite}, "point, white border");
-        Run(*device, {ClampBorder, FilterPoint, BorderBlack}, "point, black border");
-        Run(*device, {ClampBorder, FilterBilinear, BorderWhite}, "bilinear, white border");
-        Run(*device, {ClampBorder, FilterBilinear, BorderBlack}, "bilinear, black border");
-        Run(*device, {ClampEdge, FilterPoint, BorderBlack, 0u, 0x0140u}, "point, clamp to edge, sampler LOD bias");
-        Run(*device, {ClampEdge, FilterPoint}, "point, clamp to edge, offsets, bias and LOD clamp", true);
-        Run(*device, {ClampWrap, FilterBilinear}, "bilinear, wrap, offsets, bias and LOD clamp", true);
-        Run(*device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u}, "bilinear, white border, offsets, bias and LOD clamp", true);
-        for (unsigned iteration = 0; iteration < 2; ++iteration) {
-            Run(*device, {ClampEdge, FilterPoint}, "cached point comparison", false, true);
-            Run(*device, {ClampWrap, FilterBilinear}, "cached bilinear comparison with offsets", true, true);
-        }
-        Reject(*device, Format32Float, {ClampEdge, FilterPoint}, "native comparison with a nonconstant texel offset requires", OffsetCode, false);
-        Reject(*device, Format8888UInt, {ClampEdge, FilterPoint}, "unsupported format");
-        Reject(*device, Format8888UNorm, {ClampMirror, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
-        Reject(*device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
-        Reject(*device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
-        Reject(*device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
-        Reject(*device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin}, "min or max reduction");
-        std::puts("emulated color compare tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case comparisonPath{"EmulatedColorCompare_TextureFormat_SelectsNativeOrEmulatedComparison", [] {
+    auto& device = PreparedDevice();
+    Require(BindsDepthCompare(Compile(device, Format32Float, {ClampEdge, FilterBilinear})), "an R32 float texture left the native comparison path");
+    Require(!BindsDepthCompare(Compile(device, Format8888UNorm, {ClampEdge, FilterBilinear})), "a color texture kept a depth-compare binding");
+}};
+
+const Testing::Case edgeAndWrap{"EmulatedColorCompare_ClampToEdgeAndWrap_MatchesReference", [] {
+    auto& device = PreparedDevice();
+    Run(device, {ClampEdge, FilterPoint}, "point, clamp to edge");
+    Run(device, {ClampEdge, FilterBilinear}, "bilinear, clamp to edge");
+    Run(device, {ClampWrap, FilterBilinear}, "bilinear, wrap");
+}};
+
+const Testing::Case borders{"EmulatedColorCompare_ClampToBorder_ComparesAgainstBorderColor", [] {
+    auto& device = PreparedDevice();
+    Run(device, {ClampBorder, FilterPoint, BorderWhite}, "point, white border");
+    Run(device, {ClampBorder, FilterPoint, BorderBlack}, "point, black border");
+    Run(device, {ClampBorder, FilterBilinear, BorderWhite}, "bilinear, white border");
+    Run(device, {ClampBorder, FilterBilinear, BorderBlack}, "bilinear, black border");
+}};
+
+const Testing::Case lodBias{"EmulatedColorCompare_SamplerLodBias_MatchesReference", [] {
+    auto& device = PreparedDevice();
+    Run(device, {ClampEdge, FilterPoint, BorderBlack, 0u, 0x0140u}, "point, clamp to edge, sampler LOD bias");
+}};
+
+const Testing::Case offsets{"EmulatedColorCompare_OffsetsBiasAndLodClamp_MatchesReference", [] {
+    auto& device = PreparedDevice();
+    Run(device, {ClampEdge, FilterPoint}, "point, clamp to edge, offsets, bias and LOD clamp", true);
+    Run(device, {ClampWrap, FilterBilinear}, "bilinear, wrap, offsets, bias and LOD clamp", true);
+    Run(device, {ClampBorder, FilterBilinear, BorderWhite, 0u, 0x3f00u}, "bilinear, white border, offsets, bias and LOD clamp", true);
+}};
+
+const Testing::Case cached{"EmulatedColorCompare_CachedShaders_MatchReferenceOnReuse", [] {
+    auto& device = PreparedDevice();
+    for (unsigned iteration = 0; iteration < 2; ++iteration) {
+        Run(device, {ClampEdge, FilterPoint}, "cached point comparison", false, true);
+        Run(device, {ClampWrap, FilterBilinear}, "cached bilinear comparison with offsets", true, true);
     }
-}
+}};
+
+const Testing::Case nonconstantOffsets{"EmulatedColorCompare_NativeComparisonWithNonconstantOffsetsUnsupported_IsRejected", [] {
+    auto& device = PreparedDevice();
+    Reject(device, Format32Float, {ClampEdge, FilterPoint}, "native comparison with a nonconstant texel offset requires", OffsetCode, false);
+}};
+
+const Testing::Case unsupportedFormat{"EmulatedColorCompare_UnsupportedFormat_IsRejected", [] {
+    auto& device = PreparedDevice();
+    Reject(device, Format8888UInt, {ClampEdge, FilterPoint}, "unsupported format");
+}};
+
+const Testing::Case unsupportedClamp{"EmulatedColorCompare_MirrorAndHalfBorderClamp_AreRejected", [] {
+    auto& device = PreparedDevice();
+    Reject(device, Format8888UNorm, {ClampMirror, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
+    Reject(device, Format8888UNorm, {ClampHalfBorder, FilterPoint}, "wrap, clamp-to-edge or clamp-to-border");
+}};
+
+const Testing::Case borderTable{"EmulatedColorCompare_BorderColorTable_IsRejected", [] {
+    auto& device = PreparedDevice();
+    Reject(device, Format8888UNorm, {ClampBorder, FilterPoint, BorderTable}, "border color table");
+}};
+
+const Testing::Case anisotropic{"EmulatedColorCompare_AnisotropicFilter_IsRejected", [] {
+    auto& device = PreparedDevice();
+    Reject(device, Format8888UNorm, {ClampEdge, FilterAnisoBilinear}, "point or bilinear");
+}};
+
+const Testing::Case minMaxReduction{"EmulatedColorCompare_MinMaxReduction_IsRejected", [] {
+    auto& device = PreparedDevice();
+    Reject(device, Format8888UNorm, {ClampEdge, FilterBilinear, BorderBlack, ReductionMin}, "min or max reduction");
+}};
+
+} // namespace

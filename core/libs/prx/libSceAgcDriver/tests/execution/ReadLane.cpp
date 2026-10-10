@@ -4,13 +4,11 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -60,27 +58,16 @@ void Check() {
         const std::array<std::uint32_t, 3> expected{Input[5u * Stride], Input[5u * Stride], 69u};
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
             const auto actual = Output[tid * Stride + j];
-            Require(actual == expected[j], "read lane: lane " + std::to_string(tid) + " result " + std::to_string(j) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
+            Testing::Require(actual == expected[j], "read lane: lane " + std::to_string(tid) + " result " + std::to_string(j) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
         }
     }
 }
 
-}
+const Testing::Case readLaneWave32{"ReadLane_Wave32_ReturnsSelectedLaneValue", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < Threads) Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < Threads) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("read lane tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

@@ -1,9 +1,9 @@
+#include <Testing/Test.hpp>
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
+
 #include <array>
-#include <cstdio>
 #include <exception>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -13,15 +13,17 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+using Testing::Case;
+
+void require(bool condition, const std::string& message, std::source_location location = std::source_location::current()) {
+    Testing::Require(condition, message, location);
 }
 
 bool isVector(const RdnaOperand& operand, std::uint32_t reg) {
     return operand.kind == RdnaOperandKind::VectorRegister && operand.reg == reg;
 }
 
-void verifyDecode() {
+RdnaProgram DecodeWaveControl() {
     const std::vector<std::uint32_t> code{
         0xbf8d0000u, 0xbf8d0001u, 0xbf911234u, 0xbe802204u,
         0xd8661234u, 0x00000001u, 0xd86a0000u, 0x00000000u, 0xd86e0000u, 0x00000002u,
@@ -29,16 +31,29 @@ void verifyDecode() {
         0xd8fe0004u, 0x05000001u,
         0xbf9f0000u, 0xbf9f0000u, 0xffffffffu,
     };
-    const auto program = RdnaInstructionDecoder{}.Decode(code);
-    const auto& decoded = program.instructions;
-    require(decoded.size() == 12u, "decoding did not stop at the first s_code_end: " + std::to_string(decoded.size()) + " instructions");
+    auto program = RdnaInstructionDecoder{}.Decode(code);
+    require(program.instructions.size() == 12u, "decoding did not stop at the first s_code_end: " + std::to_string(program.instructions.size()) + " instructions");
+    return program;
+}
 
+const Case codeEnd{"Decode_ProgramPaddedWithCodeEnd_StopsAtTheFirstCodeEnd", [] {
+    const auto program = DecodeWaveControl();
+    require(program.instructions[11].op == RdnaOpcode::SCodeEnd, "s_code_end");
+}};
+
+const Case haltAndTrapReturn{"Decode_HaltAndTrapReturnInstructions_DecodeTheirOperands", [] {
+    const auto program = DecodeWaveControl();
+    const auto& decoded = program.instructions;
     require(decoded[0].op == RdnaOpcode::SSethalt && decoded[0].source0.value == 0u && decoded[0].sourceCount == 1u, "s_sethalt 0");
     require(decoded[1].op == RdnaOpcode::SSethalt && decoded[1].source0.value == 1u, "s_sethalt 1");
     require(decoded[2].op == RdnaOpcode::SSendmsghalt && decoded[2].source0.value == 0x1234u && decoded[2].sourceCount == 1u, "s_sendmsghalt 0x1234");
     require(decoded[3].op == RdnaOpcode::SRfeB64 && decoded[3].destination.kind == RdnaOperandKind::Null && decoded[3].sourceCount == 1u &&
         decoded[3].source0.kind == RdnaOperandKind::ScalarRegister && decoded[3].source0.reg == 4u, "s_rfe_b64 s[4:5]");
+}};
 
+const Case globalWaveSync{"Decode_GlobalWaveSyncInstructions_DecodeAsGdsOperations", [] {
+    const auto program = DecodeWaveControl();
+    const auto& decoded = program.instructions;
     const std::array<std::tuple<RdnaOpcode, std::uint32_t, std::uint32_t, const char*>, 6> gws{{
         {RdnaOpcode::DsGwsInit, 1u, 0x1234u, "ds_gws_init v1 offset:4660 gds"},
         {RdnaOpcode::DsGwsSemaV, 0u, 0u, "ds_gws_sema_v gds"},
@@ -55,12 +70,14 @@ void verifyDecode() {
             instruction.destination.kind == RdnaOperandKind::None && instruction.wordCount == 2u, name);
         if (sources != 0u) require(isVector(instruction.source0, dataRegisters[index]), std::string(name) + " reads the wrong data register");
     }
+}};
 
-    const auto& ordered = decoded[10];
+const Case orderedCount{"Decode_OrderedCount_DecodesAsGdsCounter", [] {
+    const auto program = DecodeWaveControl();
+    const auto& ordered = program.instructions[10];
     require(ordered.op == RdnaOpcode::DsOrderedCount && ordered.gds && ordered.memoryOffset == 4u && isVector(ordered.destination, 5u) &&
         isVector(ordered.source0, 1u) && ordered.sourceCount == 1u, "ds_ordered_count v5, v1 offset:4 gds");
-    require(decoded[11].op == RdnaOpcode::SCodeEnd, "s_code_end");
-}
+}};
 
 std::string recompile(std::span<const std::uint32_t> code) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
@@ -98,11 +115,16 @@ std::vector<std::uint32_t> withStore(std::initializer_list<std::uint32_t> words)
     return code;
 }
 
-void verifyTranslation() {
+const Case sethaltZero{"Recompile_SethaltZero_IsAccepted", [] {
     require(recompile(withStore({0xbf8d0000u})).empty(), "s_sethalt 0 is refused: " + recompile(withStore({0xbf8d0000u})));
+}};
+
+const Case trailingCodeEnd{"Recompile_CodeEndPaddingAfterLastBranch_IsAccepted", [] {
     const std::vector<std::uint32_t> trailingLoop{0x7e020281u, 0xbf820003u, 0xe0700000u, 0x80000100u, 0xbf810000u, 0xbf82fffcu, 0xbf9f0000u, 0xbf9f0000u, 0xffffffffu};
     require(recompile(trailingLoop).empty(), "a program padded with s_code_end after its last branch is refused: " + recompile(trailingLoop));
+}};
 
+const Case refusedWaveControl{"Recompile_WaveHaltTrapReturnOrGdsInstruction_IsRefused", [] {
     const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
         {"s_sethalt 1", withStore({0xbf8d0001u}), "s_sethalt 1 at pc 0 halts the wave"},
         {"s_sendmsghalt", withStore({0xbf910001u}), "s_sendmsghalt 1 at pc 0 halts the wave"},
@@ -120,18 +142,6 @@ void verifyTranslation() {
         const auto error = recompile(code);
         require(error.find(message) != std::string::npos, std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
     }
-}
+}};
 
-}
-
-int main() {
-    try {
-        verifyDecode();
-        verifyTranslation();
-        std::puts("wave control decode tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-    }
-    return 1;
-}
+} // namespace

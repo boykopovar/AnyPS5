@@ -10,15 +10,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
-#include <stdexcept>
 #include <string>
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using Testing::Require;
 
 template<typename TAction>
 void Reject(TAction action, const char* expected) {
@@ -27,7 +23,7 @@ void Reject(TAction action, const char* expected) {
         Require(std::string(error.what()).find(expected) != std::string::npos, error.what());
         return;
     }
-    throw std::runtime_error(std::string("invalid graphics ABI was accepted; expected: ") + expected);
+    Testing::Fail(std::string("invalid graphics ABI was accepted; expected: ") + expected);
 }
 
 struct Fixture {
@@ -234,21 +230,25 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     Reject([&] { DecodeGraphicsPrograms(invalid, queue, registry, true, true); }, "reserved graphics program address");
 }
 
+
+void CheckPath(AgcDriver::Graphics::ShaderPath path) {
+    auto& device = SharedVulkanTestDevice();
+    const auto& arguments = Testing::Arguments();
+    Require(arguments.size() <= 1, "invalid test arguments");
+    const auto dump = arguments.empty() ? std::filesystem::path{} : std::filesystem::path(arguments.front());
+    Check(device, path, dump);
 }
 
-int main(int argc, char** argv) {
-    try {
-        auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Require(argc <= 2, "invalid test arguments");
-        const auto dump = argc == 2 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
-        Check(*device, AgcDriver::Graphics::ShaderPath::Vertex, dump);
-        Check(*device, AgcDriver::Graphics::ShaderPath::Geometry, dump);
-        Check(*device, AgcDriver::Graphics::ShaderPath::Tessellation, dump);
-        std::cout << "prepared graphics ABI tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case vertexPath{"PreparedGraphics_VertexPath_MatchesDrawAbiAndRejectsInvalidPrograms", [] {
+    CheckPath(AgcDriver::Graphics::ShaderPath::Vertex);
+}};
+
+const Testing::Case geometryPath{"PreparedGraphics_MeshGeometryPath_MatchesDrawAbiAndRejectsInvalidPrograms", [] {
+    CheckPath(AgcDriver::Graphics::ShaderPath::Geometry);
+}};
+
+const Testing::Case tessellationPath{"PreparedGraphics_TessellationPath_MatchesDrawAbiAndRejectsInvalidPrograms", [] {
+    CheckPath(AgcDriver::Graphics::ShaderPath::Tessellation);
+}};
+
+} // namespace

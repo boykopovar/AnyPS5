@@ -31,20 +31,16 @@ target_link_libraries(libSceAjm.native PRIVATE atrac9 ffmpeg libc libkernel)
 configure_windows_unwind(libSceAjm.native)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_ajm_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjm.cpp)
-    target_include_directories(guest_ajm_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ajm_tests PRIVATE libSceAjm.native libc)
-    configure_windows_unwind(guest_ajm_tests)
-    add_test(NAME guest_ajm COMMAND guest_ajm_tests)
+    anyps5_add_library_test(guest_ajm_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAjm.cpp
+        LINK libSceAjm.native libc
+    )
     if(UNIX)
-        add_test_executable(guest_ajm_teardown_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmTeardown.cpp)
-        target_include_directories(guest_ajm_teardown_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_ajm_teardown_tests PRIVATE libc ${CMAKE_DL_LIBS})
+        anyps5_add_library_test(guest_ajm_teardown_tests
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAjmTeardown.cpp
+            LINK libc ${CMAKE_DL_LIBS}
+            ARGS $<TARGET_FILE:libSceAjm.native>
+        )
         add_dependencies(guest_ajm_teardown_tests libSceAjm.native)
-        add_test(NAME guest_ajm_teardown COMMAND guest_ajm_teardown_tests $<TARGET_FILE:libSceAjm.native>)
-    endif()
-    if(WIN32)
-        set_tests_properties(guest_ajm PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
     endif()
 endif()

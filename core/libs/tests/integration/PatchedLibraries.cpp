@@ -1,5 +1,7 @@
-#include <cstdio>
+#include <Testing/Test.hpp>
+
 #include <filesystem>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -7,33 +9,40 @@
 #include <dlfcn.h>
 #endif
 
-int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: %s <patched libraries directory>\n", argv[0]);
-        return 2;
-    }
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+
+std::string Load(const std::filesystem::path& path) {
+#ifdef _WIN32
+    if (LoadLibraryExW(path.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) != nullptr) return {};
+    return path.filename().string() + ": LoadLibraryEx failed with error " + std::to_string(GetLastError());
+#else
+    if (dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL) != nullptr) return {};
+    const char* error = dlerror();
+    return error != nullptr ? std::string(error) : path.filename().string() + ": dlopen failed";
+#endif
+}
+
+const Case loadAll{"PatchedLibraries_EveryPrxInDirectory_LoadsWithResolvedImports", [] {
+    const std::filesystem::path directory = Testing::RequireArgument(0, "patched libraries directory");
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS);
 #endif
     int loaded = 0;
-    int failed = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(argv[1])) {
+    std::string failures;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
         if (entry.path().extension() != ".prx") continue;
-#ifdef _WIN32
-        if (LoadLibraryExW(entry.path().c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) != nullptr) {
+        const auto error = Load(entry.path());
+        if (error.empty()) {
             ++loaded;
-            continue;
+        } else {
+            failures += "\n    " + error;
         }
-        std::fprintf(stderr, "%s: LoadLibraryEx failed with error %lu\n", entry.path().filename().string().c_str(), GetLastError());
-#else
-        if (dlopen(entry.path().c_str(), RTLD_NOW | RTLD_LOCAL) != nullptr) {
-            ++loaded;
-            continue;
-        }
-        std::fprintf(stderr, "%s\n", dlerror());
-#endif
-        ++failed;
     }
-    std::printf("%d patched libraries loaded, %d failed\n", loaded, failed);
-    return loaded > 0 && failed == 0 ? 0 : 1;
-}
+    Require(failures.empty(), "patched libraries failed to load:" + failures);
+    Require(loaded > 0, "no patched library found in " + directory.string());
+}};
+
+} // namespace

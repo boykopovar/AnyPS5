@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -662,23 +661,16 @@ void CheckDivision(AgcDriver::VulkanDevice& device) {
     }
 }
 
-}
+const Testing::Case helpers{"Division_ScaleFmasFixupHelpers_MatchReferenceVectors", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool fused = HostFusesFma(device);
+    CheckHelpers(device, fused);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const bool fused = HostFusesFma(*device);
-        CheckHelpers(*device, fused);
-        if (fused) {
-            CheckDivision(*device);
-        } else {
-            std::puts("the device splits fma into a multiply and an add, so v_div_fmas_f32 and the division macro are not checked");
-        }
-        std::puts("division tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case divisionMacro{"Division_DivisionMacro_MatchesReferenceQuotients", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (!HostFusesFma(device)) Testing::Skip("the device splits fma into a multiply and an add, so v_div_fmas_f32 and the division macro are not checked");
+    CheckDivision(device);
+}};
+
+} // namespace

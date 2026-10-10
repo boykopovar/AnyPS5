@@ -7,14 +7,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -124,35 +123,10 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
-void Expect(std::uint32_t slot, const std::array<std::uint32_t, 4>& expected, const std::string& what) {
+void RequireResult(std::uint32_t slot, const std::array<std::uint32_t, 4>& expected, const std::string& what) {
     for (std::uint32_t component = 0; component < 4u; ++component) {
         const auto actual = Output[slot * 4u + component];
         Require(actual == expected[component], what + ": result " + std::to_string(slot) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(expected[component]));
-    }
-}
-
-void CheckLoads(AgcDriver::VulkanDevice& device) {
-    Fill();
-    Require(Texel(0, 0) == 0x80u && Signed(0, 0) == 0xffffff80u, "image 8_SINT: texel (0, 0) must hold 0x80");
-    Run(device, LoadX, Sint8, PointSampler, Texels / Threads);
-    for (std::uint32_t texel = 0; texel < Texels; ++texel) {
-        Expect(texel, {Signed(texel % Width, texel / Width), 0u, 0u, 0u}, "8_SINT image_load dmask:0x1");
-    }
-    Run(device, LoadXyzw, Sint8, PointSampler, Texels / Threads);
-    for (std::uint32_t texel = 0; texel < Texels; ++texel) {
-        Expect(texel, {Signed(texel % Width, texel / Width), 1u, 1u, 1u}, "8_SINT image_load dmask:0xf X 1 1 1");
-    }
-}
-
-void CheckSamples(AgcDriver::VulkanDevice& device) {
-    Fill();
-    Run(device, SampleLz, Sint8, PointSampler, 1);
-    for (std::uint32_t lane = 0; lane < Threads; ++lane) {
-        Expect(lane, {Signed(3, 5), 1u, 1u, 1u}, "8_SINT image_sample_lz with point filtering");
-    }
-    Run(device, Gather4Lz, Sint8, LinearSampler, 1);
-    for (std::uint32_t lane = 0; lane < Threads; ++lane) {
-        Expect(lane, {Signed(0, 1), Signed(1, 1), Signed(1, 0), Signed(0, 0)}, "8_SINT image_gather4_lz through a bilinear sampler");
     }
 }
 
@@ -222,20 +196,55 @@ void CheckTable(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void FillLoadTexels() {
+    Fill();
+    Require(Texel(0, 0) == 0x80u && Signed(0, 0) == 0xffffff80u, "image 8_SINT: texel (0, 0) must hold 0x80");
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        CheckLoads(*device);
-        CheckSamples(*device);
-        CheckTable(*device);
-        RequireRefused(*device, StoreX, Sint8, PointSampler, "storage image descriptor uses an unsupported format", "8_SINT image_store");
-        std::puts("image 8_SINT tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case loadX{"ImageSint8_LoadSingleChannel_SignExtendsTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillLoadTexels();
+    Run(device, LoadX, Sint8, PointSampler, Texels / Threads);
+    for (std::uint32_t texel = 0; texel < Texels; ++texel) {
+        RequireResult(texel, {Signed(texel % Width, texel / Width), 0u, 0u, 0u}, "8_SINT image_load dmask:0x1");
     }
-}
+}};
+
+const Testing::Case loadXyzw{"ImageSint8_LoadAllChannelsWithX111Swizzle_SignExtendsTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillLoadTexels();
+    Run(device, LoadXyzw, Sint8, PointSampler, Texels / Threads);
+    for (std::uint32_t texel = 0; texel < Texels; ++texel) {
+        RequireResult(texel, {Signed(texel % Width, texel / Width), 1u, 1u, 1u}, "8_SINT image_load dmask:0xf X 1 1 1");
+    }
+}};
+
+const Testing::Case samplePoint{"ImageSint8_SampleWithPointFilter_SignExtendsTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    Fill();
+    Run(device, SampleLz, Sint8, PointSampler, 1);
+    for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+        RequireResult(lane, {Signed(3, 5), 1u, 1u, 1u}, "8_SINT image_sample_lz with point filtering");
+    }
+}};
+
+const Testing::Case gatherBilinear{"ImageSint8_GatherThroughBilinearSampler_SignExtendsTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    Fill();
+    Run(device, Gather4Lz, Sint8, LinearSampler, 1);
+    for (std::uint32_t lane = 0; lane < Threads; ++lane) {
+        RequireResult(lane, {Signed(0, 1), Signed(1, 1), Signed(1, 0), Signed(0, 0)}, "8_SINT image_gather4_lz through a bilinear sampler");
+    }
+}};
+
+const Testing::Case imageTable{"ImageSint8_SampleFromDescriptorTable_SignExtendsSelectedEntry", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckTable(device);
+}};
+
+const Testing::Case storeRefused{"ImageSint8_Store_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    RequireRefused(device, StoreX, Sint8, PointSampler, "storage image descriptor uses an unsupported format", "8_SINT image_store");
+}};
+
+} // namespace

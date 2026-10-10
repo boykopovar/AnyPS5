@@ -6,14 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -274,14 +272,19 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     device.WaitIdle();
 }
 
-void CheckReversedSubtractRefused(AgcDriver::VulkanDevice& device) {
-    std::string refusal;
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
     try {
-        static_cast<void>(Compile(ReversedSubtractCode, 32, device.ComputeTarget(32)));
+        action();
     } catch (const std::exception& error) {
-        refusal = error.what();
+        return error.what();
     }
-    Require(refusal.find("unsupported dynamic s_setpc_b64") != std::string::npos, "s_setpc_b64 after s_sub_u32 with the immediate first was not refused");
+    Testing::Fail(message);
+}
+
+void CheckReversedSubtractRefused(AgcDriver::VulkanDevice& device) {
+    const auto refusal = RequireRefusal([&] { static_cast<void>(Compile(ReversedSubtractCode, 32, device.ComputeTarget(32))); }, "s_setpc_b64 after s_sub_u32 with the immediate first was not refused");
+    Testing::Require(refusal.find("unsupported dynamic s_setpc_b64") != std::string::npos, "s_setpc_b64 after s_sub_u32 with the immediate first was refused for another reason: " + refusal);
 }
 
 template<std::size_t Lanes>
@@ -289,28 +292,31 @@ void Check(const std::uint32_t (&expected)[Lanes][Checked]) {
     for (std::uint32_t tid = 0; tid < Lanes; ++tid) {
         for (std::uint32_t index = 0; index < Checked; ++index) {
             const auto actual = Output[tid * Results + index];
-            Require(actual == expected[tid][index], "setpc wave" + std::to_string(Lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected[tid][index]));
+            Testing::Require(actual == expected[tid][index], "setpc wave" + std::to_string(Lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected[tid][index]));
         }
     }
 }
 
-}
+const Testing::Case wave32{"ScalarSetpc_Wave32_JumpsMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave32Code, 32, device.ComputeTarget(32));
+    Check(Expected32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, Wave32Code, 32, device->ComputeTarget(32));
-        Check(Expected32);
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(Expected64);
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(Expected64);
-        CheckReversedSubtractRefused(*device);
-        std::puts("setpc tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64{"ScalarSetpc_Wave64_JumpsMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave64Code, 64, device.Target());
+    Check(Expected64);
+}};
+
+const Testing::Case wave64OnWave32Target{"ScalarSetpc_Wave64OnWave32Target_JumpsMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(Expected64);
+}};
+
+const Testing::Case reversedSubtractRefused{"ScalarSetpc_ReversedSubtractTarget_IsRefused", [] {
+    CheckReversedSubtractRefused(SharedVulkanTestDevice());
+}};
+
+} // namespace

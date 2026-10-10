@@ -1,68 +1,52 @@
 #include "SceTypes.hpp"
-#include "prx/libc/include/Shutdown.hpp"
-#include <cstdio>
-#include <cstdlib>
+#include "GuestVideoOutFixture.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <stdexcept>
+#include <string>
 
 extern "C" {
-int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param);
-int APS5_VABI sceVideoOutClose(int handle);
 int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* status);
 int APS5_VABI sceVideoOutAllowOutputResolutionWqhdDetection(int handle);
 }
 
-static constexpr int SYSTEM_USER = 255;
-static constexpr int MAIN_BUS = 0;
-static constexpr int NEVER_OPENED_HANDLE = 2;
+namespace {
 
-static void Require(bool value) { if (!value) std::abort(); }
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
 
-static bool RejectsHandle(int handle) {
-    try {
-        sceVideoOutAllowOutputResolutionWqhdDetection(handle);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
+constexpr int neverOpenedHandle = 2;
+
+void RequireRejected(int handle, const std::string& message) {
+    Testing::RequireThrows<std::runtime_error>([handle] { sceVideoOutAllowOutputResolutionWqhdDetection(handle); }, message);
 }
 
-static bool SameStatus(const VideoOutOutputStatus& a, const VideoOutOutputStatus& b) {
-    return std::memcmp(&a, &b, sizeof(a)) == 0;
-}
-
-int main() {
-    std::filesystem::create_directories("app0/sce_sys");
-    {
-        std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
-        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"downloadDataSize":0})";
-        Require(static_cast<bool>(param));
-    }
-    int handle = 0;
-    try {
-        handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
-    } catch (const std::runtime_error& error) {
-        if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
-        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
-        return 77;
-    }
-    Require(handle > 0);
-
+const Case allowKeepsStatus{"AllowWqhdDetection_OpenPortTwice_SucceedsWithoutChangingStatus", [] {
+    const OpenVideoOut port;
     VideoOutOutputStatus before{};
-    Require(sceVideoOutGetOutputStatus(handle, &before) == 0);
-    Require(sceVideoOutAllowOutputResolutionWqhdDetection(handle) == 0);
-    Require(sceVideoOutAllowOutputResolutionWqhdDetection(handle) == 0);
+    RequireEqual(sceVideoOutGetOutputStatus(port.handle, &before), 0, "status before");
+    RequireEqual(sceVideoOutAllowOutputResolutionWqhdDetection(port.handle), 0, "first allow");
+    RequireEqual(sceVideoOutAllowOutputResolutionWqhdDetection(port.handle), 0, "second allow");
     VideoOutOutputStatus after{};
-    Require(sceVideoOutGetOutputStatus(handle, &after) == 0);
-    Require(SameStatus(before, after));
+    RequireEqual(sceVideoOutGetOutputStatus(port.handle, &after), 0, "status after");
+    Require(std::memcmp(&before, &after, sizeof(before)) == 0, "output status unchanged");
+}};
 
-    Require(RejectsHandle(0));
-    Require(RejectsHandle(-1));
-    Require(RejectsHandle(NEVER_OPENED_HANDLE));
+const Case invalidHandles{"AllowWqhdDetection_InvalidOrClosedHandle_Throws", [] {
+    OpenVideoOut port;
+    RequireRejected(0, "handle 0");
+    RequireRejected(-1, "handle -1");
+    RequireRejected(neverOpenedHandle, "a never opened handle");
+    const int handle = port.handle;
+    port.Close();
+    RequireRejected(handle, "a closed handle");
+}};
 
-    Require(sceVideoOutClose(handle) == 0);
-    Require(RejectsHandle(handle));
-    LibcRunShutdown_nid_postfix();
+} // namespace
+
+int main(int argc, char** argv) {
+    return RunVideoOutTests(argc, argv);
 }

@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -84,20 +83,21 @@ void Check(const Case& test) {
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto& test : Cases) {
-            Run(*device, test);
-            Check(test);
-        }
-        std::puts("branch past endpgm tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void RunCases(std::span<const std::uint32_t> code) {
+    auto& device = SharedVulkanTestDevice();
+    for (const auto& test : Cases) {
+        if (test.code.data() != code.data()) continue;
+        Run(device, test);
+        Check(test);
     }
 }
+
+const Testing::Case tailBlocks{"BranchPastEndpgm_TailBlocks_AddSelectedIncrement", [] {
+    RunCases(TailBlockCode);
+}};
+
+const Testing::Case loopBody{"BranchPastEndpgm_LoopBody_AddsOncePerIteration", [] {
+    RunCases(LoopBodyCode);
+}};
+
+} // namespace

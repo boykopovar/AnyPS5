@@ -15,7 +15,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -177,33 +177,29 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 16; ++i) ExpectHalf(tid, out[i], Expected[tid][i], Names[i]);
     }
 }
 
-}
+const Testing::Case noFloatMode{"Float16Modifiers_NoFloatMode_ClampAndOutputModifiersMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, std::nullopt);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check();
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
-        Check();
-        bool refused = false;
-        try {
-            Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
-        } catch (const std::runtime_error& error) {
-            refused = std::string(error.what()).find("output modifier on an f16") != std::string::npos;
-        }
-        Require(refused, "float16 modifiers: an output modifier with f16 output denormals flushed was not refused");
-        std::puts("float16 modifiers tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case denormalsKept{"Float16Modifiers_IeeeWithF16DenormalsKept_ClampAndOutputModifiersMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
+    Check();
+}};
+
+const Testing::Case denormalsFlushed{"Float16Modifiers_OutputModifierWithF16DenormalsFlushed_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { Run(device, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false}); },
+        "float16 modifiers: an output modifier with f16 output denormals flushed was not refused");
+    Require(std::string(error.what()).find("output modifier on an f16") != std::string::npos,
+        std::string("float16 modifiers: an output modifier with f16 output denormals flushed was not refused: ") + error.what());
+}};
+
+} // namespace

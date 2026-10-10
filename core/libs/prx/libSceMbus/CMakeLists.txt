@@ -3,13 +3,8 @@ target_include_directories(libSceMbus PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceMbus)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_mbus_tests ${LIBS_INCLUDE_DIR}/tests/GuestMbus.cpp)
-    target_include_directories(guest_mbus_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_mbus_tests PRIVATE libSceMbus libc)
-    configure_windows_unwind(guest_mbus_tests)
-    add_test(NAME guest_mbus COMMAND guest_mbus_tests)
-    if(WIN32)
-        set_tests_properties(guest_mbus PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMbus>")
-    endif()
+    anyps5_add_library_test(guest_mbus_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestMbus.cpp
+        LINK libSceMbus libc
+    )
 endif()

@@ -36,26 +36,22 @@ endif()
 
 if(BUILD_TESTING)
     find_package(Python3 QUIET COMPONENTS Interpreter)
-    if(Python3_Interpreter_FOUND)
-        add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
-        add_test(NAME pr_overlap_tools COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap.py)
-        add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
-        add_test(NAME progress_encoding COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_encoding.py)
-        add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
-        add_test(NAME conventions_function_bodies COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py)
-        add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
-        add_test(NAME pr_overlap_exports COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_exports.py)
-        add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
-    endif()
+    add_subdirectory(core/testing)
+    foreach(toolTest IN ITEMS
+            "pr_overlap_encoding|tools/tests/test_pr_overlap_encoding.py"
+            "pr_overlap_tools|tools/tests/test_pr_overlap.py"
+            "progress_report|tools/tests/test_progress.py"
+            "progress_encoding|tools/tests/test_progress_encoding.py"
+            "import_audit|tools/tests/test_import_audit.py"
+            "conventions_function_bodies|tools/tests/test_check_conventions_comments.py"
+            "hardware_oracle|tools/hw-oracle/test_hw_oracle.py"
+            "pr_overlap_exports|tools/tests/test_pr_overlap_exports.py"
+            "nid_database_cache|tools/tests/test_nid_names.py")
+        string(REPLACE "|" ";" toolTest "${toolTest}")
+        list(GET toolTest 0 toolTestName)
+        list(GET toolTest 1 toolTestScript)
+        anyps5_add_python_test(${toolTestName} LABEL tooling SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/${toolTestScript})
+    endforeach()
 endif()
 
 if(ANYPS5_RELINKER_ONLY)

@@ -23,14 +23,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -248,25 +247,26 @@ void ExportTests(AgcDriver::VulkanDevice& device, std::uint8_t mapping, const st
                 const auto expected = row < Rows.size() ? Exported(Rows[row])[(mapping >> (component * 2u)) & 3u] : static_cast<std::uint16_t>(Kept * 0x101u);
                 if (actual == expected) continue;
                 const auto words = row < Rows.size() ? " from the packed words " + Hex(Rows[row].low) + ", " + Hex(Rows[row].high) : std::string(" outside the drawn rows");
-                throw std::runtime_error("a UINT16_ABGR export under the " + name + " mapping stored " + Hex(actual) + " in component " + std::to_string(component) + " of pixel (" + std::to_string(x) + ", " + std::to_string(row) + ")" + words + ", expected " + Hex(expected));
+                Testing::Fail("a UINT16_ABGR export under the " + name + " mapping stored " + Hex(actual) + " in component " + std::to_string(component) + " of pixel (" + std::to_string(x) + ", " + std::to_string(row) + ")" + words + ", expected " + Hex(expected));
             }
         }
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        ExportTests(*device, 0xe4u, "identity");
-        ExportTests(*device, 0x1bu, "STD_REV");
-        ExportTests(*device, 0x93u, "ALT_REV");
-        std::puts("UINT16_ABGR export tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case identityMapping{"PixelUint16Export_IdentityMapping_StoresPackedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    ExportTests(device, 0xe4u, "identity");
+}};
+
+const Testing::Case standardReversedMapping{"PixelUint16Export_StandardReversedMapping_StoresSwappedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    ExportTests(device, 0x1bu, "STD_REV");
+}};
+
+const Testing::Case alternateReversedMapping{"PixelUint16Export_AlternateReversedMapping_StoresSwappedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    ExportTests(device, 0x93u, "ALT_REV");
+}};
+
+} // namespace

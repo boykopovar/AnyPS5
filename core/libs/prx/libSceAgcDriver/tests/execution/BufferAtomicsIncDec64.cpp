@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -148,28 +147,16 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t index = 0; index < 8; ++index) Expect(tid, out[index], Expected[tid][index], Names[index]);
     }
 }
 
-}
+const Testing::Case incDecX2{"BufferAtomicsIncDec64_IncDecX2_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64Atomics, "the device has no shaderBufferInt64Atomics");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("buffer atomics inc dec64 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

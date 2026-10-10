@@ -1,7 +1,9 @@
+#include <Testing/Test.hpp>
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+
 #include <array>
 #include <cstdint>
 #include <map>
@@ -11,6 +13,8 @@
 namespace {
 
 using namespace AgcDriver::Graphics;
+using Testing::Case;
+using Testing::Require;
 
 constexpr std::uint32_t FormatR16Unorm = 7;
 constexpr std::uint32_t FormatR16Uint = 11;
@@ -149,33 +153,55 @@ std::shared_ptr<Texture> lookup(const Context& context, const View& view) {
     return DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{});
 }
 
-}
 
-void RunDepthSurfaceReuseTests() {
-    static int deviceTag = 0;
+constexpr std::uint64_t Depth32 = 0x40000000;
+constexpr std::uint64_t Depth16 = 0x50000000;
+
+class DepthSurfaces {
+public:
+    DepthSurfaces() {
+        context.device = reinterpret_cast<VkDevice>(&deviceTag);
+        context.deviceProc = deviceProc;
+        context.formatProperties = formatProperties;
+        context.memory.memoryTypeCount = 1;
+        context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        context.limits.maxFramebufferWidth = 16384;
+        context.limits.maxFramebufferHeight = 16384;
+        DepthSurfaceView(context, {Depth32, 0, {384, 384}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+        DepthSurfaceView(context, {Depth16, 0, {256, 256}, VK_FORMAT_D16_UNORM, 1.0f, 0});
+    }
+
+    ~DepthSurfaces() {
+        ClearDepthSurfaces(context.device);
+    }
+
+    DepthSurfaces(const DepthSurfaces&) = delete;
+    DepthSurfaces& operator=(const DepthSurfaces&) = delete;
+
+    std::shared_ptr<Texture> Lookup(const View& view) const {
+        return lookup(context, view);
+    }
+
+private:
+    int deviceTag = 0;
     Context context{};
-    context.device = reinterpret_cast<VkDevice>(&deviceTag);
-    context.deviceProc = deviceProc;
-    context.formatProperties = formatProperties;
-    context.memory.memoryTypeCount = 1;
-    context.memory.memoryTypes[0].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    context.limits.maxFramebufferWidth = 16384;
-    context.limits.maxFramebufferHeight = 16384;
-    constexpr std::uint64_t depth32 = 0x40000000;
-    constexpr std::uint64_t depth16 = 0x50000000;
-    DepthSurfaceView(context, {depth32, 0, {384, 384}, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
-    DepthSurfaceView(context, {depth16, 0, {256, 256}, VK_FORMAT_D16_UNORM, 1.0f, 0});
+};
 
-    Require(lookup(context, {depth32, FormatR32Float, 384, 384}) != nullptr, "an R32F view of a D32 surface's own extent must sample its depth plane");
-    Require(lookup(context, {depth16, FormatR16Unorm, 256, 256}) != nullptr, "an R16 view of a D16 surface's own extent must sample its depth plane");
-    Require(lookup(context, {depth32, FormatR32Uint, 384, 384}) != nullptr, "a 32-bit raw depth bits view of a D32 surface must sample its depth plane");
-    Require(lookup(context, {depth16, FormatR16Uint, 256, 256}) != nullptr, "a 16-bit raw depth bits view of a D16 surface must sample its depth plane");
+const Case sameExtentViews{"DepthSurfaceTexture_SameExtentDepthView_SamplesTheDepthPlane", [] {
+    const DepthSurfaces surfaces;
+    Require(surfaces.Lookup({Depth32, FormatR32Float, 384, 384}) != nullptr, "an R32F view of a D32 surface's own extent must sample its depth plane");
+    Require(surfaces.Lookup({Depth16, FormatR16Unorm, 256, 256}) != nullptr, "an R16 view of a D16 surface's own extent must sample its depth plane");
+    Require(surfaces.Lookup({Depth32, FormatR32Uint, 384, 384}) != nullptr, "a 32-bit raw depth bits view of a D32 surface must sample its depth plane");
+    Require(surfaces.Lookup({Depth16, FormatR16Uint, 256, 256}) != nullptr, "a 16-bit raw depth bits view of a D16 surface must sample its depth plane");
+}};
 
-    Require(lookup(context, {depth32, FormatR32Float, 192, 192}) == nullptr, "a view of another extent over a depth surface must be read as reused memory");
-    Require(lookup(context, {depth32, FormatR11G11B10Float, 384, 384}) == nullptr, "an R11G11B10 view of a D32 surface's own extent must be read as reused memory");
-    Require(lookup(context, {depth32, FormatR32Float, 512, 512, TileDepth64KB, Type2DArray, 5}) == nullptr, "a 2D array view of another extent over a depth surface must be read as reused memory");
-    Require(lookup(context, {depth32, FormatR32Uint, 384, 384, TileRenderTarget64KB}) == nullptr, "an R32 uint view without a depth layout must be read as reused memory");
-    Require(lookup(context, {depth16, FormatR32Float, 256, 256}) == nullptr, "an R32F view of a D16 surface's own extent must be read as reused memory");
+const Case reusedMemoryViews{"DepthSurfaceTexture_OtherExtentFormatOrLayout_IsReadAsReusedMemory", [] {
+    const DepthSurfaces surfaces;
+    Require(surfaces.Lookup({Depth32, FormatR32Float, 192, 192}) == nullptr, "a view of another extent over a depth surface must be read as reused memory");
+    Require(surfaces.Lookup({Depth32, FormatR11G11B10Float, 384, 384}) == nullptr, "an R11G11B10 view of a D32 surface's own extent must be read as reused memory");
+    Require(surfaces.Lookup({Depth32, FormatR32Float, 512, 512, TileDepth64KB, Type2DArray, 5}) == nullptr, "a 2D array view of another extent over a depth surface must be read as reused memory");
+    Require(surfaces.Lookup({Depth32, FormatR32Uint, 384, 384, TileRenderTarget64KB}) == nullptr, "an R32 uint view without a depth layout must be read as reused memory");
+    Require(surfaces.Lookup({Depth16, FormatR32Float, 256, 256}) == nullptr, "an R32F view of a D16 surface's own extent must be read as reused memory");
+}};
 
-    ClearDepthSurfaces(context.device);
-}
+} // namespace

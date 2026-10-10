@@ -5,14 +5,14 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -43,7 +43,7 @@ std::uint32_t HalfBits(float value) {
     int exponent = 0;
     const float mantissa = std::frexp(std::fabs(value), &exponent);
     const auto fraction = static_cast<std::uint32_t>(std::ldexp(mantissa, 11));
-    Require(exponent >= -13 && exponent <= 16 && std::ldexp(static_cast<float>(fraction), exponent - 11) == std::fabs(value), "sdwa destination: a model value is not a normal f16");
+    Testing::Require(exponent >= -13 && exponent <= 16 && std::ldexp(static_cast<float>(fraction), exponent - 11) == std::fabs(value), "sdwa destination: a model value is not a normal f16");
     return (std::signbit(value) ? 0x8000u : 0u) | (static_cast<std::uint32_t>(exponent + 14) << 10u) | (fraction & 0x3ffu);
 }
 
@@ -68,6 +68,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
+    FillInput();
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -97,31 +98,22 @@ void Check() {
         const auto b = HalfBits(std::bit_cast<float>(in[1]));
         const auto sum = HalfBits(Quarter(tid * 7u + 3u) + Quarter(tid * 11u + 4u));
         const auto where = [&](std::uint32_t result) { return "sdwa destination: thread " + std::to_string(tid) + " result " + std::to_string(result) + " is " + Hex(out[result]); };
-        Require(out[0] == a, where(0) + ", expected " + Hex(a) + ": v_cvt_f16_f32_sdwa dst_sel:DWORD dst_unused:UNUSED_PAD must zero the high half");
-        Require(out[1] == ((Garbage & 0xffff0000u) | a), where(1) + ", expected " + Hex((Garbage & 0xffff0000u) | a) + ": v_cvt_f16_f32_e32 must keep the high half");
-        Require(out[2] == ((b << 16u) | (Garbage & 0xffffu)), where(2) + ", expected " + Hex((b << 16u) | (Garbage & 0xffffu)) + ": dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE must keep the low half");
-        Require(out[3] == (a | (b << 16u)), where(3) + ", expected " + Hex(a | (b << 16u)) + ": two padded conversions packed with v_lshl_add_u32");
-        Require(out[4] == sum, where(4) + ", expected " + Hex(sum) + ": v_add_f16_sdwa dst_sel:DWORD dst_unused:UNUSED_PAD must zero the high half");
+        Testing::Require(out[0] == a, where(0) + ", expected " + Hex(a) + ": v_cvt_f16_f32_sdwa dst_sel:DWORD dst_unused:UNUSED_PAD must zero the high half");
+        Testing::Require(out[1] == ((Garbage & 0xffff0000u) | a), where(1) + ", expected " + Hex((Garbage & 0xffff0000u) | a) + ": v_cvt_f16_f32_e32 must keep the high half");
+        Testing::Require(out[2] == ((b << 16u) | (Garbage & 0xffffu)), where(2) + ", expected " + Hex((b << 16u) | (Garbage & 0xffffu)) + ": dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE must keep the low half");
+        Testing::Require(out[3] == (a | (b << 16u)), where(3) + ", expected " + Hex(a | (b << 16u)) + ": two padded conversions packed with v_lshl_add_u32");
+        Testing::Require(out[4] == sum, where(4) + ", expected " + Hex(sum) + ": v_add_f16_sdwa dst_sel:DWORD dst_unused:UNUSED_PAD must zero the high half");
         const auto low = in[0] & 0xffu;
-        Require(out[5] == ((Garbage & 0xffffff00u) | low), where(5) + ", expected " + Hex((Garbage & 0xffffff00u) | low) + ": v_mov_b32_sdwa dst_sel:BYTE_0 dst_unused:UNUSED_PRESERVE must keep the other bytes");
-        Require(out[6] == ((Garbage & 0xff00ffffu) | (low << 16u)), where(6) + ", expected " + Hex((Garbage & 0xff00ffffu) | (low << 16u)) + ": v_mov_b32_sdwa dst_sel:BYTE_2 dst_unused:UNUSED_PRESERVE must keep the other bytes");
-        Require(out[7] == (low << 8u), where(7) + ", expected " + Hex(low << 8u) + ": v_mov_b32_sdwa dst_sel:BYTE_1 dst_unused:UNUSED_PAD must zero the other bytes");
+        Testing::Require(out[5] == ((Garbage & 0xffffff00u) | low), where(5) + ", expected " + Hex((Garbage & 0xffffff00u) | low) + ": v_mov_b32_sdwa dst_sel:BYTE_0 dst_unused:UNUSED_PRESERVE must keep the other bytes");
+        Testing::Require(out[6] == ((Garbage & 0xff00ffffu) | (low << 16u)), where(6) + ", expected " + Hex((Garbage & 0xff00ffffu) | (low << 16u)) + ": v_mov_b32_sdwa dst_sel:BYTE_2 dst_unused:UNUSED_PRESERVE must keep the other bytes");
+        Testing::Require(out[7] == (low << 8u), where(7) + ", expected " + Hex(low << 8u) + ": v_mov_b32_sdwa dst_sel:BYTE_1 dst_unused:UNUSED_PAD must zero the other bytes");
     }
 }
 
-}
+const Testing::Case sdwaDestinationSelects{"SdwaDestination_DstSelAndDstUnusedForms_WriteExpectedBits", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device);
-        Check();
-        std::puts("sdwa destination tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

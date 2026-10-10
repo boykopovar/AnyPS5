@@ -4,7 +4,10 @@
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
 
-#include <cstdlib>
+#include <Testing/Test.hpp>
+
+#include <initializer_list>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceKeyboardInit(void);
@@ -15,133 +18,408 @@ int APS5_VABI sceKeyboardReadState(std::int32_t, KeyboardData*);
 int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint32_t, std::uint32_t, std::uint16_t, KeyboardCharData*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+namespace {
 
-static SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Uint8 repeat = 0) {
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr unsigned windowId = 7;
+constexpr std::uint32_t leftShift = KEYBOARD_MOD_LEFT_SHIFT;
+constexpr std::uint32_t rightShift = KEYBOARD_MOD_RIGHT_SHIFT;
+constexpr std::uint32_t numLock = KEYBOARD_LED_NUM_LOCK;
+constexpr std::uint32_t capsLock = KEYBOARD_LED_CAPS_LOCK;
+
+class KeyboardSession {
+public:
+    KeyboardSession() {
+        RequireEqual(sceKeyboardInit(), KEYBOARD_OK, "initialize the keyboard library");
+        RequireEqual(sceKeyboardOpen(1, 0, 0, nullptr), KEYBOARD_HANDLE, "open the keyboard");
+    }
+
+    ~KeyboardSession() {
+        KeyboardInputEvent reconnect{};
+        reconnect.connectionChange = true;
+        reconnect.connected = true;
+        KeyboardPublishInput_nid_postfix(reconnect);
+        KeyboardInputEvent clearLed{};
+        clearLed.keyCode = 0x04;
+        clearLed.pressed = false;
+        clearLed.led = 0;
+        KeyboardPublishInput_nid_postfix(clearLed);
+        sceKeyboardClose(KEYBOARD_HANDLE);
+    }
+
+    KeyboardSession(const KeyboardSession&) = delete;
+    KeyboardSession& operator=(const KeyboardSession&) = delete;
+
+    void DrainInitialSample() {
+        KeyboardData initial{};
+        RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, &initial, 1), 1, "read the initial sample");
+    }
+};
+
+SDL_Event KeyEvent(Uint32 type, SDL_Scancode scancode, Uint16 mod = 0, Uint8 repeat = 0) {
     SDL_Event event{};
     event.type = type;
-    event.key.windowID = 7;
+    event.key.windowID = windowId;
     event.key.repeat = repeat;
     event.key.keysym.scancode = scancode;
     event.key.keysym.mod = mod;
     return event;
 }
 
-static std::uint16_t Char(std::uint32_t led, std::uint32_t modifierKey, std::uint16_t keyCode, std::int32_t arrange = KEYBOARD_ARRANGEMENT_101) {
+SDL_Event Window(SDL_WindowEventID windowEvent) {
+    SDL_Event event{};
+    event.type = SDL_WINDOWEVENT;
+    event.window.windowID = windowId;
+    event.window.event = windowEvent;
+    return event;
+}
+
+void RequireNoSample(const char* message) {
+    KeyboardData data{};
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, &data, 1), 0, message);
+}
+
+KeyboardData ReadOne(const char* message) {
+    KeyboardData data{};
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, &data, 1), 1, message);
+    return data;
+}
+
+struct CharExpectation {
+    std::uint32_t led;
+    std::uint32_t modifierKey;
+    std::uint16_t keyCode;
+    std::uint16_t expected;
+};
+
+std::string Describe(std::int32_t arrange, const CharExpectation& expectation) {
+    return "arrangement " + std::to_string(arrange) + " led " + std::to_string(expectation.led) + " modifiers " +
+           std::to_string(expectation.modifierKey) + " key " + std::to_string(expectation.keyCode);
+}
+
+void RequireCharacters(std::int32_t arrange, std::initializer_list<CharExpectation> expectations) {
+    const KeyboardSession session;
+    for (const auto& expectation : expectations) {
+        const auto input = Describe(arrange, expectation);
+        KeyboardCharData data{};
+        RequireEqual(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, expectation.led, expectation.modifierKey,
+                                            expectation.keyCode, &data),
+                     KEYBOARD_OK, input);
+        RequireEqual(data.char_code, expectation.expected, input);
+        RequireEqual(data.processed, data.char_code != 0, input + " processed flag");
+        RequireEqual(data.length, data.processed ? 1 : 0, input + " length");
+    }
+}
+
+const Case openBeforeInit{"Open_BeforeInit_FailsNotInitialized", [] {
+    RequireEqual(sceKeyboardOpen(1, 0, 0, nullptr), KEYBOARD_ERROR_NOT_INITIALIZED, "open before init");
+}};
+
+const Case initTwice{"Init_CalledTwice_Succeeds", [] {
+    RequireEqual(sceKeyboardInit(), KEYBOARD_OK, "first init");
+    RequireEqual(sceKeyboardInit(), KEYBOARD_OK, "second init");
+}};
+
+const Case openInvalidArguments{"Open_NonZeroTypeOrIndex_FailsInvalidArg", [] {
+    RequireEqual(sceKeyboardInit(), KEYBOARD_OK, "init");
+    RequireEqual(sceKeyboardOpen(1, 0, 1, nullptr), KEYBOARD_ERROR_INVALID_ARG, "index 1");
+    RequireEqual(sceKeyboardOpen(1, 1, 0, nullptr), KEYBOARD_ERROR_INVALID_ARG, "type 1");
+}};
+
+const Case key2CharBeforeOpen{"GetKey2Char_BeforeOpen_FailsInvalidHandle", [] {
+    RequireEqual(sceKeyboardInit(), KEYBOARD_OK, "init");
     KeyboardCharData data{};
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, arrange, led, modifierKey, keyCode, &data) == KEYBOARD_OK);
-    Require(data.processed == (data.char_code != 0) && data.length == (data.processed ? 1 : 0));
-    return data.char_code;
-}
+    RequireEqual(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &data),
+                 KEYBOARD_ERROR_INVALID_HANDLE, "key to char before open");
+}};
 
-static std::uint16_t Jis(std::uint32_t modifierKey, std::uint16_t keyCode, std::uint32_t led = 0) {
-    return Char(led, modifierKey, keyCode, KEYBOARD_ARRANGEMENT_106);
-}
+const Case openTwice{"Open_AlreadyOpened_FailsAlreadyOpened", [] {
+    const KeyboardSession session;
+    RequireEqual(sceKeyboardOpen(1, 0, 0, nullptr), KEYBOARD_ERROR_ALREADY_OPENED, "second open");
+}};
 
-int main() {
-    KeyboardData data[16]{};
-    KeyboardCharData charData{};
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED);
-    Require(sceKeyboardInit() == KEYBOARD_OK);
-    Require(sceKeyboardInit() == KEYBOARD_OK);
-    Require(sceKeyboardOpen(1, 0, 1, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardOpen(1, 1, 0, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_ALREADY_OPENED);
-    Require(sceKeyboardRead(42, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, nullptr, 1) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 17) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardReadState(KEYBOARD_HANDLE, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1);
-    Require(data[0].connected && data[0].length == 0 && data[0].modifier_key == 0);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
+const Case readArguments{"Read_InvalidHandleOrArguments_Fails", [] {
+    const KeyboardSession session;
+    KeyboardData data[KEYBOARD_MAX_DATA_NUM + 1]{};
+    RequireEqual(sceKeyboardRead(42, data, 1), KEYBOARD_ERROR_INVALID_HANDLE, "unknown handle");
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, nullptr, 1), KEYBOARD_ERROR_INVALID_ARG, "null buffer");
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, data, KEYBOARD_MAX_DATA_NUM + 1), KEYBOARD_ERROR_INVALID_ARG,
+                 "too many samples");
+    RequireEqual(sceKeyboardReadState(KEYBOARD_HANDLE, nullptr), KEYBOARD_ERROR_INVALID_ARG, "null state buffer");
+}};
 
+const Case openInitialSample{"Open_Fresh_QueuesOneConnectedEmptySample", [] {
+    const KeyboardSession session;
+    const auto initial = ReadOne("initial sample");
+    Require(initial.connected, "initial sample is connected");
+    RequireEqual(initial.length, 0, "initial key count");
+    RequireEqual(initial.modifier_key, 0u, "initial modifiers");
+    RequireNoSample("queue empty after the initial sample");
+}};
+
+const Case otherWindow{"HandleEvent_OtherWindow_IsIgnored", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
     KeyboardInput input;
     input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A), 8);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
-    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_LSHIFT, KMOD_NUM), 7);
-    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT), 7);
-    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT, 1), 7);
-    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_RETURN, KMOD_NUM | KMOD_LSHIFT), 7);
-    input.HandleEvent(KeyEvent(SDL_KEYUP, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT), 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 16) == 4);
-    Require(data[0].length == 0 && data[0].modifier_key == 2 && data[0].led == KEYBOARD_LED_NUM_LOCK);
-    Require(data[1].length == 1 && data[1].key_code[0] == 0x04);
-    Require(data[2].length == 2 && data[2].key_code[0] == 0x04 && data[2].key_code[1] == 0x28);
-    Require(data[3].length == 1 && data[3].key_code[0] == 0x28 && data[3].modifier_key == 2);
-    Require(data[0].timestamp <= data[3].timestamp);
-    Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_OK);
-    Require(data[0].connected && data[0].length == 1 && data[0].key_code[0] == 0x28 && data[0].modifier_key == 2);
+    RequireNoSample("key for window 7 while listening to window 8");
+}};
 
-    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_CAPSLOCK, KMOD_NUM | KMOD_CAPS | KMOD_LSHIFT), 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1);
-    Require(data[0].led == (KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK));
+const Case keySequence{"HandleEvent_KeySequence_QueuesModifiersKeysAndLeds", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
+    KeyboardInput input;
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_LSHIFT, KMOD_NUM), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT, 1), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_RETURN, KMOD_NUM | KMOD_LSHIFT), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYUP, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT), windowId);
+    KeyboardData data[KEYBOARD_MAX_DATA_NUM]{};
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, data, KEYBOARD_MAX_DATA_NUM), 4, "four samples, repeat ignored");
+    RequireEqual(data[0].length, 0, "shift sample key count");
+    RequireEqual(data[0].modifier_key, 2u, "shift sample modifiers");
+    RequireEqual(data[0].led, numLock, "shift sample led");
+    RequireEqual(data[1].length, 1, "A sample key count");
+    RequireEqual(data[1].key_code[0], 0x04, "A sample key");
+    RequireEqual(data[2].length, 2, "return sample key count");
+    RequireEqual(data[2].key_code[0], 0x04, "return sample first key");
+    RequireEqual(data[2].key_code[1], 0x28, "return sample second key");
+    RequireEqual(data[3].length, 1, "release sample key count");
+    RequireEqual(data[3].key_code[0], 0x28, "release sample remaining key");
+    RequireEqual(data[3].modifier_key, 2u, "release sample modifiers");
+    Require(data[0].timestamp <= data[3].timestamp, "timestamps are monotonic");
+}};
 
-    SDL_Event window{};
-    window.type = SDL_WINDOWEVENT;
-    window.window.windowID = 7;
-    window.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
-    input.HandleEvent(window, 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1);
-    Require(data[0].connected && data[0].length == 0 && data[0].modifier_key == 0);
-    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_B), 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
-    window.window.event = SDL_WINDOWEVENT_FOCUS_GAINED;
-    input.HandleEvent(window, 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
-    window.window.event = SDL_WINDOWEVENT_CLOSE;
-    input.HandleEvent(window, 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && !data[0].connected);
-    window.window.event = SDL_WINDOWEVENT_FOCUS_GAINED;
-    input.HandleEvent(window, 7);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].connected);
+const Case readState{"ReadState_KeysHeld_ReturnsCurrentSnapshot", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
+    KeyboardInput input;
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_LSHIFT, KMOD_NUM), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_RETURN, KMOD_NUM | KMOD_LSHIFT), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYUP, SDL_SCANCODE_A, KMOD_NUM | KMOD_LSHIFT), windowId);
+    KeyboardData state{};
+    RequireEqual(sceKeyboardReadState(KEYBOARD_HANDLE, &state), KEYBOARD_OK, "read state");
+    Require(state.connected, "state is connected");
+    RequireEqual(state.length, 1, "state key count");
+    RequireEqual(state.key_code[0], 0x28, "state key");
+    RequireEqual(state.modifier_key, 2u, "state modifiers");
+}};
 
+const Case capsLockLed{"HandleEvent_CapsLockPressed_ReportsBothLeds", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
+    KeyboardInput input;
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_CAPSLOCK, KMOD_NUM | KMOD_CAPS | KMOD_LSHIFT), windowId);
+    RequireEqual(ReadOne("caps lock sample").led, numLock | capsLock, "num and caps lock leds");
+}};
+
+const Case focusLost{"HandleEvent_FocusLost_ReleasesKeysAndDropsInput", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
+    KeyboardInput input;
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_LSHIFT), windowId);
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A, KMOD_LSHIFT), windowId);
+    KeyboardData held[2]{};
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, held, 2), 2, "held key samples");
+    input.HandleEvent(Window(SDL_WINDOWEVENT_FOCUS_LOST), windowId);
+    const auto released = ReadOne("focus lost sample");
+    Require(released.connected, "still connected after focus loss");
+    RequireEqual(released.length, 0, "keys released on focus loss");
+    RequireEqual(released.modifier_key, 0u, "modifiers released on focus loss");
+    input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_B), windowId);
+    RequireNoSample("key while unfocused");
+}};
+
+const Case focusGained{"HandleEvent_FocusGainedWhileConnected_QueuesNothing", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
+    KeyboardInput input;
+    input.HandleEvent(Window(SDL_WINDOWEVENT_FOCUS_LOST), windowId);
+    ReadOne("focus lost sample");
+    input.HandleEvent(Window(SDL_WINDOWEVENT_FOCUS_GAINED), windowId);
+    RequireNoSample("focus regained while connected");
+}};
+
+const Case closeAndReconnect{"HandleEvent_WindowCloseThenFocus_DisconnectsThenReconnects", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
+    KeyboardInput input;
+    input.HandleEvent(Window(SDL_WINDOWEVENT_CLOSE), windowId);
+    Require(!ReadOne("close sample").connected, "disconnected after window close");
+    input.HandleEvent(Window(SDL_WINDOWEVENT_FOCUS_GAINED), windowId);
+    Require(ReadOne("reconnect sample").connected, "connected after focus gained");
+}};
+
+const Case overflow{"Publish_MoreKeysThanCapacity_KeepsSixteenKeysAndSamples", [] {
+    KeyboardSession session;
+    session.DrainInitialSample();
     for (std::uint16_t key = 0x04; key < 0x04 + 20; ++key) {
         KeyboardInputEvent press{};
         press.keyCode = key;
         press.pressed = true;
         KeyboardPublishInput_nid_postfix(press);
     }
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 16) == 16);
-    Require(data[15].length == 16 && data[15].key_code[15] == 0x13);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 0);
+    KeyboardData data[KEYBOARD_MAX_DATA_NUM]{};
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, data, KEYBOARD_MAX_DATA_NUM), KEYBOARD_MAX_DATA_NUM, "full queue");
+    RequireEqual(data[15].length, 16, "newest sample key count");
+    RequireEqual(data[15].key_code[15], 0x13, "sixteenth key");
+    RequireNoSample("queue drained");
+}};
 
-    Require(Char(0, 0, 0x04) == 'a' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x1d) == 'Z');
-    Require(Char(KEYBOARD_LED_CAPS_LOCK, 0, 0x04) == 'A' && Char(KEYBOARD_LED_CAPS_LOCK, KEYBOARD_MOD_RIGHT_SHIFT, 0x04) == 'a');
-    Require(Char(KEYBOARD_LED_CAPS_LOCK, 0, 0x1e) == '1' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x1e) == '!');
-    Require(Char(0, 0, 0x27) == '0' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x27) == ')');
-    Require(Char(0, 0, 0x28) == '\n' && Char(0, 0, 0x2a) == '\b' && Char(0, 0, 0x2b) == '\t' && Char(0, 0, 0x2c) == ' ');
-    Require(Char(0, 0, 0x29) == 0 && Char(0, 0, 0x32) == 0 && Char(0, 0, 0x3a) == 0 && Char(0, 0, 0xe1) == 0);
-    Require(Char(0, 0, 0x31) == '\\' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x31) == '|');
-    Require(Char(0, 0, 0x34) == '\'' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x34) == '"');
-    Require(Char(0, 0, 0x38) == '/' && Char(0, KEYBOARD_MOD_LEFT_SHIFT, 0x38) == '?');
-    Require(Char(0, 0, 0x59) == 0 && Char(KEYBOARD_LED_NUM_LOCK, 0, 0x59) == '1');
-    Require(Char(KEYBOARD_LED_NUM_LOCK, 0, 0x62) == '0' && Char(KEYBOARD_LED_NUM_LOCK, 0, 0x63) == '.');
-    Require(Char(0, 0, 0x54) == '/' && Char(0, 0, 0x57) == '+' && Char(0, 0, 0x58) == '\n');
-    Require(Char(0, 0, 0x87) == 0 && Char(0, 0, 0x89) == 0);
+const Case usLetters{"GetKey2Char_Us101Letters_HonorShiftAndCapsLock", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_101, {
+        {0, 0, 0x04, 'a'},
+        {0, leftShift, 0x1d, 'Z'},
+        {capsLock, 0, 0x04, 'A'},
+        {capsLock, rightShift, 0x04, 'a'},
+    });
+}};
 
-    constexpr std::uint32_t shift = KEYBOARD_MOD_LEFT_SHIFT;
-    Require(Jis(0, 0x04) == 'a' && Jis(shift, 0x04) == 'A' && Jis(KEYBOARD_MOD_RIGHT_SHIFT, 0x04, KEYBOARD_LED_CAPS_LOCK) == 'a');
-    Require(Jis(0, 0x1e) == '1' && Jis(shift, 0x1e) == '!' && Jis(shift, 0x1f) == '"' && Jis(shift, 0x23) == '&');
-    Require(Jis(shift, 0x24) == '\'' && Jis(shift, 0x25) == '(' && Jis(shift, 0x26) == ')' && Jis(0, 0x27) == '0' && Jis(shift, 0x27) == 0);
-    Require(Jis(0, 0x28) == '\n' && Jis(0, 0x29) == 0 && Jis(0, 0x2a) == '\b' && Jis(0, 0x2b) == '\t' && Jis(shift, 0x2c) == ' ');
-    Require(Jis(0, 0x2d) == '-' && Jis(shift, 0x2d) == '=' && Jis(0, 0x2e) == '^' && Jis(shift, 0x2e) == '~');
-    Require(Jis(0, 0x2f) == '@' && Jis(shift, 0x2f) == '`' && Jis(0, 0x30) == '[' && Jis(shift, 0x30) == '{');
-    Require(Jis(0, 0x31) == ']' && Jis(shift, 0x31) == '}' && Jis(0, 0x32) == ']' && Jis(shift, 0x32) == '}');
-    Require(Jis(0, 0x33) == ';' && Jis(shift, 0x33) == '+' && Jis(0, 0x34) == ':' && Jis(shift, 0x34) == '*');
-    Require(Jis(0, 0x35) == 0 && Jis(shift, 0x35) == 0 && Jis(0, 0x36) == ',' && Jis(shift, 0x37) == '>' && Jis(shift, 0x38) == '?');
-    Require(Jis(0, 0x87) == '\\' && Jis(shift, 0x87) == '_' && Jis(0, 0x89) == '\\' && Jis(shift, 0x89) == '|');
-    Require(Jis(0, 0x59, KEYBOARD_LED_NUM_LOCK) == '1' && Jis(0, 0x59) == 0 && Jis(0, 0x55) == '*' && Jis(0, 0xe1) == 0);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
-    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+const Case usSymbols{"GetKey2Char_Us101DigitsAndSymbols_MapUsLayout", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_101, {
+        {capsLock, 0, 0x1e, '1'},
+        {0, leftShift, 0x1e, '!'},
+        {0, 0, 0x27, '0'},
+        {0, leftShift, 0x27, ')'},
+        {0, 0, 0x31, '\\'},
+        {0, leftShift, 0x31, '|'},
+        {0, 0, 0x34, '\''},
+        {0, leftShift, 0x34, '"'},
+        {0, 0, 0x38, '/'},
+        {0, leftShift, 0x38, '?'},
+    });
+}};
 
-    Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardReadState(KEYBOARD_HANDLE, data) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_ERROR_INVALID_HANDLE);
-    Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
-    Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].length == 0);
-    Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
-}
+const Case usControls{"GetKey2Char_Us101ControlKeys_MapOrReturnZero", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_101, {
+        {0, 0, 0x28, '\n'},
+        {0, 0, 0x2a, '\b'},
+        {0, 0, 0x2b, '\t'},
+        {0, 0, 0x2c, ' '},
+        {0, 0, 0x29, 0},
+        {0, 0, 0x32, 0},
+        {0, 0, 0x3a, 0},
+        {0, 0, 0xe1, 0},
+        {0, 0, 0x87, 0},
+        {0, 0, 0x89, 0},
+    });
+}};
+
+const Case usKeypad{"GetKey2Char_Us101Keypad_DigitsNeedNumLock", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_101, {
+        {0, 0, 0x59, 0},
+        {numLock, 0, 0x59, '1'},
+        {numLock, 0, 0x62, '0'},
+        {numLock, 0, 0x63, '.'},
+        {0, 0, 0x54, '/'},
+        {0, 0, 0x57, '+'},
+        {0, 0, 0x58, '\n'},
+    });
+}};
+
+const Case jisLetters{"GetKey2Char_Jis106Letters_HonorShiftAndCapsLock", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_106, {
+        {0, 0, 0x04, 'a'},
+        {0, leftShift, 0x04, 'A'},
+        {capsLock, rightShift, 0x04, 'a'},
+    });
+}};
+
+const Case jisDigits{"GetKey2Char_Jis106ShiftedDigits_MapJisLayout", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_106, {
+        {0, 0, 0x1e, '1'},
+        {0, leftShift, 0x1e, '!'},
+        {0, leftShift, 0x1f, '"'},
+        {0, leftShift, 0x23, '&'},
+        {0, leftShift, 0x24, '\''},
+        {0, leftShift, 0x25, '('},
+        {0, leftShift, 0x26, ')'},
+        {0, 0, 0x27, '0'},
+        {0, leftShift, 0x27, 0},
+    });
+}};
+
+const Case jisControls{"GetKey2Char_Jis106ControlKeys_MapOrReturnZero", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_106, {
+        {0, 0, 0x28, '\n'},
+        {0, 0, 0x29, 0},
+        {0, 0, 0x2a, '\b'},
+        {0, 0, 0x2b, '\t'},
+        {0, leftShift, 0x2c, ' '},
+        {0, 0, 0xe1, 0},
+    });
+}};
+
+const Case jisSymbols{"GetKey2Char_Jis106Symbols_MapJisLayout", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_106, {
+        {0, 0, 0x2d, '-'},
+        {0, leftShift, 0x2d, '='},
+        {0, 0, 0x2e, '^'},
+        {0, leftShift, 0x2e, '~'},
+        {0, 0, 0x2f, '@'},
+        {0, leftShift, 0x2f, '`'},
+        {0, 0, 0x30, '['},
+        {0, leftShift, 0x30, '{'},
+        {0, 0, 0x31, ']'},
+        {0, leftShift, 0x31, '}'},
+        {0, 0, 0x32, ']'},
+        {0, leftShift, 0x32, '}'},
+        {0, 0, 0x33, ';'},
+        {0, leftShift, 0x33, '+'},
+        {0, 0, 0x34, ':'},
+        {0, leftShift, 0x34, '*'},
+        {0, 0, 0x35, 0},
+        {0, leftShift, 0x35, 0},
+        {0, 0, 0x36, ','},
+        {0, leftShift, 0x37, '>'},
+        {0, leftShift, 0x38, '?'},
+        {0, 0, 0x87, '\\'},
+        {0, leftShift, 0x87, '_'},
+        {0, 0, 0x89, '\\'},
+        {0, leftShift, 0x89, '|'},
+    });
+}};
+
+const Case jisKeypad{"GetKey2Char_Jis106Keypad_DigitsNeedNumLock", [] {
+    RequireCharacters(KEYBOARD_ARRANGEMENT_106, {
+        {numLock, 0, 0x59, '1'},
+        {0, 0, 0x59, 0},
+        {0, 0, 0x55, '*'},
+    });
+}};
+
+const Case key2CharInvalidArguments{"GetKey2Char_NullOutputOrUnknownArrangement_FailsInvalidArg", [] {
+    const KeyboardSession session;
+    KeyboardCharData data{};
+    RequireEqual(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr),
+                 KEYBOARD_ERROR_INVALID_ARG, "null output with US layout");
+    RequireEqual(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr),
+                 KEYBOARD_ERROR_INVALID_ARG, "null output with JIS layout");
+    RequireEqual(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &data), KEYBOARD_ERROR_INVALID_ARG,
+                 "arrangement 2");
+}};
+
+const Case closeHandle{"Close_OpenHandle_InvalidatesHandle", [] {
+    const KeyboardSession session;
+    RequireEqual(sceKeyboardClose(KEYBOARD_HANDLE), KEYBOARD_OK, "close");
+    KeyboardData data{};
+    RequireEqual(sceKeyboardRead(KEYBOARD_HANDLE, &data, 1), KEYBOARD_ERROR_INVALID_HANDLE, "read after close");
+    RequireEqual(sceKeyboardReadState(KEYBOARD_HANDLE, &data), KEYBOARD_ERROR_INVALID_HANDLE, "read state after close");
+    RequireEqual(sceKeyboardClose(KEYBOARD_HANDLE), KEYBOARD_ERROR_INVALID_HANDLE, "second close");
+}};
+
+const Case reopen{"Open_AfterClose_QueuesFreshEmptySample", [] {
+    {
+        KeyboardSession first;
+        KeyboardInput input;
+        input.HandleEvent(KeyEvent(SDL_KEYDOWN, SDL_SCANCODE_A), windowId);
+    }
+    const KeyboardSession session;
+    RequireEqual(ReadOne("initial sample after reopen").length, 0, "keys reset by reopen");
+}};
+
+} // namespace

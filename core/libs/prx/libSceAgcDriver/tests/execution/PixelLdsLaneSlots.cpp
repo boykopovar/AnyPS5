@@ -5,13 +5,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
@@ -139,27 +138,24 @@ void Check(std::uint32_t waveSize) {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        for (const auto waveSize : {64u, 32u}) {
-            std::fprintf(stderr, "pixel LDS lane slots wave%u\n", waveSize);
-            for (std::uint32_t pass = 0; pass < 3; ++pass) {
-                Draw(*device, waveSize);
-                Check(waveSize);
-            }
-        }
-        std::puts("pixel LDS lane slot tests passed: 6 draws, 12288 pixels, 36864 LDS results");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void DrawAndCheck(std::uint32_t waveSize) {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    for (std::uint32_t pass = 0; pass < 3; ++pass) {
+        Draw(device, waveSize);
+        Check(waveSize);
     }
 }
+
+const Testing::Case wave64{"PixelLdsLaneSlots_Wave64_EachLaneUsesItsOwnSlot", [] {
+    DrawAndCheck(64u);
+}};
+
+const Testing::Case wave32{"PixelLdsLaneSlots_Wave32_EachLaneUsesItsOwnSlot", [] {
+    DrawAndCheck(32u);
+}};
+
+} // namespace

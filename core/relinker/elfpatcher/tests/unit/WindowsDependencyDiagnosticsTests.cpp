@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <Testing/Test.hpp>
 #include <elfpatcher/windows/WindowsDependencyStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
@@ -9,14 +10,25 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <random>
-#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <vector>
 
 namespace {
 
 namespace Fs = std::filesystem;
 using namespace Elfpatcher::Windows;
+
+constexpr DWORD DllNotFoundStatus = 0xc0000135u;
+constexpr char NoMissingImports[] = "Dependency tables contain no missing imports";
+
+Fs::path executableDirectory() {
+    std::vector<char> filename(32768);
+    const auto size = GetModuleFileNameA(nullptr, filename.data(), static_cast<DWORD>(filename.size()));
+    Testing::Require(size != 0 && size < filename.size(), "Cannot locate diagnostic tests");
+    return Fs::path(filename.data()).parent_path();
+}
 
 Fs::path createFixtureDirectory(const Fs::path& parent) {
     std::random_device random;
@@ -26,40 +38,31 @@ Fs::path createFixtureDirectory(const Fs::path& parent) {
         if (Fs::create_directory(directory))
             return directory;
     }
-    throw std::runtime_error("Cannot create a unique diagnostic fixture directory");
+    Testing::Fail("Cannot create a unique diagnostic fixture directory");
 }
 
-void checkRuntimeDependencies() {
-    const auto check = [](const std::vector<std::string>& input, const std::vector<std::string>& expected) {
-        Domain::SysVDynamicSection dynamic;
-        for (const auto& name : input) {
-            const auto offset = dynamic.DynStrData.size();
-            dynamic.DynStrData.insert(dynamic.DynStrData.end(), name.begin(), name.end());
-            dynamic.DynStrData.push_back(0);
-            const auto position = dynamic.DynamicSegmentData.size();
-            dynamic.DynamicSegmentData.resize(position + 16);
-            Io::WriteU64(dynamic.DynamicSegmentData, position, 1);
-            Io::WriteU64(dynamic.DynamicSegmentData, position + 8, offset);
-        }
-        if (WindowsImportBuilder{}.ReadLibraries(dynamic) != expected)
-            throw std::runtime_error("Incorrect Windows runtime dependency visibility");
-    };
-    check({}, {});
-    check({"libkernel.prx"}, {"libkernel.prx"});
-    check({"libSceLibcInternal.prx", "libkernel.prx"},
-          {"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"});
-    check({"libc.prx", "libSceLibcInternal.prx"},
-          {"libc.prx", "libSceLibcInternal.prx"});
+std::vector<std::string> readLibraries(const std::vector<std::string>& input) {
+    Domain::SysVDynamicSection dynamic;
+    for (const auto& name : input) {
+        const auto offset = dynamic.DynStrData.size();
+        dynamic.DynStrData.insert(dynamic.DynStrData.end(), name.begin(), name.end());
+        dynamic.DynStrData.push_back(0);
+        const auto position = dynamic.DynamicSegmentData.size();
+        dynamic.DynamicSegmentData.resize(position + 16);
+        Io::WriteU64(dynamic.DynamicSegmentData, position, 1);
+        Io::WriteU64(dynamic.DynamicSegmentData, position + 8, offset);
+    }
+    return WindowsImportBuilder{}.ReadLibraries(dynamic);
 }
 
 void writeFile(const Fs::path& path, const std::vector<std::uint8_t>& bytes) {
     const auto fail = [&](const char* phase) {
         const auto error = errno;
         const auto nativeError = _doserrno;
-        throw std::runtime_error("Cannot write diagnostic fixture: phase=" + std::string(phase) +
-                                 " path=" + path.string() + " errno=" + std::to_string(error) +
-                                 " native_error=" + std::to_string(nativeError) +
-                                 " bytes=" + std::to_string(bytes.size()));
+        Testing::Fail("Cannot write diagnostic fixture: phase=" + std::string(phase) +
+                      " path=" + path.string() + " errno=" + std::to_string(error) +
+                      " native_error=" + std::to_string(nativeError) +
+                      " bytes=" + std::to_string(bytes.size()));
     };
     errno = 0;
     _set_doserrno(0);
@@ -163,12 +166,17 @@ void createRunner(const Fs::path& path, const Fs::path& root) {
     writeFile(path, WindowsPeWriter().Write({imports.Section, data, executable}, codeRva, directories));
 }
 
-void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& expected) {
+struct DiagnosticRun {
+    DWORD Status = 0;
+    std::string Output;
+};
+
+DiagnosticRun runDiagnostic(const Fs::path& runner) {
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE input = nullptr;
     HANDLE output = nullptr;
-    if (!CreatePipe(&input, &output, &security, 0) || !SetHandleInformation(input, HANDLE_FLAG_INHERIT, 0))
-        throw std::runtime_error("Cannot create diagnostic test pipe");
+    Testing::Require(CreatePipe(&input, &output, &security, 0) && SetHandleInformation(input, HANDLE_FLAG_INHERIT, 0),
+                     "Cannot create diagnostic test pipe");
     STARTUPINFOA startup{};
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESTDHANDLES;
@@ -177,87 +185,203 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION process{};
     const auto filename = runner.string();
-    if (!CreateProcessA(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, runner.parent_path().string().c_str(), &startup, &process))
-        throw std::runtime_error("Cannot start diagnostic test: " + std::to_string(GetLastError()));
+    const auto started = CreateProcessA(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                        runner.parent_path().string().c_str(), &startup, &process);
+    const auto startError = GetLastError();
     CloseHandle(output);
-    if (WaitForSingleObject(process.hProcess, 20000) != WAIT_OBJECT_0) {
-        TerminateProcess(process.hProcess, 1);
-        throw std::runtime_error("Diagnostic test timed out");
+    if (!started) {
+        CloseHandle(input);
+        Testing::Fail("Cannot start diagnostic test: " + std::to_string(startError));
     }
-    DWORD status = 0;
-    if (!GetExitCodeProcess(process.hProcess, &status))
-        throw std::runtime_error("Cannot read diagnostic test exit code");
-    std::string message;
+    DiagnosticRun run;
+    const auto finished = WaitForSingleObject(process.hProcess, 20000) == WAIT_OBJECT_0;
+    if (!finished)
+        TerminateProcess(process.hProcess, 1);
+    const auto exitCodeRead = finished && GetExitCodeProcess(process.hProcess, &run.Status);
     char buffer[4096];
     DWORD size = 0;
     while (ReadFile(input, buffer, sizeof(buffer), &size, nullptr) && size != 0)
-        message.append(buffer, size);
+        run.Output.append(buffer, size);
     CloseHandle(input);
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
-    if (status != 0xc0000135u)
-        throw std::runtime_error("Wrong diagnostic exit code: " + std::to_string(status) + "\n" + message);
-    for (const auto& text : expected) {
-        if (message.find(text) == std::string::npos)
-            throw std::runtime_error("Missing diagnostic field: " + text + "\nActual: " + message);
-    }
+    Testing::Require(finished, "Diagnostic test timed out");
+    Testing::Require(exitCodeRead, "Cannot read diagnostic test exit code");
+    return run;
 }
 
+void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& expected) {
+    const auto run = runDiagnostic(runner);
+    Testing::RequireEqual(run.Status, DllNotFoundStatus, "Wrong diagnostic exit code\n" + run.Output);
+    for (const auto& text : expected)
+        Testing::Require(run.Output.find(text) != std::string::npos, "Missing diagnostic field: " + text + "\nActual: " + run.Output);
 }
 
-int main() {
-    try {
-        checkRuntimeDependencies();
-        std::vector<char> filename(32768);
-        const auto size = GetModuleFileNameA(nullptr, filename.data(), static_cast<DWORD>(filename.size()));
-        if (size == 0 || size >= filename.size())
-            throw std::runtime_error("Cannot locate diagnostic tests");
-        const auto directory = createFixtureDirectory(Fs::path(filename.data()).parent_path());
-        const auto root = directory / "diagnostic-root.prx";
-        const auto middle = directory / "diagnostic-middle.dll";
-        const auto leaf = directory / "diagnostic-leaf.dll";
-        const auto runner = directory / "diagnostic-runner.exe";
-        createRunner(runner, root);
-        createImage(root, {{middle.filename().string(), "Middle"}}, {});
-        createImage(middle, {{leaf.filename().string(), "Missing"}}, "Middle");
-        createImage(leaf, {}, "Present");
-        expectDiagnostic(runner, {"Importer: " + middle.string(), "Provider: " + leaf.string(), "Symbol: Missing", runner.string() + " -> " + root.string() + " -> " + middle.string() + " -> " + leaf.string()});
-        createImage(middle, {{leaf.filename().string(), "#8"}}, "Middle");
-        expectDiagnostic(runner, {"Symbol: #8"});
-        createImage(middle, {{leaf.filename().string(), "#7"}}, "Middle");
-        expectDiagnostic(runner, {"Dependency tables contain no missing imports"});
-        createImage(middle, {}, "Middle", "diagnostic-leaf.Missing");
-        expectDiagnostic(runner, {"Symbol: Missing", "Importer: " + middle.string()});
-        createImage(middle, {}, "Middle", "diagnostic-leaf.#7");
-        expectDiagnostic(runner, {"Dependency tables contain no missing imports"});
-        createImage(leaf, {}, "Present", "diagnostic-middle.Middle");
-        expectDiagnostic(runner, {"capacity exceeded"});
-        createImage(middle, {{leaf.filename().string(), "Present"}}, "Middle");
-        createImage(leaf, {{middle.filename().string(), "Middle"}}, "Present");
-        expectDiagnostic(runner, {"Dependency tables contain no missing imports"});
-        createImage(leaf, {{middle.filename().string(), "MissingInCycle"}}, "Present");
-        expectDiagnostic(runner, {"Symbol: MissingInCycle", "Importer: " + leaf.string()});
-        createImage(root, {{"diagnostic-absent.dll", "Missing"}}, {});
-        expectDiagnostic(runner, {"dependency module not found", "Importer: " + root.string()});
-        createImage(root, {{"KERNEL32.dll", "CreateRemoteThreadEx"}}, {});
-        expectDiagnostic(runner, {"Dependency tables contain no missing imports"});
-        createImage(root, {{"KERNEL32.dll", "RelinkerDiagnosticsMissingExport"}}, {});
-        expectDiagnostic(runner, {"Symbol: RelinkerDiagnosticsMissingExport"});
-        {
-            std::fstream corrupt(root, std::ios::binary | std::ios::in | std::ios::out);
-            const std::array<char, 4> invalidRva{static_cast<char>(0xf0), static_cast<char>(0xff), static_cast<char>(0xff), static_cast<char>(0xff)};
-            corrupt.seekp(LoadRva + 0x300);
-            if (!corrupt.write(invalidRva.data(), invalidRva.size()))
-                throw std::runtime_error("Cannot corrupt diagnostic fixture");
-        }
-        expectDiagnostic(runner, {"invalid or unsupported PE dependency metadata"});
-        writeFile(root, {0, 1, 2});
-        expectDiagnostic(runner, {"Windows API failed"});
-        Fs::remove_all(directory);
-        std::cout << "Windows dependency machine-code tests passed\n";
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+struct DiagnosticFixture {
+    DiagnosticFixture()
+        : Directory(createFixtureDirectory(executableDirectory())),
+          Root(Directory / "diagnostic-root.prx"),
+          Middle(Directory / "diagnostic-middle.dll"),
+          Leaf(Directory / "diagnostic-leaf.dll"),
+          Runner(Directory / "diagnostic-runner.exe") {
+        createRunner(Runner, Root);
     }
-    return 0;
-}
+
+    ~DiagnosticFixture() {
+        std::error_code ignored;
+        Fs::remove_all(Directory, ignored);
+    }
+
+    DiagnosticFixture(const DiagnosticFixture&) = delete;
+    DiagnosticFixture& operator=(const DiagnosticFixture&) = delete;
+
+    void CreateChain(const std::string& middleImport, const std::string& leafExport = "Present") const {
+        createImage(Root, {{MiddleName(), "Middle"}}, {});
+        createImage(Middle, {{LeafName(), middleImport}}, "Middle");
+        createImage(Leaf, {}, leafExport);
+    }
+
+    std::string MiddleName() const {
+        return Middle.filename().string();
+    }
+
+    std::string LeafName() const {
+        return Leaf.filename().string();
+    }
+
+    Fs::path Directory;
+    Fs::path Root;
+    Fs::path Middle;
+    Fs::path Leaf;
+    Fs::path Runner;
+};
+
+const Testing::Case emptyLibraries{"WindowsImportBuilder_NoNeededLibraries_ReadsNone", [] {
+    Testing::Require(readLibraries({}).empty(), "Incorrect Windows runtime dependency visibility for no libraries");
+}};
+
+const Testing::Case kernelOnly{"WindowsImportBuilder_KernelOnly_ReadsKernel", [] {
+    const auto libraries = readLibraries({"libkernel.prx"});
+
+    Testing::Require(libraries == std::vector<std::string>{"libkernel.prx"}, "Incorrect Windows runtime dependency visibility for libkernel");
+}};
+
+const Testing::Case libcInternalAddsLibc{"WindowsImportBuilder_LibcInternalWithoutLibc_AppendsLibc", [] {
+    const auto libraries = readLibraries({"libSceLibcInternal.prx", "libkernel.prx"});
+
+    Testing::Require(libraries == std::vector<std::string>{"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"},
+                     "Incorrect Windows runtime dependency visibility for libSceLibcInternal without libc");
+}};
+
+const Testing::Case libcNotDuplicated{"WindowsImportBuilder_LibcAlreadyNeeded_IsNotDuplicated", [] {
+    const auto libraries = readLibraries({"libc.prx", "libSceLibcInternal.prx"});
+
+    Testing::Require(libraries == std::vector<std::string>{"libc.prx", "libSceLibcInternal.prx"},
+                     "Incorrect Windows runtime dependency visibility for libc with libSceLibcInternal");
+}};
+
+const Testing::Case missingNamedImport{"WindowsDependencyDiagnostics_MissingNamedImport_ReportsImporterProviderSymbolAndChain", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("Missing");
+
+    expectDiagnostic(fixture.Runner, {"Importer: " + fixture.Middle.string(), "Provider: " + fixture.Leaf.string(), "Symbol: Missing",
+                                      fixture.Runner.string() + " -> " + fixture.Root.string() + " -> " + fixture.Middle.string() + " -> " + fixture.Leaf.string()});
+}};
+
+const Testing::Case missingOrdinalImport{"WindowsDependencyDiagnostics_MissingOrdinalImport_ReportsOrdinal", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("#8");
+
+    expectDiagnostic(fixture.Runner, {"Symbol: #8"});
+}};
+
+const Testing::Case presentOrdinalImport{"WindowsDependencyDiagnostics_PresentOrdinalImport_ReportsNoMissingImports", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("#7");
+
+    expectDiagnostic(fixture.Runner, {NoMissingImports});
+}};
+
+const Testing::Case missingForwardedExport{"WindowsDependencyDiagnostics_ForwarderToMissingExport_ReportsSymbolAndImporter", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("Present");
+    createImage(fixture.Middle, {}, "Middle", "diagnostic-leaf.Missing");
+
+    expectDiagnostic(fixture.Runner, {"Symbol: Missing", "Importer: " + fixture.Middle.string()});
+}};
+
+const Testing::Case presentForwardedOrdinal{"WindowsDependencyDiagnostics_ForwarderToPresentOrdinal_ReportsNoMissingImports", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("Present");
+    createImage(fixture.Middle, {}, "Middle", "diagnostic-leaf.#7");
+
+    expectDiagnostic(fixture.Runner, {NoMissingImports});
+}};
+
+const Testing::Case forwarderCycle{"WindowsDependencyDiagnostics_ForwarderCycle_ReportsCapacityExceeded", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("Present");
+    createImage(fixture.Middle, {}, "Middle", "diagnostic-leaf.#7");
+    createImage(fixture.Leaf, {}, "Present", "diagnostic-middle.Middle");
+
+    expectDiagnostic(fixture.Runner, {"capacity exceeded"});
+}};
+
+const Testing::Case satisfiedImportCycle{"WindowsDependencyDiagnostics_SatisfiedImportCycle_ReportsNoMissingImports", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("Present");
+    createImage(fixture.Leaf, {{fixture.MiddleName(), "Middle"}}, "Present");
+
+    expectDiagnostic(fixture.Runner, {NoMissingImports});
+}};
+
+const Testing::Case missingImportInCycle{"WindowsDependencyDiagnostics_MissingImportInCycle_ReportsSymbolAndImporter", [] {
+    const DiagnosticFixture fixture;
+    fixture.CreateChain("Present");
+    createImage(fixture.Leaf, {{fixture.MiddleName(), "MissingInCycle"}}, "Present");
+
+    expectDiagnostic(fixture.Runner, {"Symbol: MissingInCycle", "Importer: " + fixture.Leaf.string()});
+}};
+
+const Testing::Case absentModule{"WindowsDependencyDiagnostics_AbsentDependencyModule_ReportsModuleNotFound", [] {
+    const DiagnosticFixture fixture;
+    createImage(fixture.Root, {{"diagnostic-absent.dll", "Missing"}}, {});
+
+    expectDiagnostic(fixture.Runner, {"dependency module not found", "Importer: " + fixture.Root.string()});
+}};
+
+const Testing::Case presentSystemExport{"WindowsDependencyDiagnostics_PresentSystemExport_ReportsNoMissingImports", [] {
+    const DiagnosticFixture fixture;
+    createImage(fixture.Root, {{"KERNEL32.dll", "CreateRemoteThreadEx"}}, {});
+
+    expectDiagnostic(fixture.Runner, {NoMissingImports});
+}};
+
+const Testing::Case missingSystemExport{"WindowsDependencyDiagnostics_MissingSystemExport_ReportsSymbol", [] {
+    const DiagnosticFixture fixture;
+    createImage(fixture.Root, {{"KERNEL32.dll", "RelinkerDiagnosticsMissingExport"}}, {});
+
+    expectDiagnostic(fixture.Runner, {"Symbol: RelinkerDiagnosticsMissingExport"});
+}};
+
+const Testing::Case corruptImportTable{"WindowsDependencyDiagnostics_InvalidImportRva_ReportsInvalidMetadata", [] {
+    const DiagnosticFixture fixture;
+    createImage(fixture.Root, {{"KERNEL32.dll", "RelinkerDiagnosticsMissingExport"}}, {});
+    {
+        std::fstream corrupt(fixture.Root, std::ios::binary | std::ios::in | std::ios::out);
+        const std::array<char, 4> invalidRva{static_cast<char>(0xf0), static_cast<char>(0xff), static_cast<char>(0xff), static_cast<char>(0xff)};
+        corrupt.seekp(LoadRva + 0x300);
+        Testing::Require(static_cast<bool>(corrupt.write(invalidRva.data(), invalidRva.size())), "Cannot corrupt diagnostic fixture");
+    }
+
+    expectDiagnostic(fixture.Runner, {"invalid or unsupported PE dependency metadata"});
+}};
+
+const Testing::Case unreadableRoot{"WindowsDependencyDiagnostics_UnloadableRootImage_ReportsWindowsApiFailure", [] {
+    const DiagnosticFixture fixture;
+    writeFile(fixture.Root, {0, 1, 2});
+
+    expectDiagnostic(fixture.Runner, {"Windows API failed"});
+}};
+
+} // namespace

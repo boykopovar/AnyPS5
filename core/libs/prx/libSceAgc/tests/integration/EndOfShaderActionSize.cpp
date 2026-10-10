@@ -2,10 +2,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cstdint>
-#include <cstdio>
-#include <stdexcept>
 
 extern "C" {
 std::uint32_t APS5_VABI sceAgcDcbQueueEndOfShaderActionGetSize();
@@ -15,26 +15,33 @@ std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer*, std::uint8_t, std::u
 
 namespace {
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+using Testing::Case;
+using Testing::RequireEqual;
+
+std::uint32_t ReleaseMemBytes() {
+    std::array<std::uint32_t, 16> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    const auto* packet = sceAgcCbReleaseMem(&buffer, 0x2f, 0, 0, 0, nullptr, 0, 0, 0, 0, 0, 0);
+    RequireEqual((packet[0] >> 8u) & 0xffu, 0x49u, "end-of-shader action is a RELEASE_MEM packet");
+    return static_cast<std::uint32_t>((buffer.cursor_up - packet) * sizeof(std::uint32_t));
 }
 
-}
+const Case releaseMem{"CbReleaseMem_EndOfShaderAction_Writes32Bytes", [] {
+    RequireEqual(ReleaseMemBytes(), 32u, "end-of-shader RELEASE_MEM size");
+}};
 
-int main() {
-    try {
-        std::array<std::uint32_t, 16> words{};
-        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
-        const auto* packet = sceAgcCbReleaseMem(&buffer, 0x2f, 0, 0, 0, nullptr, 0, 0, 0, 0, 0, 0);
-        const auto releaseBytes = static_cast<std::uint32_t>((buffer.cursor_up - packet) * sizeof(std::uint32_t));
-        check(((packet[0] >> 8u) & 0xffu) == 0x49u && releaseBytes == 32, "end-of-shader RELEASE_MEM size mismatch");
-        check(sceAgcDcbQueueEndOfShaderActionGetSize() == releaseBytes, "DCB end-of-shader action size differs from its RELEASE_MEM");
-        check(sceAgcDcbQueueEndOfShaderActionGetSize() == sceAgcAcbQueueEndOfShaderActionGetSize(), "DCB and ACB end-of-shader action sizes differ");
-        LibcRunShutdown_nid_postfix();
-        std::puts("AGC end-of-shader action size tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
+const Case dcbSize{"DcbQueueEndOfShaderActionGetSize_Default_MatchesReleaseMem", [] {
+    RequireEqual(sceAgcDcbQueueEndOfShaderActionGetSize(), ReleaseMemBytes(), "DCB end-of-shader action size");
+}};
+
+const Case acbSize{"AcbQueueEndOfShaderActionGetSize_Default_MatchesDcb", [] {
+    RequireEqual(sceAgcAcbQueueEndOfShaderActionGetSize(), sceAgcDcbQueueEndOfShaderActionGetSize(), "ACB end-of-shader action size");
+}};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const int result = Testing::Run(argc, argv);
+    LibcRunShutdown_nid_postfix();
+    return result;
 }

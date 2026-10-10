@@ -1,65 +1,79 @@
-#include <stdexcept>
-#include <cstdio>
-#include <cstring>
-#include <atomic>
+#include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <array>
-#include <exception>
-#include <thread>
+#include <atomic>
 #include <cstddef>
+#include <cstring>
+#include <exception>
+#include <stdexcept>
+#include <string>
+#include <thread>
 #include <typeinfo>
-#include "../prx/libc/include/general/VabiMacros.hpp"
 
 extern "C" {
 extern const unsigned char _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix[];
 extern const unsigned char _ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix[];
 extern const unsigned char _ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix[];
+void NotImplemented_nid_no_patch(const char*);
 }
 
-static void TestTypeInfoVtables() {
-    struct TypeRecord { const void* vtable; const char* name; };
-    struct SingleRecord { TypeRecord type; const TypeRecord* base; };
-    struct BaseRecord { const TypeRecord* type; std::ptrdiff_t flags; };
-    struct MultipleRecord { TypeRecord type; unsigned flags; unsigned count; BaseRecord bases[2]; };
-    const auto* classTable = _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix;
-    const auto* singleTable = _ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix;
-    const auto* multipleTable = _ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix;
-    const unsigned char* tables[] {classTable, singleTable, multipleTable};
-    const char* names[] {"N10__cxxabiv117__class_type_infoE", "N10__cxxabiv120__si_class_type_infoE", "N10__cxxabiv121__vmi_class_type_infoE"};
-    for (std::size_t i = 0; i < 3; ++i) {
-        const std::type_info* category;
-        std::memcpy(&category, tables[i] + sizeof(void*), sizeof(category));
-        if (std::strcmp(category->name(), names[i])) throw std::runtime_error("incorrect RTTI category");
-    }
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+struct TypeRecord { const void* vtable; const char* name; };
+struct SingleRecord { TypeRecord type; const TypeRecord* base; };
+struct BaseRecord { const TypeRecord* type; std::ptrdiff_t flags; };
+struct MultipleRecord { TypeRecord type; unsigned flags; unsigned count; BaseRecord bases[2]; };
+
+using CatchType = bool (APS5_VABI *)(const void*, const void*, void**, unsigned);
+using UpcastType = bool (APS5_VABI *)(const void*, const void*, void**);
+
+struct TypeRecords {
+    const unsigned char* classTable = _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix;
+    const unsigned char* singleTable = _ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix;
+    const unsigned char* multipleTable = _ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix;
     TypeRecord base {classTable + 2 * sizeof(void*), "4Base"};
     TypeRecord other {classTable + 2 * sizeof(void*), "5Other"};
     SingleRecord single {{singleTable + 2 * sizeof(void*), "6Single"}, &base};
     MultipleRecord multiple {{multipleTable + 2 * sizeof(void*), "8Multiple"}, 0, 2, {{&other, 2}, {&base, (16 << 8) | 2}}};
-    using CatchType = bool (APS5_VABI *)(const void*, const void*, void**, unsigned);
-    using UpcastType = bool (APS5_VABI *)(const void*, const void*, void**);
-    CatchType catchType;
-    UpcastType upcastType;
-    std::memcpy(&catchType, classTable + 6 * sizeof(void*), sizeof(catchType));
-    std::memcpy(&upcastType, multipleTable + 7 * sizeof(void*), sizeof(upcastType));
     std::array<unsigned char, 32> storage {};
-    void* object = storage.data();
-    if (!catchType(&base, &single, &object, 0) || object != storage.data()) throw std::runtime_error("single RTTI catch failed");
-    object = storage.data();
-    if (!catchType(&base, &multiple, &object, 0) || object != storage.data() + 16) throw std::runtime_error("multiple RTTI catch failed");
-    object = storage.data();
-    if (!upcastType(&multiple, &base, &object) || object != storage.data() + 16) throw std::runtime_error("multiple RTTI upcast failed");
-    object = storage.data();
-    if (catchType(&other, &single, &object, 0)) throw std::runtime_error("unrelated RTTI catch succeeded");
-}
 
-extern "C" void NotImplemented_nid_no_patch(const char*);
+    CatchType Catch() const {
+        CatchType catchType;
+        std::memcpy(&catchType, classTable + 6 * sizeof(void*), sizeof(catchType));
+        return catchType;
+    }
 
-static int destroyed;
+    UpcastType Upcast() const {
+        UpcastType upcastType;
+        std::memcpy(&upcastType, multipleTable + 7 * sizeof(void*), sizeof(upcastType));
+        return upcastType;
+    }
+};
+
+int destroyed = 0;
+
 struct Guard { ~Guard() { ++destroyed; } };
-static void ThrowNested() {
+
+class GuardCounter {
+public:
+    GuardCounter() { destroyed = 0; }
+    ~GuardCounter() { destroyed = 0; }
+    GuardCounter(const GuardCounter&) = delete;
+    GuardCounter& operator=(const GuardCounter&) = delete;
+};
+
+void ThrowNested() {
     Guard guard;
     throw std::runtime_error("native own unwind");
 }
-static void Rethrow() {
+
+void Rethrow() {
     Guard guard;
     try { ThrowNested(); }
     catch (const std::runtime_error&) { throw; }
@@ -69,11 +83,55 @@ class TrackedError : public std::runtime_error {
 public:
     explicit TrackedError(std::atomic<int>* count) : std::runtime_error("retained error"), count(count) {}
     ~TrackedError() override { ++*count; }
+
 private:
     std::atomic<int>* count;
 };
 
-static void testExceptionPointer() {
+const Case rttiCategories{"TypeInfoVtables_CategoryTypeInfo_HasAbiNames", [] {
+    const unsigned char* tables[] {
+        _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix,
+        _ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix,
+        _ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix};
+    const char* names[] {"N10__cxxabiv117__class_type_infoE", "N10__cxxabiv120__si_class_type_infoE", "N10__cxxabiv121__vmi_class_type_infoE"};
+    for (std::size_t index = 0; index < 3; ++index) {
+        const std::type_info* category;
+        std::memcpy(&category, tables[index] + sizeof(void*), sizeof(category));
+        RequireEqual(std::string(category->name()), std::string(names[index]), "RTTI category of " + std::string(names[index]));
+    }
+}};
+
+const Case singleCatch{"TypeInfoVtables_CatchBaseOfSingleInheritance_KeepsObjectAddress", [] {
+    TypeRecords records;
+    void* object = records.storage.data();
+    const bool caught = records.Catch()(&records.base, &records.single, &object, 0);
+    Require(caught, "single inheritance catch");
+    Require(object == records.storage.data(), "adjusted object address");
+}};
+
+const Case multipleCatch{"TypeInfoVtables_CatchBaseOfMultipleInheritance_AdjustsToBaseOffset", [] {
+    TypeRecords records;
+    void* object = records.storage.data();
+    const bool caught = records.Catch()(&records.base, &records.multiple, &object, 0);
+    Require(caught, "multiple inheritance catch");
+    Require(object == records.storage.data() + 16, "adjusted object address");
+}};
+
+const Case multipleUpcast{"TypeInfoVtables_UpcastMultipleInheritanceToBase_AdjustsToBaseOffset", [] {
+    TypeRecords records;
+    void* object = records.storage.data();
+    const bool upcast = records.Upcast()(&records.multiple, &records.base, &object);
+    Require(upcast, "multiple inheritance upcast");
+    Require(object == records.storage.data() + 16, "adjusted object address");
+}};
+
+const Case unrelatedCatch{"TypeInfoVtables_CatchUnrelatedType_DoesNotMatch", [] {
+    TypeRecords records;
+    void* object = records.storage.data();
+    Require(!records.Catch()(&records.other, &records.single, &object, 0), "unrelated catch rejected");
+}};
+
+const Case exceptionPointer{"ExceptionPtr_RethrownOnFourThreads_SharesObjectAndDestroysOnce", [] {
     std::atomic<int> count{0};
     std::atomic<int> caught{0};
     std::exception_ptr retained;
@@ -84,7 +142,8 @@ static void testExceptionPointer() {
         original = &error;
         retained = std::current_exception();
     }
-    if (!retained || count != 0) throw std::runtime_error("exception was not retained");
+    Require(static_cast<bool>(retained), "exception retained");
+    RequireEqual(count.load(), 0, "destructions while retained");
     std::array<std::thread, 4> threads;
     for (auto& thread : threads) {
         thread = std::thread([retained, original, &caught] {
@@ -96,50 +155,97 @@ static void testExceptionPointer() {
         });
     }
     for (auto& thread : threads) thread.join();
-    if (caught != 4 || count != 0) throw std::runtime_error("cross-thread rethrow failed");
+    RequireEqual(caught.load(), 4, "threads that caught the original object");
+    RequireEqual(count.load(), 0, "destructions after cross-thread rethrow");
     auto copy = retained;
     retained = nullptr;
-    if (count != 0) throw std::runtime_error("exception copy lost ownership");
+    RequireEqual(count.load(), 0, "destructions while a copy holds ownership");
     copy = nullptr;
-    if (count != 1) throw std::runtime_error("exception destroyed an incorrect number of times");
-    if (std::current_exception()) throw std::runtime_error("stale current exception");
-}
+    RequireEqual(count.load(), 1, "destructions after releasing every owner");
+    Require(!std::current_exception(), "no stale current exception");
+}};
 
-int main() {
-    TestTypeInfoVtables();
-    testExceptionPointer();
+const Case rethrow{"Rethrow_ThroughCleanupFrames_CaughtWithMessageAndGuardsDestroyed", [] {
+    const GuardCounter counter;
+    bool returned = false;
+    bool caught = false;
+    std::string message;
     try {
         Rethrow();
-        return 1;
+        returned = true;
     } catch (const std::runtime_error& error) {
-        if (std::strcmp(error.what(), "native own unwind") || destroyed != 2) return 2;
+        caught = true;
+        message = error.what();
     }
+    Require(!returned, "Rethrow threw");
+    Require(caught, "caught as std::runtime_error");
+    RequireEqual(message, std::string("native own unwind"), "what()");
+    RequireEqual(destroyed, 2, "guards destroyed");
+}};
+
+const Case crossDll{"NotImplemented_CrossDll_ThrowsRuntimeErrorWithMessage", [] {
+    bool caught = false;
+    std::string message;
+    try { NotImplemented_nid_no_patch("cross DLL"); }
+    catch (const std::runtime_error& error) { caught = true; message = error.what(); }
+    Require(caught, "caught as std::runtime_error");
+    RequireEqual(message, std::string("cross DLL not implemented"), "what()");
+}};
+
+const Case crossDllRethrow{"NotImplemented_RethrownInsideHandler_CaughtAsSameStdException", [] {
+    const GuardCounter counter;
+    bool caught = false;
+    int handler = 0;
+    bool same = false;
+    int destroyedAtCatch = -1;
     try { NotImplemented_nid_no_patch("cross DLL"); }
     catch (const std::runtime_error& error) {
-        if (std::strcmp(error.what(), "cross DLL not implemented")) return 3;
+        caught = true;
         try {
             Guard guard;
             throw;
         } catch (const std::logic_error&) {
-            return 4;
+            handler = 1;
         } catch (const std::exception& rethrown) {
-            if (&rethrown != &error || destroyed != 3) return 5;
+            handler = 2;
+            same = &rethrown == &error;
+            destroyedAtCatch = destroyed;
         }
+    }
+    Require(caught, "cross DLL error caught");
+    RequireEqual(handler, 2, "selected handler");
+    Require(same, "rethrown object is the original object");
+    RequireEqual(destroyedAtCatch, 1, "guards destroyed");
+}};
+
+const Case crossDllCatchAll{"NotImplemented_IntThrownInsideHandler_CaughtByCatchAllAndRethrown", [] {
+    const GuardCounter counter;
+    bool caught = false;
+    int handler = 0;
+    int destroyedAtCatch = -1;
+    int rethrownValue = 0;
+    try { NotImplemented_nid_no_patch("cross DLL"); }
+    catch (const std::runtime_error&) {
+        caught = true;
         try {
             Guard guard;
             throw 42;
         } catch (const std::exception&) {
-            return 6;
+            handler = 1;
         } catch (...) {
-            if (destroyed != 4) return 7;
+            handler = 2;
+            destroyedAtCatch = destroyed;
             try {
                 throw;
             } catch (int value) {
-                if (value != 42) return 8;
+                rethrownValue = value;
             }
         }
-        std::puts("Own Windows exceptions: typed catch, base catch, catch-all, rethrow, destructors, cross DLL passed");
-        return 0;
     }
-    return 9;
-}
+    Require(caught, "cross DLL error caught");
+    RequireEqual(handler, 2, "selected handler");
+    RequireEqual(destroyedAtCatch, 1, "guards destroyed");
+    RequireEqual(rethrownValue, 42, "rethrown value");
+}};
+
+} // namespace

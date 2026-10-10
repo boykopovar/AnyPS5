@@ -4,13 +4,11 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 128;
@@ -66,8 +64,18 @@ void Check(const Workgroup& workgroup) {
     for (std::uint32_t tid = 0; tid < MaxThreads; ++tid) {
         const auto expected = tid < workgroup.ThreadCount() ? tid / workgroup.waveSize : Untouched;
         const auto actual = Output[tid];
-        Require(actual == expected, "wave id in workgroup: " + workgroup.Name() + " thread " + std::to_string(tid) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+        Testing::Require(actual == expected, "wave id in workgroup: " + workgroup.Name() + " thread " + std::to_string(tid) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
     }
+}
+
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    Testing::Fail(message);
 }
 
 void CheckRejectedOutsideCompute(const AgcDriver::VulkanDevice& device) {
@@ -82,30 +90,48 @@ void CheckRejectedOutsideCompute(const AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    std::string failure;
-    try {
-        static_cast<void>(ShaderRecompiler::Recompile(request));
-    } catch (const std::exception& error) {
-        failure = error.what();
-    }
-    Require(failure.find("s_get_waveid_in_workgroup is supported only in compute shaders") != std::string::npos, "wave id in workgroup: a vertex shader was not rejected, got '" + failure + "'");
+    const auto refusal = RequireRefusal([&] { static_cast<void>(ShaderRecompiler::Recompile(request)); }, "wave id in workgroup: a vertex shader was not rejected");
+    Testing::Require(refusal.find("s_get_waveid_in_workgroup is supported only in compute shaders") != std::string::npos, "wave id in workgroup: a vertex shader was not rejected, got '" + refusal + "'");
 }
 
-}
+const Testing::Case wave32Linear{"WaveIdInWorkgroup_Wave32Linear128_NumbersWavesInOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[0]);
+    Check(Workgroups[0]);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto& workgroup : Workgroups) {
-            Run(*device, workgroup);
-            Check(workgroup);
-        }
-        CheckRejectedOutsideCompute(*device);
-        std::puts("wave id in workgroup tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64Linear{"WaveIdInWorkgroup_Wave64Linear128_NumbersWavesInOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[1]);
+    Check(Workgroups[1]);
+}};
+
+const Testing::Case wave32Grid{"WaveIdInWorkgroup_Wave32Grid8x8x2_NumbersWavesInOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[2]);
+    Check(Workgroups[2]);
+}};
+
+const Testing::Case wave64Grid{"WaveIdInWorkgroup_Wave64Grid8x8x2_NumbersWavesInOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[3]);
+    Check(Workgroups[3]);
+}};
+
+const Testing::Case wave32Partial{"WaveIdInWorkgroup_Wave32PartialWave8x13_NumbersWavesInOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[4]);
+    Check(Workgroups[4]);
+}};
+
+const Testing::Case wave64Partial{"WaveIdInWorkgroup_Wave64PartialWave8x13_NumbersWavesInOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[5]);
+    Check(Workgroups[5]);
+}};
+
+const Testing::Case vertexStage{"WaveIdInWorkgroup_VertexShader_IsRejected", [] {
+    CheckRejectedOutsideCompute(SharedVulkanTestDevice());
+}};
+
+} // namespace

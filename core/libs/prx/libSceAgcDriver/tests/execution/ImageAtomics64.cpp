@@ -6,13 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -169,25 +168,28 @@ void Check(std::uint32_t format) {
     }
 }
 
-}
+const Testing::Case uintTexels{"ImageAtomics64_Rg32UintTexels_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64ImageEXT, "the device has no shaderImageInt64Atomics");
+    FillInput();
+    Run(device, Format32_32UInt);
+    Check(Format32_32UInt);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64ImageEXT)) {
-            std::puts("skipped, the device has no shaderImageInt64Atomics");
-            return VulkanTestSkipped;
-        }
-        FillInput();
-        for (const auto format : {Format32_32UInt, Format32_32SInt, Format32_32Float}) {
-            Run(*device, format);
-            Check(format);
-        }
-        std::puts("64-bit image atomics tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case sintTexels{"ImageAtomics64_Rg32SintTexels_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64ImageEXT, "the device has no shaderImageInt64Atomics");
+    FillInput();
+    Run(device, Format32_32SInt);
+    Check(Format32_32SInt);
+}};
+
+const Testing::Case floatTexels{"ImageAtomics64_Rg32FloatTexels_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64ImageEXT, "the device has no shaderImageInt64Atomics");
+    FillInput();
+    Run(device, Format32_32Float);
+    Check(Format32_32Float);
+}};
+
+} // namespace

@@ -5,14 +5,13 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
@@ -143,34 +142,37 @@ void Check(std::uint32_t waveSize) {
     }
 }
 
+
+AgcDriver::VulkanDevice& Wave32Device() {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    return device;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        for (const auto waveSize : {64u, 32u}) {
-            for (std::uint32_t pass = 0; pass < 4; ++pass) {
-                Draw(*device, waveSize, device->Target());
-                Check(waveSize);
-            }
-        }
-        if (device->Target().subgroupSize == 32u) {
-            auto wide = device->Target();
-            wide.subgroupSize = 64u;
-            for (std::uint32_t pass = 0; pass < 4; ++pass) {
-                Draw(*device, 32u, wide);
-                Check(32u);
-            }
-        }
-        std::puts("pixel helper lane tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case wave64{"PixelHelperLanes_Wave64Draws_PackCoveredPixelsIntoExec", [] {
+    auto& device = Wave32Device();
+    for (std::uint32_t pass = 0; pass < 4; ++pass) {
+        Draw(device, 64u, device.Target());
+        Check(64u);
     }
-}
+}};
+
+const Testing::Case wave32{"PixelHelperLanes_Wave32Draws_PackCoveredPixelsIntoExec", [] {
+    auto& device = Wave32Device();
+    for (std::uint32_t pass = 0; pass < 4; ++pass) {
+        Draw(device, 32u, device.Target());
+        Check(32u);
+    }
+    if (device.Target().subgroupSize == 32u) {
+        auto wide = device.Target();
+        wide.subgroupSize = 64u;
+        for (std::uint32_t pass = 0; pass < 4; ++pass) {
+            Draw(device, 32u, wide);
+            Check(32u);
+        }
+    }
+}};
+
+} // namespace

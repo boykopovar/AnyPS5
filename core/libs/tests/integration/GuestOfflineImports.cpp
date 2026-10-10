@@ -1,12 +1,13 @@
 #include "SceTypes.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-#include <string_view>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceHttpSetCookieEnabled(int, int);
@@ -22,61 +23,122 @@ int APS5_VABI sceRudpGetStatus(void*, std::size_t);
 int APS5_VABI sceRudpTerminate();
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+namespace {
 
-int main() {
-    constexpr int invalidValue = static_cast<int>(0x804311FE);
-    constexpr int network = static_cast<int>(0x80431063);
-    Require(sceHttpSetCookieEnabled(1, 0) == 0);
-    Require(sceHttpSendRequest(1, nullptr, 0) == network);
-    bool cookieUnsupported = false;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int httpInvalidValue = static_cast<int>(0x804311FE);
+constexpr int httpNetwork = static_cast<int>(0x80431063);
+constexpr int entitlementParameter = static_cast<int>(0x817D0002);
+constexpr int entitlementNoEntitlement = static_cast<int>(0x817D0007);
+constexpr int npSignedOut = static_cast<int>(0x80550006);
+constexpr int rudpNotInitialized = static_cast<int>(0x80770001);
+
+static_assert(sizeof(NpEntitlementAccessEntitlementKey) == 16);
+
+struct KeyBuffer {
+    std::uint64_t before;
+    NpEntitlementAccessEntitlementKey key;
+    std::uint64_t after;
+};
+
+class RudpSession {
+public:
+    RudpSession() { RequireEqual(sceRudpInit_nid_postfix(nullptr, 0), 0, "sceRudpInit"); }
+    ~RudpSession() { sceRudpTerminate(); }
+    RudpSession(const RudpSession&) = delete;
+    RudpSession& operator=(const RudpSession&) = delete;
+};
+
+NpUnifiedEntitlementLabel UnownedLabel() {
+    NpUnifiedEntitlementLabel label{};
+    std::memcpy(label.data, "unowned-addon", 14);
+    return label;
+}
+
+const Case cookiesDisabled{"HttpSetCookieEnabled_Disable_Succeeds", [] {
+    RequireEqual(sceHttpSetCookieEnabled(1, 0), 0, "disable cookies");
+}};
+
+const Case sendRequest{"HttpSendRequest_Offline_FailsWithNetworkError", [] {
+    RequireEqual(sceHttpSendRequest(1, nullptr, 0), httpNetwork, "send request");
+}};
+
+const Case cookiesEnabled{"HttpSetCookieEnabled_Enable_ThrowsNotImplemented", [] {
+    bool caught = false;
+    std::string message;
     try {
         sceHttpSetCookieEnabled(1, 1);
     } catch (const std::runtime_error& error) {
-        cookieUnsupported = std::string_view(error.what()) == "sceHttpSetCookieEnabled not implemented";
+        caught = true;
+        message = error.what();
     }
-    Require(cookieUnsupported);
-    for (int enabled : {-1, 2, 0x100}) {
-        Require(sceHttpSetCookieEnabled(1, enabled) == invalidValue);
-    }
+    Require(caught, "enable cookies throws std::runtime_error");
+    RequireEqual(message, std::string("sceHttpSetCookieEnabled not implemented"), "what()");
+}};
 
-    constexpr int parameter = static_cast<int>(0x817D0002);
-    constexpr int noEntitlement = static_cast<int>(0x817D0007);
-    static_assert(sizeof(NpEntitlementAccessEntitlementKey) == 16);
-    NpUnifiedEntitlementLabel label{};
-    std::memcpy(label.data, "unowned-addon", 14);
-    struct KeyBuffer {
-        std::uint64_t before;
-        NpEntitlementAccessEntitlementKey key;
-        std::uint64_t after;
-    } output;
+const Case cookiesInvalid{"HttpSetCookieEnabled_InvalidFlag_FailsWithInvalidValue", [] {
+    for (const int enabled : {-1, 2, 0x100}) {
+        RequireEqual(sceHttpSetCookieEnabled(1, enabled), httpInvalidValue, "enabled " + std::to_string(enabled));
+    }
+}};
+
+const Case keyNullArguments{"EntitlementKey_NullLabelOrKey_FailsWithParameterError", [] {
+    const auto label = UnownedLabel();
+    KeyBuffer output{};
+    RequireEqual(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, &output.key), entitlementParameter, "null label");
+    RequireEqual(sceNpEntitlementAccessGetEntitlementKey(0, &label, nullptr), entitlementParameter, "null key");
+    RequireEqual(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, nullptr), entitlementParameter, "null label and key");
+}};
+
+const Case keyUnowned{"EntitlementKey_UnownedLabel_FailsWithNoEntitlementAndKeepsOutput", [] {
+    const auto label = UnownedLabel();
+    KeyBuffer output{};
     std::memset(&output, 0xa5, sizeof(output));
     std::array<unsigned char, sizeof(output)> original{};
     std::memcpy(original.data(), &output, sizeof(output));
-    Require(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, &output.key) == parameter);
-    Require(sceNpEntitlementAccessGetEntitlementKey(0, &label, nullptr) == parameter);
-    Require(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, nullptr) == parameter);
-    for (std::uint32_t serviceLabel : {0u, 1u, 0xffffffffu}) {
-        Require(sceNpEntitlementAccessGetEntitlementKey(serviceLabel, &label, &output.key) == noEntitlement);
-        Require(std::memcmp(&output, original.data(), sizeof(output)) == 0);
+    for (const std::uint32_t serviceLabel : {0u, 1u, 0xffffffffu}) {
+        const std::string input = "service label " + std::to_string(serviceLabel);
+        RequireEqual(sceNpEntitlementAccessGetEntitlementKey(serviceLabel, &label, &output.key), entitlementNoEntitlement, input);
+        Require(std::memcmp(&output, original.data(), sizeof(output)) == 0, input + " output untouched");
     }
+}};
 
-    constexpr int signedOut = static_cast<int>(0x80550006);
-    Require(sceNpEntitlementAccessRequestUnifiedEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessPollUnifiedEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessRequestServiceEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessPollServiceEntitlementInfoList() == signedOut);
+const Case entitlementLists{"EntitlementInfoLists_RequestAndPoll_FailWithSignedOut", [] {
+    RequireEqual(sceNpEntitlementAccessRequestUnifiedEntitlementInfoList(), npSignedOut, "request unified list");
+    RequireEqual(sceNpEntitlementAccessPollUnifiedEntitlementInfoList(), npSignedOut, "poll unified list");
+    RequireEqual(sceNpEntitlementAccessRequestServiceEntitlementInfoList(), npSignedOut, "request service list");
+    RequireEqual(sceNpEntitlementAccessPollServiceEntitlementInfoList(), npSignedOut, "poll service list");
+}};
 
+const Case rudpUninitialized{"RudpGetStatus_BeforeInit_FailsAndKeepsBuffer", [] {
     std::array<unsigned char, 248> status;
     status.fill(0x5a);
     const auto originalStatus = status;
-    constexpr int rudpNotInitialized = static_cast<int>(0x80770001);
-    Require(sceRudpGetStatus(status.data(), status.size()) == rudpNotInitialized);
-    Require(status == originalStatus);
-    Require(sceRudpInit_nid_postfix(nullptr, 0) == 0);
-    Require(sceRudpGetStatus(status.data(), status.size()) == 0);
-    for (unsigned char byte : status) Require(byte == 0);
-    Require(sceRudpGetStatus(nullptr, 0) == 0);
-    Require(sceRudpTerminate() == 0);
-    return 0;
-}
+    RequireEqual(sceRudpGetStatus(status.data(), status.size()), rudpNotInitialized, "get status");
+    Require(status == originalStatus, "status buffer untouched");
+}};
+
+const Case rudpStatus{"RudpGetStatus_AfterInit_ZeroFillsBuffer", [] {
+    const RudpSession session;
+    std::array<unsigned char, 248> status;
+    status.fill(0x5a);
+    RequireEqual(sceRudpGetStatus(status.data(), status.size()), 0, "get status");
+    for (std::size_t index = 0; index < status.size(); ++index) {
+        RequireEqual(status[index], static_cast<unsigned char>(0), "status byte " + std::to_string(index));
+    }
+}};
+
+const Case rudpNullStatus{"RudpGetStatus_NullBufferAfterInit_Succeeds", [] {
+    const RudpSession session;
+    RequireEqual(sceRudpGetStatus(nullptr, 0), 0, "get status");
+}};
+
+const Case rudpTerminate{"RudpTerminate_AfterInit_Succeeds", [] {
+    RequireEqual(sceRudpInit_nid_postfix(nullptr, 0), 0, "sceRudpInit");
+    RequireEqual(sceRudpTerminate(), 0, "sceRudpTerminate");
+}};
+
+} // namespace

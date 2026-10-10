@@ -1,59 +1,115 @@
 #include <Cli.hpp>
-#include <chrono>
+#include <Testing/Test.hpp>
+
 #include <csignal>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
-#include <stdexcept>
+#include <streambuf>
 #include <string>
-#include <vector>
+#include <string_view>
 
-int main(int, char* argv[]) {
+namespace {
+
+using namespace Testing;
+
+constexpr std::string_view ChildPrefix = "anyps5-autorun-child-";
+constexpr int ChildExitCode = 42;
+
+std::filesystem::path& ExecutablePath() {
+    static std::filesystem::path path;
+    return path;
+}
+
+class InputRedirect {
+public:
+    InputRedirect() : input("\n\n\n"), saved(std::cin.rdbuf(input.rdbuf())) {}
+    ~InputRedirect() {
+        std::cin.rdbuf(saved);
+        std::cin.clear();
+    }
+    InputRedirect(const InputRedirect&) = delete;
+    InputRedirect& operator=(const InputRedirect&) = delete;
+
+private:
+    std::istringstream input;
+    std::streambuf* saved;
+};
+
+int AutorunCopy(const std::string& fileName, bool toWindows) {
+    const TemporaryDirectory directory;
+    const auto child = directory.Path() / (fileName + ExecutablePath().extension().string());
+    std::filesystem::copy_file(ExecutablePath(), child);
+    const InputRedirect input;
+    return Cli::Autorun(child.string(), toWindows);
+}
+
+std::string ExitingChild(std::string_view suffix) {
+    return std::string(ChildPrefix) + "exit with spaces" + std::string(suffix);
+}
+
+const Case posixModeKeepsExitCode{"Autorun_PosixModeChildExits42_Returns42", [] {
+    const int code = AutorunCopy(ExitingChild(""), false);
+
+    RequireEqual(code, ChildExitCode, "Autorun exit code");
+}};
+
+const Case windowsModeKeepsExitCode{"Autorun_WindowsModeChildExits42_Returns42", [] {
+    const int code = AutorunCopy(ExitingChild(""), true);
+
+    RequireEqual(code, ChildExitCode, "Autorun exit code");
+}};
+
+#ifndef _WIN32
+void RequireExitCodeInBothModes(std::string_view suffix) {
+    RequireEqual(AutorunCopy(ExitingChild(suffix), false), ChildExitCode, "Autorun exit code in posix mode");
+    RequireEqual(AutorunCopy(ExitingChild(suffix), true), ChildExitCode, "Autorun exit code in windows mode");
+}
+
+const Case shellVariablePath{"Autorun_PathWithShellVariable_Returns42", [] {
+    RequireExitCodeInBothModes(" $HOME");
+}};
+
+const Case commandSubstitutionPath{"Autorun_PathWithCommandSubstitution_Returns42", [] {
+    RequireExitCodeInBothModes(" $(printf substituted)");
+}};
+
+const Case backtickPath{"Autorun_PathWithBackticks_Returns42", [] {
+    RequireExitCodeInBothModes(" `printf substituted`");
+}};
+
+const Case singleQuotePath{"Autorun_PathWithSingleQuotes_Returns42", [] {
+    RequireExitCodeInBothModes(" 'single'");
+}};
+
+const Case doubleQuotePath{"Autorun_PathWithDoubleQuotes_Returns42", [] {
+    RequireExitCodeInBothModes(" \"double\"");
+}};
+
+const Case backslashPath{"Autorun_PathWithBackslash_Returns42", [] {
+    RequireExitCodeInBothModes(" \\backslash");
+}};
+
+const Case lineBreakPath{"Autorun_PathWithLineBreak_Returns42", [] {
+    RequireExitCodeInBothModes(" line\nbreak");
+}};
+
+const Case signaledChild{"Autorun_ChildKilledBySigill_Returns128PlusSignal", [] {
+    const int code = AutorunCopy(std::string(ChildPrefix) + "signal with spaces", false);
+
+    RequireEqual(code, 128 + SIGILL, "Autorun exit code");
+}};
+#endif
+
+} // namespace
+
+int main(int argc, char** argv) {
     const auto executable = std::filesystem::absolute(argv[0]);
     const auto name = executable.stem().string();
-    if (name.starts_with("anyps5-autorun-child-")) {
+    if (name.starts_with(ChildPrefix)) {
         if (name.find("signal") != std::string::npos) std::raise(SIGILL);
-        return 42;
+        return ChildExitCode;
     }
-    auto child = std::filesystem::temp_directory_path() / ("anyps5-autorun-child-" +
-        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + " with spaces" + executable.extension().string());
-#ifndef _WIN32
-    const auto signaled = child.parent_path() / ("anyps5-autorun-child-signal-" + child.filename().string());
-#endif
-    std::istringstream input("\n\n\n");
-    auto* savedInput = std::cin.rdbuf(input.rdbuf());
-    int result = 0;
-    try {
-        std::filesystem::copy_file(executable, child);
-        std::vector<std::string> suffixes{""};
-#ifndef _WIN32
-        suffixes.insert(suffixes.end(), {" $HOME", " $(printf substituted)", " `printf substituted`",
-            " 'single'", " \"double\"", " \\backslash", " line\nbreak"});
-#endif
-        const auto originalChild = child;
-        for (const auto& suffix : suffixes) {
-            const auto renamed = std::filesystem::path(originalChild.string() + suffix);
-            if (renamed != child) std::filesystem::rename(child, renamed);
-            child = renamed;
-            for (const bool windows : {false, true}) {
-                const int code = Cli::Autorun(child.string(), windows);
-                if (code != 42) throw std::runtime_error("Autorun changed exit code 42 to " +
-                    std::to_string(code) + " for " + child.string());
-            }
-        }
-#ifndef _WIN32
-        std::filesystem::rename(child, signaled);
-        const int code = Cli::Autorun(signaled.string(), false);
-        if (code != 128 + SIGILL) throw std::runtime_error("Autorun lost the child signal");
-#endif
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        result = 1;
-    }
-    std::cin.rdbuf(savedInput);
-    std::filesystem::remove(child);
-#ifndef _WIN32
-    std::filesystem::remove(signaled);
-#endif
-    return result;
+    ExecutablePath() = executable;
+    return Testing::Run(argc, argv);
 }

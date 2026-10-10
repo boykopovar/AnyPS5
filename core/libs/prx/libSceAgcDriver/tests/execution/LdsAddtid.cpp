@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -331,26 +330,31 @@ void Check(const std::uint32_t (&expected)[Lanes][Checked], const char* const (&
     }
 }
 
+
+AgcDriver::VulkanDevice& WaveWideDevice() {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("the device's subgroups are narrower than a wave (" + std::to_string(device.Target().subgroupSize) + " lanes)");
+    }
+    return device;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device, Wave32Code, 32, device->Target());
-        Check(Expected32, Names32, "wave32");
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(Expected64, Names64, "wave64");
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(Expected64, Names64, "wave64 split");
-        std::puts("lds addtid tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32{"LdsAddtid_Wave32_ReadsAndWritesByThreadId", [] {
+    auto& device = WaveWideDevice();
+    Run(device, Wave32Code, 32, device.Target());
+    Check(Expected32, Names32, "wave32");
+}};
+
+const Testing::Case wave64{"LdsAddtid_Wave64_ReadsAndWritesByThreadId", [] {
+    auto& device = WaveWideDevice();
+    Run(device, Wave64Code, 64, device.Target());
+    Check(Expected64, Names64, "wave64");
+}};
+
+const Testing::Case wave64Split{"LdsAddtid_Wave64OnThirtyTwoLaneSubgroups_ReadsAndWritesByThreadId", [] {
+    auto& device = WaveWideDevice();
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(Expected64, Names64, "wave64 split");
+}};
+
+} // namespace

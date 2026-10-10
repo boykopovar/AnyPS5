@@ -1,43 +1,51 @@
 #define SDL_MAIN_HANDLED
+#include <Testing/Test.hpp>
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include <SDL.h>
 #include <SDL_vulkan.h>
+
 #include <array>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <string_view>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Case;
+using Testing::Require;
 constexpr std::uint32_t Width = 640;
 constexpr std::uint32_t Height = 480;
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 
 ShaderRecompiler::RecompileResult LoadShader(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    Require(file.is_open(), "cannot open test SPIR-V: " + path.string());
+    if (!file.is_open()) throw std::runtime_error("cannot open test SPIR-V: " + path.string());
     const auto size = file.tellg();
-    Require(size >= 20 && size <= 1024 * 1024 && size % 4 == 0, "invalid test SPIR-V size");
+    if (size < 20 || size > 1024 * 1024 || size % 4 != 0) throw std::runtime_error("invalid test SPIR-V size");
     ShaderRecompiler::RecompileResult result;
     result.spirv.resize(static_cast<std::size_t>(size) / 4);
     file.seekg(0);
-    Require(static_cast<bool>(file.read(reinterpret_cast<char*>(result.spirv.data()), size)), "cannot read test SPIR-V");
+    if (!file.read(reinterpret_cast<char*>(result.spirv.data()), size)) throw std::runtime_error("cannot read test SPIR-V");
     return result;
+}
+
+void RequireSdl(bool condition) {
+    if (!condition) throw std::runtime_error(SDL_GetError());
 }
 
 void Run(SDL_Window* window, const std::filesystem::path& directory, bool verifyOnly) {
     unsigned count = 0;
-    Require(SDL_Vulkan_GetInstanceExtensions(window, &count, nullptr) == SDL_TRUE, SDL_GetError());
+    RequireSdl(SDL_Vulkan_GetInstanceExtensions(window, &count, nullptr) == SDL_TRUE);
     std::vector<const char*> extensions(count);
-    Require(SDL_Vulkan_GetInstanceExtensions(window, &count, extensions.data()) == SDL_TRUE, SDL_GetError());
+    RequireSdl(SDL_Vulkan_GetInstanceExtensions(window, &count, extensions.data()) == SDL_TRUE);
     const AgcDriver::PresentationWindow presentation{window, extensions, [](void* context, VkInstance instance) {
         VkSurfaceKHR surface = VK_NULL_HANDLE;
-        Require(SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(context), instance, &surface) == SDL_TRUE, SDL_GetError());
+        RequireSdl(SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(context), instance, &surface) == SDL_TRUE);
         return surface;
     }, [](void* context, std::uint32_t* width, std::uint32_t* height) {
         int drawableWidth = 0;
@@ -90,8 +98,8 @@ void Run(SDL_Window* window, const std::filesystem::path& directory, bool verify
     Require(std::to_integer<unsigned>(Pixels[center]) > 30 && std::to_integer<unsigned>(Pixels[center + 1]) > 30 && std::to_integer<unsigned>(Pixels[center + 2]) > 30, "GPU readback: triangle center was not rendered");
     Require(Pixels[0] == std::byte{16} && Pixels[1] == std::byte{24} && Pixels[2] == std::byte{40}, "GPU readback: background changed");
     device.PresentPixels(Width, Height, Pixels);
-    std::cout << "SPIR-V triangle rendered, GPU readback verified, frame queued for presentation. Close the window or press Escape.\n" << std::flush;
     if (!verifyOnly) {
+        std::cout << "SPIR-V triangle rendered, GPU readback verified, frame queued for presentation. Close the window or press Escape.\n" << std::flush;
         bool running = true;
         while (running) {
             SDL_Event event{};
@@ -104,25 +112,31 @@ void Run(SDL_Window* window, const std::filesystem::path& directory, bool verify
     device.WaitIdle();
 }
 
+struct SdlVideo {
+    SdlVideo() {
+        SDL_SetMainReady();
+        RequireSdl(SDL_Init(SDL_INIT_VIDEO) == 0);
+    }
+
+    SdlVideo(const SdlVideo&) = delete;
+    SdlVideo& operator=(const SdlVideo&) = delete;
+    ~SdlVideo() { SDL_Quit(); }
+};
+
+bool Interactive() {
+    for (const auto& argument : Testing::Arguments()) {
+        if (argument == "interactive") return true;
+    }
+    return false;
 }
 
-int main(int argc, char** argv) {
-    try {
-        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--verify"), "usage: agc_driver_visual_test [--verify]");
-        SDL_SetMainReady();
-        Require(SDL_Init(SDL_INIT_VIDEO) == 0, SDL_GetError());
-        {
-            const auto window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>(SDL_CreateWindow("AnyPS5 AGC - SPIR-V triangle test", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, Width, Height, SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN), SDL_DestroyWindow);
-            Require(window != nullptr, SDL_GetError());
-            const auto base = std::unique_ptr<char, decltype(&SDL_free)>(SDL_GetBasePath(), SDL_free);
-            Require(base != nullptr, SDL_GetError());
-            Run(window.get(), std::filesystem::path(base.get()), argc == 2);
-        }
-        SDL_Quit();
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        SDL_Quit();
-        return 1;
-    }
-}
+const Case triangle{"Draw_SpirvTriangleInWindow_RendersAndPresentsTheTriangle", [] {
+    const SdlVideo video;
+    const auto window = std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)>(SDL_CreateWindow("AnyPS5 AGC - SPIR-V triangle test", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, Width, Height, SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN), SDL_DestroyWindow);
+    RequireSdl(window != nullptr);
+    const auto base = std::unique_ptr<char, decltype(&SDL_free)>(SDL_GetBasePath(), SDL_free);
+    RequireSdl(base != nullptr);
+    Run(window.get(), std::filesystem::path(base.get()), !Interactive());
+}};
+
+} // namespace

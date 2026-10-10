@@ -9,14 +9,13 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Width = 61;
@@ -164,33 +163,59 @@ void Refused(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_
     Require(refused, "image PCK opcode " + std::to_string(opcode) + " format " + std::to_string(format) + " was not refused");
 }
 
+class RegisteredTexels {
+public:
+    RegisteredTexels() { GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true); }
+    ~RegisteredTexels() { GuestAllocations::Mutation().Remove(Texels.data()); }
+    RegisteredTexels(const RegisteredTexels&) = delete;
+    RegisteredTexels& operator=(const RegisteredTexels&) = delete;
+};
+
+constexpr Format R8{R8UInt, 1u, 1u};
+constexpr Format R16{R16UInt, 2u, 1u};
+constexpr Format Rg8{Rg8UInt, 1u, 2u};
+constexpr auto Layout = "elements fill one dword";
+
+void CheckPck2(std::uint32_t opcode) {
+    auto& device = SharedVulkanTestDevice();
+    RegisteredTexels registered;
+    Check(device, opcode, R8, 0x1u);
+    Check(device, opcode, R16, 0x1u);
+    Check(device, opcode, Rg8, 0x1u);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true);
-        constexpr Format r8{R8UInt, 1u, 1u};
-        constexpr Format r16{R16UInt, 2u, 1u};
-        constexpr Format rg8{Rg8UInt, 1u, 2u};
-        for (const auto opcode : {0x70u, 0x73u}) {
-            Check(*device, opcode, r8, 0x1u);
-            Check(*device, opcode, r16, 0x1u);
-            Check(*device, opcode, rg8, 0x1u);
-        }
-        for (const auto opcode : {0x71u, 0x74u}) Check(*device, opcode, r8, 0x1u);
-        constexpr auto layout = "elements fill one dword";
-        Refused(*device, 0x70u, R32UInt, 0x1u, 0xfacu, layout);
-        Refused(*device, 0x71u, R16UInt, 0x1u, 0xfacu, layout);
-        Refused(*device, 0x71u, Rg8UInt, 0x1u, 0xfacu, layout);
-        Refused(*device, 0x70u, R16UInt, 0x1u, 0xf2eu, "identity swizzle");
-        for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) Refused(*device, opcode, R8UInt, 0x1u, 0xfacu, "stores are not implemented");
-        GuestAllocations::Mutation().Remove(Texels.data());
-        std::cout << "image PCK2/PCK4 execution tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+void CheckPck4(std::uint32_t opcode) {
+    auto& device = SharedVulkanTestDevice();
+    RegisteredTexels registered;
+    Check(device, opcode, R8, 0x1u);
 }
+
+const Testing::Case loadPck2{"ImagePckN_LoadPck2_ReturnsPackedPairs", [] { CheckPck2(0x70u); }};
+
+const Testing::Case loadMipPck2{"ImagePckN_LoadMipPck2_ReturnsPackedPairs", [] { CheckPck2(0x73u); }};
+
+const Testing::Case loadPck4{"ImagePckN_LoadPck4_ReturnsPackedQuads", [] { CheckPck4(0x71u); }};
+
+const Testing::Case loadMipPck4{"ImagePckN_LoadMipPck4_ReturnsPackedQuads", [] { CheckPck4(0x74u); }};
+
+const Testing::Case partialDwordRefused{"ImagePckN_ElementsNotFillingDword_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    RegisteredTexels registered;
+    Refused(device, 0x70u, R32UInt, 0x1u, 0xfacu, Layout);
+    Refused(device, 0x71u, R16UInt, 0x1u, 0xfacu, Layout);
+    Refused(device, 0x71u, Rg8UInt, 0x1u, 0xfacu, Layout);
+}};
+
+const Testing::Case swizzleRefused{"ImagePckN_SwizzledTexture_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    RegisteredTexels registered;
+    Refused(device, 0x70u, R16UInt, 0x1u, 0xf2eu, "identity swizzle");
+}};
+
+const Testing::Case storesRefused{"ImagePckN_PackedStores_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    RegisteredTexels registered;
+    for (const auto opcode : {0x76u, 0x77u, 0x79u, 0x7au}) Refused(device, opcode, R8UInt, 0x1u, 0xfacu, "stores are not implemented");
+}};
+
+} // namespace

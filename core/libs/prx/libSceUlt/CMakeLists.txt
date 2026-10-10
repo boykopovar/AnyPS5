@@ -3,29 +3,14 @@ target_include_directories(libSceUlt PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceUlt)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_ult_queue_tests ${LIBS_INCLUDE_DIR}/tests/GuestUltQueue.cpp)
-    target_include_directories(guest_ult_queue_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ult_queue_tests PRIVATE libSceUlt libc)
-    configure_windows_unwind(guest_ult_queue_tests)
-    foreach(testCase IN ITEMS validation fifo blocking shared-pool finalize stress)
-        add_test(NAME guest_ult_queue_${testCase} COMMAND guest_ult_queue_tests ${testCase})
-        set_tests_properties(guest_ult_queue_${testCase} PROPERTIES TIMEOUT 20)
-        if(WIN32)
-            set_tests_properties(guest_ult_queue_${testCase} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUlt>")
-        endif()
-    endforeach()
-
-    add_test_executable(guest_ult_thread_tests ${LIBS_INCLUDE_DIR}/tests/GuestUltThread.cpp)
-    target_include_directories(guest_ult_thread_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_ult_thread_tests PRIVATE libSceUlt libc)
-    configure_windows_unwind(guest_ult_thread_tests)
-    foreach(testCase IN ITEMS outstanding validation tryjoin destroy)
-        add_test(NAME guest_ult_thread_${testCase} COMMAND guest_ult_thread_tests ${testCase})
-        set_tests_properties(guest_ult_thread_${testCase} PROPERTIES TIMEOUT 20)
-        if(WIN32)
-            set_tests_properties(guest_ult_thread_${testCase} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUlt>")
-        endif()
-    endforeach()
+    anyps5_add_library_test(guest_ult_queue_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestUltQueue.cpp
+        LINK libSceUlt libc
+    )
+    anyps5_add_library_test(guest_ult_thread_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestUltThread.cpp
+        LINK libSceUlt libc
+    )
 endif()

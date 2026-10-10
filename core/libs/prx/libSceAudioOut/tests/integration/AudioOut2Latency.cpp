@@ -1,8 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <stdexcept>
 
 extern "C" {
@@ -13,60 +13,74 @@ int APS5_VABI sceAudioOut2MasteringTerm();
 int APS5_VABI sceAudioOut2MasteringSetParam(const void*, std::uint32_t, std::uint32_t);
 }
 
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
-
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 namespace {
+
+using Testing::Case;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
 
 constexpr int systemUser = 0xFF;
 constexpr int user = 0x10000000;
 
-void TestSet3DLatency() {
-    Require(sceAudioOut2Set3DLatency(systemUser, 2) == 0, "latency 2 for the system user must be accepted");
-    Require(sceAudioOut2Set3DLatency(systemUser, 2) == 0, "latency 2 must be accepted again");
-    Require(sceAudioOut2Set3DLatency(systemUser, 1) == 0, "latency 1 for the system user must be accepted");
-    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 0); }), "latency 0 must throw");
-    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(systemUser, 3); }), "latency 3 must throw");
-    Require(ThrowsRuntimeError([] { sceAudioOut2Set3DLatency(user, 2); }), "a user other than the system user must throw");
+void Initialize() {
+    RequireEqual(sceAudioOut2Initialize(), 0, "initialization must succeed");
 }
 
-void TestMasteringInit() {
-    Require(sceAudioOut2MasteringInit(0) == 0, "flags 0 must be accepted");
-    Require(ThrowsRuntimeError([] { sceAudioOut2MasteringInit(1); }), "flags 1 must throw");
-}
+class Mastering {
+public:
+    Mastering() {
+        RequireEqual(sceAudioOut2MasteringInit(0), 0, "flags 0 must be accepted");
+        initialized = true;
+    }
 
-void TestMasteringTerm() {
-    Require(sceAudioOut2MasteringInit(0) == 0, "a second initialization must be accepted");
-    Require(sceAudioOut2MasteringTerm() == 0, "termination must be accepted");
-    Require(sceAudioOut2MasteringTerm() == 0, "termination must be accepted for each initialization");
-}
+    ~Mastering() {
+        if (initialized) sceAudioOut2MasteringTerm();
+    }
 
-void TestMasteringSetParam() {
+    Mastering(const Mastering&) = delete;
+    Mastering& operator=(const Mastering&) = delete;
+
+    void Term() {
+        initialized = false;
+        RequireEqual(sceAudioOut2MasteringTerm(), 0, "termination must be accepted");
+    }
+
+private:
+    bool initialized = false;
+};
+
+const Case latencyAccepted{"Set3DLatency_SystemUserOneOrTwo_Succeeds", [] {
+    Initialize();
+    RequireEqual(sceAudioOut2Set3DLatency(systemUser, 2), 0, "latency 2 for the system user must be accepted");
+    RequireEqual(sceAudioOut2Set3DLatency(systemUser, 2), 0, "latency 2 must be accepted again");
+    RequireEqual(sceAudioOut2Set3DLatency(systemUser, 1), 0, "latency 1 for the system user must be accepted");
+}};
+
+const Case latencyRejected{"Set3DLatency_OtherLatencyOrUser_Throws", [] {
+    Initialize();
+    RequireThrows<std::runtime_error>([] { sceAudioOut2Set3DLatency(systemUser, 0); }, "latency 0 must throw");
+    RequireThrows<std::runtime_error>([] { sceAudioOut2Set3DLatency(systemUser, 3); }, "latency 3 must throw");
+    RequireThrows<std::runtime_error>([] { sceAudioOut2Set3DLatency(user, 2); }, "a user other than the system user must throw");
+}};
+
+const Case masteringFlags{"MasteringInit_NonZeroFlags_Throws", [] {
+    Initialize();
+    RequireThrows<std::runtime_error>([] { sceAudioOut2MasteringInit(1); }, "flags 1 must throw");
+}};
+
+const Case masteringTerm{"MasteringTerm_TwoInitializations_TerminatesEach", [] {
+    Initialize();
+    Mastering first;
+    Mastering second;
+    second.Term();
+    first.Term();
+}};
+
+const Case masteringParam{"MasteringSetParam_ParamsOrNull_AcceptsOrThrows", [] {
+    Initialize();
     const std::uint32_t params[4] = {1u, 0u, 0u, 0u};
-    Require(sceAudioOut2MasteringSetParam(params, 0, 0) == 0, "mastering parameters must be accepted");
-    Require(ThrowsRuntimeError([] { sceAudioOut2MasteringSetParam(nullptr, 0, 0); }), "null mastering parameters must throw");
-}
+    RequireEqual(sceAudioOut2MasteringSetParam(params, 0, 0), 0, "mastering parameters must be accepted");
+    RequireThrows<std::runtime_error>([] { sceAudioOut2MasteringSetParam(nullptr, 0, 0); }, "null mastering parameters must throw");
+}};
 
-}
-
-int main() {
-    Require(sceAudioOut2Initialize() == 0, "initialization must succeed");
-    TestSet3DLatency();
-    TestMasteringInit();
-    TestMasteringTerm();
-    TestMasteringSetParam();
-    return 0;
-}
+} // namespace

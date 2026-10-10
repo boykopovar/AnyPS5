@@ -7,14 +7,13 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <exception>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -135,40 +134,48 @@ void Check(std::uint32_t select, const std::string& what) {
             const auto source = select == ReverseSelect ? 3u - component : component;
             const auto expected = std::bit_cast<std::uint32_t>(Triangle[vertex][source]);
             const auto actual = Output[vertex * 4u + component];
-            Require(actual == expected, what + ": vertex " + std::to_string(vertex) + " v" + std::to_string(8u + component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+            Testing::Require(actual == expected, what + ": vertex " + std::to_string(vertex) + " v" + std::to_string(8u + component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
         }
     }
+}
+
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    Testing::Fail(message);
 }
 
 void CheckRegisterLimit(AgcDriver::VulkanDevice& device) {
     const auto userData = UserData();
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
-    try {
-        static_cast<void>(ShaderRecompiler::Recompile(VertexRequest(device, userData, VertexInfo(IdentitySelect, 5), memory)));
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("the inline model supports one to four") != std::string::npos, std::string("fetch-shader register limit: unexpected error: ") + error.what());
-        return;
-    }
-    throw std::runtime_error("fetch-shader register limit: five destination registers compiled");
+    const auto refusal = RequireRefusal([&] { static_cast<void>(ShaderRecompiler::Recompile(VertexRequest(device, userData, VertexInfo(IdentitySelect, 5), memory))); }, "fetch-shader register limit: five destination registers compiled");
+    Testing::Require(refusal.find("the inline model supports one to four") != std::string::npos, "fetch-shader register limit: unexpected error: " + refusal);
 }
 
-}
+const Testing::Case identitySelect{"ScalarSwappcFetch_IdentityDstSel_FetchesVertexComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    Draw(device, IdentitySelect);
+    Check(IdentitySelect, "fetch-shader call, identity dst_sel");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Draw(*device, IdentitySelect);
-        Check(IdentitySelect, "fetch-shader call, identity dst_sel");
-        Draw(*device, ReverseSelect);
-        Check(ReverseSelect, "fetch-shader call, reversed dst_sel");
-        CheckRegisterLimit(*device);
-        Draw(*device, IdentitySelect, true);
-        Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; }) && std::all_of(Pixels.begin(), Pixels.end(), [](std::byte value) { return value == std::byte{0x40}; }), "an indexed draw of only restart indices ran its vertices or wrote pixels");
-        std::puts("scalar swappc fetch tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case reverseSelect{"ScalarSwappcFetch_ReversedDstSel_FetchesSwizzledComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    Draw(device, ReverseSelect);
+    Check(ReverseSelect, "fetch-shader call, reversed dst_sel");
+}};
+
+const Testing::Case registerLimit{"ScalarSwappcFetch_FiveDestinationRegisters_IsRefused", [] {
+    CheckRegisterLimit(SharedVulkanTestDevice());
+}};
+
+const Testing::Case onlyRestartIndices{"ScalarSwappcFetch_OnlyRestartIndices_RunsNoVertices", [] {
+    auto& device = SharedVulkanTestDevice();
+    Draw(device, IdentitySelect, true);
+    Testing::Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; }) && std::all_of(Pixels.begin(), Pixels.end(), [](std::byte value) { return value == std::byte{0x40}; }), "an indexed draw of only restart indices ran its vertices or wrote pixels");
+}};
+
+} // namespace

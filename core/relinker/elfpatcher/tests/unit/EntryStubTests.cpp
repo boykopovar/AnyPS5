@@ -1,49 +1,68 @@
+#include <Testing/Test.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
-#include <stdexcept>
-#include <string>
 #include <vector>
 
 namespace {
 
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+constexpr std::uint64_t StubVaddr = 0xb32db98;
+constexpr std::uint64_t EntryVaddr = 0x80;
+constexpr std::size_t CallOffset = 17;
+constexpr std::size_t CallSize = 5;
+
+std::vector<std::uint8_t> buildStub() {
+    return Elfpatcher::EntryStubBuilder().BuildEntryStub(StubVaddr, EntryVaddr);
 }
 
-bool bytesAt(const std::vector<std::uint8_t>& stub, std::size_t& offset, const std::vector<std::uint8_t>& expected) {
-    if (offset + expected.size() > stub.size() || std::memcmp(stub.data() + offset, expected.data(), expected.size()) != 0) return false;
-    offset += expected.size();
-    return true;
+bool bytesAt(const std::vector<std::uint8_t>& stub, std::size_t offset, const std::vector<std::uint8_t>& expected) {
+    return offset + expected.size() <= stub.size() && std::memcmp(stub.data() + offset, expected.data(), expected.size()) == 0;
 }
 
-void stubTerminatesTheFrameChain() {
-    constexpr std::uint64_t stubVaddr = 0xb32db98;
-    constexpr std::uint64_t entryVaddr = 0x80;
-    const auto stub = Elfpatcher::EntryStubBuilder().BuildEntryStub(stubVaddr, entryVaddr);
-    std::size_t offset = 0;
-    require(bytesAt(stub, offset, {0x48, 0x89, 0xe7}), "the stub does not pass the initial stack pointer in rdi");
-    require(bytesAt(stub, offset, {0x48, 0x83, 0xe4, 0xf0}), "the stub does not align the stack to 16 bytes");
-    require(bytesAt(stub, offset, {0x6a, 0x00, 0x6a, 0x00}), "the stub does not push a zero frame record");
-    require(bytesAt(stub, offset, {0x48, 0x89, 0xe5}), "the stub does not point rbp at the zero frame record");
-    require(bytesAt(stub, offset, {0x48, 0x31, 0xf6}), "the stub does not clear rsi");
-    require(offset < stub.size() && stub[offset] == 0xe8, "the stub does not call the entry point");
+const Testing::Case passesStackPointer{"EntryStub_Prologue_PassesInitialStackPointerInRdi", [] {
+    const auto stub = buildStub();
+
+    Testing::Require(bytesAt(stub, 0, {0x48, 0x89, 0xe7}), "the stub does not pass the initial stack pointer in rdi");
+}};
+
+const Testing::Case alignsStack{"EntryStub_Prologue_AlignsStackTo16Bytes", [] {
+    const auto stub = buildStub();
+
+    Testing::Require(bytesAt(stub, 3, {0x48, 0x83, 0xe4, 0xf0}), "the stub does not align the stack to 16 bytes");
+}};
+
+const Testing::Case pushesZeroFrame{"EntryStub_Prologue_PushesZeroFrameRecord", [] {
+    const auto stub = buildStub();
+
+    Testing::Require(bytesAt(stub, 7, {0x6a, 0x00, 0x6a, 0x00}), "the stub does not push a zero frame record");
+}};
+
+const Testing::Case pointsRbpAtZeroFrame{"EntryStub_Prologue_PointsRbpAtZeroFrameRecord", [] {
+    const auto stub = buildStub();
+
+    Testing::Require(bytesAt(stub, 11, {0x48, 0x89, 0xe5}), "the stub does not point rbp at the zero frame record");
+}};
+
+const Testing::Case clearsRsi{"EntryStub_Prologue_ClearsRsi", [] {
+    const auto stub = buildStub();
+
+    Testing::Require(bytesAt(stub, 14, {0x48, 0x31, 0xf6}), "the stub does not clear rsi");
+}};
+
+const Testing::Case callsEntryPoint{"EntryStub_Call_TargetsEntryPoint", [] {
+    const auto stub = buildStub();
+
+    Testing::Require(CallOffset + CallSize <= stub.size() && stub[CallOffset] == 0xe8, "the stub does not call the entry point");
     std::int32_t rel32 = 0;
-    std::memcpy(&rel32, stub.data() + offset + 1, sizeof(rel32));
-    offset += 5;
-    require(stubVaddr + offset + static_cast<std::int64_t>(rel32) == entryVaddr, "the stub calls the wrong address");
-    require(bytesAt(stub, offset, {0x0f, 0x0b}) && offset == stub.size(), "the stub does not end with ud2 after the call");
-}
+    std::memcpy(&rel32, stub.data() + CallOffset + 1, sizeof(rel32));
+    Testing::RequireEqual(StubVaddr + CallOffset + CallSize + static_cast<std::int64_t>(rel32), EntryVaddr, "the stub calls the wrong address");
+}};
 
-}
+const Testing::Case endsWithUd2{"EntryStub_AfterCall_EndsWithUd2", [] {
+    const auto stub = buildStub();
 
-int main() {
-    try {
-        stubTerminatesTheFrameChain();
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-    return 0;
-}
+    Testing::Require(bytesAt(stub, CallOffset + CallSize, {0x0f, 0x0b}), "the stub does not end with ud2 after the call");
+    Testing::RequireEqual(stub.size(), CallOffset + CallSize + 2, "the stub has trailing bytes after ud2");
+}};
+
+} // namespace

@@ -1,6 +1,9 @@
 #include "SceTypes.hpp"
-#include <cstdlib>
+
+#include <Testing/Test.hpp>
+
 #include <future>
+#include <string>
 
 extern "C" {
 KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void);
@@ -13,53 +16,119 @@ int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
 int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
 }
 
-static constexpr int SCE_OK = 0;
-static constexpr int PS5_LOGICAL_CPUS = 16;
+namespace {
 
-static void Require(bool value) { if (!value) std::abort(); }
+using Testing::Case;
+using Testing::RequireEqual;
 
-static void* APS5_VABI Worker(void* arg) {
-    static_cast<std::future<void>*>(arg)->get();
+constexpr int SCE_OK = 0;
+constexpr int PS5_LOGICAL_CPUS = 16;
+
+class ThreadAttr {
+public:
+    ThreadAttr() {
+        RequireEqual(scePthreadAttrInit(&attr), SCE_OK, "attr init");
+        initialized = true;
+    }
+    ~ThreadAttr() {
+        if (initialized) scePthreadAttrDestroy(&attr);
+    }
+    ThreadAttr(const ThreadAttr&) = delete;
+    ThreadAttr& operator=(const ThreadAttr&) = delete;
+
+    int Destroy() {
+        initialized = false;
+        return scePthreadAttrDestroy(&attr);
+    }
+
+    PthreadAttr attr = nullptr;
+
+private:
+    bool initialized = false;
+};
+
+void* APS5_VABI WaitForRelease(void* arg) {
+    static_cast<std::shared_future<void>*>(arg)->wait();
     return nullptr;
 }
 
-static void* APS5_VABI ReportMask(void* arg) {
+void* APS5_VABI ReportMask(void* arg) {
     *static_cast<KernelCpumask*>(arg) = sceKernelGetAvailableCpumask();
     return nullptr;
 }
 
-int main() {
-    const KernelCpumask available = sceKernelGetAvailableCpumask();
-    Require(available != 0);
-    Require((available >> PS5_LOGICAL_CPUS) == 0);
-    Require(sceKernelGetAvailableCpumask() == available);
+class BlockedThread {
+public:
+    explicit BlockedThread(const ThreadAttr& attr) : released(release.get_future().share()) {
+        RequireEqual(scePthreadCreate(&thread, &attr.attr, WaitForRelease, &released, nullptr), SCE_OK, "create thread");
+    }
+    ~BlockedThread() {
+        if (thread != nullptr) ReleaseAndJoin();
+    }
+    BlockedThread(const BlockedThread&) = delete;
+    BlockedThread& operator=(const BlockedThread&) = delete;
 
-    PthreadAttr attr = nullptr;
-    Require(scePthreadAttrInit(&attr) == SCE_OK);
-    KernelCpumask defaultAffinity = 0;
-    Require(scePthreadAttrGetaffinity(&attr, &defaultAffinity) == SCE_OK);
-    Require(defaultAffinity == available);
+    KernelCpumask Affinity() {
+        KernelCpumask mask = 0;
+        RequireEqual(scePthreadGetaffinity(thread, &mask), SCE_OK, "get affinity");
+        return mask;
+    }
 
-    std::promise<void> release;
-    auto released = release.get_future();
+    int ReleaseAndJoin() {
+        release.set_value();
+        const int result = scePthreadJoin(thread, nullptr);
+        thread = nullptr;
+        return result;
+    }
+
     Pthread thread = nullptr;
-    Require(scePthreadCreate(&thread, &attr, Worker, &released, nullptr) == SCE_OK);
-    KernelCpumask threadAffinity = 0;
-    Require(scePthreadGetaffinity(thread, &threadAffinity) == SCE_OK);
-    Require(threadAffinity == available);
 
+private:
+    std::promise<void> release;
+    std::shared_future<void> released;
+};
+
+const Case mask{"GetAvailableCpumask_Read_ReturnsStableNonEmptyMaskWithinPs5Cpus", [] {
+    const KernelCpumask available = sceKernelGetAvailableCpumask();
+    RequireEqual(available != 0, true, "mask is not empty");
+    RequireEqual(available >> PS5_LOGICAL_CPUS, KernelCpumask{0}, "bits above the 16 logical cpus");
+    RequireEqual(sceKernelGetAvailableCpumask(), available, "second read");
+}};
+
+const Case attrDefault{"PthreadAttrGetaffinity_DefaultAttr_ReturnsAvailableMask", [] {
+    ThreadAttr attr;
+    KernelCpumask affinity = 0;
+    RequireEqual(scePthreadAttrGetaffinity(&attr.attr, &affinity), SCE_OK, "attr get affinity");
+    RequireEqual(affinity, sceKernelGetAvailableCpumask(), "default affinity");
+    RequireEqual(attr.Destroy(), SCE_OK, "attr destroy");
+}};
+
+const Case threadDefault{"PthreadGetaffinity_NewThread_ReturnsAvailableMask", [] {
+    ThreadAttr attr;
+    BlockedThread thread(attr);
+    RequireEqual(thread.Affinity(), sceKernelGetAvailableCpumask(), "thread affinity");
+}};
+
+const Case setEachCpu{"PthreadSetaffinity_EachAvailableCpu_IsReportedBack", [] {
+    const KernelCpumask available = sceKernelGetAvailableCpumask();
+    ThreadAttr attr;
+    BlockedThread thread(attr);
     for (KernelCpumask cpu = 1; cpu != 0; cpu <<= 1) {
         if ((available & cpu) == 0) continue;
-        Require(scePthreadSetaffinity(thread, cpu) == SCE_OK);
-        Require(scePthreadGetaffinity(thread, &threadAffinity) == SCE_OK);
-        Require(threadAffinity == cpu);
+        const std::string name = "cpu mask " + std::to_string(cpu);
+        RequireEqual(scePthreadSetaffinity(thread.thread, cpu), SCE_OK, "set " + name);
+        RequireEqual(thread.Affinity(), cpu, "get " + name);
     }
-    release.set_value();
-    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+    RequireEqual(thread.ReleaseAndJoin(), SCE_OK, "join thread");
+}};
 
+const Case fromGuestThread{"GetAvailableCpumask_FromGuestThread_MatchesMainThread", [] {
+    ThreadAttr attr;
     KernelCpumask fromThread = 0;
-    Require(scePthreadCreate(&thread, &attr, ReportMask, &fromThread, nullptr) == SCE_OK);
-    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
-    Require(fromThread == available);
-    Require(scePthreadAttrDestroy(&attr) == SCE_OK);
-}
+    Pthread thread = nullptr;
+    RequireEqual(scePthreadCreate(&thread, &attr.attr, ReportMask, &fromThread, nullptr), SCE_OK, "create thread");
+    RequireEqual(scePthreadJoin(thread, nullptr), SCE_OK, "join thread");
+    RequireEqual(fromThread, sceKernelGetAvailableCpumask(), "mask seen by guest thread");
+}};
+
+} // namespace

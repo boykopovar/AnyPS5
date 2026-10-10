@@ -1,8 +1,11 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 extern "C" {
@@ -22,153 +25,249 @@ uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
 void* APS5_VABI sceKernelGetEventUserData(const KernelEvent* ev);
 }
 
-static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
-static constexpr int EVFILT_TIMER = -7;
-static constexpr int EVFILT_USER = -11;
-static constexpr int EVFILT_HRTIMER = -15;
+namespace {
 
-static void Require(bool value) { if (!value) std::abort(); }
+using namespace std::chrono_literals;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
 
-template <typename TResult>
-static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
-    try {
-        accessor(nullptr);
-    } catch (const std::runtime_error&) {
-        return true;
+constexpr int sceOk = 0;
+constexpr int sceKernelErrorEnoent = static_cast<int>(0x80020002);
+constexpr int sceKernelErrorEbadf = static_cast<int>(0x80020009);
+constexpr int sceKernelErrorEtimedout = static_cast<int>(0x8002003c);
+constexpr int evfiltTimer = -7;
+constexpr int evfiltUser = -11;
+constexpr int evfiltHrtimer = -15;
+constexpr KernelUseconds pollTimeout = 0;
+constexpr KernelUseconds oneSecond = 1000000;
+
+class Equeue {
+public:
+    explicit Equeue(const char* name) {
+        RequireEqual(sceKernelCreateEqueue(&handle, name), sceOk, std::string("create equeue ") + name);
     }
-    return false;
-}
 
-static void SleepAtLeast(std::chrono::steady_clock::duration duration) {
+    ~Equeue() {
+        if (!deleted) sceKernelDeleteEqueue(handle);
+    }
+
+    Equeue(const Equeue&) = delete;
+    Equeue& operator=(const Equeue&) = delete;
+
+    KernelEqueue Handle() const noexcept { return handle; }
+
+    int Delete() {
+        deleted = true;
+        return sceKernelDeleteEqueue(handle);
+    }
+
+private:
+    KernelEqueue handle = 0;
+    bool deleted = false;
+};
+
+void SleepAtLeast(std::chrono::steady_clock::duration duration) {
     const auto start = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - start < duration) {
         std::this_thread::sleep_for(duration);
     }
 }
 
-static void VerifyPeriodicTimer() {
-    using namespace std::chrono_literals;
+std::uintptr_t Id(const KernelEvent& event) {
+    return sceKernelGetEventId(&event);
+}
+
+std::intptr_t Data(const KernelEvent& event) {
+    return sceKernelGetEventData(&event);
+}
+
+void RequireDataAtLeast(const KernelEvent& event, std::intptr_t minimum, const std::string& context) {
+    const std::intptr_t data = Data(event);
+    Require(data >= minimum, context + " expirations at least " + std::to_string(minimum) + ", got " + std::to_string(data));
+}
+
+const Case timerBadQueue{"TimerEvent_InvalidEqueue_FailsWithEbadf", [] {
     int first = 0;
-    int second = 0;
-    Require(sceKernelAddTimerEvent(0, 10, 1000, &first) == SCE_KERNEL_ERROR_EBADF);
-    Require(sceKernelDeleteTimerEvent(0, 10) == SCE_KERNEL_ERROR_EBADF);
+    RequireEqual(sceKernelAddTimerEvent(0, 10, 1000, &first), sceKernelErrorEbadf, "add timer to equeue 0");
+    RequireEqual(sceKernelDeleteTimerEvent(0, 10), sceKernelErrorEbadf, "delete timer from equeue 0");
+}};
 
-    KernelEqueue eq = 0;
-    Require(sceKernelCreateEqueue(&eq, "timer") == SCE_OK);
-    Require(sceKernelDeleteTimerEvent(eq, 10) == SCE_KERNEL_ERROR_ENOENT);
+const Case timerMissing{"DeleteTimerEvent_NotAdded_FailsWithEnoent", [] {
+    Equeue queue("timer");
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 10), sceKernelErrorEnoent, "delete timer 10");
+}};
 
+const Case periodicTimer{"TimerEvent_PeriodicTimer_ReportsAccumulatedExpirations", [] {
+    Equeue queue("timer");
+    int first = 0;
     KernelEvent events[2]{};
     int count = 0;
-    const KernelUseconds poll = 0;
-    const KernelUseconds wait = 1000000;
-    Require(sceKernelAddTimerEvent(eq, 10, 1000, &first) == SCE_OK);
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 10, 1000, &first), sceOk, "add timer 10");
     SleepAtLeast(5ms);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_OK);
-    Require(count == 1);
-    Require(sceKernelGetEventId(&events[0]) == 10);
-    Require(sceKernelGetEventFilter(&events[0]) == EVFILT_TIMER);
-    Require(sceKernelGetEventData(&events[0]) >= 5);
-    Require(sceKernelGetEventUserData(&events[0]) == &first);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &wait) == SCE_OK);
-    Require(count == 1 && sceKernelGetEventData(&events[0]) >= 1);
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout), sceOk, "poll");
+    RequireEqual(count, 1, "polled event count");
+    RequireEqual(Id(events[0]), std::uintptr_t{10}, "event id");
+    RequireEqual(sceKernelGetEventFilter(&events[0]), evfiltTimer, "event filter");
+    RequireDataAtLeast(events[0], 5, "polled");
+    RequireEqual(sceKernelGetEventUserData(&events[0]), static_cast<void*>(&first), "event user data");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &oneSecond), sceOk, "wait");
+    RequireEqual(count, 1, "waited event count");
+    RequireDataAtLeast(events[0], 1, "waited");
+}};
 
+const Case timerReplaced{"AddTimerEvent_ExistingTimer_KeepsPendingExpirationsAndReplacesUserData", [] {
+    Equeue queue("timer");
+    int first = 0;
+    int second = 0;
+    KernelEvent events[2]{};
+    int count = 0;
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 10, 1000, &first), sceOk, "add timer 10");
     SleepAtLeast(5ms);
-    Require(sceKernelAddTimerEvent(eq, 10, 3000000000u, &second) == SCE_OK);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_OK);
-    Require(count == 1);
-    Require(sceKernelGetEventData(&events[0]) >= 5);
-    Require(sceKernelGetEventUserData(&events[0]) == &second);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
-    Require(sceKernelDeleteTimerEvent(eq, 10) == SCE_OK);
-    Require(sceKernelDeleteTimerEvent(eq, 10) == SCE_KERNEL_ERROR_ENOENT);
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 10, 3000000000u, &second), sceOk, "re-add timer 10");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout), sceOk, "poll");
+    RequireEqual(count, 1, "polled event count");
+    RequireDataAtLeast(events[0], 5, "polled");
+    RequireEqual(sceKernelGetEventUserData(&events[0]), static_cast<void*>(&second), "event user data");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout), sceKernelErrorEtimedout, "second poll");
+}};
 
-    Require(sceKernelAddTimerEvent(eq, 13, 3000000000u, &first) == SCE_OK);
+const Case timerDeletedTwice{"DeleteTimerEvent_AlreadyDeleted_FailsWithEnoent", [] {
+    Equeue queue("timer");
+    int first = 0;
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 10, 3000000000u, &first), sceOk, "add timer 10");
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 10), sceOk, "first delete");
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 10), sceKernelErrorEnoent, "second delete");
+}};
+
+const Case timerShortened{"AddTimerEvent_ShorterPeriodOnLongTimer_RestartsWithNewPeriod", [] {
+    Equeue queue("timer");
+    int first = 0;
+    KernelEvent events[2]{};
+    int count = 0;
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 13, 3000000000u, &first), sceOk, "add long timer 13");
     const auto readded = std::chrono::steady_clock::now();
-    Require(sceKernelAddTimerEvent(eq, 13, 200000, &first) == SCE_OK);
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 13, 200000, &first), sceOk, "re-add timer 13 with 200 ms");
     SleepAtLeast(250ms);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_OK);
-    Require(count == 1 && sceKernelGetEventData(&events[0]) >= 1);
-    const intptr_t expirations = sceKernelGetEventData(&events[0]);
-    const int again = sceKernelWaitEqueue(eq, events, 2, &count, &poll);
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout), sceOk, "poll");
+    RequireEqual(count, 1, "polled event count");
+    RequireDataAtLeast(events[0], 1, "polled");
+    const std::intptr_t expirations = Data(events[0]);
+    const int again = sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout);
     if (std::chrono::steady_clock::now() - readded < 400ms) {
-        Require(expirations == 1 && again == SCE_KERNEL_ERROR_ETIMEDOUT);
+        RequireEqual(expirations, std::intptr_t{1}, "expirations within 400 ms");
+        RequireEqual(again, sceKernelErrorEtimedout, "second poll within 400 ms");
     }
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &wait) == SCE_OK);
-    Require(count == 1 && sceKernelGetEventId(&events[0]) == 13);
-    Require(sceKernelDeleteTimerEvent(eq, 13) == SCE_OK);
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &oneSecond), sceOk, "wait");
+    RequireEqual(count, 1, "waited event count");
+    RequireEqual(Id(events[0]), std::uintptr_t{13}, "waited event id");
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 13), sceOk, "delete timer 13");
+}};
 
-    Require(sceKernelAddTimerEvent(eq, 14, 1000, &first) == SCE_OK);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, nullptr) == SCE_OK);
-    Require(count == 1 && sceKernelGetEventId(&events[0]) == 14 && sceKernelGetEventData(&events[0]) >= 1);
-    Require(sceKernelDeleteTimerEvent(eq, 14) == SCE_OK);
+const Case timerInfiniteWait{"WaitEqueue_NullTimeoutWithTimer_ReturnsTimerEvent", [] {
+    Equeue queue("timer");
+    int first = 0;
+    KernelEvent events[2]{};
+    int count = 0;
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 14, 1000, &first), sceOk, "add timer 14");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, nullptr), sceOk, "wait");
+    RequireEqual(count, 1, "event count");
+    RequireEqual(Id(events[0]), std::uintptr_t{14}, "event id");
+    RequireDataAtLeast(events[0], 1, "waited");
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 14), sceOk, "delete timer 14");
+}};
+
+const Case hrTimerInfiniteWait{"WaitEqueue_NullTimeoutWithHrTimer_ReturnsHrTimerEvent", [] {
+    Equeue queue("timer");
+    int second = 0;
+    KernelEvent events[2]{};
+    int count = 0;
     const KernelTimespec soon{0, 1000000};
-    Require(sceKernelAddHRTimerEvent(eq, 15, &soon, &second) == SCE_OK);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, nullptr) == SCE_OK);
-    Require(count == 1 && sceKernelGetEventId(&events[0]) == 15 && sceKernelGetEventFilter(&events[0]) == EVFILT_HRTIMER);
+    RequireEqual(sceKernelAddHRTimerEvent(queue.Handle(), 15, &soon, &second), sceOk, "add hr timer 15");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, nullptr), sceOk, "wait");
+    RequireEqual(count, 1, "event count");
+    RequireEqual(Id(events[0]), std::uintptr_t{15}, "event id");
+    RequireEqual(sceKernelGetEventFilter(&events[0]), evfiltHrtimer, "event filter");
+}};
 
-    Require(sceKernelAddTimerEvent(eq, 11, 0, &first) == SCE_OK);
-    Require(sceKernelAddTimerEvent(eq, 11, 0, &first) == SCE_OK);
+const Case zeroPeriodTimer{"AddTimerEvent_ZeroPeriodAddedTwice_FiresOncePerAddUntilDeleted", [] {
+    Equeue queue("timer");
+    int first = 0;
+    KernelEvent events[2]{};
+    int count = 0;
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 11, 0, &first), sceOk, "first add");
+    RequireEqual(sceKernelAddTimerEvent(queue.Handle(), 11, 0, &first), sceOk, "second add");
     for (int i = 0; i < 2; ++i) {
-        Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_OK);
-        Require(count == 1 && sceKernelGetEventData(&events[0]) == 1);
+        const std::string context = "poll " + std::to_string(i);
+        RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout), sceOk, context);
+        RequireEqual(count, 1, context + " event count");
+        RequireEqual(Data(events[0]), std::intptr_t{1}, context + " expirations");
     }
-    Require(sceKernelDeleteTimerEvent(eq, 11) == SCE_OK);
-    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 11), sceOk, "delete timer 11");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), events, 2, &count, &pollTimeout), sceKernelErrorEtimedout, "poll after delete");
+}};
 
+const Case hrTimerNotTimer{"DeleteTimerEvent_HrTimer_FailsWithEnoentAndEqueueStillDeletes", [] {
+    Equeue queue("timer");
+    int first = 0;
     const KernelTimespec delay{0, 1000000};
-    Require(sceKernelAddHRTimerEvent(eq, 12, &delay, &first) == SCE_OK);
-    Require(sceKernelDeleteTimerEvent(eq, 12) == SCE_KERNEL_ERROR_ENOENT);
-    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
-}
+    RequireEqual(sceKernelAddHRTimerEvent(queue.Handle(), 12, &delay, &first), sceOk, "add hr timer 12");
+    RequireEqual(sceKernelDeleteTimerEvent(queue.Handle(), 12), sceKernelErrorEnoent, "delete hr timer as timer");
+    RequireEqual(queue.Delete(), sceOk, "delete equeue");
+}};
 
-int main() {
-    VerifyPeriodicTimer();
-
-    KernelEqueue eq = 0;
-    Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);
-    const KernelUseconds timeout = 1000000;
+const Case userEvent{"TriggerUserEvent_AddedEvent_DeliversUserEventFields", [] {
+    Equeue queue("events");
     int payload = 0;
     int count = 0;
+    KernelEvent event{};
+    RequireEqual(sceKernelAddUserEvent(queue.Handle(), 7), sceOk, "add user event");
+    RequireEqual(sceKernelTriggerUserEvent(queue.Handle(), 7, &payload), sceOk, "trigger user event");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), &event, 1, &count, &oneSecond), sceOk, "wait");
+    RequireEqual(count, 1, "event count");
+    RequireEqual(Id(event), std::uintptr_t{7}, "event id");
+    RequireEqual(sceKernelGetEventFilter(&event), evfiltUser, "event filter");
+    RequireEqual(Data(event), reinterpret_cast<std::intptr_t>(&payload), "event data");
+    RequireEqual(sceKernelGetEventUserData(&event), static_cast<void*>(&payload), "event user data");
+    RequireEqual(sceKernelGetEventFflags(&event), std::intptr_t{0}, "event fflags");
+    RequireEqual(sceKernelDeleteUserEvent(queue.Handle(), 7), sceOk, "delete user event");
+}};
 
-    KernelEvent userEvent{};
-    Require(sceKernelAddUserEvent(eq, 7) == SCE_OK);
-    Require(sceKernelTriggerUserEvent(eq, 7, &payload) == SCE_OK);
-    Require(sceKernelWaitEqueue(eq, &userEvent, 1, &count, &timeout) == SCE_OK);
-    Require(count == 1);
-    Require(sceKernelGetEventId(&userEvent) == 7);
-    Require(sceKernelGetEventFilter(&userEvent) == EVFILT_USER);
-    Require(sceKernelGetEventData(&userEvent) == reinterpret_cast<intptr_t>(&payload));
-    Require(sceKernelGetEventUserData(&userEvent) == &payload);
-    Require(sceKernelGetEventFflags(&userEvent) == 0);
-    Require(sceKernelDeleteUserEvent(eq, 7) == SCE_OK);
-
-    KernelEvent timerEvent{};
+const Case hrTimerEvent{"AddHRTimerEvent_OneMillisecond_DeliversHrTimerEventAndEqueueDeletes", [] {
+    Equeue queue("events");
+    int payload = 0;
+    int count = 0;
+    KernelEvent event{};
     const KernelTimespec delay{0, 1000000};
-    Require(sceKernelAddHRTimerEvent(eq, 9, &delay, &payload) == SCE_OK);
-    Require(sceKernelWaitEqueue(eq, &timerEvent, 1, &count, &timeout) == SCE_OK);
-    Require(count == 1);
-    Require(sceKernelGetEventId(&timerEvent) == 9);
-    Require(sceKernelGetEventFilter(&timerEvent) == EVFILT_HRTIMER);
-    Require(sceKernelGetEventUserData(&timerEvent) == &payload);
-    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    RequireEqual(sceKernelAddHRTimerEvent(queue.Handle(), 9, &delay, &payload), sceOk, "add hr timer 9");
+    RequireEqual(sceKernelWaitEqueue(queue.Handle(), &event, 1, &count, &oneSecond), sceOk, "wait");
+    RequireEqual(count, 1, "event count");
+    RequireEqual(Id(event), std::uintptr_t{9}, "event id");
+    RequireEqual(sceKernelGetEventFilter(&event), evfiltHrtimer, "event filter");
+    RequireEqual(sceKernelGetEventUserData(&event), static_cast<void*>(&payload), "event user data");
+    RequireEqual(queue.Delete(), sceOk, "delete equeue");
+}};
 
-    KernelEvent rawEvent{};
-    rawEvent.ident = UINTPTR_MAX;
-    rawEvent.filter = INT16_MIN;
-    rawEvent.fflags = 0x80000001u;
-    rawEvent.data = -5;
-    Require(sceKernelGetEventId(&rawEvent) == UINTPTR_MAX);
-    Require(sceKernelGetEventFilter(&rawEvent) == INT16_MIN);
-    Require(sceKernelGetEventFflags(&rawEvent) == static_cast<intptr_t>(0x80000001LL));
-    Require(sceKernelGetEventData(&rawEvent) == -5);
-    Require(sceKernelGetEventUserData(&rawEvent) == nullptr);
+const Case rawEvent{"EventAccessors_RawEvent_ReturnFieldsUnchanged", [] {
+    KernelEvent event{};
+    event.ident = UINTPTR_MAX;
+    event.filter = INT16_MIN;
+    event.fflags = 0x80000001u;
+    event.data = -5;
+    RequireEqual(Id(event), std::uintptr_t{UINTPTR_MAX}, "id");
+    RequireEqual(sceKernelGetEventFilter(&event), int{INT16_MIN}, "filter");
+    RequireEqual(sceKernelGetEventFflags(&event), static_cast<std::intptr_t>(0x80000001LL), "fflags");
+    RequireEqual(Data(event), std::intptr_t{-5}, "data");
+    Require(sceKernelGetEventUserData(&event) == nullptr, "user data is null");
+}};
 
-    Require(RejectsNull(sceKernelGetEventData));
-    Require(RejectsNull(sceKernelGetEventFflags));
-    Require(RejectsNull(sceKernelGetEventFilter));
-    Require(RejectsNull(sceKernelGetEventId));
-    Require(RejectsNull(sceKernelGetEventUserData));
-}
+const Case nullEvent{"EventAccessors_NullEvent_ThrowRuntimeError", [] {
+    RequireThrows<std::runtime_error>([] { sceKernelGetEventData(nullptr); }, "sceKernelGetEventData");
+    RequireThrows<std::runtime_error>([] { sceKernelGetEventFflags(nullptr); }, "sceKernelGetEventFflags");
+    RequireThrows<std::runtime_error>([] { sceKernelGetEventFilter(nullptr); }, "sceKernelGetEventFilter");
+    RequireThrows<std::runtime_error>([] { sceKernelGetEventId(nullptr); }, "sceKernelGetEventId");
+    RequireThrows<std::runtime_error>([] { sceKernelGetEventUserData(nullptr); }, "sceKernelGetEventUserData");
+}};
+
+} // namespace

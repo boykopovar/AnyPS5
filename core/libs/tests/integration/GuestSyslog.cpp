@@ -1,7 +1,9 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <string>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -12,40 +14,136 @@ extern "C" {
 void APS5_VABI syslog_nid_postfix(int, const char*, ...);
 int* APS5_VABI __error_nid_postfix();
 }
-static void Require(bool value) { if (!value) std::abort(); }
-int main() {
-    auto* captured = std::tmpfile();
-    Require(captured != nullptr);
-    std::fflush(stderr);
+
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int enoent = 2;
+
+int StderrDescriptor() {
 #ifdef _WIN32
-    const int saved = ::_dup(::_fileno(stderr));
-    Require(saved >= 0 && ::_dup2(::_fileno(captured), ::_fileno(stderr)) == 0);
+    return ::_fileno(stderr);
 #else
-    const int saved = ::dup(::fileno(stderr));
-    Require(saved >= 0 && ::dup2(::fileno(captured), ::fileno(stderr)) == ::fileno(stderr));
+    return ::fileno(stderr);
 #endif
-    *__error_nid_postfix() = 2;
-    syslog_nid_postfix(6, "station %s at %d kbps", "radio", 128);
-    const int afterFirst = *__error_nid_postfix();
-    syslog_nid_postfix(16 | 3, "open: %m, %%m kept, %d%%\n", 50);
-    syslog_nid_postfix(0x10000 | 4, "masked");
-    syslog_nid_postfix(7, "");
-    std::fflush(stderr);
-#ifdef _WIN32
-    Require(::_dup2(saved, ::_fileno(stderr)) == 0 && ::_close(saved) == 0);
-#else
-    Require(::dup2(saved, ::fileno(stderr)) == ::fileno(stderr) && ::close(saved) == 0);
-#endif
-    Require(afterFirst == 2 && *__error_nid_postfix() == 2);
-    std::rewind(captured);
-    char text[512]{};
-    const auto length = std::fread(text, 1, sizeof(text) - 1, captured);
-    const char* expected =
-        "[syslog:14] station radio at 128 kbps\n"
-        "[syslog:19] open: No such file or directory, %m kept, 50%\n"
-        "[syslog:35] syslog: unknown facility/priority: 10004\n"
-        "[syslog:12] masked\n"
-        "[syslog:15] \n";
-    Require(length == std::strlen(expected) && std::strcmp(text, expected) == 0);
-    Require(std::fclose(captured) == 0);
 }
+
+int DescriptorOf(std::FILE* file) {
+#ifdef _WIN32
+    return ::_fileno(file);
+#else
+    return ::fileno(file);
+#endif
+}
+
+int Duplicate(int descriptor) {
+#ifdef _WIN32
+    return ::_dup(descriptor);
+#else
+    return ::dup(descriptor);
+#endif
+}
+
+bool Redirect(int source, int target) {
+#ifdef _WIN32
+    return ::_dup2(source, target) == 0;
+#else
+    return ::dup2(source, target) == target;
+#endif
+}
+
+bool CloseDescriptor(int descriptor) {
+#ifdef _WIN32
+    return ::_close(descriptor) == 0;
+#else
+    return ::close(descriptor) == 0;
+#endif
+}
+
+class StderrCapture {
+public:
+    StderrCapture() : file(std::tmpfile()) {
+        Require(file != nullptr, "create the capture file");
+        std::fflush(stderr);
+        saved = Duplicate(StderrDescriptor());
+        const bool redirected = saved >= 0 && Redirect(DescriptorOf(file), StderrDescriptor());
+        if (!redirected) {
+            if (saved >= 0) CloseDescriptor(saved);
+            std::fclose(file);
+            Testing::Fail("redirect stderr into the capture file");
+        }
+    }
+
+    ~StderrCapture() {
+        Restore();
+        std::fclose(file);
+    }
+
+    StderrCapture(const StderrCapture&) = delete;
+    StderrCapture& operator=(const StderrCapture&) = delete;
+
+    std::string Finish() {
+        Require(Restore(), "restore stderr");
+        std::rewind(file);
+        std::string text;
+        char buffer[512];
+        std::size_t length = 0;
+        while ((length = std::fread(buffer, 1, sizeof(buffer), file)) > 0) text.append(buffer, length);
+        return text;
+    }
+
+private:
+    bool Restore() {
+        if (saved < 0) return true;
+        std::fflush(stderr);
+        const bool restored = Redirect(saved, StderrDescriptor());
+        const bool closed = CloseDescriptor(saved);
+        saved = -1;
+        return restored && closed;
+    }
+
+    std::FILE* file;
+    int saved = -1;
+};
+
+const Case formattedMessage{"Syslog_InfoPriority_WritesUserFacilityPrefixAndFormattedText", [] {
+    StderrCapture capture;
+    *__error_nid_postfix() = enoent;
+    syslog_nid_postfix(6, "station %s at %d kbps", "radio", 128);
+    const int error = *__error_nid_postfix();
+    RequireEqual(capture.Finish(), std::string("[syslog:14] station radio at 128 kbps\n"), "captured output");
+    RequireEqual(error, enoent, "errno");
+}};
+
+const Case errorText{"Syslog_PercentM_ExpandsErrnoTextAndKeepsEscapedPercent", [] {
+    StderrCapture capture;
+    *__error_nid_postfix() = enoent;
+    syslog_nid_postfix(16 | 3, "open: %m, %%m kept, %d%%\n", 50);
+    const int error = *__error_nid_postfix();
+    RequireEqual(capture.Finish(), std::string("[syslog:19] open: No such file or directory, %m kept, 50%\n"), "captured output");
+    RequireEqual(error, enoent, "errno");
+}};
+
+const Case unknownBits{"Syslog_UnknownPriorityBits_ReportsThemAndLogsMaskedMessage", [] {
+    StderrCapture capture;
+    *__error_nid_postfix() = enoent;
+    syslog_nid_postfix(0x10000 | 4, "masked");
+    const int error = *__error_nid_postfix();
+    RequireEqual(capture.Finish(),
+        std::string("[syslog:35] syslog: unknown facility/priority: 10004\n[syslog:12] masked\n"), "captured output");
+    RequireEqual(error, enoent, "errno");
+}};
+
+const Case emptyMessage{"Syslog_EmptyMessage_WritesPrefixAndNewline", [] {
+    StderrCapture capture;
+    *__error_nid_postfix() = enoent;
+    syslog_nid_postfix(7, "");
+    const int error = *__error_nid_postfix();
+    RequireEqual(capture.Finish(), std::string("[syslog:15] \n"), "captured output");
+    RequireEqual(error, enoent, "errno");
+}};
+
+} // namespace

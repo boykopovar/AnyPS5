@@ -14,14 +14,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::size_t BlockBytes = 65536;
@@ -155,25 +154,36 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
     CheckRejected(device, noScalarBase, "global_store_dword_addtid supports only an SGPR pair as base address");
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        CheckRejections(*device);
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        GuestBlock guest;
-        Run(*device, guest, 32, device->Target(), "wave32");
-        Run(*device, guest, 64, device->Target(), "wave64");
-        Run(*device, guest, 64, device->ComputeTarget(32), "wave64 split");
-        std::puts("global store addtid tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void SkipUnlessWaveFitsSubgroup(const AgcDriver::VulkanDevice& device) {
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("the device's subgroups are narrower than a wave (" + std::to_string(device.Target().subgroupSize) + " lanes)");
     }
 }
+
+const Testing::Case unsupportedForms{"GlobalStoreAddtid_NonGlobalSegmentOrVgprBase_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckRejections(device);
+}};
+
+const Testing::Case wave32Stores{"GlobalStoreAddtid_Wave32_StoresLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWaveFitsSubgroup(device);
+    GuestBlock guest;
+    Run(device, guest, 32, device.Target(), "wave32");
+}};
+
+const Testing::Case wave64Stores{"GlobalStoreAddtid_Wave64_StoresLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWaveFitsSubgroup(device);
+    GuestBlock guest;
+    Run(device, guest, 64, device.Target(), "wave64");
+}};
+
+const Testing::Case wave64SplitStores{"GlobalStoreAddtid_Wave64SplitAcrossSubgroups_StoresLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWaveFitsSubgroup(device);
+    GuestBlock guest;
+    Run(device, guest, 64, device.ComputeTarget(32), "wave64 split");
+}};
+
+} // namespace

@@ -4,14 +4,13 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
 #include <chrono>
-#include <iostream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using namespace AgcDriver::DriverDetail;
 alignas(256) constexpr auto Code = PatternFillKernel;
 alignas(256) std::array<std::uint32_t, 4> Pattern{0, 0x12345678u, 0xdeadbeefu, 0x7fc12345u};
@@ -33,7 +32,7 @@ std::array<std::uint32_t, 12> UserData(void* output, std::uint32_t records) {
     return data;
 }
 
-void RangeTests() {
+void KernelMatchingTests() {
     const ShaderRecompiler::ShaderComputeStageInfo compute{{64, 1, 1}, 0, {true, false, false}, false, 1};
     const auto data = UserData(Output.data(), 256);
     Require(MatchesPatternFillKernel(Code, data, compute), "pattern fill kernel was not recognized");
@@ -54,6 +53,10 @@ void RangeTests() {
     disabled = compute;
     disabled.numThreads[0] = 32;
     Require(!MatchesPatternFillKernel(Code, data, disabled), "different fill group size matched");
+}
+
+void RangeDecodingTests() {
+    const auto data = UserData(Output.data(), 256);
     std::array<std::uint32_t, 5> packet{0xc0031500u, 2, 1, 1, 0x41};
     auto range = DecodePatternFillRange(data, packet);
     Require(range && range->UniformBytes(256, 0) == 512, "fill exceeded launched threads");
@@ -116,9 +119,9 @@ void Submit(const std::vector<std::uint32_t>& words, void* output = Output.data(
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(output), bytes);
 }
 
-void ExecuteTests() {
-    struct Case { std::uint32_t pattern, count, records, threads, mask; bool partial, indirect; };
-    constexpr std::array<Case, 11> cases{{
+void ExecuteTests(std::uint32_t wave) {
+    struct FillCase { std::uint32_t pattern, count, records, threads, mask; bool partial, indirect; };
+    constexpr std::array<FillCase, 11> cases{{
         {0, 256, 256, 256, 0, false, false},
         {0xffffffffu, 256, 256, 128, 0, false, false},
         {0x7fc12345u, 80, 256, 256, 0, false, false},
@@ -131,21 +134,21 @@ void ExecuteTests() {
         {0x01010101u, 128, 256, 128, 0, false, true},
         {0, 128, 256, 128, 3, false, false}
     }};
-    for (const auto wave : {32u, 64u}) {
-        for (const auto& item : cases) {
-            Output.fill(0xcafebabeu);
-            Pattern[0] = item.pattern;
-            Control = {item.count, item.mask, 0, 0};
-            const auto words = Commands(UserData(Output.data(), item.records), item.threads, wave, item.partial, item.indirect);
-            Submit(words);
-            const auto count = std::min({item.count, item.records, item.threads});
-            for (std::size_t i = 0; i < Output.size(); ++i) {
-                const auto expected = i < count ? Pattern[i & item.mask] : 0xcafebabeu;
-                Require(Output[i] == expected, "pattern fill mismatch at " + std::to_string(i) + " wave " + std::to_string(wave) + " count " + std::to_string(item.count) + " got " + std::to_string(Output[i]) + " expected " + std::to_string(expected));
-            }
+    for (const auto& item : cases) {
+        Output.fill(0xcafebabeu);
+        Pattern[0] = item.pattern;
+        Control = {item.count, item.mask, 0, 0};
+        const auto words = Commands(UserData(Output.data(), item.records), item.threads, wave, item.partial, item.indirect);
+        Submit(words);
+        const auto count = std::min({item.count, item.records, item.threads});
+        for (std::size_t i = 0; i < Output.size(); ++i) {
+            const auto expected = i < count ? Pattern[i & item.mask] : 0xcafebabeu;
+            Require(Output[i] == expected, "pattern fill mismatch at " + std::to_string(i) + " wave " + std::to_string(wave) + " count " + std::to_string(item.count) + " got " + std::to_string(Output[i]) + " expected " + std::to_string(expected));
         }
     }
+}
 
+void LabelOrderingTests() {
     Output.fill(0xcafebabeu);
     Pattern[0] = 0x40404040u;
     const auto firstPattern = Pattern;
@@ -186,23 +189,44 @@ void Benchmark() {
     std::printf("64 MiB fill median %.3f ms, min %.3f, max %.3f\n", times[4], times.front(), times.back());
 }
 
+
+void ProbeVulkanDevice() {
+    static_cast<void>(RequireVulkanTestDevice());
 }
 
+const Testing::Case kernelMatching{"PatternBufferFill_KernelMatching_RecognizesOnlyTheFillKernel", [] {
+    KernelMatchingTests();
+}};
+
+const Testing::Case rangeDecoding{"PatternBufferFill_RangeDecoding_BoundsUniformBytes", [] {
+    RangeDecodingTests();
+}};
+
+const Testing::Case wave32Fills{"PatternBufferFill_Wave32Dispatches_FillExpectedRecords", [] {
+    ProbeVulkanDevice();
+    ExecuteTests(32u);
+}};
+
+const Testing::Case wave64Fills{"PatternBufferFill_Wave64Dispatches_FillExpectedRecords", [] {
+    ProbeVulkanDevice();
+    ExecuteTests(64u);
+}};
+
+const Testing::Case labelOrdering{"PatternBufferFill_FillAfterLabels_ObservesPrecedingGpuWrites", [] {
+    ProbeVulkanDevice();
+    LabelOrderingTests();
+}};
+
+} // namespace
+
 int main(int argc, char** argv) {
-    try {
-        RangeTests();
-        {
-            const auto device = OpenVulkanTestDevice();
-            if (!device) return VulkanTestSkipped;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--benchmark") Benchmark();
-        else ExecuteTests();
+    if (argc == 2 && std::string_view(argv[1]) == "--benchmark") {
+        ProbeVulkanDevice();
+        Benchmark();
         AgcDriverShutdown_nid_postfix();
-        std::puts("pattern buffer fill tests passed");
         return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        AgcDriverShutdown_nid_postfix();
-        return 1;
     }
+    const auto result = Testing::Run(argc, argv);
+    AgcDriverShutdown_nid_postfix();
+    return result;
 }

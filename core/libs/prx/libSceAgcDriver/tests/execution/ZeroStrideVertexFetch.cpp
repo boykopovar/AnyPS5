@@ -6,14 +6,12 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -32,14 +30,14 @@ alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
 
 alignas(256) constexpr std::array<float, 4> Element{0.25f, -2.0f, 7.5f, 1.0f};
 
-struct Case {
+struct FetchCase {
     std::uint32_t select;
     std::uint32_t records;
     bool inRange;
     const char* what;
 };
 
-std::array<std::uint32_t, 4> VertexBufferDescriptor(const Case& value) {
+std::array<std::uint32_t, 4> VertexBufferDescriptor(const FetchCase& value) {
     const auto address = reinterpret_cast<std::uintptr_t>(Element.data());
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), value.records, 0x0104dfacu | (value.select << 28u)};
 }
@@ -49,7 +47,7 @@ std::array<std::uint32_t, 4> OutputDescriptor() {
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu};
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
+void Draw(AgcDriver::VulkanDevice& device, const FetchCase& value) {
     Pixels.fill(std::byte{0x40});
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(12, 0u);
@@ -73,7 +71,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     };
     vertexRequest.useCache = false;
     const auto vertexResult = ShaderRecompiler::Recompile(vertexRequest);
-    Require(vertexResult.vertexAttributes.size() == 1u, std::string(value.what) + ": the fetch did not become a vertex attribute");
+    Testing::Require(vertexResult.vertexAttributes.size() == 1u, std::string(value.what) + ": the fetch did not become a vertex attribute");
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
@@ -117,37 +115,40 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     device.WaitIdle();
 }
 
-void Check(const Case& value) {
+void Check(const FetchCase& value) {
     for (std::uint32_t vertex = 0; vertex < Vertices; ++vertex) {
         for (std::uint32_t component = 0; component < 4u; ++component) {
             const auto expected = value.inRange ? std::bit_cast<std::uint32_t>(Element[component]) : 0u;
             const auto actual = Output[vertex * 4u + component];
-            Require(actual == expected, std::string(value.what) + ": vertex " + std::to_string(vertex) + " v" + std::to_string(8u + component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+            Testing::Require(actual == expected, std::string(value.what) + ": vertex " + std::to_string(vertex) + " v" + std::to_string(8u + component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
         }
     }
 }
 
+void DrawAndCheck(const FetchCase& value) {
+    auto& device = SharedVulkanTestDevice();
+    Draw(device, value);
+    Check(value);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        constexpr std::array<Case, 5> cases{{
-            {2u, 1u, true, "OOB_SELECT 2, one record"},
-            {2u, 0u, false, "OOB_SELECT 2, no records"},
-            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
-            {3u, 0u, false, "OOB_SELECT 3, no records"},
-            {0u, 16u, true, "OOB_SELECT 0, whole element in range"},
-        }};
-        for (const auto& value : cases) {
-            Draw(*device, value);
-            Check(value);
-        }
-        std::puts("zero-stride vertex fetch tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case oneRecordSelect2{"ZeroStrideVertexFetch_OobSelect2OneRecord_FetchesElement", [] {
+    DrawAndCheck({2u, 1u, true, "OOB_SELECT 2, one record"});
+}};
+
+const Testing::Case noRecordsSelect2{"ZeroStrideVertexFetch_OobSelect2NoRecords_FetchesZero", [] {
+    DrawAndCheck({2u, 0u, false, "OOB_SELECT 2, no records"});
+}};
+
+const Testing::Case wholeElementSelect3{"ZeroStrideVertexFetch_OobSelect3WholeElement_FetchesElement", [] {
+    DrawAndCheck({3u, 16u, true, "OOB_SELECT 3, whole element in range"});
+}};
+
+const Testing::Case noRecordsSelect3{"ZeroStrideVertexFetch_OobSelect3NoRecords_FetchesZero", [] {
+    DrawAndCheck({3u, 0u, false, "OOB_SELECT 3, no records"});
+}};
+
+const Testing::Case wholeElementSelect0{"ZeroStrideVertexFetch_OobSelect0WholeElement_FetchesElement", [] {
+    DrawAndCheck({0u, 16u, true, "OOB_SELECT 0, whole element in range"});
+}};
+
+} // namespace

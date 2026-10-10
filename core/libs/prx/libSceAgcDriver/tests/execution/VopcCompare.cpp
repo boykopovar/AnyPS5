@@ -7,14 +7,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -145,7 +143,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void Check() {
+void Check(const std::string& run) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto* in = &Input[tid * Inputs];
         const float fa = std::bit_cast<float>(in[0]);
@@ -214,33 +212,30 @@ void Check() {
         };
         for (std::uint32_t k = 0; k < expected.size(); ++k) {
             const bool actual = ((Output[tid * Results + k / 32u] >> (k % 32u)) & 1u) != 0u;
-            Require(actual == expected[k], "vopc compares: thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
+            Testing::Require(actual == expected[k], "vopc compares: " + run + "thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
         }
     }
 }
 
-}
+const Testing::Case mixedEdges{"VopcCompare_MixedEdgeInputs_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device);
+    Check("");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device);
-        Check();
-        for (std::uint32_t pairBase = 0; pairBase < HalfEdges.size() * HalfEdges.size(); pairBase += Threads) {
-            for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-                const auto pair = (pairBase + tid) % (HalfEdges.size() * HalfEdges.size());
-                Input[tid * Inputs + 6u] = 0xabcd0000u | HalfEdges[pair / HalfEdges.size()];
-                Input[tid * Inputs + 7u] = 0x12340000u | HalfEdges[pair % HalfEdges.size()];
-            }
-            Run(*device);
-            Check();
+const Testing::Case halfEdgePairs{"VopcCompare_EveryHalfEdgePair_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    for (std::uint32_t pairBase = 0; pairBase < HalfEdges.size() * HalfEdges.size(); pairBase += Threads) {
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            const auto pair = (pairBase + tid) % (HalfEdges.size() * HalfEdges.size());
+            Input[tid * Inputs + 6u] = 0xabcd0000u | HalfEdges[pair / HalfEdges.size()];
+            Input[tid * Inputs + 7u] = 0x12340000u | HalfEdges[pair % HalfEdges.size()];
         }
-        std::puts("vopc compare tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        Run(device);
+        Check("half pair base " + std::to_string(pairBase) + " ");
     }
-}
+}};
+
+} // namespace

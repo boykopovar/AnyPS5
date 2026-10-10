@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -157,20 +156,25 @@ void CheckExecution(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, con
     Run(device, waveSize, target, 0x120u, 12u, false, true);
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        CheckRejections(*device);
-        CheckExecution(*device, 32u, device->Target());
-        CheckExecution(*device, 64u, device->Target());
-        CheckExecution(*device, 64u, device->ComputeTarget(32u));
-        std::puts("lds condxchg tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case rejections{"LdsCondxchg_MalformedInstructions_AreRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckRejections(device);
+}};
+
+const Testing::Case wave32{"LdsCondxchg_Wave32_ExchangesConditionally", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckExecution(device, 32u, device.Target());
+}};
+
+const Testing::Case wave64{"LdsCondxchg_Wave64_ExchangesConditionally", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckExecution(device, 64u, device.Target());
+}};
+
+const Testing::Case wave64Split{"LdsCondxchg_Wave64OnThirtyTwoLaneSubgroups_ExchangesConditionally", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckExecution(device, 64u, device.ComputeTarget(32u));
+}};
+
+} // namespace

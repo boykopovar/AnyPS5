@@ -7,7 +7,7 @@ set_target_properties(libScePad PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libScePad)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_pad_tests ${LIBS_INCLUDE_DIR}/tests/GuestPad.cpp)
+    add_test_executable(guest_pad_tests ${LIBS_INCLUDE_DIR}/tests/integration/GuestPad.cpp)
     target_include_directories(guest_pad_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
     target_link_libraries(guest_pad_tests PRIVATE libScePad libc)
     configure_windows_unwind(guest_pad_tests)

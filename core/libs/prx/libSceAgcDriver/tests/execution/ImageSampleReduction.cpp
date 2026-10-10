@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -17,7 +16,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -240,8 +239,7 @@ std::uint32_t PairedSamplers(const ShaderRecompiler::RecompileResult& result, st
             if (((binding.guestDescriptor.at(element * 8u + 1u) >> 20u) & 0x1ffu) == format) return binding.imageSamplers.at(element);
         }
     }
-    Require(false, "image sample reduction: no sampled image of format " + std::to_string(format));
-    return 0;
+    Testing::Fail("image sample reduction: no sampled image of format " + std::to_string(format));
 }
 
 float ExpectedColor(std::uint32_t tid, bool sampled) {
@@ -271,49 +269,87 @@ void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, const Sampler
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
         return;
     }
-    Require(false, std::string("expected rejection: ") + std::string(reason));
+    Testing::Fail(std::string("expected rejection: ") + std::string(reason));
 }
 
+void Prepare() {
+    FillTexels();
+    FillColors();
+    FillInput();
 }
 
-int main() {
+void SkipUnlessMinmax(AgcDriver::VulkanDevice& device) {
+    if (!device.SamplerFilterMinmax()) Testing::Skip("the device has no min/max sampler reduction with component mapping");
+}
+
+constexpr Sampler MinBilinear{ReductionMin, FilterBilinear, MipPoint};
+
+const Testing::Case loadedPairs{"ImageSampleReduction_LoadNextToMinSampler_PairsOnlySampledImage", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    const auto loaded = Compile(device, Format32Float, MinBilinear, LoadedCode);
+    Require(PairedSamplers(loaded, Format32Float) == 1u && PairedSamplers(loaded, Format8888UNorm) == 0u, "image_load of 8_8_8_8 next to a min sampler: wrong image-sampler pairs");
+}};
+
+const Testing::Case sampledPairs{"ImageSampleReduction_SampleNextToMinSampler_PairsBothImages", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    const auto sampled = Compile(device, Format32Float, MinBilinear, SampledCode);
+    Require(PairedSamplers(sampled, Format32Float) == 1u && PairedSamplers(sampled, Format8888UNorm) == 1u, "8_8_8_8 sampled through a min sampler: wrong image-sampler pairs");
+}};
+
+const Testing::Case integerPoint{"ImageSampleReduction_IntegerFormatPointFilter_Compiles", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    static_cast<void>(Compile(device, Format32SInt, {ReductionMin, FilterPoint, MipPoint}));
+}};
+
+const Testing::Case integerFiltered{"ImageSampleReduction_IntegerFormatLinearFilter_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    Reject(device, Format32SInt, {ReductionMin, FilterBilinear, MipPoint}, "needs point filtering");
+    Reject(device, Format32SInt, {ReductionMax, FilterPoint, MipLinear}, "needs point filtering");
+}};
+
+const Testing::Case sample{"ImageSampleReduction_SampleWithMinMaxSamplers_ReturnsReducedTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessMinmax(device);
+    Prepare();
+    Run(device, {ReductionMin, FilterBilinear, MipPoint}, "min, bilinear, point mip");
+    Run(device, {ReductionMax, FilterBilinear, MipPoint}, "max, bilinear, point mip");
+    Run(device, {ReductionMin, FilterPoint, MipPoint}, "min, point, point mip");
+    Run(device, {ReductionMax, FilterPoint, MipPoint}, "max, point, point mip");
+    Run(device, {ReductionMin, FilterBilinear, MipNone}, "min, bilinear, no mip");
+    Run(device, {ReductionMax, FilterPoint, MipNone}, "max, point, no mip");
+}};
+
+const Testing::Case gather{"ImageSampleReduction_GatherWithMinMaxSamplers_IgnoresReduction", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessMinmax(device);
+    Prepare();
+    Gather(device, {ReductionMin, FilterBilinear, MipPoint}, "gather4_lz, min");
+    Gather(device, {ReductionMax, FilterBilinear, MipPoint}, "gather4_lz, max");
+}};
+
+const Testing::Case loadedColors{"ImageSampleReduction_LoadNextToMinSampler_ReadsUnreducedTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessMinmax(device);
+    Prepare();
+    const auto loaded = Compile(device, Format32Float, MinBilinear, LoadedCode);
+    RunWithColors(device, loaded, LoadedCode, false, "min 32_FLOAT, image_load 8_8_8_8");
+}};
+
+const Testing::Case sampledColors{"ImageSampleReduction_SampleUnormThroughMinSampler_ReducesOrIsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessMinmax(device);
+    Prepare();
+    const auto sampled = Compile(device, Format32Float, MinBilinear, SampledCode);
     try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillColors();
-        FillInput();
-        const Sampler minBilinear{ReductionMin, FilterBilinear, MipPoint};
-        const auto loaded = Compile(*device, Format32Float, minBilinear, LoadedCode);
-        Require(PairedSamplers(loaded, Format32Float) == 1u && PairedSamplers(loaded, Format8888UNorm) == 0u, "image_load of 8_8_8_8 next to a min sampler: wrong image-sampler pairs");
-        const auto sampled = Compile(*device, Format32Float, minBilinear, SampledCode);
-        Require(PairedSamplers(sampled, Format32Float) == 1u && PairedSamplers(sampled, Format8888UNorm) == 1u, "8_8_8_8 sampled through a min sampler: wrong image-sampler pairs");
-        static_cast<void>(Compile(*device, Format32SInt, {ReductionMin, FilterPoint, MipPoint}));
-        Reject(*device, Format32SInt, {ReductionMin, FilterBilinear, MipPoint}, "needs point filtering");
-        Reject(*device, Format32SInt, {ReductionMax, FilterPoint, MipLinear}, "needs point filtering");
-        if (!device->SamplerFilterMinmax()) {
-            std::puts("skipped, the device has no min/max sampler reduction with component mapping");
-            return VulkanTestSkipped;
-        }
-        Run(*device, {ReductionMin, FilterBilinear, MipPoint}, "min, bilinear, point mip");
-        Run(*device, {ReductionMax, FilterBilinear, MipPoint}, "max, bilinear, point mip");
-        Run(*device, {ReductionMin, FilterPoint, MipPoint}, "min, point, point mip");
-        Run(*device, {ReductionMax, FilterPoint, MipPoint}, "max, point, point mip");
-        Run(*device, {ReductionMin, FilterBilinear, MipNone}, "min, bilinear, no mip");
-        Run(*device, {ReductionMax, FilterPoint, MipNone}, "max, point, no mip");
-        Gather(*device, {ReductionMin, FilterBilinear, MipPoint}, "gather4_lz, min");
-        Gather(*device, {ReductionMax, FilterBilinear, MipPoint}, "gather4_lz, max");
-        RunWithColors(*device, loaded, LoadedCode, false, "min 32_FLOAT, image_load 8_8_8_8");
-        try {
-            RunWithColors(*device, sampled, SampledCode, true, "min 32_FLOAT and 8_8_8_8");
-            std::puts("the device filters 8_8_8_8 UNORM with min/max reduction");
-        } catch (const std::exception& error) {
-            Require(std::string_view(error.what()).find("format 37 does not support min/max filtering is sampled through a min or max reduction sampler") != std::string_view::npos, std::string("min 32_FLOAT and 8_8_8_8: unexpected error: ") + error.what());
-        }
-        std::puts("image sample reduction tests passed");
-        return 0;
+        RunWithColors(device, sampled, SampledCode, true, "min 32_FLOAT and 8_8_8_8");
+        std::puts("the device filters 8_8_8_8 UNORM with min/max reduction");
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        Require(std::string_view(error.what()).find("format 37 does not support min/max filtering is sampled through a min or max reduction sampler") != std::string_view::npos, std::string("min 32_FLOAT and 8_8_8_8: unexpected error: ") + error.what());
     }
-}
+}};
+
+} // namespace

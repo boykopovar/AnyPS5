@@ -7,14 +7,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::DescriptorRole;
 using ShaderRecompiler::ShaderStage;
 
@@ -139,18 +138,15 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, PushCode, PushBuffers, false);
-        Run(*device, DataCode, DataBuffers, true);
-        std::puts("many buffers tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case pushConstantOffsets{"ManyBuffers_BuffersWithinPushLimit_PassOffsetsInPushConstants", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, PushCode, PushBuffers, false);
+}};
+
+const Testing::Case shaderDataOffsets{"ManyBuffers_BuffersBeyondPushLimit_PassOffsetsInShaderData", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, DataCode, DataBuffers, true);
+}};
+
+} // namespace

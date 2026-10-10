@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -103,22 +102,11 @@ void Check() {
     }
 }
 
-}
+const Testing::Case appendConsume{"DsAppendConsume_FullAndMaskedWaves_UpdateCountersAndReturnPreviousValues", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < Threads) Testing::Skip("the device's subgroups are narrower than a wave (" + std::to_string(device.Target().subgroupSize) + " lanes)");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < Threads) {
-            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("ds append consume tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

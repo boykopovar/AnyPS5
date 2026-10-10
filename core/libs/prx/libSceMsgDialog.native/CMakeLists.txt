@@ -3,12 +3,8 @@ target_include_directories(libSceMsgDialog.native PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceMsgDialog.native)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_msg_dialog_native_tests ${LIBS_INCLUDE_DIR}/tests/GuestMsgDialogNative.cpp)
-    target_include_directories(guest_msg_dialog_native_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_msg_dialog_native_tests PRIVATE libSceMsgDialog.native)
-    add_test(NAME guest_msg_dialog_native COMMAND guest_msg_dialog_native_tests)
-    if(WIN32)
-        set_tests_properties(guest_msg_dialog_native PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMsgDialog.native>")
-    endif()
+    anyps5_add_library_test(guest_msg_dialog_native_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestMsgDialogNative.cpp
+        LINK libSceMsgDialog.native libc
+    )
 endif()

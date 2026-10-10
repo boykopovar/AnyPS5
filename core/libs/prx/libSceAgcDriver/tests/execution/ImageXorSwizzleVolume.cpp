@@ -11,7 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
@@ -19,6 +18,7 @@
 namespace {
 
 using namespace AgcDriver::Graphics;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -138,20 +138,23 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t tileMode, const char* na
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device, TileS64KBX, "thick SW_64KB_S_X volume");
-        Run(*device, TileD64KBX, "thick SW_64KB_D_X volume");
-        Run(*device, TileZ64KBX, "thin SW_64KB_Z_X volume");
-        std::puts("image XOR swizzle volume tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case thickStandard{"ImageXorSwizzleVolume_ThickStandardSwizzle_LoadsEveryTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, TileS64KBX, "thick SW_64KB_S_X volume");
+}};
+
+const Testing::Case thickDisplay{"ImageXorSwizzleVolume_ThickDisplaySwizzle_LoadsEveryTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, TileD64KBX, "thick SW_64KB_D_X volume");
+}};
+
+const Testing::Case thinZ{"ImageXorSwizzleVolume_ThinZSwizzle_LoadsEveryTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, TileZ64KBX, "thin SW_64KB_Z_X volume");
+}};
+
+} // namespace

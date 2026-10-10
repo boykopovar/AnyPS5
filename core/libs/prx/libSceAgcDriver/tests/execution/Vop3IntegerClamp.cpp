@@ -8,13 +8,11 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -135,7 +133,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("vop3 integer clamp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("vop3 integer clamp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -161,28 +159,31 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void Check() {
+void CheckColumns(std::uint32_t first, std::uint32_t last) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t i = 0; i < 16; ++i) {
+        for (std::uint32_t i = first; i < last; ++i) {
             Expect(tid, out[i], Expected[tid][i], Names[i]);
         }
     }
 }
 
-}
+const Testing::Case multiplyAdd{"Vop3IntegerClamp_MultiplyAdd_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(0, 6);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("vop3 integer clamp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case sad{"Vop3IntegerClamp_SumOfAbsoluteDifferences_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(6, 11);
+}};
+
+const Testing::Case opSel{"Vop3IntegerClamp_MultiplyAddWithOpSel_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckColumns(11, 16);
+}};
+
+} // namespace

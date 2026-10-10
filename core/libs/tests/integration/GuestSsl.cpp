@@ -1,13 +1,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::size_t);
-int APS5_VABI sceSslGetCaCerts(int, void*);
-int APS5_VABI sceSslFreeCaCerts(int, void*);
-}
+#include <string>
 
 struct SslMemoryPoolStats {
     std::size_t pool_size;
@@ -16,9 +13,23 @@ struct SslMemoryPoolStats {
     std::int32_t reserved;
 };
 
-extern "C" int APS5_VABI sceSslGetMemoryPoolStats(int, SslMemoryPoolStats*);
+extern "C" {
+int APS5_VABI sceSslInit_nid_postfix(std::size_t);
+int APS5_VABI sceSslTerm_nid_postfix(int);
+int APS5_VABI sceSslGetCaCerts(int, void*);
+int APS5_VABI sceSslFreeCaCerts(int, void*);
+int APS5_VABI sceSslGetMemoryPoolStats(int, SslMemoryPoolStats*);
+}
 
-static void Require(bool value) { if (!value) std::abort(); }
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int notFound = static_cast<int>(0x8095F004);
+constexpr int invalidArg = static_cast<int>(0x8095177A);
+constexpr std::size_t poolSize = 0x10000;
 
 struct SslCaCerts {
     void* certs;
@@ -26,24 +37,58 @@ struct SslCaCerts {
     void* pool;
 };
 
-int main() {
-    constexpr int notFound = static_cast<int>(0x8095F004);
-    constexpr int invalidArg = static_cast<int>(0x8095177A);
-    int marker = 0;
+class SslContext {
+public:
+    SslContext() : id(sceSslInit_nid_postfix(poolSize)) {
+        Require(id > 0, "sceSslInit returned a non-positive context id");
+    }
 
-    const int context = sceSslInit_nid_postfix(0x10000);
-    Require(context > 0);
-    SslMemoryPoolStats stats{1, 1, 1, 1};
-    Require(sceSslGetMemoryPoolStats(context, &stats) == 0);
-    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
-    Require(sceSslGetCaCerts(context, nullptr) == invalidArg);
-    Require(sceSslFreeCaCerts(context, nullptr) == invalidArg);
+    ~SslContext() {
+        sceSslTerm_nid_postfix(id);
+    }
 
-    SslCaCerts certs{&marker, 3, &marker};
-    Require(sceSslGetCaCerts(context, &certs) == notFound);
-    Require(certs.certs == nullptr && certs.num == 0 && certs.pool == nullptr);
+    SslContext(const SslContext&) = delete;
+    SslContext& operator=(const SslContext&) = delete;
 
-    certs = {&marker, 3, &marker};
-    Require(sceSslFreeCaCerts(context, &certs) == 0);
-    Require(certs.certs == nullptr && certs.num == 0 && certs.pool == nullptr);
+    const int id;
+};
+
+void RequireEmpty(const SslCaCerts& certs, const char* message) {
+    Require(certs.certs == nullptr, std::string(message) + ": certs pointer not cleared");
+    RequireEqual(certs.num, std::size_t{0}, std::string(message) + ": certificate count");
+    Require(certs.pool == nullptr, std::string(message) + ": pool pointer not cleared");
 }
+
+const Case poolStats{"GetMemoryPoolStats_FreshContext_ReportsPoolSizeAndNoUsage", [] {
+    const SslContext context;
+    SslMemoryPoolStats stats{1, 1, 1, 1};
+    RequireEqual(sceSslGetMemoryPoolStats(context.id, &stats), 0, "get memory pool stats");
+    RequireEqual(stats.pool_size, poolSize, "pool size");
+    RequireEqual(stats.max_inuse_size, std::size_t{0}, "max in-use size");
+    RequireEqual(stats.current_inuse_size, std::size_t{0}, "current in-use size");
+    RequireEqual(stats.reserved, 0, "reserved field");
+}};
+
+const Case nullCerts{"CaCerts_NullOutput_ReturnsInvalidArgument", [] {
+    const SslContext context;
+    RequireEqual(sceSslGetCaCerts(context.id, nullptr), invalidArg, "get with a null output");
+    RequireEqual(sceSslFreeCaCerts(context.id, nullptr), invalidArg, "free with a null output");
+}};
+
+const Case getCerts{"GetCaCerts_NoCertificates_ReturnsNotFoundAndClearsOutput", [] {
+    const SslContext context;
+    int marker = 0;
+    SslCaCerts certs{&marker, 3, &marker};
+    RequireEqual(sceSslGetCaCerts(context.id, &certs), notFound, "get certificates");
+    RequireEmpty(certs, "after get");
+}};
+
+const Case freeCerts{"FreeCaCerts_PopulatedOutput_SucceedsAndClearsOutput", [] {
+    const SslContext context;
+    int marker = 0;
+    SslCaCerts certs{&marker, 3, &marker};
+    RequireEqual(sceSslFreeCaCerts(context.id, &certs), 0, "free certificates");
+    RequireEmpty(certs, "after free");
+}};
+
+} // namespace

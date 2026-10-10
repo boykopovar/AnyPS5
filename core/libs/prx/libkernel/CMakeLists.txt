@@ -70,10 +70,6 @@ endif()
 configure_windows_unwind(libkernel)
 
 if(BUILD_TESTING)
-    add_test_executable(download_data_mount_tests ${LIBS_INCLUDE_DIR}/tests/GuestDownloadDataMount.cpp)
-    target_include_directories(download_data_mount_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(download_data_mount_tests PRIVATE libkernel libc)
-    configure_windows_unwind(download_data_mount_tests)
     foreach(downloadDataCase IN ITEMS declared:256 none:0 invalid:256)
         string(REPLACE ":" ";" downloadDataCase ${downloadDataCase})
         list(GET downloadDataCase 0 downloadDataName)
@@ -86,11 +82,22 @@ if(BUILD_TESTING)
                 "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}},\"downloadDataSize\":${downloadDataSize},"
                 "\"userDefinedParam1\":0,\"userDefinedParam2\":0,\"userDefinedParam3\":0,\"userDefinedParam4\":0}")
         endif()
-        add_test(NAME download_data_mount_${downloadDataName} COMMAND download_data_mount_tests ${downloadDataName}
-            WORKING_DIRECTORY ${downloadDataRun})
-        if(WIN32)
-            set_tests_properties(download_data_mount_${downloadDataName} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        if(downloadDataName STREQUAL "declared")
+            anyps5_add_library_test(download_data_mount_tests
+                NAME download_data_mount_declared
+                SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestDownloadDataMount.cpp
+                LINK libkernel libc
+                ARGS declared
+                PROPERTIES WORKING_DIRECTORY ${downloadDataRun}
+            )
+        else()
+            add_test(NAME download_data_mount_${downloadDataName} COMMAND download_data_mount_tests ${downloadDataName}
+                WORKING_DIRECTORY ${downloadDataRun})
+            anyps5_set_test_properties(download_data_mount_${downloadDataName} integration "" SKIP_RETURN_CODE 77)
+            if(WIN32)
+                set_tests_properties(download_data_mount_${downloadDataName} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+            endif()
         endif()
     endforeach()
     add_test_executable(param_json_parser_tests ${LIBS_INCLUDE_DIR}/tests/ParamJsonParser.cpp)
@@ -102,26 +109,14 @@ if(BUILD_TESTING)
         set_tests_properties(param_json_parser PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_posix_sem_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSem.cpp)
-    target_include_directories(guest_posix_sem_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_posix_sem_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_posix_sem_tests)
-    add_test(NAME guest_posix_sem_init COMMAND guest_posix_sem_tests init)
-    add_test(NAME guest_posix_sem_post COMMAND guest_posix_sem_tests post)
-    if(WIN32)
-        set_tests_properties(guest_posix_sem_init guest_posix_sem_post PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_process_time_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessTime.cpp)
-    target_include_directories(guest_process_time_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_process_time_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_process_time_tests)
-    add_test(NAME guest_process_time COMMAND guest_process_time_tests)
-    add_test(NAME guest_process_time_counter COMMAND guest_process_time_tests counter)
-    if(WIN32)
-        set_tests_properties(guest_process_time guest_process_time_counter PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_posix_sem_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPosixSem.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_process_time_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestProcessTime.cpp
+        LINK libkernel libc
+    )
     add_library(guest_module_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestModuleFixture.cpp)
     target_include_directories(guest_module_fixture PRIVATE ${LIBS_INCLUDE_DIR})
     add_custom_command(TARGET guest_module_fixture POST_BUILD
@@ -133,10 +128,12 @@ if(BUILD_TESTING)
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND AND NOT WIN32)
         target_link_options(guest_module_fixture PRIVATE -Wl,--no-as-needed)
-        add_test(NAME nid_patcher_dynamic_strings COMMAND ${Python3_EXECUTABLE}
-            ${LIBS_INCLUDE_DIR}/nid/tests/test_dynamic_strings.py $<TARGET_FILE:guest_module_fixture>)
-        add_test(NAME nid_patcher_symbol_versions COMMAND ${Python3_EXECUTABLE}
-            ${LIBS_INCLUDE_DIR}/nid/tests/test_symbol_versions.py $<TARGET_FILE:nid_patcher>)
+        anyps5_add_python_test(nid_patcher_dynamic_strings LABEL e2e
+            SCRIPT ${LIBS_INCLUDE_DIR}/nid/tests/e2e/test_dynamic_strings.py
+            ARGS $<TARGET_FILE:guest_module_fixture>)
+        anyps5_add_python_test(nid_patcher_symbol_versions LABEL e2e
+            SCRIPT ${LIBS_INCLUDE_DIR}/nid/tests/e2e/test_symbol_versions.py
+            ARGS $<TARGET_FILE:nid_patcher>)
     endif()
     add_test_executable(guest_dynamic_loader_tests ${LIBS_INCLUDE_DIR}/tests/GuestDynamicLoader.cpp)
     target_include_directories(guest_dynamic_loader_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -165,24 +162,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_module_info PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_file_timestamp_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileTimestamps.cpp)
-    target_include_directories(guest_file_timestamp_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_file_timestamp_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_file_timestamp_tests)
-    add_test(NAME guest_file_timestamps COMMAND guest_file_timestamp_tests)
-    if(WIN32)
-        set_tests_properties(guest_file_timestamps PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    add_test_executable(guest_filesystem_tests ${LIBS_INCLUDE_DIR}/tests/GuestFilesystem.cpp)
-    target_include_directories(guest_filesystem_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_filesystem_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_filesystem_tests)
-    add_test(NAME guest_filesystem COMMAND guest_filesystem_tests)
-    if(WIN32)
-        set_tests_properties(guest_filesystem PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_file_timestamp_tests
+        NAME guest_file_timestamps
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestFileTimestamps.cpp
+        LINK libkernel libc
+        RUNTIME libc
+    )
+    anyps5_add_library_test(guest_filesystem_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestFilesystem.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_terminal_tests ${LIBS_INCLUDE_DIR}/tests/GuestTerminal.cpp)
     target_include_directories(guest_terminal_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_terminal_tests PRIVATE libkernel libc)
@@ -202,35 +191,20 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_sync PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_kernel_rename_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelRename.cpp)
-    target_include_directories(guest_kernel_rename_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_kernel_rename_tests PRIVATE libkernel libc)
+    anyps5_add_library_test(guest_kernel_rename_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestKernelRename.cpp
+        LINK libkernel libc
+    )
     target_compile_definitions(guest_kernel_rename_tests PRIVATE KERNEL_PRX_PATH="$<TARGET_FILE:libkernel>")
-    configure_windows_unwind(guest_kernel_rename_tests)
-    add_test(NAME guest_kernel_rename COMMAND guest_kernel_rename_tests)
-    if(WIN32)
-        set_tests_properties(guest_kernel_rename PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_aio_tests ${LIBS_INCLUDE_DIR}/tests/GuestAio.cpp)
-    target_include_directories(guest_aio_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_aio_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_aio_tests)
-    add_test(NAME guest_aio COMMAND guest_aio_tests)
-    if(WIN32)
-        set_tests_properties(guest_aio PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_once_tests ${LIBS_INCLUDE_DIR}/tests/GuestOnce.cpp)
-    target_include_directories(guest_once_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_once_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_once_tests)
-    add_test(NAME guest_once COMMAND guest_once_tests)
-    set_tests_properties(guest_once PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_once PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_aio_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAio.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_once_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestOnce.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_pthread_barrier_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadBarrier.cpp)
     target_include_directories(guest_pthread_barrier_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_pthread_barrier_tests PRIVATE libkernel libc)
@@ -261,16 +235,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_thread_self PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_pthread_getname_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadGetname.cpp)
-    target_include_directories(guest_pthread_getname_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_pthread_getname_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_pthread_getname_tests)
-    add_test(NAME guest_pthread_getname COMMAND guest_pthread_getname_tests)
-    set_tests_properties(guest_pthread_getname PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_pthread_getname PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_pthread_getname_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPthreadGetname.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_pthread_attr_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadAttr.cpp)
     target_include_directories(guest_pthread_attr_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_pthread_attr_tests PRIVATE libkernel libc)
@@ -291,16 +260,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pthread_start PROPERTIES TIMEOUT 60 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_cond_timedwait_tests ${LIBS_INCLUDE_DIR}/tests/GuestCondTimedwait.cpp)
-    target_include_directories(guest_cond_timedwait_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_cond_timedwait_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_cond_timedwait_tests)
-    add_test(NAME guest_cond_timedwait COMMAND guest_cond_timedwait_tests)
-    set_tests_properties(guest_cond_timedwait PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_cond_timedwait PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_cond_timedwait_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestCondTimedwait.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_cond_recursive_mutex_tests ${LIBS_INCLUDE_DIR}/tests/GuestCondRecursiveMutex.cpp)
     target_include_directories(guest_cond_recursive_mutex_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_cond_recursive_mutex_tests PRIVATE libkernel libc)
@@ -321,16 +285,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_cpu_time_clocks PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_freebsd_clocks_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreebsdClocks.cpp)
-    target_include_directories(guest_freebsd_clocks_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_freebsd_clocks_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_freebsd_clocks_tests)
-    add_test(NAME guest_freebsd_clocks COMMAND guest_freebsd_clocks_tests)
-    set_tests_properties(guest_freebsd_clocks PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_freebsd_clocks PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_freebsd_clocks_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestFreebsdClocks.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_thread_cpu_clock_tests ${LIBS_INCLUDE_DIR}/tests/GuestThreadCpuClock.cpp)
     target_include_directories(guest_thread_cpu_clock_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_thread_cpu_clock_tests PRIVATE libkernel libc)
@@ -351,16 +310,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_nanosleep PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_pthread_sem_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadSem.cpp)
-    target_include_directories(guest_pthread_sem_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_pthread_sem_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_pthread_sem_tests)
-    add_test(NAME guest_pthread_sem COMMAND guest_pthread_sem_tests)
-    set_tests_properties(guest_pthread_sem PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_pthread_sem PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_pthread_sem_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPthreadSem.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_semaphore_tests ${LIBS_INCLUDE_DIR}/tests/GuestSemaphore.cpp)
     target_include_directories(guest_semaphore_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_semaphore_tests PRIVATE libkernel libc)
@@ -371,16 +325,11 @@ if(BUILD_TESTING)
         set_tests_properties(guest_semaphore PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_pthread_rwlock_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadRwlock.cpp)
-    target_include_directories(guest_pthread_rwlock_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_pthread_rwlock_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_pthread_rwlock_tests)
-    add_test(NAME guest_pthread_rwlock COMMAND guest_pthread_rwlock_tests)
-    set_tests_properties(guest_pthread_rwlock PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_pthread_rwlock PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_pthread_rwlock_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPthreadRwlock.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_pthread_key_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadKey.cpp)
     target_include_directories(guest_pthread_key_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_pthread_key_tests PRIVATE libkernel libc)
@@ -410,49 +359,34 @@ if(BUILD_TESTING)
         set_tests_properties(guest_signal_sets PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_sigaltstack_tests ${LIBS_INCLUDE_DIR}/tests/GuestSigaltstack.cpp)
-    target_include_directories(guest_sigaltstack_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_sigaltstack_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_sigaltstack_tests)
-    add_test(NAME guest_sigaltstack COMMAND guest_sigaltstack_tests)
+    anyps5_add_library_test(guest_sigaltstack_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSigaltstack.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_exception_handler_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestExceptionHandler.cpp
+        LINK libkernel libc
+    )
     if(WIN32)
-        set_tests_properties(guest_sigaltstack PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_exception_handler_tests ${LIBS_INCLUDE_DIR}/tests/GuestExceptionHandler.cpp)
-    target_include_directories(guest_exception_handler_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_exception_handler_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_exception_handler_tests)
-    add_test(NAME guest_exception_handler COMMAND guest_exception_handler_tests)
-    if(WIN32)
-        set_tests_properties(guest_exception_handler PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    if(WIN32)
-        add_test_executable(guest_raise_exception_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseException.cpp)
-        target_include_directories(guest_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_raise_exception_tests PRIVATE libkernel libc)
-        configure_windows_unwind(guest_raise_exception_tests)
-        add_test(NAME guest_raise_exception COMMAND guest_raise_exception_tests)
-        set_tests_properties(guest_raise_exception PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-        add_test_executable(guest_raise_nested_sleep_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseNestedSleep.cpp)
-        target_include_directories(guest_raise_nested_sleep_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_raise_nested_sleep_tests PRIVATE libkernel libc)
-        configure_windows_unwind(guest_raise_nested_sleep_tests)
-        add_test(NAME guest_raise_nested_sleep COMMAND guest_raise_nested_sleep_tests)
-        set_tests_properties(guest_raise_nested_sleep PROPERTIES TIMEOUT 30 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        anyps5_add_library_test(guest_raise_exception_tests
+            TIMEOUT 30
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestRaiseException.cpp
+            LINK libkernel libc
+        )
+        anyps5_add_library_test(guest_raise_nested_sleep_tests
+            TIMEOUT 30
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestRaiseNestedSleep.cpp
+            LINK libkernel libc
+        )
     endif()
     if(WIN32)
         add_library(guest_unwind_module_info_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestUnwindModuleInfoFixture.cpp)
         target_include_directories(guest_unwind_module_info_fixture PRIVATE ${LIBS_INCLUDE_DIR})
         target_compile_options(guest_unwind_module_info_fixture PRIVATE -fno-exceptions)
-        add_test_executable(guest_unwind_module_info_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnwindModuleInfo.cpp)
-        target_include_directories(guest_unwind_module_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_unwind_module_info_tests PRIVATE libkernel libc guest_unwind_module_info_fixture)
-        configure_windows_unwind(guest_unwind_module_info_tests)
-        add_test(NAME guest_unwind_module_info COMMAND guest_unwind_module_info_tests)
+        anyps5_add_library_test(guest_unwind_module_info_tests
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestUnwindModuleInfo.cpp
+            LINK libkernel libc guest_unwind_module_info_fixture
+        )
         set_tests_properties(guest_unwind_module_info PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>;PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_unwind_module_info_fixture>")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -470,62 +404,38 @@ if(BUILD_TESTING)
         add_test(NAME guest_unwind_module_info COMMAND guest_unwind_module_info_tests guest_unwind_module_info_fixture.prx guest_unwind_no_header_fixture.prx)
         set_tests_properties(guest_unwind_module_info PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:guest_unwind_module_info_fixture>")
-        add_test_executable(guest_unwind_module_info_failure_tests ${LIBS_INCLUDE_DIR}/tests/GuestUnwindModuleInfoFailureLinux.cpp)
-        target_include_directories(guest_unwind_module_info_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_unwind_module_info_failure_tests PRIVATE libkernel libc)
+        anyps5_add_library_test(guest_unwind_module_info_failure_tests
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestUnwindModuleInfoFailureLinux.cpp
+            LINK libkernel libc
+        )
         set_target_properties(guest_unwind_module_info_failure_tests PROPERTIES ENABLE_EXPORTS ON)
-        add_test(NAME guest_unwind_module_info_failure COMMAND guest_unwind_module_info_failure_tests)
     endif()
-    add_test_executable(guest_sync_on_address_tests ${LIBS_INCLUDE_DIR}/tests/GuestSyncOnAddress.cpp)
-    target_include_directories(guest_sync_on_address_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_sync_on_address_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_sync_on_address_tests)
-    add_test(NAME guest_sync_on_address COMMAND guest_sync_on_address_tests)
-    set_tests_properties(guest_sync_on_address PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_sync_on_address PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_available_cpumask_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvailableCpumask.cpp)
-    target_include_directories(guest_available_cpumask_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_available_cpumask_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_available_cpumask_tests)
-    add_test(NAME guest_available_cpumask COMMAND guest_available_cpumask_tests)
-    set_tests_properties(guest_available_cpumask PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_available_cpumask PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_current_cpu_tests ${LIBS_INCLUDE_DIR}/tests/GuestCurrentCpu.cpp)
-    target_include_directories(guest_current_cpu_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_current_cpu_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_current_cpu_tests)
-    add_test(NAME guest_current_cpu COMMAND guest_current_cpu_tests)
-    set_tests_properties(guest_current_cpu PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_current_cpu PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_getrusage_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrusage.cpp)
-    target_include_directories(guest_getrusage_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_getrusage_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_getrusage_tests)
-    add_test(NAME guest_getrusage COMMAND guest_getrusage_tests)
-    set_tests_properties(guest_getrusage PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_getrusage PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_kernel_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelErrors.cpp)
-    target_include_directories(guest_kernel_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_kernel_error_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_kernel_error_tests)
-    add_test(NAME guest_kernel_errors COMMAND guest_kernel_error_tests)
-    set_tests_properties(guest_kernel_errors PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_kernel_errors PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_sync_on_address_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSyncOnAddress.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_available_cpumask_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAvailableCpumask.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_current_cpu_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestCurrentCpu.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_getrusage_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestGetrusage.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_kernel_error_tests
+        NAME guest_kernel_errors
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestKernelErrors.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_getrlimit_tests ${LIBS_INCLUDE_DIR}/tests/GuestGetrlimit.cpp)
     target_include_directories(guest_getrlimit_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_getrlimit_tests PRIVATE libkernel libc)
@@ -536,34 +446,20 @@ if(BUILD_TESTING)
         set_tests_properties(guest_getrlimit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_equeue_event_tests ${LIBS_INCLUDE_DIR}/tests/GuestEqueueEvents.cpp)
-    target_include_directories(guest_equeue_event_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_equeue_event_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_equeue_event_tests)
-    add_test(NAME guest_equeue_events COMMAND guest_equeue_event_tests)
-    set_tests_properties(guest_equeue_events PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_equeue_events PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_system_configuration_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemConfiguration.cpp)
-    target_include_directories(guest_system_configuration_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_system_configuration_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_system_configuration_tests)
-    add_test(NAME guest_system_configuration COMMAND guest_system_configuration_tests)
-    if(WIN32)
-        set_tests_properties(guest_system_configuration PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_system_command_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemCommand.cpp)
-    target_include_directories(guest_system_command_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_system_command_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_system_command_tests)
-    add_test(NAME guest_system_command COMMAND guest_system_command_tests)
-    if(WIN32)
-        set_tests_properties(guest_system_command PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_equeue_event_tests
+        NAME guest_equeue_events
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestEqueueEvents.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_system_configuration_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSystemConfiguration.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_system_command_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSystemCommand.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_udp_tests ${LIBS_INCLUDE_DIR}/tests/GuestUdp.cpp)
     target_include_directories(guest_udp_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_udp_tests PRIVATE libkernel libc)
@@ -584,74 +480,40 @@ if(BUILD_TESTING)
         set_tests_properties(guest_socket_read_write PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_poll_tests ${LIBS_INCLUDE_DIR}/tests/GuestPoll.cpp)
-    target_include_directories(guest_poll_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_poll_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_poll_tests)
-    add_test(NAME guest_poll COMMAND guest_poll_tests)
-    set_tests_properties(guest_poll PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_poll PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_tcp_tests ${LIBS_INCLUDE_DIR}/tests/GuestTcp.cpp)
-    target_include_directories(guest_tcp_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_tcp_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_tcp_tests)
-    add_test(NAME guest_tcp COMMAND guest_tcp_tests)
-    set_tests_properties(guest_tcp PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_tcp PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_socket_pair_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketPair.cpp)
-    target_include_directories(guest_socket_pair_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_socket_pair_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_socket_pair_tests)
-    add_test(NAME guest_socket_pair COMMAND guest_socket_pair_tests)
-    set_tests_properties(guest_socket_pair PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_socket_pair PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_elf_phdr_match_tests ${LIBS_INCLUDE_DIR}/tests/GuestElfPhdrMatch.cpp)
-    target_include_directories(guest_elf_phdr_match_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_elf_phdr_match_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_elf_phdr_match_tests)
-    add_test(NAME guest_elf_phdr_match COMMAND guest_elf_phdr_match_tests)
-    set_tests_properties(guest_elf_phdr_match PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_elf_phdr_match PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_credentials_tests ${LIBS_INCLUDE_DIR}/tests/GuestCredentials.cpp)
-    target_include_directories(guest_credentials_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_credentials_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_credentials_tests)
-    add_test(NAME guest_credentials COMMAND guest_credentials_tests)
-    set_tests_properties(guest_credentials PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_credentials PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_address_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressConversion.cpp)
-    target_include_directories(guest_address_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_address_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_address_tests)
-    add_test(NAME guest_addresses COMMAND guest_address_tests)
-    if(WIN32)
-        set_tests_properties(guest_addresses PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
-    add_test_executable(guest_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemory.cpp)
-    target_include_directories(guest_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_memory_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_memory_tests)
-    add_test(NAME guest_memory COMMAND guest_memory_tests)
-    if(WIN32)
-        set_tests_properties(guest_memory PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-    endif()
+    anyps5_add_library_test(guest_poll_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPoll.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_tcp_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestTcp.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_socket_pair_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSocketPair.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_elf_phdr_match_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestElfPhdrMatch.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_credentials_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestCredentials.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_address_tests
+        NAME guest_addresses
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestAddressConversion.cpp
+        LINK libkernel libc
+    )
+    anyps5_add_library_test(guest_memory_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestMemory.cpp
+        LINK libkernel libc
+    )
     add_test_executable(guest_mlock_tests ${LIBS_INCLUDE_DIR}/tests/GuestMlock.cpp)
     target_include_directories(guest_mlock_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_mlock_tests PRIVATE libkernel libc)
@@ -673,27 +535,23 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(WIN32)
-        add_test_executable(guest_directory_buffer_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryBuffer.cpp)
-        target_include_directories(guest_directory_buffer_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_directory_buffer_tests PRIVATE libkernel libc)
-        configure_windows_unwind(guest_directory_buffer_tests)
-        add_test(NAME guest_directory_buffer COMMAND guest_directory_buffer_tests)
-        set_tests_properties(guest_directory_buffer PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        anyps5_add_library_test(guest_directory_buffer_tests
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestDirectoryBuffer.cpp
+            LINK libkernel libc
+        )
     endif()
     if(NOT WIN32)
-        add_test_executable(guest_directory_entry_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryEntries.cpp)
-        target_include_directories(guest_directory_entry_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_directory_entry_tests PRIVATE libkernel libc)
-        add_test(NAME guest_directory_entries COMMAND guest_directory_entry_tests)
+        anyps5_add_library_test(guest_directory_entry_tests
+            NAME guest_directory_entries
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestDirectoryEntries.cpp
+            LINK libkernel libc
+        )
     else()
-        add_test_executable(guest_directory_close_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectoryClose.cpp)
-        target_include_directories(guest_directory_close_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_directory_close_tests PRIVATE libkernel libc)
-        configure_windows_unwind(guest_directory_close_tests)
-        add_test(NAME guest_directory_close COMMAND guest_directory_close_tests)
-        set_tests_properties(guest_directory_close PROPERTIES TIMEOUT 15 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        anyps5_add_library_test(guest_directory_close_tests
+            TIMEOUT 15
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestDirectoryClose.cpp
+            LINK libkernel libc
+        )
         if(MINGW)
             target_compile_options(guest_directory_close_tests PRIVATE -fasynchronous-unwind-tables)
         endif()
@@ -707,21 +565,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_file_vector PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    add_test_executable(guest_sandbox_random_word_tests ${LIBS_INCLUDE_DIR}/tests/GuestSandboxRandomWord.cpp)
-    target_include_directories(guest_sandbox_random_word_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_sandbox_random_word_tests PRIVATE libkernel libc)
-    configure_windows_unwind(guest_sandbox_random_word_tests)
-    add_test(NAME guest_sandbox_random_word COMMAND guest_sandbox_random_word_tests)
-    set_tests_properties(guest_sandbox_random_word PROPERTIES TIMEOUT 20)
+    anyps5_add_library_test(guest_sandbox_random_word_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSandboxRandomWord.cpp
+        LINK libkernel libc
+    )
     if(WIN32)
-        set_tests_properties(guest_sandbox_random_word PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-        add_test_executable(guest_mutex_raise_exception_tests ${LIBS_INCLUDE_DIR}/tests/GuestMutexRaiseException.cpp)
-        target_include_directories(guest_mutex_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_mutex_raise_exception_tests PRIVATE libkernel libc)
-        configure_windows_unwind(guest_mutex_raise_exception_tests)
-        add_test(NAME guest_mutex_raise_exception COMMAND guest_mutex_raise_exception_tests)
-        set_tests_properties(guest_mutex_raise_exception PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        anyps5_add_library_test(guest_mutex_raise_exception_tests
+            TIMEOUT 20
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestMutexRaiseException.cpp
+            LINK libkernel libc
+        )
     endif()
 endif()

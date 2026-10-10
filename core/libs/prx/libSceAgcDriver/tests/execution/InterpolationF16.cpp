@@ -7,14 +7,13 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::PixelInput;
 using ShaderRecompiler::PixelInputBit;
 using ShaderRecompiler::ShaderStage;
@@ -269,7 +268,7 @@ void ExpectFailure(std::span<const std::uint32_t> code, std::uint32_t input0, bo
         Require(std::string(error.what()).find(expected) != std::string::npos, std::string(message) + ": " + error.what());
         return;
     }
-    throw std::runtime_error(message);
+    Testing::Fail(message);
 }
 
 void ExpectRejected(std::uint32_t word0, std::uint32_t word1, const char* expected, const char* message) {
@@ -277,32 +276,46 @@ void ExpectRejected(std::uint32_t word0, std::uint32_t word1, const char* expect
     ExpectFailure(code, Fp16Input, true, expected, message);
 }
 
+
+void RequireBarycentrics(const AgcDriver::VulkanDevice& device) {
+    if (!device.Target().fragmentShaderBarycentricEnabled) Testing::Skip("the device has no fragmentShaderBarycentric");
 }
 
-int main() {
-    try {
-        ExpectFailure(PixelCode, Fp16Input, false, "requires fragmentShaderBarycentric", "16-bit interpolation was accepted without barycentrics");
-        ExpectFailure(PixelCode, 0x03000000u, true, "without FP16_INTERP_MODE", "16-bit interpolation of a 32-bit input was accepted");
-        ExpectFailure(PixelCode, 0x03080420u, true, "passes its vertices through unchanged", "16-bit interpolation of a pass-through input was accepted");
-        ExpectRejected(0xd75a001bu, 0x0c6a0200u, "interpolation modifiers", "v_interp_p2_f16 accepted an output modifier");
-        ExpectRejected(0xd75a081bu, 0x046a0200u, "interpolation modifiers", "v_interp_p2_f16 accepted op_sel");
-        ExpectRejected(0xd742001au, 0x20020000u, "interpolation modifiers", "v_interp_p1ll_f16 accepted a negated attribute");
-        ExpectRejected(0xd742001au, 0x00000000u, "not a vector register", "v_interp_p1ll_f16 accepted a scalar I coordinate");
-        ExpectRejected(0xd743001du, 0x003e0140u, "not a vector register", "v_interp_p1lv_f16 accepted a scalar P0");
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!device->Target().fragmentShaderBarycentricEnabled) {
-            std::puts("skipped, the device has no fragmentShaderBarycentric");
-            return VulkanTestSkipped;
-        }
-        for (const auto waveSize : {64u, 32u}) {
-            Draw(*device, waveSize);
-            Check(waveSize);
-        }
-        std::puts("16-bit interpolation tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case withoutBarycentrics{"InterpolationF16_TargetWithoutBarycentrics_IsRejected", [] {
+    ExpectFailure(PixelCode, Fp16Input, false, "requires fragmentShaderBarycentric", "16-bit interpolation was accepted without barycentrics");
+}};
+
+const Testing::Case thirtyTwoBitInput{"InterpolationF16_ThirtyTwoBitInput_IsRejected", [] {
+    ExpectFailure(PixelCode, 0x03000000u, true, "without FP16_INTERP_MODE", "16-bit interpolation of a 32-bit input was accepted");
+}};
+
+const Testing::Case passThroughInput{"InterpolationF16_PassThroughInput_IsRejected", [] {
+    ExpectFailure(PixelCode, 0x03080420u, true, "passes its vertices through unchanged", "16-bit interpolation of a pass-through input was accepted");
+}};
+
+const Testing::Case modifiersRejected{"InterpolationF16_InterpolationModifiers_AreRejected", [] {
+    ExpectRejected(0xd75a001bu, 0x0c6a0200u, "interpolation modifiers", "v_interp_p2_f16 accepted an output modifier");
+    ExpectRejected(0xd75a081bu, 0x046a0200u, "interpolation modifiers", "v_interp_p2_f16 accepted op_sel");
+    ExpectRejected(0xd742001au, 0x20020000u, "interpolation modifiers", "v_interp_p1ll_f16 accepted a negated attribute");
+}};
+
+const Testing::Case scalarOperandsRejected{"InterpolationF16_ScalarOperands_AreRejected", [] {
+    ExpectRejected(0xd742001au, 0x00000000u, "not a vector register", "v_interp_p1ll_f16 accepted a scalar I coordinate");
+    ExpectRejected(0xd743001du, 0x003e0140u, "not a vector register", "v_interp_p1lv_f16 accepted a scalar P0");
+}};
+
+const Testing::Case wave64Draw{"InterpolationF16_Wave64Draw_MatchesReferenceInterpolation", [] {
+    auto& device = SharedVulkanTestDevice();
+    RequireBarycentrics(device);
+    Draw(device, 64u);
+    Check(64u);
+}};
+
+const Testing::Case wave32Draw{"InterpolationF16_Wave32Draw_MatchesReferenceInterpolation", [] {
+    auto& device = SharedVulkanTestDevice();
+    RequireBarycentrics(device);
+    Draw(device, 32u);
+    Check(32u);
+}};
+
+} // namespace

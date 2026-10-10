@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -26,14 +27,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 512;
@@ -80,7 +79,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
 }
 
 std::span<const std::uint32_t> Program(std::array<float, 4> srgb8, bool rgba8) {
-    Require(programCount < Programs.size(), "too many test programs");
+    Testing::Require(programCount < Programs.size(), "too many test programs");
     auto& code = Programs[programCount++];
     std::size_t at = 0;
     const auto move = [&](std::uint32_t vgpr, float value) {
@@ -113,7 +112,7 @@ struct Block {
 #else
         if (watched) {
             void* raw = mmap(nullptr, bytes + BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            Require(raw != MAP_FAILED, "cannot map the color target");
+            Testing::Require(raw != MAP_FAILED, "cannot map the color target");
             const auto begin = reinterpret_cast<std::uintptr_t>(raw);
             const auto aligned = (begin + BlockBytes - 1) & ~(static_cast<std::uintptr_t>(BlockBytes) - 1);
             if (aligned != begin) munmap(raw, aligned - begin);
@@ -124,8 +123,8 @@ struct Block {
             data = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, bytes));
         }
 #endif
-        Require(data != nullptr, "cannot allocate the color target");
-        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "the color target is not write-watched");
+        Testing::Require(data != nullptr, "cannot allocate the color target");
+        Testing::Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "the color target is not write-watched");
         GuestAllocations::Mutation mutation;
         mutation.Add(data, bytes, true, true);
     }
@@ -158,6 +157,10 @@ struct Block {
     bool watched;
     std::uint8_t* data = nullptr;
 };
+
+Block& ProcessLifetimeBlock(std::size_t bytes) {
+    return *new Block(bytes);
+}
 
 AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint32_t slot, const Block& block, std::uint32_t info, std::uint32_t attrib3, std::uint32_t clear = 0) {
     const auto stride = slot * 0xfu;
@@ -270,7 +273,7 @@ void ExpectSurface(AgcDriver::VulkanDevice& device, const Block& block, const st
         const int expected = inside ? drawn(before[offset]) : before[offset];
         const int actual = stored[offset];
         if (std::abs(actual - expected) <= (inside ? tolerance : 0)) continue;
-        throw std::runtime_error(what + ": byte " + std::to_string(offset) + (inside ? " inside" : " outside") + " the scissor is " + std::to_string(actual) + ", expected " + std::to_string(expected) + " from " + std::to_string(before[offset]));
+        Testing::Fail(what + ": byte " + std::to_string(offset) + (inside ? " inside" : " outside") + " the scissor is " + std::to_string(actual) + ", expected " + std::to_string(expected) + " from " + std::to_string(before[offset]));
     }
 }
 
@@ -279,44 +282,74 @@ std::vector<std::uint8_t> Fill(Block& block) {
     return std::vector<std::uint8_t>(block.data, block.data + block.bytes);
 }
 
-void RecordedDrawTests(AgcDriver::VulkanDevice& device, Block& block) {
-    auto before = Fill(block);
+AgcDriver::Graphics::ColorTarget Srgb8Target(const Block& block) {
     const auto color = DecodeTarget(0, block, Srgb8Info, TiledAttrib3);
-    Require(color.format == VK_FORMAT_R8_SRGB && color.elementBytes == 1 && color.bytes == SurfaceBytes, "the 8_SRGB target did not decode as a 512x256 R8_SRGB surface");
-    const auto keep = Program({0.0f, 0.25f, 0.5f, 0.75f}, false);
-    Draw(device, {color}, {Keep}, keep);
+    Testing::Require(color.format == VK_FORMAT_R8_SRGB && color.elementBytes == 1 && color.bytes == SurfaceBytes, "the 8_SRGB target did not decode as a 512x256 R8_SRGB surface");
+    return color;
+}
+
+const Testing::Case keepBlend{"Srgb8Target_ZeroOneBlend_KeepsTheSurface", [] {
+    auto& device = SharedVulkanTestDevice();
+    Block& block = ProcessLifetimeBlock(SurfaceBytes);
+    const auto before = Fill(block);
+    const auto color = Srgb8Target(block);
+    Draw(device, {color}, {Keep}, Program({0.0f, 0.25f, 0.5f, 0.75f}, false));
     ExpectSurface(device, block, before, [](std::uint8_t code) { return code; }, 0, "a ZERO/ONE blend into an 8_SRGB target");
-    before = ReadBack(device, block.Address(), SurfaceBytes);
+}};
+
+const Testing::Case multiplyBlend{"Srgb8Target_MultiplyBlend_BlendsInLinearSpace", [] {
+    auto& device = SharedVulkanTestDevice();
+    Block& block = ProcessLifetimeBlock(SurfaceBytes);
+    const auto before = Fill(block);
+    const auto color = Srgb8Target(block);
     constexpr float factor = 0.6f;
     Draw(device, {color}, {Multiply}, Program({factor, 0.25f, 0.5f, 0.75f}, false));
     ExpectSurface(device, block, before, [](std::uint8_t code) { return Oetf(Eotf(code) * factor); }, 1, "a multiply blend into an 8_SRGB target");
-    before = ReadBack(device, block.Address(), SurfaceBytes);
+}};
+
+const Testing::Case writeThenMultiply{"Srgb8Target_WriteThenMultiplyInOnePass_BlendsTheWrittenValue", [] {
+    auto& device = SharedVulkanTestDevice();
+    Block& block = ProcessLifetimeBlock(SurfaceBytes);
+    const auto before = Fill(block);
+    const auto color = Srgb8Target(block);
     const auto written = static_cast<float>(Eotf(150));
     Draw(device, {color}, {BlendOff}, Program({written, 0.25f, 0.5f, 0.75f}, false));
     Draw(device, {color}, {Multiply}, Program({0.5f, 0.25f, 0.5f, 0.75f}, false));
     ExpectSurface(device, block, before, [&](std::uint8_t) { return Oetf(static_cast<double>(written) * 0.5); }, 1, "a write and a multiply blend in one pass over an 8_SRGB target");
-    before = ReadBack(device, block.Address(), SurfaceBytes);
+}};
+
+const Testing::Case writeThenDestinationAlpha{"Srgb8Target_WriteThenDestinationAlphaBlend_KeepsTheWrittenValue", [] {
+    auto& device = SharedVulkanTestDevice();
+    Block& block = ProcessLifetimeBlock(SurfaceBytes);
+    const auto before = Fill(block);
+    const auto color = Srgb8Target(block);
+    const auto written = static_cast<float>(Eotf(150));
     Draw(device, {color}, {BlendOff}, Program({written, 0.25f, 0.5f, 0.75f}, false));
     Draw(device, {color}, {Blend(true, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_DST_ALPHA)}, Program({0.5f, 0.25f, 0.5f, 0.75f}, false));
     ExpectSurface(device, block, before, [](std::uint8_t) { return 150; }, 1, "a destination-alpha blend after a write in one pass over an 8_SRGB target");
-}
+}};
 
-void ClearTests(AgcDriver::VulkanDevice& device, Block& block) {
+const Testing::Case fastClearedTarget{"Srgb8Target_DrawOverFastClearedDccTarget_WritesValuesAndDecompressesKeys", [] {
+    auto& device = SharedVulkanTestDevice();
+    Block& block = ProcessLifetimeBlock(SurfaceBytes);
     Fill(block);
     Keys.fill(0x20);
     const auto color = DecodeTarget(0, block, Srgb8Info | DccEnable, TiledAttrib3, ClearCode);
-    Require(color.dccAddress == reinterpret_cast<std::uintptr_t>(Keys.data()), "the 8_SRGB target lost its DCC keys");
+    Testing::Require(color.dccAddress == reinterpret_cast<std::uintptr_t>(Keys.data()), "the 8_SRGB target lost its DCC keys");
     const auto written = static_cast<float>(Eotf(200));
     Draw(device, {color}, {BlendOff}, Program({written, 0.25f, 0.5f, 0.75f}, false));
     const std::vector<std::uint8_t> cleared(SurfaceBytes, ClearCode);
     ExpectSurface(device, block, cleared, [](std::uint8_t) { return 200; }, 1, "a draw over a fast-cleared 8_SRGB target");
     std::array<std::uint8_t, KeyBytes> keys{};
     AgcDriver::GuestMemory::Read(reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_writable_bytes(std::span(keys)), 1);
-    Require(std::all_of(keys.begin(), keys.end(), [](std::uint8_t key) { return key == 0xff; }), "the drawn 8_SRGB target kept compressed DCC keys");
-}
+    Testing::Require(std::all_of(keys.begin(), keys.end(), [](std::uint8_t key) { return key == 0xff; }), "the drawn 8_SRGB target kept compressed DCC keys");
+}};
 
-void SynchronousDrawTests(AgcDriver::VulkanDevice& device, Block& linear, Block& block) {
-    Require(AgcDriver::Graphics::ColorTargetLayout(Width, Height, AgcDriver::Graphics::ColorTileMode::Linear, 4).Bytes() == LinearBytes, "the linear RGBA8 target is padded");
+const Testing::Case besideLinearTarget{"Srgb8Target_MultiplyBesideLinearRgba8Target_BlendsBothCorrectly", [] {
+    auto& device = SharedVulkanTestDevice();
+    Block& linear = ProcessLifetimeBlock(LinearBytes);
+    Block& block = ProcessLifetimeBlock(SurfaceBytes);
+    Testing::Require(AgcDriver::Graphics::ColorTargetLayout(Width, Height, AgcDriver::Graphics::ColorTileMode::Linear, 4).Bytes() == LinearBytes, "the linear RGBA8 target is padded");
     std::memset(linear.data, Kept, LinearBytes);
     const auto before = Fill(block);
     const auto rgba8 = DecodeTarget(0, linear, Rgba8Info, LinearAttrib3);
@@ -328,27 +361,8 @@ void SynchronousDrawTests(AgcDriver::VulkanDevice& device, Block& linear, Block&
     for (std::size_t offset = 0; offset < LinearBytes; ++offset) {
         const bool inside = (offset / 4u) % Width < ScissorWidth;
         const std::uint8_t expected = inside ? (offset % 2u == 0 ? 255 : 0) : Kept;
-        Require(pixels[offset] == expected, "the linear RGBA8 target beside an 8_SRGB target holds " + std::to_string(pixels[offset]) + " at byte " + std::to_string(offset) + ", expected " + std::to_string(expected));
+        Testing::Require(pixels[offset] == expected, "the linear RGBA8 target beside an 8_SRGB target holds " + std::to_string(pixels[offset]) + " at byte " + std::to_string(offset) + ", expected " + std::to_string(expected));
     }
-}
+}};
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Block recorded(SurfaceBytes);
-        Block cleared(SurfaceBytes);
-        Block linear(LinearBytes);
-        Block synchronous(SurfaceBytes);
-        RecordedDrawTests(*device, recorded);
-        ClearTests(*device, cleared);
-        SynchronousDrawTests(*device, linear, synchronous);
-        std::puts("8_SRGB color target tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

@@ -9,14 +9,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -146,13 +145,13 @@ std::uint32_t Wrap(std::uint32_t coordinate, std::int32_t offset, std::uint32_t 
     return static_cast<std::uint32_t>(((static_cast<std::int32_t>(coordinate) + offset) % extent + extent) % extent);
 }
 
-void Check(bool clamped) {
+void Check(std::uint32_t firstIndex, std::uint32_t endIndex) {
     constexpr std::array<const char*, 4> names{"image_sample_b a16", "image_sample_b_o a16 (1, 2)", "image_sample_b_o a16 (-1, -2)", "image_sample_b_cl a16"};
     constexpr std::array<std::array<std::int32_t, 2>, 4> offsets{{{0, 0}, {1, 2}, {-1, -2}, {0, 0}}};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto sample = SampleOf(tid);
         const std::array<std::uint32_t, 4> levels{0u, 0u, 0u, sample.clamp};
-        for (std::uint32_t index = 0; index < (clamped ? 4u : 3u); ++index) {
+        for (std::uint32_t index = firstIndex; index < endIndex; ++index) {
             const std::uint32_t level = levels[index];
             const std::uint32_t size = Size >> level;
             const std::array<std::uint32_t, 4> expected{level, Wrap(sample.x >> level, offsets[index][0], size), Wrap(sample.y >> level, offsets[index][1], size), 255u};
@@ -164,24 +163,24 @@ void Check(bool clamped) {
     }
 }
 
+void Prepare() {
+    FillInput();
+    FillTexture();
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const bool clamped = TargetHasCapability(device->Target(), spv::CapabilityMinLod);
-        FillInput();
-        FillTexture();
-        Run(*device, BiasCode);
-        if (clamped) {
-            Run(*device, BiasClampCode);
-        }
-        Check(clamped);
-        std::puts(clamped ? "image sample a16 bias tests passed" : "image sample a16 bias tests passed, image_sample_b_cl skipped without shaderResourceMinLod");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case bias{"ImageSampleBiasA16_SampleWithBiasAndOffsets_SelectsBiasedTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    Run(device, BiasCode);
+    Check(0u, 3u);
+}};
+
+const Testing::Case biasClamp{"ImageSampleBiasA16_SampleWithBiasAndClamp_SelectsClampedLevel", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityMinLod, "the device has no shaderResourceMinLod, image_sample_b_cl skipped");
+    Prepare();
+    Run(device, BiasClampCode);
+    Check(3u, 4u);
+}};
+
+} // namespace

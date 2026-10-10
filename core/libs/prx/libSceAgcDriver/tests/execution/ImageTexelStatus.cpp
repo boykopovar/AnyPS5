@@ -8,14 +8,13 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -327,21 +326,22 @@ void CheckSample() {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        RunStorage(*device);
-        CheckStorage();
-        RunSample(*device);
-        CheckSample();
-        CheckRefused(*device);
-        std::puts("image texel status tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case storageStatus{"ImageTexelStatus_StorageStoresWithTfeAndLwe_ReportExpectedStatus", [] {
+    auto& device = SharedVulkanTestDevice();
+    RunStorage(device);
+    CheckStorage();
+}};
+
+const Testing::Case sampleStatus{"ImageTexelStatus_SamplesWithTfeAndLwe_ReturnExpectedDataAndStatus", [] {
+    auto& device = SharedVulkanTestDevice();
+    RunSample(device);
+    CheckSample();
+}};
+
+const Testing::Case unsupportedRefused{"ImageTexelStatus_UnsupportedStatusForms_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckRefused(device);
+}};
+
+} // namespace

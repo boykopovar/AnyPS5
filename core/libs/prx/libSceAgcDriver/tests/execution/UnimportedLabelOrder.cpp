@@ -15,14 +15,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <span>
 #include <thread>
 
 namespace {
-
-using AgcDriver::Graphics::Require;
 
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t ReleaseMemHeader = 0xc0064900u;
@@ -35,7 +32,7 @@ public:
 #else
         block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
 #endif
-        Require(block != nullptr, "unimported label order: cannot allocate the guest block");
+        Testing::Require(block != nullptr, "unimported label order: cannot allocate the guest block");
         std::memset(block, 0, BlockBytes);
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true);
     }
@@ -76,38 +73,29 @@ int StoreLabel(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint
     return reason;
 }
 
-}
 
-int main() {
-    try {
-        GuestBlock labels;
-        auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-        const std::array<std::uint32_t, 4> pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
-        if (!device->FillBuffer(labels.Address() + 4096, 4096, pattern)) {
-            std::printf("skipped, the device does not import guest memory\n");
-            return VulkanTestSkipped;
-        }
-        StoreLabel(*device, AddressOf(&commandMemory[8]), 1, 1);
-        StoreLabel(*device, labels.Address() + 4, 2, 2);
-        device->SubmitRecorded(true);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (labels.Words()[1] != 2) {
-            Require(std::chrono::steady_clock::now() < deadline, "unimported label order: the later label never landed");
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
-        }
-        const std::uint32_t seen = commandMemory[8];
-        commandMemory[8] = ReleaseMemHeader;
-        device->WaitIdle();
-        const std::uint32_t reused = commandMemory[8];
-        std::array<char, 256> message{};
-        std::snprintf(message.data(), message.size(), "unimported label order: the label held 0x%08x when a later label had landed, and the guest's reused word holds 0x%08x instead of 0x%08x", seen, reused, ReleaseMemHeader);
-        Require(seen == 1 && reused == ReleaseMemHeader, message.data());
-        std::puts("unimported label order tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case laterLabelOrder{"WriteLabel_UnimportedThenImportedLabel_LandsInSubmissionOrderWithoutClobberingReusedMemory", [] {
+    GuestBlock labels;
+    auto& device = SharedVulkanTestDevice();
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    const std::array<std::uint32_t, 4> pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
+    if (!device.FillBuffer(labels.Address() + 4096, 4096, pattern)) Testing::Skip("the device does not import guest memory");
+    commandMemory[8] = 0;
+    StoreLabel(device, AddressOf(&commandMemory[8]), 1, 1);
+    StoreLabel(device, labels.Address() + 4, 2, 2);
+    device.SubmitRecorded(true);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (labels.Words()[1] != 2) {
+        Testing::Require(std::chrono::steady_clock::now() < deadline, "unimported label order: the later label never landed");
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
-}
+    const std::uint32_t seen = commandMemory[8];
+    commandMemory[8] = ReleaseMemHeader;
+    device.WaitIdle();
+    const std::uint32_t reused = commandMemory[8];
+    std::array<char, 256> message{};
+    std::snprintf(message.data(), message.size(), "unimported label order: the label held 0x%08x when a later label had landed, and the guest's reused word holds 0x%08x instead of 0x%08x", seen, reused, ReleaseMemHeader);
+    Testing::Require(seen == 1 && reused == ReleaseMemHeader, message.data());
+}};
+
+} // namespace

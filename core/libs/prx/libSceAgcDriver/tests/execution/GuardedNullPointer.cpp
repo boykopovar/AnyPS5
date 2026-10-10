@@ -7,7 +7,6 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
@@ -27,7 +26,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Lanes = 64;
@@ -178,18 +177,44 @@ void RequireWords(const Outcome& outcome, std::uint32_t lanes, std::uint32_t ins
     }
 }
 
-void RunTests(AgcDriver::VulkanDevice& device) {
-    const auto valid = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Data.data()));
-    void* reserved = nullptr;
+class InaccessibleRange {
+public:
+    InaccessibleRange() {
 #ifdef _WIN32
-    reserved = VirtualAlloc(nullptr, 65536, MEM_RESERVE, PAGE_NOACCESS);
+        reserved = VirtualAlloc(nullptr, 65536, MEM_RESERVE, PAGE_NOACCESS);
 #else
-    reserved = mmap(nullptr, 65536, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (reserved == MAP_FAILED) reserved = nullptr;
+        reserved = mmap(nullptr, 65536, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (reserved == MAP_FAILED) reserved = nullptr;
 #endif
-    Require(reserved != nullptr, "cannot reserve an inaccessible range");
-    const auto unmapped = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(reserved));
+        Require(reserved != nullptr, "cannot reserve an inaccessible range");
+    }
 
+    ~InaccessibleRange() {
+#ifdef _WIN32
+        VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+        munmap(reserved, 65536);
+#endif
+    }
+
+    InaccessibleRange(const InaccessibleRange&) = delete;
+    InaccessibleRange& operator=(const InaccessibleRange&) = delete;
+
+    std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(reserved)); }
+
+private:
+    void* reserved = nullptr;
+};
+
+std::uint64_t ValidPointer() {
+    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Data.data()));
+}
+
+const Testing::Case branchGuard{"GuardedNullPointer_ReadBehindBranch_FaultsOnlyWhenTheReadRuns", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto valid = ValidPointer();
+    const InaccessibleRange range;
+    const auto unmapped = range.Address();
     const auto taken = Run(device, BranchCode, valid, 1u);
     Require(!Faulted(taken) && taken.poisoned == 0u && taken.cacheable, "guarded pointer: a mapped pointer faulted, was poisoned or left the caches:\n" + taken.log);
     RequireWords(taken, Lanes, Payload, "guarded pointer: a mapped pointer under a taken branch");
@@ -203,7 +228,11 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto takenUnmapped = Run(device, BranchCode, unmapped, 1u);
     Require(Faulted(takenUnmapped) && takenUnmapped.log.find(Fault(unmapped, 0x2cu)) != std::string::npos, "guarded pointer: a read through an unmapped pointer that runs did not fault at its address:\n" + takenUnmapped.log);
     Require(takenUnmapped.pipelineVariantId == taken.pipelineVariantId, "guarded pointer: an unmapped pointer changed the pipeline variant");
+}};
 
+const Testing::Case execGuard{"GuardedNullPointer_ReadUnderExec_FaultsOnlyWhenTheReadRuns", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto valid = ValidPointer();
     const auto someLanes = Run(device, ExecCode, valid, 5u);
     Require(!Faulted(someLanes), "guarded pointer: a mapped pointer under EXEC faulted:\n" + someLanes.log);
     RequireWords(someLanes, 5u, Payload, "guarded pointer: a mapped pointer read under EXEC");
@@ -218,7 +247,11 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto emptyNull = Run(device, EmptyExecCode, 0u, 0u);
     Require(Faulted(emptyNull) && emptyNull.log.find(Fault(0u, 0x34u)) != std::string::npos, "guarded pointer: a null pointer read that runs with an empty EXEC did not fault:\n" + emptyNull.log);
     Require(noLanes.pipelineVariantId == someLanes.pipelineVariantId && oneLane.pipelineVariantId == someLanes.pipelineVariantId && emptyNull.pipelineVariantId == emptyMapped.pipelineVariantId, "guarded pointer: the poison changed an EXEC program's pipeline variant");
+}};
 
+const Testing::Case pointerChain{"GuardedNullPointer_PointerChain_FaultsAtTheFirstNullRead", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto valid = ValidPointer();
     const auto chainSkipped = Run(device, ChainCode, 0u, 0u);
     Require(chainSkipped.poisoned == 3u && Faulted(chainSkipped) && chainSkipped.log.find(Fault(0u, 0x24u)) != std::string::npos, "guarded pointer: a pointer read through a null pointer, used only by a skipped read, did not fault at its own pc:\n" + chainSkipped.log);
     const auto chainTaken = Run(device, ChainCode, 0u, 1u);
@@ -227,7 +260,13 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto chainMapped = Run(device, ChainCode, static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Indirect.data())), 1u);
     Require(!Faulted(chainMapped) && chainMapped.poisoned == 0u && chainMapped.cacheable && chainMapped.pipelineVariantId == chainTaken.pipelineVariantId && chainSkipped.pipelineVariantId == chainTaken.pipelineVariantId, "guarded pointer: a chain's poison changed its pipeline variant, or a mapped chain faulted:\n" + chainMapped.log);
     RequireWords(chainMapped, Lanes, Payload, "guarded pointer: a read through a mapped pointer chain");
+}};
 
+const Testing::Case descriptorGuard{"GuardedNullPointer_DescriptorBehindPointer_FaultsOnlyWhenTheLoadRuns", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto valid = ValidPointer();
+    const InaccessibleRange range;
+    const auto unmapped = range.Address();
     Table = {0u, 0u, 0u, 0u, static_cast<std::uint32_t>(valid), static_cast<std::uint32_t>((valid >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Data)), 0x30027facu};
     const auto table = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Table.data()));
     const auto descriptorTaken = Run(device, DescriptorCode, table, 1u);
@@ -244,25 +283,6 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto descriptorZero = Run(device, DescriptorCode, table, 1u);
     Require(!Faulted(descriptorZero) && descriptorZero.poisoned == 0u && descriptorZero.cacheable && descriptorZero.pipelineVariantId == descriptorNull.pipelineVariantId, "guarded pointer: a zero V# read from mapped memory faulted, or its pipeline variant differs from a V# zeroed by poison:\n" + descriptorZero.log);
     RequireWords(descriptorZero, Lanes, 0u, "guarded pointer: a buffer read through a zero V#");
+}};
 
-#ifdef _WIN32
-    VirtualFree(reserved, 0, MEM_RELEASE);
-#else
-    munmap(reserved, 65536);
-#endif
-}
-
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        RunTests(*device);
-        std::puts("guarded null pointer tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

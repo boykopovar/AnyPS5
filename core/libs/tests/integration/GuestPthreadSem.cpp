@@ -1,8 +1,10 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
 #include <stdexcept>
 #include <thread>
 
@@ -18,49 +20,103 @@ int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, unsigned int usec);
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
 }
 
-static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
+namespace {
 
-static void Require(bool value) { if (!value) std::abort(); }
+using Testing::Case;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
 
-struct Context {
+constexpr int SCE_OK = 0;
+constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
+constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
+
+class Semaphore {
+public:
+    explicit Semaphore(unsigned int initial) {
+        RequireEqual(scePthreadSemInit(&sem, 0, initial, nullptr), SCE_OK, "sem init");
+        initialized = true;
+    }
+    ~Semaphore() {
+        if (initialized) scePthreadSemDestroy(&sem);
+    }
+    Semaphore(const Semaphore&) = delete;
+    Semaphore& operator=(const Semaphore&) = delete;
+
+    int Value() {
+        int value = -1;
+        RequireEqual(scePthreadSemGetvalue(&sem, &value), SCE_OK, "sem getvalue");
+        return value;
+    }
+
+    int Destroy() {
+        initialized = false;
+        return scePthreadSemDestroy(&sem);
+    }
+
     PthreadSem sem = nullptr;
+
+private:
+    bool initialized = false;
 };
 
-static void* APS5_VABI Poster(void* arg) {
-    auto& context = *static_cast<Context*>(arg);
+struct PosterRun {
+    PthreadSem* sem;
+    std::atomic<int> firstPost{-1};
+    std::atomic<int> secondPost{-1};
+};
+
+void* APS5_VABI Poster(void* arg) {
+    auto& run = *static_cast<PosterRun*>(arg);
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    Require(scePthreadSemPost(&context.sem) == SCE_OK);
-    Require(scePthreadSemPost(&context.sem) == SCE_OK);
+    run.firstPost.store(scePthreadSemPost(run.sem));
+    run.secondPost.store(scePthreadSemPost(run.sem));
     return nullptr;
 }
 
-int main() {
-    PthreadSem sem = nullptr;
-    Require(scePthreadSemInit(&sem, 0, 2, nullptr) == SCE_OK);
-    int value = -1;
-    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 2);
-    Require(scePthreadSemTrywait(&sem) == SCE_OK);
-    Require(scePthreadSemTrywait(&sem) == SCE_OK);
-    Require(scePthreadSemTrywait(&sem) == SCE_KERNEL_ERROR_EBUSY);
-    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 0);
-    Require(scePthreadSemTimedwait(&sem, 1000) == SCE_KERNEL_ERROR_ETIMEDOUT);
-    Require(scePthreadSemPost(&sem) == SCE_OK);
-    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 1);
+const Case initialValue{"SemInit_InitialCount_IsReportedByGetvalue", [] {
+    Semaphore semaphore(2);
+    RequireEqual(semaphore.Value(), 2, "value");
+}};
 
-    Context context;
-    Require(scePthreadSemInit(&context.sem, 0, 0, nullptr) == SCE_OK);
+const Case exhausted{"SemTrywait_CountExhausted_FailsWithEbusy", [] {
+    Semaphore semaphore(2);
+    RequireEqual(scePthreadSemTrywait(&semaphore.sem), SCE_OK, "first trywait");
+    RequireEqual(scePthreadSemTrywait(&semaphore.sem), SCE_OK, "second trywait");
+    RequireEqual(scePthreadSemTrywait(&semaphore.sem), SCE_KERNEL_ERROR_EBUSY, "third trywait");
+    RequireEqual(semaphore.Value(), 0, "value");
+}};
+
+const Case timeout{"SemTimedwait_ZeroCount_TimesOut", [] {
+    Semaphore semaphore(0);
+    RequireEqual(scePthreadSemTimedwait(&semaphore.sem, 1000), SCE_KERNEL_ERROR_ETIMEDOUT, "timed wait");
+}};
+
+const Case post{"SemPost_ZeroCount_IncrementsValue", [] {
+    Semaphore semaphore(0);
+    RequireEqual(scePthreadSemPost(&semaphore.sem), SCE_OK, "post");
+    RequireEqual(semaphore.Value(), 1, "value");
+    RequireEqual(semaphore.Destroy(), SCE_OK, "destroy");
+}};
+
+const Case crossThread{"SemWait_PostedFromGuestThread_WakesWaiter", [] {
+    Semaphore semaphore(0);
+    PosterRun run{&semaphore.sem};
     Pthread thread = nullptr;
-    Require(scePthreadCreate(&thread, nullptr, Poster, &context, nullptr) == SCE_OK);
-    Require(scePthreadSemTimedwait(&context.sem, 5000000) == SCE_OK);
-    Require(scePthreadSemWait(&context.sem) == SCE_OK);
-    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
-    Require(scePthreadSemDestroy(&context.sem) == SCE_OK);
+    RequireEqual(scePthreadCreate(&thread, nullptr, Poster, &run, nullptr), SCE_OK, "create poster");
+    const int timedWait = scePthreadSemTimedwait(&semaphore.sem, 5000000);
+    const int wait = timedWait == SCE_OK ? scePthreadSemWait(&semaphore.sem) : timedWait;
+    RequireEqual(scePthreadJoin(thread, nullptr), SCE_OK, "join poster");
+    RequireEqual(timedWait, SCE_OK, "timed wait");
+    RequireEqual(wait, SCE_OK, "wait");
+    RequireEqual(run.firstPost.load(), SCE_OK, "first post");
+    RequireEqual(run.secondPost.load(), SCE_OK, "second post");
+    RequireEqual(semaphore.Destroy(), SCE_OK, "destroy");
+}};
 
-    bool rejected = false;
-    try { scePthreadSemWait(&context.sem); }
-    catch (const std::runtime_error&) { rejected = true; }
-    Require(rejected);
-    Require(scePthreadSemDestroy(&sem) == SCE_OK);
-}
+const Case destroyed{"SemWait_DestroyedSemaphore_Throws", [] {
+    Semaphore semaphore(0);
+    RequireEqual(semaphore.Destroy(), SCE_OK, "destroy");
+    RequireThrows<std::runtime_error>([&semaphore] { scePthreadSemWait(&semaphore.sem); }, "wait on destroyed semaphore");
+}};
+
+} // namespace

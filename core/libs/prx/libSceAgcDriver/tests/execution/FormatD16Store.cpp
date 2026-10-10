@@ -14,7 +14,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -150,24 +150,15 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t index = 0; index < 16; ++index) Expect(tid, out[index], Expected[tid][index], Names[index]);
     }
 }
 
-}
+const Testing::Case formats{"FormatD16Store_D16FormattedStores_ConvertEveryFormatLikeReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("format d16 store tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

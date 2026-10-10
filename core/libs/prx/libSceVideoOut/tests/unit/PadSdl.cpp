@@ -1,13 +1,15 @@
 #include "SDL_config.h"
 
-#include <cstdio>
+#include <Testing/Test.hpp>
 
-int main() {
+namespace {
+
+const Testing::Case hidapi{"SdlBuild_Joysticks_UseHidapi", [] {
 #ifdef SDL_JOYSTICK_HIDAPI
-    std::puts("pad_sdl: SDL drives controllers through HIDAPI");
-    return 0;
+    Testing::Require(true, "SDL drives controllers through HIDAPI");
 #else
-    std::fputs("pad_sdl: SDL is built without HIDAPI, so a DualSense gets no light bar, touchpad or trigger effects\n", stderr);
-    return 1;
+    Testing::Fail("SDL is built without HIDAPI, so a DualSense gets no light bar, touchpad or trigger effects");
 #endif
-}
+}};
+
+} // namespace

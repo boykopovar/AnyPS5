@@ -13,8 +13,6 @@ def fixture(extra_tags=()):
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
                      3, 62, 1, 0x200, 64, 0, 0, 64, 56, 2, 64, 0, 0)
-    # Return through a relocated function pointer. This verifies that ordinary
-    # RELATIVE relocations still work when the ELF has no PLT relocation table.
     image[0x200:0x206] = b"\xff\x25\xfa\x00\x00\x00"
     image[0x210:0x216] = b"\xb8\x2a\x00\x00\x00\xc3"
     struct.pack_into("<QQq", image, 0x700, 0x300, 8, 0x210)

@@ -6,14 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -89,46 +87,48 @@ void Check(const char* variant, std::uint32_t lanes) {
         for (std::uint32_t index = 0; index < Results; ++index) {
             const auto actual = Output[tid * Results + index];
             const auto expected = Expected(tid, index);
-            Require(actual == expected, std::string(variant) + " wave" + std::to_string(lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected));
+            Testing::Require(actual == expected, std::string(variant) + " wave" + std::to_string(lanes) + ": lane " + std::to_string(tid) + " " + Names[index] + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
     for (std::uint32_t index = lanes * Results; index < Output.size(); ++index) {
-        Require(Output[index] == 0xdeadbeefu, std::string(variant) + ": inactive lane wrote output");
+        Testing::Require(Output[index] == 0xdeadbeefu, std::string(variant) + ": inactive lane wrote output");
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const auto defaultTarget = device->Target();
-        const auto wave32Target = device->ComputeTarget(32);
-        const bool distinctTarget = defaultTarget.subgroupSize != wave32Target.subgroupSize;
-        std::printf("static call targets: default subgroup %u, ComputeTarget(32) subgroup %u\n", defaultTarget.subgroupSize, wave32Target.subgroupSize);
-        std::uint32_t lanes = 0u, dispatches = 0u;
-        const std::array<std::span<const std::uint32_t>, 5> variants{SwappcForward, CallForward, CallBackward, CallAfterEnd, MixedNested};
-        const std::array<const char*, 5> names{"SWAPPC forward", "CALL forward", "CALL backward", "CALL after endpgm", "mixed nested calls"};
-        for (std::size_t index = 0; index < variants.size(); ++index) {
-            const auto code = variants[index];
-            Run(*device, code, 32, wave32Target);
-            Check(names[index], 32);
-            Run(*device, code, 64, defaultTarget);
-            Check(names[index], 64);
-            if (distinctTarget) {
-                Run(*device, code, 64, wave32Target);
-                Check(names[index], 64);
-            }
-            const std::uint32_t variantLanes = distinctTarget ? 160u : 96u;
-            lanes += variantLanes;
-            dispatches += distinctTarget ? 3u : 2u;
-            std::printf("passed %s: %u lanes, %u output comparisons\n", names[index], variantLanes, variantLanes * Results);
-        }
-        std::printf("static call execution passed: 5 variants, %u dispatches, %u lanes, %u output comparisons\n", dispatches, lanes, lanes * Results);
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void RunVariant(std::span<const std::uint32_t> code, const char* name) {
+    auto& device = SharedVulkanTestDevice();
+    const auto defaultTarget = device.Target();
+    const auto wave32Target = device.ComputeTarget(32);
+    const bool distinctTarget = defaultTarget.subgroupSize != wave32Target.subgroupSize;
+    std::printf("static call targets: default subgroup %u, ComputeTarget(32) subgroup %u\n", defaultTarget.subgroupSize, wave32Target.subgroupSize);
+    Run(device, code, 32, wave32Target);
+    Check(name, 32);
+    Run(device, code, 64, defaultTarget);
+    Check(name, 64);
+    if (distinctTarget) {
+        Run(device, code, 64, wave32Target);
+        Check(name, 64);
     }
 }
+
+const Testing::Case swappcForward{"ScalarStaticCall_SwappcForward_ReturnsToCaller", [] {
+    RunVariant(SwappcForward, "SWAPPC forward");
+}};
+
+const Testing::Case callForward{"ScalarStaticCall_CallForward_ReturnsToCaller", [] {
+    RunVariant(CallForward, "CALL forward");
+}};
+
+const Testing::Case callBackward{"ScalarStaticCall_CallBackward_ReturnsToCaller", [] {
+    RunVariant(CallBackward, "CALL backward");
+}};
+
+const Testing::Case callAfterEnd{"ScalarStaticCall_CallAfterEndpgm_ReturnsToCaller", [] {
+    RunVariant(CallAfterEnd, "CALL after endpgm");
+}};
+
+const Testing::Case mixedNested{"ScalarStaticCall_MixedNestedCalls_ReturnToCallers", [] {
+    RunVariant(MixedNested, "mixed nested calls");
+}};
+
+} // namespace

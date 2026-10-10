@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -122,7 +121,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("vop1 vop2 integer: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("vop1 vop2 integer: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -148,26 +147,24 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void Check() {
+void Check(std::uint32_t first, std::uint32_t last) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t i = 0; i < 41; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
+        for (std::uint32_t i = first; i < last; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
     }
 }
 
-}
+const Testing::Case vop1Integer{"Vop1Vop2Integer_Vop1Ops_MatchExpectedTable", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check(0, 16);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("vop1 vop2 integer tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case vop2Integer{"Vop1Vop2Integer_Vop2Ops_MatchExpectedTable", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check(16, 41);
+}};
+
+} // namespace

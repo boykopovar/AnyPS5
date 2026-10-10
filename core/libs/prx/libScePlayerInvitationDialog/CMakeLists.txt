@@ -3,13 +3,9 @@ target_include_directories(libScePlayerInvitationDialog PRIVATE ${LIBS_INCLUDE_D
 configure_windows_unwind(libScePlayerInvitationDialog)
 
 if(BUILD_TESTING)
-    add_test_executable(player_invitation_dialog_tests ${LIBS_INCLUDE_DIR}/tests/PlayerInvitationDialog.cpp)
-    target_include_directories(player_invitation_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(player_invitation_dialog_tests PRIVATE libScePlayerInvitationDialog libc)
-    configure_windows_unwind(player_invitation_dialog_tests)
-    add_test(NAME player_invitation_dialog COMMAND player_invitation_dialog_tests)
-    if(WIN32)
-        set_tests_properties(player_invitation_dialog PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
+    anyps5_add_library_test(player_invitation_dialog_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/PlayerInvitationDialog.cpp
+        LINK libScePlayerInvitationDialog libc
+        RUNTIME libc
+    )
 endif()

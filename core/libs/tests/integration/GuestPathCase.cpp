@@ -3,10 +3,16 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "SceTypes.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <chrono>
-#include <cstdlib>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 
 extern "C" {
 int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
@@ -23,70 +29,249 @@ std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStr
 int APS5_VABI fclose_nid_postfix(FileStream*);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
+namespace {
 
-static void CheckRead(const std::string& path, char expected) {
-    const int fd = sceKernelOpen(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
-    Require(fd >= 0);
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int kernelNotFound = static_cast<int>(0x80020002u);
+constexpr int kernelExists = static_cast<int>(0x80020011u);
+constexpr int createExclusive = SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_WRONLY;
+
+class PathCaseFixture {
+public:
+    PathCaseFixture()
+        : host(std::filesystem::canonical(std::filesystem::current_path())),
+          name("AnyPS5-Case-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())),
+          lower(Lowercase(name)),
+          directory(host / name),
+          data(directory / "Data") {
+        Require(std::filesystem::create_directories(data / "Nested"), "create the test directories");
+        std::ofstream(data / "Settings.ini") << 'x';
+    }
+
+    ~PathCaseFixture() {
+        chdir_nid_postfix("/");
+        AddPathAlias_nid_no_patch("case-mount", data.string().c_str());
+        RemovePathAlias_nid_no_patch("case-mount");
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+    }
+
+    PathCaseFixture(const PathCaseFixture&) = delete;
+    PathCaseFixture& operator=(const PathCaseFixture&) = delete;
+
+    void EnterLowercase() const {
+        RequireEqual(chdir_nid_postfix(lower.c_str()), 0, "enter the test directory by its lowercase name");
+    }
+
+    const std::filesystem::path host;
+    const std::string name;
+    const std::string lower;
+    const std::filesystem::path directory;
+    const std::filesystem::path data;
+
+private:
+    static std::string Lowercase(std::string text) {
+        for (auto& character : text) {
+            if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
+        }
+        return text;
+    }
+};
+
+void RequireRead(const std::string& path, char expected) {
+    const int descriptor = sceKernelOpen(path.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(descriptor >= 0, "open " + path);
     char value = 0;
-    Require(sceKernelRead(fd, &value, 1) == 1 && value == expected);
-    Require(sceKernelClose(fd) == 0);
+    const std::int64_t count = sceKernelRead(descriptor, &value, 1);
+    const int closed = sceKernelClose(descriptor);
+    RequireEqual(count, std::int64_t{1}, "read one byte from " + path);
+    RequireEqual(value, expected, "byte read from " + path);
+    RequireEqual(closed, 0, "close " + path);
 }
 
-int main() {
-    const auto host = std::filesystem::canonical(std::filesystem::current_path());
-    const auto name = "AnyPS5-Case-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    const auto directory = host / name;
-    Require(std::filesystem::create_directories(directory / "Data" / "Nested"));
-    { std::ofstream file(directory / "Data" / "Settings.ini"); file << 'x'; }
-    auto lower = name;
-    for (auto& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    CheckRead("/" + lower + "/dAtA/SETTINGS.INI", 'x');
+void CreateNewFile() {
+    const int created = sceKernelOpen("data/nested/New.DAT", createExclusive, 0600);
+    Require(created >= 0, "create data/nested/New.DAT");
+    const std::int64_t written = sceKernelWrite(created, "y", 1);
+    const int closed = sceKernelClose(created);
+    RequireEqual(written, std::int64_t{1}, "write the new file");
+    RequireEqual(closed, 0, "close the new file");
+}
+
+const Case absoluteMixedCase{"KernelOpen_MixedCaseAbsolutePath_ReadsExistingFile", [] {
+    const PathCaseFixture fixture;
+    RequireRead("/" + fixture.lower + "/dAtA/SETTINGS.INI", 'x');
+}};
+
+const Case statMixedCase{"KernelStat_MixedCaseAbsolutePath_Succeeds", [] {
+    const PathCaseFixture fixture;
     FileStat stat{};
-    Require(sceKernelStat(("/" + lower + "/DATA/settings.INI").c_str(), &stat) == 0);
-    Require(chdir_nid_postfix(lower.c_str()) == 0);
-    Require(access_nid_postfix("DATA/SETTINGS.ini", 4) == 0);
+    RequireEqual(sceKernelStat(("/" + fixture.lower + "/DATA/settings.INI").c_str(), &stat), 0, "stat");
+}};
+
+const Case chdirLowercase{"Chdir_LowercaseDirectoryName_Succeeds", [] {
+    const PathCaseFixture fixture;
+    RequireEqual(chdir_nid_postfix(fixture.lower.c_str()), 0, "chdir");
+}};
+
+const Case accessMixedCase{"Access_MixedCaseRelativePath_Succeeds", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    RequireEqual(access_nid_postfix("DATA/SETTINGS.ini", 4), 0, "access");
+}};
+
+const Case fopenBackslash{"Fopen_MixedCaseBackslashPath_ReadsExistingFile", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
     auto* stream = fopen_nid_postfix("data\\SETTINGS.INI", "rb");
+    Require(stream != nullptr, "fopen");
     char value = 0;
-    Require(stream && fread_nid_postfix(&value, 1, 1, stream) == 1 && value == 'x');
-    Require(fclose_nid_postfix(stream) == 0);
-    Require(chdir_nid_postfix("DATA/../data") == 0);
-    CheckRead("settings.INI", 'x');
-    Require(chdir_nid_postfix("..") == 0);
-    const int created = sceKernelOpen("data/nested/New.DAT", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_WRONLY, 0600);
-    Require(created >= 0 && sceKernelWrite(created, "y", 1) == 1 && sceKernelClose(created) == 0);
-    Require(std::filesystem::exists(directory / "Data" / "Nested" / "New.DAT"));
-    CheckRead("DATA/NESTED/new.dat", 'y');
-    Require(sceKernelOpen("data/nested/NEW.dat", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL | SCE_KERNEL_O_WRONLY, 0600) == static_cast<int>(0x80020011u));
-    Require(rename_nid_postfix("DATA/NESTED/new.dat", "data/nested/Moved.DAT") == 0);
-    Require(remove_nid_postfix("DATA/NESTED/moved.dat") == 0);
-    Require(sceKernelOpen("data/nested/missing", SCE_KERNEL_O_RDONLY, 0) == static_cast<int>(0x80020002u));
-    AddPathAlias_nid_no_patch("case-mount", (directory / "Data").string().c_str());
-    CheckRead("/CASE-MOUNT/settings.INI", 'x');
-    Require(access_nid_postfix("/case-mount-other/Settings.ini", 0) == -1);
+    const std::size_t count = fread_nid_postfix(&value, 1, 1, stream);
+    const int closed = fclose_nid_postfix(stream);
+    RequireEqual(count, std::size_t{1}, "fread count");
+    RequireEqual(value, 'x', "fread value");
+    RequireEqual(closed, 0, "fclose");
+}};
+
+const Case chdirDotDot{"Chdir_MixedCaseDotDotPath_EntersExistingDirectory", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    RequireEqual(chdir_nid_postfix("DATA/../data"), 0, "chdir DATA/../data");
+    RequireRead("settings.INI", 'x');
+}};
+
+const Case chdirParent{"Chdir_ParentAfterMixedCaseChdir_ReturnsToTestDirectory", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    RequireEqual(chdir_nid_postfix("DATA/../data"), 0, "chdir DATA/../data");
+    RequireEqual(chdir_nid_postfix(".."), 0, "chdir ..");
+    RequireRead("DATA/SETTINGS.INI", 'x');
+}};
+
+const Case createKeepsCase{"KernelOpen_CreateInMixedCaseDirectory_UsesExistingDirectoryCase", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    CreateNewFile();
+    Require(std::filesystem::exists(fixture.data / "Nested" / "New.DAT"), "file created in Data/Nested as New.DAT");
+    RequireRead("DATA/NESTED/new.dat", 'y');
+}};
+
+const Case exclusiveDifferentCase{"KernelOpen_ExclusiveCreateWithDifferentCase_FailsWithExists", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    CreateNewFile();
+    RequireEqual(sceKernelOpen("data/nested/NEW.dat", createExclusive, 0600), kernelExists, "exclusive create");
+}};
+
+const Case renameMixedCase{"Rename_MixedCasePaths_Succeeds", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    CreateNewFile();
+    RequireEqual(rename_nid_postfix("DATA/NESTED/new.dat", "data/nested/Moved.DAT"), 0, "rename");
+}};
+
+const Case removeMixedCase{"Remove_MixedCasePathOfRenamedFile_Succeeds", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    CreateNewFile();
+    RequireEqual(rename_nid_postfix("DATA/NESTED/new.dat", "data/nested/Moved.DAT"), 0, "rename");
+    RequireEqual(remove_nid_postfix("DATA/NESTED/moved.dat"), 0, "remove");
+}};
+
+const Case openMissing{"KernelOpen_MissingFileInMixedCaseDirectory_FailsWithNotFound", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    RequireEqual(sceKernelOpen("data/nested/missing", SCE_KERNEL_O_RDONLY, 0), kernelNotFound, "open missing");
+}};
+
+const Case aliasCase{"PathAlias_UppercaseGuestPrefix_ResolvesAlias", [] {
+    const PathCaseFixture fixture;
+    AddPathAlias_nid_no_patch("case-mount", fixture.data.string().c_str());
+    RequireRead("/CASE-MOUNT/settings.INI", 'x');
+}};
+
+const Case aliasLongerPrefix{"PathAlias_LongerGuestPrefix_DoesNotMatch", [] {
+    const PathCaseFixture fixture;
+    AddPathAlias_nid_no_patch("case-mount", fixture.data.string().c_str());
+    RequireEqual(access_nid_postfix("/case-mount-other/Settings.ini", 0), -1, "access through a longer prefix");
+}};
+
+const Case blockAlias{"BlockPathAlias_DifferentCase_BlocksAlias", [] {
+    const PathCaseFixture fixture;
+    AddPathAlias_nid_no_patch("case-mount", fixture.data.string().c_str());
     BlockPathAlias_nid_no_patch("CASE-MOUNT");
-    Require(access_nid_postfix("/case-mount/settings.ini", 0) == -1);
-    AddPathAlias_nid_no_patch("Case-Mount", (directory / "Data").string().c_str());
-    CheckRead("/case-MOUNT/settings.INI", 'x');
+    RequireEqual(access_nid_postfix("/case-mount/settings.ini", 0), -1, "access through a blocked alias");
+}};
+
+const Case readdAlias{"AddPathAlias_AfterBlockWithDifferentCase_ResolvesAlias", [] {
+    const PathCaseFixture fixture;
+    AddPathAlias_nid_no_patch("case-mount", fixture.data.string().c_str());
+    BlockPathAlias_nid_no_patch("CASE-MOUNT");
+    AddPathAlias_nid_no_patch("Case-Mount", fixture.data.string().c_str());
+    RequireRead("/case-MOUNT/settings.INI", 'x');
+}};
+
+const Case removeAlias{"RemovePathAlias_DifferentCase_RemovesAlias", [] {
+    const PathCaseFixture fixture;
+    AddPathAlias_nid_no_patch("case-mount", fixture.data.string().c_str());
+    BlockPathAlias_nid_no_patch("CASE-MOUNT");
+    AddPathAlias_nid_no_patch("Case-Mount", fixture.data.string().c_str());
     RemovePathAlias_nid_no_patch("CASE-mount");
-    Require(access_nid_postfix("/case-mount/settings.ini", 0) == -1);
+    RequireEqual(access_nid_postfix("/case-mount/settings.ini", 0), -1, "access through a removed alias");
+}};
+
+const Case returnToRoot{"Chdir_GuestRoot_KeepsHostWorkingDirectory", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    RequireEqual(chdir_nid_postfix("/"), 0, "chdir /");
+    RequireEqual(std::filesystem::current_path(), fixture.host, "host working directory");
+}};
+
 #ifndef _WIN32
-    std::filesystem::create_directory_symlink("Data", directory / "Linked");
-    CheckRead("linked/SETTINGS.INI", 'x');
-    { std::ofstream file(directory / "Data" / "SETTINGS.INI"); file << 'z'; }
-    CheckRead("Data/Settings.ini", 'x');
-    CheckRead("Data/SETTINGS.INI", 'z');
-    bool ambiguous = false;
-    try { CheckRead("data/settings.ini", 'x'); } catch (const std::runtime_error&) { ambiguous = true; }
-    Require(ambiguous);
-    std::filesystem::remove(directory / "Data" / "SETTINGS.INI");
-    std::filesystem::remove(directory / "Data" / "Settings.ini");
-    { std::ofstream file(directory / "Data" / "SETTINGS.ini"); file << 'n'; }
-    CheckRead("data/settings.ini", 'n');
-    std::filesystem::create_symlink("absent", directory / "Dangling");
-    Require(sceKernelOpen("dangling", SCE_KERNEL_O_RDONLY, 0) == static_cast<int>(0x80020002u));
+const Case symlinkedDirectory{"KernelOpen_MixedCasePathThroughDirectorySymlink_ReadsFile", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    std::filesystem::create_directory_symlink("Data", fixture.directory / "Linked");
+    RequireRead("linked/SETTINGS.INI", 'x');
+}};
+
+const Case exactCasePreferred{"KernelOpen_ExactCaseMatchAmongCaseVariants_OpensExactFile", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    std::ofstream(fixture.data / "SETTINGS.INI") << 'z';
+    RequireRead("Data/Settings.ini", 'x');
+    RequireRead("Data/SETTINGS.INI", 'z');
+}};
+
+const Case ambiguousCase{"KernelOpen_AmbiguousCaseVariants_ThrowsRuntimeError", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    std::ofstream(fixture.data / "SETTINGS.INI") << 'z';
+    Testing::RequireThrows<std::runtime_error>([] {
+        const int descriptor = sceKernelOpen("data/settings.ini", SCE_KERNEL_O_RDONLY, 0);
+        if (descriptor >= 0) sceKernelClose(descriptor);
+    }, "open data/settings.ini with two case variants");
+}};
+
+const Case singleVariant{"KernelOpen_SingleCaseVariant_ReadsIt", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    std::ofstream(fixture.data / "SETTINGS.INI") << 'z';
+    Require(std::filesystem::remove(fixture.data / "SETTINGS.INI"), "remove Data/SETTINGS.INI");
+    Require(std::filesystem::remove(fixture.data / "Settings.ini"), "remove Data/Settings.ini");
+    std::ofstream(fixture.data / "SETTINGS.ini") << 'n';
+    RequireRead("data/settings.ini", 'n');
+}};
+
+const Case danglingSymlink{"KernelOpen_DanglingSymlink_FailsWithNotFound", [] {
+    const PathCaseFixture fixture;
+    fixture.EnterLowercase();
+    std::filesystem::create_symlink("absent", fixture.directory / "Dangling");
+    RequireEqual(sceKernelOpen("dangling", SCE_KERNEL_O_RDONLY, 0), kernelNotFound, "open dangling");
+}};
 #endif
-    Require(chdir_nid_postfix("/") == 0);
-    Require(std::filesystem::current_path() == host);
-    std::filesystem::remove_all(directory);
-}
+
+} // namespace

@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <memory>
 #include <span>
 #include <string>
@@ -16,7 +15,6 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using AgcDriver::Graphics::StorageTexture;
 using ShaderRecompiler::ShaderStage;
 
@@ -77,68 +75,89 @@ std::shared_ptr<StorageTexture> Load(AgcDriver::VulkanDevice& device, std::uint6
     device.WaitIdle();
     StorageTexture::FlushPending(address, static_cast<std::size_t>(SurfaceBytes), nullptr, "test");
     device.WaitIdle();
-    Require(Output[0] == Marker(surface), "surface " + std::to_string(surface) + ": the shader read " + std::to_string(Output[0]) + " instead of its first texel");
+    Testing::Require(Output[0] == Marker(surface), "surface " + std::to_string(surface) + ": the shader read " + std::to_string(Output[0]) + " instead of its first texel");
     return StorageTexture::FindLive(address, SurfaceBytes);
 }
 
+
+void UseTestCacheBudget() {
+#ifdef _WIN32
+    Testing::Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
+#else
+    Testing::Require(setenv("APS5_TEXTURE_CACHE_MIB", "32", 1) == 0, "cannot set the test cache budget");
+#endif
 }
 
-int main() {
-    try {
-#ifdef _WIN32
-        Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
-#else
-        Require(setenv("APS5_TEXTURE_CACHE_MIB", "32", 1) == 0, "cannot set the test cache budget");
-#endif
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const auto budget = TestBudget;
-        std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
-        auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
+class GuestSurfaces {
+public:
+    explicit GuestSurfaces(AgcDriver::VulkanDevice& device) : device(device), storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u) {
+        texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
         for (std::uint32_t surface = 0; surface < MaxSurfaces; ++surface) texels[surface * Stride / 4u] = Marker(surface);
-        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
-        const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (MaxSurfaces - 1u) * Stride);
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(texels, blockBytes, true, true);
-        }
-        const auto release = [&] {
-            AgcDriver::Graphics::ClearCachedTextures(device->Device());
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(texels);
-        };
-        try {
-            const auto first = Load(*device, base, 0);
-            Require(first != nullptr, "surface 0 has no cached storage image");
-            const auto held = std::max<std::uint64_t>(first->AllocationBytes(), first->GuestBytes());
-            const auto reused = static_cast<std::uint32_t>(FixedBudget / held) + 1u;
-            std::printf("texture cache budget %llu MiB; each 512x512 32_UINT surface holds %llu MiB; cyclic set of %u surfaces (%llu MiB)\n", static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(held >> 20u), reused, static_cast<unsigned long long>((reused * held) >> 20u));
-            Require(budget >= reused * held, "the cyclic set exceeds the test cache budget");
-            std::vector<std::weak_ptr<StorageTexture>> images(reused);
-            images[0] = first;
-            for (std::uint32_t surface = 1; surface < reused; ++surface) images[surface] = Load(*device, base, surface);
-            std::uint32_t remade = 0;
-            for (std::uint32_t surface = 0; surface < reused; ++surface) {
-                const auto again = Load(*device, base, surface);
-                if (again == nullptr || again != images[surface].lock()) ++remade;
-            }
-            Require(remade == 0, std::to_string(remade) + " of " + std::to_string(reused) + " storage images were made again on the second pass over a " + std::to_string((reused * held) >> 20u) + " MiB cyclic set under a " + std::to_string(budget >> 20u) + " MiB budget");
-            const auto capacity = static_cast<std::uint32_t>(budget / held);
-            Require(capacity + 2u <= MaxSurfaces, "the eviction set exceeds the test storage");
-            for (std::uint32_t surface = reused; surface < capacity + 2u; ++surface) Load(*device, base, surface);
-            for (std::uint32_t surface = 0; surface < capacity + 2u; ++surface) {
-                const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
-                Require(cached == (surface >= 2u), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(capacity + 2u) + " surfaces under a budget of " + std::to_string(capacity) + " of them");
-            }
-        } catch (...) {
-            release();
-            throw;
-        }
-        release();
-        std::puts("storage cache budget tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels, static_cast<std::size_t>(SurfaceBytes + (MaxSurfaces - 1u) * Stride), true, true);
     }
+
+    GuestSurfaces(const GuestSurfaces&) = delete;
+    GuestSurfaces& operator=(const GuestSurfaces&) = delete;
+
+    ~GuestSurfaces() {
+        AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels);
+    }
+
+    std::uint64_t Base() const {
+        return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
+    }
+
+private:
+    AgcDriver::VulkanDevice& device;
+    std::vector<std::uint32_t> storage;
+    std::uint32_t* texels = nullptr;
+};
+
+std::uint64_t HeldBytes(const std::shared_ptr<StorageTexture>& texture) {
+    Testing::Require(texture != nullptr, "surface 0 has no cached storage image");
+    return std::max<std::uint64_t>(texture->AllocationBytes(), texture->GuestBytes());
 }
+
+const Testing::Case cyclicSetWithinBudget{"StorageCache_CyclicSetWithinBudget_IsNotRemadeOnTheSecondPass", [] {
+    UseTestCacheBudget();
+    auto& device = SharedVulkanTestDevice();
+    GuestSurfaces surfaces(device);
+    const auto base = surfaces.Base();
+    const auto budget = TestBudget;
+    const auto first = Load(device, base, 0);
+    const auto held = HeldBytes(first);
+    const auto reused = static_cast<std::uint32_t>(FixedBudget / held) + 1u;
+    std::printf("texture cache budget %llu MiB; each 512x512 32_UINT surface holds %llu MiB; cyclic set of %u surfaces (%llu MiB)\n", static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(held >> 20u), reused, static_cast<unsigned long long>((reused * held) >> 20u));
+    Testing::Require(budget >= reused * held, "the cyclic set exceeds the test cache budget");
+    std::vector<std::weak_ptr<StorageTexture>> images(reused);
+    images[0] = first;
+    for (std::uint32_t surface = 1; surface < reused; ++surface) images[surface] = Load(device, base, surface);
+    std::uint32_t remade = 0;
+    for (std::uint32_t surface = 0; surface < reused; ++surface) {
+        const auto again = Load(device, base, surface);
+        if (again == nullptr || again != images[surface].lock()) ++remade;
+    }
+    Testing::Require(remade == 0, std::to_string(remade) + " of " + std::to_string(reused) + " storage images were made again on the second pass over a " + std::to_string((reused * held) >> 20u) + " MiB cyclic set under a " + std::to_string(budget >> 20u) + " MiB budget");
+}};
+
+const Testing::Case evictionPastBudget{"StorageCache_PastTheBudget_EvictsTheLeastRecentlyUsedSurfaces", [] {
+    UseTestCacheBudget();
+    auto& device = SharedVulkanTestDevice();
+    GuestSurfaces surfaces(device);
+    const auto base = surfaces.Base();
+    const auto budget = TestBudget;
+    const auto held = HeldBytes(Load(device, base, 0));
+    const auto capacity = static_cast<std::uint32_t>(budget / held);
+    Testing::Require(capacity + 2u <= MaxSurfaces, "the eviction set exceeds the test storage");
+    for (std::uint32_t surface = 1; surface < capacity + 2u; ++surface) Load(device, base, surface);
+    for (std::uint32_t surface = 0; surface < capacity + 2u; ++surface) {
+        const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
+        Testing::Require(cached == (surface >= 2u), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(capacity + 2u) + " surfaces under a budget of " + std::to_string(capacity) + " of them");
+    }
+}};
+
+} // namespace

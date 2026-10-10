@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -146,28 +145,16 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t index = 0; index < 4; ++index) Expect(tid, out[index], Expected[tid][index], Names[index]);
     }
 }
 
-}
+const Testing::Case permuteForms{"DsPermute_PermuteAndBpermuteForms_MatchReferenceLanes", [] {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < Threads) Testing::Skip("the device's subgroups are narrower than a wave (" + std::to_string(device.Target().subgroupSize) + " lanes)");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < Threads) {
-            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("ds permute tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

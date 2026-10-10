@@ -14,7 +14,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -156,7 +156,6 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 9; ++i) {
             if ((Checked[tid] >> i) & 1u) Expect(tid, out[i], Expected[tid][i], Names[i]);
@@ -164,18 +163,10 @@ void Check() {
     }
 }
 
-}
+const Testing::Case results{"Float16TernaryClamp_Max3Med3Min3WithClamp_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("float16 ternary clamp tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

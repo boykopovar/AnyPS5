@@ -17,14 +17,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -282,35 +281,70 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::
     Require(refusal.find(reason) != std::string::npos, what + " was not refused: " + refusal);
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock block;
-        auto* texels = block.Data();
-        for (const auto& format : Formats) {
-            Store(*device, texels, StoreCode, format.format, SwizzleOf(format));
-            CheckTexels(texels, format, StoreWrites, "image_store");
-            CheckLoad(*device, texels, format);
-        }
-        Store(*device, texels, TitleCode, Formats[0].format, TitleSwizzle);
-        CheckTexels(texels, Formats[0], TitleWrites, "image_store dmask:0x1 glc with DST_SEL X,1,1,1");
-        RequireRefused(*device, texels, D16Code, 12u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 16_SINT");
-        RequireRefused(*device, texels, D16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 32_SINT");
-        RequireRefused(*device, texels, PackedCode, 12u, "storage image descriptor uses an unsupported format", "image_store_pck of 16_SINT");
-        RequireRefused(*device, texels, AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12", "image_atomic_add of 16_SINT");
-        RequireRefused(*device, texels, StoreCode, 73u, "storage image descriptor uses an unsupported format", "image_store of 32_32_32_SINT");
-        for (const auto index : {2u, 5u, 7u}) {
-            Store(*device, texels, PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));
-            CheckTexels(texels, Formats[index], PackedWideWrites, "image_store_pck dmask:0x3");
-        }
-        RequireRefused(*device, texels, AtomicD16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of an atomically updated 32_SINT image");
-        std::puts("image store sint tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case storeSintFormats{"ImageStoreSint_EachSintFormat_StoresSaturatedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    for (const auto& format : Formats) {
+        Store(device, block.Data(), StoreCode, format.format, SwizzleOf(format));
+        CheckTexels(block.Data(), format, StoreWrites, "image_store");
     }
-}
+}};
+
+const Testing::Case loadAfterStore{"ImageStoreSint_LoadAfterStore_ReturnsSignExtendedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    for (const auto& format : Formats) {
+        Store(device, block.Data(), StoreCode, format.format, SwizzleOf(format));
+        CheckLoad(device, block.Data(), format);
+    }
+}};
+
+const Testing::Case titleStore{"ImageStoreSint_SingleComponentGlcWithConstantSwizzle_StoresX", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    Store(device, block.Data(), TitleCode, Formats[0].format, TitleSwizzle);
+    CheckTexels(block.Data(), Formats[0], TitleWrites, "image_store dmask:0x1 glc with DST_SEL X,1,1,1");
+}};
+
+const Testing::Case d16Refused{"ImageStoreSint_D16Store_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), D16Code, 12u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 16_SINT");
+    RequireRefused(device, block.Data(), D16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of 32_SINT");
+}};
+
+const Testing::Case packedSixteenRefused{"ImageStoreSint_PackedStoreOf16Sint_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), PackedCode, 12u, "storage image descriptor uses an unsupported format", "image_store_pck of 16_SINT");
+}};
+
+const Testing::Case atomicSixteenRefused{"ImageStoreSint_AtomicAddOf16Sint_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), AtomicCode, 12u, "atomic image descriptor uses an unsupported format 12", "image_atomic_add of 16_SINT");
+}};
+
+const Testing::Case threeComponentRefused{"ImageStoreSint_ThreeComponentFormat_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), StoreCode, 73u, "storage image descriptor uses an unsupported format", "image_store of 32_32_32_SINT");
+}};
+
+const Testing::Case packedWide{"ImageStoreSint_PackedTwoComponentStore_WritesSaturatedComponents", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    for (const auto index : {2u, 5u, 7u}) {
+        Store(device, block.Data(), PackedWideCode, Formats[index].format, SwizzleOf(Formats[index]));
+        CheckTexels(block.Data(), Formats[index], PackedWideWrites, "image_store_pck dmask:0x3");
+    }
+}};
+
+const Testing::Case atomicD16Refused{"ImageStoreSint_D16StoreToAtomicImage_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock block;
+    RequireRefused(device, block.Data(), AtomicD16Code, 21u, "stores 16-bit data to an image of a SINT format", "image_store d16 of an atomically updated 32_SINT image");
+}};
+
+} // namespace

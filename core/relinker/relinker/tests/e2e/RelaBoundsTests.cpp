@@ -1,17 +1,16 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <iostream>
-#include <stdexcept>
+#include <source_location>
 #include <string>
 
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using namespace Testing;
 
 const Bytes kCode = {0xC3};
 
@@ -28,41 +27,33 @@ void WriteTag(Bytes& image, const std::size_t index, const std::int64_t tag, con
     Write<std::uint64_t>(image, kTagBase + index * kTagStride + 8, value);
 }
 
-void RunAndRequireRejected(const std::string& binary, const Bytes& image, const std::string& what) {
-    const TempDirectory directory;
+Bytes ImageWithRelaTable(const std::uint64_t offset, const std::uint64_t size) {
+    Bytes image = MakeExecutable(kCode);
+    WriteTag(image, kRelaTag, kDtOsRela, offset);
+    WriteTag(image, kRelaSzTag, kDtRelaSz, size);
+    return image;
+}
+
+void RequireRejected(const Bytes& image, const std::string& what, std::source_location location = std::source_location::current()) {
+    const TemporaryDirectory directory;
     const auto input = directory.Path() / "input.elf";
     const auto output = directory.Path() / "output.elf";
     WriteFile(input, image);
-    const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode != 0, "Relinker accepted a relocation table " + what + " and exited 0:\n" + run.Output);
-    require(run.Output.find("Relocation table is out of bounds") != std::string::npos,
-            "Relinker did not report the table as out of bounds for a table " + what + ":\n" + run.Output);
+
+    const auto run = RunRelinker(RequireArgument(0, "relinker"), {"--skip-sce-module", "--to-intel", input.string(), output.string()},
+                                 directory.Path() / "relinker.log");
+
+    Require(run.ExitCode != 0, "Relinker accepted a relocation table " + what + " and exited 0:\n" + run.Output, location);
+    Require(run.Output.find("Relocation table is out of bounds") != std::string::npos,
+            "Relinker did not report the table as out of bounds for a table " + what + ":\n" + run.Output, location);
 }
 
-}
+const Case offsetNearMaximum{"Relinker_RelaOffsetNearUint64Max_RejectsTable", [] {
+    RequireRejected(ImageWithRelaTable(0xFFFFFFFFFFFFFFF8ull, 24), "whose offset is near UINT64_MAX");
+}};
 
-int main(const int argc, char** argv) {
-    try {
-        require(argc == 2, "usage: rela_bounds_tests <relinker>");
-        const std::string binary = argv[1];
+const Case tablePastEndOfFile{"Relinker_RelaTableExtendingPastEndOfFile_RejectsTable", [] {
+    RequireRejected(ImageWithRelaTable(kImageSize - 16, 48), "that does not fit in the file");
+}};
 
-        {
-            Bytes image = MakeExecutable(kCode);
-            WriteTag(image, kRelaTag, kDtOsRela, 0xFFFFFFFFFFFFFFF8ull);
-            WriteTag(image, kRelaSzTag, kDtRelaSz, 24);
-            RunAndRequireRejected(binary, image, "whose offset is near UINT64_MAX");
-        }
-
-        {
-            Bytes image = MakeExecutable(kCode);
-            WriteTag(image, kRelaTag, kDtOsRela, kImageSize - 16);
-            WriteTag(image, kRelaSzTag, kDtRelaSz, 48);
-            RunAndRequireRejected(binary, image, "that does not fit in the file");
-        }
-
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << "rela_bounds_tests: " << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

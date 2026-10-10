@@ -1,10 +1,11 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <stdexcept>
 
 extern "C" {
@@ -20,18 +21,11 @@ constexpr std::uint32_t Sentinel = 0xabcdef01u;
 constexpr std::uint64_t Address = 0x0000112233440000ull;
 constexpr std::uint32_t SizeInBytes = 0x00345000u;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using Testing::Require;
 
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("expected invalid input to fail");
+template<typename TAction>
+void ExpectFailure(TAction action) {
+    Testing::RequireThrows<std::runtime_error>(action, "expected invalid input to fail");
 }
 
 struct Storage {
@@ -56,44 +50,47 @@ std::uint32_t* writeDraw(CommandBuffer* buffer) {
 }
 
 template <typename TWriter, typename TSize>
-void testCommand(TWriter writer, TSize size) {
+void VerifyCommand(TWriter writer, TSize size) {
     const std::array expected{0xc0031000u, 0u, 0x33440000u, 0x1122u, SizeInBytes};
     const auto count = static_cast<std::uint32_t>(expected.size());
-    check(size() == count * sizeof(std::uint32_t), "size query does not match the prime packet");
+    Require(size() == count * sizeof(std::uint32_t), "size query does not match the prime packet");
 
     Storage storage;
     auto* packet = writer(&storage.buffer);
-    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect prime packet");
-    check(storage.buffer.cursor_up == packet + size() / sizeof(std::uint32_t), "cursor advance does not match the size query");
-    check(std::all_of(storage.words.begin() + count, storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "prime command overwrote following words");
+    Require(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect prime packet");
+    Require(storage.buffer.cursor_up == packet + size() / sizeof(std::uint32_t), "cursor advance does not match the size query");
+    Require(std::all_of(storage.words.begin() + count, storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "prime command overwrote following words");
 
     auto* second = writer(&storage.buffer);
-    check(second == packet + count && std::equal(expected.begin(), expected.end(), second), "second prime packet does not follow the first");
+    Require(second == packet + count && std::equal(expected.begin(), expected.end(), second), "second prime packet does not follow the first");
 
     Storage exact;
     exact.limitTo(size() / sizeof(std::uint32_t));
-    check(writer(&exact.buffer) == exact.words.data() && exact.buffer.cursor_up == exact.buffer.cursor_down, "prime packet does not fill the queried size");
+    Require(writer(&exact.buffer) == exact.words.data() && exact.buffer.cursor_up == exact.buffer.cursor_down, "prime packet does not fill the queried size");
 
     Storage shortBuffer;
     shortBuffer.limitTo(size() / sizeof(std::uint32_t) - 1u);
     const auto before = shortBuffer.words;
-    expectFailure([&] { writer(&shortBuffer.buffer); });
-    check(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(), "failed prime write modified the buffer");
+    ExpectFailure([&] { writer(&shortBuffer.buffer); });
+    Require(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(), "failed prime write modified the buffer");
 
-    expectFailure([&] { writer(nullptr); });
+    ExpectFailure([&] { writer(nullptr); });
 }
 
 }
 
-int main() {
-    try {
-        testCommand(writeCompute, sceAgcAcbPrimeUtcl2GetSize);
-        testCommand(writeDraw, sceAgcDcbPrimeUtcl2GetSize);
-        check(sceAgcAcbPrimeUtcl2GetSize() == sceAgcDcbPrimeUtcl2GetSize(), "compute and draw prime sizes differ");
-        std::puts("AGC prime UTCL2 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
+namespace {
+
+const Testing::Case compute{"AcbPrimeUtcl2_Buffers_WritesSizedPacketOrRejectsShortBuffer", [] {
+    VerifyCommand(writeCompute, sceAgcAcbPrimeUtcl2GetSize);
+}};
+
+const Testing::Case draw{"DcbPrimeUtcl2_Buffers_WritesSizedPacketOrRejectsShortBuffer", [] {
+    VerifyCommand(writeDraw, sceAgcDcbPrimeUtcl2GetSize);
+}};
+
+const Testing::Case sizes{"PrimeUtcl2GetSize_ComputeAndDraw_AreEqual", [] {
+    Require(sceAgcAcbPrimeUtcl2GetSize() == sceAgcDcbPrimeUtcl2GetSize(), "compute and draw prime sizes differ");
+}};
+
+} // namespace

@@ -8,14 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -320,28 +319,47 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWo
     }
 }
 
+void SkipUnlessComputedOffsets(AgcDriver::VulkanDevice& device) {
+    if (!device.Target().nonConstantImageOffsets) Testing::Skip("2D cases skipped, their computed texel offsets need VK_KHR_maintenance8");
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < Threads) {
-            std::printf("EXEC-masked cases skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-        }
-        const bool computedOffsets = device->Target().nonConstantImageOffsets;
-        if (!computedOffsets) std::puts("2D cases skipped, their computed texel offsets need VK_KHR_maintenance8");
-        std::vector<std::uint32_t> waves{Threads};
-        if (device->Target().subgroupSize >= Threads) waves.push_back(Wave64Threads);
-        for (const auto threads : waves) {
-            if (computedOffsets) Run(*device, Code2D, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);
-            Run(*device, Code3D, threads, 10u, Height, Depth, Names3D, Masked3D, Expected3D);
-            Run(*device, Code1D, threads, 8u, 1u, 1u, Names1D, Masked1D, Expected1D);
-        }
-        std::puts("image sample derivatives tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+void SkipUnlessWave64(AgcDriver::VulkanDevice& device) {
+    if (device.Target().subgroupSize < Threads) Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
 }
+
+const Testing::Case wave32TwoDimensional{"ImageSampleDerivatives_2DWave32_SamplesWithExplicitDerivatives", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessComputedOffsets(device);
+    Run(device, Code2D, Threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);
+}};
+
+const Testing::Case wave32ThreeDimensional{"ImageSampleDerivatives_3DWave32_SamplesWithExplicitDerivatives", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Code3D, Threads, 10u, Height, Depth, Names3D, Masked3D, Expected3D);
+}};
+
+const Testing::Case wave32OneDimensional{"ImageSampleDerivatives_1DWave32_SamplesWithExplicitDerivatives", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Code1D, Threads, 8u, 1u, 1u, Names1D, Masked1D, Expected1D);
+}};
+
+const Testing::Case wave64TwoDimensional{"ImageSampleDerivatives_2DWave64_SamplesWithExplicitDerivatives", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWave64(device);
+    SkipUnlessComputedOffsets(device);
+    Run(device, Code2D, Wave64Threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);
+}};
+
+const Testing::Case wave64ThreeDimensional{"ImageSampleDerivatives_3DWave64_SamplesWithExplicitDerivatives", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWave64(device);
+    Run(device, Code3D, Wave64Threads, 10u, Height, Depth, Names3D, Masked3D, Expected3D);
+}};
+
+const Testing::Case wave64OneDimensional{"ImageSampleDerivatives_1DWave64_SamplesWithExplicitDerivatives", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWave64(device);
+    Run(device, Code1D, Wave64Threads, 8u, 1u, 1u, Names1D, Masked1D, Expected1D);
+}};
+
+} // namespace

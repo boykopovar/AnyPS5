@@ -17,6 +17,32 @@ add_executable(nid_patcher
 target_include_directories(nid_patcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
 target_compile_features(nid_patcher PRIVATE cxx_std_20)
 
+if(BUILD_TESTING)
+    anyps5_add_test(nid_unit_tests
+        LABEL unit
+        SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/BinaryPatcherFactoryTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/ExportExclusionsTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/NidComputeTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/NidPatcherUtilsTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/NidResolverTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/PeNidPatcherTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/unit/Sha1Tests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/Sha1.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidCompute.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/NidResolver.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/ExportExclusions.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/ElfNidPatcher.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/PeNidPatcher.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/BinaryPatcherFactory.cpp
+        INCLUDES
+            ${CMAKE_CURRENT_SOURCE_DIR}/nid/include
+    )
+    if(MINGW)
+        target_link_options(nid_unit_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+endif()
+
 if(MINGW)
     target_link_options(nid_patcher PRIVATE -static -static-libgcc -static-libstdc++)
     add_compile_options(-fno-asynchronous-unwind-tables)
@@ -31,6 +57,38 @@ function(configure_windows_unwind target)
                 COMMAND "${CMAKE_OBJCOPY}" --rename-section .eh_frame=.ehfram "$<TARGET_FILE:${target}>"
                 VERBATIM
         )
+    endif()
+endfunction()
+
+function(anyps5_add_library_test target)
+    cmake_parse_arguments(PARSE_ARGV 1 test "CUSTOM_MAIN" "NAME;LABEL;TIMEOUT;RUNTIME" "SOURCES;LINK;INCLUDES;ARGS;PROPERTIES")
+    if(NOT test_LABEL)
+        set(test_LABEL integration)
+    endif()
+    if(NOT test_NAME)
+        string(REGEX REPLACE "_tests$" "" test_NAME "${target}")
+    endif()
+    set(forwarded NAME ${test_NAME} LABEL ${test_LABEL})
+    if(test_CUSTOM_MAIN)
+        list(APPEND forwarded CUSTOM_MAIN)
+    endif()
+    if(test_TIMEOUT)
+        list(APPEND forwarded TIMEOUT ${test_TIMEOUT})
+    endif()
+    anyps5_add_test(${target} ${forwarded}
+        SOURCES ${test_SOURCES}
+        LINK ${test_LINK}
+        INCLUDES ${LIBS_INCLUDE_DIR} ${test_INCLUDES}
+        ARGS ${test_ARGS}
+        PROPERTIES ${test_PROPERTIES}
+    )
+    configure_windows_unwind(${target})
+    if(NOT test_RUNTIME AND test_LINK)
+        list(GET test_LINK 0 test_RUNTIME)
+    endif()
+    if(WIN32 AND test_RUNTIME AND TARGET ${test_RUNTIME})
+        set_tests_properties(${test_NAME} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:${test_RUNTIME}>")
     endif()
 endfunction()
 
@@ -131,101 +189,62 @@ endforeach()
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
 if(BUILD_TESTING)
-    add_test_executable(patched_libraries_tests tests/PatchedLibraries.cpp)
+    anyps5_add_library_test(patched_libraries_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/PatchedLibraries.cpp
+        ARGS ${PATCHED_DIR}
+    )
     add_dependencies(patched_libraries_tests libs)
     if(MINGW)
         target_compile_options(patched_libraries_tests PRIVATE -fasynchronous-unwind-tables)
         target_link_options(patched_libraries_tests PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
-    add_test(NAME patched_libraries COMMAND patched_libraries_tests ${PATCHED_DIR})
-    add_test_executable(guest_kernel_sys_tests tests/GuestKernelSys.cpp)
-    target_include_directories(guest_kernel_sys_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libkernel libc)
-    configure_windows_unwind(guest_kernel_sys_tests)
-    add_test(NAME guest_kernel_sys COMMAND guest_kernel_sys_tests)
-    if(WIN32)
-        set_tests_properties(guest_kernel_sys PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
-    endif()
-    add_test_executable(guest_offline_imports_tests tests/GuestOfflineImports.cpp)
-    target_include_directories(guest_offline_imports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_offline_imports_tests PRIVATE libSceHttp libSceNpEntitlementAccess libSceRudp libc)
-    configure_windows_unwind(guest_offline_imports_tests)
-    add_test(NAME guest_offline_imports COMMAND guest_offline_imports_tests)
-    if(WIN32)
-        set_tests_properties(guest_offline_imports PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
-    endif()
+    anyps5_add_library_test(guest_kernel_sys_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/GuestKernelSys.cpp
+        LINK libkernel_sys libkernel libc
+    )
+    anyps5_add_library_test(guest_offline_imports_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/GuestOfflineImports.cpp
+        LINK libSceHttp libSceNpEntitlementAccess libSceRudp libc
+    )
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
         add_subdirectory(tests/register_context)
     endif()
 
-    add_test_executable(savedata_memory_metadata_tests tests/SaveDataMemoryMetadata.cpp)
-    target_include_directories(savedata_memory_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(savedata_memory_metadata_tests PRIVATE libSceSaveData.native)
-    configure_windows_unwind(savedata_memory_metadata_tests)
-    add_test(NAME savedata_memory_metadata COMMAND savedata_memory_metadata_tests)
-    if(MINGW)
-        target_compile_options(savedata_memory_metadata_tests PRIVATE -fasynchronous-unwind-tables)
-    endif()
-    if(WIN32)
-        set_tests_properties(savedata_memory_metadata PROPERTIES
-            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
-    endif()
-    add_test_executable(savedata_memory_growth_tests tests/SaveDataMemoryGrowth.cpp)
-    target_include_directories(savedata_memory_growth_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(savedata_memory_growth_tests PRIVATE libSceSaveData.native)
-    configure_windows_unwind(savedata_memory_growth_tests)
-    if(MINGW)
-        target_compile_options(savedata_memory_growth_tests PRIVATE -fasynchronous-unwind-tables)
-    endif()
-    add_test(NAME savedata_memory_growth COMMAND savedata_memory_growth_tests)
-    add_test(NAME savedata_memory_growth_read_failure COMMAND savedata_memory_growth_tests read-failure)
-    set_tests_properties(savedata_memory_growth_read_failure PROPERTIES SKIP_RETURN_CODE 77)
-    if(WIN32)
-        set_tests_properties(savedata_memory_growth savedata_memory_growth_read_failure PROPERTIES
-            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
-    endif()
-    add_library(host_thread_local_test_library SHARED tests/HostThreadLocalLibrary.cpp)
+    anyps5_add_library_test(savedata_memory_metadata_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/SaveDataMemoryMetadata.cpp
+        LINK libSceSaveData.native
+    )
+    anyps5_add_library_test(savedata_memory_growth_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/SaveDataMemoryGrowth.cpp
+        LINK libSceSaveData.native
+    )
+    add_library(host_thread_local_test_library SHARED tests/integration/HostThreadLocalLibrary.cpp)
     set_target_properties(host_thread_local_test_library PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
     target_include_directories(host_thread_local_test_library PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test_executable(host_thread_local_tests tests/HostThreadLocal.cpp)
-    target_link_libraries(host_thread_local_tests PRIVATE host_thread_local_test_library)
-    if(MINGW)
-        target_compile_options(host_thread_local_test_library PRIVATE -fasynchronous-unwind-tables)
-        target_compile_options(host_thread_local_tests PRIVATE -fasynchronous-unwind-tables)
-    endif()
-    add_test(NAME host_thread_local COMMAND host_thread_local_tests)
-    set_tests_properties(host_thread_local PROPERTIES TIMEOUT 15)
-
-    add_test_executable(savedata_core_write_replacement_tests tests/SaveDataWriteReplacement.cpp)
-    target_include_directories(savedata_core_write_replacement_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(savedata_core_write_replacement_tests PRIVATE libSceSaveData)
-    configure_windows_unwind(savedata_core_write_replacement_tests)
-    add_test(NAME savedata_core_write_replacement COMMAND savedata_core_write_replacement_tests)
-
-    add_test_executable(savedata_native_write_replacement_tests tests/SaveDataWriteReplacement.cpp)
-    target_include_directories(savedata_native_write_replacement_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    anyps5_add_library_test(host_thread_local_tests
+        TIMEOUT 15
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/HostThreadLocal.cpp
+        LINK host_thread_local_test_library
+    )
+    anyps5_add_library_test(savedata_core_write_replacement_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/SaveDataWriteReplacement.cpp
+        LINK libSceSaveData
+    )
+    anyps5_add_library_test(savedata_native_write_replacement_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/SaveDataWriteReplacement.cpp
+        LINK libSceSaveData.native
+    )
     target_compile_definitions(savedata_native_write_replacement_tests PRIVATE SAVEDATA_NATIVE_BACKEND)
-    target_link_libraries(savedata_native_write_replacement_tests PRIVATE libSceSaveData.native)
-    configure_windows_unwind(savedata_native_write_replacement_tests)
-    add_test(NAME savedata_native_write_replacement COMMAND savedata_native_write_replacement_tests)
-
-    add_test_executable(savedata_replace_file_failure_tests tests/SaveDataFileWriteFailure.cpp)
-    target_include_directories(savedata_replace_file_failure_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    configure_windows_unwind(savedata_replace_file_failure_tests)
-    add_test(NAME savedata_replace_file_failure COMMAND savedata_replace_file_failure_tests)
+    anyps5_add_library_test(savedata_replace_file_failure_tests
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/SaveDataFileWriteFailure.cpp
+    )
 
     if(MINGW)
-        target_compile_options(savedata_core_write_replacement_tests PRIVATE -fasynchronous-unwind-tables)
-        target_compile_options(savedata_native_write_replacement_tests PRIVATE -fasynchronous-unwind-tables)
-        target_compile_options(savedata_replace_file_failure_tests PRIVATE -fasynchronous-unwind-tables)
-    endif()
-    if(WIN32)
-        set_tests_properties(savedata_core_write_replacement PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData>")
-        set_tests_properties(savedata_native_write_replacement PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+        foreach(asynchronousUnwindTarget IN ITEMS savedata_memory_metadata_tests savedata_memory_growth_tests
+                host_thread_local_test_library host_thread_local_tests savedata_core_write_replacement_tests
+                savedata_native_write_replacement_tests savedata_replace_file_failure_tests)
+            target_compile_options(${asynchronousUnwindTarget} PRIVATE -fasynchronous-unwind-tables)
+        endforeach()
     endif()
 endif()

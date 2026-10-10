@@ -1,20 +1,25 @@
+#include <Testing/Test.hpp>
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
-#include "execution/VulkanTestDevice.hpp"
+#include "../execution/VulkanTestDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <new>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Case;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 192;
@@ -204,15 +209,8 @@ void CheckTriangles(const char* what) {
     Require(PixelIs(0, Background) && PixelIs(Pixels.size() - 4u, Background), std::string(what) + ": the corners changed");
 }
 
-}
-
-int main() {
-    try {
-#ifdef _WIN32
-        _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
-#else
-        setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
-#endif
+struct Geometry {
+    Geometry() {
         for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
             const auto vertices = TriangleVertices(triangle);
             for (std::uint32_t k = 0; k < 3; ++k) {
@@ -240,108 +238,165 @@ int main() {
             FanRestart[k] = FanIndices[k];
         }
         FanRestart[FanRim] = 0xffffu;
-
-        const auto testDevice = OpenVulkanTestDevice();
-        if (!testDevice) return VulkanTestSkipped;
-        auto& device = *testDevice;
-        const auto target = device.Target();
-        if (!target.mesh.has_value()) {
-            std::puts("skipped, the device has no VK_EXT_mesh_shader");
-            return VulkanTestSkipped;
-        }
-        if (device.DeviceName().starts_with("llvmpipe")) {
-            std::puts("skipped, the device has no mesh shader compiler that handles these programs (llvmpipe)");
-            return VulkanTestSkipped;
-        }
-
-        for (const auto& [name, subgroup] : {std::pair{"one-wave subgroups", SmallSubgroup}, std::pair{"two-wave subgroups", WideSubgroup}}) {
-            ClearPixels();
-            DrawMesh(device, {subgroup, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true}, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
-            CheckTriangles((std::string("indexed triangle list, ") + name).c_str());
-
-            ClearPixels();
-            DrawMesh(device, {subgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
-            CheckTriangles((std::string("non-indexed triangle list, ") + name).c_str());
-        }
-
-        constexpr std::size_t recordBlockBytes = 65536;
-        auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(record, recordBlockBytes, true, true);
-        }
-        const auto drawIndirect = [&](std::uint32_t count, std::uint32_t instances, std::uint32_t first) {
-            const std::array<std::uint32_t, 5> words{count, instances, first, 0u, 0u};
-            std::copy(words.begin(), words.end(), record);
-            AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true};
-            draw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
-            ClearPixels();
-            DrawMesh(device, {WideSubgroup, draw, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
-        };
-        drawIndirect(static_cast<std::uint32_t>(Indices.size()), 1, 0);
-        CheckTriangles("indirect indexed triangle list");
-        drawIndirect(3u * 10u, 1, 3u * 5u);
-        for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
-            const auto offset = CellPixel(triangle);
-            const bool drawn = triangle >= 5u && triangle < 15u;
-            Require(drawn ? PixelIs(offset, TriangleColor(triangle)) : PixelIs(offset, Background), "indirect index range: triangle " + std::to_string(triangle) + " pixel " + PixelText(offset));
-        }
-        drawIndirect(1000u, 1, 3u * (Triangles - 2u));
-        for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
-            const auto offset = CellPixel(triangle);
-            Require(triangle >= Triangles - 2u ? PixelIs(offset, TriangleColor(triangle)) : PixelIs(offset, Background), "indirect index count past the buffer: triangle " + std::to_string(triangle) + " pixel " + PixelText(offset));
-        }
-        for (const auto& [count, instances, first] : {std::array<std::uint32_t, 3>{static_cast<std::uint32_t>(Indices.size()), 0u, 0u}, std::array<std::uint32_t, 3>{0u, 1u, 0u}, std::array<std::uint32_t, 3>{3u, 1u, static_cast<std::uint32_t>(Indices.size())}}) {
-            drawIndirect(count, instances, first);
-            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) Require(PixelIs(CellPixel(triangle), Background), "an empty indirect record drew triangle " + std::to_string(triangle));
-        }
-
-        ClearPixels();
-        DrawMesh(device, {SmallSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), 0});
-        CheckTriangles("mesh program without push data");
-
-        ClearPixels();
-        const ShaderRecompiler::MeshConfiguration strip{6u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
-        DrawMesh(device, {strip, {0, static_cast<std::uint32_t>(Strip.size()), 0, 1, 0, false}, VertexBufferDescriptor(Strip.data(), static_cast<std::uint32_t>(Strip.size()))});
-        const std::array<std::uint8_t, 4> stripPixel{128, 255, 64, 255};
-        for (std::uint32_t y = Height / 2u + 2u; y < Height - 2u; y += 5u) {
-            for (std::uint32_t x = 2u; x < Width - 2u; x += 5u) {
-                const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
-                Require(PixelIs(offset, stripPixel), "triangle strip: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(offset));
-            }
-        }
-        Require(PixelIs((static_cast<std::size_t>(Height / 4u) * Width + Width / 2u) * 4u, Background), "triangle strip: the upper half changed");
-
-        const ShaderRecompiler::MeshConfiguration fan{5u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
-        ClearPixels();
-        DrawMesh(device, {fan, {0, static_cast<std::uint32_t>(Fan.size()), 0, 1, 0, false}, VertexBufferDescriptor(Fan.data(), static_cast<std::uint32_t>(Fan.size()))});
-        CheckFan("non-indexed triangle fan");
-        ClearPixels();
-        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size()))});
-        CheckFan("indexed triangle fan");
-        ClearPixels();
-        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
-        CheckFan("indexed triangle fan with restart enabled and no restart index");
-        bool refused = false;
-        try {
-            DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanRestart.data()), static_cast<std::uint32_t>(FanRestart.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
-        } catch (const std::runtime_error& error) {
-            refused = std::string(error.what()).find("primitive restart in a triangle fan") != std::string::npos;
-            if (!refused) throw;
-        }
-        Require(refused, "a triangle fan with a restart index was drawn");
-        const std::array<std::uint32_t, 5> fanWords{static_cast<std::uint32_t>(FanIndices.size()), 1u, 0u, 0u, 0u};
-        std::copy(fanWords.begin(), fanWords.end(), record);
-        AgcDriver::Pm4::DrawParameters fanDraw{reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true};
-        fanDraw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
-        ClearPixels();
-        DrawMesh(device, {fan, fanDraw, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size()))});
-        CheckFan("indirect indexed triangle fan");
-
-        std::puts("Mesh tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
     }
+};
+
+AgcDriver::VulkanDevice& MeshDevice() {
+    static const Geometry geometry;
+#ifdef _WIN32
+    _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+    setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
+    auto& device = SharedVulkanTestDevice();
+    if (!device.Target().mesh.has_value()) Testing::Skip("the device has no VK_EXT_mesh_shader");
+    if (device.DeviceName().starts_with("llvmpipe")) Testing::Skip("the device has no mesh shader compiler that handles these programs (llvmpipe)");
+    return device;
 }
+
+std::uint32_t* IndirectRecord() {
+    constexpr std::size_t recordBlockBytes = 65536;
+    static auto* record = [] {
+        auto* block = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, recordBlockBytes, true, true);
+        return block;
+    }();
+    return record;
+}
+
+AgcDriver::Pm4::DrawParameters::IndirectDraw IndirectDraw(std::uint32_t* record) {
+    return AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
+}
+
+void DrawIndirect(AgcDriver::VulkanDevice& device, std::uint32_t count, std::uint32_t instances, std::uint32_t first) {
+    auto* record = IndirectRecord();
+    const std::array<std::uint32_t, 5> words{count, instances, first, 0u, 0u};
+    std::copy(words.begin(), words.end(), record);
+    AgcDriver::Pm4::DrawParameters draw{reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true};
+    draw.indirect = IndirectDraw(record);
+    ClearPixels();
+    DrawMesh(device, {WideSubgroup, draw, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
+}
+
+constexpr ShaderRecompiler::MeshConfiguration FanMesh{5u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
+
+void DrawIndexedFan(AgcDriver::VulkanDevice& device, const std::array<std::uint16_t, FanRim + 1>& indices, bool restart) {
+    ClearPixels();
+    DrawMesh(device, {FanMesh, {reinterpret_cast<std::uintptr_t>(indices.data()), static_cast<std::uint32_t>(indices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, restart});
+}
+
+const Case indexedList{"DrawMesh_IndexedTriangleList_RendersEveryTriangle", [] {
+    auto& device = MeshDevice();
+    for (const auto& [name, subgroup] : {std::pair{"one-wave subgroups", SmallSubgroup}, std::pair{"two-wave subgroups", WideSubgroup}}) {
+        ClearPixels();
+        DrawMesh(device, {subgroup, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true}, VertexBufferDescriptor(Scrambled.data(), static_cast<std::uint32_t>(Scrambled.size()))});
+        CheckTriangles((std::string("indexed triangle list, ") + name).c_str());
+    }
+}};
+
+const Case nonIndexedList{"DrawMesh_NonIndexedTriangleList_RendersEveryTriangle", [] {
+    auto& device = MeshDevice();
+    for (const auto& [name, subgroup] : {std::pair{"one-wave subgroups", SmallSubgroup}, std::pair{"two-wave subgroups", WideSubgroup}}) {
+        ClearPixels();
+        DrawMesh(device, {subgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
+        CheckTriangles((std::string("non-indexed triangle list, ") + name).c_str());
+    }
+}};
+
+const Case indirectList{"DrawMesh_IndirectIndexedTriangleList_RendersEveryTriangle", [] {
+    auto& device = MeshDevice();
+    DrawIndirect(device, static_cast<std::uint32_t>(Indices.size()), 1, 0);
+    CheckTriangles("indirect indexed triangle list");
+}};
+
+const Case indirectRange{"DrawMesh_IndirectIndexRange_RendersOnlyTheRangeTriangles", [] {
+    auto& device = MeshDevice();
+    DrawIndirect(device, 3u * 10u, 1, 3u * 5u);
+    for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+        const auto offset = CellPixel(triangle);
+        const bool drawn = triangle >= 5u && triangle < 15u;
+        Require(drawn ? PixelIs(offset, TriangleColor(triangle)) : PixelIs(offset, Background), "indirect index range: triangle " + std::to_string(triangle) + " pixel " + PixelText(offset));
+    }
+}};
+
+const Case indirectPastBuffer{"DrawMesh_IndirectIndexCountPastTheBuffer_StopsAtTheBufferEnd", [] {
+    auto& device = MeshDevice();
+    DrawIndirect(device, 1000u, 1, 3u * (Triangles - 2u));
+    for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+        const auto offset = CellPixel(triangle);
+        Require(triangle >= Triangles - 2u ? PixelIs(offset, TriangleColor(triangle)) : PixelIs(offset, Background), "indirect index count past the buffer: triangle " + std::to_string(triangle) + " pixel " + PixelText(offset));
+    }
+}};
+
+const Case emptyIndirect{"DrawMesh_EmptyIndirectRecord_DrawsNothing", [] {
+    auto& device = MeshDevice();
+    for (const auto& [count, instances, first] : {std::array<std::uint32_t, 3>{static_cast<std::uint32_t>(Indices.size()), 0u, 0u}, std::array<std::uint32_t, 3>{0u, 1u, 0u}, std::array<std::uint32_t, 3>{3u, 1u, static_cast<std::uint32_t>(Indices.size())}}) {
+        DrawIndirect(device, count, instances, first);
+        for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+            Require(PixelIs(CellPixel(triangle), Background), "an empty indirect record (count " + std::to_string(count) + ", instances " + std::to_string(instances) + ", first " + std::to_string(first) + ") drew triangle " + std::to_string(triangle));
+        }
+    }
+}};
+
+const Case withoutPushData{"DrawMesh_ProgramWithoutPushData_RendersEveryTriangle", [] {
+    auto& device = MeshDevice();
+    ClearPixels();
+    DrawMesh(device, {SmallSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), 0});
+    CheckTriangles("mesh program without push data");
+}};
+
+const Case triangleStrip{"DrawMesh_TriangleStrip_FillsOnlyTheLowerHalf", [] {
+    auto& device = MeshDevice();
+    ClearPixels();
+    const ShaderRecompiler::MeshConfiguration strip{6u, 3u, 5u, 9u, 3u, 64u, 1024u, 0u, 4u};
+    DrawMesh(device, {strip, {0, static_cast<std::uint32_t>(Strip.size()), 0, 1, 0, false}, VertexBufferDescriptor(Strip.data(), static_cast<std::uint32_t>(Strip.size()))});
+    const std::array<std::uint8_t, 4> stripPixel{128, 255, 64, 255};
+    for (std::uint32_t y = Height / 2u + 2u; y < Height - 2u; y += 5u) {
+        for (std::uint32_t x = 2u; x < Width - 2u; x += 5u) {
+            const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
+            Require(PixelIs(offset, stripPixel), "triangle strip: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + PixelText(offset));
+        }
+    }
+    Require(PixelIs((static_cast<std::size_t>(Height / 4u) * Width + Width / 2u) * 4u, Background), "triangle strip: the upper half changed");
+}};
+
+const Case nonIndexedFan{"DrawMesh_NonIndexedTriangleFan_RendersFanInFirstVertexColors", [] {
+    auto& device = MeshDevice();
+    ClearPixels();
+    DrawMesh(device, {FanMesh, {0, static_cast<std::uint32_t>(Fan.size()), 0, 1, 0, false}, VertexBufferDescriptor(Fan.data(), static_cast<std::uint32_t>(Fan.size()))});
+    CheckFan("non-indexed triangle fan");
+}};
+
+const Case indexedFan{"DrawMesh_IndexedTriangleFan_RendersFanInFirstVertexColors", [] {
+    auto& device = MeshDevice();
+    ClearPixels();
+    DrawMesh(device, {FanMesh, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size()))});
+    CheckFan("indexed triangle fan");
+}};
+
+const Case restartWithoutIndex{"DrawMesh_IndexedFanWithRestartEnabledButNoRestartIndex_RendersTheFan", [] {
+    auto& device = MeshDevice();
+    DrawIndexedFan(device, FanIndices, true);
+    CheckFan("indexed triangle fan with restart enabled and no restart index");
+}};
+
+const Case restartIndex{"DrawMesh_TriangleFanWithRestartIndex_IsRefused", [] {
+    auto& device = MeshDevice();
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { DrawIndexedFan(device, FanRestart, true); }, "a triangle fan with a restart index was drawn");
+    Require(std::string(error.what()).find("primitive restart in a triangle fan") != std::string::npos, std::string("a triangle fan with a restart index failed for another reason: ") + error.what());
+}};
+
+const Case indirectFan{"DrawMesh_IndirectIndexedTriangleFan_RendersFanInFirstVertexColors", [] {
+    auto& device = MeshDevice();
+    auto* record = IndirectRecord();
+    const std::array<std::uint32_t, 5> fanWords{static_cast<std::uint32_t>(FanIndices.size()), 1u, 0u, 0u, 0u};
+    std::copy(fanWords.begin(), fanWords.end(), record);
+    AgcDriver::Pm4::DrawParameters fanDraw{reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true};
+    fanDraw.indirect = IndirectDraw(record);
+    ClearPixels();
+    DrawMesh(device, {FanMesh, fanDraw, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size()))});
+    CheckFan("indirect indexed triangle fan");
+}};
+
+} // namespace

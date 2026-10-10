@@ -2,26 +2,16 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/FontLibrary.cmake)
 add_sce_font_library(libSceFont)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestFont.cpp)
-    target_include_directories(guest_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_font_tests PRIVATE libSceFont libSceFontFt libc)
-    add_test(NAME guest_font COMMAND guest_font_tests)
-    add_test_executable(guest_system_font_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemFont.cpp)
-    target_include_directories(guest_system_font_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_system_font_tests PRIVATE libSceFont libSceFontFt libc)
-    configure_windows_unwind(guest_system_font_tests)
-    add_test(NAME guest_system_font COMMAND guest_system_font_tests)
-    if(WIN32)
-        set_tests_properties(guest_font guest_system_font PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
-    endif()
-    add_test_executable(guest_font_writing_line_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontWritingLine.cpp)
-    target_include_directories(guest_font_writing_line_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_font_writing_line_tests PRIVATE libSceFont libc)
-    configure_windows_unwind(guest_font_writing_line_tests)
-    add_test(NAME guest_font_writing_line COMMAND guest_font_writing_line_tests)
-    if(WIN32)
-        set_tests_properties(guest_font_writing_line PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
-    endif()
+    anyps5_add_library_test(guest_font_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestFont.cpp
+        LINK libSceFont libSceFontFt libc
+    )
+    anyps5_add_library_test(guest_system_font_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSystemFont.cpp
+        LINK libSceFont libSceFontFt libc
+    )
+    anyps5_add_library_test(guest_font_writing_line_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestFontWritingLine.cpp
+        LINK libSceFont libc
+    )
 endif()

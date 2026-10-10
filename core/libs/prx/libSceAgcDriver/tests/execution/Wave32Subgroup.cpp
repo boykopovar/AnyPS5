@@ -6,13 +6,11 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t WaveSize = 32;
@@ -51,6 +49,14 @@ void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& t
     device.WaitIdle();
 }
 
+ShaderRecompiler::SpirvTarget Wave32Target(AgcDriver::VulkanDevice& device) {
+    auto target = device.ComputeTarget(WaveSize);
+    if (target.subgroupSize < WaveSize) {
+        Testing::Skip("the device runs wave32 programs on " + std::to_string(target.subgroupSize) + "-wide subgroups");
+    }
+    return target;
+}
+
 void Check() {
     constexpr std::array<const char*, Results> names{"v_mbcnt_lo_u32_b32", "s_bcnt1 of a VCC compare", "v_readlane_b32 lane 3", "v_cmpx EXEC"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -58,38 +64,41 @@ void Check() {
         const std::array<std::uint32_t, Results> expected{lane, 8u, tid - lane + 3u, lane < 8u ? 1u : 0u};
         for (std::uint32_t j = 0; j < Results; ++j) {
             const auto actual = Output[tid * Results + j];
-            Require(actual == expected[j], std::string("wave32 subgroup: thread ") + std::to_string(tid) + " " + names[j] + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
+            Testing::Require(actual == expected[j], std::string("wave32 subgroup: thread ") + std::to_string(tid) + " " + names[j] + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
         }
     }
 }
 
-}
+const Testing::Case wave32ComputeTarget{"Wave32Subgroup_Wave32ComputeTarget_MatchesPerWaveReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave32Target(device));
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const auto target = device->ComputeTarget(WaveSize);
-        if (target.subgroupSize < WaveSize) {
-            std::printf("skipped, the device runs wave32 programs on %u-wide subgroups\n", target.subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device, target);
-        Check();
-        if (device->Target().subgroupSize != target.subgroupSize && device->Target().subgroupSize >= WaveSize) {
-            Run(*device, device->Target());
-            Check();
-        }
-        if (device->Target().subgroupSize == WaveSize) {
-            auto wide = device->Target();
-            wide.subgroupSize = 64;
-            Run(*device, wide);
-            Check();
-        }
-        std::puts("wave32 subgroup tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case defaultTarget{"Wave32Subgroup_DefaultTarget_MatchesPerWaveReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    const auto target = Wave32Target(device);
+    const auto defaultSize = device.Target().subgroupSize;
+    if (defaultSize == target.subgroupSize) {
+        Testing::Skip("the default target uses the same " + std::to_string(defaultSize) + "-wide subgroups as the wave32 compute target");
     }
-}
+    if (defaultSize < WaveSize) {
+        Testing::Skip("the default target's " + std::to_string(defaultSize) + "-wide subgroups cannot hold a wave32");
+    }
+    Run(device, device.Target());
+    Check();
+}};
+
+const Testing::Case sixtyFourWideSubgroups{"Wave32Subgroup_DefaultTargetWith64WideSubgroups_MatchesPerWaveReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    static_cast<void>(Wave32Target(device));
+    if (device.Target().subgroupSize != WaveSize) {
+        Testing::Skip("the default target runs " + std::to_string(device.Target().subgroupSize) + "-wide subgroups, not 32-wide ones");
+    }
+    auto wide = device.Target();
+    wide.subgroupSize = 64;
+    Run(device, wide);
+    Check();
+}};
+
+} // namespace

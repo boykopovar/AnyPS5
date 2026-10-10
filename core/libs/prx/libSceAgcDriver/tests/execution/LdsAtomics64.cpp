@@ -6,13 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -222,19 +221,17 @@ void CheckContention() {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        CheckLanes();
-        CheckContention();
-        std::puts("lds 64-bit atomics tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case perLaneOperations{"LdsAtomics64_PerLaneOperations_MatchReferenceResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckLanes();
+}};
+
+const Testing::Case contendedOperations{"LdsAtomics64_ContendedAddAndMax_FormOneSerialOrder", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    CheckContention();
+}};
+
+} // namespace

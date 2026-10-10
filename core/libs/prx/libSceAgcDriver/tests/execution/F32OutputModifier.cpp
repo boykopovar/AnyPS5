@@ -8,14 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -235,7 +234,6 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
 
 void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 16; ++i) {
             if ((Checked[tid] >> i) & 1u) Expect(tid, out[i], expected[tid][i], (std::string(mode) + " " + Names[i]).c_str());
@@ -244,26 +242,34 @@ void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     }
 }
 
-}
+const Testing::Case noFloatMode{"F32OutputModifier_NoFloatMode_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, std::nullopt);
+    Check(Expected, "no float mode");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check(Expected, "no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check(Expected, "IEEE=0 f32 denormals flushed");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false});
-        Check(ExpectedKept, "IEEE=0 f32 denormals kept");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
-        Check(ExpectedIeee, "IEEE=1 f32 denormals flushed");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
-        Check(ExpectedIeee, "IEEE=1 f32 denormals kept");
-        std::puts("f32 output modifier tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case ieeeDisabledDenormalsFlushed{"F32OutputModifier_IeeeDisabledDenormalsFlushed_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+    Check(Expected, "IEEE=0 f32 denormals flushed");
+}};
+
+const Testing::Case ieeeDisabledDenormalsKept{"F32OutputModifier_IeeeDisabledDenormalsKept_MatchesKeptReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false});
+    Check(ExpectedKept, "IEEE=0 f32 denormals kept");
+}};
+
+const Testing::Case ieeeEnabledDenormalsFlushed{"F32OutputModifier_IeeeEnabledDenormalsFlushed_MatchesIeeeReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
+    Check(ExpectedIeee, "IEEE=1 f32 denormals flushed");
+}};
+
+const Testing::Case ieeeEnabledDenormalsKept{"F32OutputModifier_IeeeEnabledDenormalsKept_MatchesIeeeReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
+    Check(ExpectedIeee, "IEEE=1 f32 denormals kept");
+}};
+
+} // namespace

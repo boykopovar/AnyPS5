@@ -3,6 +3,6 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 
-void RunResidentPresentTests(const AgcDriver::Graphics::Context& context);
+const AgcDriver::Graphics::Context& ResidentPresentTestContext();
 
 #endif

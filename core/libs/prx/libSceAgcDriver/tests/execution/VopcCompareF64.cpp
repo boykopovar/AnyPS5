@@ -7,14 +7,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -192,26 +190,27 @@ void Check(std::uint32_t round) {
         expected[40] = !(std::fabs(a) > std::fabs(b));
         for (std::uint32_t k = 0; k < expected.size(); ++k) {
             const bool actual = ((Output[tid * Results + k / 32u] >> (k % 32u)) & 1u) != 0u;
-            Require(actual == expected[k], "vopc f64 compares: round " + std::to_string(round) + " thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
+            Testing::Require(actual == expected[k], "vopc f64 compares: round " + std::to_string(round) + " thread " + std::to_string(tid) + " compare " + std::to_string(k) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[k]));
         }
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (std::uint32_t round = 0; round < EdgeRounds + RandomRounds; ++round) {
-            FillInput(round);
-            Run(*device);
-            Check(round);
-        }
-        std::puts("vopc f64 compare tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case edgePairs{"VopcCompareF64_EveryEdgePair_MatchesReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (std::uint32_t round = 0; round < EdgeRounds; ++round) {
+        FillInput(round);
+        Run(device);
+        Check(round);
     }
-}
+}};
+
+const Testing::Case randomInputs{"VopcCompareF64_RandomInputs_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (std::uint32_t round = EdgeRounds; round < EdgeRounds + RandomRounds; ++round) {
+        FillInput(round);
+        Run(device);
+        Check(round);
+    }
+}};
+
+} // namespace

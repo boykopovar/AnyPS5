@@ -24,7 +24,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -34,7 +33,7 @@
 namespace {
 
 using AgcDriver::Graphics::DccKeys;
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using AgcDriver::Graphics::StorageTexture;
 using ShaderRecompiler::ShaderStage;
 
@@ -306,8 +305,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
         return device.FillBuffer(AddressOf(keys + offset), bytes, pattern);
     };
     if (!fill(0, KeyBytes, 0x10)) {
-        std::puts("the key range has no host import: pending key fills are not tested");
-        return;
+        Testing::Skip("the key range has no host import: pending key fills are not tested");
     }
     if (watched && !AgcDriver::GuestMemory::Watched(AddressOf(block), BlockBytes)) {
         std::puts("host imports are compared, not watched: the write-watched block runs as unwatched");
@@ -424,35 +422,36 @@ void RunSharedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 }
 #endif
 
-}
+const Testing::Case unwatchedBlock{"DccKeysFirstWrite_UnwatchedBlock_KeysTrackFirstWrite", [] {
+    std::optional<GuestBlock> block;
+    const auto device = RequireVulkanTestDevice();
+    block.emplace(false);
+    Run(*device, block->Data());
+}};
 
-int main() {
-    try {
-        std::optional<GuestBlock> block;
-        std::optional<GuestBlock> watched;
-        std::optional<GuestBlock> untracked;
-        std::optional<GuestBlock> shared;
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        block.emplace(false);
-        Run(*device, block->Data());
-        untracked.emplace(false);
-        RunUntrackedReuse(*device, untracked->Data());
+const Testing::Case untrackedReuse{"DccKeysFirstWrite_UntrackedReuse_RefreshKeepsGpuAndCpuEdits", [] {
+    std::optional<GuestBlock> untracked;
+    const auto device = RequireVulkanTestDevice();
+    untracked.emplace(false);
+    RunUntrackedReuse(*device, untracked->Data());
+}};
+
 #ifdef _WIN32
-        shared.emplace(true, true);
-        RunSharedImport(*device, shared->Data());
-        Run(*device, shared->Data());
+const Testing::Case sharedImport{"DccKeysFirstWrite_SharedImport_KeepsWriteTrackingAndKeys", [] {
+    std::optional<GuestBlock> shared;
+    const auto device = RequireVulkanTestDevice();
+    shared.emplace(true, true);
+    RunSharedImport(*device, shared->Data());
+    Run(*device, shared->Data());
+}};
 #endif
-        if (AgcDriver::GuestMemory::WriteWatched()) {
-            watched.emplace(true);
-            Run(*device, watched->Data());
-        } else {
-            std::puts("guest memory has no write watch: a write-watched surface is not tested");
-        }
-        std::puts("DCC keys first write tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+
+const Testing::Case watchedBlock{"DccKeysFirstWrite_WatchedBlock_KeysTrackFirstWrite", [] {
+    std::optional<GuestBlock> watched;
+    const auto device = RequireVulkanTestDevice();
+    if (!AgcDriver::GuestMemory::WriteWatched()) Testing::Skip("guest memory has no write watch: a write-watched surface is not tested");
+    watched.emplace(true);
+    Run(*device, watched->Data());
+}};
+
+} // namespace

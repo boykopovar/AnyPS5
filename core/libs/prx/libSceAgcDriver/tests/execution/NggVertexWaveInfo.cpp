@@ -4,14 +4,13 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -107,24 +106,22 @@ void Check(std::uint32_t waveSize) {
     }
 }
 
+
+void DrawAndCheck(std::uint32_t waveSize) {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32u) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    Draw(device, waveSize);
+    Check(waveSize);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32u) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        for (const auto waveSize : {64u, 32u}) {
-            Draw(*device, waveSize);
-            Check(waveSize);
-        }
-        std::puts("NGG vertex wave info tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64{"NggVertexWaveInfo_Wave64Prologue_CoversEveryVertex", [] {
+    DrawAndCheck(64u);
+}};
+
+const Testing::Case wave32{"NggVertexWaveInfo_Wave32Prologue_CoversEveryVertex", [] {
+    DrawAndCheck(32u);
+}};
+
+} // namespace

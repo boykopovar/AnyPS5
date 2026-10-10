@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -22,7 +21,6 @@ constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
-bool WrappingClock = false;
 
 alignas(256) constexpr std::array<std::uint32_t, 49> Code{
     0x34020084, 0x34060086, 0xe0301000, 0x80000401, 0xf4900200, 0x00000000, 0xf4940280, 0x00000000,
@@ -42,8 +40,8 @@ std::uint64_t Pair(const std::uint32_t* words) {
     return static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u);
 }
 
-bool Advanced(const std::uint32_t* before, const std::uint32_t* after) {
-    if (WrappingClock) return static_cast<std::uint32_t>(after[0] - before[0]) < 0x80000000u;
+bool Advanced(const std::uint32_t* before, const std::uint32_t* after, bool wrappingClock) {
+    if (wrappingClock) return static_cast<std::uint32_t>(after[0] - before[0]) < 0x80000000u;
     return Pair(after) >= Pair(before);
 }
 
@@ -59,25 +57,25 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("shader clock: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("shader clock: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Check() {
+void Check(bool wrappingClock) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         const std::uint32_t* first = &Output[(tid & ~7u) * Results];
         for (std::uint32_t index = 0; index < 8; ++index) Expect(tid, out[index], first[index], "clock read uniform over the wave");
-        Require(Advanced(out, out + 4), "memtime: lane " + std::to_string(tid) + " went back from " + std::to_string(Pair(out)) + " to " + std::to_string(Pair(out + 4)));
-        Require(Advanced(out + 2, out + 6), "memrealtime: lane " + std::to_string(tid) + " went back from " + std::to_string(Pair(out + 2)) + " to " + std::to_string(Pair(out + 6)));
-        Require(Pair(out + 4) != 0u && Pair(out + 6) != 0u, "clocks read zero");
+        Testing::Require(Advanced(out, out + 4, wrappingClock), "memtime: lane " + std::to_string(tid) + " went back from " + std::to_string(Pair(out)) + " to " + std::to_string(Pair(out + 4)));
+        Testing::Require(Advanced(out + 2, out + 6, wrappingClock), "memrealtime: lane " + std::to_string(tid) + " went back from " + std::to_string(Pair(out + 2)) + " to " + std::to_string(Pair(out + 6)));
+        Testing::Require(Pair(out + 4) != 0u && Pair(out + 6) != 0u, "clocks read zero");
         std::uint32_t sum = 0u;
         for (std::uint32_t step = 0; step < 2000u; ++step) sum = (sum & 0xffffffu) * 3u + in[0];
         Expect(tid, out[8], sum, "loop result");
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, bool wrappingClock) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -100,27 +98,15 @@ void Run(AgcDriver::VulkanDevice& device) {
         Output.fill(0xdeadbeefu);
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
-        Check();
+        Check(wrappingClock);
     }
 }
 
-}
+const Testing::Case shaderClockReads{"ShaderClock_MemtimeAndMemrealtime_AreUniformAndMonotonic", [] {
+    auto& device = SharedVulkanTestDevice();
+    const bool wrappingClock = device.DeviceName().starts_with("llvmpipe");
+    SkipUnlessCapability(device.Target(), spv::CapabilityShaderClockKHR, "the device lacks shaderSubgroupClock or shaderDeviceClock");
+    Run(device, wrappingClock);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        WrappingClock = device->DeviceName().starts_with("llvmpipe");
-        if (!TargetHasCapability(device->Target(), spv::CapabilityShaderClockKHR)) {
-            std::puts("skipped, the device lacks shaderSubgroupClock or shaderDeviceClock");
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("shader clock tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

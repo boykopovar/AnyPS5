@@ -1,9 +1,9 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <stdexcept>
 
 namespace {
@@ -13,7 +13,7 @@ struct UsbdTimeval {
     std::int64_t microseconds;
 };
 
-}
+} // namespace
 
 extern "C" {
 std::int32_t APS5_VABI sceUsbdInit();
@@ -26,39 +26,63 @@ int APS5_VABI sceUsbdOpen();
 
 namespace {
 
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
+
 constexpr std::int32_t invalidArgument = static_cast<std::int32_t>(0x80240002);
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "USBD: %s\n", message);
-        std::abort();
+class UsbdSession {
+public:
+    UsbdSession() {
+        RequireEqual(sceUsbdInit(), 0, "initialization");
     }
-}
 
-}
+    ~UsbdSession() {
+        sceUsbdExit();
+    }
 
-int main() {
-    Require(sceUsbdInit() == 0, "initialization failed");
+    UsbdSession(const UsbdSession&) = delete;
+    UsbdSession& operator=(const UsbdSession&) = delete;
+};
+
+const Case deviceList{"GetDeviceList_NoDevices_ReturnsEmptyNullTerminatedList", [] {
+    const UsbdSession session;
     void** list = nullptr;
-    Require(sceUsbdGetDeviceList(&list) == 0, "a device was listed");
-    Require(list != nullptr && list[0] == nullptr, "device list is not an empty null-terminated array");
+    RequireEqual(sceUsbdGetDeviceList(&list), std::int64_t{0}, "listed device count");
+    Require(list != nullptr, "the device list is null");
+    Require(list[0] == nullptr, "the device list is not null-terminated at index 0");
     sceUsbdFreeDeviceList(list, 1);
-    Require(sceUsbdGetDeviceList(nullptr) == invalidArgument, "null list accepted");
-    Require(sceUsbdHandleEventsTimeout(nullptr) == invalidArgument, "null timeout accepted");
+}};
+
+const Case deviceListNull{"GetDeviceList_NullOutput_ReturnsInvalidArgument", [] {
+    const UsbdSession session;
+    RequireEqual(sceUsbdGetDeviceList(nullptr), std::int64_t{invalidArgument}, "get device list with a null output");
+}};
+
+const Case eventsNullTimeout{"HandleEventsTimeout_NullTimeout_ReturnsInvalidArgument", [] {
+    const UsbdSession session;
+    RequireEqual(sceUsbdHandleEventsTimeout(nullptr), invalidArgument, "null timeout");
+}};
+
+const Case eventsInvalidTimeout{"HandleEventsTimeout_MicrosecondsOutOfRange_ReturnsInvalidArgument", [] {
+    const UsbdSession session;
     const UsbdTimeval invalid{0, 1000000};
-    Require(sceUsbdHandleEventsTimeout(&invalid) == invalidArgument, "out-of-range microseconds accepted");
+    RequireEqual(sceUsbdHandleEventsTimeout(&invalid), invalidArgument, "one million microseconds");
+}};
+
+const Case eventsWait{"HandleEventsTimeout_FiftyMilliseconds_WaitsForTheTimeout", [] {
+    const UsbdSession session;
     const UsbdTimeval timeout{0, 50000};
     const auto start = std::chrono::steady_clock::now();
-    Require(sceUsbdHandleEventsTimeout(&timeout) == 0, "event handling failed");
+    RequireEqual(sceUsbdHandleEventsTimeout(&timeout), 0, "event handling");
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(45), "event handling returned before the timeout");
-    bool threw = false;
-    try {
-        sceUsbdOpen();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "opening a device did not throw");
-    sceUsbdExit();
-    std::puts("USBD tests passed");
-    return 0;
-}
+}};
+
+const Case open{"Open_NoDevice_ThrowsRuntimeError", [] {
+    const UsbdSession session;
+    RequireThrows<std::runtime_error>([] { sceUsbdOpen(); }, "opening a device");
+}};
+
+} // namespace

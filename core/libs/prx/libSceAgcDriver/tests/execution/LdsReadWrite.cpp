@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -363,22 +362,23 @@ void Check(const std::uint32_t (&expected)[Lanes][Checked], const char* const (&
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, Wave32Code, 32, device->Target());
-        Check(Expected32, Names32, "wave32");
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(Expected64, Names64, "wave64");
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(Expected64, Names64, "wave64 split");
-        std::puts("lds read write tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32{"LdsReadWrite_Wave32_MatchHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave32Code, 32, device.Target());
+    Check(Expected32, Names32, "wave32");
+}};
+
+const Testing::Case wave64{"LdsReadWrite_Wave64_MatchHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave64Code, 64, device.Target());
+    Check(Expected64, Names64, "wave64");
+}};
+
+const Testing::Case wave64Split{"LdsReadWrite_Wave64OnThirtyTwoLaneSubgroups_MatchHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(Expected64, Names64, "wave64 split");
+}};
+
+} // namespace

@@ -1,10 +1,12 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
-#include <cstdio>
-#include <stdexcept>
-#include <string_view>
+#include <cstddef>
+#include <exception>
+#include <string>
 #include <thread>
 
 #if !defined(__x86_64__) || (!defined(__linux__) && !defined(__APPLE__))
@@ -75,7 +77,12 @@ CONTEXT_SYMBOL(RestoreProbe) ":\n"
 
 namespace {
 
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
 constexpr std::uintptr_t Guard = 0xa1b2c3d4e5f60718;
+constexpr std::uintptr_t SeedsPerRun = 256;
 
 struct Capture {
     std::uintptr_t before = Guard;
@@ -94,10 +101,6 @@ struct Registers {
     std::uintptr_t after = Guard;
 };
 
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void CheckCapture() {
     Capture captured;
     CaptureProbe(captured.registers.data());
@@ -105,10 +108,10 @@ void CheckCapture() {
     for (std::size_t i = 0; i < 16; ++i) {
         const auto expected = i == 5 ? reinterpret_cast<std::uintptr_t>(captured.registers.data())
             : i == 7 ? captured.expectedStack : 0x1234567800000100 + i;
-        Require(captured.registers[i] == expected, "capture saved the wrong general register");
+        RequireEqual(captured.registers[i], expected, "capture saved general register " + std::to_string(i));
     }
-    Require(captured.registers[16] == captured.expectedInstruction, "capture saved the wrong return instruction");
-    Require(captured.registers[7] % 16 == 0, "capture saved the callee stack instead of the caller stack");
+    RequireEqual(captured.registers[16], captured.expectedInstruction, "capture saved the return instruction");
+    RequireEqual(captured.registers[7] % 16, std::uintptr_t{0}, "capture saved the caller stack, not the callee stack");
 }
 
 void CheckRestore(std::uintptr_t seed) {
@@ -122,35 +125,38 @@ void CheckRestore(std::uintptr_t seed) {
     Require(observed.before == Guard && observed.after == Guard, "restore probe overwrote its destination context");
     for (std::size_t i = 0; i < restored.values.size(); ++i) {
         if (i == 10 || i == 11) continue;
-        Require(observed.values[i] == restored.values[i], "restore did not install the landing pad context");
+        RequireEqual(observed.values[i], restored.values[i],
+            "restore installed landing pad register " + std::to_string(i) + " for seed " + std::to_string(seed));
     }
 }
 
-void CheckThread(std::uintptr_t seed) {
-    for (std::uintptr_t i = 0; i < 256; ++i) {
-        CheckCapture();
-        CheckRestore(seed + i);
-    }
-}
+const Case capture{"CaptureRegisters_KnownRegisterValues_SavesCallerContext", [] {
+    CheckCapture();
+}};
 
-}
+const Case restore{"RestoreRegisters_SeededContexts_InstallsLandingPadContext", [] {
+    for (std::uintptr_t seed = 0; seed < SeedsPerRun; ++seed) CheckRestore(seed);
+}};
 
-int main(int argc, char** argv) {
-    try {
-        Require(argc == 2, "expected capture, restore or threads");
-        const std::string_view mode(argv[1]);
-        if (mode == "capture") CheckCapture();
-        else if (mode == "restore") {
-            for (std::uintptr_t seed = 0; seed < 256; ++seed) CheckRestore(seed);
-        } else if (mode == "threads") {
-            std::array<std::thread, 4> threads;
-            for (std::size_t i = 0; i < threads.size(); ++i) threads[i] = std::thread(CheckThread, i * 256);
-            for (auto& thread : threads) thread.join();
-        } else throw std::runtime_error("unknown register context probe");
-        std::printf("register context %s passed\n", argv[1]);
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
+const Case threads{"CaptureAndRestore_ConcurrentThreads_KeepContextsIsolated", [] {
+    std::array<std::string, 4> failures;
+    std::array<std::thread, 4> workers;
+    for (std::size_t i = 0; i < workers.size(); ++i) {
+        workers[i] = std::thread([&failures, i] {
+            try {
+                for (std::uintptr_t step = 0; step < SeedsPerRun; ++step) {
+                    CheckCapture();
+                    CheckRestore(i * SeedsPerRun + step);
+                }
+            } catch (const std::exception& error) {
+                failures[i] = error.what();
+            }
+        });
     }
-}
+    for (auto& worker : workers) worker.join();
+    for (std::size_t i = 0; i < failures.size(); ++i) {
+        Require(failures[i].empty(), "thread " + std::to_string(i) + ": " + failures[i]);
+    }
+}};
+
+} // namespace

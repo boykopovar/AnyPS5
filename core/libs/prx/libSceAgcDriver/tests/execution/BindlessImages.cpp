@@ -4,11 +4,13 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using namespace ShaderRecompiler;
 
 struct alignas(4096) GuestData {
@@ -65,13 +67,8 @@ void Run(AgcDriver::VulkanDevice& device) {
             Require(binding != invalid.bindings.end(), "bindless shader has no runtime metadata");
             const auto offset = invalid.imageMetadataDword + invalid.runtimeImageResources.at(0) * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t)) + offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t);
             binding->guestDescriptor.at(offset) = RuntimeAbi::SampledHeapCapacity;
-            bool rejected = false;
-            try {
-                device.Dispatch(invalid, 1u, 1u, 1u);
-            } catch (const std::exception& error) {
-                rejected = std::string_view(error.what()).find("runtime metadata exceeds its bound heap") != std::string_view::npos;
-            }
-            Require(rejected, "driver accepted an out-of-range runtime heap index");
+            const auto error = Testing::RequireThrows<std::runtime_error>([&] { device.Dispatch(invalid, 1u, 1u, 1u); }, "driver accepted an out-of-range runtime heap index");
+            Require(std::string_view(error.what()).find("runtime metadata exceeds its bound heap") != std::string_view::npos, std::string("driver accepted an out-of-range runtime heap index: ") + error.what());
         }
         device.Dispatch(shader, 1u, 1u, 1u);
         device.SubmitRecorded(false);
@@ -83,17 +80,8 @@ void Run(AgcDriver::VulkanDevice& device) {
     }
 }
 
-}
+const Testing::Case runtimeHeapTable{"BindlessImages_RuntimeHeapTable_SelectsResourcesWithOneArtifact", [] {
+    Run(SharedVulkanTestDevice());
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        std::cout << "bindless image materialization tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

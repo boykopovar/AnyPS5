@@ -6,14 +6,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Lanes = 32;
@@ -182,13 +182,8 @@ auto RecompileFormatted(AgcDriver::VulkanDevice& device, std::span<const std::ui
 
 void RunFormattedFault(AgcDriver::VulkanDevice& device, const std::string& name, std::span<const std::uint32_t> code, std::uint32_t viewOffset) {
     const auto run = "buffer unaligned base " + name + ", view +" + std::to_string(viewOffset);
-    try {
-        static_cast<void>(RecompileFormatted(device, code, Input.data() + viewOffset, ViewBytes));
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("is a formatted buffer access through a V# whose base is not aligned to its element") != std::string::npos, run + ": unexpected error: " + error.what());
-        return;
-    }
-    throw std::runtime_error(run + ": a formatted access the hardware faults on was recompiled");
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { static_cast<void>(RecompileFormatted(device, code, Input.data() + viewOffset, ViewBytes)); }, run + ": a formatted access the hardware faults on was recompiled");
+    Require(std::string(error.what()).find("is a formatted buffer access through a V# whose base is not aligned to its element") != std::string::npos, run + ": unexpected error: " + error.what());
 }
 
 void RunFormattedLoad(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset) {
@@ -223,44 +218,48 @@ void RunAtomic(AgcDriver::VulkanDevice& device) {
     const auto descriptor = BufferDescriptor(reinterpret_cast<std::uint8_t*>(Output.data()) + 2u, 64u);
     userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(AtomicCode.data()), std::as_bytes(std::span(AtomicCode))}}};
-    try {
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] {
         const auto result = ShaderRecompiler::Recompile(Request(AtomicCode, userData, device.Target(), memory));
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(AtomicCode.data()));
         device.WaitIdle();
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("buffer atomic on a V# whose base is not DWORD aligned") != std::string::npos, std::string("buffer unaligned base atomic: unexpected error: ") + error.what());
-        return;
-    }
-    throw std::runtime_error("buffer unaligned base atomic: an atomic on a V# off a DWORD boundary ran");
+    }, "buffer unaligned base atomic: an atomic on a V# off a DWORD boundary ran");
+    Require(std::string(error.what()).find("buffer atomic on a V# whose base is not DWORD aligned") != std::string::npos, std::string("buffer unaligned base atomic: unexpected error: ") + error.what());
 }
 
-}
+const Testing::Case unalignedViews{"BufferUnalignedBase_UnalignedViews_LoadAndStoreBytes", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, 2, 1);
+    Run(device, 3, 3);
+    Run(device, 1, 2);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, 2, 1);
-        Run(*device, 3, 3);
-        Run(*device, 1, 2);
-        RunPair(*device, 1);
-        RunPair(*device, 2);
-        RunPair(*device, 3);
-        RunAtomic(*device);
-        RunFormattedLoad(*device, 2);
-        RunFormattedStore(*device, 2);
-        for (const auto view : {1u, 3u}) {
-            RunFormattedFault(*device, "tbuffer_load_format_x 16_UINT", Load16Code, view);
-            RunFormattedFault(*device, "tbuffer_store_format_x 16_UINT", Store16Code, view);
-        }
-        for (const auto view : {1u, 2u, 3u}) {
-            RunFormattedFault(*device, "tbuffer_load_format_x 32_UINT", Load32Code, view);
-            RunFormattedFault(*device, "tbuffer_load_format_x 16_16_UINT", Load16_16Code, view);
-        }
-        std::puts("buffer unaligned base tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case glcDwordx2{"BufferUnalignedBase_GlcDwordx2_ReadsUnalignedPairs", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (const auto view : {1u, 2u, 3u}) RunPair(device, view);
+}};
+
+const Testing::Case atomicOffDword{"BufferUnalignedBase_AtomicOffDwordBoundary_IsRejected", [] {
+    RunAtomic(SharedVulkanTestDevice());
+}};
+
+const Testing::Case formattedLoad{"BufferUnalignedBase_FormattedLoadOnElementBoundary_ReadsField", [] {
+    RunFormattedLoad(SharedVulkanTestDevice(), 2);
+}};
+
+const Testing::Case formattedStore{"BufferUnalignedBase_FormattedStoreOnElementBoundary_WritesField", [] {
+    RunFormattedStore(SharedVulkanTestDevice(), 2);
+}};
+
+const Testing::Case formattedOffElement{"BufferUnalignedBase_FormattedOffElementBoundary_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (const auto view : {1u, 3u}) {
+        RunFormattedFault(device, "tbuffer_load_format_x 16_UINT", Load16Code, view);
+        RunFormattedFault(device, "tbuffer_store_format_x 16_UINT", Store16Code, view);
     }
-}
+    for (const auto view : {1u, 2u, 3u}) {
+        RunFormattedFault(device, "tbuffer_load_format_x 32_UINT", Load32Code, view);
+        RunFormattedFault(device, "tbuffer_load_format_x 16_16_UINT", Load16_16Code, view);
+    }
+}};
+
+} // namespace

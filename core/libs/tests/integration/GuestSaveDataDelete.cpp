@@ -1,14 +1,16 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "SceTypes.hpp"
+#include "GuestSaveDataFixture.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <random>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -26,16 +28,14 @@ int APS5_VABI fclose_nid_postfix(FileStream*);
 
 namespace {
 
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
 constexpr int SaveDataErrorParameter = -2137063424;
 constexpr int SaveDataErrorBusy = -2137063421;
-
-int failures = 0;
-
-void Check(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "savedata delete check failed: %s\n", what.c_str());
-    ++failures;
-}
+constexpr char mountedPayload[] = "live mounted save";
+constexpr char updatedPayload[] = "still mounted";
 
 int Delete(const char* data, std::size_t size) {
     SceSaveDataDirName name{};
@@ -56,6 +56,10 @@ std::vector<char> Read(const std::filesystem::path& path) {
     return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
+std::vector<char> Bytes(const char* payload, std::size_t size) {
+    return std::vector<char>(payload, payload + size);
+}
+
 bool WriteMountedFile(const char* payload, std::size_t size) {
     auto* stream = fopen_nid_postfix("/savedata0/data.bin", "wb");
     if (stream == nullptr) return false;
@@ -63,79 +67,104 @@ bool WriteMountedFile(const char* payload, std::size_t size) {
     return fclose_nid_postfix(stream) == 0 && written;
 }
 
-bool ReadMountedFile(std::array<char, 32>& buffer, std::size_t expectedSize) {
+void RequireMountedContent(const char* payload, std::size_t size, const std::string& message) {
+    std::array<char, 32> buffer{};
     auto* stream = fopen_nid_postfix("/savedata0/data.bin", "rb");
-    if (stream == nullptr) return false;
-    const bool read = fread_nid_postfix(buffer.data(), 1, expectedSize, stream) == expectedSize;
-    return fclose_nid_postfix(stream) == 0 && read;
+    Require(stream != nullptr, message + ": open /savedata0/data.bin");
+    const bool read = fread_nid_postfix(buffer.data(), 1, size, stream) == size;
+    const bool closed = fclose_nid_postfix(stream) == 0;
+    Require(read && closed, message + ": read /savedata0/data.bin");
+    Require(std::memcmp(buffer.data(), payload, size) == 0, message + ": content");
 }
 
-}
+class SaveRoot {
+public:
+    SaveRoot() : kept(directory.Path() / "_sd" / "kept" / "data.bin"), victim(directory.Path() / "victim" / "important.txt") {
+        Write(kept);
+        Write(victim);
+    }
 
-int main() {
-    const auto root = std::filesystem::temp_directory_path() / ("anyps5-savedata-delete-" + std::to_string(std::random_device{}()));
-    const auto work = root / "work";
-    const auto kept = work / "_sd" / "kept" / "data.bin";
-    const auto victim = work / "victim" / "important.txt";
-    Write(kept);
-    Write(victim);
-    const auto previous = std::filesystem::current_path();
-    std::filesystem::current_path(work);
+    const SaveDataWorkingDirectory directory;
+    const std::filesystem::path kept;
+    const std::filesystem::path victim;
+};
 
+class MountedSave {
+public:
+    MountedSave() {
+        RequireEqual(sceSaveDataInitialize3(nullptr), 0, "SaveData initializes");
+        SceSaveDataDirName dirName{};
+        std::memcpy(dirName.data, "kept", sizeof("kept"));
+        SaveDataMount3 mount{};
+        mount.dir_name = &dirName;
+        mount.mount_mode = 2;
+        RequireEqual(sceSaveDataMount3(&mount, &result), 0, "the existing save mounts read/write");
+        mounted = true;
+        Require(WriteMountedFile(mountedPayload, sizeof(mountedPayload)), "the guest alias writes the mounted save");
+    }
+
+    ~MountedSave() {
+        if (mounted) sceSaveDataUmount2(0, &result.mount_point);
+    }
+
+    MountedSave(const MountedSave&) = delete;
+    MountedSave& operator=(const MountedSave&) = delete;
+
+    void Unmount() {
+        mounted = false;
+        RequireEqual(sceSaveDataUmount2(0, &result.mount_point), 0, "the mounted save unmounts");
+    }
+
+private:
+    SaveDataMountResult result{};
+    bool mounted = false;
+};
+
+const Case invalidNames{"Delete_TraversalOrReservedName_FailsParameterAndDeletesNothing", [] {
+    const SaveRoot root;
     for (const char* invalid : {"../victim", "", ".", "..", "../..", "kept/..", "a\\b", "c:d"}) {
-        Check(Delete(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter, std::string("\"") + invalid + "\" is rejected");
-        Check(std::filesystem::exists(kept) && std::filesystem::exists(victim), std::string("\"") + invalid + "\" deletes nothing");
+        const auto name = std::string("\"") + invalid + "\"";
+        RequireEqual(Delete(invalid, std::strlen(invalid) + 1), SaveDataErrorParameter, name + " is rejected");
+        Require(std::filesystem::exists(root.kept) && std::filesystem::exists(root.victim), name + " deletes nothing");
     }
-    char unterminated[sizeof(SceSaveDataDirName::data)];
-    std::memset(unterminated, 'a', sizeof(unterminated));
-    Check(Delete(unterminated, sizeof(unterminated)) == SaveDataErrorParameter, "an unterminated name is rejected");
+}};
 
-    constexpr char mountedPayload[] = "live mounted save";
-    constexpr char updatedPayload[] = "still mounted";
-    Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
-    SceSaveDataDirName dirName{};
-    std::memcpy(dirName.data, "kept", sizeof("kept"));
-    SaveDataMount3 mount{};
-    mount.dir_name = &dirName;
-    mount.mount_mode = 2;
-    SaveDataMountResult mountResult{};
-    const int mountResultCode = sceSaveDataMount3(&mount, &mountResult);
-    Check(mountResultCode == 0, "the existing save mounts read/write");
-    if (mountResultCode == 0) {
-        Check(WriteMountedFile(mountedPayload, sizeof(mountedPayload)), "the guest alias writes the mounted save");
-        std::error_code caseAliasError;
-        const bool caseAlias = std::filesystem::equivalent(kept.parent_path(), work / "_sd" / "Kept", caseAliasError);
-        if (caseAliasError && caseAliasError != std::errc::no_such_file_or_directory) {
-            Check(false, "case-alias host identity probe has no unexpected filesystem error");
-        } else if (caseAlias) {
-            std::printf("savedata delete case-alias control: host paths are equivalent\n");
-            Check(Delete("Kept", sizeof("Kept")) == SaveDataErrorBusy, "case-variant mounted delete returns BUSY");
-            Check(Read(kept) == std::vector<char>(mountedPayload, mountedPayload + sizeof(mountedPayload)), "case-variant mounted delete preserves backing data");
-            std::array<char, 32> caseAliasBuffer{};
-            const bool readCaseAlias = ReadMountedFile(caseAliasBuffer, sizeof(mountedPayload));
-            Check(readCaseAlias && std::memcmp(caseAliasBuffer.data(), mountedPayload, sizeof(mountedPayload)) == 0, "case-variant mounted delete preserves the live guest alias");
-        } else {
-            std::printf("savedata delete case-alias control: host paths are distinct\n");
-        }
-        const int deleteResult = Delete("kept", sizeof("kept"));
-        Check(deleteResult == SaveDataErrorBusy, "mounted delete returns BUSY");
-        Check(Read(kept) == std::vector<char>(mountedPayload, mountedPayload + sizeof(mountedPayload)), "mounted data remains on disk after delete");
-        std::array<char, 32> buffer{};
-        const bool readMountedData = ReadMountedFile(buffer, sizeof(mountedPayload));
-        Check(readMountedData && std::memcmp(buffer.data(), mountedPayload, sizeof(mountedPayload)) == 0, "mounted data remains accessible through /savedata0");
-        Check(WriteMountedFile(updatedPayload, sizeof(updatedPayload)), "the live /savedata0 alias remains writable after delete");
-        Check(Read(kept) == std::vector<char>(updatedPayload, updatedPayload + sizeof(updatedPayload)), "writes through /savedata0 remain attached to the save");
-        Check(sceSaveDataUmount2(0, &mountResult.mount_point) == 0, "the mounted save unmounts");
-    }
+const Case unterminated{"Delete_UnterminatedName_FailsParameter", [] {
+    const SaveRoot root;
+    char name[sizeof(SceSaveDataDirName::data)];
+    std::memset(name, 'a', sizeof(name));
+    RequireEqual(Delete(name, sizeof(name)), SaveDataErrorParameter, "an unterminated name is rejected");
+}};
 
-    Check(Delete("kept", 5) == 0, "a valid name is deleted");
-    Check(!std::filesystem::exists(kept.parent_path()), "the valid save directory is gone");
-    Check(std::filesystem::exists(victim), "the directory beside the save root is untouched");
+const Case caseVariantMounted{"Delete_CaseVariantOfMountedSave_FailsBusyWhenHostIsCaseInsensitive", [] {
+    const SaveRoot root;
+    const MountedSave mounted;
+    std::error_code caseAliasError;
+    const bool caseAlias = std::filesystem::equivalent(root.kept.parent_path(), root.directory.Path() / "_sd" / "Kept", caseAliasError);
+    Require(!caseAliasError || caseAliasError == std::errc::no_such_file_or_directory,
+            "case-alias host identity probe has no unexpected filesystem error: " + caseAliasError.message());
+    if (!caseAlias) Testing::Skip("host paths are case sensitive, so the case variant names another save");
+    RequireEqual(Delete("Kept", sizeof("Kept")), SaveDataErrorBusy, "case-variant mounted delete returns BUSY");
+    RequireEqual(Read(root.kept), Bytes(mountedPayload, sizeof(mountedPayload)), "case-variant mounted delete preserves backing data");
+    RequireMountedContent(mountedPayload, sizeof(mountedPayload), "case-variant mounted delete preserves the live guest alias");
+}};
 
-    std::filesystem::current_path(previous);
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    if (failures != 0) return 1;
-    std::printf("savedata delete tests passed\n");
-    return 0;
-}
+const Case mounted{"Delete_MountedSave_FailsBusyAndKeepsAliasUsable", [] {
+    const SaveRoot root;
+    MountedSave save;
+    RequireEqual(Delete("kept", sizeof("kept")), SaveDataErrorBusy, "mounted delete returns BUSY");
+    RequireEqual(Read(root.kept), Bytes(mountedPayload, sizeof(mountedPayload)), "mounted data remains on disk after delete");
+    RequireMountedContent(mountedPayload, sizeof(mountedPayload), "mounted data remains accessible through /savedata0");
+    Require(WriteMountedFile(updatedPayload, sizeof(updatedPayload)), "the live /savedata0 alias remains writable after delete");
+    RequireEqual(Read(root.kept), Bytes(updatedPayload, sizeof(updatedPayload)), "writes through /savedata0 remain attached to the save");
+    save.Unmount();
+}};
+
+const Case valid{"Delete_UnmountedSave_RemovesOnlyThatSave", [] {
+    const SaveRoot root;
+    RequireEqual(Delete("kept", 5), 0, "a valid name is deleted");
+    Require(!std::filesystem::exists(root.kept.parent_path()), "the valid save directory is gone");
+    Require(std::filesystem::exists(root.victim), "the directory beside the save root is untouched");
+}};
+
+} // namespace

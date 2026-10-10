@@ -6,13 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -75,6 +74,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+    FillInput();
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -128,27 +128,22 @@ void Check(std::uint32_t waveSize) {
             const std::string what = "wave" + std::to_string(waveSize) + " " + names[j] + ": thread " + std::to_string(tid) + " (" + Hex(a) + ", " + Hex(b) + ")";
             const std::uint32_t value = Output[tid * Results + j * 2u];
             const std::uint32_t carry = Output[tid * Results + j * 2u + 1u];
-            Require(value == expected[j][0], what + " is " + Hex(value) + ", expected " + Hex(expected[j][0]));
-            Require(carry == expected[j][1], what + " carries " + std::to_string(carry) + ", expected " + std::to_string(expected[j][1]));
+            Testing::Require(value == expected[j][0], what + " is " + Hex(value) + ", expected " + Hex(expected[j][0]));
+            Testing::Require(carry == expected[j][1], what + " carries " + std::to_string(carry) + ", expected " + std::to_string(expected[j][1]));
         }
     }
 }
 
-}
+const Testing::Case carryOutWave32{"Vop3CarryOut_Wave32_MatchesModel", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, 32);
+    Check(32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        for (const std::uint32_t waveSize : {32u, 64u}) {
-            Run(*device, waveSize);
-            Check(waveSize);
-        }
-        std::puts("vop3 carry out tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case carryOutWave64{"Vop3CarryOut_Wave64_MatchesModel", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, 64);
+    Check(64);
+}};
+
+} // namespace

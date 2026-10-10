@@ -1,62 +1,91 @@
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
+#include <Testing/Test.hpp>
+
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Save-data write failure check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
+namespace {
 
-int main() {
-    const auto root = std::filesystem::temp_directory_path() /
-        ("anyps5-savedata-write-failure-" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    Require(std::filesystem::create_directory(root));
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
 
-    const auto savePath = root / "memory.dat";
-    const std::vector<char> oldData{'o', 'l', 'd'};
-    const std::vector<char> replacement{'n', 'e', 'w'};
-    {
+const std::vector<char> oldData{'o', 'l', 'd'};
+const std::vector<char> replacement{'n', 'e', 'w'};
+
+struct ReplaceAttempt {
+    int count = 0;
+    std::filesystem::path temporary;
+    std::filesystem::path destination;
+    bool replaced = true;
+};
+
+class SaveFileFixture {
+public:
+    SaveFileFixture() : savePath(directory.Path() / "memory.dat") {
         std::ofstream file(savePath, std::ios::binary);
-        Require(file.is_open());
+        Require(file.is_open(), "create the save file");
         file.write(oldData.data(), static_cast<std::streamsize>(oldData.size()));
-        Require(static_cast<bool>(file));
+        Require(static_cast<bool>(file), "write the save file");
     }
 
-    int replaceAttempts = 0;
-    const bool replaced = savedata::replace_file_with(
-        savePath, replacement.data(), replacement.size(),
-        [&replaceAttempts, &savePath](const std::filesystem::path& temporary,
-                                      const std::filesystem::path& destination) {
-            ++replaceAttempts;
-            Require(destination == savePath);
-            auto expectedTemporary = savePath;
-            expectedTemporary += ".tmp";
-            Require(temporary == expectedTemporary);
-            return false;
-        });
+    SaveFileFixture(const SaveFileFixture&) = delete;
+    SaveFileFixture& operator=(const SaveFileFixture&) = delete;
 
-    Require(!replaced);
-    Require(replaceAttempts == 1);
-    std::vector<char> savedData;
-    {
-        std::ifstream savedFile(savePath, std::ios::binary);
-        savedData.assign(std::istreambuf_iterator<char>(savedFile), std::istreambuf_iterator<char>());
+    std::filesystem::path Temporary() const {
+        auto temporary = savePath;
+        temporary += ".tmp";
+        return temporary;
     }
-    Require(savedData == oldData);
-    auto temporary = savePath;
-    temporary += ".tmp";
-    Require(!std::filesystem::exists(temporary));
 
-    std::filesystem::remove_all(root);
+    ReplaceAttempt ReplaceWithFailingOperation() const {
+        ReplaceAttempt attempt;
+        attempt.replaced = savedata::replace_file_with(
+            savePath, replacement.data(), replacement.size(),
+            [&attempt](const std::filesystem::path& temporary, const std::filesystem::path& destination) {
+                ++attempt.count;
+                attempt.temporary = temporary;
+                attempt.destination = destination;
+                return false;
+            });
+        return attempt;
+    }
+
+    const std::filesystem::path& SavePath() const { return savePath; }
+
+private:
+    Testing::TemporaryDirectory directory;
+    const std::filesystem::path savePath;
+};
+
+std::vector<char> ReadAll(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
+
+const Case operationArguments{"ReplaceFileWith_FailingReplace_CallsReplaceOnceWithTemporaryAndDestination", [] {
+    const SaveFileFixture fixture;
+    const auto attempt = fixture.ReplaceWithFailingOperation();
+    RequireEqual(attempt.count, 1, "replace attempts");
+    Require(attempt.destination == fixture.SavePath(), "destination is the save path");
+    Require(attempt.temporary == fixture.Temporary(), "temporary is the save path with .tmp");
+}};
+
+const Case returnsFalse{"ReplaceFileWith_FailingReplace_ReturnsFalseAndKeepsOriginal", [] {
+    const SaveFileFixture fixture;
+    const auto attempt = fixture.ReplaceWithFailingOperation();
+    Require(!attempt.replaced, "replace_file_with returns false");
+    Require(ReadAll(fixture.SavePath()) == oldData, "save file keeps the old data");
+}};
+
+const Case removesTemporary{"ReplaceFileWith_FailingReplace_RemovesTemporary", [] {
+    const SaveFileFixture fixture;
+    fixture.ReplaceWithFailingOperation();
+    Require(!std::filesystem::exists(fixture.Temporary()), "temporary file removed");
+}};
+
+} // namespace

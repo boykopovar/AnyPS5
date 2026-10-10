@@ -14,7 +14,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -167,25 +167,19 @@ void Check() {
     }
 }
 
-}
+const Testing::Case dotProducts{"Float16Dot_Dot2F32F16Variants_MatchReferenceLanes", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityFloat64, "v_dot2_f32_f16 is computed in f64 and the device has no shaderFloat64");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
-            std::puts("skipped, v_dot2_f32_f16 is computed in f64 and the device has no shaderFloat64");
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        CheckRefused(*device, 0xcc13600au, "op_sel on the accumulator");
-        CheckRefused(*device, 0xcc13440au, "neg_hi on the accumulator");
-        CheckRefused(*device, 0xcc13000au, "op_sel_hi cleared on the accumulator");
-        std::puts("v_dot2_f32_f16 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case accumulatorModifiers{"Float16Dot_AccumulatorOpSelOrNegHi_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityFloat64, "v_dot2_f32_f16 is computed in f64 and the device has no shaderFloat64");
+    CheckRefused(device, 0xcc13600au, "op_sel on the accumulator");
+    CheckRefused(device, 0xcc13440au, "neg_hi on the accumulator");
+    CheckRefused(device, 0xcc13000au, "op_sel_hi cleared on the accumulator");
+}};
+
+} // namespace

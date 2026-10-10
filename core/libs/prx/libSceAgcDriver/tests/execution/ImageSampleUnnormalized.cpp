@@ -8,16 +8,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 128;
@@ -225,71 +223,100 @@ void ExpectFailure(AgcDriver::VulkanDevice& device, const std::array<std::uint32
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string(what) + ": unexpected error: " + error.what());
         return;
     }
-    throw std::runtime_error(std::string(what) + " was accepted");
+    Testing::Fail(std::string(what) + " was accepted");
 }
 
+struct ConstantCase {
+    const char* name;
+    std::array<std::uint32_t, 8> texture;
+    std::uint32_t one;
+};
+
+void Prepare() {
+    FillTexture(SingleLevel, 1);
+    FillTexture(MultiLevel, StorageLevels);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexture(SingleLevel, 1);
-        FillTexture(MultiLevel, StorageLevels);
-        const auto coordinates = Coordinates();
-        const auto single = TextureDescriptor(SingleLevel.data(), 0u, 0u);
-        const auto multi = TextureDescriptor(MultiLevel.data(), 0u, StorageLevels - 1u);
-        for (const auto& sampler : Samplers) {
-            const auto singleSamples = Run(*device, single, sampler.words, coordinates);
-            Check(sampler, "1-level image", coordinates, singleSamples);
-            const auto multiSamples = Run(*device, multi, sampler.words, coordinates);
-            Check(sampler, "first level of a 4-level image", coordinates, multiSamples);
-            Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
-        }
-        ExpectFailure(*device, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view");
-        ExpectFailure(*device, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification", "unequal minification and magnification filters");
-        ExpectFailure(*device, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, "clamp mode 0", "wrap on X");
-        const auto constantView = [&](std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {
-            auto descriptor = TextureDescriptor(SingleLevel.data(), 0u, 0u);
-            descriptor[1] = (descriptor[1] & ~(0x1ffu << 20u)) | (format << 20u);
-            descriptor[3] = swizzle | (type << 28u);
-            return descriptor;
-        };
-        for (const auto& sampler : Samplers) {
-            for (const auto& sample : Run(*device, constantView(Type3D, Format8888UNorm, OneZeroOneZero), sampler.words, coordinates)) {
-                for (std::uint32_t index = 0; index < Results; ++index) {
-                    const std::uint32_t expected = index % 2u == 0u ? 0x3f800000u : 0u;
-                    Require(sample[index] == expected, std::string(sampler.name) + ": a 3D view whose channels select (1, 0, 1, 0) returned " + Hex(sample[index]) + " for result " + std::to_string(index));
-                }
-            }
-        }
-        struct ConstantCase {
-            const char* name;
-            std::array<std::uint32_t, 8> texture;
-            std::uint32_t one;
-        };
-        const std::array<ConstantCase, 4> constants{{
-            {"a 3D UNORM view selecting (1, 0, 1, 0)", constantView(Type3D, Format8888UNorm, OneZeroOneZero), 0x3f800000u},
-            {"a 32_UINT view selecting (1, 0, 1, 0)", constantView(Type2D, Format32UInt, OneZeroOneZero), 1u},
-            {"a 32_SINT view selecting (1, 0, 1, 0)", constantView(Type2D, Format32SInt, OneZeroOneZero), 1u},
-            {"a 1D view selecting (0, 0, 0, 0)", constantView(Type1D, Format8888UNorm, 0u), 0u},
-        }};
-        const std::array<const char*, 3> constantInstructions{"image_sample_lz dmask 0x6", "image_gather4_lz dmask 0x2", "image_gather4_lz dmask 0x4"};
-        for (const auto& constant : constants) {
-            auto normalized = Samplers[0].words;
-            normalized[0] &= ~0x8000u;
-            for (const auto& sample : Run(*device, constant.texture, normalized, coordinates, ConstantCode)) {
-                const std::array<std::uint32_t, 10> expected{0u, constant.one, 0u, 0u, 0u, 0u, constant.one, constant.one, constant.one, constant.one};
-                for (std::uint32_t index = 0; index < expected.size(); ++index) {
-                    const auto instruction = constantInstructions[index < 2u ? 0u : index < 6u ? 1u : 2u];
-                    Require(sample[index] == expected[index], std::string(instruction) + ", " + constant.name + ": result " + std::to_string(index) + " is " + Hex(sample[index]) + ", expected " + Hex(expected[index]));
-                }
-            }
-        }
-        std::puts("image sample unnormalized tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+std::array<std::uint32_t, 8> SingleView() {
+    return TextureDescriptor(SingleLevel.data(), 0u, 0u);
+}
+
+std::array<std::uint32_t, 8> ConstantView(std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {
+    auto descriptor = SingleView();
+    descriptor[1] = (descriptor[1] & ~(0x1ffu << 20u)) | (format << 20u);
+    descriptor[3] = swizzle | (type << 28u);
+    return descriptor;
+}
+
+const Testing::Case firstLevel{"ImageSampleUnnormalized_SingleAndFirstOfFourLevels_SampleLikeReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    const auto coordinates = Coordinates();
+    const auto single = SingleView();
+    const auto multi = TextureDescriptor(MultiLevel.data(), 0u, StorageLevels - 1u);
+    for (const auto& sampler : Samplers) {
+        const auto singleSamples = Run(device, single, sampler.words, coordinates);
+        Check(sampler, "1-level image", coordinates, singleSamples);
+        const auto multiSamples = Run(device, multi, sampler.words, coordinates);
+        Check(sampler, "first level of a 4-level image", coordinates, multiSamples);
+        Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
     }
-}
+}};
+
+const Testing::Case multiLevelView{"ImageSampleUnnormalized_MultiLevelView_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    ExpectFailure(device, TextureDescriptor(MultiLevel.data(), 2u, 2u), Samplers[0].words, "single-level", "a 3-level view");
+}};
+
+const Testing::Case unequalFilters{"ImageSampleUnnormalized_UnequalMinMagFilters_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    ExpectFailure(device, SingleView(), {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification", "unequal minification and magnification filters");
+}};
+
+const Testing::Case wrapMode{"ImageSampleUnnormalized_WrapClampMode_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    ExpectFailure(device, SingleView(), {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, "clamp mode 0", "wrap on X");
+}};
+
+const Testing::Case constantThreeDimensional{"ImageSampleUnnormalized_ConstantSwizzle3DView_ReturnsConstants", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    const auto coordinates = Coordinates();
+    for (const auto& sampler : Samplers) {
+        for (const auto& sample : Run(device, ConstantView(Type3D, Format8888UNorm, OneZeroOneZero), sampler.words, coordinates)) {
+            for (std::uint32_t index = 0; index < Results; ++index) {
+                const std::uint32_t expected = index % 2u == 0u ? 0x3f800000u : 0u;
+                Require(sample[index] == expected, std::string(sampler.name) + ": a 3D view whose channels select (1, 0, 1, 0) returned " + Hex(sample[index]) + " for result " + std::to_string(index));
+            }
+        }
+    }
+}};
+
+const Testing::Case constantViews{"ImageSampleUnnormalized_ConstantSwizzleViewsWithPartialDmask_ReturnConstants", [] {
+    auto& device = SharedVulkanTestDevice();
+    Prepare();
+    const auto coordinates = Coordinates();
+    const std::array<ConstantCase, 4> constants{{
+        {"a 3D UNORM view selecting (1, 0, 1, 0)", ConstantView(Type3D, Format8888UNorm, OneZeroOneZero), 0x3f800000u},
+        {"a 32_UINT view selecting (1, 0, 1, 0)", ConstantView(Type2D, Format32UInt, OneZeroOneZero), 1u},
+        {"a 32_SINT view selecting (1, 0, 1, 0)", ConstantView(Type2D, Format32SInt, OneZeroOneZero), 1u},
+        {"a 1D view selecting (0, 0, 0, 0)", ConstantView(Type1D, Format8888UNorm, 0u), 0u},
+    }};
+    const std::array<const char*, 3> constantInstructions{"image_sample_lz dmask 0x6", "image_gather4_lz dmask 0x2", "image_gather4_lz dmask 0x4"};
+    for (const auto& constant : constants) {
+        auto normalized = Samplers[0].words;
+        normalized[0] &= ~0x8000u;
+        for (const auto& sample : Run(device, constant.texture, normalized, coordinates, ConstantCode)) {
+            const std::array<std::uint32_t, 10> expected{0u, constant.one, 0u, 0u, 0u, 0u, constant.one, constant.one, constant.one, constant.one};
+            for (std::uint32_t index = 0; index < expected.size(); ++index) {
+                const auto instruction = constantInstructions[index < 2u ? 0u : index < 6u ? 1u : 2u];
+                Require(sample[index] == expected[index], std::string(instruction) + ", " + constant.name + ": result " + std::to_string(index) + " is " + Hex(sample[index]) + ", expected " + Hex(expected[index]));
+            }
+        }
+    }
+}};
+
+} // namespace

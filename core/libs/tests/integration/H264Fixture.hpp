@@ -113,7 +113,7 @@ inline constexpr std::array<std::uint64_t, 6> PictureHashes{
 
 inline constexpr std::array<std::uint64_t, 6> DisplayOrderUnits{0, 2, 3, 1, 5, 4};
 
-inline std::uint64_t hashNv12(const std::uint8_t* buffer, std::uint32_t pitch) {
+inline std::uint64_t HashNv12(const std::uint8_t* buffer, std::uint32_t pitch) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](const std::uint8_t* row) {
         for (std::uint32_t column = 0; column < Width; ++column) hash = (hash ^ row[column]) * 0x100000001b3ull;
@@ -124,7 +124,7 @@ inline std::uint64_t hashNv12(const std::uint8_t* buffer, std::uint32_t pitch) {
     return hash;
 }
 
-inline std::vector<std::vector<std::uint8_t>> accessUnits(bool lengthPrefixed) {
+inline std::vector<std::vector<std::uint8_t>> AccessUnits(bool lengthPrefixed) {
     std::vector<std::size_t> starts;
     for (std::size_t index = 0; index + 4 < Stream.size(); ++index) {
         if (Stream[index] == 0 && Stream[index + 1] == 0 && Stream[index + 2] == 0 && Stream[index + 3] == 1 && (Stream[index + 4] & 0x1fu) == 9) starts.push_back(index);
@@ -156,4 +156,4 @@ inline std::vector<std::vector<std::uint8_t>> accessUnits(bool lengthPrefixed) {
     return units;
 }
 
-}
+} // namespace

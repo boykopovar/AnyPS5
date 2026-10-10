@@ -1,8 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <stdexcept>
 
 extern "C" {
@@ -12,26 +12,25 @@ int APS5_VABI sceHmd2Open();
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "HMD2: %s\n", message);
-        std::abort();
-    }
-}
+using Testing::Case;
+using Testing::RequireEqual;
+using Testing::RequireThrows;
 
-}
+constexpr std::int32_t notSupported = static_cast<std::int32_t>(0x81110016);
 
-int main() {
+const Case initializeWithParam{"Initialize_ZeroedParam_ReportsUnsupportedFeature", [] {
     const std::uint8_t param[16]{};
-    Require(sceHmd2Initialize(param) == static_cast<std::int32_t>(0x81110016), "initialization did not report the unsupported feature");
-    Require(sceHmd2Initialize(nullptr) == static_cast<std::int32_t>(0x81110016), "initialization without a param did not report the unsupported feature");
-    bool threw = false;
-    try {
-        sceHmd2Open();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "open after failed initialization did not throw");
-    std::puts("HMD2 tests passed");
-    return 0;
-}
+    RequireEqual(sceHmd2Initialize(param), notSupported, "initialization with a param");
+}};
+
+const Case initializeWithoutParam{"Initialize_NullParam_ReportsUnsupportedFeature", [] {
+    RequireEqual(sceHmd2Initialize(nullptr), notSupported, "initialization without a param");
+}};
+
+const Case openAfterFailedInit{"Open_AfterFailedInitialize_ThrowsRuntimeError", [] {
+    const std::uint8_t param[16]{};
+    sceHmd2Initialize(param);
+    RequireThrows<std::runtime_error>([] { sceHmd2Open(); }, "open after failed initialization");
+}};
+
+} // namespace

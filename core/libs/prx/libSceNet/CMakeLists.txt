@@ -3,14 +3,9 @@ target_include_directories(libSceNet PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNet)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_sce_net_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceNet.cpp)
-    target_include_directories(guest_sce_net_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_sce_net_tests PRIVATE libSceNet libSceNetCtl libkernel libc)
-    configure_windows_unwind(guest_sce_net_tests)
-    add_test(NAME guest_sce_net COMMAND guest_sce_net_tests)
-    set_tests_properties(guest_sce_net PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
-    if(WIN32)
-        set_tests_properties(guest_sce_net PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNet>")
-    endif()
+    anyps5_add_library_test(guest_sce_net_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestSceNet.cpp
+        LINK libSceNet libSceNetCtl libkernel libc
+    )
 endif()

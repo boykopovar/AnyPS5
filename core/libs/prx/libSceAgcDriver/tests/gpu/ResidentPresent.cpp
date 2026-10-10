@@ -1,17 +1,18 @@
+#include <Testing/Test.hpp>
 #include "ResidentPresent.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory>
+#include <mutex>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -20,16 +21,21 @@ namespace {
 using namespace AgcDriver::Graphics;
 using AgcDriver::DisplayBuffer;
 using AgcDriver::ResidentPresent;
+using Testing::Case;
+using Testing::Require;
 
 constexpr std::uint64_t Bgra8 = 0x8000000000000000ull;
 constexpr std::uint64_t Rgba8 = 0x8000000022000000ull;
 constexpr std::uint64_t TenBit = 0x0100000000000000ull;
 
-void decisionTests() {
+const Case displayTexelFormats{"DisplayTexelFormat_EightAndTenBitDisplays_MapToTheirVulkanFormats", [] {
     using AgcDriver::DisplayTexelFormat;
-    using AgcDriver::ResidentPresentPath;
     Require(DisplayTexelFormat(Bgra8) == VK_FORMAT_B8G8R8A8_UNORM && DisplayTexelFormat(Rgba8) == VK_FORMAT_R8G8B8A8_UNORM, "8-bit display texel formats are wrong");
     Require(DisplayTexelFormat(Bgra8 | TenBit) == VK_FORMAT_A2R10G10B10_UNORM_PACK32 && DisplayTexelFormat(Rgba8 | TenBit) == VK_FORMAT_A2B10G10R10_UNORM_PACK32, "10-bit display texel formats are wrong");
+}};
+
+const Case presentPaths{"ResidentPresentPath_ImageAndDisplayFormats_BlitOnlyMatchingEightBitImages", [] {
+    using AgcDriver::ResidentPresentPath;
     Require(ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, Bgra8, true) == ResidentPresent::Blit && ResidentPresentPath(VK_FORMAT_R8G8B8A8_UNORM, Rgba8, true) == ResidentPresent::Blit, "an 8-bit image in its display's order is not blitted");
     Require(ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, Bgra8, false) == ResidentPresent::Convert, "an 8-bit image that cannot be a blit source is not converted");
     Require(ResidentPresentPath(VK_FORMAT_R8G8B8A8_UNORM, Bgra8, true) == ResidentPresent::Convert && ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, Rgba8, true) == ResidentPresent::Convert, "an 8-bit image in the other order is not converted");
@@ -41,18 +47,23 @@ void decisionTests() {
         Require(ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, display, true) == ResidentPresent::None, "an 8-bit image presents a 10-bit display");
     }
     Require(ResidentPresentPath(VK_FORMAT_A2B10G10R10_UNORM_PACK32, Bgra8, true) == ResidentPresent::None && ResidentPresentPath(VK_FORMAT_R16G16_SFLOAT, Bgra8, true) == ResidentPresent::None, "an image of another type presents an 8-bit display");
+}};
+
+const Case blueLowStorage{"FindGuestColorTargetFormat_BlueLowTenBitTarget_HasAStorageFormat", [] {
     const auto guest = FindGuestColorTargetFormat(VK_FORMAT_A2R10G10B10_UNORM_PACK32, 4);
     Require(guest.has_value() && guest == FindGuestTextureFormat(VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4), "the blue-low 10-bit color target has no storage format");
-}
+}};
 
 std::uint32_t memoryType(const Context& context, std::uint32_t bits, VkMemoryPropertyFlags flags) {
     for (std::uint32_t i = 0; i < context.memory.memoryTypeCount; ++i) {
         if ((bits & (1u << i)) != 0 && (context.memory.memoryTypes[i].propertyFlags & flags) == flags) return i;
     }
-    throw std::runtime_error("no device-local memory type for the test image");
+    Testing::Fail("no device-local memory type for the test image");
 }
 
-void conversionTest(const Context& context, std::uint64_t pixelFormat, VkFormat format) {
+void ConversionTest(std::uint64_t pixelFormat, VkFormat format) {
+    std::lock_guard<AgcDriver::GuestMemory::GpuMutexType> gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto& context = ResidentPresentTestContext();
     constexpr std::uint32_t width = 200;
     constexpr std::uint32_t height = 130;
     std::vector<std::byte> words(static_cast<std::size_t>(width) * height * 4);
@@ -146,14 +157,24 @@ void conversionTest(const Context& context, std::uint64_t pixelFormat, VkFormat 
     Require(std::equal(expected.begin(), expected.end(), fromImage.Bytes().begin()), "the resident image presents other pixels than guest memory: " + name);
 }
 
-}
+const Case tenBitBgraFromA2B10G10R10{"ResidentPresent_TenBitBgraDisplayFromA2B10G10R10_MatchesGuestMemory", [] {
+    ConversionTest(Bgra8 | TenBit, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
+}};
 
-void RunResidentPresentTests(const Context& context) {
-    decisionTests();
-    conversionTest(context, Bgra8 | TenBit, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
-    conversionTest(context, Rgba8 | TenBit, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
-    conversionTest(context, Bgra8 | TenBit, VK_FORMAT_A2R10G10B10_UNORM_PACK32);
-    conversionTest(context, Bgra8, VK_FORMAT_R8G8B8A8_UNORM);
-    conversionTest(context, Rgba8, VK_FORMAT_B8G8R8A8_UNORM);
-    std::cout << "resident present format and conversion tests passed\n";
-}
+const Case tenBitRgbaFromA2B10G10R10{"ResidentPresent_TenBitRgbaDisplayFromA2B10G10R10_MatchesGuestMemory", [] {
+    ConversionTest(Rgba8 | TenBit, VK_FORMAT_A2B10G10R10_UNORM_PACK32);
+}};
+
+const Case tenBitBgraFromA2R10G10B10{"ResidentPresent_TenBitBgraDisplayFromA2R10G10B10_MatchesGuestMemory", [] {
+    ConversionTest(Bgra8 | TenBit, VK_FORMAT_A2R10G10B10_UNORM_PACK32);
+}};
+
+const Case eightBitBgraFromRgba{"ResidentPresent_EightBitBgraDisplayFromRgbaImage_MatchesGuestMemory", [] {
+    ConversionTest(Bgra8, VK_FORMAT_R8G8B8A8_UNORM);
+}};
+
+const Case eightBitRgbaFromBgra{"ResidentPresent_EightBitRgbaDisplayFromBgraImage_MatchesGuestMemory", [] {
+    ConversionTest(Rgba8, VK_FORMAT_B8G8R8A8_UNORM);
+}};
+
+} // namespace

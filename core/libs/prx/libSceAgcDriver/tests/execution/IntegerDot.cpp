@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -99,12 +98,18 @@ void CheckRefused(AgcDriver::VulkanDevice& device, std::uint32_t word0, std::uin
     Require(refusal.find(reason) != std::string::npos, what + " was not refused");
 }
 
+void CheckClampRefused(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t opcode = 0x14u; opcode <= 0x19u; ++opcode) {
+        const std::uint32_t word0 = 0xcc00400au | (opcode << 16u);
+        CheckRefused(device, word0 | 0x8000u, 0x1c1a0b04u, "VOP3P integer clamp is not implemented", "VOP3P opcode " + Hex(opcode) + " with clamp");
+    }
+}
+
 void CheckModifiersRefused(AgcDriver::VulkanDevice& device) {
     const std::string modifiers = "VOP3P integer dot source modifiers are not implemented";
     for (std::uint32_t opcode = 0x14u; opcode <= 0x19u; ++opcode) {
         const std::uint32_t word0 = 0xcc00400au | (opcode << 16u);
         const std::string name = "VOP3P opcode " + Hex(opcode);
-        CheckRefused(device, word0 | 0x8000u, 0x1c1a0b04u, "VOP3P integer clamp is not implemented", name + " with clamp");
         CheckRefused(device, word0, 0x3c1a0b04u, modifiers, name + " with neg");
         CheckRefused(device, word0 | 0x100u, 0x1c1a0b04u, modifiers, name + " with neg_hi");
         CheckRefused(device, word0 | 0x2000u, 0x1c1a0b04u, modifiers, name + " with op_sel on the addend");
@@ -116,7 +121,6 @@ void CheckModifiersRefused(AgcDriver::VulkanDevice& device) {
         CheckRefused(device, word0 | 0x800u, 0x1c1a0b04u, modifiers, name + " with op_sel");
         CheckRefused(device, word0, 0x141a0b04u, modifiers, name + " without op_sel_hi");
     }
-    CheckRefused(device, 0xd50d000au, 0x00020b04u, "VOP3 opcode is not implemented", "VOP3-encoded v_dot4c_i32_i8");
 }
 
 std::uint32_t Element(std::uint32_t value, std::uint32_t offset, std::uint32_t bits, bool sign) {
@@ -162,20 +166,30 @@ void Check() {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device);
-        Check();
-        CheckModifiersRefused(*device);
-        std::puts("integer dot tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case dotProducts{"IntegerDot_PackedDotProducts_MatchReferenceSums", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device);
+    Check();
+}};
+
+const Testing::Case clampRefused{"IntegerDot_Vop3pClamp_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    CheckClampRefused(device);
+}};
+
+const Testing::Case modifiersRefused{"IntegerDot_Vop3pSourceModifiers_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    CheckModifiersRefused(device);
+}};
+
+const Testing::Case vop3Dot4cRefused{"IntegerDot_Vop3EncodedDot4c_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    CheckRefused(device, 0xd50d000au, 0x00020b04u, "VOP3 opcode is not implemented", "VOP3-encoded v_dot4c_i32_i8");
+}};
+
+} // namespace

@@ -3,6 +3,9 @@
 #endif
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <windows.h>
 #include <array>
 #include <cstddef>
@@ -13,7 +16,6 @@
 #include <new>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 extern "C" {
@@ -24,25 +26,32 @@ void* APS5_VABI realloc_nid_postfix(void*, std::size_t);
 
 namespace {
 
-constexpr std::size_t HeaderBytes = 2 * sizeof(void*);
-constexpr std::size_t MaximumSmallBlockBytes = 64u * 1024u;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
 
-void registerDefaultHeap() {
+constexpr std::size_t headerBytes = 2 * sizeof(void*);
+constexpr std::size_t maximumSmallBlockBytes = 64u * 1024u;
+
+void RegisterDefaultHeap() {
     std::array<void*, 10> api{};
     ApplicationHeapRegister_nid_no_patch(api.data());
 }
 
-bool checkThreshold(std::size_t bytes, unsigned char value) {
+void RequireThresholdAllocation(std::size_t bytes, unsigned char value) {
+    RegisterDefaultHeap();
     auto* pointer = static_cast<unsigned char*>(malloc_nid_postfix(bytes));
-    if (pointer == nullptr || reinterpret_cast<std::uintptr_t>(pointer) % 16 != 0) return false;
+    Require(pointer != nullptr, "allocation of " + std::to_string(bytes) + " bytes");
+    const bool aligned = reinterpret_cast<std::uintptr_t>(pointer) % 16 == 0;
     pointer[0] = value;
     pointer[bytes - 1] = static_cast<unsigned char>(value + 1);
     const bool preserved = pointer[0] == value && pointer[bytes - 1] == static_cast<unsigned char>(value + 1);
     free_nid_postfix(pointer);
-    return preserved;
+    Require(aligned, "16-byte alignment of " + std::to_string(bytes) + " bytes");
+    Require(preserved, "first and last bytes preserved for " + std::to_string(bytes) + " bytes");
 }
 
-DWORD runChild(const wchar_t* mode) {
+DWORD RunChild(const wchar_t* mode) {
     std::array<wchar_t, 32768> executable{};
     const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
     if (length == 0 || length >= executable.size()) return 0xffffffffu;
@@ -74,10 +83,10 @@ DWORD runChild(const wchar_t* mode) {
     return exitCode;
 }
 
-int runMallocOverflow() {
-    registerDefaultHeap();
+int RunMallocOverflow() {
+    RegisterDefaultHeap();
     try {
-        auto* pointer = malloc_nid_postfix(std::numeric_limits<std::size_t>::max() - HeaderBytes);
+        auto* pointer = malloc_nid_postfix(std::numeric_limits<std::size_t>::max() - headerBytes);
         free_nid_postfix(pointer);
         return 1;
     } catch (const std::length_error& error) {
@@ -92,14 +101,14 @@ int runMallocOverflow() {
     }
 }
 
-int runReallocOverflow() {
-    registerDefaultHeap();
+int RunReallocOverflow() {
+    RegisterDefaultHeap();
     constexpr std::size_t bytes = 16;
     auto* original = static_cast<unsigned char*>(malloc_nid_postfix(bytes));
     std::memset(original, 0x5a, bytes);
     bool rejectedWithExpectedError = false;
     try {
-        auto* result = realloc_nid_postfix(original, std::numeric_limits<std::size_t>::max() - HeaderBytes);
+        auto* result = realloc_nid_postfix(original, std::numeric_limits<std::size_t>::max() - headerBytes);
         if (result != nullptr) {
             free_nid_postfix(result);
             return 4;
@@ -144,29 +153,32 @@ int runReallocOverflow() {
     return static_cast<int>(result);
 }
 
-int runGuardedCases() {
-    bool success = true;
-    for (const auto& [mode, label] : std::array<std::pair<const wchar_t*, const char*>, 2>{
-             std::pair{L"overflow-malloc", "overflow malloc"},
-             std::pair{L"overflow-realloc", "overflow realloc"}}) {
-        const DWORD exitCode = runChild(mode);
-        if (exitCode != 0) {
-            std::fprintf(stderr, "%s child exited with 0x%08lx\n", label, static_cast<unsigned long>(exitCode));
-            success = false;
-        }
-    }
-    return success ? 0 : 1;
-}
+const Case largestSmallBlock{"Malloc_LargestSmallBlock_AlignedAndUsable", [] {
+    RequireThresholdAllocation(maximumSmallBlockBytes - headerBytes, 0x31);
+}};
 
-}
+const Case smallestLargeBlock{"Malloc_SmallestLargeBlock_AlignedAndUsable", [] {
+    RequireThresholdAllocation(maximumSmallBlockBytes - headerBytes + 1, 0x72);
+}};
+
+const Case mallocOverflow{"Malloc_SizeOverflowingHeader_ThrowsLengthError", [] {
+    RequireEqual(RunChild(L"overflow-malloc"), DWORD {0}, "overflow-malloc child exit code");
+}};
+
+const Case reallocOverflow{"Realloc_SizeOverflowingHeader_ThrowsLengthErrorAndKeepsOriginal", [] {
+    RequireEqual(RunChild(L"overflow-realloc"), DWORD {0}, "overflow-realloc child exit code (bit mask of failed checks)");
+}};
+
+} // namespace
 
 int main(int argc, char** argv) {
-    if (argc == 2) SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-    if (argc == 2 && std::strcmp(argv[1], "overflow-malloc") == 0) return runMallocOverflow();
-    if (argc == 2 && std::strcmp(argv[1], "overflow-realloc") == 0) return runReallocOverflow();
-    if (argc != 1) return 10;
-    registerDefaultHeap();
-    if (!checkThreshold(MaximumSmallBlockBytes - HeaderBytes, 0x31) ||
-        !checkThreshold(MaximumSmallBlockBytes - HeaderBytes + 1, 0x72)) return 11;
-    return runGuardedCases();
+    if (argc == 2 && std::strcmp(argv[1], "overflow-malloc") == 0) {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        return RunMallocOverflow();
+    }
+    if (argc == 2 && std::strcmp(argv[1], "overflow-realloc") == 0) {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        return RunReallocOverflow();
+    }
+    return Testing::Run(argc, argv);
 }

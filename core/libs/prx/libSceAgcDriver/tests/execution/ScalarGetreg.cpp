@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -48,17 +47,22 @@ ShaderRecompiler::RecompileRequest Request(AgcDriver::VulkanDevice& device, std:
     return request;
 }
 
-void ExpectRefused(AgcDriver::VulkanDevice& device, std::uint32_t word, const char* what) {
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    Testing::Fail(message);
+}
+
+void RequireRefused(AgcDriver::VulkanDevice& device, std::uint32_t word, const char* what) {
     alignas(256) const std::array<std::uint32_t, 2> code{word, 0xbf810000u};
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span<const std::uint32_t>(code))}}};
     const std::vector<std::uint32_t> userData(8, 0u);
-    std::string refusal;
-    try {
-        static_cast<void>(ShaderRecompiler::Recompile(Request(device, code, userData, memory)));
-    } catch (const std::exception& error) {
-        refusal = error.what();
-    }
-    Require(refusal.find("only the MODE round mode fields are modeled") != std::string::npos, std::string("s_getreg_b32 reading ") + what + " was not refused");
+    const auto refusal = RequireRefusal([&] { static_cast<void>(ShaderRecompiler::Recompile(Request(device, code, userData, memory))); }, std::string("s_getreg_b32 reading ") + what + " was not refused");
+    Testing::Require(refusal.find("only the MODE round mode fields are modeled") != std::string::npos, std::string("s_getreg_b32 reading ") + what + " was refused for another reason: " + refusal);
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -78,25 +82,23 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t index = 0; index < names.size(); ++index) {
             const std::uint32_t actual = Output[tid * Results + index];
-            Require(actual == 0u, std::string("s_getreg_b32: lane ") + std::to_string(tid) + " " + names[index] + " is " + Hex(actual) + ", expected 0x00000000");
+            Testing::Require(actual == 0u, std::string("s_getreg_b32: lane ") + std::to_string(tid) + " " + names[index] + " is " + Hex(actual) + ", expected 0x00000000");
         }
     }
 }
 
-}
+const Testing::Case readModeRoundFields{"GetregMode_RoundModeFields_ReadZeroInEveryLane", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        ExpectRefused(*device, 0xb9141901u, "the MODE denormal fields");
-        ExpectRefused(*device, 0xb914f804u, "hardware register 4");
-        std::puts("s_getreg_b32 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case refuseModeDenormalFields{"GetregMode_DenormalFields_AreRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0xb9141901u, "the MODE denormal fields");
+}};
+
+const Testing::Case refuseHardwareRegister4{"GetregHardwareRegister4_IsRefused", [] {
+    RequireRefused(SharedVulkanTestDevice(), 0xb914f804u, "hardware register 4");
+}};
+
+} // namespace

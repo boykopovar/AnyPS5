@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -268,26 +267,31 @@ void Check(const std::uint32_t (&expected)[Lanes][Checked]) {
     }
 }
 
+
+AgcDriver::VulkanDevice& Wave32Device() {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    return device;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device, Wave32Code, 32, device->ComputeTarget(32));
-        Check(Expected32);
-        Run(*device, Wave64Code, 64, device->Target());
-        Check(Expected64);
-        Run(*device, Wave64Code, 64, device->ComputeTarget(32));
-        Check(Expected64);
-        std::puts("permlane16 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32{"Permlane16_Wave32_PermutesWithinRows", [] {
+    auto& device = Wave32Device();
+    Run(device, Wave32Code, 32, device.ComputeTarget(32));
+    Check(Expected32);
+}};
+
+const Testing::Case wave64{"Permlane16_Wave64_PermutesWithinRows", [] {
+    auto& device = Wave32Device();
+    Run(device, Wave64Code, 64, device.Target());
+    Check(Expected64);
+}};
+
+const Testing::Case wave64Split{"Permlane16_Wave64OnThirtyTwoLaneSubgroups_PermutesWithinRows", [] {
+    auto& device = Wave32Device();
+    Run(device, Wave64Code, 64, device.ComputeTarget(32));
+    Check(Expected64);
+}};
+
+} // namespace

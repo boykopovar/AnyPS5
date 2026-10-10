@@ -14,14 +14,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -548,23 +547,15 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest) {
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        std::memset(guest.Data(), 0, BlockBytes);
-        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-            std::memcpy(guest.Data() + tid * 16u, Rows[tid].input.data(), 16u);
-        }
-        std::memcpy(guest.Data() + RegionOffset, Region.data(), Region.size());
-        Run(*device, guest);
-        std::puts("flat d16 loads tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case wave32D16Loads{"FlatD16Loads_Wave32_MatchesReferenceLanes", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    std::memset(guest.Data(), 0, BlockBytes);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        std::memcpy(guest.Data() + tid * 16u, Rows[tid].input.data(), 16u);
     }
-}
+    std::memcpy(guest.Data() + RegionOffset, Region.data(), Region.size());
+    Run(device, guest);
+}};
+
+} // namespace

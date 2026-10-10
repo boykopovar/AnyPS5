@@ -14,14 +14,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Width = 64;
@@ -208,30 +207,43 @@ void Check(std::uint32_t waveSize, std::uint32_t pass) {
     }
 }
 
+
+AgcDriver::VulkanDevice& InterlockDevice() {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityFragmentShaderPixelInterlockEXT, "the device lacks fragmentShaderPixelInterlock");
+    return device;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT)) {
-            std::puts("skipped, the device lacks fragmentShaderPixelInterlock");
-            return VulkanTestSkipped;
-        }
-        GuestCounters guest;
-        for (const auto waveSize : {64u, 32u}) {
-            for (std::uint32_t pass = 0; pass < 3; ++pass) {
-                Draw(*device, waveSize);
-                Check(waveSize, pass);
-            }
-            DrawFault(*device, waveSize, guest);
-            Draw(*device, waveSize);
-            Check(waveSize, 3);
-        }
-        std::printf("pixel interlock tests passed: 10 draws of %u overlapping triangles over %u pixels, 2 of them with a killed BDA fault in every %uth column\n", Layers, Width * Height, FaultColumns);
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void CheckRepeatedDraws(std::uint32_t waveSize) {
+    auto& device = InterlockDevice();
+    for (std::uint32_t pass = 0; pass < 3; ++pass) {
+        Draw(device, waveSize);
+        Check(waveSize, pass);
     }
 }
+
+void CheckFaultRecovery(std::uint32_t waveSize) {
+    auto& device = InterlockDevice();
+    GuestCounters guest;
+    DrawFault(device, waveSize, guest);
+    Draw(device, waveSize);
+    Check(waveSize, 3);
+}
+
+const Testing::Case wave64Overlap{"PixelInterlock_Wave64OverlappingTriangles_SerializeReadModifyWrites", [] {
+    CheckRepeatedDraws(64u);
+}};
+
+const Testing::Case wave64Fault{"PixelInterlock_Wave64KilledBdaFault_LeavesOtherPixelsCountedAndNextDrawIntact", [] {
+    CheckFaultRecovery(64u);
+}};
+
+const Testing::Case wave32Overlap{"PixelInterlock_Wave32OverlappingTriangles_SerializeReadModifyWrites", [] {
+    CheckRepeatedDraws(32u);
+}};
+
+const Testing::Case wave32Fault{"PixelInterlock_Wave32KilledBdaFault_LeavesOtherPixelsCountedAndNextDrawIntact", [] {
+    CheckFaultRecovery(32u);
+}};
+
+} // namespace

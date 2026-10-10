@@ -6,13 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -120,23 +119,25 @@ void Check(const char* run) {
     }
 }
 
-}
+const Testing::Case wave32{"ImageAtomicsBitwise_Wave32_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, 32, device.Target());
+    Check("wave32");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        Run(*device, 32, device->Target());
-        Check("wave32");
-        Run(*device, 64, device->Target());
-        Check("wave64");
-        Run(*device, 64, device->ComputeTarget(32));
-        Check("wave64 split");
-        std::puts("image atomics bitwise tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave64{"ImageAtomicsBitwise_Wave64_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, 64, device.Target());
+    Check("wave64");
+}};
+
+const Testing::Case wave64Split{"ImageAtomicsBitwise_Wave64SplitAcrossSubgroups_ReturnOriginalAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    Run(device, 64, device.ComputeTarget(32));
+    Check("wave64 split");
+}};
+
+} // namespace

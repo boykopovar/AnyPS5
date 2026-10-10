@@ -1,10 +1,11 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <stdexcept>
 
 extern "C" {
@@ -20,18 +21,11 @@ constexpr std::uint32_t Sentinel = 0xabcdef01u;
 constexpr std::uint64_t Destination = 0x0000778899aabbccull;
 constexpr std::uint64_t Source = 0x0000112233445566ull;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using Testing::Require;
 
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("expected invalid input to fail");
+template<typename TAction>
+void ExpectFailure(TAction action) {
+    Testing::RequireThrows<std::runtime_error>(action, "expected invalid input to fail");
 }
 
 struct Storage {
@@ -56,39 +50,42 @@ std::uint32_t* writeDraw(CommandBuffer* buffer) {
 }
 
 template <typename TWriter, typename TSize>
-void testCommand(TWriter writer, TSize size, std::uint32_t control) {
+void VerifyCommand(TWriter writer, TSize size, std::uint32_t control) {
     const std::array expected{0xc0055000u, control, 0x33445566u, 0x1122u, 0x99aabbccu, 0x7788u, 0xd8001234u};
     const auto count = static_cast<std::uint32_t>(expected.size());
-    check(size() == count * sizeof(std::uint32_t), "size query does not match the DMA packet");
+    Require(size() == count * sizeof(std::uint32_t), "size query does not match the DMA packet");
 
     Storage storage;
     auto* packet = writer(&storage.buffer);
-    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect DMA packet");
-    check(storage.buffer.cursor_up == packet + size() / sizeof(std::uint32_t), "cursor advance does not match the size query");
-    check(std::all_of(storage.words.begin() + count, storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "DMA command overwrote following words");
+    Require(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect DMA packet");
+    Require(storage.buffer.cursor_up == packet + size() / sizeof(std::uint32_t), "cursor advance does not match the size query");
+    Require(std::all_of(storage.words.begin() + count, storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "DMA command overwrote following words");
 
     Storage exact;
     exact.limitTo(size() / sizeof(std::uint32_t));
-    check(writer(&exact.buffer) == exact.words.data() && exact.buffer.cursor_up == exact.buffer.cursor_down, "DMA packet does not fill the queried size");
+    Require(writer(&exact.buffer) == exact.words.data() && exact.buffer.cursor_up == exact.buffer.cursor_down, "DMA packet does not fill the queried size");
 
     Storage shortBuffer;
     shortBuffer.limitTo(size() / sizeof(std::uint32_t) - 1u);
     const auto before = shortBuffer.words;
-    expectFailure([&] { writer(&shortBuffer.buffer); });
-    check(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(), "failed DMA write modified the buffer");
+    ExpectFailure([&] { writer(&shortBuffer.buffer); });
+    Require(shortBuffer.words == before && shortBuffer.buffer.cursor_up == shortBuffer.words.data(), "failed DMA write modified the buffer");
 }
 
 }
 
-int main() {
-    try {
-        testCommand(writeCompute, sceAgcAcbDmaDataGetSize, 0x44102000u);
-        testCommand(writeDraw, sceAgcDcbDmaDataGetSize, 0xc4102001u);
-        check(sceAgcAcbDmaDataGetSize() == sceAgcDcbDmaDataGetSize(), "compute and draw DMA sizes differ");
-        std::puts("AGC DMA data tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
-    }
-}
+namespace {
+
+const Testing::Case compute{"AcbDmaData_Buffers_WritesSizedPacketOrRejectsShortBuffer", [] {
+    VerifyCommand(writeCompute, sceAgcAcbDmaDataGetSize, 0x44102000u);
+}};
+
+const Testing::Case draw{"DcbDmaData_Buffers_WritesSizedPacketOrRejectsShortBuffer", [] {
+    VerifyCommand(writeDraw, sceAgcDcbDmaDataGetSize, 0xc4102001u);
+}};
+
+const Testing::Case sizes{"DmaDataGetSize_ComputeAndDraw_AreEqual", [] {
+    Require(sceAgcAcbDmaDataGetSize() == sceAgcDcbDmaDataGetSize(), "compute and draw DMA sizes differ");
+}};
+
+} // namespace

@@ -17,14 +17,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -214,31 +213,48 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32
     }
 }
 
+AgcDriver::VulkanDevice& SrgbDecodingDevice() {
+#ifdef _WIN32
+    _putenv_s("APS5_SRGB_SHADER_DECODE", "1");
+#else
+    setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
+#endif
+    return SharedVulkanTestDevice();
 }
 
-int main() {
-    try {
-#ifdef _WIN32
-        _putenv_s("APS5_SRGB_SHADER_DECODE", "1");
-#else
-        setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
-#endif
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        CheckLoad(*device, LoadXyzw, 0xfu, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0xf X Y 0 1");
-        CheckLoad(*device, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10, "8_8_SRGB image_load dmask:0xf Y X 1 0");
-        CheckLoad(*device, LoadXy, 0x3u, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0x3 X Y 0 1");
-        CheckLoad(*device, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1, "8_SRGB image_load dmask:0xf X X X 1");
-        GuestBlock block;
-        CheckStoredLoad(*device, block, LoadXy, 0x3u, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0x3 X Y 0 1 of 8_8_UNORM image_stores");
-        CheckStoredLoad(*device, block, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10, "8_8_SRGB image_load dmask:0xf Y X 1 0 of 8_8_UNORM image_stores");
-        CheckStoredLoad(*device, block, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1, "8_SRGB image_load dmask:0xf X X X 1 of 8_UNORM image_stores");
-        RequireRefused(*device, SampleLz, "image_sample_lz");
-        RequireRefused(*device, Gather4Lz, "image_gather4_lz");
-        std::puts("image sRGB load tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case load8_8{"ImageSrgbLoad_Load8_8SrgbWithSwizzles_DecodesTexels", [] {
+    auto& device = SrgbDecodingDevice();
+    CheckLoad(device, LoadXyzw, 0xfu, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0xf X Y 0 1");
+    CheckLoad(device, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10, "8_8_SRGB image_load dmask:0xf Y X 1 0");
+    CheckLoad(device, LoadXy, 0x3u, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0x3 X Y 0 1");
+}};
+
+const Testing::Case load8{"ImageSrgbLoad_Load8Srgb_DecodesTexels", [] {
+    auto& device = SrgbDecodingDevice();
+    CheckLoad(device, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1, "8_SRGB image_load dmask:0xf X X X 1");
+}};
+
+const Testing::Case storedLoad8_8{"ImageSrgbLoad_Load8_8SrgbOfPendingUnormStores_DecodesTexels", [] {
+    auto& device = SrgbDecodingDevice();
+    GuestBlock block;
+    CheckStoredLoad(device, block, LoadXy, 0x3u, Srgb8_8, SwizzleXY01, "8_8_SRGB image_load dmask:0x3 X Y 0 1 of 8_8_UNORM image_stores");
+    CheckStoredLoad(device, block, LoadXyzw, 0xfu, Srgb8_8, SwizzleYX10, "8_8_SRGB image_load dmask:0xf Y X 1 0 of 8_8_UNORM image_stores");
+}};
+
+const Testing::Case storedLoad8{"ImageSrgbLoad_Load8SrgbOfPendingUnormStores_DecodesTexels", [] {
+    auto& device = SrgbDecodingDevice();
+    GuestBlock block;
+    CheckStoredLoad(device, block, LoadXyzw, 0xfu, Srgb8, SwizzleXXX1, "8_SRGB image_load dmask:0xf X X X 1 of 8_UNORM image_stores");
+}};
+
+const Testing::Case sampleRefused{"ImageSrgbLoad_SampleUndecodableSrgb_IsRefused", [] {
+    auto& device = SrgbDecodingDevice();
+    RequireRefused(device, SampleLz, "image_sample_lz");
+}};
+
+const Testing::Case gatherRefused{"ImageSrgbLoad_GatherUndecodableSrgb_IsRefused", [] {
+    auto& device = SrgbDecodingDevice();
+    RequireRefused(device, Gather4Lz, "image_gather4_lz");
+}};
+
+} // namespace

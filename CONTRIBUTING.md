@@ -12,6 +12,7 @@
 - Avoid non-standard extensions (`__attribute__`, etc.) where standard C++ is enough. Helper symbols that must not become NIDs use the `_nid_no_patch` or `_nid_no_patch_cut` suffix.
 - The relinker uses only the C++20 standard library.
 - Third-party code is added as a submodule under `3rdparty/` and built from source, not found on the system.
+- Write tests with the [test framework](docs/dev/TESTING.md): named cases, one behaviour each, registered with a label (`unit`, `integration`, `gpu`, `e2e` or `tooling`).
 - Don't add tests that only check that a symbol is exported: a missing export already fails at startup.
 - Each test finishes in 30 s on the CI runners, Vulkan tests included (Linux runs them on lavapipe), counting the first run with no shader cache. ctest runs in parallel there, so a slow test competes for the cores and times out on some runs and not others. Split or shrink a test that gets close instead of raising its timeout. CI reports every test over 30 s as a warning on the pull request.
 
@@ -26,6 +27,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+`ctest --test-dir build -L unit` runs only the unit tests; see [testing](docs/dev/TESTING.md#layout-and-labels) for the other labels.
 
 Python 3 is optional; without it some relinker tests are not registered.
 

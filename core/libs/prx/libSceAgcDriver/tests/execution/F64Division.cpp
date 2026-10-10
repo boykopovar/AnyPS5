@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -145,7 +144,6 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 7; ++i) {
             Expect(tid, out[2 * i], Expected[tid][2 * i], Names[i]);
@@ -155,22 +153,11 @@ void Check() {
     }
 }
 
-}
+const Testing::Case divisionHelpers{"F64Division_DivScaleFmasFixup_MatchesReferenceBits", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityFloat64, "the device has no shaderFloat64");
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
-            std::puts("skipped, the device has no shaderFloat64");
-            return VulkanTestSkipped;
-        }
-        Run(*device);
-        Check();
-        std::puts("f64 division tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

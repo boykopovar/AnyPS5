@@ -1,19 +1,17 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
 #include <filesystem>
-#include <iostream>
-#include <stdexcept>
+#include <source_location>
 #include <string>
-#include <vector>
 
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using namespace Testing;
 
 const Bytes kCode = {0xC3};
 
@@ -34,15 +32,16 @@ constexpr std::uint64_t kOffsetBeforeEnd = kImageSize - 16;
 constexpr std::size_t kRelaEntry = kCodeOffset + 0x700;
 constexpr std::uint64_t kRelativeEntryInfo = 8;
 
+const std::string kTableError = "Relocation table is out of bounds";
+const std::string kUnmappedError = "Virtual address not mapped by any PT_LOAD segment";
+
 struct OutputMode {
     std::string Flag;
     std::string Name;
 };
 
-const std::vector<OutputMode>& OutputModes() {
-    static const std::vector<OutputMode> modes{{"--windows", "windows"}, {"--to-intel", "intel"}};
-    return modes;
-}
+const OutputMode kWindows{"--windows", "windows"};
+const OutputMode kIntel{"--to-intel", "intel"};
 
 void WriteTag(Bytes& image, const std::size_t index, const std::int64_t tag, const std::uint64_t value) {
     Write<std::int64_t>(image, kTagBase + index * kTagStride, tag);
@@ -65,62 +64,138 @@ Bytes ImageWithRelocationTable(const std::int64_t offsetTag, const std::int64_t 
     return image;
 }
 
-void RunAndRequireAccepted(const std::string& binary, const Bytes& image, const OutputMode& mode, const std::string& what) {
-    const TempDirectory directory;
+Bytes ImageWithFittingTable() {
+    Bytes image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 24);
+    WriteRelativeEntry(image);
+    return image;
+}
+
+void RequireAccepted(const Bytes& image, const OutputMode& mode, const std::string& what,
+                     std::source_location location = std::source_location::current()) {
+    const TemporaryDirectory directory;
     const auto input = directory.Path() / "input.elf";
     const auto output = directory.Path() / ("output." + mode.Name);
     WriteFile(input, image);
-    const auto run = RunRelinker(binary, {"--skip-sce-module", mode.Flag, input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode == 0 && std::filesystem::exists(output),
-            "Relinker rejected " + what + " for " + mode.Flag + ":\n" + run.Output);
+
+    const auto run = RunRelinker(RequireArgument(0, "relinker"), {"--skip-sce-module", mode.Flag, input.string(), output.string()},
+                                 directory.Path() / "relinker.log");
+
+    Require(run.ExitCode == 0 && std::filesystem::exists(output), "Relinker rejected " + what + " for " + mode.Flag + ":\n" + run.Output, location);
 }
 
-void RunAndRequireRejected(const std::string& binary, const Bytes& image, const OutputMode& mode, const std::string& what, const std::string& expected) {
-    const TempDirectory directory;
+void RequireRejected(const Bytes& image, const OutputMode& mode, const std::string& what, const std::string& expected,
+                     std::source_location location = std::source_location::current()) {
+    const TemporaryDirectory directory;
     const auto input = directory.Path() / "input.elf";
     const auto output = directory.Path() / ("output." + mode.Name);
     WriteFile(input, image);
-    const auto run = RunRelinker(binary, {"--skip-sce-module", mode.Flag, input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode != 0 && !std::filesystem::exists(output),
-            "Relinker accepted " + what + " for " + mode.Flag + ":\n" + run.Output);
-    require(run.Output.find(expected) != std::string::npos,
-            "Relinker did not report " + expected + " for " + what + ":\n" + run.Output);
+
+    const auto run = RunRelinker(RequireArgument(0, "relinker"), {"--skip-sce-module", mode.Flag, input.string(), output.string()},
+                                 directory.Path() / "relinker.log");
+
+    Require(run.ExitCode != 0 && !std::filesystem::exists(output), "Relinker accepted " + what + " for " + mode.Flag + ":\n" + run.Output, location);
+    Require(run.Output.find(expected) != std::string::npos, "Relinker did not report " + expected + " for " + what + ":\n" + run.Output, location);
 }
 
+void RequireEmptyTableAccepted(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireAccepted(ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0), mode, "an empty relocation table in the file", location);
 }
 
-int main(const int argc, char** argv) {
-    try {
-        require(argc == 2, "usage: reloc_table_bounds_tests <relinker>");
-        const std::string binary = argv[1];
-        const std::string tableError = "Relocation table is out of bounds";
-        const std::string unmappedError = "Virtual address not mapped by any PT_LOAD segment";
-
-        for (const auto& mode : OutputModes()) {
-            RunAndRequireAccepted(binary, ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0), mode, "an empty relocation table in the file");
-            RunAndRequireAccepted(binary, ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kRelaEntry, 0), mode, "an empty DT_OS_RELA table in the file");
-
-            {
-                Bytes image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 24);
-                WriteRelativeEntry(image);
-                RunAndRequireAccepted(binary, image, mode, "a relocation table that fits in the file");
-            }
-
-            RunAndRequireRejected(binary, ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kOffsetPastEnd, 0), mode,
-                                  "an empty relocation table whose offset is past the end of the file", tableError);
-            RunAndRequireRejected(binary, ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0xFFFFFFFFFFFFFFFFull, 0), mode,
-                                  "an empty relocation table whose offset is near UINT64_MAX", tableError);
-            RunAndRequireRejected(binary, ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kOffsetBeforeEnd, 0x108), mode,
-                                  "a relocation table that does not fit in the file", tableError);
-            RunAndRequireRejected(binary, ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0xFFFFFFFFFFFFFFF0ull), mode,
-                                  "a relocation table whose size does not fit in the file", tableError);
-            RunAndRequireRejected(binary, ImageWithRelocationTable(kDtRela, kDtRelaSz, kUnmappedVaddr, 0), mode,
-                                  "a relocation table whose address no segment maps", unmappedError);
-        }
-
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << "reloc_table_bounds_tests: " << error.what() << '\n';
-        return 1;
-    }
+void RequireEmptyOsTableAccepted(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireAccepted(ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kRelaEntry, 0), mode, "an empty DT_OS_RELA table in the file", location);
 }
+
+void RequireFittingTableAccepted(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireAccepted(ImageWithFittingTable(), mode, "a relocation table that fits in the file", location);
+}
+
+void RequireEmptyTablePastEndRejected(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireRejected(ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kOffsetPastEnd, 0), mode,
+                    "an empty relocation table whose offset is past the end of the file", kTableError, location);
+}
+
+void RequireEmptyTableNearMaximumRejected(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireRejected(ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0xFFFFFFFFFFFFFFFFull, 0), mode,
+                    "an empty relocation table whose offset is near UINT64_MAX", kTableError, location);
+}
+
+void RequireTablePastEndRejected(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireRejected(ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kOffsetBeforeEnd, 0x108), mode,
+                    "a relocation table that does not fit in the file", kTableError, location);
+}
+
+void RequireHugeSizeRejected(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireRejected(ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0xFFFFFFFFFFFFFFF0ull), mode,
+                    "a relocation table whose size does not fit in the file", kTableError, location);
+}
+
+void RequireUnmappedTableRejected(const OutputMode& mode, std::source_location location = std::source_location::current()) {
+    RequireRejected(ImageWithRelocationTable(kDtRela, kDtRelaSz, kUnmappedVaddr, 0), mode,
+                    "a relocation table whose address no segment maps", kUnmappedError, location);
+}
+
+const Case windowsEmptyTable{"Relinker_WindowsEmptyRelaTableInFile_AcceptsTable", [] {
+    RequireEmptyTableAccepted(kWindows);
+}};
+
+const Case intelEmptyTable{"Relinker_IntelEmptyRelaTableInFile_AcceptsTable", [] {
+    RequireEmptyTableAccepted(kIntel);
+}};
+
+const Case windowsEmptyOsTable{"Relinker_WindowsEmptyOsRelaTableInFile_AcceptsTable", [] {
+    RequireEmptyOsTableAccepted(kWindows);
+}};
+
+const Case intelEmptyOsTable{"Relinker_IntelEmptyOsRelaTableInFile_AcceptsTable", [] {
+    RequireEmptyOsTableAccepted(kIntel);
+}};
+
+const Case windowsFittingTable{"Relinker_WindowsRelaTableFittingInFile_AcceptsTable", [] {
+    RequireFittingTableAccepted(kWindows);
+}};
+
+const Case intelFittingTable{"Relinker_IntelRelaTableFittingInFile_AcceptsTable", [] {
+    RequireFittingTableAccepted(kIntel);
+}};
+
+const Case windowsEmptyTablePastEnd{"Relinker_WindowsEmptyTableOffsetPastEndOfFile_RejectsTable", [] {
+    RequireEmptyTablePastEndRejected(kWindows);
+}};
+
+const Case intelEmptyTablePastEnd{"Relinker_IntelEmptyTableOffsetPastEndOfFile_RejectsTable", [] {
+    RequireEmptyTablePastEndRejected(kIntel);
+}};
+
+const Case windowsEmptyTableNearMaximum{"Relinker_WindowsEmptyTableOffsetNearUint64Max_RejectsTable", [] {
+    RequireEmptyTableNearMaximumRejected(kWindows);
+}};
+
+const Case intelEmptyTableNearMaximum{"Relinker_IntelEmptyTableOffsetNearUint64Max_RejectsTable", [] {
+    RequireEmptyTableNearMaximumRejected(kIntel);
+}};
+
+const Case windowsTablePastEnd{"Relinker_WindowsTableExtendingPastEndOfFile_RejectsTable", [] {
+    RequireTablePastEndRejected(kWindows);
+}};
+
+const Case intelTablePastEnd{"Relinker_IntelTableExtendingPastEndOfFile_RejectsTable", [] {
+    RequireTablePastEndRejected(kIntel);
+}};
+
+const Case windowsHugeSize{"Relinker_WindowsTableSizeNearUint64Max_RejectsTable", [] {
+    RequireHugeSizeRejected(kWindows);
+}};
+
+const Case intelHugeSize{"Relinker_IntelTableSizeNearUint64Max_RejectsTable", [] {
+    RequireHugeSizeRejected(kIntel);
+}};
+
+const Case windowsUnmappedTable{"Relinker_WindowsTableAtUnmappedAddress_RejectsTable", [] {
+    RequireUnmappedTableRejected(kWindows);
+}};
+
+const Case intelUnmappedTable{"Relinker_IntelTableAtUnmappedAddress_RejectsTable", [] {
+    RequireUnmappedTableRejected(kIntel);
+}};
+
+} // namespace

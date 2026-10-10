@@ -12,7 +12,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -142,41 +142,40 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Check() {
+bool HostFuses() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        if (Rows[tid].fused != Rows[tid].separate && Output[tid * Results] == Rows[tid].fused) return true;
+    }
+    return false;
+}
+
+void Check(std::uint32_t firstColumn, std::uint32_t endColumn) {
     constexpr std::array<const char*, 11> names{
         "v_fma_f32", "v_fmac_f32", "v_fmaak_f32", "v_fmamk_f32", "v_fma_mix_f32", "v_mad_f32", "v_mac_f32", "v_madak_f32", "v_madmk_f32", "v_mul_f32 + v_add_f32", "v_mac_f32_e64",
     };
-    bool hostFuses = false;
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        hostFuses = hostFuses || (Rows[tid].fused != Rows[tid].separate && Output[tid * Results] == Rows[tid].fused);
-    }
-    if (!hostFuses) {
-        std::puts("the device splits fma into a multiply and an add, so the fused forms are not checked");
-    }
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto& row = Rows[tid];
         const std::array<std::uint32_t, 11> expected{
             row.fused, row.fused, row.fusedAk, row.fusedMk, row.fused, row.separate, row.separate, row.separateAk, row.separateMk, row.separate, row.separate,
         };
-        for (std::uint32_t j = hostFuses ? 0u : 5u; j < expected.size(); ++j) {
+        for (std::uint32_t j = firstColumn; j < endColumn; ++j) {
             const auto actual = Output[tid * Results + j];
             Require(actual == expected[j], std::string("fma rounding: lane ") + std::to_string(tid) + " " + names[j] + " is " + Hex(actual) + ", expected " + Hex(expected[j]));
         }
     }
 }
 
-}
+const Testing::Case fusedForms{"FmaRounding_FusedForms_RoundOnceLikeTheHost", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    if (!HostFuses()) Testing::Skip("the device splits fma into a multiply and an add, so the fused forms are not checked");
+    Check(0u, 5u);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("fma rounding tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case separateForms{"FmaRounding_MadAndMacForms_RoundTheProductAndTheSumSeparately", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check(5u, 11u);
+}};
+
+} // namespace

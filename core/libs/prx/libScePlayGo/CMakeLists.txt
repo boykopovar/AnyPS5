@@ -3,13 +3,8 @@ target_include_directories(libScePlayGo PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libScePlayGo)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_playgo_tests ${LIBS_INCLUDE_DIR}/tests/GuestPlayGo.cpp)
-    target_include_directories(guest_playgo_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_playgo_tests PRIVATE libScePlayGo libc)
-    configure_windows_unwind(guest_playgo_tests)
-    add_test(NAME guest_playgo COMMAND guest_playgo_tests)
-    if(WIN32)
-        set_tests_properties(guest_playgo PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayGo>")
-    endif()
+    anyps5_add_library_test(guest_playgo_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestPlayGo.cpp
+        LINK libScePlayGo libc
+    )
 endif()

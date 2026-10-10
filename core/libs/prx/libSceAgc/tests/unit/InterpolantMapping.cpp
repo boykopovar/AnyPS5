@@ -3,6 +3,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <algorithm>
 #include <cstdint>
@@ -22,19 +24,19 @@ Registers preparedMapping{};
 unsigned mappings = 0;
 unsigned links = 0;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using Testing::Require;
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template<typename TAction>
+void ExpectFailure(TAction action) {
     try {
         action();
+    } catch (const Testing::Failure&) {
+        throw;
     } catch (const std::exception& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
-    throw std::runtime_error("expected an exception");
+    Testing::Fail("expected an exception");
 }
 
 Registers filled() {
@@ -53,21 +55,21 @@ ShaderSemantic semantic(std::uint32_t id, std::uint32_t hardwareMapping, std::ui
 
 void checkIdentity(const Registers& regs, std::uint32_t first, const char* message) {
     for (std::uint32_t i = first; i < regs.size(); ++i) {
-        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && regs[i].value == i, message);
+        Require(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && regs[i].value == i, message);
     }
 }
 
-void testIdentity() {
+void VerifyIdentity() {
     auto regs = filled();
-    check(sceAgcUnknownCreateInterpolantMapping(regs.data(), nullptr, nullptr) == 0, "mapping without shaders failed");
+    Require(sceAgcUnknownCreateInterpolantMapping(regs.data(), nullptr, nullptr) == 0, "mapping without shaders failed");
     checkIdentity(regs, 0, "mapping without a pixel shader is not the identity");
     Shader ps{};
     regs = filled();
-    check(sceAgcUnknownCreateInterpolantMapping(regs.data(), nullptr, &ps) == 0, "mapping without inputs failed");
+    Require(sceAgcUnknownCreateInterpolantMapping(regs.data(), nullptr, &ps) == 0, "mapping without inputs failed");
     checkIdentity(regs, 0, "mapping without inputs is not the identity");
 }
 
-void testMapping() {
+void VerifyMapping() {
     std::array<ShaderSemantic, 5> inputs{
         semantic(1, 0, 2), semantic(2, 0, 2), semantic(5, 0, 2), semantic(3, 0, 0), semantic(4, 0, 3)};
     inputs[0].is_flat_shaded = 1;
@@ -87,26 +89,26 @@ void testMapping() {
     ps.num_input_semantics = static_cast<std::uint32_t>(inputs.size());
 
     auto split = filled();
-    check(sceAgcUnknownCreateInterpolantMapping(split.data(), &gs, &ps) == 0, "split f16 mapping failed");
-    check(std::memcmp(split.data(), preparedMapping.data(), sizeof(split)) == 0, "prepared split mapping differs from published registers");
+    Require(sceAgcUnknownCreateInterpolantMapping(split.data(), &gs, &ps) == 0, "split f16 mapping failed");
+    Require(std::memcmp(split.data(), preparedMapping.data(), sizeof(split)) == 0, "prepared split mapping differs from published registers");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(split[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "interpolant register offset changed");
+        Require(split[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "interpolant register offset changed");
     }
-    check(split[0].value == 0x02680707u, "high f16 half provided by the gs is not mapped");
-    check(split[1].value == 0x02280124u, "high f16 half missing from the gs does not use its default");
-    check(split[2].value == 0x02480220u, "unmatched high f16 half does not use its default");
-    check(split[3].value == 0x00000609u, "32-bit interpolant mapping changed");
-    check(split[4].value == 0x03180002u, "full f16 interpolant mapping changed");
+    Require(split[0].value == 0x02680707u, "high f16 half provided by the gs is not mapped");
+    Require(split[1].value == 0x02280124u, "high f16 half missing from the gs does not use its default");
+    Require(split[2].value == 0x02480220u, "unmatched high f16 half does not use its default");
+    Require(split[3].value == 0x00000609u, "32-bit interpolant mapping changed");
+    Require(split[4].value == 0x03180002u, "full f16 interpolant mapping changed");
     checkIdentity(split, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 
     auto regular = filled();
-    check(sceAgcCreateInterpolantMapping_0100(regular.data(), &gs, &ps) == 0, "mapping failed");
-    check(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
-    check(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
+    Require(sceAgcCreateInterpolantMapping_0100(regular.data(), &gs, &ps) == 0, "mapping failed");
+    Require(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
+    Require(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
     checkIdentity(regular, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 }
 
-void testRejections() {
+void VerifyRejections() {
     std::array<ShaderSemantic, 33> inputs{};
     Shader gs{};
     Shader ps{};
@@ -115,41 +117,61 @@ void testRejections() {
     std::array<ShaderRegister, 64> regs{};
     std::memset(regs.data(), 0xcc, sizeof(regs));
     const auto saved = regs;
-    expectFailure([&] { sceAgcCreateInterpolantMapping_0100(regs.data(), &gs, &ps); });
-    expectFailure([&] { sceAgcUnknownCreateInterpolantMapping(regs.data(), &gs, &ps); });
-    check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected mapping wrote registers");
+    ExpectFailure([&] { sceAgcCreateInterpolantMapping_0100(regs.data(), &gs, &ps); });
+    ExpectFailure([&] { sceAgcUnknownCreateInterpolantMapping(regs.data(), &gs, &ps); });
+    Require(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected mapping wrote registers");
     ps.num_input_semantics = 1;
-    expectFailure([&] { sceAgcUnknownCreateInterpolantMapping(regs.data(), nullptr, &ps); });
-    expectFailure([&] { sceAgcUnknownCreateInterpolantMapping(nullptr, &gs, &ps); });
+    ExpectFailure([&] { sceAgcUnknownCreateInterpolantMapping(regs.data(), nullptr, &ps); });
+    ExpectFailure([&] { sceAgcUnknownCreateInterpolantMapping(nullptr, &gs, &ps); });
 }
 
 }
 
 extern "C" void AgcDriverResolveShaderAbi_nid_postfix(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
-    check(shader != nullptr && context.size() == preparedMapping.size() && primitive.empty(), "invalid mapping preparation call");
+    Require(shader != nullptr && context.size() == preparedMapping.size() && primitive.empty(), "invalid mapping preparation call");
     mappedPixel = shader;
     std::copy(context.begin(), context.end(), preparedMapping.begin());
     ++mappings;
 }
 
 extern "C" void AgcDriverResolveGraphicsAbi_nid_postfix(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
-    check(vertex != nullptr && pixel == mappedPixel && primitiveType == 0u, "invalid mapping link call");
+    Require(vertex != nullptr && pixel == mappedPixel && primitiveType == 0u, "invalid mapping link call");
     ++links;
 }
 
-int main() {
-    try {
-        testIdentity();
-        testMapping();
-        testRejections();
-        check(mappings == 3u && links == 2u, "mapping preparation call count changed");
-        LibcRunShutdown_nid_postfix();
-        std::puts("AGC interpolant mapping tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
-        return 1;
-    }
+namespace {
+
+struct HookCalls {
+    unsigned mappings;
+    unsigned links;
+};
+
+template<typename TBody>
+void RequireHookCalls(HookCalls expected, TBody body) {
+    mappings = 0;
+    links = 0;
+    mappedPixel = nullptr;
+    body();
+    Testing::RequireEqual(mappings, expected.mappings, "mapping preparation calls");
+    Testing::RequireEqual(links, expected.links, "mapping link calls");
+}
+
+const Testing::Case identity{"CreateInterpolantMapping_NoShadersOrInputs_WritesIdentity", [] {
+    RequireHookCalls({1u, 0u}, [] { VerifyIdentity(); });
+}};
+
+const Testing::Case mapping{"CreateInterpolantMapping_F16AndFlatInputs_MapsGsOutputs", [] {
+    RequireHookCalls({2u, 2u}, [] { VerifyMapping(); });
+}};
+
+const Testing::Case rejections{"CreateInterpolantMapping_TooManyInputsOrMissingArguments_ThrowsWithoutWriting", [] {
+    RequireHookCalls({0u, 0u}, [] { VerifyRejections(); });
+}};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const int result = Testing::Run(argc, argv);
+    LibcRunShutdown_nid_postfix();
+    return result;
 }

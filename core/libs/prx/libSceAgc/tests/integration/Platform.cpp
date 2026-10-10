@@ -1,53 +1,50 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
-#include <cstdio>
 #include <stdexcept>
 
 extern "C" int APS5_VABI sceAgcGetIsTrinityMode(bool* isTrinityMode);
 
 namespace {
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+using Testing::Require;
+
+template<typename TAction>
+void ExpectFailure(TAction action) {
+    const auto error = Testing::RequireThrows<std::runtime_error>(action, "expected an exception");
+    Require(error.what()[0] != '\0', "empty exception message");
 }
 
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error& error) {
-        check(error.what()[0] != '\0', "empty exception message");
-        return;
-    }
-    throw std::runtime_error("expected an exception");
-}
-
-void testTrinityMode() {
+void VerifyTrinityMode() {
     std::array<bool, 3> flags{true, true, true};
-    check(sceAgcGetIsTrinityMode(&flags[1]) == 0, "Trinity mode query did not return 0");
-    check(!flags[1], "base PS5 GPU reported as Trinity");
-    check(flags[0] && flags[2], "Trinity mode query wrote past its one-byte flag");
+    Require(sceAgcGetIsTrinityMode(&flags[1]) == 0, "Trinity mode query did not return 0");
+    Require(!flags[1], "base PS5 GPU reported as Trinity");
+    Require(flags[0] && flags[2], "Trinity mode query wrote past its one-byte flag");
 }
 
-void testRejections() {
-    expectFailure([] { sceAgcGetIsTrinityMode(nullptr); });
+void VerifyRejections() {
+    ExpectFailure([] { sceAgcGetIsTrinityMode(nullptr); });
 }
 
 }
 
-int main() {
-    try {
-        testTrinityMode();
-        testRejections();
-        LibcRunShutdown_nid_postfix();
-        std::puts("AGC platform tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
-        return 1;
-    }
+namespace {
+
+const Testing::Case trinity{"GetIsTrinityMode_BasePs5_ReportsFalseWithoutOverrun", [] {
+    VerifyTrinityMode();
+}};
+
+const Testing::Case rejections{"GetIsTrinityMode_NullOutput_Throws", [] {
+    VerifyRejections();
+}};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const int result = Testing::Run(argc, argv);
+    LibcRunShutdown_nid_postfix();
+    return result;
 }

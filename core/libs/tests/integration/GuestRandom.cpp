@@ -1,26 +1,57 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
+#include <array>
 #include <cstddef>
-#include <cstdlib>
-#include <cstring>
 
 extern "C" {
 int APS5_VABI sceRandomGetRandomNumber(void*, std::size_t);
 }
-static void Require(bool value) { if (!value) std::abort(); }
-int main() {
-    constexpr int invalid = static_cast<int>(0x817C0016);
-    unsigned char buffer[80];
-    Require(sceRandomGetRandomNumber(nullptr, 16) == invalid);
-    std::memset(buffer, 0xAA, sizeof(buffer));
-    Require(sceRandomGetRandomNumber(buffer, 65) == invalid);
-    Require(buffer[0] == 0xAA);
-    Require(sceRandomGetRandomNumber(buffer, 0) == 0);
-    Require(buffer[0] == 0xAA);
-    Require(sceRandomGetRandomNumber(buffer, 7) == 0);
-    Require(buffer[7] == 0xAA);
-    unsigned char first[64] = {};
-    unsigned char second[64] = {};
-    Require(sceRandomGetRandomNumber(first, sizeof(first)) == 0);
-    Require(sceRandomGetRandomNumber(second, sizeof(second)) == 0);
-    Require(std::memcmp(first, second, sizeof(first)) != 0);
+
+namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int invalid = static_cast<int>(0x817C0016);
+constexpr unsigned char filler = 0xAA;
+
+std::array<unsigned char, 80> FilledBuffer() {
+    std::array<unsigned char, 80> buffer{};
+    buffer.fill(filler);
+    return buffer;
 }
+
+const Case nullBuffer{"GetRandomNumber_NullBuffer_ReturnsInvalid", [] {
+    RequireEqual(sceRandomGetRandomNumber(nullptr, 16), invalid, "null buffer");
+}};
+
+const Case oversizedRequest{"GetRandomNumber_SizeAbove64_ReturnsInvalidAndLeavesBufferUntouched", [] {
+    auto buffer = FilledBuffer();
+    RequireEqual(sceRandomGetRandomNumber(buffer.data(), 65), invalid, "65 byte request");
+    RequireEqual(buffer[0], filler, "first byte untouched");
+}};
+
+const Case zeroSize{"GetRandomNumber_ZeroSize_SucceedsWithoutWriting", [] {
+    auto buffer = FilledBuffer();
+    RequireEqual(sceRandomGetRandomNumber(buffer.data(), 0), 0, "zero byte request");
+    RequireEqual(buffer[0], filler, "first byte untouched");
+}};
+
+const Case partialRequest{"GetRandomNumber_SevenBytes_LeavesFollowingByteUntouched", [] {
+    auto buffer = FilledBuffer();
+    RequireEqual(sceRandomGetRandomNumber(buffer.data(), 7), 0, "seven byte request");
+    RequireEqual(buffer[7], filler, "byte after the requested range");
+}};
+
+const Case distinctResults{"GetRandomNumber_TwoFullRequests_ProduceDifferentBytes", [] {
+    std::array<unsigned char, 64> first{};
+    std::array<unsigned char, 64> second{};
+    RequireEqual(sceRandomGetRandomNumber(first.data(), first.size()), 0, "first request");
+    RequireEqual(sceRandomGetRandomNumber(second.data(), second.size()), 0, "second request");
+    Require(first != second, "two 64 byte requests returned identical bytes");
+}};
+
+} // namespace

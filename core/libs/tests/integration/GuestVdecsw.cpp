@@ -1,12 +1,16 @@
+#include "prx/libc/include/General.hpp"
+#include "H264Fixture.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <stdexcept>
+#include <exception>
 #include <string>
 #include <vector>
-#include "prx/libc/include/General.hpp"
-#include "H264Fixture.hpp"
+
+namespace {
 
 struct ComputeMemoryInfo {
     std::uint64_t thisSize;
@@ -111,6 +115,8 @@ struct AvcPictureInfo {
 
 static_assert(sizeof(DecoderConfigInfo) == 0x50 && sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isLastFrame) == 9 && offsetof(OutputInfo, pictureCount) == 0xb && sizeof(AvcPictureInfo) == 0x78);
 
+} // namespace
+
 extern "C" {
 int APS5_VABI sceVdecswQueryComputeMemoryInfo(ComputeMemoryInfo*);
 int APS5_VABI sceVdecswAllocateComputeQueue(const ComputeConfigInfo*, const ComputeMemoryInfo*, std::uint64_t*);
@@ -130,119 +136,333 @@ int APS5_VABI sceVdecswResetDecoder(std::uint64_t);
 namespace {
 
 using namespace H264Fixture;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+template<typename TValue>
+TValue Sized() {
+    TValue value{};
+    value.thisSize = sizeof(TValue);
+    return value;
+}
 
 constexpr int OutputPending = static_cast<int>(0x81510115u);
 constexpr int InputQueueEmpty = static_cast<int>(0x81510116u);
 
-void check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-struct Session {
-    std::uint64_t queue = 0;
-    std::uint64_t decoder = 0;
-    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
-
-    Session() {
-        ComputeMemoryInfo compute{sizeof(ComputeMemoryInfo)};
-        check(sceVdecswQueryComputeMemoryInfo(&compute) == 0 && compute.cpuGpuMemorySize != 0, "compute memory query failed");
+class ComputeQueue {
+public:
+    ComputeQueue() {
+        ComputeMemoryInfo compute = Sized<ComputeMemoryInfo>();
+        RequireEqual(sceVdecswQueryComputeMemoryInfo(&compute), 0, "compute memory query status");
+        Require(compute.cpuGpuMemorySize != 0, "compute memory query reports a non-zero size");
         const ComputeConfigInfo computeConfig{sizeof(ComputeConfigInfo), 3, 3, true};
-        check(sceVdecswAllocateComputeQueue(&computeConfig, &compute, &queue) == 0, "compute queue allocation failed");
-        DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, 1, 100, 42, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3, queue, 0x3f, 0, true, {}};
-        check(sceVdecswQueryDecoderMemoryInfo(&config, &memory) == 0 && memory.maxFrameBufferSize != 0, "decoder memory query failed");
-        check(sceVdecswCreateDecoder(&config, &memory, &decoder) == 0, "decoder creation failed");
+        RequireEqual(sceVdecswAllocateComputeQueue(&computeConfig, &compute, &handle), 0, "compute queue allocation status");
+    }
+
+    ~ComputeQueue() {
+        sceVdecswReleaseComputeQueue(handle);
+    }
+
+    ComputeQueue(const ComputeQueue&) = delete;
+    ComputeQueue& operator=(const ComputeQueue&) = delete;
+
+    std::uint64_t Handle() const noexcept {
+        return handle;
+    }
+
+private:
+    std::uint64_t handle = 0;
+};
+
+class Session {
+public:
+    Session() {
+        DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, 1, 100, 42, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3, queue.Handle(), 0x3f, 0, true, {}};
+        RequireEqual(sceVdecswQueryDecoderMemoryInfo(&config, &memory), 0, "decoder memory query status");
+        Require(memory.maxFrameBufferSize != 0, "decoder memory query reports a non-zero frame buffer size");
+        RequireEqual(sceVdecswCreateDecoder(&config, &memory, &decoder), 0, "decoder creation status");
+        created = true;
     }
 
     ~Session() {
-        sceVdecswDeleteDecoder(decoder);
-        sceVdecswReleaseComputeQueue(queue);
+        if (!created) return;
+        try {
+            sceVdecswDeleteDecoder(decoder);
+        } catch (const std::exception&) {
+        }
     }
+
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
+
+    std::uint64_t Decoder() const noexcept {
+        return decoder;
+    }
+
+    const DecoderMemoryInfo& Memory() const noexcept {
+        return memory;
+    }
+
+private:
+    ComputeQueue queue;
+    DecoderMemoryInfo memory = Sized<DecoderMemoryInfo>();
+    std::uint64_t decoder = 0;
+    bool created = false;
 };
 
-void testDecode() {
-    Session session;
-    const auto units = accessUnits(false);
-    check(units.size() == PictureHashes.size(), "unexpected access unit count");
-    std::array<std::vector<std::uint8_t>, 2> buffers{std::vector<std::uint8_t>(session.memory.maxFrameBufferSize), std::vector<std::uint8_t>(session.memory.maxFrameBufferSize)};
-    InputResult result{sizeof(InputResult)};
-    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty && result.decodedAu == nullptr, "an idle decoder did not report an empty input queue");
-    std::size_t pictures = 0;
+struct DecodedPicture {
+    OutputInfo output;
+    bool expectedBuffer;
+    int infoStatus;
+    AvcPictureInfo info;
+    std::uint64_t hash;
+};
+
+struct StreamRun {
+    std::string failure;
+    int idleStatus = 0;
+    bool idleDecodedAuNull = false;
+    std::vector<bool> consumed;
+    std::uint32_t produced = 0;
+    std::size_t picturesBeforeFinalize = 0;
+    std::vector<DecodedPicture> pictures;
+    OutputInfo end = Sized<OutputInfo>();
+    int inputStatusAfterFinalize = 0;
+};
+
+void DecodeStream(const Session& session, StreamRun& run) {
+    const auto units = AccessUnits(false);
+    RequireEqual(units.size(), PictureHashes.size(), "access unit count");
+    std::array<std::vector<std::uint8_t>, 2> buffers{std::vector<std::uint8_t>(session.Memory().maxFrameBufferSize), std::vector<std::uint8_t>(session.Memory().maxFrameBufferSize)};
+    InputResult idle = Sized<InputResult>();
+    run.idleStatus = sceVdecswTrySyncDecodeInput(session.Decoder(), &idle);
+    run.idleDecodedAuNull = idle.decodedAu == nullptr;
     bool outputSet = false;
     bool ended = false;
     const auto drain = [&] {
         for (;;) {
+            const auto slot = run.pictures.size() % 2;
             if (!outputSet) {
-                const FrameBuffer frame{sizeof(FrameBuffer), buffers[pictures % 2].data(), buffers[pictures % 2].size()};
-                check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "output buffer was rejected");
+                const FrameBuffer frame{sizeof(FrameBuffer), buffers[slot].data(), buffers[slot].size()};
+                RequireEqual(sceVdecswSetDecodeOutput(session.Decoder(), &frame), 0, "output buffer status");
                 outputSet = true;
             }
-            OutputInfo output{sizeof(OutputInfo)};
-            const auto status = sceVdecswTrySyncDecodeOutput(session.decoder, &output);
+            OutputInfo output = Sized<OutputInfo>();
+            const auto status = sceVdecswTrySyncDecodeOutput(session.Decoder(), &output);
             if (status == OutputPending) return;
-            check(status == 0, "output sync failed");
+            RequireEqual(status, 0, "output sync status");
             outputSet = false;
             if (!output.isValid) {
-                check(output.isLastFrame && output.pictureCount == 0, "an output without a picture is not the end of the sequence");
+                run.end = output;
                 ended = true;
                 return;
             }
-            check(pictures < PictureHashes.size(), "more pictures than access units");
-            check(output.isLastFrame == (pictures + 1 == PictureHashes.size()), "only the last picture of the finalized sequence is marked last");
-            check(!output.isErrorFrame && !output.isDiscardedFrame && output.pictureCount == 1 && output.frameWidth == Width && output.frameHeight == Height && output.frameBuffer == buffers[pictures % 2].data(), "unexpected picture geometry");
-            AvcPictureInfo info{sizeof(AvcPictureInfo)};
-            check(sceVdecswGetAvcPictureInfo(&output, &info, nullptr) == 0 && info.isValid, "picture info missing");
-            const auto unit = DisplayOrderUnits[pictures];
-            check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit && info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.profileIdc == 100, "pictures out of display order");
-            check(info.picWidthInMbsMinus1 == Width / 16 - 1 && info.picHeightInMapUnitsMinus1 == (Height + 15) / 16 - 1 && info.frameMbsOnlyFlag == 1 && info.frameCroppingFlag == 1 && info.frameCropRightOffset == 0 && info.frameCropBottomOffset == ((Height + 15) / 16 * 16 - Height) / 2, "picture geometry in the picture info is wrong");
-            check(hashNv12(static_cast<const std::uint8_t*>(output.frameBuffer), output.framePitch) == PictureHashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
-            ++pictures;
+            Require(run.pictures.size() < PictureHashes.size(), "more pictures than access units");
+            DecodedPicture picture{output, output.frameBuffer == buffers[slot].data(), 0, Sized<AvcPictureInfo>(), 0};
+            picture.infoStatus = sceVdecswGetAvcPictureInfo(&output, &picture.info, nullptr);
+            picture.hash = HashNv12(static_cast<const std::uint8_t*>(output.frameBuffer), output.framePitch);
+            run.pictures.push_back(picture);
         }
     };
-    std::uint32_t produced = 0;
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
         const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
-        check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input was rejected");
-        InputResult consumed{sizeof(InputResult)};
-        check(sceVdecswTrySyncDecodeInput(session.decoder, &consumed) == 0 && consumed.decodedAu == units[unit].data(), "an access unit was not consumed");
-        produced += consumed.outputFrameCount;
+        RequireEqual(sceVdecswSetDecodeInput(session.Decoder(), &input), 0, "decode input status for unit " + std::to_string(unit));
+        InputResult consumed = Sized<InputResult>();
+        const auto status = sceVdecswTrySyncDecodeInput(session.Decoder(), &consumed);
+        run.consumed.push_back(status == 0 && consumed.decodedAu == units[unit].data());
+        run.produced += consumed.outputFrameCount;
         drain();
     }
-    check(pictures < PictureHashes.size(), "the last picture was returned before the sequence was finalized");
-    check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "finalize failed");
+    run.picturesBeforeFinalize = run.pictures.size();
+    RequireEqual(sceVdecswFinalizeDecodeSequence(session.Decoder()), 0, "finalize status");
     while (!ended) drain();
-    check(pictures == PictureHashes.size(), "missing pictures after finalizing the sequence");
-    check(produced <= PictureHashes.size(), "more pictures counted than decoded");
-    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a finalized decoder did not report an empty input queue");
+    InputResult result = Sized<InputResult>();
+    run.inputStatusAfterFinalize = sceVdecswTrySyncDecodeInput(session.Decoder(), &result);
 }
 
-void testWithoutOutput() {
-    Session session;
-    const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
-    check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "decode input was rejected");
-    InputResult result{sizeof(InputResult)};
-    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == 0 && result.decodedAu == units[0].data(), "an input was not decoded before an output buffer was set");
-    std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
-    const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
-    check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "output buffer was rejected");
-    OutputInfo output{sizeof(OutputInfo)};
-    check(sceVdecswTrySyncDecodeOutput(session.decoder, &output) == OutputPending, "the only picture of an open sequence was returned before it was known to be the last");
-    check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "finalize failed");
-    check(sceVdecswTrySyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.isLastFrame, "the only picture of a finalized sequence is not marked last");
-    check(sceVdecswResetDecoder(session.decoder) == 0, "reset failed");
-    check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a reset decoder kept its inputs");
-}
-
-}
-
-int main() {
+StreamRun BuildStreamRun() {
+    StreamRun run;
     try {
-        testDecode();
-        testWithoutOutput();
-        std::puts("Vdecsw tests passed");
-        return 0;
+        const Session session;
+        DecodeStream(session, run);
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        return 1;
+        run.failure = error.what();
     }
+    return run;
 }
+
+const StreamRun& DecodedStream() {
+    static const StreamRun run = BuildStreamRun();
+    Require(run.failure.empty(), "stream decode run failed: " + run.failure);
+    return run;
+}
+
+struct SinglePictureRun {
+    std::string failure;
+    int inputStatus = -1;
+    bool inputDecoded = false;
+    int pendingStatus = -1;
+    int finalizeStatus = -1;
+    int finalStatus = -1;
+    OutputInfo finalOutput = Sized<OutputInfo>();
+    int resetStatus = -1;
+    int inputStatusAfterReset = -1;
+};
+
+SinglePictureRun BuildSinglePictureRun() {
+    SinglePictureRun run;
+    try {
+        const Session session;
+        const auto units = AccessUnits(false);
+        const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+        RequireEqual(sceVdecswSetDecodeInput(session.Decoder(), &input), 0, "decode input status");
+        InputResult result = Sized<InputResult>();
+        run.inputStatus = sceVdecswTrySyncDecodeInput(session.Decoder(), &result);
+        run.inputDecoded = result.decodedAu == units[0].data();
+        std::vector<std::uint8_t> buffer(session.Memory().maxFrameBufferSize);
+        const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+        RequireEqual(sceVdecswSetDecodeOutput(session.Decoder(), &frame), 0, "output buffer status");
+        OutputInfo pending = Sized<OutputInfo>();
+        run.pendingStatus = sceVdecswTrySyncDecodeOutput(session.Decoder(), &pending);
+        run.finalizeStatus = sceVdecswFinalizeDecodeSequence(session.Decoder());
+        run.finalStatus = sceVdecswTrySyncDecodeOutput(session.Decoder(), &run.finalOutput);
+        run.resetStatus = sceVdecswResetDecoder(session.Decoder());
+        InputResult afterReset = Sized<InputResult>();
+        run.inputStatusAfterReset = sceVdecswTrySyncDecodeInput(session.Decoder(), &afterReset);
+    } catch (const std::exception& error) {
+        run.failure = error.what();
+    }
+    return run;
+}
+
+const SinglePictureRun& DecodedSinglePicture() {
+    static const SinglePictureRun run = BuildSinglePictureRun();
+    Require(run.failure.empty(), "single-picture run failed: " + run.failure);
+    return run;
+}
+
+std::string PictureLabel(std::size_t picture) {
+    return "picture " + std::to_string(picture);
+}
+
+const Case idleDecoder{"Vdecsw_IdleDecoder_ReportsEmptyInputQueue", [] {
+    const auto& run = DecodedStream();
+    RequireEqual(run.idleStatus, InputQueueEmpty, "input sync status of an idle decoder");
+    Require(run.idleDecodedAuNull, "an idle decoder reports no decoded access unit");
+}};
+
+const Case consumesUnits{"Vdecsw_DecodeStream_ConsumesEveryAccessUnit", [] {
+    const auto& run = DecodedStream();
+    for (std::size_t unit = 0; unit < run.consumed.size(); ++unit) {
+        Require(run.consumed[unit], "access unit " + std::to_string(unit) + " is reported consumed by input sync");
+    }
+}};
+
+const Case holdsLastPicture{"Vdecsw_DecodeStream_HoldsLastPictureUntilFinalize", [] {
+    const auto& run = DecodedStream();
+    Require(run.picturesBeforeFinalize < PictureHashes.size(), "the last picture was not returned before the sequence was finalized");
+}};
+
+const Case everyPicture{"Vdecsw_FinalizedStream_ReturnsEveryPicture", [] {
+    const auto& run = DecodedStream();
+    RequireEqual(run.pictures.size(), PictureHashes.size(), "pictures after finalizing the sequence");
+    Require(run.produced <= PictureHashes.size(), "pictures counted by input sync do not exceed decoded pictures");
+}};
+
+const Case endOutput{"Vdecsw_FinalizedStream_EndsWithEmptyLastOutput", [] {
+    const auto& run = DecodedStream();
+    Require(run.end.isLastFrame, "the output without a picture is marked last");
+    RequireEqual(run.end.pictureCount, 0, "picture count of the end-of-sequence output");
+}};
+
+const Case lastFlag{"Vdecsw_FinalizedStream_MarksOnlyLastPictureLast", [] {
+    const auto& run = DecodedStream();
+    for (std::size_t index = 0; index < run.pictures.size(); ++index) {
+        RequireEqual(run.pictures[index].output.isLastFrame, index + 1 == PictureHashes.size(), PictureLabel(index) + " last flag");
+    }
+}};
+
+const Case outputGeometry{"Vdecsw_DecodeStream_ReportsPictureGeometry", [] {
+    const auto& run = DecodedStream();
+    for (std::size_t index = 0; index < run.pictures.size(); ++index) {
+        const auto& picture = run.pictures[index];
+        const auto label = PictureLabel(index);
+        Require(!picture.output.isErrorFrame, label + " is not an error frame");
+        Require(!picture.output.isDiscardedFrame, label + " is not discarded");
+        RequireEqual(picture.output.pictureCount, 1, label + " picture count");
+        RequireEqual(picture.output.frameWidth, Width, label + " width");
+        RequireEqual(picture.output.frameHeight, Height, label + " height");
+        Require(picture.expectedBuffer, label + " is written to the output buffer set for it");
+    }
+}};
+
+const Case displayOrder{"Vdecsw_PictureInfo_FollowsDisplayOrder", [] {
+    const auto& run = DecodedStream();
+    for (std::size_t index = 0; index < run.pictures.size(); ++index) {
+        const auto& picture = run.pictures[index];
+        const auto label = PictureLabel(index);
+        const auto unit = DisplayOrderUnits[index];
+        RequireEqual(picture.infoStatus, 0, label + " picture info status");
+        Require(picture.info.isValid, label + " picture info is valid");
+        RequireEqual(picture.info.ptsData, 1000 + unit, label + " pts");
+        RequireEqual(picture.info.dtsData, unit, label + " dts");
+        RequireEqual(picture.info.attachedData, 0xa0 + unit, label + " attached data");
+        RequireEqual(picture.info.idrPictureFlag, index == 0 ? 1 : 0, label + " idr flag");
+        RequireEqual(picture.info.profileIdc, 100, label + " profile");
+    }
+}};
+
+const Case infoGeometry{"Vdecsw_PictureInfo_ReportsCroppedGeometry", [] {
+    const auto& run = DecodedStream();
+    for (std::size_t index = 0; index < run.pictures.size(); ++index) {
+        const auto& picture = run.pictures[index];
+        const auto label = PictureLabel(index);
+        RequireEqual(picture.infoStatus, 0, label + " picture info status");
+        RequireEqual(picture.info.picWidthInMbsMinus1, Width / 16 - 1, label + " width in macroblocks");
+        RequireEqual(picture.info.picHeightInMapUnitsMinus1, (Height + 15) / 16 - 1, label + " height in map units");
+        RequireEqual(picture.info.frameMbsOnlyFlag, 1, label + " frame macroblocks only flag");
+        RequireEqual(picture.info.frameCroppingFlag, 1, label + " cropping flag");
+        RequireEqual(picture.info.frameCropRightOffset, 0u, label + " right crop");
+        RequireEqual(picture.info.frameCropBottomOffset, ((Height + 15) / 16 * 16 - Height) / 2, label + " bottom crop");
+    }
+}};
+
+const Case referenceHashes{"Vdecsw_DecodeStream_PicturesMatchReference", [] {
+    const auto& run = DecodedStream();
+    for (std::size_t index = 0; index < run.pictures.size(); ++index) {
+        RequireEqual(run.pictures[index].hash, PictureHashes[index], PictureLabel(index) + " hash");
+    }
+}};
+
+const Case finalizedQueue{"Vdecsw_FinalizedDecoder_ReportsEmptyInputQueue", [] {
+    const auto& run = DecodedStream();
+    RequireEqual(run.inputStatusAfterFinalize, InputQueueEmpty, "input sync status of a finalized decoder");
+}};
+
+const Case inputWithoutOutput{"Vdecsw_InputWithoutOutputBuffer_IsDecoded", [] {
+    const auto& run = DecodedSinglePicture();
+    RequireEqual(run.inputStatus, 0, "input sync status before an output buffer is set");
+    Require(run.inputDecoded, "the input is reported decoded before an output buffer is set");
+}};
+
+const Case openSequence{"Vdecsw_OpenSequence_HoldsOnlyPicture", [] {
+    const auto& run = DecodedSinglePicture();
+    RequireEqual(run.pendingStatus, OutputPending, "output sync status of an open single-picture sequence");
+}};
+
+const Case finalizedSequence{"Vdecsw_FinalizedSequence_MarksOnlyPictureLast", [] {
+    const auto& run = DecodedSinglePicture();
+    RequireEqual(run.finalizeStatus, 0, "finalize status");
+    RequireEqual(run.finalStatus, 0, "output sync status after finalizing");
+    Require(run.finalOutput.isValid, "the only picture is returned after finalizing");
+    Require(run.finalOutput.isLastFrame, "the only picture of a finalized sequence is marked last");
+}};
+
+const Case resetDecoder{"Vdecsw_Reset_DropsQueuedInputs", [] {
+    const auto& run = DecodedSinglePicture();
+    RequireEqual(run.resetStatus, 0, "reset status");
+    RequireEqual(run.inputStatusAfterReset, InputQueueEmpty, "input sync status of a reset decoder");
+}};
+
+} // namespace

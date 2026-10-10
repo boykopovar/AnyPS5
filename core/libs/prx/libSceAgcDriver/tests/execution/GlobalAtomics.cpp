@@ -14,14 +14,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -418,19 +417,10 @@ void RunAtomics(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_
     }
 }
 
+const Testing::Case wave32Atomics{"GlobalAtomics_Wave32DwordOperations_ReturnPreviousAndStoreResult", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock writable(true);
+    RunAtomics(device, writable, 32);
+}};
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock writable(true);
-        RunAtomics(*device, writable, 32);
-        std::puts("global atomics tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

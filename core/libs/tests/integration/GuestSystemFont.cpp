@@ -1,11 +1,13 @@
 #include "prx/libSceFont/include/FontTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
-#include <random>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -27,39 +29,46 @@ int APS5_VABI sceFontGetHorizontalLayout(FontHandle, FontHorizontalLayout*);
 const void* APS5_VABI sceFontSelectLibraryFt(int);
 }
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "System font check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
+namespace {
 
-static int allocations = 0;
-static void* APS5_VABI Allocate(void*, std::uint32_t size) {
-    ++allocations;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr std::uint32_t EuropeanLight = 0x180700C3u;
+constexpr std::uint32_t EuropeanBold = 0x180700C7u;
+constexpr std::uint32_t EuropeanItalic = 0x18170044u;
+constexpr std::uint32_t ThaiMedium = 0x18071055u;
+constexpr std::uint32_t VietnameseBold = 0x18070057u;
+constexpr std::uint32_t JapaneseJg2Light = 0x1A0835D3u;
+constexpr std::uint32_t ChineseGb = 0x180CB0D4u;
+constexpr const char* fontDirectoryVariable = "ANYPS5_SYSTEM_FONTS";
+
+void* APS5_VABI Allocate(void* object, std::uint32_t size) {
+    if (object != nullptr) ++*static_cast<int*>(object);
     return std::malloc(size);
 }
-static void APS5_VABI Release(void*, void* pointer) {
-    if (pointer) --allocations;
+
+void APS5_VABI Release(void* object, void* pointer) {
+    if (pointer != nullptr && object != nullptr) --*static_cast<int*>(object);
     std::free(pointer);
 }
 
-static void Put16(std::vector<unsigned char>& out, std::uint32_t value) {
+void Put16(std::vector<unsigned char>& out, std::uint32_t value) {
     out.push_back(static_cast<unsigned char>(value >> 8));
     out.push_back(static_cast<unsigned char>(value));
 }
 
-static void Put32(std::vector<unsigned char>& out, std::uint32_t value) {
+void Put32(std::vector<unsigned char>& out, std::uint32_t value) {
     Put16(out, value >> 16);
     Put16(out, value & 0xFFFFu);
 }
 
-static void PutAll16(std::vector<unsigned char>& out, std::initializer_list<int> values) {
+void PutAll16(std::vector<unsigned char>& out, std::initializer_list<int> values) {
     for (const int value : values) Put16(out, static_cast<std::uint32_t>(static_cast<std::uint16_t>(value)));
 }
 
-static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int width) {
+std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int width) {
     std::vector<unsigned char> head;
     Put32(head, 0x00010000u);
     Put32(head, 0x00010000u);
@@ -83,7 +92,8 @@ static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int w
     std::vector<unsigned char> cmap;
     PutAll16(cmap, {0, 1, 3, 1});
     Put32(cmap, 12);
-    PutAll16(cmap, {4, 32, 0, 4, 4, 1, 0, static_cast<int>(codepoint), 0xFFFF, 0, static_cast<int>(codepoint), 0xFFFF, 1 - static_cast<int>(codepoint), 1, 0, 0});
+    PutAll16(cmap, {4, 32, 0, 4, 4, 1, 0, static_cast<int>(codepoint), 0xFFFF, 0, static_cast<int>(codepoint), 0xFFFF,
+                    1 - static_cast<int>(codepoint), 1, 0, 0});
     const std::vector<std::pair<const char*, const std::vector<unsigned char>*>> tables = {
         {"cmap", &cmap}, {"glyf", &glyf}, {"head", &head}, {"hhea", &hhea}, {"hmtx", &hmtx}, {"loca", &loca}, {"maxp", &maxp}};
     std::vector<unsigned char> font;
@@ -104,119 +114,206 @@ static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int w
     return font;
 }
 
-static void WriteFile(const std::filesystem::path& path, const std::vector<unsigned char>& bytes) {
+void WriteFile(const std::filesystem::path& path, const std::vector<unsigned char>& bytes) {
     std::ofstream file(path, std::ios::binary);
     file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    Require(static_cast<bool>(file));
+    Require(static_cast<bool>(file), "write " + path.string());
 }
 
-static void SetFontDirectory(const std::filesystem::path& directory) {
+void SetEnvironment(const char* name, const std::optional<std::string>& value) {
 #ifdef _WIN32
-    Require(_putenv_s("ANYPS5_SYSTEM_FONTS", directory.string().c_str()) == 0);
+    _putenv_s(name, value ? value->c_str() : "");
 #else
-    Require(::setenv("ANYPS5_SYSTEM_FONTS", directory.string().c_str(), 1) == 0);
+    if (value) ::setenv(name, value->c_str(), 1);
+    else ::unsetenv(name);
 #endif
 }
 
-static float AdvanceOf(FontHandle font, std::uint32_t code) {
+class SystemFontFixture {
+public:
+    SystemFontFixture() {
+        if (const char* previous = std::getenv(fontDirectoryVariable)) previousDirectory = previous;
+        std::filesystem::create_directories(Empty());
+        std::filesystem::create_directories(Fonts());
+        WriteFile(Fonts() / "SST-Bold.otf", SquareGlyphFont('A', 700));
+        WriteFile(Fonts() / "NotoSans-Bold.ttf", SquareGlyphFont('A', 300));
+        WriteFile(Fonts() / "NotoSans-Light.ttf", SquareGlyphFont('A', 500));
+        WriteFile(Fonts() / "SST-Italic.otf", SquareGlyphFont('A', 520));
+        WriteFile(Fonts() / "NotoSansThai-Medium.ttf", SquareGlyphFont(0x0E01, 540));
+        WriteFile(Fonts() / "SSTVietnamese-Bold.otf", SquareGlyphFont(0x1EA0, 560));
+        WriteFile(Fonts() / "NotoSansCJK-Light.ttc", SquareGlyphFont(0x3042, 580));
+        RequireEqual(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr), SCE_FONT_OK, "initialize font memory");
+        RequireEqual(sceFontCreateLibrary(&memory, sceFontSelectLibraryFt(0), &library), SCE_FONT_OK, "create the library");
+        RequireEqual(sceFontSupportSystemFonts(library), SCE_FONT_OK, "support system fonts");
+    }
+
+    ~SystemFontFixture() {
+        for (auto font : fonts) sceFontCloseFont(font);
+        if (library != nullptr) sceFontDestroyLibrary(&library);
+        SetEnvironment(fontDirectoryVariable, previousDirectory);
+    }
+
+    SystemFontFixture(const SystemFontFixture&) = delete;
+    SystemFontFixture& operator=(const SystemFontFixture&) = delete;
+
+    std::filesystem::path Empty() const {
+        return root.Path() / "empty";
+    }
+
+    std::filesystem::path Fonts() const {
+        return root.Path() / "fonts";
+    }
+
+    void UseDirectory(const std::filesystem::path& directory) const {
+        SetEnvironment(fontDirectoryVariable, directory.string());
+    }
+
+    FontHandle Track(FontHandle font) {
+        fonts.push_back(font);
+        return font;
+    }
+
+    FontHandle OpenSet(std::uint32_t type, std::uint32_t mode) {
+        FontHandle font = nullptr;
+        RequireEqual(sceFontOpenFontSet(library, type, mode, nullptr, &font), SCE_FONT_OK, "open font set " + std::to_string(type));
+        Require(font != nullptr, "font handle is set");
+        return Track(font);
+    }
+
+    void Close(FontHandle font) {
+        std::erase(fonts, font);
+        RequireEqual(sceFontCloseFont(font), SCE_FONT_OK, "close the font");
+    }
+
+    const Testing::TemporaryDirectory root;
+    int allocations = 0;
+    const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    FontLibrary library = nullptr;
+
+private:
+    std::optional<std::string> previousDirectory;
+    std::vector<FontHandle> fonts;
+};
+
+float AdvanceOf(FontHandle font, std::uint32_t code) {
+    RequireEqual(sceFontSetScalePixel(font, 100.0f, 100.0f), SCE_FONT_OK, "set the pixel scale");
     FontGlyphMetrics metrics{};
-    Require(sceFontGetCharGlyphMetrics(font, code, &metrics) == SCE_FONT_OK);
+    RequireEqual(sceFontGetCharGlyphMetrics(font, code, &metrics), SCE_FONT_OK, "glyph metrics of " + std::to_string(code));
     return metrics.Horizontal.advance;
 }
 
-int main() {
-    constexpr std::uint32_t EuropeanLight = 0x180700C3u;
-    constexpr std::uint32_t EuropeanBold = 0x180700C7u;
-    constexpr std::uint32_t EuropeanItalic = 0x18170044u;
-    constexpr std::uint32_t ThaiMedium = 0x18071055u;
-    constexpr std::uint32_t VietnameseBold = 0x18070057u;
-    constexpr std::uint32_t JapaneseJg2Light = 0x1A0835D3u;
-    constexpr std::uint32_t ChineseGb = 0x180CB0D4u;
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / ("anyps5_guest_system_font-" + std::to_string(std::random_device{}()));
-    std::filesystem::remove_all(root);
-    const std::filesystem::path empty = root / "empty";
-    const std::filesystem::path fonts = root / "fonts";
-    std::filesystem::create_directories(empty);
-    std::filesystem::create_directories(fonts);
-    WriteFile(fonts / "SST-Bold.otf", SquareGlyphFont('A', 700));
-    WriteFile(fonts / "NotoSans-Bold.ttf", SquareGlyphFont('A', 300));
-    WriteFile(fonts / "NotoSans-Light.ttf", SquareGlyphFont('A', 500));
-    WriteFile(fonts / "SST-Italic.otf", SquareGlyphFont('A', 520));
-    WriteFile(fonts / "NotoSansThai-Medium.ttf", SquareGlyphFont(0x0E01, 540));
-    WriteFile(fonts / "SSTVietnamese-Bold.otf", SquareGlyphFont(0x1EA0, 560));
-    WriteFile(fonts / "NotoSansCJK-Light.ttc", SquareGlyphFont(0x3042, 580));
-
-    const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
-    FontMemory memory{};
-    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);
-    FontLibrary library = nullptr;
-    Require(sceFontCreateLibrary(&memory, sceFontSelectLibraryFt(0), &library) == SCE_FONT_OK);
-    Require(sceFontSupportSystemFonts(library) == SCE_FONT_OK);
-
+const Case emptyDirectory{"OpenFontSet_EmptyFontDirectory_FailsOpenOrUnsupported", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Empty());
     FontHandle font = nullptr;
-    SetFontDirectory(empty);
-    Require(sceFontOpenFontSet(library, EuropeanBold, 1, nullptr, &font) == SCE_FONT_ERROR_FONT_OPEN_FAILED && font == nullptr);
-    Require(sceFontOpenFontSet(library, 0x18070046u, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FONTSET && font == nullptr);
-    SetFontDirectory(root / "missing");
-    bool threw = false;
-    try {
-        sceFontOpenFontSet(library, EuropeanBold, 1, nullptr, &font);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
+    RequireEqual(sceFontOpenFontSet(fixture.library, EuropeanBold, 1, nullptr, &font), SCE_FONT_ERROR_FONT_OPEN_FAILED, "bold set");
+    Require(font == nullptr, "no handle for a missing file");
+    RequireEqual(sceFontOpenFontSet(fixture.library, 0x18070046u, 1, nullptr, &font), SCE_FONT_ERROR_NO_SUPPORT_FONTSET, "unknown set");
+    Require(font == nullptr, "no handle for an unknown set");
+}};
 
-    SetFontDirectory(fonts);
-    const int beforeOpen = allocations;
-    Require(sceFontOpenFontSet(library, EuropeanBold, 1, nullptr, &font) == SCE_FONT_OK && font != nullptr);
-    Require(allocations - beforeOpen == 3);
-    Require(sceFontSetScalePixel(font, 100.0f, 100.0f) == SCE_FONT_OK);
-    Require(AdvanceOf(font, 'A') == 70.0f);
+const Case missingDirectory{"OpenFontSet_MissingFontDirectory_Throws", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.root.Path() / "missing");
+    FontHandle font = nullptr;
+    Testing::RequireThrows<std::runtime_error>([&] { sceFontOpenFontSet(fixture.library, EuropeanBold, 1, nullptr, &font); },
+                                               "missing directory");
+}};
+
+const Case openBold{"OpenFontSet_EuropeanBold_LoadsSstBoldWithThreeAllocations", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Fonts());
+    const int beforeOpen = fixture.allocations;
+    const auto font = fixture.OpenSet(EuropeanBold, 1);
+    RequireEqual(fixture.allocations - beforeOpen, 3, "allocations for one open");
+    RequireEqual(AdvanceOf(font, 'A'), 70.0f, "SST-Bold advance");
     FontGlyphMetrics metrics{};
-    Require(sceFontGetCharGlyphMetrics(font, 'B', &metrics) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    RequireEqual(sceFontGetCharGlyphMetrics(font, 'B', &metrics), SCE_FONT_ERROR_NO_SUPPORT_GLYPH, "missing glyph");
     FontHorizontalLayout layout{};
-    Require(sceFontGetHorizontalLayout(font, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f && layout.lineAdvance >= layout.baselineOffset);
+    RequireEqual(sceFontGetHorizontalLayout(font, &layout), SCE_FONT_OK, "layout");
+    Require(layout.baselineOffset > 0.0f, "positive baseline");
+    Require(layout.lineAdvance >= layout.baselineOffset, "line advance covers the baseline");
+}};
 
-    FontHandle again = nullptr;
-    Require(sceFontOpenFontSet(library, EuropeanBold, 2, nullptr, &again) == SCE_FONT_OK && again != font);
+const Case openTwiceAndInstance{"OpenFontSet_AgainOrInstance_ReturnsIndependentHandles", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Fonts());
+    const auto font = fixture.OpenSet(EuropeanBold, 1);
+    const auto again = fixture.OpenSet(EuropeanBold, 2);
+    Require(again != font, "second open returns a new handle");
     FontHandle instance = nullptr;
-    Require(sceFontOpenFontInstance(font, nullptr, &instance) == SCE_FONT_OK && instance != nullptr);
-    Require(sceFontGetHorizontalLayout(instance, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f);
+    RequireEqual(sceFontOpenFontInstance(font, nullptr, &instance), SCE_FONT_OK, "open instance");
+    Require(instance != nullptr, "instance handle is set");
+    fixture.Track(instance);
+    FontHorizontalLayout layout{};
+    RequireEqual(sceFontGetHorizontalLayout(instance, &layout), SCE_FONT_OK, "instance layout");
+    Require(layout.baselineOffset > 0.0f, "instance baseline");
+}};
 
+const Case styleFiles{"OpenFontSet_EachStyle_LoadsMatchingFile", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Fonts());
     const std::vector<std::pair<std::uint32_t, std::pair<std::uint32_t, float>>> expected = {
         {EuropeanLight, {'A', 50.0f}}, {EuropeanItalic, {'A', 52.0f}}, {ThaiMedium, {0x0E01, 54.0f}},
         {VietnameseBold, {0x1EA0, 56.0f}}, {JapaneseJg2Light, {0x3042, 58.0f}}};
     for (const auto& [type, glyph] : expected) {
-        FontHandle set = nullptr;
-        Require(sceFontOpenFontSet(library, type, 1, nullptr, &set) == SCE_FONT_OK);
-        Require(sceFontSetScalePixel(set, 100.0f, 100.0f) == SCE_FONT_OK);
-        Require(AdvanceOf(set, glyph.first) == glyph.second);
-        Require(sceFontCloseFont(set) == SCE_FONT_OK);
+        const auto set = fixture.OpenSet(type, 1);
+        RequireEqual(AdvanceOf(set, glyph.first), glyph.second, "advance of set " + std::to_string(type));
+        fixture.Close(set);
     }
-    Require(sceFontCloseFont(again) == SCE_FONT_OK);
-    FontHandle missing = nullptr;
-    Require(sceFontOpenFontSet(library, ChineseGb, 1, nullptr, &missing) == SCE_FONT_ERROR_FONT_OPEN_FAILED && missing == nullptr);
+}};
 
-    const auto substituteFonts = root / "substitute-fonts";
+const Case missingFile{"OpenFontSet_FileAbsentFromDirectory_FailsOpen", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Fonts());
+    FontHandle missing = nullptr;
+    RequireEqual(sceFontOpenFontSet(fixture.library, ChineseGb, 1, nullptr, &missing), SCE_FONT_ERROR_FONT_OPEN_FAILED, "Chinese set");
+    Require(missing == nullptr, "no handle");
+}};
+
+const Case substitute{"OpenFontSet_PrimaryFileMissing_FallsBackToSubstituteWithoutAffectingOpenFonts", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Fonts());
+    const auto font = fixture.OpenSet(EuropeanBold, 1);
+    const auto substituteFonts = fixture.root.Path() / "substitute-fonts";
     std::filesystem::create_directories(substituteFonts);
     WriteFile(substituteFonts / "NotoSans-Bold.ttf", SquareGlyphFont('A', 300));
-    SetFontDirectory(substituteFonts);
-    FontHandle substitute = nullptr;
-    Require(sceFontOpenFontSet(library, EuropeanBold, 3, nullptr, &substitute) == SCE_FONT_OK);
-    Require(sceFontSetScalePixel(substitute, 100.0f, 100.0f) == SCE_FONT_OK);
-    Require(AdvanceOf(substitute, 'A') == 30.0f);
-    Require(AdvanceOf(font, 'A') == 70.0f);
+    fixture.UseDirectory(substituteFonts);
+    const auto replacement = fixture.OpenSet(EuropeanBold, 3);
+    RequireEqual(AdvanceOf(replacement, 'A'), 30.0f, "substitute advance");
+    RequireEqual(AdvanceOf(font, 'A'), 70.0f, "already open font keeps its file");
+}};
 
-    Require(sceFontSupportExternalFonts(library, 2, 0x52) == SCE_FONT_OK);
+const Case memoryFont{"OpenFontMemory_WithSystemFontsSupported_LoadsExternalFont", [] {
+    SystemFontFixture fixture;
+    RequireEqual(sceFontSupportExternalFonts(fixture.library, 2, 0x52), SCE_FONT_OK, "support external fonts");
+    const std::vector<unsigned char> external = SquareGlyphFont('A', 900);
+    FontHandle font = nullptr;
+    RequireEqual(sceFontOpenFontMemory(fixture.library, external.data(), static_cast<std::uint32_t>(external.size()), nullptr, &font),
+                 SCE_FONT_OK, "open");
+    fixture.Track(font);
+    RequireEqual(AdvanceOf(font, 'A'), 90.0f, "memory font advance");
+    FontHorizontalLayout layout{};
+    RequireEqual(sceFontGetHorizontalLayout(font, &layout), SCE_FONT_OK, "layout");
+}};
+
+const Case releaseAll{"DestroyLibrary_AfterClosingEverything_ReleasesAllAllocations", [] {
+    SystemFontFixture fixture;
+    fixture.UseDirectory(fixture.Fonts());
+    const auto font = fixture.OpenSet(EuropeanBold, 1);
+    FontHandle instance = nullptr;
+    RequireEqual(sceFontOpenFontInstance(font, nullptr, &instance), SCE_FONT_OK, "open instance");
+    fixture.Track(instance);
+    RequireEqual(sceFontSupportExternalFonts(fixture.library, 2, 0x52), SCE_FONT_OK, "support external fonts");
     const std::vector<unsigned char> external = SquareGlyphFont('A', 900);
     FontHandle memoryFont = nullptr;
-    Require(sceFontOpenFontMemory(library, external.data(), static_cast<std::uint32_t>(external.size()), nullptr, &memoryFont) == SCE_FONT_OK);
-    Require(sceFontSetScalePixel(memoryFont, 100.0f, 100.0f) == SCE_FONT_OK);
-    Require(AdvanceOf(memoryFont, 'A') == 90.0f);
-    Require(sceFontGetHorizontalLayout(memoryFont, &layout) == SCE_FONT_OK);
+    RequireEqual(sceFontOpenFontMemory(fixture.library, external.data(), static_cast<std::uint32_t>(external.size()), nullptr,
+                                       &memoryFont), SCE_FONT_OK, "open memory font");
+    fixture.Track(memoryFont);
+    for (FontHandle handle : {font, instance, memoryFont}) fixture.Close(handle);
+    RequireEqual(sceFontDestroyLibrary(&fixture.library), SCE_FONT_OK, "destroy the library");
+    RequireEqual(fixture.allocations, 0, "outstanding allocations");
+}};
 
-    for (FontHandle handle : {font, instance, substitute, memoryFont}) Require(sceFontCloseFont(handle) == SCE_FONT_OK);
-    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
-    Require(allocations == 0);
-    std::filesystem::remove_all(root);
-}
+} // namespace

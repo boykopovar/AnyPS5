@@ -6,14 +6,14 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -171,30 +171,31 @@ void Check(const Workgroup& workgroup) {
 void CheckNoReturnRejected(const AgcDriver::VulkanDevice& device) {
     const auto userData = UserData();
     const std::string reason = "buffer_atomic_csub without glc is not supported";
-    std::string failure;
-    try {
-        static_cast<void>(Recompile(device, NoReturnCode, Workgroups[0], userData));
-    } catch (const std::exception& error) {
-        failure = error.what();
-    }
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { static_cast<void>(Recompile(device, NoReturnCode, Workgroups[0], userData)); }, "buffer atomic csub: expected '" + reason + "'");
+    const std::string failure = error.what();
     Require(failure.find(reason) != std::string::npos, "buffer atomic csub: expected '" + reason + "', got '" + failure + "'");
 }
 
+void RunWorkgroup(const Workgroup& workgroup) {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, workgroup);
+    Check(workgroup);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto& workgroup : Workgroups) {
-            Run(*device, workgroup);
-            Check(workgroup);
-        }
-        CheckNoReturnRejected(*device);
-        std::puts("buffer atomic csub tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32{"BufferAtomicCsub_Wave32_SubtractsClampedAtZero", [] {
+    RunWorkgroup(Workgroups[0]);
+}};
+
+const Testing::Case wave32TwoWaves{"BufferAtomicCsub_Wave32TwoWaves_SubtractsClampedAtZero", [] {
+    RunWorkgroup(Workgroups[1]);
+}};
+
+const Testing::Case wave64{"BufferAtomicCsub_Wave64_SubtractsClampedAtZero", [] {
+    RunWorkgroup(Workgroups[2]);
+}};
+
+const Testing::Case withoutGlc{"BufferAtomicCsub_WithoutGlc_IsRejected", [] {
+    CheckNoReturnRejected(SharedVulkanTestDevice());
+}};
+
+} // namespace

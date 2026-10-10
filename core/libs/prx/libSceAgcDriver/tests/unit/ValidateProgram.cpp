@@ -1,29 +1,30 @@
+#include <Testing/Test.hpp>
 #include "IntermediateRepresentation/IrProgram.hpp"
+
 #include <cstdint>
-#include <cstdio>
-#include <exception>
-#include <functional>
 #include <stdexcept>
 #include <string>
 
-using namespace ShaderRecompiler;
-
 namespace {
 
-IrValue& constant(IrProgram& program, std::uint32_t value) {
+using namespace ShaderRecompiler;
+using Testing::Case;
+using Testing::Require;
+
+IrValue& Constant(IrProgram& program, std::uint32_t value) {
     auto& created = program.CreateValue(IrOpcode::Void, IrType::U32);
     created.SetImmediateU32(value);
     return created;
 }
 
-IrValue& add(IrProgram& program, IrValue& left, IrValue& right) {
+IrValue& Add(IrProgram& program, IrValue& left, IrValue& right) {
     auto& created = program.CreateValue(IrOpcode::IAdd32, IrType::U32);
     created.AddArgument(&left);
     created.AddArgument(&right);
     return created;
 }
 
-IrBlock& entry(IrProgram& program) {
+IrBlock& Entry(IrProgram& program) {
     auto& block = program.CreateBlock();
     program.SetEntryBlock(block);
     program.BlockOrder().push_back(&block);
@@ -33,97 +34,91 @@ IrBlock& entry(IrProgram& program) {
     return block;
 }
 
-bool rejects(const char* name, const std::function<void()>& build, const std::string& expected) {
-    try {
-        build();
-    } catch (const std::exception& error) {
-        if (std::string(error.what()).find(expected) != std::string::npos) return true;
-        std::fprintf(stderr, "%s: rejected with \"%s\", expected \"%s\"\n", name, error.what(), expected.c_str());
-        return false;
-    }
-    std::fprintf(stderr, "%s: accepted, expected \"%s\"\n", name, expected.c_str());
-    return false;
+template<typename TBuild>
+void RequireRejection(const char* name, const TBuild& build, const std::string& expected) {
+    const auto text = Testing::RequireThrowsMessage<std::exception>(build, std::string(name) + ": accepted, expected \"" + expected + "\"");
+    Require(text.find(expected) != std::string::npos,
+            std::string(name) + ": rejected with \"" + text + "\", expected \"" + expected + "\"");
 }
 
+void ValidateCollidingIds(bool useFirst) {
+    IrProgram other;
+    Entry(other);
+    auto& otherOne = Constant(other, 1);
+    auto& foreign = Add(other, otherOne, otherOne);
+
+    IrProgram program;
+    auto& block = Entry(program);
+    auto& one = Constant(program, 1);
+    auto& sum = Add(program, one, one);
+    Require(sum.Id() == foreign.Id(), "test setup: the ids differ");
+    auto& use = Add(program, foreign, one);
+    block.AppendInstruction(&sum);
+    if (useFirst) block.AppendInstruction(&use);
+    block.AppendInstruction(&foreign);
+    if (!useFirst) block.AppendInstruction(&use);
+    ValidateProgram(program, true);
 }
 
-int main() {
-    bool passed = true;
-    try {
-        IrProgram program;
-        auto& block = entry(program);
-        auto& one = constant(program, 1);
-        auto& sum = add(program, one, one);
-        block.AppendInstruction(&sum);
-        block.AppendInstruction(&add(program, sum, one));
-        ValidateProgram(program, true);
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "valid program: %s\n", error.what());
-        passed = false;
-    }
+const Case validProgram{"ValidateProgram_DefinitionsBeforeUses_IsAccepted", [] {
+    IrProgram program;
+    auto& block = Entry(program);
+    auto& one = Constant(program, 1);
+    auto& sum = Add(program, one, one);
+    block.AppendInstruction(&sum);
+    block.AppendInstruction(&Add(program, sum, one));
+    ValidateProgram(program, true);
+}};
 
-    passed &= rejects("use before definition", [] {
+const Case useBeforeDefinition{"ValidateProgram_UseBeforeSameBlockDefinition_IsRejected", [] {
+    RequireRejection("use before definition", [] {
         IrProgram program;
-        auto& block = entry(program);
-        auto& one = constant(program, 1);
-        auto& sum = add(program, one, one);
-        block.AppendInstruction(&add(program, sum, one));
+        auto& block = Entry(program);
+        auto& one = Constant(program, 1);
+        auto& sum = Add(program, one, one);
+        block.AppendInstruction(&Add(program, sum, one));
         block.AppendInstruction(&sum);
         ValidateProgram(program, true);
     }, "uses a same-block definition before it");
+}};
 
-    passed &= rejects("duplicated instruction", [] {
+const Case duplicatedInstruction{"ValidateProgram_DuplicatedInstruction_IsRejected", [] {
+    RequireRejection("duplicated instruction", [] {
         IrProgram program;
-        auto& block = entry(program);
-        auto& one = constant(program, 1);
-        auto& sum = add(program, one, one);
+        auto& block = Entry(program);
+        auto& one = Constant(program, 1);
+        auto& sum = Add(program, one, one);
         block.AppendInstruction(&sum);
         block.Instructions().push_back(&sum);
         ValidateProgram(program, true);
     }, "instruction is duplicated");
+}};
 
-    passed &= rejects("foreign definition with a local id", [] {
+const Case foreignDefinition{"ValidateProgram_ForeignDefinitionWithLocalId_IsRejected", [] {
+    RequireRejection("foreign definition with a local id", [] {
         IrProgram other;
-        auto& otherBlock = entry(other);
-        auto& otherOne = constant(other, 1);
-        auto& foreign = add(other, otherOne, otherOne);
+        auto& otherBlock = Entry(other);
+        auto& otherOne = Constant(other, 1);
+        auto& foreign = Add(other, otherOne, otherOne);
         otherBlock.AppendInstruction(&foreign);
 
         IrProgram program;
-        auto& block = entry(program);
-        auto& one = constant(program, 1);
-        auto& sum = add(program, one, one);
+        auto& block = Entry(program);
+        auto& one = Constant(program, 1);
+        auto& sum = Add(program, one, one);
         block.AppendInstruction(&sum);
-        if (sum.Id() != foreign.Id()) throw std::runtime_error("test setup: the ids differ");
-        block.AppendInstruction(&add(program, foreign, one));
+        if (sum.Id() != foreign.Id()) throw std::logic_error("test setup: the ids differ");
+        block.AppendInstruction(&Add(program, foreign, one));
         ValidateProgram(program, true);
     }, "foreign definition");
+}};
 
-    const auto collidingIds = [](bool useFirst) {
-        IrProgram other;
-        entry(other);
-        auto& otherOne = constant(other, 1);
-        auto& foreign = add(other, otherOne, otherOne);
+const Case collidingIdsInOrder{"ValidateProgram_CollidingIdsInDefinitionOrder_IsAccepted", [] {
+    ValidateCollidingIds(false);
+}};
 
-        IrProgram program;
-        auto& block = entry(program);
-        auto& one = constant(program, 1);
-        auto& sum = add(program, one, one);
-        if (sum.Id() != foreign.Id()) throw std::runtime_error("test setup: the ids differ");
-        auto& use = add(program, foreign, one);
-        block.AppendInstruction(&sum);
-        if (useFirst) block.AppendInstruction(&use);
-        block.AppendInstruction(&foreign);
-        if (!useFirst) block.AppendInstruction(&use);
-        ValidateProgram(program, true);
-    };
-    try {
-        collidingIds(false);
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "colliding ids in order: %s\n", error.what());
-        passed = false;
-    }
-    passed &= rejects("colliding ids out of order", [&] { collidingIds(true); }, "uses a same-block definition before it");
+const Case collidingIdsOutOfOrder{"ValidateProgram_CollidingIdsOutOfOrder_IsRejected", [] {
+    RequireRejection("colliding ids out of order", [] { ValidateCollidingIds(true); }, "uses a same-block definition before it");
+}};
 
-    return passed ? 0 : 1;
-}
+} // namespace

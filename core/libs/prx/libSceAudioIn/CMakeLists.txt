@@ -5,7 +5,7 @@ target_link_options(libSceAudioIn PRIVATE LINKER:--exclude-libs,ALL)
 configure_windows_unwind(libSceAudioIn)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_audio_in_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioIn.cpp)
+    add_test_executable(guest_audio_in_tests ${LIBS_INCLUDE_DIR}/tests/integration/GuestAudioIn.cpp)
     target_include_directories(guest_audio_in_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_audio_in_tests PRIVATE libSceAudioIn libc)
     configure_windows_unwind(guest_audio_in_tests)

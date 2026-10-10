@@ -6,13 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -138,20 +137,16 @@ void Check(const char* name, const std::uint64_t (&rows)[Count][4]) {
     }
 }
 
-}
+const Testing::Case fmaSubnormals{"F64FmaSubnormals_Fma_MatchesReferenceBits", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Code, Rows);
+    Check("v_fma_f64", Rows);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, Code, Rows);
-        Check("v_fma_f64", Rows);
-        Run(*device, FmasCode, FmasRows);
-        Check("v_div_fmas_f64 with VCC set", FmasRows);
-        std::puts("v_fma_f64 subnormal tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case divFmasSubnormals{"F64FmaSubnormals_DivFmasWithVccSet_MatchesReferenceBits", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, FmasCode, FmasRows);
+    Check("v_div_fmas_f64 with VCC set", FmasRows);
+}};
+
+} // namespace

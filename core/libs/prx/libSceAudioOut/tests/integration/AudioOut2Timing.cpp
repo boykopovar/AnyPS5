@@ -1,14 +1,12 @@
 #include "SceTypes.hpp"
+#include "AudioOutTestSupport.hpp"
+
+#include <Testing/Test.hpp>
 
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
-#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -24,17 +22,11 @@ int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
 int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
 }
 
-static void Require(bool value) { if (!value) std::abort(); }
-
-static void SetEnvironment(const char* name, const std::string& value) {
-#ifdef _WIN32
-    _putenv_s(name, value.c_str());
-#else
-    setenv(name, value.c_str(), 1);
-#endif
-}
-
 namespace {
+
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
 
 constexpr std::uint32_t grain = 256;
 constexpr std::uint32_t queueDepth = 2;
@@ -46,48 +38,64 @@ constexpr std::uint32_t attributeData = 0;
 constexpr int queueFull = static_cast<int>(0x80260507);
 constexpr float masterGain = 0.5f;
 constexpr float tolerance = 1e-5f;
+constexpr std::size_t stereoGrainSamples = static_cast<std::size_t>(grain) * 2;
 
-struct Session {
-    std::filesystem::path path;
-    AudioOut2ContextHandle context = 0;
-    AudioOut2PortHandle port = 0;
-    std::vector<float> buffer = std::vector<float>(static_cast<std::size_t>(grain) * 2, 0.0f);
-
-    explicit Session(const char* name) : path(std::filesystem::temp_directory_path() / (std::to_string(std::random_device{}()) + "-" + name)) {
-        std::filesystem::remove(path);
-        SetEnvironment("SDL_DISKAUDIOFILE", path.string());
+class Session {
+public:
+    Session() {
         AudioOut2ContextParam params{};
-        Require(sceAudioOut2ContextResetParam(&params) == 0);
+        RequireEqual(sceAudioOut2ContextResetParam(&params), 0, "reset the context parameters");
         params.num_grains = grain;
         params.queue_depth = queueDepth;
-        Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
-        AudioOut2PortParam port{};
-        port.port_type = 0;
-        port.data_format = formatStereoFloat;
-        port.sampling_freq = frequency;
-        Require(sceAudioOut2PortCreate(context, &port, &this->port) == 0);
+        RequireEqual(sceAudioOut2ContextCreate(&params, nullptr, 0, &context), 0, "create the context");
+        port = CreatePort(formatStereoFloat);
+    }
+
+    ~Session() {
+        if (port != 0) sceAudioOut2PortDestroy(port);
+        if (context != 0) sceAudioOut2ContextDestroy(context);
+    }
+
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
+
+    AudioOut2PortHandle CreatePort(std::uint32_t format) {
+        AudioOut2PortParam param{};
+        param.port_type = 0;
+        param.data_format = format;
+        param.sampling_freq = frequency;
+        AudioOut2PortHandle handle = 0;
+        RequireEqual(sceAudioOut2PortCreate(context, &param, &handle), 0, "create the port");
+        return handle;
     }
 
     void Point(const void* data) {
         const AudioOut2Attribute attribute{attributeData, 0, &data, sizeof(data)};
-        Require(sceAudioOut2PortSetAttributes(port, &attribute, 1) == 0);
+        RequireEqual(sceAudioOut2PortSetAttributes(port, &attribute, 1), 0, "point the port at its data");
     }
 
     void Fill(float value) {
         for (float& sample : buffer) sample = value;
     }
 
-    std::vector<float> Close() {
-        Require(sceAudioOut2PortDestroy(port) == 0);
-        Require(sceAudioOut2ContextDestroy(context) == 0);
-        std::ifstream file(path, std::ios::binary);
-        const std::vector<char> bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-        file.close();
-        std::filesystem::remove(path);
-        Require(bytes.size() % sizeof(float) == 0);
-        const auto* samples = reinterpret_cast<const float*>(bytes.data());
-        return {samples, samples + bytes.size() / sizeof(float)};
+    void Push(std::uint32_t count, const char* message) {
+        for (std::uint32_t push = 0; push < count; push++) RequireEqual(sceAudioOut2ContextPush(context, 1), 0, message);
     }
+
+    std::vector<float> Close() {
+        const auto closingPort = port;
+        const auto closingContext = context;
+        port = 0;
+        context = 0;
+        RequireEqual(sceAudioOut2PortDestroy(closingPort), 0, "destroy the port");
+        RequireEqual(sceAudioOut2ContextDestroy(closingContext), 0, "destroy the context");
+        return capture.Samples<float>();
+    }
+
+    const DiskAudioCapture capture;
+    AudioOut2ContextHandle context = 0;
+    AudioOut2PortHandle port = 0;
+    std::vector<float> buffer = std::vector<float>(stereoGrainSamples, 0.0f);
 };
 
 std::size_t FirstNonZero(const std::vector<float>& played, std::size_t from = 0) {
@@ -95,106 +103,95 @@ std::size_t FirstNonZero(const std::vector<float>& played, std::size_t from = 0)
     return from;
 }
 
-bool Constant(const std::vector<float>& played, std::size_t first, std::size_t count, float value) {
-    if (first + count > played.size()) return false;
+void RequireConstant(const std::vector<float>& played, std::size_t first, std::size_t count, float value, const std::string& message) {
+    Require(first + count <= played.size(), message + ": capture holds " + std::to_string(count) + " samples from " + std::to_string(first));
     for (std::size_t index = first; index < first + count; index++) {
-        if (std::fabs(played[index] - value) > tolerance) return false;
+        Require(std::fabs(played[index] - value) <= tolerance,
+                message + " sample " + std::to_string(index) + ": expected " + std::to_string(value) + ", got " + std::to_string(played[index]));
     }
-    return true;
 }
 
-void TestReadAtNextPush() {
-    Session session("anyps5_audio_out2_next_push.raw");
+const Case nextPush{"ContextPush_PortData_IsReadAtTheNextPush", [] {
+    Session session;
     session.Fill(0.25f);
     session.Point(session.buffer.data());
-    Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(1, "push 0.25");
     session.Fill(0.5f);
-    Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(1, "push 0.5");
     session.Fill(0.75f);
-    Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(1, "push 0.75");
     session.Fill(0.0f);
     session.Point(nullptr);
-    for (std::uint32_t push = 0; push < cushionGrains * 4; push++) Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(cushionGrains * 4, "push silence");
     const auto played = session.Close();
     const auto first = FirstNonZero(played);
-    const std::size_t samples = static_cast<std::size_t>(grain) * 2;
-    Require(Constant(played, first, samples, 0.5f * masterGain));
-    Require(Constant(played, first + samples, samples, 0.75f * masterGain));
-    Require(FirstNonZero(played, first + 2 * samples) == played.size());
-}
+    RequireConstant(played, first, stereoGrainSamples, 0.5f * masterGain, "first audible grain");
+    RequireConstant(played, first + stereoGrainSamples, stereoGrainSamples, 0.75f * masterGain, "second audible grain");
+    RequireEqual(FirstNonZero(played, first + 2 * stereoGrainSamples), played.size(), "silence after the two grains");
+}};
 
-void TestRecreatedPort() {
-    Session session("anyps5_audio_out2_recreated_port.raw");
+const Case recreatedPort{"PortCreate_AfterDestroyInSameContext_ReusesHandleWithNewFormat", [] {
+    Session session;
     session.Fill(0.5f);
     session.Point(session.buffer.data());
-    Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(1, "push stereo");
     const auto first = session.port;
-    Require(sceAudioOut2PortDestroy(session.port) == 0);
-    AudioOut2PortParam mono{};
-    mono.port_type = 0;
-    mono.data_format = formatMonoFloat;
-    mono.sampling_freq = frequency;
-    Require(sceAudioOut2PortCreate(session.context, &mono, &session.port) == 0);
-    Require(session.port == first);
+    const auto destroyed = session.port;
+    session.port = 0;
+    RequireEqual(sceAudioOut2PortDestroy(destroyed), 0, "destroy the stereo port");
+    session.port = session.CreatePort(formatMonoFloat);
+    RequireEqual(session.port, first, "recreated handle");
     const std::vector<float> monoBuffer(grain, 0.75f);
     session.Point(monoBuffer.data());
-    Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(1, "push mono");
     session.Point(nullptr);
-    for (std::uint32_t push = 0; push < cushionGrains * 4; push++) Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(cushionGrains * 4, "push silence");
     const auto played = session.Close();
     const auto start = FirstNonZero(played);
-    const std::size_t samples = static_cast<std::size_t>(grain) * 2;
-    Require(Constant(played, start, samples, 0.75f * masterGain));
-    Require(FirstNonZero(played, start + samples) == played.size());
-}
+    RequireConstant(played, start, stereoGrainSamples, 0.75f * masterGain, "mono grain");
+    RequireEqual(FirstNonZero(played, start + stereoGrainSamples), played.size(), "silence after the mono grain");
+}};
 
-void TestLevelExcludesCushion() {
-    Session session("anyps5_audio_out2_level.raw");
+const Case queueLevel{"ContextGetQueueLevel_EmptyQueue_ExcludesCushion", [] {
+    Session session;
     session.Point(nullptr);
     std::uint32_t level = 99;
     std::uint32_t available = 99;
-    Require(sceAudioOut2ContextGetQueueLevel(session.context, &level, &available) == 0);
-    Require(level == 0 && available == queueDepth);
+    RequireEqual(sceAudioOut2ContextGetQueueLevel(session.context, &level, &available), 0, "queue level");
+    RequireEqual(level, 0u, "level");
+    RequireEqual(available, queueDepth, "available");
     std::uint32_t accepted = 0;
     int result = 0;
     while ((result = sceAudioOut2ContextPush(session.context, 0)) == 0) {
         accepted++;
-        Require(accepted < 1000);
+        Require(accepted < 1000, "the queue fills up");
     }
-    Require(result == queueFull);
-    Require(accepted >= cushionGrains + queueDepth);
+    RequireEqual(result, queueFull, "push into a full queue");
+    Require(accepted >= cushionGrains + queueDepth, "accepted " + std::to_string(accepted) + " non-blocking pushes");
     session.Close();
-}
+}};
 
-void TestPrimingAfterRunningDry() {
-    Session session("anyps5_audio_out2_priming.raw");
+const Case priming{"ContextPush_AfterRunningDry_PrimesBeforeNextBurst", [] {
+    Session session;
     session.Fill(0.5f);
     session.Point(session.buffer.data());
-    for (std::uint32_t push = 0; push < 12; push++) Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(12, "push the first burst");
     session.Point(nullptr);
-    Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(1, "push one silent grain");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     session.Fill(-0.5f);
     session.Point(session.buffer.data());
-    for (std::uint32_t push = 0; push < 12; push++) Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(12, "push the second burst");
     session.Point(nullptr);
-    for (std::uint32_t push = 0; push < cushionGrains * 4; push++) Require(sceAudioOut2ContextPush(session.context, 1) == 0);
+    session.Push(cushionGrains * 4, "push silence");
     const auto played = session.Close();
-    const std::size_t burst = static_cast<std::size_t>(grain) * 2 * 12;
+    const std::size_t burst = stereoGrainSamples * 12;
     const auto first = FirstNonZero(played);
-    Require(Constant(played, first, burst, 0.5f * masterGain));
+    RequireConstant(played, first, burst, 0.5f * masterGain, "first burst");
     const auto second = FirstNonZero(played, first + burst);
-    Require(second < played.size() && second - (first + burst) >= static_cast<std::size_t>(grain) * 2);
-    Require(Constant(played, second, burst, -0.5f * masterGain));
-}
+    Require(second < played.size(), "second burst is audible");
+    Require(second - (first + burst) >= stereoGrainSamples, "a gap of at least one grain separates the bursts");
+    RequireConstant(played, second, burst, -0.5f * masterGain, "second burst");
+}};
 
-}
-
-int main() {
-    SetEnvironment("SDL_AUDIODRIVER", "disk");
-    TestReadAtNextPush();
-    TestRecreatedPort();
-    TestLevelExcludesCushion();
-    TestPrimingAfterRunningDry();
-    return 0;
-}
+} // namespace

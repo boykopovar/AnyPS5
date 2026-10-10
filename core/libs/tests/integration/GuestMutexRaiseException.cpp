@@ -1,8 +1,9 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
-#include <mutex>
 #include <thread>
 
 extern "C" {
@@ -17,36 +18,107 @@ int APS5_VABI sceKernelRemoveExceptionHandler(int);
 int APS5_VABI sceKernelRaiseException(Pthread, int);
 }
 
-static constexpr int SigUsr1 = 30;
-static void Require(bool value) { if (!value) std::abort(); }
-static std::atomic<int> deliveries{0};
-static void APS5_VABI Handler(int, void*) { deliveries.fetch_add(1); }
+namespace {
 
-struct Context { PthreadMutex mutex = nullptr; std::atomic<bool> started{false}; std::atomic<bool> acquired{false}; };
-static void* APS5_VABI Worker(void* opaque) {
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+constexpr int sigUsr1 = 30;
+
+std::atomic<int> deliveries{0};
+
+void APS5_VABI Handler(int, void*) {
+    deliveries.fetch_add(1);
+}
+
+class InstalledHandler {
+public:
+    InstalledHandler() {
+        deliveries.store(0);
+        RequireEqual(sceKernelInstallExceptionHandler(sigUsr1, reinterpret_cast<void*>(&Handler)), 0, "install handler");
+    }
+    ~InstalledHandler() { sceKernelRemoveExceptionHandler(sigUsr1); }
+    InstalledHandler(const InstalledHandler&) = delete;
+    InstalledHandler& operator=(const InstalledHandler&) = delete;
+};
+
+struct Context {
+    PthreadMutex mutex = nullptr;
+    std::atomic<bool> started{false};
+    std::atomic<bool> acquired{false};
+    std::atomic<int> lockResult{-1};
+    std::atomic<int> unlockResult{-1};
+};
+
+void* APS5_VABI Worker(void* opaque) {
     auto& context = *static_cast<Context*>(opaque);
     context.started.store(true);
-    Require(scePthreadMutexLock(&context.mutex) == 0);
+    context.lockResult.store(scePthreadMutexLock(&context.mutex));
     context.acquired.store(true);
-    Require(scePthreadMutexUnlock(&context.mutex) == 0);
+    context.unlockResult.store(scePthreadMutexUnlock(&context.mutex));
     return nullptr;
 }
 
-int main() {
-    Require(sceKernelInstallExceptionHandler(SigUsr1, reinterpret_cast<void*>(&Handler)) == 0);
-    Context context;
-    Require(scePthreadMutexInit(&context.mutex, nullptr, nullptr) == 0);
-    Require(scePthreadMutexLock(&context.mutex) == 0);
+class LockedMutex {
+public:
+    LockedMutex() {
+        RequireEqual(scePthreadMutexInit(&context.mutex, nullptr, nullptr), 0, "mutex init");
+        RequireEqual(scePthreadMutexLock(&context.mutex), 0, "main thread lock");
+        locked = true;
+    }
+    ~LockedMutex() {
+        if (locked) scePthreadMutexUnlock(&context.mutex);
+        if (worker != nullptr) scePthreadJoin(worker, nullptr);
+        if (!destroyed) scePthreadMutexDestroy(&context.mutex);
+    }
+    LockedMutex(const LockedMutex&) = delete;
+    LockedMutex& operator=(const LockedMutex&) = delete;
+
+    void StartWaiter() {
+        RequireEqual(scePthreadCreate(&worker, nullptr, Worker, &context, "mutex wait"), 0, "create waiter");
+        while (!context.started.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    int Unlock() {
+        locked = false;
+        return scePthreadMutexUnlock(&context.mutex);
+    }
+
+    int Join() {
+        const int result = scePthreadJoin(worker, nullptr);
+        worker = nullptr;
+        return result;
+    }
+
+    int Destroy() {
+        destroyed = true;
+        return scePthreadMutexDestroy(&context.mutex);
+    }
+
     Pthread worker = nullptr;
-    Require(scePthreadCreate(&worker, nullptr, Worker, &context, "mutex wait") == 0);
-    while (!context.started.load()) std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    Require(sceKernelRaiseException(worker, SigUsr1) == 0);
+    Context context;
+
+private:
+    bool locked = false;
+    bool destroyed = false;
+};
+
+const Case raiseDuringMutexWait{"RaiseException_ThreadBlockedOnMutex_DeliversOnceAndThreadAcquiresAfterUnlock", [] {
+    const InstalledHandler handler;
+    LockedMutex mutex;
+    mutex.StartWaiter();
+    RequireEqual(sceKernelRaiseException(mutex.worker, sigUsr1), 0, "raise exception");
     for (int i = 0; i < 5000 && deliveries.load() == 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    Require(deliveries.load() == 1);
-    Require(scePthreadMutexUnlock(&context.mutex) == 0);
-    Require(scePthreadJoin(worker, nullptr) == 0);
-    Require(context.acquired.load());
-    Require(scePthreadMutexDestroy(&context.mutex) == 0);
-    Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
-}
+    RequireEqual(deliveries.load(), 1, "handler deliveries");
+    RequireEqual(mutex.Unlock(), 0, "main thread unlock");
+    RequireEqual(mutex.Join(), 0, "join waiter");
+    RequireEqual(mutex.context.lockResult.load(), 0, "waiter lock result");
+    RequireEqual(mutex.context.unlockResult.load(), 0, "waiter unlock result");
+    Require(mutex.context.acquired.load(), "waiter acquired the mutex");
+    RequireEqual(mutex.Destroy(), 0, "mutex destroy");
+    RequireEqual(sceKernelRemoveExceptionHandler(sigUsr1), 0, "remove handler");
+}};
+
+} // namespace

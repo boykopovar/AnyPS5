@@ -26,84 +26,62 @@ configure_windows_unwind(libSceVideoOut)
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 endforeach()
-add_test_executable(video_out_flip_tests EXCLUDE_FROM_ALL tests/Flip.cpp)
-target_include_directories(video_out_flip_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
-target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
-set_target_properties(video_out_flip_tests PROPERTIES CXX_EXTENSIONS OFF)
-configure_windows_unwind(video_out_flip_tests)
 if(BUILD_TESTING)
-    set_target_properties(video_out_flip_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(flipMode IN ITEMS lifetime decode controls)
-        if(flipMode STREQUAL "lifetime")
-            add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests)
-        else()
-            add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests ${flipMode})
-        endif()
-        set_tests_properties(video_out_flip_${flipMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=offscreen")
+    set(videoOutFlipProperties RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=offscreen")
+    anyps5_add_library_test(video_out_flip_tests
+        NAME video_out_flip_lifetime
+        TIMEOUT 30
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/Flip.cpp
+        LINK libSceVideoOut libSceAgcDriver libkernel libc
+        RUNTIME libc
+        INCLUDES
+            ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+            ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+            ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        ARGS lifetime
+        PROPERTIES ${videoOutFlipProperties}
+    )
+    set_target_properties(video_out_flip_tests PROPERTIES CXX_EXTENSIONS OFF)
+    foreach(flipMode IN ITEMS decode controls)
+        add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests ${flipMode})
+        anyps5_set_test_properties(video_out_flip_${flipMode} integration 30 SKIP_RETURN_CODE 77 ${videoOutFlipProperties})
         if(WIN32)
             set_tests_properties(video_out_flip_${flipMode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
-endif()
 
-if(BUILD_TESTING)
-    add_test_executable(pad_sdl_tests tests/PadSdl.cpp)
-    target_link_libraries(pad_sdl_tests PRIVATE SDL2-static)
-    add_test(NAME pad_sdl COMMAND pad_sdl_tests)
-endif()
+    anyps5_add_library_test(pad_sdl_tests
+        LABEL unit
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/PadSdl.cpp
+        LINK SDL2-static libc
+        RUNTIME libc
+    )
 
-if(BUILD_TESTING)
-    add_test_executable(guest_video_out_wqhd_detection_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutWqhdDetection.cpp)
-    target_include_directories(guest_video_out_wqhd_detection_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_video_out_wqhd_detection_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
-    configure_windows_unwind(guest_video_out_wqhd_detection_tests)
-    add_test(NAME guest_video_out_wqhd_detection COMMAND guest_video_out_wqhd_detection_tests)
-    set_tests_properties(guest_video_out_wqhd_detection PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    foreach(videoOutTest IN ITEMS wqhd_detection:WqhdDetection resolution_status:ResolutionStatus output_mode:OutputMode)
+        string(REPLACE ":" ";" videoOutTest "${videoOutTest}")
+        list(GET videoOutTest 0 videoOutTestName)
+        list(GET videoOutTest 1 videoOutTestSource)
+        anyps5_add_library_test(guest_video_out_${videoOutTestName}_tests
+            CUSTOM_MAIN
+            TIMEOUT 20
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestVideoOut${videoOutTestSource}.cpp
+            LINK libSceVideoOut libSceAgcDriver libkernel libc
+            RUNTIME libc
+            PROPERTIES RESOURCE_LOCK videoout_app0
+        )
+    endforeach()
     if(WIN32)
-        set_tests_properties(guest_video_out_wqhd_detection PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME guest_video_out_wqhd_detection_no_vulkan COMMAND guest_video_out_wqhd_detection_tests)
-        set_tests_properties(guest_video_out_wqhd_detection_no_vulkan PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
+        anyps5_set_test_properties(guest_video_out_wqhd_detection_no_vulkan integration 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+        set_tests_properties(guest_video_out_wqhd_detection_no_vulkan PROPERTIES
             ENVIRONMENT "VK_DRIVER_FILES=${CMAKE_CURRENT_BINARY_DIR}/missing_icd.json;VK_ICD_FILENAMES=${CMAKE_CURRENT_BINARY_DIR}/missing_icd.json"
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-endif()
 
-if(BUILD_TESTING)
-    add_test_executable(guest_video_out_resolution_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutResolutionStatus.cpp)
-    target_include_directories(guest_video_out_resolution_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_video_out_resolution_status_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
-    configure_windows_unwind(guest_video_out_resolution_status_tests)
-    add_test(NAME guest_video_out_resolution_status COMMAND guest_video_out_resolution_status_tests)
-    set_tests_properties(guest_video_out_resolution_status PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
-    if(WIN32)
-        set_tests_properties(guest_video_out_resolution_status PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-endif()
-
-if(BUILD_TESTING)
-    add_test_executable(guest_video_out_output_mode_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutOutputMode.cpp)
-    target_include_directories(guest_video_out_output_mode_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_video_out_output_mode_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
-    configure_windows_unwind(guest_video_out_output_mode_tests)
-    add_test(NAME guest_video_out_output_mode COMMAND guest_video_out_output_mode_tests)
-    set_tests_properties(guest_video_out_output_mode PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
-    if(WIN32)
-        set_tests_properties(guest_video_out_output_mode PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-endif()
-
-if(BUILD_TESTING)
-    add_test_executable(guest_buffer_reuse_tests ${LIBS_INCLUDE_DIR}/tests/GuestBufferReuse.cpp)
-    target_include_directories(guest_buffer_reuse_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_buffer_reuse_tests PRIVATE libc)
-    configure_windows_unwind(guest_buffer_reuse_tests)
-    add_test(NAME guest_buffer_reuse COMMAND guest_buffer_reuse_tests)
-    if(WIN32)
-        set_tests_properties(guest_buffer_reuse PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
+    anyps5_add_library_test(guest_buffer_reuse_tests
+        LABEL unit
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/unit/GuestBufferReuse.cpp
+        LINK libc
+    )
 endif()

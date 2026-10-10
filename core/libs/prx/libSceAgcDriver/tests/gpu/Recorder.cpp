@@ -1,3 +1,4 @@
+#include <Testing/Test.hpp>
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -25,6 +26,7 @@
 #include "Cover_vert_spv.h"
 #include "Cover_frag_spv.h"
 #include <SDL_loadso.h>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -43,8 +45,12 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <source_location>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -59,6 +65,12 @@ int APS5_VABI sceKernelMunmap(void*, std::size_t);
 
 using namespace AgcDriver::Graphics;
 using AgcDriver::GuestMemory::GpuMutex;
+using Testing::Case;
+using Testing::Require;
+
+void DeviceRequire(bool condition, const char* what) {
+    if (!condition) throw std::runtime_error(what);
+}
 
 void* AllocateWatched(std::size_t bytes, std::size_t alignment) {
     if (!AgcDriver::GuestMemory::WriteWatched()) return nullptr;
@@ -67,7 +79,7 @@ void* AllocateWatched(std::size_t bytes, std::size_t alignment) {
     GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
 #else
     void* raw = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (raw == MAP_FAILED) throw std::runtime_error("cannot map the watched block");
+    Require(raw != MAP_FAILED, "cannot map the watched block");
     const auto begin = reinterpret_cast<std::uintptr_t>(raw);
     const auto aligned = (begin + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
     if (aligned != begin) munmap(raw, aligned - begin);
@@ -75,7 +87,7 @@ void* AllocateWatched(std::size_t bytes, std::size_t alignment) {
     void* block = reinterpret_cast<void*>(aligned);
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
 #endif
-    if (!AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uint64_t>(block), bytes)) throw std::runtime_error("the watched block is not watched");
+    Require(AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uint64_t>(block), bytes), "the watched block is not watched");
     return block;
 }
 
@@ -89,8 +101,6 @@ void ReleaseWatched(void* block, std::size_t bytes) {
 #endif
 }
 
-// A compute-capable device with host imports (VK_EXT_external_memory_host) when the host offers
-// them, as the driver creates its own; the recorder's batches need a real queue and real fences.
 class Device {
 public:
     Device() {
@@ -99,10 +109,10 @@ public:
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
-        Require(library != nullptr, "cannot load Vulkan");
+        DeviceRequire(library != nullptr, "cannot load Vulkan");
         try {
             instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
-            Require(instanceProc != nullptr, "missing Vulkan instance resolver");
+            DeviceRequire(instanceProc != nullptr, "missing Vulkan instance resolver");
             VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -111,7 +121,7 @@ public:
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
             Check(enumerate(instance, &count, nullptr), "vkEnumeratePhysicalDevices");
-            Require(count != 0, "no Vulkan device");
+            DeviceRequire(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             const auto rankDeviceType = [](VkPhysicalDeviceType type) {
@@ -133,7 +143,7 @@ public:
                 context.physical = physical;
                 selectedRank = rank;
             }
-            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
+            DeviceRequire(context.physical != VK_NULL_HANDLE, "no Vulkan 1.1 device");
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -152,7 +162,7 @@ public:
             queues(context.physical, &count, families.data());
             std::uint32_t family = 0;
             while (family < count && (families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0) ++family;
-            Require(family < count, "no Vulkan compute queue");
+            DeviceRequire(family < count, "no Vulkan compute queue");
             const float priority = 1;
             VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
             queue.queueFamilyIndex = family;
@@ -228,7 +238,7 @@ private:
     template<typename TFunction>
     TFunction function(const char* name) const {
         const auto result = reinterpret_cast<TFunction>(instanceProc(instance, name));
-        Require(result != nullptr, name);
+        DeviceRequire(result != nullptr, name);
         return result;
     }
 
@@ -250,10 +260,101 @@ private:
     bool graphics = false;
 };
 
+void* AllocateHost(std::size_t bytes) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    return std::aligned_alloc(65536, bytes);
+#endif
+}
+
+class RegisteredBlock {
+public:
+    RegisteredBlock(const Context& context, void* block, std::size_t bytes) : context(context), block(block), bytes(bytes) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true);
+    }
+    ~RegisteredBlock() {
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+        HostImportFor(context, Address(), bytes);
+    }
+    RegisteredBlock(const RegisteredBlock&) = delete;
+    RegisteredBlock& operator=(const RegisteredBlock&) = delete;
+
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(block); }
+    const HostImport* Import() const { return HostImportFor(context, Address(), bytes); }
+
+private:
+    const Context& context;
+    void* block;
+    std::size_t bytes;
+};
+
+const Device& SharedDevice() {
+    static std::unique_ptr<Device> device;
+    static std::string failure;
+    if (!device && failure.empty()) {
+        try {
+            device = std::make_unique<Device>();
+        } catch (const std::exception& error) {
+            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+            failure = error.what();
+        }
+    }
+    if (!device) Testing::Skip("no usable Vulkan device: " + failure);
+    return *device;
+}
+
+const Device& PreparedDevice() {
+    const auto& device = SharedDevice();
+    static const auto decided = PrepareImportWatch(device.GetContext());
+    static_cast<void>(decided);
+    return device;
+}
+
+struct ActiveRecorder {
+    ActiveRecorder() { recorder.Activate(); }
+
+    std::lock_guard<AgcDriver::GuestMemory::GpuMutexType> gpu{GpuMutex()};
+    const Device& device{PreparedDevice()};
+    Recorder recorder{device.GetContext()};
+};
+
+class ScopedEnvironment {
+public:
+    ScopedEnvironment(const char* name, const char* value) : name(name) {
+        if (const char* old = std::getenv(name); old != nullptr) previous = old;
+        Set(value);
+    }
+    ~ScopedEnvironment() { Set(previous ? previous->c_str() : nullptr); }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    void Set(const char* value) const {
+#ifdef _WIN32
+        _putenv_s(name, value != nullptr ? value : "");
+#else
+        if (value != nullptr) setenv(name, value, 1);
+        else unsetenv(name);
+#endif
+    }
+
+    const char* name;
+    std::optional<std::string> previous;
+};
+
 using Kind = Recorder::ReadKind;
 
-void readTrackingTests(const Device& device, Recorder& recorder) {
+const Case readTracking{"ReadTracking_OpenAndSignaledBatchReads_AreSeenUntilTheBatchSignals", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
+    const auto before = Recorder::ReadCounts();
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x10000, 16), "a fresh recorder reports a read");
     recorder.NotePendingRead(0x10000, 0x100, Kind::DispatchElement);
     Require(recorder.Recording(), "a read note did not open a batch");
@@ -264,28 +365,38 @@ void readTrackingTests(const Device& device, Recorder& recorder) {
     recorder.Submit();
     Require(!recorder.Recording() && !recorder.Idle(), "the batch is not in flight after Submit");
     Require(recorder.PendingReadOverlaps(0x10000, 4, false), "the raw scan does not see the in-flight batch's read");
-    // An empty batch completes at once: once its fence signaled, its read is no reader any more,
-    // although the batch stays in flight until it is reaped.
     device.WaitQueue();
     Require(!recorder.PendingReadOverlaps(0x10000, 4), "a signaled batch's read still refuses");
     Require(!recorder.Idle(), "an overlap query reaped the batch");
     const auto signaled = recorder.DescribePendingRead(0x10000, 4);
     Require(signaled.has_value() && !signaled->open && signaled->signaled && signaled->serial == recorder.Submissions(), "the signaled batch's read is described wrongly");
     const auto counts = Recorder::ReadCounts();
-    Require(counts.noted == 1 && counts.staleIgnored >= 1 && counts.hits[static_cast<std::size_t>(Kind::DispatchElement)] >= 3 && counts.queries >= 6, "read counters are off");
+    const auto element = static_cast<std::size_t>(Kind::DispatchElement);
+    Require(counts.noted == before.noted + 1 && counts.staleIgnored >= before.staleIgnored + 1 && counts.hits[element] >= before.hits[element] + 3 && counts.queries >= before.queries + 6, "read counters are off");
     recorder.Sync();
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x10000, 4, false) && !recorder.DescribePendingRead(0x10000, 4).has_value(), "a read outlived its batch");
+}};
+
+const Case readTrackingRanges{"ReadTracking_NotedRanges_AreSeenAsAddressBasedReadsUntilSynced", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
+    Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
+    const auto addressBased = static_cast<std::size_t>(Kind::AddressBased);
+    const auto before = Recorder::ReadCounts().hits[addressBased];
     const std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges{{0x20000, 0x21000}, {0x30000, 0x30010}, {0x40000, 0x40000}};
     recorder.NotePendingReads(ranges, Kind::AddressBased);
     Require(recorder.PendingReadOverlaps(0x20fff, 1) && recorder.PendingReadOverlaps(0x30000, 16) && !recorder.PendingReadOverlaps(0x21000, 16) && !recorder.PendingReadOverlaps(0x40000, 16), "noted ranges are not seen as reads");
     const auto batch = recorder.DescribePendingRead(0x30008, 4);
     Require(batch.has_value() && batch->kind == Kind::AddressBased && batch->open, "a noted range has the wrong reader kind");
-    Require(Recorder::ReadCounts().hits[static_cast<std::size_t>(Kind::AddressBased)] >= 2, "address-based hits are not counted");
+    Require(Recorder::ReadCounts().hits[addressBased] >= before + 2, "address-based hits are not counted");
     recorder.Sync();
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x20000, 0x1000, false), "noted ranges outlived their batch");
-}
+}};
 
-void writeSettledTests(const Device& device, Recorder& recorder) {
+const Case writeSettled{"PendingWriteSettled_OpenAndSignaledWrites_SettleWithTheirBatch", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     Require(recorder.PendingWriteSettled(0x50000, 0x100), "an unwritten range is not settled");
     recorder.NotePendingWrite(0x50000, 0x100);
     Require(recorder.PendingWriteOverlaps(0x50000, 0x100) && !recorder.PendingWriteSettled(0x50000, 0x100) && recorder.PendingWriteSettled(0x50100, 0x100), "an open batch's write counts as settled");
@@ -296,13 +407,12 @@ void writeSettledTests(const Device& device, Recorder& recorder) {
     Require(!recorder.PendingWriteSettled(0x50000, 0x100) && recorder.PendingWriteSettled(0x50000, 0x80), "a later open write over the range still counts as settled");
     recorder.Sync();
     Require(recorder.Idle() && !recorder.PendingWriteOverlaps(0x50000, 0x100), "writes outlived their batches");
-}
+}};
 
-// Completion counting: a write-back completion (OnComplete) is pending until its batch finished;
-// a completion label the GPU also stored (AfterCompletions storedOnGpu) is pending only once a CPU
-// write-back overlapped it (NoteWrittenBack, once per label), one the GPU has no view of from its
-// registration; both counts return to 0 when the batch finishes.
-void completionCountTests(const Device& device, Recorder& recorder) {
+const Case completionCounts{"CompletionCounts_WriteBackAndLabels_ArePendingUntilTheBatchFinishes", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     alignas(64) static std::uint32_t memory[64];
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
@@ -310,8 +420,6 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     int ran = 0;
     recorder.OnComplete([&] { ++ran; });
     Require(Recorder::PendingWriteBackCompletions() == 1 && recorder.HasCompletions(), "a write-back completion is not pending");
-    // APS5_COUNT_ALL_COMPLETION_LABELS=1 (or APS5_LABEL_STORE_ALWAYS=1) counts the GPU-stored
-    // labels at registration, as before; the write-back then changes nothing.
     const bool countAll = std::getenv("APS5_COUNT_ALL_COMPLETION_LABELS") != nullptr || std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr;
     const std::uint64_t registered = countAll ? 2 : 0;
     recorder.AfterCompletions(base, value, 3, 0, true);
@@ -319,9 +427,6 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     Require(Recorder::PendingCompletionLabels() == registered, "a GPU-stored completion label counts before any write-back");
     recorder.AfterCompletions(base + 0x40, value, 5, 0, false);
     Require(Recorder::PendingCompletionLabels() == registered + 1, "a label the GPU has no view of is not pending");
-    // A late lookup (stamp <= afterStamp) of a label whose value reaches memory only through the
-    // batch's completion action is refused as BehindCompletion (a poller reaps for it); a GPU-stored
-    // one keeps the ordinary reason (unclosed group, or trust off) until a write-back overlaps it.
     using Refusal = Recorder::LabelRefusal;
     const Refusal ordinary = Recorder::LateTrust() ? Refusal::Unclosed : Refusal::TrustOff;
     Refusal refusal{};
@@ -346,9 +451,11 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     Require(ran == 1 && Recorder::PendingCompletionLabels() == 0 && Recorder::PendingWriteBackCompletions() == 0 && recorder.Idle(), "counts did not return to 0 at finish");
     const bool storeAlways = std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr;
     Require(memory[0] == 1 && memory[2] == (storeAlways ? 1u : 7u) && memory[16] == 1, "completion stores ran for the wrong labels (overlapped and not-imported ones store, the untouched GPU-stored one skips)");
-}
+}};
 
-void directCompletionLabelTests(Recorder& recorder) {
+const Case directCompletionLabels{"CompletionLabel_InDirectMemory_StoresExactlyItsBytesUntracked", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t size = 65536;
     struct Release {
@@ -389,9 +496,12 @@ void directCompletionLabelTests(Recorder& recorder) {
             Require(!UnchangedSinceCollected(address, bytes, after), "completion store disabled subsequent guest tracking");
         }
     }
-}
+}};
 
-void afterRecordedWorkTests(const Device& device, Recorder& recorder) {
+const Case afterRecordedWork{"AfterRecordedWork_PendingActions_RunOnceInOrderAfterTheirBatch", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     alignas(64) static std::uint32_t memory[16];
     const auto base = reinterpret_cast<std::uint64_t>(memory);
     const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
@@ -411,9 +521,11 @@ void afterRecordedWorkTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     Require(ran == std::vector<int>{1, 2, 3} && Recorder::PendingCompletionLabels() == 0 && recorder.Idle(), "actions behind recorded work did not run once each, in order");
     Require(seen == 1, "an action ran before the completion label recorded ahead of it");
-}
+}};
 
-void batchStampTests(Recorder& recorder) {
+const Case batchStamps{"BatchStamps_FinishedBatches_HaveOrderedStampsOrNone", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
     Require(recorder.Idle(), "batch stamps: the recorder is busy");
     double previousEnd = 0;
     for (int round = 0; round < 3; ++round) {
@@ -432,13 +544,13 @@ void batchStampTests(Recorder& recorder) {
             Require(batch.gpuStartNs == 0 && batch.gpuEndNs == 0, "batch stamps were written with profiling off");
         }
     }
-    std::cout << "batch stamps " << (Recorder::BatchStampsEnabled() ? "checked" : "off") << '\n';
-}
+}};
 
-void labelTests(Recorder& recorder) {
+const Case pendingLabels{"PendingLabelIn_QueuedAndRecordedLabels_AreSeenUntilForgottenOrSynced", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
     const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
     Require(!recorder.PendingLabelIn(0x60000, 0x100), "an empty table reports a label");
-    // A label this worker queued but has not recorded yet is inside the range for a CPU store decision.
     Recorder::NoteQueuedLabel(0x60010, value, 1, AgcDriver::GuestMemory::GpuLockThreadTag());
     Require(recorder.PendingLabelIn(0x60010, 4) && recorder.PendingLabelIn(0x60000, 0x100) && !recorder.PendingLabelIn(0x60014, 4) && !recorder.PendingLabelIn(0x60000, 0x10), "a queued label is not seen by PendingLabelIn");
     Recorder::ForgetQueuedLabels();
@@ -447,12 +559,11 @@ void labelTests(Recorder& recorder) {
     Require(recorder.PendingLabelIn(0x60020, 4) && recorder.PendingLabelIn(0x60000, 0x100) && !recorder.PendingLabelIn(0x60000, 0x20), "a recorded label is not seen by PendingLabelIn");
     recorder.Sync();
     Require(!recorder.PendingLabelIn(0x60000, 0x100), "a recorded label outlived its batch");
-}
+}};
 
-// The late rule (Recorder::NoteLabel): an entry with stamp <= afterStamp is served once its group
-// closed, unless a non-label write covered it, it is queued, or APS5_LABEL_TRUST_LATE=0 (run the
-// binary with that set for the switch-off case).
-void lateLabelTests(Recorder& recorder) {
+const Case lateLabels{"LookupLabel_LateRule_ServesOnlyClosedUnwrittenUnqueuedEntries", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
     using Refusal = Recorder::LabelRefusal;
     const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
     const std::array<std::byte, 4> two{std::byte{2}, std::byte{0}, std::byte{0}, std::byte{0}};
@@ -473,7 +584,6 @@ void lateLabelTests(Recorder& recorder) {
         Require(Recorder::LookupLabel(a, 4, 5).has_value(), "(1) the early lookup broke with the switch off");
         recorder.Sync();
         Require(!Recorder::LookupLabel(a, 4, 5).has_value(), "(7) the entry outlived its batch");
-        std::cout << "late label tests ran with APS5_LABEL_TRUST_LATE=0\n";
         return;
     }
     Require(!late.has_value() && refusal == Refusal::Unclosed, "(2) an unclosed group is served");
@@ -483,20 +593,16 @@ void lateLabelTests(Recorder& recorder) {
     late = Recorder::LookupLabel(a, 4, 10, &refusal);
     Require(late.has_value() && late->late && late->value == 1 && late->generation == generation && late->stamp == 10 && refusal == Refusal::None, "(2) a closed group is not served");
     Require(Recorder::LookupLabel(a, 4, 9)->late == false, "(2) an early lookup became late");
-    // (3) A disjoint write leaves the entry alone; an overlapping non-label write refuses the late
-    // lookup only (the early one still composes what memory will hold in order).
     recorder.NotePendingWrite(a + 4, 16);
     Require(Recorder::LookupLabel(a, 4, 10).has_value(), "(3) a disjoint write flagged the entry");
     recorder.NotePendingWrite(a - 8, 12);
     late = Recorder::LookupLabel(a, 4, 10, &refusal);
     Require(!late.has_value() && refusal == Refusal::Overwritten, "(3) an overwritten entry is served late");
     Require(Recorder::LookupLabel(a, 4, 5).has_value(), "(3) an overwrite refused the early lookup");
-    // The label's own note (inside NoteLabel) is no overwrite: an 8-byte label closed as a group.
     recorder.NoteLabel(b, pair, 20, 0);
     Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
     const auto wide = Recorder::LookupLabel(b, 8, 20, &refusal);
     Require(wide.has_value() && wide->late && wide->value == 0x200000001ull && refusal == Refusal::None, "(3) the label's own note refused it");
-    // (4) A later label on the dword replaces the entry: unclosed until its own group closes.
     recorder.NoteLabel(a, two, 30, 0);
     Require(!Recorder::LookupLabel(a, 4, 40, &refusal).has_value() && refusal == Refusal::Unclosed, "(4) a replaced entry kept the old close or flag");
     const auto replaced = Recorder::LookupLabel(a, 4, 25);
@@ -505,7 +611,6 @@ void lateLabelTests(Recorder& recorder) {
     Recorder::CloseLabelGroup(generation2);
     late = Recorder::LookupLabel(a, 4, 40, &refusal);
     Require(late.has_value() && late->late && late->value == 2 && late->generation == generation2, "(4) the replaced entry is not late-trustable after its close");
-    // (5) Queued entries: another queue's is never seen, this queue's is early-only.
     const std::uint32_t other = tag == 7 ? 8 : 7;
     Recorder::NoteQueuedLabel(d, one, 50, other);
     Require(!Recorder::LookupLabel(d, 4, 60, &refusal).has_value() && refusal == Refusal::None && !Recorder::LookupLabel(d, 4, 40).has_value(), "(5) another queue's queued label is served");
@@ -520,12 +625,13 @@ void lateLabelTests(Recorder& recorder) {
     Require(!Recorder::LookupLabel(c, 4, 40).has_value(), "(5) a forgotten queued entry is still served");
     const auto after = Recorder::LateCounts();
     Require(after.queued == before.queued + 2 && after.overwritten == before.overwritten + 1 && after.unclosed == before.unclosed + 2 && after.candidates >= before.candidates + 6, "late counters are off");
-    // (7) Entries leave the table with their batch.
     recorder.Sync();
     Require(!Recorder::LookupLabel(a, 4, 5).has_value() && !Recorder::LookupLabel(b, 8, 5).has_value() && !recorder.PendingLabelIn(0x70000, 0x400), "(7) entries outlived their batch");
-}
+}};
 
-void largeLabelTests(Recorder& recorder) {
+const Case largeLabels{"NoteLabel_LargeLabels_ReplaceSmallerOnesAndEnterTheTableUpToItsBound", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
     constexpr std::uint64_t slot = 0x71000, small = slot + 0x10, outside = slot - 4, wide = 0x72000;
     const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
     std::array<std::byte, 256> clear{};
@@ -555,21 +661,26 @@ void largeLabelTests(Recorder& recorder) {
     Require(bound.has_value() && bound->value == 0x0303030303030303ull && bound->stamp == 103, "a label at the table bound is not served");
     recorder.Sync();
     Require(recorder.PendingLabels() == 0 && !Recorder::WideLabelIn(0, ~0ull) && !recorder.PendingLabelIn(slot, clear.size()) && !recorder.PendingWriteOverlaps(slot, clear.size()), "large label tests left entries, ranges or writes behind");
-}
+}};
 
-// (6) GuestMemory::UnchangedSinceCollected: false outside the watched arena, and around a
-// MarkWritten or a CPU write of the block inside it.
-void unchangedSinceTests() {
+const Case unchangedSinceOutside{"UnchangedSinceCollected_OutsideTheWatchedMemory_IsNeverUnchanged", [] {
+    ActiveRecorder fixture;
     using namespace AgcDriver::GuestMemory;
     static std::uint32_t outside[16];
     Require(!UnchangedSinceCollected(reinterpret_cast<std::uint64_t>(outside), 4, TrackerGeneration()), "(6) a range outside the watched memory is unchanged");
     Require(!Watched(reinterpret_cast<std::uint64_t>(outside), 4) && CollectWrites(reinterpret_cast<std::uint64_t>(outside), 4) == 0, "(6) a range outside the watched memory is watched");
+}};
+
+const Case unchangedSince{"UnchangedSinceCollected_WatchedBlock_SeesStampsAndCpuWrites", [] {
+    ActiveRecorder fixture;
+    using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, bytes);
-    if (block == nullptr) {
-        std::cout << "no write watching: UnchangedSinceCollected is always false\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("no write watching: UnchangedSinceCollected is always false");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
     auto* words = static_cast<volatile std::uint32_t*>(block);
     const auto address = reinterpret_cast<std::uint64_t>(block);
     words[0] = 0;
@@ -590,21 +701,16 @@ void unchangedSinceTests() {
     words[1] = 2;
     CollectWritesUncached(address, 4);
     Require(!UnchangedSinceCollected(address, 4, generation3), "(6) a CPU write collected by another caller is not seen");
-    ReleaseWatched(block, bytes);
-}
+}};
 
-// (9) ProvedClearKeys: a surface's DCC keys are scanned once and answered from the proof after,
-// until the key range is stamped (a GPU key store's MarkWritten) or the CPU writes it; a scan made
-// while recorded work still writes the keys is not kept. With APS5_NO_KEY_FAST_PATH=1 every call
-// scans and no proof is stored.
-void keyProofTests(const Device& device, Recorder& recorder) {
+const Case keyProofs{"ProvedClearKeys_StableKeys_AreProvedUntilStampedWrittenOrPending", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, bytes);
-    if (block == nullptr) {
-        std::cout << "no write watching: key proofs not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("no write watching: key proofs not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -631,7 +737,6 @@ void keyProofTests(const Device& device, Recorder& recorder) {
     if (!KeyFastPath()) {
         Require(proof.generation == 0, "(9) APS5_NO_KEY_FAST_PATH stored a proof");
         Require(ProvedClearKeys(resource, surfaceBytes, proof) == DccKeys::Clear0000 && proof.generation == 0, "(9) APS5_NO_KEY_FAST_PATH proved keys");
-        std::cout << "key fast path off: every call scans\n";
         return;
     }
     Require(proof.generation != 0 && proof.keys == DccKeys::Clear0000 && after.unstable == before.unstable, "(9) a stable scan left no proof");
@@ -648,8 +753,6 @@ void keyProofTests(const Device& device, Recorder& recorder) {
     before = KeyProofCounts();
     Require(before.scanned == after.scanned + 1 && proof.keys == DccKeys::Clear0001, "(9) the CPU write did not make a scan");
     Require(ProvedClearKeys(resource, surfaceBytes, proof) == DccKeys::Clear0001 && KeyProofCounts().proved == before.proved + 1, "(9) the new keys were not proved");
-    // A recorded write over the keys (noted and stamped as the driver's key stores are): the scans
-    // are not kept until its batch signaled.
     recorder.NotePendingWrite(address, keyCount);
     MarkWritten(address, keyCount);
     before = KeyProofCounts();
@@ -663,34 +766,48 @@ void keyProofTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     before = KeyProofCounts();
     Require(ProvedClearKeys(resource, surfaceBytes, proof) == DccKeys::Clear0001 && KeyProofCounts().proved == before.proved + 1, "(9) the proof did not hold after the batch finished");
+}};
+
+void SkipUnlessLateTrust() {
+    if (!Recorder::LateTrust()) Testing::Skip("late label trust is off (APS5_LABEL_TRUST_LATE=0)");
 }
 
-// (8) The group close against a collect in progress: a CPU store made after the close must refuse
-// the entry although another thread's resetting walk of the label's page (over a large range) may
-// absorb the store and stamp the block with the generation it took before the close. And an entry
-// whose batch was submitted before the close stays unclosed.
-void closeRaceTests(const Device& device, Recorder& recorder) {
-    using namespace AgcDriver::GuestMemory;
+const Case closeSubmitted{"CloseLabelGroup_EntryOfASubmittedBatch_StaysUnclosed", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     using Refusal = Recorder::LabelRefusal;
+    SkipUnlessLateTrust();
     const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
     Refusal refusal{};
-    if (!Recorder::LateTrust()) return;
     recorder.NoteLabel(0x80000, one, 70, 0);
     recorder.Submit();
-    Recorder::CloseLabelGroup(TrackerGeneration());
+    Recorder::CloseLabelGroup(AgcDriver::GuestMemory::TrackerGeneration());
     Require(!Recorder::LookupLabel(0x80000, 4, 70, &refusal).has_value() && refusal == Refusal::Unclosed, "(8) a submitted batch's entry was closed");
     device.WaitQueue();
     recorder.Sync();
+}};
+
+const Case closeRace{"CloseLabelGroup_RacingCollect_DoesNotHideALaterCpuStore", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
+    using namespace AgcDriver::GuestMemory;
+    using Refusal = Recorder::LabelRefusal;
+    SkipUnlessLateTrust();
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    Refusal refusal{};
     constexpr std::size_t bytes = 1u << 20;
     void* block = AllocateWatched(bytes, 65536);
-    if (block == nullptr) return;
+    if (block == nullptr) Testing::Skip("no write watching: the close race not tested");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
     const auto base = reinterpret_cast<std::uint64_t>(block);
-    // Late in the range, so the walker is usually still ahead of the page when the store lands.
     const auto label = base + 4096 * 250;
     auto* word = reinterpret_cast<volatile std::uint32_t*>(label);
     *word = 0;
     CollectWritesUncached(base, bytes);
-    // Joined on every exit, so a failed Require reports instead of terminating on the thread.
     struct Walker {
         std::atomic<bool> stop{false};
         std::thread thread;
@@ -715,39 +832,22 @@ void closeRaceTests(const Device& device, Recorder& recorder) {
     walker.thread.join();
     recorder.Sync();
     Require(!Recorder::LookupLabel(label, 4, 5).has_value(), "(8) the entry outlived its batch");
-    ReleaseWatched(block, bytes);
-}
+}};
 
-// A resource build over host-imported guest memory notes its in-place reads when its writes are
-// marked, so a CPU copy into that memory is refused until the batch ran.
-// Per-batch store runs (Recorder::RecordStore): the stores of a batch queue until Submit, a
-// later writer or reader of a queued store's bytes has the run recorded in place first, and the
-// stores land in the import's memory once the batch ran. With APS5_LABEL_RUNS_INLINE=1 or
-// APS5_NO_LABEL_RUNS=1 (run the binary with either set) nothing queues and the stores land alike.
-void storeRunTests(const Device& device, Recorder& recorder) {
+const Case storeRuns{"RecordStore_PerBatchRuns_QueueUntilSubmitOrAnOverlappingAccess", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: store runs not tested\n";
-        return;
-    }
+    if (context.hostImportAlignment == 0) Testing::Skip("host imports unavailable: store runs not tested");
     constexpr std::size_t bytes = 65536;
-#ifdef _WIN32
-    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-#else
-    void* block = std::aligned_alloc(65536, bytes);
-#endif
+    void* block = AllocateHost(bytes);
     Require(block != nullptr, "cannot allocate the store test block");
     std::memset(block, 0, bytes);
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
-    }
-    const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr) {
-        std::cout << "host import of the store test block refused: store runs not tested\n";
-        return;
-    }
+    const RegisteredBlock registered(context, block, bytes);
+    const auto address = registered.Address();
+    const auto* import = registered.Import();
+    if (import == nullptr) Testing::Skip("host import of the store test block refused: store runs not tested");
     const bool perBatch = std::getenv("APS5_LABEL_RUNS_INLINE") == nullptr && std::getenv("APS5_NO_LABEL_RUNS") == nullptr && std::getenv("APS5_NO_LABEL_BATCHING") == nullptr;
     auto* words = static_cast<volatile std::uint32_t*>(block);
     const auto store = [&](std::size_t word, std::uint32_t value) {
@@ -763,7 +863,6 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     Require(recorder.HasQueuedStores() == perBatch, "per-batch runs do not queue (or inline runs do)");
     Require(recorder.QueuedStoreOverlaps(address, 8) == perBatch && recorder.QueuedStoreOverlaps(address + 16, 4) == perBatch && !recorder.QueuedStoreOverlaps(address + 8, 8), "queued store ranges are wrong");
     const auto before = Recorder::StoreCounts();
-    // A reader or writer of untouched bytes forces nothing; one over a queued store records the run.
     recorder.FlushStoresOverlapping(address + 8, 8);
     Require(recorder.HasQueuedStores() == perBatch, "a disjoint range flushed the run");
     recorder.FlushStoresOverlapping(address + 16, 4);
@@ -776,7 +875,11 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     Require(words[0] == 1 && words[1] == 2 && words[2] == 5 && words[4] == 4 && words[3] == 0, "the stores did not land (or the later store of a dword lost)");
     const auto after = Recorder::StoreCounts();
     Require(after.stores == before.stores + 1 && after.replaced == before.replaced + 0 && after.joined == before.joined + 0, "store counters are off");
-    // The covered-access mask: reported once by the next Commands() call, then cleared.
+}};
+
+const Case coveredMask{"MarkCovered_CoveredAccesses_AreReportedOnceByTheNextCommands", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
     VkAccessFlags covered = 0xffffffffu;
     recorder.Commands(&covered);
     Require(covered == 0, "a new batch starts covered");
@@ -786,25 +889,25 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     recorder.Commands(&covered);
     Require(covered == 0, "the covered mask survived a Commands() call");
     recorder.Sync();
-    // The hazard tracker (counting mode only): accesses are noted without effect on the batch.
+}};
+
+const Case noteAccess{"NoteAccess_HazardTracker_OpensABatchOnlyWhenValidating", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
+    alignas(64) static std::byte memory[64];
+    const auto address = reinterpret_cast<std::uint64_t>(memory);
     const std::pair<std::uint64_t, std::uint64_t> range{address, address + 64};
     recorder.NoteAccess(Recorder::CommandClass::Fill, Recorder::Access{{}, std::span(&range, 1), {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
     recorder.NoteAccess(Recorder::CommandClass::DispatchLeading, Recorder::Access{std::span(&range, 1), {}, {}, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT});
     Require(recorder.Recording() == Recorder::BarrierValidate(), "a noted access opened a batch with the tracker off (or none with it on)");
     recorder.Sync();
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Remove(block);
-    }
-    HostImportFor(context, address, bytes);
-}
+}};
 
-void remappedImportTests(const Device& device) {
+const Case remappedImports{"HostImportFor_RangeMappedAgain_IsImportedAgain", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
     const auto& context = device.GetContext();
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: remapped imports not tested\n";
-        return;
-    }
+    if (context.hostImportAlignment == 0) Testing::Skip("host imports unavailable: remapped imports not tested");
     constexpr std::size_t bytes = 65536;
 #ifdef _WIN32
     void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -817,10 +920,7 @@ void remappedImportTests(const Device& device) {
         GuestAllocations::Mutation mutation;
         mutation.Add(block, bytes, true, true);
     }
-    if (HostImportFor(context, address, bytes) == nullptr) {
-        std::cout << "host import of the remap test block refused: remapped imports not tested\n";
-        return;
-    }
+    if (HostImportFor(context, address, bytes) == nullptr) Testing::Skip("host import of the remap test block refused: remapped imports not tested");
     const auto first = HostImportSerial(context, address, bytes, true);
     Require(first != 0 && HostImportSerial(context, address, bytes, true) == first, "an unchanged range lost its import");
     {
@@ -836,14 +936,14 @@ void remappedImportTests(const Device& device) {
         mutation.Remove(block);
     }
     HostImportFor(context, address, bytes);
-}
+}};
 
-void movedMetadataTests(const Device& device, Recorder& recorder) {
+const Case movedMetadata{"CachedStorageSurface_MovedDccKeys_RemakeTheImage", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: moved DCC metadata not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: moved DCC metadata not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
@@ -875,10 +975,7 @@ void movedMetadataTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, address, bytes);
         }
     } unregister{base, block, address};
-    if (HostImportFor(base, address, bytes) == nullptr) {
-        std::cout << "host import of the moved metadata block refused: moved DCC metadata not tested\n";
-        return;
-    }
+    if (HostImportFor(base, address, bytes) == nullptr) Testing::Skip("host import of the moved metadata block refused: moved DCC metadata not tested");
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
@@ -933,14 +1030,14 @@ void movedMetadataTests(const Device& device, Recorder& recorder) {
     const auto back = CachedStorageSurface(context, withKeys(first));
     Require(back != moved && back->Descriptor().dccAddress == first, "the keys moving back did not remake the image");
     Require(holds(*back, {0x55, 0x55, 0x55, 0x55}), "the image remade under the first keys does not hold the stored texels");
-}
+}};
 
-void viewPastLastMipTests(const Device& device, Recorder& recorder) {
+const Case viewPastLastMip{"CachedStorageSurface_ViewPastTheLastMip_ReadsTheTailSlots", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: views past the last mip not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: views past the last mip not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t bytes = 0x60000;
 #ifdef _WIN32
@@ -968,10 +1065,7 @@ void viewPastLastMipTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, address, bytes);
         }
     } unregister{base, block, address};
-    if (HostImportFor(base, address, bytes) == nullptr) {
-        std::cout << "host import of the past-last-mip block refused: views past the last mip not tested\n";
-        return;
-    }
+    if (HostImportFor(base, address, bytes) == nullptr) Testing::Skip("host import of the past-last-mip block refused: views past the last mip not tested");
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
@@ -1018,41 +1112,9 @@ void viewPastLastMipTests(const Device& device, Recorder& recorder) {
     Require(CachedStorageSurface(context, allocatedView) == past, "a view of the allocated levels took another image than the view past the last mip");
     Require(texel(*past, 2) == 0x66666666u, "level 2 was not read from its addrlib tail slot");
     Require(texel(*past, 3) == 0x77777777u, "the level past the last mip was not read from its addrlib tail slot");
-}
+}};
 
-void resourceReadTests(const Device& device, Recorder& recorder) {
-    const auto& context = device.GetContext();
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: resource read notes not tested\n";
-        return;
-    }
-    constexpr std::size_t bytes = 65536;
-#ifdef _WIN32
-    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-#else
-    void* block = std::aligned_alloc(65536, bytes);
-#endif
-    Require(block != nullptr, "cannot allocate the test block");
-    std::memset(block, 0x11, bytes);
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
-    }
-    if (HostImportFor(context, address, bytes) == nullptr) {
-        std::cout << "host import of the test block refused: resource read notes not tested\n";
-        return;
-    }
-    const auto element = address + 4096;
-    constexpr std::size_t elementBytes = 1024;
-    {
-        GuestBufferMemory memory(context);
-        memory.AddReadable(element, elementBytes);
-        memory.Upload(false);
-        const auto reads = memory.InPlaceReads();
-        Require(reads.size() == 1 && reads[0].first == element && reads[0].second == element + elementBytes, "an imported region is not an in-place read");
-        Require(memory.Writes().empty(), "a readable element counts as written");
-    }
+ShaderRecompiler::RecompileResult ReadOnlyBufferProgram(std::uint64_t element, std::uint32_t elementBytes) {
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
     binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
@@ -1063,6 +1125,50 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, elementBytes, 0x31000000u};
     binding.bufferWritten = {false};
     program.bindings.push_back(binding);
+    return program;
+}
+
+class ResourceReadBlock {
+public:
+    static constexpr std::size_t Bytes = 65536;
+    static constexpr std::size_t ElementBytes = 1024;
+
+    explicit ResourceReadBlock(const Context& context) : block(Allocate(context)), registered(context, block, Bytes) {
+        if (registered.Import() == nullptr) Testing::Skip("host import of the test block refused: resource read notes not tested");
+    }
+
+    std::uint64_t Element() const { return registered.Address() + 4096; }
+
+private:
+    static void* Allocate(const Context& context) {
+        if (context.hostImportAlignment == 0) Testing::Skip("host imports unavailable: resource read notes not tested");
+        void* block = AllocateHost(Bytes);
+        Require(block != nullptr, "cannot allocate the test block");
+        std::memset(block, 0x11, Bytes);
+        return block;
+    }
+
+    void* block;
+    RegisteredBlock registered;
+};
+
+const Case resourceReads{"ShaderResources_InPlaceRead_IsNotedUntilItsBatchRan", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
+    const auto& context = device.GetContext();
+    const ResourceReadBlock block(context);
+    const auto element = block.Element();
+    constexpr std::size_t elementBytes = ResourceReadBlock::ElementBytes;
+    {
+        GuestBufferMemory memory(context);
+        memory.AddReadable(element, elementBytes);
+        memory.Upload(false);
+        const auto reads = memory.InPlaceReads();
+        Require(reads.size() == 1 && reads[0].first == element && reads[0].second == element + elementBytes, "an imported region is not an in-place read");
+        Require(memory.Writes().empty(), "a readable element counts as written");
+    }
+    auto program = ReadOnlyBufferProgram(element, elementBytes);
     const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     {
         ShaderResources resources(context, compute);
@@ -1077,6 +1183,18 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         Require(!recorder.PendingReadOverlaps(element, 16), "the build's read refuses after its batch ran");
         recorder.Sync();
     }
+}};
+
+const Case drawSnapshots{"ShaderResources_ReadOnlyDrawInput_IsSnapshottedPerDraw", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
+    const auto& context = device.GetContext();
+    const ResourceReadBlock block(context);
+    const auto element = block.Element();
+    constexpr std::size_t elementBytes = ResourceReadBlock::ElementBytes;
+    auto program = ReadOnlyBufferProgram(element, elementBytes);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     std::weak_ptr<ShaderResources::DrawBindings> snapshotLifetime;
     {
         auto snapshotContext = context;
@@ -1115,27 +1233,18 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     }
     Require(snapshotLifetime.expired(), "draw snapshots outlived their recorder");
     recorder.Activate();
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Remove(block);
-    }
-    // The import is retired by the next reconcile; the block itself is left to the process.
-    HostImportFor(context, address, bytes);
-}
+}};
 
-void misalignedRegionTests(const Device& device, Recorder& recorder) {
+const Case misalignedRegions{"ShaderResources_MisalignedDrawRegion_IsSnapshottedFromTheAlignedOffset", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
     constexpr std::size_t bytes = 65536;
-    if (alignment < 8 || alignment > 256) {
-        std::cout << "storage buffer offset alignment " << alignment << ": misaligned draw regions not tested\n";
-        return;
-    }
+    if (alignment < 8 || alignment > 256) Testing::Skip("storage buffer offset alignment " + std::to_string(alignment) + ": misaligned draw regions not tested");
     void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
-    if (block == nullptr) {
-        std::cout << "host imports or write watching unavailable: misaligned draw regions not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("host imports or write watching unavailable: misaligned draw regions not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -1159,10 +1268,7 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
         }
     } unregister{context, block};
     const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr) {
-        std::cout << "host import of the watched block refused: misaligned draw regions not tested\n";
-        return;
-    }
+    if (import == nullptr) Testing::Skip("host import of the watched block refused: misaligned draw regions not tested");
     constexpr std::uint32_t offset = 4096 + 4;
     constexpr std::size_t elementBytes = 64;
     const auto view = address + offset;
@@ -1208,19 +1314,16 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
         regionRecorder.Sync();
     }
     recorder.Activate();
-}
+}};
 
-void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
+const Case misalignedSnapshots{"ShaderResources_MisalignedInnerView_IsReadAtItsShaderOffset", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: misaligned draw snapshots not tested\n";
-        return;
-    }
-    if (alignment < 8 || alignment > 256) {
-        std::cout << "storage buffer offset alignment " << alignment << ": misaligned draw snapshots not tested\n";
-        return;
-    }
+    if (context.hostImportAlignment == 0) Testing::Skip("host imports unavailable: misaligned draw snapshots not tested");
+    if (alignment < 8 || alignment > 256) Testing::Skip("storage buffer offset alignment " + std::to_string(alignment) + ": misaligned draw snapshots not tested");
     constexpr std::size_t bytes = 65536;
 #ifdef _WIN32
     void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -1246,10 +1349,7 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
         }
     } unregister{context, block};
-    if (HostImportFor(context, address, bytes) == nullptr) {
-        std::cout << "host import of the test block refused: misaligned draw snapshots not tested\n";
-        return;
-    }
+    if (HostImportFor(context, address, bytes) == nullptr) Testing::Skip("host import of the test block refused: misaligned draw snapshots not tested");
     constexpr std::uint32_t outer = 4096;
     constexpr std::uint32_t offset = outer + 4;
     constexpr std::size_t outerBytes = 128;
@@ -1290,16 +1390,16 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
         snapshotRecorder.Sync();
     }
     recorder.Activate();
-}
+}};
 
-void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
+const Case drawSnapshotReuse{"PrepareDrawBindings_UnchangedInput_ReusesItsSnapshot", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
     constexpr std::size_t bytes = 65536;
     void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
-    if (block == nullptr) {
-        std::cout << "host imports or write watching unavailable: draw snapshot reuse not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("host imports or write watching unavailable: draw snapshot reuse not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -1321,14 +1421,8 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
         }
     } unregister{context, block};
-    if (HostImportFor(context, address, bytes) == nullptr) {
-        std::cout << "host import of the watched block refused: draw snapshot reuse not tested\n";
-        return;
-    }
-    if (!AgcDriver::GuestMemory::Watched(address, bytes)) {
-        std::cout << "host imports are compared, not watched: draw snapshot reuse not tested\n";
-        return;
-    }
+    if (HostImportFor(context, address, bytes) == nullptr) Testing::Skip("host import of the watched block refused: draw snapshot reuse not tested");
+    if (!AgcDriver::GuestMemory::Watched(address, bytes)) Testing::Skip("host imports are compared, not watched: draw snapshot reuse not tested");
     const auto element = address + 4096;
     constexpr std::size_t elementBytes = 1024;
     ShaderRecompiler::RecompileResult program;
@@ -1374,16 +1468,15 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         snapshotRecorder.Sync();
     }
     recorder.Activate();
-}
+}};
 
-void drawSnapshotEvictionTests(const Device& device) {
+const Case drawSnapshotEviction{"KeepDrawSnapshot_PastTheCapOrBudget_EvictsTheLeastRecentlyUsed", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t bytes = 65536;
     void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
-    if (block == nullptr) {
-        std::cout << "write watching unavailable: draw snapshot eviction not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("write watching unavailable: draw snapshot eviction not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -1412,17 +1505,17 @@ void drawSnapshotEvictionTests(const Device& device) {
     std::memset(block, 0x5a, 16);
     CollectWrites(address, 16);
     Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
-}
+}};
 
-void drawInputReuseTests(const Device& device, Recorder& recorder) {
+const Case drawInputReuse{"CopyDrawInput_UnchangedInput_ReusesTheCopyOfItsUse", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     using namespace AgcDriver::GuestMemory;
     using Use = Recorder::SnapshotUse;
     constexpr std::size_t bytes = 65536;
     void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
-    if (block == nullptr) {
-        std::cout << "write watching unavailable: draw input reuse not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("write watching unavailable: draw input reuse not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -1488,27 +1581,24 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     const auto small = CopyDrawInput(context, &recorder, pool, 4096, 1, Use::Vertex);
     Require(small.reused && small.buffer == after.buffer, "the new vertex snapshot does not serve shorter reads");
     recorder.Sync();
-}
+}};
 
-// Unit shadows (UnitShadow.hpp) over a host import of write-watched arena memory: a retile piece's
-// slab destination and its seeds, freshness from the tracker (a publish never stamps, a CPU write
-// makes the unit stale), the scopes, the slab boundary, and the retire publish. With
-// APS5_UNIT_SHADOW_MIB=8 (one slab) the second slab's allocation evicts the first with a publish;
-// with APS5_NO_UNIT_SHADOW=1 every primitive is inert.
-void unitShadowTests(const Device& device, Recorder& recorder) {
+const Case unitShadowsOff{"UnitShadows_Disabled_AreInert", [] {
+    ActiveRecorder fixture;
+    using namespace AgcDriver::GuestMemory;
+    if (UnitShadowEnabled()) Testing::Skip("unit shadows are on");
+    Require(!AnyShadowedOverlaps(0x10000, 16) && PublishShadow(0x10000, 16, PublishScope::Whole, PublishReason::Hook) == 0, "unit shadows are off but not inert");
+}};
+
+const Case unitShadows{"UnitShadows_RetilePublishAndRetire_KeepGuestBytesExact", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
-    if (!UnitShadowEnabled()) {
-        Require(!AnyShadowedOverlaps(0x10000, 16) && PublishShadow(0x10000, 16, PublishScope::Whole, PublishReason::Hook) == 0, "unit shadows are off but not inert");
-        std::cout << "unit shadows off (APS5_NO_UNIT_SHADOW, or no write watching): primitives inert\n";
-        return;
-    }
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: unit shadows not tested\n";
-        return;
-    }
+    if (!UnitShadowEnabled()) Testing::Skip("unit shadows off (APS5_NO_UNIT_SHADOW, or no write watching): primitives inert");
+    if (context.hostImportAlignment == 0) Testing::Skip("host imports unavailable: unit shadows not tested");
     constexpr std::uint64_t unit = 65536;
-    // Three slabs at the default 8 MiB: units 0..127, 128..255, 256..271.
     constexpr std::size_t bytes = (17u << 20u);
     void* block = AllocateWatched(bytes, 65536);
     Require(block != nullptr, "unit shadows are on without write watching");
@@ -1537,22 +1627,14 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
         }
     } unregister{context, block, address};
     const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr) {
-        std::cout << "host import of the shadow test block refused: unit shadows not tested\n";
-        return;
-    }
-    if (!Watched(address, bytes)) {
-        std::cout << "host imports are compared, not watched: unit shadows not tested\n";
-        return;
-    }
+    if (import == nullptr) Testing::Skip("host import of the shadow test block refused: unit shadows not tested");
+    if (!Watched(address, bytes)) Testing::Skip("host imports are compared, not watched: unit shadows not tested");
     Require(import->base == address && import->bytes == bytes, "the import does not cover the block");
     CollectWritesUncached(address, bytes);
     const auto* words = static_cast<const std::uint8_t*>(block);
     const auto unit3 = address + 3 * unit;
     const auto unit4 = unit3 + unit;
     const auto unit5 = unit4 + unit;
-    // A half-unit piece seeds its unit from the import; a whole-unit piece does not; both land in
-    // one slab at one offset.
     auto half = ShadowDestinationFor(context, *import, unit3, unit3 + unit / 2);
     Require(half.has_value() && half->seedUnits.size() == 1 && half->seedUnits[0].first == unit3 && half->seedUnits[0].second == unit4, "a half-unit retile piece does not seed its unit");
     auto whole = ShadowDestinationFor(context, *import, unit3, unit4);
@@ -1560,7 +1642,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(!AnyShadowedOverlaps(unit3, unit), "a destination alone counts as shadowed");
     const auto firstSlab = half->slab;
     Require(firstSlab->pins.load() == 2 && half->pin != nullptr, "destinations do not pin their slab");
-    // The retile as writeBackWindows records it: the seed, then the piece's bytes over its half.
     const auto copyBuffer = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
     const auto retile = [&](const ShadowDestination& destination, std::uint64_t begin, std::uint64_t length, std::uint8_t value, bool seed) {
         auto pattern = std::make_shared<Buffer>(context, static_cast<std::size_t>(length), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -1585,7 +1666,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(AnyShadowedOverlaps(unit3, 1) && AnyShadowedOverlaps(unit4 - 1, 1) && AnyShadowedOverlaps(unit3 + 1000, 64), "a fresh unit is not seen as shadowed");
     Require(!AnyShadowedOverlaps(unit3 - 1, 1) && !AnyShadowedOverlaps(unit4, unit) && !AnyShadowedOverlaps(address, 3 * unit), "a range outside the unit is seen as shadowed");
     {
-        // An upload's runs over units 2..4 split at unit 3's freshness; the fresh piece reads the slab.
         const std::pair<std::uint64_t, std::uint64_t> run{2 * unit, 5 * unit};
         const auto sources = ShadowSources(context, *import, address, std::span(&run, 1), {});
         Require(sources.size() == 3, "an upload run is not split at the fresh unit");
@@ -1593,8 +1673,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
         Require(sources[1].shadow && sources[1].begin == 3 * unit && sources[1].end == 4 * unit && sources[1].buffer == half->buffer && sources[1].offset == half->offset && sources[1].slab == half->slab, "the fresh unit's piece does not read the slab");
         Require(!sources[2].shadow && sources[2].begin == 4 * unit && sources[2].end == 5 * unit, "the import piece after the fresh unit is wrong");
     }
-    // A whole publish: the untouched half keeps the seed (the import's bytes), the other the
-    // retile's; the copy stamps nothing, and a second publish copies nothing.
     const auto pre = CollectWritesUncached(address, bytes);
     Require(PublishShadow(unit3, unit, PublishScope::Whole, PublishReason::Hook) == 1, "the whole publish did not copy the unit");
     Require(recorder.PendingWriteOverlaps(unit3, unit), "the publish noted no pending write");
@@ -1604,12 +1682,10 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(PublishShadow(unit3, unit, PublishScope::Whole, PublishReason::Hook) == 0, "a second publish copied the unit again");
     Require(UnchangedSince(unit3, unit, pre), "the publish stamped the unit");
     {
-        // The published unit still reads from the slab (both hold the bytes).
         const std::pair<std::uint64_t, std::uint64_t> run{3 * unit, 4 * unit};
         const auto sources = ShadowSources(context, *import, address, std::span(&run, 1), {});
         Require(sources.size() == 1 && sources[0].shadow, "a published unit does not read from the slab");
     }
-    // Partial-unit scope over unit 3 (partly, fresh again) and unit 4 (wholly, fresh): unit 3 only.
     retile(*whole, unit3, unit, 0x33, false);
     auto four = ShadowDestinationFor(context, *import, unit4, unit5);
     Require(four.has_value() && four->seedUnits.empty() && four->slab == half->slab, "unit 4's destination is not in the same slab");
@@ -1619,15 +1695,12 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(!AnyShadowedOverlaps(unit3, unit) && AnyShadowedOverlaps(unit4, unit), "the partial publish copied the wrong unit");
     recorder.Sync();
     Require(words[3 * unit] == 0x33 && words[4 * unit - 1] == 0x33 && words[4 * unit] == 0x11, "the partial publish's bytes are wrong");
-    // A CPU write into a page of unit 4 makes it stale: the publish collects the unit itself (no
-    // walk saw the store before it), copies nothing and drops it.
     static_cast<void>(CollectWritesUncached(unit4, unit));
     *static_cast<volatile std::uint8_t*>(static_cast<void*>(static_cast<std::uint8_t*>(block) + 4 * unit + 4096)) = 0x55;
     Require(PublishShadow(unit4, unit, PublishScope::Whole, PublishReason::Hook) == 0, "a stale unit was published");
     Require(!AnyShadowedOverlaps(unit4, unit), "a stale unit still counts as shadowed after its publish");
     recorder.Sync();
     Require(words[4 * unit + 4096] == 0x55 && words[4 * unit] == 0x11, "a stale unit's publish overwrote the CPU's bytes");
-    // The slab boundary: a piece over units 127 and 128 is refused, each alone lands in its slab.
     const auto unit127 = address + 127 * unit;
     const auto unit128 = unit127 + unit;
     Require(SlabBoundary(*import, unit127) == unit128 && SlabBoundary(*import, address) == unit128 && SlabBoundary(*import, unit128) == unit128 + 128 * unit, "the slab boundary is wrong");
@@ -1639,10 +1712,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     const char* budgetText = std::getenv("APS5_UNIT_SHADOW_MIB");
     const auto budgetMiB = budgetText != nullptr ? std::strtoull(budgetText, nullptr, 10) : 1024ull;
     if (budgetMiB < 16) {
-        // One slab fits: while destinations pin the first slab the second is refused (a
-        // write-back in progress must keep its slab); with the pins released, the second slab's
-        // allocation evicts the first after publishing its fresh unit 127 (the eviction publish is
-        // recorded, so the bytes land at the sync).
         Require(!high.has_value(), "a pinned slab was evicted for a second slab");
         half.reset();
         whole.reset();
@@ -1653,7 +1722,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
         Require(high.has_value() && high->slab != firstSlab && high->offset == 0, "unit 128 does not land in a second slab under the one-slab budget");
         recorder.Sync();
         Require(words[127 * unit] == 0x66 && !AnyShadowedOverlaps(unit127, unit), "the evicted slab's fresh unit was not published");
-        std::cout << "unit shadow eviction under APS5_UNIT_SHADOW_MIB=" << budgetMiB << " verified\n";
     } else {
         Require(high.has_value() && high->slab != firstSlab && high->offset == 0 && AnyShadowedOverlaps(unit127, unit), "unit 128 does not land in a second slab beside the first");
         half.reset();
@@ -1664,10 +1732,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     retile(*high, unit128, unit, 0x77, false);
     Require(AnyShadowedOverlaps(unit128, unit), "the second slab's unit is not shadowed");
     high.reset();
-    // Retire through the registry: the block is re-registered as its first five units, so the next
-    // lookup reconciles and retires the import; the fresh units still inside a registered range
-    // are published into its (kept) buffer, the rest (memory the title took back) are dropped.
-    // Under the one-slab budget unit 5's slab evicts the second one first (unit 128 published).
     retile(*ShadowDestinationFor(context, *import, unit5, unit5 + unit), unit5, unit, 0x88, false);
     retile(*ShadowDestinationFor(context, *import, address + 2 * unit, unit3), address + 2 * unit, unit, 0x99, false);
     Require(AnyShadowedOverlaps(unit5, unit) && AnyShadowedOverlaps(address + 2 * unit, unit), "units 2 and 5 are not shadowed before the retire");
@@ -1683,14 +1747,14 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(words[5 * unit] == 0x11 && words[5 * unit + unit - 1] == 0x11, "the retire published a unit whose memory is no longer registered");
     if (budgetMiB >= 16) Require(words[127 * unit] == 0x11 && words[128 * unit] == 0x11, "the retire published the second slab's units outside the registration");
     else Require(words[128 * unit] == 0x77, "the eviction before the retire did not publish unit 128");
-}
+}};
 
-void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
+void StorageRefresh(bool watched) {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: storage refresh not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: storage refresh not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
@@ -1698,10 +1762,7 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     void* block = nullptr;
     if (watched) {
         block = AllocateWatched(bytes, 65536);
-        if (block == nullptr) {
-            std::cout << "no write watching: storage refresh in watched memory not tested\n";
-            return;
-        }
+        if (block == nullptr) Testing::Skip("no write watching: storage refresh in watched memory not tested");
     } else {
 #ifdef _WIN32
         block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -1732,11 +1793,7 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
         }
     } unregister{base, block, address};
     const auto* import = HostImportFor(base, address, bytes);
-    if (import == nullptr) {
-        std::cout << "host import of the storage refresh block refused: storage refresh not tested\n";
-        return;
-    }
-    if (watched && !AgcDriver::GuestMemory::Watched(address, bytes)) std::cout << "host imports are compared, not watched: storage refresh in watched memory runs as unwatched\n";
+    if (import == nullptr) Testing::Skip("host import of the storage refresh block refused: storage refresh not tested");
     watched = watched && AgcDriver::GuestMemory::Watched(address, bytes);
     Require(watched || !ShadowDestinationFor(base, *import, address, address + 65536).has_value(), "a unit shadow was offered for memory the write tracker does not watch");
     if (!AgcDriver::GuestMemory::WriteWatched()) Require(!UnitShadowEnabled(), "unit shadows are on without write watching");
@@ -1846,17 +1903,23 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
     recorder.Sync();
 }
 
-void importWatchTests(const Device& device) {
+const Case storageRefresh{"StorageTexture_RefreshOfUnwatchedMemory_KeepsResultsAndFollowsClearKeys", [] {
+    StorageRefresh(false);
+}};
+
+const Case storageRefreshWatched{"StorageTexture_RefreshOfWatchedMemory_KeepsResultsAndFollowsClearKeys", [] {
+    StorageRefresh(true);
+}};
+
+const Case importWatch{"ImportWatch_Decisions_FollowThePlatformAndTheImport", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
 #ifdef _WIN32
     Require(PrepareImportWatch(context) == ImportWatch::Unwatch, "Windows host imports stayed watched by default");
-    std::cout << "import watch decisions: Windows host imports use comparisons\n";
 #else
-    if (context.hostImportAlignment == 0 || !WriteWatched()) {
-        std::cout << "host imports or write watching unavailable: import watch decisions not tested\n";
-        return;
-    }
+    if (context.hostImportAlignment == 0 || !WriteWatched()) Testing::Skip("host imports or write watching unavailable: import watch decisions not tested");
     const auto probe = ProbeImportWriteProtection(context);
     Require(probe.failure == nullptr, std::string("(u) the import probe failed at ") + (probe.failure != nullptr ? probe.failure : "") + " (" + std::to_string(static_cast<int>(probe.result)) + ")");
     std::cout << "import probe: " << probe.writtenAfterSubmit << " of " << probe.pages << " scratch pages written after a GPU read, " << probe.writtenAtImport << " after the import\n";
@@ -1949,28 +2012,25 @@ void importWatchTests(const Device& device) {
         ReleaseWatched(block, bytes);
     }
 #endif
-}
+}};
 
-void staleGenerationTests(const Device& device, Recorder& recorder) {
+const Case staleGeneration{"StorageTexture_RangeLeavingTheWatch_KeepsPendingResults", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
 #ifdef _WIN32
     static_cast<void>(recorder);
     static_cast<void>(base);
-    std::cout << "a range leaving the watch: Linux write watch only\n";
+    Testing::Skip("a range leaving the watch: Linux write watch only");
 #else
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: a range leaving the watch not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: a range leaving the watch not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
     constexpr std::size_t bytes = surfaceBytes + 65536;
     void* block = AllocateWatched(bytes, 65536);
-    if (block == nullptr) {
-        std::cout << "no write watching: a range leaving the watch not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("no write watching: a range leaving the watch not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -2031,9 +2091,8 @@ void staleGenerationTests(const Device& device, Recorder& recorder) {
         image->MarkDirty();
         const auto* import = HostImportFor(base, address, bytes);
         if (import == nullptr) {
-            std::cout << "host import of the stale generation block refused: a range leaving the watch not tested\n";
             recorder.Sync();
-            return;
+            Testing::Skip("host import of the stale generation block refused: a range leaving the watch not tested");
         }
         Require(!AgcDriver::GuestMemory::Watched(address, bytes), "(s) the imported range stayed watched");
         image->Refresh();
@@ -2055,22 +2114,14 @@ void staleGenerationTests(const Device& device, Recorder& recorder) {
     }
     recorder.Sync();
 #endif
-}
+}};
 
-// A write-back stores the texels of an image and leaves every other byte of the surface's memory
-// as it was: the padding of the tile blocks the surface covers only partly (its last block column
-// and row), the tail block of a mip chain, the bytes between the mips and the pitch padding of a
-// linear surface. Another surface over the memory, or the CPU, reads those bytes. Each case clears
-// every mip of an image over memory holding a pattern no texel equals, stores it and reads the
-// memory back (watched memory through the flush hook, after a store into the import's unit shadow):
-// each 4-byte word is the clear texel or the pattern, and the texels are exactly the surface's.
-// The 64 KiB-aligned tiled cases store through block windows, the others whole layers.
-void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watched) {
+void WriteBackPadding(bool watched) {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: write-back padding not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: write-back padding not tested");
     struct Case {
         const char* name;
         TextureTileMode tileMode;
@@ -2107,14 +2158,12 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
         const auto surfaceBytes = static_cast<std::size_t>(geometry.guestBytes);
         std::size_t texelCount = 0;
         for (const auto& mip : geometry.mips) texelCount += static_cast<std::size_t>(mip.width) * mip.height;
-        // The surface, then a 64 KiB unit past it that no store may reach.
         const auto bytes = (static_cast<std::size_t>(test.offset) + surfaceBytes + 65535) / 65536 * 65536 + 65536;
         void* block = nullptr;
         if (watched) {
             block = AllocateWatched(bytes, 65536);
             if (block == nullptr) {
-                std::cout << "no write watching: write-back padding in watched memory not tested\n";
-                return;
+                Testing::Skip("no write watching: write-back padding in watched memory not tested");
             }
         } else {
 #ifdef _WIN32
@@ -2147,10 +2196,7 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 if (watched) ReleaseWatched(block, bytes);
             }
         } unregister{base, block, blockAddress, bytes, watched};
-        if (HostImportFor(base, blockAddress, bytes) == nullptr) {
-            std::cout << "host import of the write-back padding block refused: write-back padding not tested\n";
-            return;
-        }
+        if (HostImportFor(base, blockAddress, bytes) == nullptr) Testing::Skip("host import of the write-back padding block refused: write-back padding not tested");
         TextureDetiler detiler(base);
         auto context = base;
         context.detiler = &detiler;
@@ -2190,31 +2236,35 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
         }
         recorder.Sync();
     }
-    if (!failures.empty()) throw std::runtime_error("write-back padding:\n" + failures);
-    std::cout << "write-back padding" << (watched ? " (watched)" : "") << ": ok\n";
+    if (!failures.empty()) Testing::Fail("write-back padding:\n" + failures);
 }
 
-void importWindowTests(const Device& device, Recorder& recorder) {
+const Case writeBackPadding{"StorageTexture_WriteBackOfUnwatchedMemory_StoresOnlyTheTexels", [] {
+    WriteBackPadding(false);
+}};
+
+const Case writeBackPaddingWatched{"StorageTexture_WriteBackOfWatchedMemory_StoresOnlyTheTexels", [] {
+    WriteBackPadding(true);
+}};
+
+const Case importWindow{"StorageTexture_ImportWindow_KeepsPendingResultsAndLaterCpuStores", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     using namespace AgcDriver::GuestMemory;
     const auto& base = device.GetContext();
 #ifdef _WIN32
     static_cast<void>(recorder);
     static_cast<void>(base);
-    std::cout << "the import window: Linux write watch only\n";
+    Testing::Skip("the import window: Linux write watch only");
 #else
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: the import window not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: the import window not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
     constexpr std::size_t bytes = surfaceBytes + 65536;
     void* block = AllocateWatched(bytes, 65536);
-    if (block == nullptr) {
-        std::cout << "no write watching: the import window not tested\n";
-        return;
-    }
+    if (block == nullptr) Testing::Skip("no write watching: the import window not tested");
     struct Release {
         void* block;
         ~Release() { ReleaseWatched(block, bytes); }
@@ -2223,10 +2273,7 @@ void importWindowTests(const Device& device, Recorder& recorder) {
     Require(probe.failure == nullptr, "(w) the import probe failed");
     const bool importWrites = probe.writtenAtImport != 0;
     const auto decided = PrepareImportWatch(base);
-    if (decided == ImportWatch::Unwatch) {
-        std::cout << "host imports are compared, not watched: the import window not tested\n";
-        return;
-    }
+    if (decided == ImportWatch::Unwatch) Testing::Skip("host imports are compared, not watched: the import window not tested");
     SetImportWatch(base, ImportWatch::Watch);
     struct Restore {
         const Context& context;
@@ -2284,9 +2331,8 @@ void importWindowTests(const Device& device, Recorder& recorder) {
         Require(cached != 0 && UnchangedSince(address, surfaceBytes, cached), "(w) the cache's generation is not current before the import");
         const auto* import = HostImportFor(base, address, bytes);
         if (import == nullptr) {
-            std::cout << "host import of the import window block refused: the import window not tested\n";
             recorder.Sync();
-            return;
+            Testing::Skip("host import of the import window block refused: the import window not tested");
         }
         Require(!import->unwatched && Watched(address, bytes), "(w) an import under the watch decision left the watch");
         CollectWritesUncached(address, surfaceBytes);
@@ -2326,9 +2372,23 @@ void importWindowTests(const Device& device, Recorder& recorder) {
     }
     recorder.Sync();
 #endif
-}
+}};
 
-void queuedWriteGroupTests() {
+const Case queuedWriteGroups{"QueuedWriteGroups_Examples_SplitOnlyAtStoresOverComputedWrites", [] {
+    using Write = Recorder::QueuedWrite;
+    using Groups = std::vector<std::size_t>;
+    Require(Recorder::QueuedWriteGroups({}).empty(), "no queued writes made a group");
+    const std::vector<Write> query{{0x100, 0x200, false}, {0x100, 0x1f8, true}, {0x108, 0x200, true}, {0x200, 0x300, false}, {0x200, 0x2f8, true}, {0x208, 0x300, true}};
+    Require(Recorder::QueuedWriteGroups(query) == Groups{6}, "a clear, a begin dump and an end dump per query slot are not one group");
+    const std::vector<Write> reused{{0x100, 0x1f8, true}, {0x100, 0x200, false}, {0x100, 0x1f8, true}};
+    Require(Recorder::QueuedWriteGroups(reused) == Groups{1, 3}, "a store over a computed write of its group did not start a new group");
+    const std::vector<Write> apart{{0x100, 0x1f8, true}, {0x1f8, 0x200, false}, {0x300, 0x310, false}};
+    Require(Recorder::QueuedWriteGroups(apart) == Groups{3}, "stores beside the computed writes left their group");
+    const std::vector<Write> stores{{0x100, 0x110, false}, {0x100, 0x110, false}};
+    Require(Recorder::QueuedWriteGroups(stores) == Groups{2}, "stores alone were split into groups");
+}};
+
+const Case queuedWriteGroupOrder{"QueuedWriteGroups_RandomWrites_KeepTheFinalBytesOfTheProgramOrder", [] {
     using Write = Recorder::QueuedWrite;
     using Groups = std::vector<std::size_t>;
     const auto paint = [](const std::vector<Write>& writes, const Groups& groups, std::size_t bytes) {
@@ -2352,15 +2412,6 @@ void queuedWriteGroupTests() {
         }
         return memory;
     };
-    Require(Recorder::QueuedWriteGroups({}).empty(), "no queued writes made a group");
-    const std::vector<Write> query{{0x100, 0x200, false}, {0x100, 0x1f8, true}, {0x108, 0x200, true}, {0x200, 0x300, false}, {0x200, 0x2f8, true}, {0x208, 0x300, true}};
-    Require(Recorder::QueuedWriteGroups(query) == Groups{6}, "a clear, a begin dump and an end dump per query slot are not one group");
-    const std::vector<Write> reused{{0x100, 0x1f8, true}, {0x100, 0x200, false}, {0x100, 0x1f8, true}};
-    Require(Recorder::QueuedWriteGroups(reused) == Groups{1, 3}, "a store over a computed write of its group did not start a new group");
-    const std::vector<Write> apart{{0x100, 0x1f8, true}, {0x1f8, 0x200, false}, {0x300, 0x310, false}};
-    Require(Recorder::QueuedWriteGroups(apart) == Groups{3}, "stores beside the computed writes left their group");
-    const std::vector<Write> stores{{0x100, 0x110, false}, {0x100, 0x110, false}};
-    Require(Recorder::QueuedWriteGroups(stores) == Groups{2}, "stores alone were split into groups");
     std::uint64_t seed = 0x9e3779b97f4a7c15ull;
     const auto next = [&](std::uint64_t bound) {
         seed ^= seed << 13u;
@@ -2381,12 +2432,47 @@ void queuedWriteGroupTests() {
         Require(!groups.empty() && groups.back() == writes.size() && std::is_sorted(groups.begin(), groups.end()), "queued write groups do not end at the last write in order");
         Require(paint(writes, groups, bytes) == programOrder(writes, bytes), "recording each group's stores before its computed writes changed the final bytes of the program order");
     }
-}
+}};
 
 constexpr std::uint64_t SampleReady = 1ull << 63u;
 
-void queuedSampleDumpTests(Recorder& recorder, const HostImport& import, std::uint64_t* words, std::uint64_t address, VkDeviceAddress target) {
-    constexpr std::uint64_t untouched = 0xaaaaaaaaaaaaaaaaull;
+class SampleDumpBlock {
+public:
+    static constexpr std::size_t Bytes = 65536;
+    static constexpr std::uint64_t Untouched = 0xaaaaaaaaaaaaaaaaull;
+
+    explicit SampleDumpBlock(const Context& context) : block(Allocate(context)), registered(context, block, Bytes), import(registered.Import()) {
+        if (import == nullptr || import->address == 0) Testing::Skip("host import of the occlusion counter block refused: occlusion counter dumps on the GPU not tested");
+    }
+
+    std::uint64_t* Words() const { return static_cast<std::uint64_t*>(block); }
+    std::uint64_t Address() const { return registered.Address(); }
+    VkDeviceAddress Target() const { return import->address + (Address() - import->base); }
+    const HostImport& Import() const { return *import; }
+
+private:
+    static void* Allocate(const Context& context) {
+        if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress) Testing::Skip("host imports or buffer device addresses unavailable: occlusion counter dumps on the GPU not tested");
+        void* block = AllocateHost(Bytes);
+        Require(block != nullptr, "cannot allocate the occlusion counter block");
+        std::fill(static_cast<std::uint64_t*>(block), static_cast<std::uint64_t*>(block) + 64, Untouched);
+        return block;
+    }
+
+    void* block;
+    RegisteredBlock registered;
+    const HostImport* import;
+};
+
+const Case queuedSampleDumps{"DumpSamples_Queued_LandInProgramOrderWithTheBatchsStores", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
+    const SampleDumpBlock dump(fixture.device.GetContext());
+    const auto& import = dump.Import();
+    auto* words = dump.Words();
+    const auto address = dump.Address();
+    const auto target = dump.Target();
+    constexpr std::uint64_t untouched = SampleDumpBlock::Untouched;
     const auto storeZero = [&](std::uint64_t at, std::size_t bytes) {
         const std::vector<std::byte> zero(bytes);
         recorder.RecordStore(import.buffer, at - import.base, zero, at);
@@ -2416,7 +2502,7 @@ void queuedSampleDumpTests(Recorder& recorder, const HostImport& import, std::ui
     Require(words[32] == 0 && words[34] == SampleReady, "a store after a dump of its bytes did not land last");
     Require(words[33] == (base | SampleReady) && words[35] == SampleReady, "a dump after a store over an earlier dump landed before it");
     Require(words[64] == 0 && words[65] == 0 && words[66] == untouched, "a store between dumps was lost");
-}
+}};
 
 class CoverPass {
 public:
@@ -2554,7 +2640,19 @@ private:
     VkPipeline pipeline = VK_NULL_HANDLE;
 };
 
-void inPassSampleDumpTests(Recorder& recorder, const Context& context, const CoverPass& cover, std::uint64_t* words, std::uint64_t address, VkDeviceAddress target) {
+const Case inPassSampleDumps{"DumpSamples_InsideARenderPass_SplitItsDrawsSamplesInOrder", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
+    const auto& context = device.GetContext();
+    const SampleDumpBlock dump(context);
+    auto* words = dump.Words();
+    const auto address = dump.Address();
+    const auto target = dump.Target();
+    if (!device.Graphics()) Testing::Skip("the test queue has no graphics: occlusion dumps inside a render pass not tested");
+    Require(recorder.DumpSamples(target, address), "the occlusion counters were not dumped on the GPU");
+    recorder.Sync();
+    const CoverPass cover(context);
     const auto samples = [&](std::uint64_t word) { return word & ~SampleReady; };
     recorder.Sync();
     auto base = recorder.SamplesTotal();
@@ -2606,14 +2704,14 @@ void inPassSampleDumpTests(Recorder& recorder, const Context& context, const Cov
     const auto folded = samples(words[0]);
     Require(folded > base && folded == recorder.SamplesTotal(), "segments folded at Submit without a dump were lost");
     if (context.occlusionQueryPrecise) Require(folded == base + passes * CoverPass::Samples, "segments folded at Submit without a dump counted the wrong samples");
-}
+}};
 
-void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
+const Case pendingKeyStores{"CurrentDccKeys_PendingDriverKeyStores_ReadWithoutWaiting", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
-    if (context.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: pending key stores not tested\n";
-        return;
-    }
+    if (context.hostImportAlignment == 0) Testing::Skip("host imports unavailable: pending key stores not tested");
     constexpr std::size_t surfaceBytes = 65536;
     constexpr std::size_t keyCount = surfaceBytes / 256;
     constexpr std::size_t bytes = 65536;
@@ -2641,10 +2739,7 @@ void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, address, bytes);
         }
     } unregister{context, block, address};
-    if (HostImportFor(context, address, bytes) == nullptr) {
-        std::cout << "host import of the pending key store block refused: pending key stores not tested\n";
-        return;
-    }
+    if (HostImportFor(context, address, bytes) == nullptr) Testing::Skip("host import of the pending key store block refused: pending key stores not tested");
     recorder.Sync();
     std::memset(keys, 0x00, keyCount);
     MarkDccUncompressed(context, address, surfaceBytes);
@@ -2673,47 +2768,16 @@ void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
     Require(CurrentDccKeys(address, displayBytes, displayKeys) == DccKeys::Uncompressed && !recorder.PendingWriteOverlaps(address + 40000, 1), "a later writer of key 40000 over a pending 1920x1080 store was not waited for");
     Require(std::all_of(keys, keys + consoleKeys, [](std::uint8_t key) { return key == 0xff; }), "the uncompressed key store over a 1920x1080 surface did not land on all 49152 keys");
     recorder.Sync();
-}
+}};
 
-void sampleDumpTests(const Device& device, Recorder& recorder) {
-    const auto& context = device.GetContext();
-    if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress) {
-        std::cout << "host imports or buffer device addresses unavailable: occlusion counter dumps on the GPU not tested\n";
-        return;
-    }
-    constexpr std::size_t bytes = 65536;
-#ifdef _WIN32
-    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-#else
-    void* block = std::aligned_alloc(65536, bytes);
-#endif
-    Require(block != nullptr, "cannot allocate the occlusion counter block");
-    auto* words = static_cast<std::uint64_t*>(block);
-    constexpr std::uint64_t untouched = 0xaaaaaaaaaaaaaaaaull;
-    std::fill(words, words + 64, untouched);
-    const auto address = reinterpret_cast<std::uint64_t>(block);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(block, bytes, true, true);
-    }
-    struct Unregister {
-        const Context& context;
-        void* block;
-        std::uint64_t address;
-        ~Unregister() {
-            {
-                GuestAllocations::Mutation mutation;
-                mutation.Remove(block);
-            }
-            HostImportFor(context, address, bytes);
-        }
-    } unregister{context, block, address};
-    const auto* import = HostImportFor(context, address, bytes);
-    if (import == nullptr || import->address == 0) {
-        std::cout << "host import of the occlusion counter block refused: occlusion counter dumps on the GPU not tested\n";
-        return;
-    }
-    const auto target = import->address + (address - import->base);
+const Case sampleDumps{"DumpSamples_OnTheGpu_StoreReadyCountersOnceTheBatchRan", [] {
+    ActiveRecorder fixture;
+    auto& recorder = fixture.recorder;
+    const SampleDumpBlock dump(fixture.device.GetContext());
+    auto* words = dump.Words();
+    const auto address = dump.Address();
+    const auto target = dump.Target();
+    constexpr std::uint64_t untouched = SampleDumpBlock::Untouched;
     recorder.Sync();
     constexpr std::uint64_t ready = 1ull << 63u;
     Require(recorder.DumpSamples(target, address), "the occlusion counters were not dumped on the GPU");
@@ -2736,21 +2800,14 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
     Require(words[0] == (begin | ready) && recorder.SamplesTotal() == begin, "dumps past one batch's query slots moved the total");
     Require(recorder.QueuesSampleDumps(), "occlusion dumps are recorded at once, not queued with the batch's stores");
-    queuedSampleDumpTests(recorder, *import, words, address, target);
-    if (!device.Graphics()) {
-        std::cout << "the test queue has no graphics: occlusion dumps inside a render pass not tested\n";
-        return;
-    }
-    CoverPass cover(context);
-    inPassSampleDumpTests(recorder, context, cover, words, address, target);
-}
+}};
 
-void metadataPassTests(const Device& device, Recorder& recorder) {
+const Case metadataPasses{"RunColorMetadataPass_ResidentImage_StoresClearValuesAndUncompressedKeys", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: resident metadata passes not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: resident metadata passes not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
@@ -2781,10 +2838,7 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, address, bytes);
         }
     } unregister{base, block, address};
-    if (HostImportFor(base, address, bytes) == nullptr) {
-        std::cout << "host import of the metadata pass block refused: resident metadata passes not tested\n";
-        return;
-    }
+    if (HostImportFor(base, address, bytes) == nullptr) Testing::Skip("host import of the metadata pass block refused: resident metadata passes not tested");
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
@@ -2861,41 +2915,46 @@ void metadataPassTests(const Device& device, Recorder& recorder) {
     const auto keyed = StorageTexture::FindPending(address, surfaceBytes);
     Require(keyed != nullptr && keyed != unkeyed && keyed->Descriptor().dccAddress == color.dccAddress, "a pass over a resident image under other keys did not remake it under the target's keys");
     Require(keysUncompressed() && memoryHolds({0xff, 0xff, 0xff, 0xff}), "a pass over a remade resident image did not store the 1111 value");
-}
+}};
 
-// The data word positions of a dispatch-cache variant (Driver.cpp's data-only hits): leaves
-// located among the runs' words, aliased, unaligned, out-of-run and mismatched ones skipped.
-void dataWordPositionsTests() {
-    using AgcDriver::DataWordPositions;
+struct DataWordInputs {
     const std::vector<std::pair<std::uint64_t, std::uint64_t>> runs{{0x1000, 0x1010}, {0x2000, 0x2008}};
     const std::vector<std::uint32_t> words{1, 2, 3, 4, 5, 6};
     const std::vector<std::uint32_t> flattened{2, 6, 3};
-    std::vector<std::uint32_t> positions, slots;
-    {
-        const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{1, 0x2004}, {0, 0x1004}, {2, 0x1008}};
-        const std::vector<std::uint64_t> otherReads{0x1008};
-        const auto counts = DataWordPositions(runs, leaves, otherReads, words, flattened, positions, slots);
-        Require(positions == std::vector<std::uint32_t>{1, 5} && slots == std::vector<std::uint32_t>{0, 1}, "data word positions are wrong");
-        Require(counts.aliased == 1 && counts.unmapped == 0 && counts.mismatched == 0, "an aliased leaf was not counted");
-    }
-    {
-        const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{0, 0x1006}, {1, 0x3000}, {1, 0x2008}, {2, 0x1000}};
-        const auto counts = DataWordPositions(runs, leaves, {}, words, flattened, positions, slots);
-        Require(positions.empty() && slots.empty(), "a skipped leaf produced a position");
-        Require(counts.unmapped == 3 && counts.mismatched == 1 && counts.aliased == 0, "skipped leaves were counted wrongly");
-    }
-    {
-        // Two pure slots over one dword: both positions kept, in position order.
-        const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{2, 0x1008}, {1, 0x2004}, {0, 0x1004}};
-        static_cast<void>(DataWordPositions(runs, leaves, {}, words, flattened, positions, slots));
-        Require(positions == std::vector<std::uint32_t>{1, 2, 5} && slots == std::vector<std::uint32_t>{0, 2, 1}, "positions are not sorted");
-    }
-}
+    std::vector<std::uint32_t> positions;
+    std::vector<std::uint32_t> slots;
+};
 
-// A template's data buffers refreshed by words from a patched compiled result (a data-only hit)
-// and back: DataWordsHash() follows the buffers exactly, so a later recipe hit's hash compare
-// (RecordedDispatch::DataRefresh::Hash) decides correctly in both directions.
-void dataRefreshTests(const Device& device, Recorder& recorder) {
+const Case dataWordPositions{"DataWordPositions_LeavesInTheRuns_AreLocatedAndAliasesCounted", [] {
+    DataWordInputs in;
+    const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{1, 0x2004}, {0, 0x1004}, {2, 0x1008}};
+    const std::vector<std::uint64_t> otherReads{0x1008};
+    const auto counts = AgcDriver::DataWordPositions(in.runs, leaves, otherReads, in.words, in.flattened, in.positions, in.slots);
+    Require(in.positions == std::vector<std::uint32_t>{1, 5} && in.slots == std::vector<std::uint32_t>{0, 1}, "data word positions are wrong");
+    Require(counts.aliased == 1 && counts.unmapped == 0 && counts.mismatched == 0, "an aliased leaf was not counted");
+}};
+
+const Case dataWordSkipped{"DataWordPositions_UnalignedOutOfRunOrMismatchedLeaves_AreSkippedAndCounted", [] {
+    DataWordInputs in;
+    in.positions = {7};
+    in.slots = {7};
+    const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{0, 0x1006}, {1, 0x3000}, {1, 0x2008}, {2, 0x1000}};
+    const auto counts = AgcDriver::DataWordPositions(in.runs, leaves, {}, in.words, in.flattened, in.positions, in.slots);
+    Require(in.positions.empty() && in.slots.empty(), "a skipped leaf produced a position");
+    Require(counts.unmapped == 3 && counts.mismatched == 1 && counts.aliased == 0, "skipped leaves were counted wrongly");
+}};
+
+const Case dataWordSorted{"DataWordPositions_TwoSlotsOverOneDword_KeepBothInPositionOrder", [] {
+    DataWordInputs in;
+    const std::vector<std::pair<std::uint32_t, std::uint64_t>> leaves{{2, 0x1008}, {1, 0x2004}, {0, 0x1004}};
+    static_cast<void>(AgcDriver::DataWordPositions(in.runs, leaves, {}, in.words, in.flattened, in.positions, in.slots));
+    Require(in.positions == std::vector<std::uint32_t>{1, 2, 5} && in.slots == std::vector<std::uint32_t>{0, 2, 1}, "positions are not sorted");
+}};
+
+const Case dataRefresh{"RefreshData_PatchedWords_FollowTheDataHashBothWays", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
@@ -2932,9 +2991,7 @@ void dataRefreshTests(const Device& device, Recorder& recorder) {
     recorder.Submit();
     device.WaitQueue();
     recorder.Sync();
-}
-
-}
+}};
 
 class SampleProgram {
 public:
@@ -3036,16 +3093,16 @@ private:
     VkDescriptorPool pool = VK_NULL_HANDLE;
 };
 
-void expectRed(float got, float want, const char* what) {
-    if (std::abs(got - want) > 1.5f / 255.0f) throw std::runtime_error(std::string(what) + ": read " + std::to_string(got) + ", expected " + std::to_string(want));
+void ExpectRed(float got, float want, const char* what, std::source_location location = std::source_location::current()) {
+    if (std::abs(got - want) > 1.5f / 255.0f) Testing::Fail(std::string(what) + ": read " + std::to_string(got) + ", expected " + std::to_string(want), location);
 }
 
-void minLodTests(const Device& device, Recorder& recorder) {
+const Case minLod{"Texture_MinimumLod_ClampsTheSampledLevel", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
-    if (!context.imageViewMinLod) {
-        std::cout << "VK_EXT_image_view_min_lod unavailable: minimum LOD clamp not tested\n";
-        return;
-    }
+    if (!context.imageViewMinLod) Testing::Skip("VK_EXT_image_view_min_lod unavailable: minimum LOD clamp not tested");
     TextureDetiler detiler(context);
     GuestTextureResource resource{};
     resource.baseAddress = 0x100000;
@@ -3079,21 +3136,20 @@ void minLodTests(const Device& device, Recorder& recorder) {
         return program.Red(texture.View(), texture.Layout(), lod);
     };
     const auto unorm = [&](std::size_t level) { return levels[level] / 255.0f; };
-    expectRed(sample(0, 0.0f), unorm(0), "minimum LOD clamp: no clamp reads level 0");
-    expectRed(sample(0x100, 0.0f), unorm(1), "minimum LOD clamp: MIN_LOD 1 reads level 1 at LOD 0");
+    ExpectRed(sample(0, 0.0f), unorm(0), "minimum LOD clamp: no clamp reads level 0");
+    ExpectRed(sample(0x100, 0.0f), unorm(1), "minimum LOD clamp: MIN_LOD 1 reads level 1 at LOD 0");
     const auto fractional = sample(0x180, 0.0f);
-    if (std::abs(fractional - unorm(1)) <= 1.5f / 255.0f) {
-        std::cout << "minimum LOD clamp: the device takes the integer part of a fractional view minimum LOD\n";
-    } else {
-        expectRed(fractional, (unorm(1) + unorm(2)) / 2.0f, "minimum LOD clamp: MIN_LOD 1.5 blends levels 1 and 2");
-    }
-    expectRed(sample(0x100, 2.0f), unorm(2), "minimum LOD clamp: MIN_LOD 1 lowered LOD 2");
-    expectRed(sample(0xfff, 0.0f), unorm(3), "minimum LOD clamp: MIN_LOD past the last level reads the last level");
-    expectRed(sample(0x200, 0.0f, 1), unorm(2), "minimum LOD clamp: MIN_LOD 2 over a view from level 1 reads level 2");
-    expectRed(sample(0x100, 0.0f, 1), unorm(1), "minimum LOD clamp: MIN_LOD at the view's base level reads its base level");
-}
+    if (std::abs(fractional - unorm(1)) > 1.5f / 255.0f) ExpectRed(fractional, (unorm(1) + unorm(2)) / 2.0f, "minimum LOD clamp: MIN_LOD 1.5 blends levels 1 and 2");
+    ExpectRed(sample(0x100, 2.0f), unorm(2), "minimum LOD clamp: MIN_LOD 1 lowered LOD 2");
+    ExpectRed(sample(0xfff, 0.0f), unorm(3), "minimum LOD clamp: MIN_LOD past the last level reads the last level");
+    ExpectRed(sample(0x200, 0.0f, 1), unorm(2), "minimum LOD clamp: MIN_LOD 2 over a view from level 1 reads level 2");
+    ExpectRed(sample(0x100, 0.0f, 1), unorm(1), "minimum LOD clamp: MIN_LOD at the view's base level reads its base level");
+}};
 
-void singleCubeTests(const Device& device, Recorder& recorder) {
+const Case singleCube{"Texture_SingleCube_SamplesEachFace", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     auto context = device.GetContext();
     TextureDetiler detiler(context);
     context.detiler = &detiler;
@@ -3116,13 +3172,16 @@ void singleCubeTests(const Device& device, Recorder& recorder) {
         Texture storageView(context, storage, resource, identity);
         for (std::uint32_t face = 0; face < 6; ++face) {
             const auto expected = 16.0f * (first + face + 1) / 255.0f;
-            expectRed(program.Red(texture.View(), texture.Layout(), 0, face), expected, "single cube snapshot sampled the wrong face");
-            expectRed(program.Red(storageView.View(), storageView.Layout(), 0, face), expected, "single cube storage view sampled the wrong face");
+            ExpectRed(program.Red(texture.View(), texture.Layout(), 0, face), expected, "single cube snapshot sampled the wrong face");
+            ExpectRed(program.Red(storageView.View(), storageView.Layout(), 0, face), expected, "single cube storage view sampled the wrong face");
         }
     }
-}
+}};
 
-void firstLayerViewTests(const Device& device, Recorder& recorder) {
+const Case firstLayerView{"StorageTexture_FirstLayerView_ReadsTheBaseArrayLayer", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
     TextureDetiler detiler(context);
     auto withDetiler = context;
@@ -3148,25 +3207,28 @@ void firstLayerViewTests(const Device& device, Recorder& recorder) {
     auto image = std::make_shared<StorageTexture>(withDetiler, detiler, resource, 0);
     recorder.Keep(image);
     SampleProgram program(context, recorder);
-    expectRed(program.Red(image->FirstLayerView(0), VK_IMAGE_LAYOUT_GENERAL, 0.0f), 0x40 / 255.0f, "a first-layer view does not read the BASE_ARRAY layer");
+    ExpectRed(program.Red(image->FirstLayerView(0), VK_IMAGE_LAYOUT_GENERAL, 0.0f), 0x40 / 255.0f, "a first-layer view does not read the BASE_ARRAY layer");
     Require(image->FirstLayerView(0) == image->FirstLayerView(0), "first-layer views are not reused");
     const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     Texture snapshotTexture(context, detiler, resource, identity, std::span<const std::byte>(reinterpret_cast<const std::byte*>(surface), static_cast<std::size_t>(geometry.guestBytes)));
     Require(snapshotTexture.FirstLayerView() != VK_NULL_HANDLE, "a sampled 2D array texture has no first-layer view");
-    expectRed(program.Red(snapshotTexture.FirstLayerView(), snapshotTexture.Layout(), 0.0f), 0x40 / 255.0f, "a sampled first-layer view does not read the BASE_ARRAY layer");
+    ExpectRed(program.Red(snapshotTexture.FirstLayerView(), snapshotTexture.Layout(), 0.0f), 0x40 / 255.0f, "a sampled first-layer view does not read the BASE_ARRAY layer");
     Texture storageView(context, image, resource, identity);
     Require(storageView.FirstLayerView() != VK_NULL_HANDLE, "a sampled view of a 2D array storage image has no first-layer view");
-    expectRed(program.Red(storageView.FirstLayerView(), storageView.Layout(), 0.0f), 0x40 / 255.0f, "a sampled first-layer view of a storage image does not read the BASE_ARRAY layer");
+    ExpectRed(program.Red(storageView.FirstLayerView(), storageView.Layout(), 0.0f), 0x40 / 255.0f, "a sampled first-layer view of a storage image does not read the BASE_ARRAY layer");
     auto flat = resource;
     flat.dimension = TextureDimension::k2D;
     flat.depthOrLastArray = 0;
     flat.baseArray = 0;
     Texture flatTexture(context, detiler, flat, identity, std::span<const std::byte>(reinterpret_cast<const std::byte*>(surface), static_cast<std::size_t>(DescribeSurface(flat).guestBytes)));
     Require(flatTexture.FirstLayerView() == VK_NULL_HANDLE, "a 2D texture has a first-layer view");
-    expectRed(program.Red(flatTexture.View(), flatTexture.Layout(), 0.0f), 0x20 / 255.0f, "a 2D texture over the surface does not read its first layer");
-}
+    ExpectRed(program.Red(flatTexture.View(), flatTexture.Layout(), 0.0f), 0x20 / 255.0f, "a 2D texture over the surface does not read its first layer");
+}};
 
-void atomicViewTests(const Device& device, Recorder& recorder) {
+const Case atomicViews{"StorageTexture_AtomicView_IsReusedOrRefused", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& context = device.GetContext();
     TextureDetiler detiler(context);
     auto withDetiler = context;
@@ -3189,22 +3251,19 @@ void atomicViewTests(const Device& device, Recorder& recorder) {
         auto image = std::make_shared<StorageTexture>(withDetiler, detiler, resource, 0);
         recorder.Keep(image);
         if (format == 56u) {
-            bool refused = false;
-            try {
-                static_cast<void>(image->AtomicView(0, false));
-            } catch (const std::exception&) {
-                refused = true;
-            }
-            Require(refused, "an 8_8_8_8 storage image has an atomic view");
+            Testing::RequireThrows<std::exception>([&] { static_cast<void>(image->AtomicView(0, false)); }, "an 8_8_8_8 storage image has an atomic view");
             continue;
         }
         const auto atomic = image->AtomicView(0, false);
         Require(atomic != VK_NULL_HANDLE && atomic == image->AtomicView(0, false), "atomic storage views are not reused");
         Require((atomic == image->View(0)) == (format == 20u), "only a 32_UINT storage image serves atomics through its own view");
     }
-}
+}};
 
-void pipelineCacheTests(const Device& device, bool benchmark) {
+const Case pipelineCache{"CachedPipeline_Keys_RetainIdenticalPipelinesAndSeparateChangedOnes", [] {
+    const auto& device = SharedDevice();
+    const auto& arguments = Testing::Arguments();
+    const bool benchmark = std::find(arguments.begin(), arguments.end(), "benchmark") != arguments.end();
     std::thread establishThreadedProcess([] {});
     establishThreadedProcess.join();
     std::lock_guard gpu(GpuMutex());
@@ -3266,15 +3325,14 @@ void pipelineCacheTests(const Device& device, bool benchmark) {
     Require(lookup(input) == first, "an unidentified shader disturbed the retained pipeline");
     ClearCachedPipelines(context.device);
     Require(lookup(input) != first, "clearing the pipeline cache retained its old entry");
-    std::cout << "Pipeline cache key and retained lifetime tests passed\n";
-}
+}};
 
-void keysFillTests(const Device& device, Recorder& recorder) {
+const Case keysFill{"StorageTexture_DccKeyFill_ClearsPendingResults", [] {
+    ActiveRecorder fixture;
+    const auto& device = fixture.device;
+    auto& recorder = fixture.recorder;
     const auto& base = device.GetContext();
-    if (base.hostImportAlignment == 0) {
-        std::cout << "host imports unavailable: DCC key fills not tested\n";
-        return;
-    }
+    if (base.hostImportAlignment == 0) Testing::Skip("host imports unavailable: DCC key fills not tested");
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
@@ -3307,10 +3365,7 @@ void keysFillTests(const Device& device, Recorder& recorder) {
             HostImportFor(context, address, bytes);
         }
     } unregister{base, block, address};
-    if (HostImportFor(base, address, bytes) == nullptr) {
-        std::cout << "host import of the key fill block refused: DCC key fills not tested\n";
-        return;
-    }
+    if (HostImportFor(base, address, bytes) == nullptr) Testing::Skip("host import of the key fill block refused: DCC key fills not tested");
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
@@ -3371,11 +3426,7 @@ void keysFillTests(const Device& device, Recorder& recorder) {
         Require(image->FilledKeys() == DccKeys::Uncompressed, "the image cleared by a refresh still holds the fill");
         draw({{0.0f, 0.0f, 1.0f, 1.0f}});
         Require(fill(0x00) == 1, "a second 0000 key fill did not cover the surface");
-#ifdef _WIN32
-        _putenv_s("APS5_KEYS_FILL_CLEAR", "1");
-#else
-        setenv("APS5_KEYS_FILL_CLEAR", "1", 1);
-#endif
+        const ScopedEnvironment keysFillClear("APS5_KEYS_FILL_CLEAR", "1");
         Require(StorageTexture::ClearByKeysFill(keysAddress, keyCount, 0x00) == 1, "a 0000 key fill did not clear the surface at once");
         Require(holds({0, 0, 0, 0}), "a key fill cleared at once left results made before it");
         draw({{0.0f, 1.0f, 0.0f, 1.0f}});
@@ -3383,89 +3434,10 @@ void keysFillTests(const Device& device, Recorder& recorder) {
         Require(holds({0, 255, 0, 255}), "results drawn after a key fill cleared at once were lost");
     }
     recorder.Sync();
-}
+}};
 
-int main(int argc, char** argv) {
-    try {
-        std::unique_ptr<Device> created;
-        try {
-            created = std::make_unique<Device>();
-        } catch (const std::exception& error) {
-            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-            std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
-            return 77;
-        }
-        Device& device = *created;
-        if (argc == 2 && (std::string_view(argv[1]) == "--benchmark-pipeline-cache" || std::string_view(argv[1]) == "--pipeline-cache-only")) {
-            pipelineCacheTests(device, std::string_view(argv[1]) == "--benchmark-pipeline-cache");
-            return 0;
-        }
+} // namespace
 
-        std::lock_guard gpu(GpuMutex());
-        std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
-        Recorder recorder(device.GetContext());
-        recorder.Activate();
-        if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
-            singleCubeTests(device, recorder);
-            std::cout << "Single cube snapshot and storage sampling tests passed\n";
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
-            completionCountTests(device, recorder);
-            afterRecordedWorkTests(device, recorder);
-            directCompletionLabelTests(recorder);
-            labelTests(recorder);
-            lateLabelTests(recorder);
-            largeLabelTests(recorder);
-            std::cout << "Completion label storage and ordering tests passed\n";
-            return 0;
-        }
-        readTrackingTests(device, recorder);
-        writeSettledTests(device, recorder);
-        completionCountTests(device, recorder);
-        afterRecordedWorkTests(device, recorder);
-        directCompletionLabelTests(recorder);
-        batchStampTests(recorder);
-        labelTests(recorder);
-        lateLabelTests(recorder);
-        largeLabelTests(recorder);
-        unchangedSinceTests();
-        closeRaceTests(device, recorder);
-        keyProofTests(device, recorder);
-        resourceReadTests(device, recorder);
-        misalignedSnapshotTests(device, recorder);
-        misalignedRegionTests(device, recorder);
-        drawSnapshotReuseTests(device, recorder);
-        drawSnapshotEvictionTests(device);
-        drawInputReuseTests(device, recorder);
-        RunResidentPresentTests(device.GetContext());
-        storeRunTests(device, recorder);
-        queuedWriteGroupTests();
-        remappedImportTests(device);
-        movedMetadataTests(device, recorder);
-        viewPastLastMipTests(device, recorder);
-        keysFillTests(device, recorder);
-        unitShadowTests(device, recorder);
-        storageRefreshTests(device, recorder, false);
-        storageRefreshTests(device, recorder, true);
-        writeBackPaddingTests(device, recorder, false);
-        writeBackPaddingTests(device, recorder, true);
-        importWatchTests(device);
-        staleGenerationTests(device, recorder);
-        importWindowTests(device, recorder);
-        dataWordPositionsTests();
-        dataRefreshTests(device, recorder);
-        minLodTests(device, recorder);
-        firstLayerViewTests(device, recorder);
-        singleCubeTests(device, recorder);
-        atomicViewTests(device, recorder);
-        metadataPassTests(device, recorder);
-        pendingKeyStoreTests(device, recorder);
-        sampleDumpTests(device, recorder);
-        std::cout << "Recorder read tracking and label tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+const AgcDriver::Graphics::Context& ResidentPresentTestContext() {
+    return SharedDevice().GetContext();
 }

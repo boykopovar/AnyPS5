@@ -8,14 +8,13 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -296,45 +295,33 @@ void CheckRefused(AgcDriver::VulkanDevice& device) {
     }
 }
 
-void Expect(const char* name, std::uint32_t tid, std::uint32_t actual, std::uint32_t expected) {
-    char message[160];
-    std::snprintf(message, sizeof(message), "%s: thread %u is 0x%08x, expected 0x%08x", name, tid, actual, expected);
-    Require(actual == expected, message);
-}
-
-void CheckStorage() {
-    constexpr std::array<const char*, StorageResults> names{"image_store dlc", "image_store glc slc dlc"};
+template<std::size_t Count>
+void CheckResults(const std::array<const char*, Count>& names, const std::array<std::array<std::uint32_t, Count>, Threads>& expected) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        for (std::uint32_t j = 0; j < StorageResults; ++j) {
-            Expect(names[j], tid, Buffer[Threads * Inputs + tid * Results + j], StorageExpected[tid][j]);
+        for (std::uint32_t j = 0; j < Count; ++j) {
+            const auto actual = Buffer[Threads * Inputs + tid * Results + j];
+            char message[160];
+            std::snprintf(message, sizeof(message), "%s: thread %u is 0x%08x, expected 0x%08x", names[j], tid, actual, expected[tid][j]);
+            Require(actual == expected[tid][j], message);
         }
     }
 }
 
-void CheckSample() {
-    constexpr std::array<const char*, SampleResults> names{"image_sample dlc", "image_sample glc slc dlc", "image_gather4 dlc x", "image_gather4 dlc y", "image_gather4 dlc z", "image_gather4 dlc w", "image_get_resinfo dlc width", "image_get_resinfo dlc height", "image_sample_l dlc", "image_load dlc"};
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        for (std::uint32_t j = 0; j < SampleResults; ++j) {
-            Expect(names[j], tid, Buffer[Threads * Inputs + tid * Results + j], SampleExpected[tid][j]);
-        }
-    }
-}
+const Testing::Case storeCacheBits{"ImageCacheBits_StoreWithCacheBits_WritesTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    RunStorage(device);
+    CheckResults<StorageResults>({"image_store dlc", "image_store glc slc dlc"}, StorageExpected);
+}};
 
-}
+const Testing::Case sampleCacheBits{"ImageCacheBits_SampleGatherQueryWithCacheBits_ReturnTexels", [] {
+    auto& device = SharedVulkanTestDevice();
+    RunSample(device);
+    CheckResults<SampleResults>({"image_sample dlc", "image_sample glc slc dlc", "image_gather4 dlc x", "image_gather4 dlc y", "image_gather4 dlc z", "image_gather4 dlc w", "image_get_resinfo dlc width", "image_get_resinfo dlc height", "image_sample_l dlc", "image_load dlc"}, SampleExpected);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        RunStorage(*device);
-        CheckStorage();
-        RunSample(*device);
-        CheckSample();
-        CheckRefused(*device);
-        std::puts("image cache bits tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case atomicCacheBits{"ImageCacheBits_AtomicWithDlc_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckRefused(device);
+}};
+
+} // namespace

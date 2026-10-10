@@ -10,14 +10,13 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Width = 61;
@@ -160,34 +159,61 @@ void Refused(AgcDriver::VulkanDevice& device, std::uint32_t opcode, std::uint32_
     Require(refused, "image BY opcode " + std::to_string(opcode) + " format " + std::to_string(format) + " was not refused");
 }
 
+class TexelsRegistration {
+public:
+    TexelsRegistration() { GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true); }
+    ~TexelsRegistration() { GuestAllocations::Mutation().Remove(Texels.data()); }
+    TexelsRegistration(const TexelsRegistration&) = delete;
+    TexelsRegistration& operator=(const TexelsRegistration&) = delete;
+};
+
+constexpr Format R8{R8UInt, 1u, 1u};
+constexpr Format R16{R16UInt, 2u, 1u};
+constexpr Format Rg8{Rg8UInt, 1u, 2u};
+constexpr auto Layout = "elements fill one dword";
+
+void CheckBy2(std::uint32_t opcode) {
+    auto& device = SharedVulkanTestDevice();
+    const TexelsRegistration registration;
+    Check(device, opcode, R8, 0x3u);
+    Check(device, opcode, R16, 0x3u);
+    Check(device, opcode, Rg8, 0xfu);
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestAllocations::Mutation().Add(Texels.data(), Bytes, true, true);
-        constexpr Format r8{R8UInt, 1u, 1u};
-        constexpr Format r16{R16UInt, 2u, 1u};
-        constexpr Format rg8{Rg8UInt, 1u, 2u};
-        for (const auto opcode : {0x42u, 0x4au}) {
-            Check(*device, opcode, r8, 0x3u);
-            Check(*device, opcode, r16, 0x3u);
-            Check(*device, opcode, rg8, 0xfu);
-        }
-        for (const auto opcode : {0x43u, 0x4bu}) Check(*device, opcode, r8, 0xfu);
-        constexpr auto layout = "elements fill one dword";
-        Refused(*device, 0x42u, R32UInt, 0x3u, 0xfacu, layout);
-        Refused(*device, 0x42u, R8UInt, 0xfu, 0xfacu, layout);
-        Refused(*device, 0x43u, R16UInt, 0xfu, 0xfacu, layout);
-        Refused(*device, 0x43u, Rg8UInt, 0xfu, 0xfacu, layout);
-        Refused(*device, 0x42u, R16UInt, 0x3u, 0xf2eu, layout);
-        for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) Refused(*device, opcode, R8UInt, 0xfu, 0xfacu, "stores are not implemented");
-        GuestAllocations::Mutation().Remove(Texels.data());
-        std::cout << "image BY2/BY4 execution tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case by2Load{"ImageBy_By2Load_ReturnsTexelPairs", [] {
+    CheckBy2(0x42u);
+}};
+
+const Testing::Case by2MipLoad{"ImageBy_By2MipLoad_ReturnsTexelPairs", [] {
+    CheckBy2(0x4au);
+}};
+
+const Testing::Case by4Load{"ImageBy_By4Load_ReturnsTexelQuads", [] {
+    auto& device = SharedVulkanTestDevice();
+    const TexelsRegistration registration;
+    Check(device, 0x43u, R8, 0xfu);
+}};
+
+const Testing::Case by4MipLoad{"ImageBy_By4MipLoad_ReturnsTexelQuads", [] {
+    auto& device = SharedVulkanTestDevice();
+    const TexelsRegistration registration;
+    Check(device, 0x4bu, R8, 0xfu);
+}};
+
+const Testing::Case mismatchedLayouts{"ImageBy_ElementsNotFillingOneDword_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    const TexelsRegistration registration;
+    Refused(device, 0x42u, R32UInt, 0x3u, 0xfacu, Layout);
+    Refused(device, 0x42u, R8UInt, 0xfu, 0xfacu, Layout);
+    Refused(device, 0x43u, R16UInt, 0xfu, 0xfacu, Layout);
+    Refused(device, 0x43u, Rg8UInt, 0xfu, 0xfacu, Layout);
+    Refused(device, 0x42u, R16UInt, 0x3u, 0xf2eu, Layout);
+}};
+
+const Testing::Case stores{"ImageBy_Stores_AreRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    const TexelsRegistration registration;
+    for (const auto opcode : {0x52u, 0x53u, 0x5au, 0x5bu}) Refused(device, opcode, R8UInt, 0xfu, 0xfacu, "stores are not implemented");
+}};
+
+} // namespace

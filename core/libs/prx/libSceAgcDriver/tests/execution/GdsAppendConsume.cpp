@@ -15,7 +15,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -150,29 +150,34 @@ void Check(const Workgroup& workgroup, std::uint32_t pass, const std::array<std:
     CheckWaves(workgroup, 3, before[3], false, true);
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32) {
-            std::printf("skipped, the device's subgroups are narrower than a wave32 (%u lanes)\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        AgcDriver::QueueState queue;
-        for (const auto& workgroup : Workgroups) {
-            SetCounters(queue);
-            Require(ReadCounters(queue) == Starts, workgroup.Name() + ": the GDS counters did not read back as set");
-            for (std::uint32_t pass = 0; pass < 2; ++pass) {
-                Run(*device, workgroup);
-                Check(workgroup, pass, ReadCounters(queue));
-            }
-        }
-        std::puts("gds append consume tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void RunTwoPasses(const Workgroup& workgroup) {
+    auto& device = SharedVulkanTestDevice();
+    if (device.Target().subgroupSize < 32) {
+        Testing::Skip("the device's subgroups are narrower than a wave32 (" + std::to_string(device.Target().subgroupSize) + " lanes)");
+    }
+    AgcDriver::QueueState queue;
+    SetCounters(queue);
+    Require(ReadCounters(queue) == Starts, workgroup.Name() + ": the GDS counters did not read back as set");
+    for (std::uint32_t pass = 0; pass < 2; ++pass) {
+        Run(device, workgroup);
+        Check(workgroup, pass, ReadCounters(queue));
     }
 }
+
+const Testing::Case wave32Full{"GdsAppendConsume_Wave32AllLanesActive_CountersAndWaveResultsAdvance", [] {
+    RunTwoPasses(Workgroups[0]);
+}};
+
+const Testing::Case wave32Masked{"GdsAppendConsume_Wave32PartiallyMasked_CountersAndWaveResultsAdvanceByActiveLanes", [] {
+    RunTwoPasses(Workgroups[1]);
+}};
+
+const Testing::Case wave32TwoWaves{"GdsAppendConsume_TwoWave32Waves_CountersAndWaveResultsAdvance", [] {
+    RunTwoPasses(Workgroups[2]);
+}};
+
+const Testing::Case wave64{"GdsAppendConsume_Wave64PartiallyMasked_CountersAndWaveResultsAdvance", [] {
+    RunTwoPasses(Workgroups[3]);
+}};
+
+} // namespace

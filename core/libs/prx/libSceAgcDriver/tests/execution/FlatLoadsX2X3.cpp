@@ -22,7 +22,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -159,23 +159,15 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std
     }
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        std::memset(guest.Data(), 0, BlockBytes);
-        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-            std::memcpy(guest.Data() + tid * 16u, Rows[tid].input.data(), 16u);
-        }
-        std::memcpy(guest.Data() + RegionOffset, FlatGlobalLoadsRegion.data(), FlatGlobalLoadsRegion.size());
-        Run(*device, guest, LoadsCode);
-        std::puts("flat loads x2 x3 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case loads{"FlatLoadsX2X3_GlobalLoadDwordx2AndX3_MatchReferenceLanes", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    std::memset(guest.Data(), 0, BlockBytes);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        std::memcpy(guest.Data() + tid * 16u, Rows[tid].input.data(), 16u);
     }
-}
+    std::memcpy(guest.Data() + RegionOffset, FlatGlobalLoadsRegion.data(), FlatGlobalLoadsRegion.size());
+    Run(device, guest, LoadsCode);
+}};
+
+} // namespace

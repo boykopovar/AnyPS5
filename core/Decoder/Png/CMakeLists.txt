@@ -15,14 +15,18 @@ function(add_png_decoder target runtimeTarget)
     )
 
     if(BUILD_TESTING)
-        add_test_executable(${target}_tests ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/Png.cpp)
-        target_include_directories(${target}_tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/3rdparty/stb)
-        target_link_libraries(${target}_tests PRIVATE ${target})
-        configure_windows_unwind(${target}_tests)
-        add_test(NAME ${target} COMMAND ${target}_tests)
+        set(decoderTestProperties)
         if(WIN32)
-            set_tests_properties(${target} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:${runtimeTarget}>")
+            set(decoderTestProperties ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:${runtimeTarget}>")
         endif()
+        anyps5_add_test(${target}_tests
+            NAME ${target}
+            LABEL unit
+            SOURCES ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/unit/PngTests.cpp
+            LINK ${target}
+            PROPERTIES ${decoderTestProperties}
+        )
+        target_include_directories(${target}_tests SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/3rdparty/stb)
+        configure_windows_unwind(${target}_tests)
     endif()
 endfunction()

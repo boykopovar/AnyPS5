@@ -4,21 +4,16 @@ target_link_libraries(libSceLibcInternal PRIVATE ${CMAKE_DL_LIBS})
 configure_windows_unwind(libSceLibcInternal)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_thread_atexit_tests ${LIBS_INCLUDE_DIR}/tests/GuestThreadAtexit.cpp)
-    target_include_directories(guest_thread_atexit_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_thread_atexit_tests PRIVATE libSceLibcInternal libkernel libc)
-    configure_windows_unwind(guest_thread_atexit_tests)
-    add_test(NAME guest_thread_atexit COMMAND guest_thread_atexit_tests)
-    set_tests_properties(guest_thread_atexit PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_thread_atexit PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
-    endif()
+    anyps5_add_library_test(guest_thread_atexit_tests
+        TIMEOUT 20
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestThreadAtexit.cpp
+        LINK libSceLibcInternal libkernel libc
+    )
     if(NOT WIN32)
-        add_test_executable(guest_force_tls_destructor_tests ${LIBS_INCLUDE_DIR}/tests/GuestForceTlsDestructor.cpp)
-        target_include_directories(guest_force_tls_destructor_tests PRIVATE ${LIBS_INCLUDE_DIR})
-        target_link_libraries(guest_force_tls_destructor_tests PRIVATE libSceLibcInternal libkernel libc ${CMAKE_DL_LIBS})
-        add_test(NAME guest_force_tls_destructor COMMAND guest_force_tls_destructor_tests)
-        set_tests_properties(guest_force_tls_destructor PROPERTIES TIMEOUT 20)
+        anyps5_add_library_test(guest_force_tls_destructor_tests
+            TIMEOUT 20
+            SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestForceTlsDestructor.cpp
+            LINK libSceLibcInternal libkernel libc ${CMAKE_DL_LIBS}
+        )
     endif()
 endif()

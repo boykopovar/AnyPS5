@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdlib>
 
 extern "C" {
 std::uint32_t APS5_VABI sceRazorCpuIsCapturing(void);
@@ -16,26 +18,50 @@ int APS5_VABI sceRazorCpuWriteBookmark(const char* label, const char* descriptio
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+using Testing::Case;
+using Testing::RequireEqual;
 
-}
+constexpr std::uint32_t markerColor = 0x80ffffffu;
 
-int main() {
-    Require(sceRazorCpuIsCapturing() == 0);
-    Require(sceRazorCpuJobManagerDispatch(nullptr) == 0);
-    Require(sceRazorCpuJobManagerJob(nullptr) == 0);
-    Require(sceRazorCpuJobManagerSequence(nullptr) == 0);
-    Require(sceRazorCpuPushMarkerStatic("outer", 0x80ffffffu, 2) == 0);
-    Require(sceRazorCpuPushMarkerStatic("inner", 0x80ffffffu, 2) == 0);
-    Require(sceRazorCpuPopMarker() == 0);
-    Require(sceRazorCpuPopMarker() == 0);
-    Require(sceRazorCpuPushMarkerStatic("unbalanced", 0x80ffffffu, 2) == 0);
-    Require(sceRazorCpuIsCapturing() == 0);
+const Case notCapturing{"IsCapturing_NoCapture_ReturnsZero", [] {
+    RequireEqual(sceRazorCpuIsCapturing(), 0u, "capturing state");
+}};
+
+const Case jobManagerHooks{"JobManagerHooks_NullArgs_Succeed", [] {
+    RequireEqual(sceRazorCpuJobManagerDispatch(nullptr), 0, "dispatch");
+    RequireEqual(sceRazorCpuJobManagerJob(nullptr), 0, "job");
+    RequireEqual(sceRazorCpuJobManagerSequence(nullptr), 0, "sequence");
+}};
+
+const Case nestedMarkers{"PushMarkerStatic_NestedMarkers_PushAndPopSucceed", [] {
+    RequireEqual(sceRazorCpuPushMarkerStatic("outer", markerColor, 2), 0, "push outer");
+    RequireEqual(sceRazorCpuPushMarkerStatic("inner", markerColor, 2), 0, "push inner");
+    RequireEqual(sceRazorCpuPopMarker(), 0, "pop inner");
+    RequireEqual(sceRazorCpuPopMarker(), 0, "pop outer");
+}};
+
+const Case unbalancedMarker{"PushMarkerStatic_UnbalancedMarker_SucceedsWithoutStartingCapture", [] {
+    RequireEqual(sceRazorCpuPushMarkerStatic("unbalanced", markerColor, 2), 0, "push unbalanced");
+    RequireEqual(sceRazorCpuIsCapturing(), 0u, "capturing state");
+}};
+
+const Case flushTime{"FlushOccurred_OutputPointer_ReportsZeroFlushTime", [] {
     std::uint64_t timeSpentInFlush = 0x123456789abcdef0ull;
-    Require(sceRazorCpuFlushOccurred(&timeSpentInFlush) == 0);
-    Require(timeSpentInFlush == 0);
-    Require(sceRazorCpuFlushOccurred(nullptr) == 0);
-    Require(sceRazorCpuPlotValue("read time (ms)", 1.5f) == 0);
-    Require(sceRazorCpuWriteBookmark("read timeout", "lba=0x10") == 0);
-    Require(sceRazorCpuWriteBookmark("read timeout", nullptr) == 0);
-}
+    RequireEqual(sceRazorCpuFlushOccurred(&timeSpentInFlush), 0, "flush occurred");
+    RequireEqual(timeSpentInFlush, std::uint64_t{0}, "time spent in flush");
+}};
+
+const Case flushNull{"FlushOccurred_NullPointer_Succeeds", [] {
+    RequireEqual(sceRazorCpuFlushOccurred(nullptr), 0, "flush occurred without output");
+}};
+
+const Case plotValue{"PlotValue_NamedSeries_Succeeds", [] {
+    RequireEqual(sceRazorCpuPlotValue("read time (ms)", 1.5f), 0, "plot value");
+}};
+
+const Case bookmarks{"WriteBookmark_WithAndWithoutDescription_Succeeds", [] {
+    RequireEqual(sceRazorCpuWriteBookmark("read timeout", "lba=0x10"), 0, "bookmark with description");
+    RequireEqual(sceRazorCpuWriteBookmark("read timeout", nullptr), 0, "bookmark without description");
+}};
+
+} // namespace

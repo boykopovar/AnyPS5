@@ -1,14 +1,14 @@
-#undef NDEBUG
-#include <cassert>
-#include <cstdio>
-#include <typeinfo>
+#include <Testing/Test.hpp>
+
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <typeinfo>
 #include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -32,18 +32,12 @@ extern "C" _Unwind_Reason_Code _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exceptio
 extern "C" std::uintptr_t _Unwind_GetIP_nid_postfix(_Unwind_Context*);
 extern "C" void (*_ZSt13set_terminatePFvvE_nid_postfix(void(*)()))();
 
-thread_local int destroyed = 0;
-struct Guard {
-    ~Guard() { assert(__cxa_uncaught_exceptions_nid_postfix() > 0); ++destroyed; }
-};
+namespace ExceptionRuntimeTypes {
+
 struct Base { virtual ~Base() = default; int value = 7; };
 struct Other { virtual ~Other() = default; int padding = 9; };
 struct Derived : Other, Base {};
 struct Virtual : virtual Base {};
-
-[[gnu::noinline]] void ThrowInt() { Guard guard; throw 42; }
-[[gnu::noinline]] void ThrowClass() { Guard guard; throw Derived(); }
-
 struct Left : Base {};
 struct Right : Base {};
 struct Repeated : Left, Right {};
@@ -51,112 +45,164 @@ struct LeftVirtual : virtual Base {};
 struct RightVirtual : virtual Base {};
 struct Diamond : LeftVirtual, RightVirtual {};
 struct PrivateDerived : private Derived {
-    Base* source() { return this; }
-    Derived* target() { return this; }
+    Base* Source() { return this; }
+    Derived* Target() { return this; }
 };
-[[gnu::noinline]] Derived* ToDerived(Base* p) { return dynamic_cast<Derived*>(p); }
-[[gnu::noinline]] Repeated* ToRepeated(Base* p) { return dynamic_cast<Repeated*>(p); }
-void CheckRtti() {
-    Repeated repeated;
-    Base* left = static_cast<Left*>(&repeated);
-    assert(ToRepeated(left) == &repeated);
-    assert(dynamic_cast<Right*>(left) == static_cast<Right*>(&repeated));
-    PrivateDerived hidden;
-    assert(ToDerived(hidden.source()) == hidden.target());
-    try { throw static_cast<Repeated*>(nullptr); }
-    catch (Base*) { assert(false); }
-    catch (Repeated* p) { assert(p == nullptr); }
-    try { throw static_cast<Diamond*>(nullptr); }
-    catch (Base* p) { assert(p == nullptr); }
-    try { throw nullptr; }
-    catch (Base* p) { assert(p == nullptr); }
-    int value = 1; int* pointer = &value;
-    try { throw &pointer; }
-    catch (const int**) { assert(false); }
-    catch (int** p) { assert(p == &pointer); }
-    try { throw &pointer; }
-    catch (const int* const* p) { assert(**p == value); }
-}
-int foreignDeleted;
-void CheckForeign() {
-    auto* exception = new _Unwind_Exception {};
-    exception->exception_class = 0x54455354464f5200;
-    exception->exception_cleanup = [](_Unwind_Reason_Code reason, _Unwind_Exception* p) {
-        assert(reason == _URC_FOREIGN_EXCEPTION_CAUGHT); ++foreignDeleted; delete p;
-    };
+
+} // namespace ExceptionRuntimeTypes
+
+namespace {
+
+using namespace ExceptionRuntimeTypes;
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
+thread_local int destroyed = 0;
+thread_local int guardsWithoutUncaught = 0;
+
+struct Guard {
+    ~Guard() {
+        if (__cxa_uncaught_exceptions_nid_postfix() == 0) ++guardsWithoutUncaught;
+        ++destroyed;
+    }
+};
+
+class GuardCounters {
+public:
+    GuardCounters() { Reset(); }
+    ~GuardCounters() { Reset(); }
+    GuardCounters(const GuardCounters&) = delete;
+    GuardCounters& operator=(const GuardCounters&) = delete;
+
+private:
+    static void Reset() {
+        destroyed = 0;
+        guardsWithoutUncaught = 0;
+    }
+};
+
+[[gnu::noinline]] void ThrowInt() { Guard guard; throw 42; }
+[[gnu::noinline]] void ThrowClass() { Guard guard; throw Derived(); }
+[[gnu::noinline]] Derived* ToDerived(Base* pointer) { return dynamic_cast<Derived*>(pointer); }
+[[gnu::noinline]] Repeated* ToRepeated(Base* pointer) { return dynamic_cast<Repeated*>(pointer); }
+
+template<typename TError, typename TOperation>
+bool ThrowsType(const TOperation& operation) {
     try {
-        try { _Unwind_RaiseException(exception); assert(false); }
-        catch (...) { assert(__cxa_current_primary_exception_nid_postfix() == nullptr); throw; }
-    } catch (...) {}
-    assert(foreignDeleted == 1);
+        operation();
+    } catch (const TError&) {
+        return true;
+    }
+    return false;
 }
+
+template<typename TError, typename TOperation>
+std::string MessageOf(const TOperation& operation, const char* description) {
+    std::string message;
+    bool caught = false;
+    try {
+        operation();
+    } catch (const TError& error) {
+        caught = true;
+        message = error.what();
+    }
+    Require(caught, std::string(description) + " throws the expected type");
+    return message;
+}
+
+int foreignCleanups = 0;
+int foreignWrongReasons = 0;
 
 int staticAttempts = 0;
 [[gnu::noinline]] int StaticValue() {
     static int value = [] { if (++staticAttempts == 1) throw 91; return 37; }();
     return value;
 }
-void CheckStaticInitialization() {
-    try { StaticValue(); assert(false); } catch (int value) { assert(value == 91); }
-    assert(StaticValue() == 37 && StaticValue() == 37 && staticAttempts == 2);
-}
 
-int arrayConstructed, arrayDestroyed, arrayFreed;
-bool failArray;
+int arrayConstructed = 0;
+int arrayDestroyed = 0;
+int arrayFreed = 0;
+int arrayDestroyOrderErrors = 0;
+int arrayFreeSizeErrors = 0;
+bool failArray = false;
+
+class ArrayCounters {
+public:
+    explicit ArrayCounters(bool fail) {
+        Reset();
+        failArray = fail;
+    }
+    ~ArrayCounters() { Reset(); }
+    ArrayCounters(const ArrayCounters&) = delete;
+    ArrayCounters& operator=(const ArrayCounters&) = delete;
+
+private:
+    static void Reset() {
+        arrayConstructed = arrayDestroyed = arrayFreed = arrayDestroyOrderErrors = arrayFreeSizeErrors = 0;
+        failArray = false;
+    }
+};
+
 void ArrayConstruct(void* pointer) {
     if (failArray && arrayConstructed == 2) throw 73;
     *static_cast<int*>(pointer) = arrayConstructed++;
 }
+
 void ArrayDestroy(void* pointer) {
-    assert(*static_cast<int*>(pointer) == arrayConstructed - 1 - arrayDestroyed);
+    if (*static_cast<int*>(pointer) != arrayConstructed - 1 - arrayDestroyed) ++arrayDestroyOrderErrors;
     ++arrayDestroyed;
 }
+
 void ArrayFree(void* pointer, std::size_t size) {
-    assert(size == 4 * sizeof(int) + sizeof(std::size_t));
+    if (size != 4 * sizeof(int) + sizeof(std::size_t)) ++arrayFreeSizeErrors;
     ++arrayFreed;
     std::free(pointer);
 }
-void CheckArrays() {
-    failArray = true;
-    try {
-        __cxa_vec_new3_nid_postfix(4, sizeof(int), sizeof(std::size_t), ArrayConstruct, ArrayDestroy, std::malloc, ArrayFree);
-        assert(false);
-    } catch (int value) { assert(value == 73); }
-    assert(arrayConstructed == 2 && arrayDestroyed == 2 && arrayFreed == 1);
-    arrayConstructed = arrayDestroyed = arrayFreed = 0;
-    failArray = false;
-    void* array = __cxa_vec_new3_nid_postfix(4, sizeof(int), sizeof(std::size_t), ArrayConstruct, ArrayDestroy, std::malloc, ArrayFree);
-    __cxa_vec_delete3_nid_postfix(array, sizeof(int), sizeof(std::size_t), ArrayDestroy, ArrayFree);
-    assert(arrayConstructed == 4 && arrayDestroyed == 4 && arrayFreed == 1);
-}
-void* ThreadTest(void*) {
-    for (int i = 0; i < 100; ++i) {
-        try { ThrowInt(); } catch (int value) { assert(value == 42); }
-        assert(__cxa_uncaught_exceptions_nid_postfix() == 0);
+
+struct ThreadOutcome {
+    int wrongValues = 0;
+    int uncaughtAfterCatch = 0;
+    int guardsWithoutUncaught = 0;
+    int destroyed = 0;
+};
+
+void* ThreadTest(void* argument) {
+    auto& outcome = *static_cast<ThreadOutcome*>(argument);
+    destroyed = 0;
+    guardsWithoutUncaught = 0;
+    for (int index = 0; index < 100; ++index) {
+        int caught = 0;
+        try { ThrowInt(); } catch (int value) { caught = value; }
+        if (caught != 42) ++outcome.wrongValues;
+        if (__cxa_uncaught_exceptions_nid_postfix() != 0) ++outcome.uncaughtAfterCatch;
     }
-    assert(destroyed == 100);
+    outcome.destroyed = destroyed;
+    outcome.guardsWithoutUncaught = guardsWithoutUncaught;
     return nullptr;
 }
-void CheckThreads() {
-    pthread_t threads[4];
-    for (auto& thread : threads) assert(pthread_create(&thread, nullptr, ThreadTest, nullptr) == 0);
-    for (auto& thread : threads) assert(pthread_join(thread, nullptr) == 0);
-}
+
 [[gnu::noinline]] void UncaughtThrow() { throw 19; }
 [[gnu::noinline]] void NoexceptThrow() noexcept { UncaughtThrow(); }
-void CheckTerminate(void (*function)()) {
-    pid_t child = fork();
-    assert(child >= 0);
-    if (child == 0) {
-        _ZSt13set_terminatePFvvE_nid_postfix([] { _exit(61); });
-        function();
-        _exit(62);
-    }
-    int status;
-    assert(waitpid(child, &status, 0) == child);
-    assert(WIFEXITED(status) && WEXITSTATUS(status) == 61);
+
+void* RunFunction(void* argument) {
+    (*static_cast<void (**)()>(argument))();
+    return nullptr;
 }
+
+[[noreturn]] void TerminateOnHandlerFreeThread(void (*function)()) {
+    _ZSt13set_terminatePFvvE_nid_postfix([] { _exit(61); });
+    pthread_t thread;
+    if (pthread_create(&thread, nullptr, RunFunction, &function) != 0) _exit(66);
+    pthread_join(thread, nullptr);
+    _exit(62);
+}
+
+[[noreturn]] void UncaughtChild() { TerminateOnHandlerFreeThread(UncaughtThrow); }
+[[noreturn]] void NoexceptChild() { TerminateOnHandlerFreeThread(NoexceptThrow); }
+
 struct ForcedGuard { ~ForcedGuard() { ++destroyed; } };
+
 [[gnu::noinline]] void ForceUnwind() {
     ForcedGuard guard;
     auto* exception = new _Unwind_Exception {};
@@ -167,68 +213,337 @@ struct ForcedGuard { ~ForcedGuard() { ++destroyed; } };
         }, nullptr);
     _exit(65);
 }
-void CheckForcedUnwind() {
-    pid_t child = fork(); assert(child >= 0);
-    if (child == 0) { destroyed = 0; ForceUnwind(); }
-    int status; assert(waitpid(child, &status, 0) == child);
-    assert(WIFEXITED(status) && WEXITSTATUS(status) == 63);
+
+[[noreturn]] void ForcedUnwindChild() {
+    destroyed = 0;
+    ForceUnwind();
+    _exit(67);
 }
 
-int main() {
-    try { ThrowInt(); assert(false); } catch (int value) { assert(value == 42); }
-    assert(destroyed == 1);
-    try { ThrowClass(); assert(false); } catch (const Base& value) { assert(value.value == 7); }
-    assert(destroyed == 2);
+int ChildExitStatus(void (*body)()) {
+    const pid_t child = fork();
+    Require(child >= 0, "fork the child");
+    if (child == 0) {
+        body();
+        _exit(68);
+    }
+    int status = 0;
+    RequireEqual(waitpid(child, &status, 0), child, "wait for the child");
+    Require(WIFEXITED(status), "child exited normally");
+    return WEXITSTATUS(status);
+}
+
+struct BacktraceOutcome {
+    int frames = 0;
+    int zeroIps = 0;
+};
+
+const Case throwInt{"Throw_IntThroughCleanupFrame_CaughtAndGuardDestroyedDuringUnwind", [] {
+    const GuardCounters counters;
+    bool returned = false;
+    int caught = 0;
+    try { ThrowInt(); returned = true; } catch (int value) { caught = value; }
+    Require(!returned, "ThrowInt threw");
+    RequireEqual(caught, 42, "caught value");
+    RequireEqual(destroyed, 1, "guards destroyed");
+    RequireEqual(guardsWithoutUncaught, 0, "guards destroyed without an uncaught exception");
+}};
+
+const Case throwClass{"Throw_DerivedThroughCleanupFrame_CaughtAsBaseReference", [] {
+    const GuardCounters counters;
+    bool returned = false;
+    int caught = 0;
+    try { ThrowClass(); returned = true; } catch (const Base& value) { caught = value.value; }
+    Require(!returned, "ThrowClass threw");
+    RequireEqual(caught, 7, "caught base value");
+    RequireEqual(destroyed, 1, "guards destroyed");
+    RequireEqual(guardsWithoutUncaught, 0, "guards destroyed without an uncaught exception");
+}};
+
+const Case rethrow{"Rethrow_InsideHandler_ReachesOuterHandlerAndClearsUncaught", [] {
+    int inner = 0;
+    int outer = 0;
     try {
-        try { throw 13; } catch (int value) { assert(value == 13); throw; }
-    } catch (int value) { assert(value == 13); }
-    assert(__cxa_uncaught_exceptions_nid_postfix() == 0);
+        try { throw 13; } catch (int value) { inner = value; throw; }
+    } catch (int value) { outer = value; }
+    RequireEqual(inner, 13, "inner handler value");
+    RequireEqual(outer, 13, "outer handler value");
+    RequireEqual(__cxa_uncaught_exceptions_nid_postfix(), 0u, "uncaught exceptions");
+}};
+
+const Case rethrowPrimary{"RethrowPrimaryException_RetainedException_RethrowsOriginalValue", [] {
     void* retained = nullptr;
     try { throw 27; } catch (...) { retained = __cxa_current_primary_exception_nid_postfix(); }
-    try { __cxa_rethrow_primary_exception_nid_postfix(retained); assert(false); }
-    catch (int value) { assert(value == 27); }
+    Require(retained != nullptr, "primary exception retained");
+    bool returned = false;
+    int caught = 0;
+    try { __cxa_rethrow_primary_exception_nid_postfix(retained); returned = true; } catch (int value) { caught = value; }
     __cxa_decrement_exception_refcount_nid_postfix(retained);
+    Require(!returned, "rethrow threw");
+    RequireEqual(caught, 27, "rethrown value");
+}};
+
+const Case throwPointer{"Throw_DerivedPointer_CaughtAsAdjustedBasePointer", [] {
     Derived object;
     Base* pointer = &object;
-    try { throw &object; } catch (Base* value) { assert(value == pointer); }
-    assert(dynamic_cast<Derived*>(pointer) == &object);
-    assert(dynamic_cast<Other*>(pointer) == static_cast<Other*>(&object));
-    try { throw Virtual(); } catch (Base& value) { assert(value.value == 7); }
-    try { _ZSt14_Xout_of_rangePKc_nid_postfix("test message"); }
-    catch (const std::logic_error& value) { assert(std::strcmp(value.what(), "test message") == 0); }
-    try { _ZSt13_Xrange_errorPKc_nid_postfix("range message"); }
-    catch (const std::range_error& value) { if (std::strcmp(value.what(), "range message") != 0) std::abort(); }
-    try { _ZSt13_Xrange_errorPKc_nid_postfix(nullptr); }
-    catch (const std::runtime_error& value) { if (std::strcmp(value.what(), "") != 0) std::abort(); }
+    Base* caught = nullptr;
+    try { throw &object; } catch (Base* value) { caught = value; }
+    Require(caught == pointer, "caught pointer is the base subobject");
+}};
+
+const Case downcast{"DynamicCast_BaseToDerived_ReturnsObject", [] {
+    Derived object;
+    Base* pointer = &object;
+    Require(dynamic_cast<Derived*>(pointer) == &object, "downcast result");
+}};
+
+const Case crossCast{"DynamicCast_BaseToSiblingBase_ReturnsSiblingSubobject", [] {
+    Derived object;
+    Base* pointer = &object;
+    Require(dynamic_cast<Other*>(pointer) == static_cast<Other*>(&object), "cross cast result");
+}};
+
+const Case virtualBase{"Throw_ClassWithVirtualBase_CaughtAsBaseReference", [] {
+    int caught = 0;
+    try { throw Virtual(); } catch (Base& value) { caught = value.value; }
+    RequireEqual(caught, 7, "caught base value");
+}};
+
+const Case outOfRange{"XoutOfRange_Message_ThrowsLogicErrorWithMessage", [] {
+    RequireEqual(MessageOf<std::logic_error>([] { _ZSt14_Xout_of_rangePKc_nid_postfix("test message"); }, "_Xout_of_range"),
+        std::string("test message"), "what()");
+}};
+
+const Case rangeError{"XrangeError_Message_ThrowsRangeErrorWithMessage", [] {
+    RequireEqual(MessageOf<std::range_error>([] { _ZSt13_Xrange_errorPKc_nid_postfix("range message"); }, "_Xrange_error"),
+        std::string("range message"), "what()");
+}};
+
+const Case rangeErrorNull{"XrangeError_NullMessage_ThrowsRuntimeErrorWithEmptyMessage", [] {
+    RequireEqual(MessageOf<std::runtime_error>([] { _ZSt13_Xrange_errorPKc_nid_postfix(nullptr); }, "_Xrange_error(nullptr)"),
+        std::string(), "what()");
+}};
+
+const Case rangeErrorNotLogic{"XrangeError_Thrown_NotCaughtAsLogicError", [] {
+    bool logic = false;
+    bool range = false;
     try { _ZSt13_Xrange_errorPKc_nid_postfix("not a logic error"); }
-    catch (const std::logic_error&) { std::abort(); }
-    catch (const std::range_error&) {}
-    bool badFunctionCall = false;
-    try { _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix(); }
-    catch (const std::bad_function_call&) { badFunctionCall = true; }
-    if (!badFunctionCall) std::abort();
+    catch (const std::logic_error&) { logic = true; }
+    catch (const std::range_error&) { range = true; }
+    Require(!logic, "not caught as std::logic_error");
+    Require(range, "caught as std::range_error");
+}};
+
+const Case badFunctionCall{"XbadFunctionCall_Called_ThrowsBadFunctionCall", [] {
+    Require(ThrowsType<std::bad_function_call>([] { _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix(); }),
+        "throws std::bad_function_call");
+}};
+
+const Case badCast{"CxaBadCast_Called_ThrowsStdExceptionWithMessage", [] {
+    bool caught = false;
+    bool hasMessage = false;
     try { __cxa_bad_cast_nid_postfix(); }
-    catch (const std::exception& value) { assert(value.what() != nullptr); }
-    try { _ZSt19_Throw_bad_weak_ptrv_nid_postfix(); std::abort(); }
-    catch (const std::bad_weak_ptr& value) { if (std::strcmp(value.what(), "bad_weak_ptr") != 0) std::abort(); }
-    try { _ZNKSt9exception6_RaiseEv_nid_postfix(nullptr); assert(false); }
-    catch (const std::invalid_argument&) {}
-    try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); assert(false); }
-    catch (const std::exception& value) { assert(std::strcmp(value.what(), "std::exception") == 0); }
-    CheckRtti();
-    CheckForeign();
-    CheckStaticInitialization();
-    CheckArrays();
-    CheckThreads();
-    CheckTerminate(UncaughtThrow);
-    CheckTerminate(NoexceptThrow);
-    CheckForcedUnwind();
-    int frames = 0;
-    auto backtrace = _Unwind_Backtrace_nid_postfix([](_Unwind_Context* context, void* argument) {
-        assert(_Unwind_GetIP_nid_postfix(context) != 0);
-        ++*static_cast<int*>(argument);
+    catch (const std::exception& value) { caught = true; hasMessage = value.what() != nullptr; }
+    Require(caught, "throws std::exception");
+    Require(hasMessage, "what() is not null");
+}};
+
+const Case badWeakPtr{"ThrowBadWeakPtr_Called_ThrowsBadWeakPtrWithMessage", [] {
+    RequireEqual(MessageOf<std::bad_weak_ptr>([] { _ZSt19_Throw_bad_weak_ptrv_nid_postfix(); }, "_Throw_bad_weak_ptr"),
+        std::string("bad_weak_ptr"), "what()");
+}};
+
+const Case raiseNull{"ExceptionRaise_NullObject_ThrowsInvalidArgument", [] {
+    Require(ThrowsType<std::invalid_argument>([] { _ZNKSt9exception6_RaiseEv_nid_postfix(nullptr); }),
+        "throws std::invalid_argument");
+}};
+
+const Case raiseObject{"ExceptionRaise_Object_ThrowsStdException", [] {
+    Derived object;
+    bool caught = false;
+    std::string message;
+    try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); }
+    catch (const std::exception& value) { caught = true; message = value.what(); }
+    Require(caught, "throws std::exception");
+    RequireEqual(message, std::string("std::exception"), "what()");
+}};
+
+const Case repeatedDowncast{"DynamicCast_RepeatedBaseThroughLeft_ReturnsMostDerived", [] {
+    Repeated repeated;
+    Base* left = static_cast<Left*>(&repeated);
+    Require(ToRepeated(left) == &repeated, "downcast from the left base");
+}};
+
+const Case repeatedCrossCast{"DynamicCast_LeftBaseToRight_ReturnsRightSubobject", [] {
+    Repeated repeated;
+    Base* left = static_cast<Left*>(&repeated);
+    Require(dynamic_cast<Right*>(left) == static_cast<Right*>(&repeated), "cross cast to the right base");
+}};
+
+const Case privateBase{"DynamicCast_BaseOfPrivateBase_ReturnsPrivateBaseObject", [] {
+    PrivateDerived hidden;
+    Require(ToDerived(hidden.Source()) == hidden.Target(), "downcast inside the private base");
+}};
+
+const Case ambiguousPointer{"Catch_NullPointerWithAmbiguousBase_SkipsBaseHandler", [] {
+    int handler = 0;
+    bool isNull = false;
+    try { throw static_cast<Repeated*>(nullptr); }
+    catch (Base*) { handler = 1; }
+    catch (Repeated* pointer) { handler = 2; isNull = pointer == nullptr; }
+    RequireEqual(handler, 2, "selected handler");
+    Require(isNull, "caught pointer is null");
+}};
+
+const Case diamondPointer{"Catch_NullDiamondPointer_CaughtAsVirtualBasePointer", [] {
+    bool caught = false;
+    bool isNull = false;
+    try { throw static_cast<Diamond*>(nullptr); }
+    catch (Base* pointer) { caught = true; isNull = pointer == nullptr; }
+    Require(caught, "caught as Base*");
+    Require(isNull, "caught pointer is null");
+}};
+
+const Case nullPointer{"Catch_Nullptr_CaughtAsClassPointer", [] {
+    bool caught = false;
+    bool isNull = false;
+    try { throw nullptr; }
+    catch (Base* pointer) { caught = true; isNull = pointer == nullptr; }
+    Require(caught, "caught as Base*");
+    Require(isNull, "caught pointer is null");
+}};
+
+const Case pointerToPointer{"Catch_PointerToPointer_SkipsUnsafeConstConversionHandler", [] {
+    int value = 1;
+    int* pointer = &value;
+    int handler = 0;
+    bool same = false;
+    try { throw &pointer; }
+    catch (const int**) { handler = 1; }
+    catch (int** caught) { handler = 2; same = caught == &pointer; }
+    RequireEqual(handler, 2, "selected handler");
+    Require(same, "caught pointer is the thrown pointer");
+}};
+
+const Case constPointerToPointer{"Catch_PointerToPointer_CaughtAsFullyConstQualified", [] {
+    int value = 1;
+    int* pointer = &value;
+    bool caught = false;
+    int pointee = 0;
+    try { throw &pointer; }
+    catch (const int* const* caughtPointer) { caught = true; pointee = **caughtPointer; }
+    Require(caught, "caught as const int* const*");
+    RequireEqual(pointee, value, "pointee");
+}};
+
+const Case foreign{"ForeignException_CaughtByCatchAll_HasNoPrimaryAndIsCleanedUpOnce", [] {
+    foreignCleanups = 0;
+    foreignWrongReasons = 0;
+    auto* exception = new _Unwind_Exception {};
+    exception->exception_class = 0x54455354464f5200;
+    exception->exception_cleanup = [](_Unwind_Reason_Code reason, _Unwind_Exception* pointer) {
+        if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT) ++foreignWrongReasons;
+        ++foreignCleanups;
+        delete pointer;
+    };
+    bool returned = false;
+    bool caughtInner = false;
+    bool caughtOuter = false;
+    bool primaryIsNull = false;
+    try {
+        try { _Unwind_RaiseException(exception); returned = true; }
+        catch (...) { caughtInner = true; primaryIsNull = __cxa_current_primary_exception_nid_postfix() == nullptr; throw; }
+    } catch (...) { caughtOuter = true; }
+    Require(!returned, "raise did not return");
+    Require(caughtInner, "caught by the inner catch-all");
+    Require(primaryIsNull, "no primary exception for a foreign exception");
+    Require(caughtOuter, "rethrown to the outer catch-all");
+    RequireEqual(foreignCleanups, 1, "cleanup calls");
+    RequireEqual(foreignWrongReasons, 0, "cleanup calls with a reason other than foreign caught");
+}};
+
+const Case staticInitialization{"StaticInitialization_FirstAttemptThrows_RetriedOnNextCall", [] {
+    bool returned = false;
+    int thrown = 0;
+    try { StaticValue(); returned = true; } catch (int value) { thrown = value; }
+    Require(!returned, "first initialization threw");
+    RequireEqual(thrown, 91, "thrown value");
+    RequireEqual(StaticValue(), 37, "second call value");
+    RequireEqual(StaticValue(), 37, "third call value");
+    RequireEqual(staticAttempts, 2, "initializer attempts");
+}};
+
+const Case arrayFailure{"VecNew3_ConstructorThrows_DestroysConstructedElementsAndFrees", [] {
+    const ArrayCounters counters(true);
+    bool returned = false;
+    int thrown = 0;
+    try {
+        __cxa_vec_new3_nid_postfix(4, sizeof(int), sizeof(std::size_t), ArrayConstruct, ArrayDestroy, std::malloc, ArrayFree);
+        returned = true;
+    } catch (int value) { thrown = value; }
+    Require(!returned, "vec_new3 threw");
+    RequireEqual(thrown, 73, "thrown value");
+    RequireEqual(arrayConstructed, 2, "elements constructed");
+    RequireEqual(arrayDestroyed, 2, "elements destroyed");
+    RequireEqual(arrayFreed, 1, "frees");
+    RequireEqual(arrayDestroyOrderErrors, 0, "elements destroyed out of reverse order");
+    RequireEqual(arrayFreeSizeErrors, 0, "frees with an unexpected size");
+}};
+
+const Case arraySuccess{"VecNew3AndDelete3_FourElements_ConstructsDestroysAndFreesAll", [] {
+    const ArrayCounters counters(false);
+    void* array = __cxa_vec_new3_nid_postfix(4, sizeof(int), sizeof(std::size_t), ArrayConstruct, ArrayDestroy, std::malloc, ArrayFree);
+    __cxa_vec_delete3_nid_postfix(array, sizeof(int), sizeof(std::size_t), ArrayDestroy, ArrayFree);
+    RequireEqual(arrayConstructed, 4, "elements constructed");
+    RequireEqual(arrayDestroyed, 4, "elements destroyed");
+    RequireEqual(arrayFreed, 1, "frees");
+    RequireEqual(arrayDestroyOrderErrors, 0, "elements destroyed out of reverse order");
+    RequireEqual(arrayFreeSizeErrors, 0, "frees with an unexpected size");
+}};
+
+const Case threads{"Throw_ConcurrentThreads_EachThreadCatchesAndCleansUp", [] {
+    pthread_t handles[4];
+    ThreadOutcome outcomes[4];
+    bool created[4] {};
+    for (int index = 0; index < 4; ++index) created[index] = pthread_create(&handles[index], nullptr, ThreadTest, &outcomes[index]) == 0;
+    bool joined[4] {};
+    for (int index = 0; index < 4; ++index) {
+        if (created[index]) joined[index] = pthread_join(handles[index], nullptr) == 0;
+    }
+    for (int index = 0; index < 4; ++index) {
+        const std::string thread = "thread " + std::to_string(index);
+        Require(created[index], thread + " created");
+        Require(joined[index], thread + " joined");
+        RequireEqual(outcomes[index].wrongValues, 0, thread + " wrong caught values");
+        RequireEqual(outcomes[index].uncaughtAfterCatch, 0, thread + " uncaught exceptions after catch");
+        RequireEqual(outcomes[index].destroyed, 100, thread + " guards destroyed");
+        RequireEqual(outcomes[index].guardsWithoutUncaught, 0, thread + " guards destroyed without an uncaught exception");
+    }
+}};
+
+const Case terminateUncaught{"Terminate_ExceptionWithoutHandler_CallsTerminateHandler", [] {
+    RequireEqual(ChildExitStatus(UncaughtChild), 61, "child exit status");
+}};
+
+const Case terminateNoexcept{"Terminate_ExceptionLeavingNoexceptFunction_CallsTerminateHandler", [] {
+    RequireEqual(ChildExitStatus(NoexceptChild), 61, "child exit status");
+}};
+
+const Case forcedUnwind{"ForcedUnwind_ToEndOfStack_RunsCleanupAndCallsStopAtEnd", [] {
+    RequireEqual(ChildExitStatus(ForcedUnwindChild), 63, "child exit status");
+}};
+
+const Case backtrace{"Backtrace_CurrentStack_VisitsFramesUntilEndOfStack", [] {
+    BacktraceOutcome outcome;
+    const auto result = _Unwind_Backtrace_nid_postfix([](_Unwind_Context* context, void* argument) {
+        auto& state = *static_cast<BacktraceOutcome*>(argument);
+        if (_Unwind_GetIP_nid_postfix(context) == 0) ++state.zeroIps;
+        ++state.frames;
         return _URC_NO_REASON;
-    }, &frames);
-    assert(backtrace == _URC_END_OF_STACK && frames >= 2);
-    std::puts("exception runtime tests passed");
-}
+    }, &outcome);
+    RequireEqual(result, _URC_END_OF_STACK, "backtrace result");
+    Require(outcome.frames >= 2, "at least two frames, got " + std::to_string(outcome.frames));
+    RequireEqual(outcome.zeroIps, 0, "frames with a zero instruction pointer");
+}};
+
+} // namespace

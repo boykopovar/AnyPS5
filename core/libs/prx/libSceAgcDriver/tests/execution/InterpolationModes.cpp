@@ -8,13 +8,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <string>
 
 namespace {
 
 using namespace ShaderRecompiler;
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 
 struct Row {
     std::array<std::uint32_t, 9> input;
@@ -150,22 +149,21 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t mode) {
     for (std::size_t index = Rows.size() * Words; index < Data.size(); ++index) Require(Data[index] == Sentinel, "interpolation modes wrote beyond the rows");
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        const auto target = device->Target();
-        if (std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityFloat64) == target.supportedCapabilities.end()) {
-            std::puts("skipped, interpolation modes require Float64");
-            return VulkanTestSkipped;
-        }
-        for (std::uint32_t mode = 0; mode < ModeFlags.size(); ++mode) Run(*device, mode);
-        std::puts("interpolation modes passed: 32 hardware rows, 3 ops, 8 float modes");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+void RunModes(bool quiet) {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityFloat64, "interpolation modes require Float64");
+    for (std::uint32_t mode = 0; mode < ModeFlags.size(); ++mode) {
+        if (((ModeFlags[mode] & InterpolationQuiet) != 0u) == quiet) Run(device, mode);
     }
 }
+
+const Testing::Case nonIeeeModes{"InterpolationModes_IeeeOffFlushModes_MatchHardwareRows", [] {
+    RunModes(false);
+}};
+
+const Testing::Case ieeeModes{"InterpolationModes_IeeeOnFlushModes_MatchHardwareRows", [] {
+    RunModes(true);
+}};
+
+} // namespace

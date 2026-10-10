@@ -1,12 +1,17 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <exception>
+#include <memory>
 #include <string>
+#include <string_view>
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -15,142 +20,292 @@ std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
 
 namespace {
 
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
+
 std::size_t allocations = 0;
 std::size_t frees = 0;
 std::size_t lastSize = 0;
 void* lastAllocation = nullptr;
 void* lastFree = nullptr;
 
-void require(bool condition) {
-    if (!condition) std::abort();
-}
-
-template<typename TAction>
-void reject(TAction action) {
-    bool rejected = false;
-    try { action(); } catch (const std::exception&) { rejected = true; }
-    require(rejected);
-}
-
-void* APS5_VABI allocate(std::size_t bytes) {
+void* APS5_VABI Allocate(std::size_t bytes) {
     ++allocations;
     lastSize = bytes;
     lastAllocation = std::malloc(bytes);
     return lastAllocation;
 }
 
-void APS5_VABI release(void* pointer) {
+void APS5_VABI Release(void* pointer) {
     ++frees;
     lastFree = pointer;
     std::free(pointer);
 }
 
-void* APS5_VABI allocateZeroed(std::size_t, std::size_t) { std::abort(); }
-void* APS5_VABI reallocate(void*, std::size_t) { std::abort(); }
-void* APS5_VABI align(std::size_t, std::size_t) { std::abort(); }
-void* APS5_VABI realign(void*, std::size_t, std::size_t) { std::abort(); }
-int APS5_VABI posixAlign(void**, std::size_t, std::size_t) { std::abort(); }
+void* APS5_VABI AllocateZeroed(std::size_t, std::size_t) { std::abort(); }
+void* APS5_VABI Reallocate(void*, std::size_t) { std::abort(); }
+void* APS5_VABI Align(std::size_t, std::size_t) { std::abort(); }
+void* APS5_VABI Realign(void*, std::size_t, std::size_t) { std::abort(); }
+int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) { std::abort(); }
+
+const GuestLocale::Implementation* const* Classic() {
+    return &_ZSt21_sceLibcClassicLocale_nid_postfix;
+}
+
+std::size_t Getcat(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    return _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(facet, locale);
+}
+
+class HeapFixture {
+public:
+    HeapFixture() {
+        const std::array<void*, 10> api{reinterpret_cast<void*>(&Allocate), reinterpret_cast<void*>(&Release),
+            reinterpret_cast<void*>(&AllocateZeroed), reinterpret_cast<void*>(&Reallocate), reinterpret_cast<void*>(&Align),
+            reinterpret_cast<void*>(&Realign), reinterpret_cast<void*>(&PosixAlign)};
+        ApplicationHeapRegister_nid_no_patch(api.data());
+        allocations = 0;
+        frees = 0;
+        lastSize = 0;
+        lastAllocation = nullptr;
+        lastFree = nullptr;
+    }
+
+    HeapFixture(const HeapFixture&) = delete;
+    HeapFixture& operator=(const HeapFixture&) = delete;
+};
 
 const GuestLocale::CollateVtable& Vtable(const GuestLocale::Facet* facet) {
     return *reinterpret_cast<const GuestLocale::CollateVtable*>(facet->vtable);
 }
 
-int Compare(const GuestLocale::CollateFacet* facet, const std::string& left, const std::string& right) {
-    return Vtable(&facet->base).compare(facet, left.data(), left.data() + left.size(), right.data(), right.data() + right.size());
+class CollateFixture : public HeapFixture {
+public:
+    CollateFixture() {
+        Require(Getcat(&facet, Classic()) == 1, "create the classic collate facet");
+        Require(facet != nullptr, "collate facet allocated");
+        collate = reinterpret_cast<const GuestLocale::CollateFacet*>(facet);
+    }
+
+    ~CollateFixture() {
+        if (facet != nullptr) Vtable(facet).facet.deleteObject(facet);
+    }
+
+    CollateFixture(const CollateFixture&) = delete;
+    CollateFixture& operator=(const CollateFixture&) = delete;
+
+    const GuestLocale::CollateVtable& Functions() const { return Vtable(facet); }
+
+    int Compare(const std::string& left, const std::string& right) const {
+        return Functions().compare(collate, left.data(), left.data() + left.size(), right.data(), right.data() + right.size());
+    }
+
+    std::uint64_t Hash(const std::string& text) const {
+        return static_cast<std::uint64_t>(Functions().hash(collate, text.data(), text.data() + text.size()));
+    }
+
+    GuestLocale::String* Transform(GuestLocale::String* result, const std::string& text) const {
+        return Functions().transform(result, collate, text.data(), text.data() + text.size());
+    }
+
+    GuestLocale::Facet* facet = nullptr;
+    const GuestLocale::CollateFacet* collate = nullptr;
+};
+
+struct FreeDeleter {
+    void operator()(char* pointer) const { std::free(pointer); }
+};
+
+using HeapString = std::unique_ptr<char, FreeDeleter>;
+
+GuestLocale::String GarbageString() {
+    GuestLocale::String result;
+    std::memset(&result, 0xcd, sizeof(result));
+    return result;
 }
 
-std::uint64_t Hash(const GuestLocale::CollateFacet* facet, const std::string& text) {
-    return static_cast<std::uint64_t>(Vtable(&facet->base).hash(facet, text.data(), text.data() + text.size()));
+template<typename TAction>
+void RequireRejected(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const Testing::Failure&) {
+        throw;
+    } catch (const std::exception&) {
+        return;
+    }
+    Testing::Fail(std::string(message) + ": did not throw");
 }
 
-}
+const Case getcatWithoutFacet{"CollateGetcat_NullFacetPointer_ReturnsCollateCategory", [] {
+    const HeapFixture heap;
+    RequireEqual(Getcat(nullptr, Classic()), std::size_t{1}, "category");
+}};
 
-int main() {
-    const std::array<void*, 10> api{reinterpret_cast<void*>(&allocate), reinterpret_cast<void*>(&release), reinterpret_cast<void*>(&allocateZeroed), reinterpret_cast<void*>(&reallocate), reinterpret_cast<void*>(&align), reinterpret_cast<void*>(&realign), reinterpret_cast<void*>(&posixAlign)};
-    ApplicationHeapRegister_nid_no_patch(api.data());
-
-    const GuestLocale::Implementation* const* classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
-    require(_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(nullptr, classic) == 1);
+const Case getcatExisting{"CollateGetcat_ExistingFacet_KeepsFacetWithoutAllocating", [] {
+    const HeapFixture heap;
     GuestLocale::Facet existing{};
     GuestLocale::Facet* facet = &existing;
-    require(_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, classic) == 1);
-    require(facet == &existing && allocations == 0);
+    RequireEqual(Getcat(&facet, Classic()), std::size_t{1}, "category");
+    RequireEqual(facet == &existing, true, "facet kept");
+    RequireEqual(allocations, std::size_t{0}, "allocations");
+}};
 
+const Case getcatUnsupported{"CollateGetcat_UnsupportedLocale_ThrowsWithoutAllocating", [] {
+    const HeapFixture heap;
     GuestLocale::Implementation french = *_ZSt21_sceLibcClassicLocale_nid_postfix;
     french.name = "fr_FR";
     const GuestLocale::Implementation* frenchPointer = &french;
-    facet = nullptr;
-    reject([&] { _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, &frenchPointer); });
-    require(facet == nullptr && allocations == 0);
+    GuestLocale::Facet* facet = nullptr;
+    RequireRejected([&] { Getcat(&facet, &frenchPointer); }, "fr_FR collate");
+    RequireEqual(facet == nullptr, true, "no facet created");
+    RequireEqual(allocations, std::size_t{0}, "allocations");
+}};
 
-    require(_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, classic) == 1);
-    require(facet != nullptr && allocations == 1 && lastSize == sizeof(GuestLocale::CollateFacet) && lastAllocation == facet);
-    const auto* collate = reinterpret_cast<const GuestLocale::CollateFacet*>(facet);
-    require(facet->references == 0 && collate->collation == nullptr && collate->wideCollation == nullptr);
+const Case getcatCreates{"CollateGetcat_ClassicLocale_AllocatesUnreferencedFacet", [] {
+    const CollateFixture fixture;
+    RequireEqual(allocations, std::size_t{1}, "allocations");
+    RequireEqual(lastSize, sizeof(GuestLocale::CollateFacet), "allocation size");
+    RequireEqual(lastAllocation == fixture.facet, true, "facet storage from the guest heap");
+    RequireEqual(fixture.facet->references, std::uint32_t{0}, "references");
+    RequireEqual(fixture.collate->collation == nullptr, true, "collation");
+    RequireEqual(fixture.collate->wideCollation == nullptr, true, "wide collation");
+}};
 
-    require(Compare(collate, "abc", "abd") == -1);
-    require(Compare(collate, "abd", "abc") == 1);
-    require(Compare(collate, "a", "c") == -1);
-    require(Compare(collate, "abc", "abc") == 0);
-    require(Compare(collate, "ab", "abc") == -1);
-    require(Compare(collate, "abc", "ab") == 1);
-    require(Compare(collate, "", "") == 0);
-    require(Compare(collate, "", "a") == -1);
-    require(Compare(collate, "\x80", "a") == 1);
-    require(Compare(collate, std::string("a\0", 2), "a") == 1);
-    require(Compare(collate, std::string("a\0b", 3), std::string("a\0c", 3)) == -1);
-    require(Vtable(facet).compare(collate, nullptr, nullptr, nullptr, nullptr) == 0);
+const Case compare{"CollateCompare_ByteStrings_OrdersLexicographically", [] {
+    const CollateFixture fixture;
+    struct Example {
+        std::string left;
+        std::string right;
+        int expected;
+    };
+    const Example examples[] = {
+        {"abc", "abd", -1}, {"abd", "abc", 1}, {"a", "c", -1}, {"abc", "abc", 0}, {"ab", "abc", -1}, {"abc", "ab", 1},
+        {"", "", 0}, {"", "a", -1}, {"\x80", "a", 1}, {std::string("a\0", 2), "a", 1},
+        {std::string("a\0b", 3), std::string("a\0c", 3), -1},
+    };
+    for (const auto& example : examples) {
+        RequireEqual(fixture.Compare(example.left, example.right), example.expected,
+            "compare(\"" + example.left + "\", \"" + example.right + "\")");
+    }
+}};
+
+const Case compareNull{"CollateCompare_EmptyNullRanges_ReturnsEqual", [] {
+    const CollateFixture fixture;
+    RequireEqual(fixture.Functions().compare(fixture.collate, nullptr, nullptr, nullptr, nullptr), 0, "result");
+}};
+
+const Case compareInvalid{"CollateCompare_InvalidRanges_Throws", [] {
+    const CollateFixture fixture;
     const char text[] = "abc";
-    reject([&] { Vtable(facet).compare(collate, text + 2, text, text, text + 1); });
-    reject([&] { Vtable(facet).compare(collate, nullptr, text, text, text + 1); });
+    RequireRejected([&] { fixture.Functions().compare(fixture.collate, text + 2, text, text, text + 1); }, "reversed range");
+    RequireRejected([&] { fixture.Functions().compare(fixture.collate, nullptr, text, text, text + 1); }, "null start");
+}};
 
-    require(Hash(collate, "") == 0xcbf29ce484222325ull);
-    require(Hash(collate, "a") == 0xaf63dc4c8601ec8cull);
-    require(Hash(collate, "foobar") == 0x85944171f73967e8ull);
-    require(Hash(collate, "\xff") == ((0xcbf29ce484222325ull ^ 0xffull) * 0x100000001b3ull));
-    reject([&] { Vtable(facet).hash(collate, text + 1, text); });
+const Case hash{"CollateHash_ByteStrings_UsesFnv1a", [] {
+    const CollateFixture fixture;
+    RequireEqual(fixture.Hash(""), std::uint64_t{0xcbf29ce484222325ull}, "empty");
+    RequireEqual(fixture.Hash("a"), std::uint64_t{0xaf63dc4c8601ec8cull}, "a");
+    RequireEqual(fixture.Hash("foobar"), std::uint64_t{0x85944171f73967e8ull}, "foobar");
+    RequireEqual(fixture.Hash("\xff"), std::uint64_t{(0xcbf29ce484222325ull ^ 0xffull) * 0x100000001b3ull}, "0xff");
+}};
 
-    GuestLocale::String result;
-    std::memset(&result, 0xcd, sizeof(result));
-    const std::string shortText = "hello";
-    require(Vtable(facet).transform(&result, collate, shortText.data(), shortText.data() + shortText.size()) == &result);
-    require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == 5 && result.capacity == 15 && std::strcmp(result.buffer, "hello") == 0);
-    require(allocations == 1);
+const Case hashInvalid{"CollateHash_ReversedRange_Throws", [] {
+    const CollateFixture fixture;
+    const char text[] = "abc";
+    RequireRejected([&] { fixture.Functions().hash(fixture.collate, text + 1, text); }, "reversed range");
+}};
 
-    std::memset(&result, 0xcd, sizeof(result));
-    require(Vtable(facet).transform(&result, collate, nullptr, nullptr) == &result);
-    require(result.size == 0 && result.capacity == 15 && result.buffer[0] == 0);
+const Case transformShort{"CollateTransform_ShortText_UsesInlineBuffer", [] {
+    const CollateFixture fixture;
+    auto result = GarbageString();
+    RequireEqual(fixture.Transform(&result, "hello") == &result, true, "returns result");
+    RequireEqual(result.reserved, std::uint64_t{0xcdcdcdcdcdcdcdcdull}, "reserved untouched");
+    RequireEqual(result.size, std::size_t{5}, "size");
+    RequireEqual(result.capacity, std::size_t{15}, "capacity");
+    RequireEqual(std::string_view(result.buffer), std::string_view("hello"), "text");
+    RequireEqual(allocations, std::size_t{1}, "no allocation beyond the facet");
+}};
 
+const Case transformEmpty{"CollateTransform_EmptyNullRange_ProducesEmptyInlineString", [] {
+    const CollateFixture fixture;
+    auto result = GarbageString();
+    RequireEqual(fixture.Functions().transform(&result, fixture.collate, nullptr, nullptr) == &result, true, "returns result");
+    RequireEqual(result.size, std::size_t{0}, "size");
+    RequireEqual(result.capacity, std::size_t{15}, "capacity");
+    RequireEqual(result.buffer[0], '\0', "terminator");
+}};
+
+const Case transformFifteen{"CollateTransform_FifteenCharacters_StaysInline", [] {
+    const CollateFixture fixture;
+    auto result = GarbageString();
     const std::string fifteen(15, 'q');
-    require(Vtable(facet).transform(&result, collate, fifteen.data(), fifteen.data() + fifteen.size()) == &result);
-    require(result.size == 15 && result.capacity == 15 && std::string(result.buffer) == fifteen && allocations == 1);
+    RequireEqual(fixture.Transform(&result, fifteen) == &result, true, "returns result");
+    RequireEqual(result.size, std::size_t{15}, "size");
+    RequireEqual(result.capacity, std::size_t{15}, "capacity");
+    RequireEqual(std::string(result.buffer), fifteen, "text");
+    RequireEqual(allocations, std::size_t{1}, "no allocation beyond the facet");
+}};
 
+const Case transformLong{"CollateTransform_LongText_AllocatesFromGuestHeap", [] {
+    const CollateFixture fixture;
+    auto result = GarbageString();
     const std::string longText = "collation of a longer text";
-    require(Vtable(facet).transform(&result, collate, longText.data(), longText.data() + longText.size()) == &result);
-    require(allocations == 2 && lastSize == longText.size() + 1 && result.pointer == lastAllocation);
-    require(result.size == longText.size() && result.capacity == longText.size() && std::string(result.pointer) == longText);
-    std::free(result.pointer);
+    RequireEqual(fixture.Transform(&result, longText) == &result, true, "returns result");
+    const HeapString owned(result.pointer);
+    RequireEqual(allocations, std::size_t{2}, "allocations");
+    RequireEqual(lastSize, longText.size() + 1, "allocation size");
+    RequireEqual(result.pointer == lastAllocation, true, "text storage from the guest heap");
+    RequireEqual(result.size, longText.size(), "size");
+    RequireEqual(result.capacity, longText.size(), "capacity");
+    RequireEqual(std::string(result.pointer), longText, "text");
+}};
 
+const Case transformLargest{"CollateTransform_LargestSupportedText_AllocatesExactCapacity", [] {
+    const CollateFixture fixture;
+    auto result = GarbageString();
     const std::string largest(4094, 'z');
-    require(Vtable(facet).transform(&result, collate, largest.data(), largest.data() + largest.size()) == &result);
-    require(allocations == 3 && lastSize == 4095 && result.capacity == 4094 && std::string(result.pointer) == largest);
-    std::free(result.pointer);
+    RequireEqual(fixture.Transform(&result, largest) == &result, true, "returns result");
+    const HeapString owned(result.pointer);
+    RequireEqual(allocations, std::size_t{2}, "allocations");
+    RequireEqual(lastSize, std::size_t{4095}, "allocation size");
+    RequireEqual(result.capacity, std::size_t{4094}, "capacity");
+    RequireEqual(std::string(result.pointer), largest, "text");
+}};
 
+const Case transformInvalid{"CollateTransform_InvalidInput_ThrowsWithoutAllocating", [] {
+    const CollateFixture fixture;
+    auto result = GarbageString();
+    const char text[] = "abc";
     const std::string tooLong(4095, 'z');
-    reject([&] { Vtable(facet).transform(&result, collate, tooLong.data(), tooLong.data() + tooLong.size()); });
+    RequireRejected([&] { fixture.Transform(&result, tooLong); }, "4095 characters");
     const std::string embedded("a\0b", 3);
-    reject([&] { Vtable(facet).transform(&result, collate, embedded.data(), embedded.data() + embedded.size()); });
-    reject([&] { Vtable(facet).transform(nullptr, collate, text, text + 1); });
-    require(allocations == 3);
+    RequireRejected([&] { fixture.Transform(&result, embedded); }, "embedded nul");
+    RequireRejected([&] { fixture.Functions().transform(nullptr, fixture.collate, text, text + 1); }, "null result");
+    RequireEqual(allocations, std::size_t{1}, "no allocation beyond the facet");
+}};
 
-    Vtable(facet).facet.retain(facet);
-    Vtable(facet).facet.retain(facet);
-    require(facet->references == 2);
-    require(Vtable(facet).facet.release(facet) == nullptr && facet->references == 1);
-    require(Vtable(facet).facet.release(facet) == facet && facet->references == 0);
-    Vtable(facet).facet.destroy(facet);
-    require(frees == 0);
-    Vtable(facet).facet.deleteObject(facet);
-    require(frees == 1 && lastFree == collate);
-    return 0;
-}
+const Case references{"CollateFacet_RetainAndRelease_TrackReferences", [] {
+    const CollateFixture fixture;
+    auto* facet = fixture.facet;
+    fixture.Functions().facet.retain(facet);
+    fixture.Functions().facet.retain(facet);
+    RequireEqual(facet->references, std::uint32_t{2}, "after two retains");
+    RequireEqual(fixture.Functions().facet.release(facet) == nullptr, true, "first release keeps the facet");
+    RequireEqual(facet->references, std::uint32_t{1}, "after first release");
+    RequireEqual(fixture.Functions().facet.release(facet) == facet, true, "last release returns the facet");
+    RequireEqual(facet->references, std::uint32_t{0}, "after last release");
+}};
+
+const Case deletion{"CollateFacet_DeleteObject_FreesThroughGuestHeap", [] {
+    CollateFixture fixture;
+    auto* facet = fixture.facet;
+    const auto& functions = fixture.Functions();
+    functions.facet.destroy(facet);
+    RequireEqual(frees, std::size_t{0}, "destroy does not free");
+    fixture.facet = nullptr;
+    functions.facet.deleteObject(facet);
+    RequireEqual(frees, std::size_t{1}, "delete frees once");
+    RequireEqual(lastFree == fixture.collate, true, "freed the facet");
+}};
+
+} // namespace

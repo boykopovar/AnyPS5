@@ -5,12 +5,11 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <iostream>
+#include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 alignas(256) std::array<std::array<std::uint32_t, 64>, 4> texels{};
@@ -30,10 +29,10 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     const auto instructions = store ? std::span<const std::uint32_t>(storeCode) : std::span<const std::uint32_t>(code);
     ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(instructions.data()), instructions, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, {}}, device.Target(), {0u, 0u, 0u, 128u}};
     auto result = ShaderRecompiler::Recompile(request);
-    Require(result.runtimeImageCount == 0u, "direct image allocated runtime image metadata");
-    Require(result.shaderDataDwords < ShaderRecompiler::RuntimeAbi::ShaderDataDwords, "shader data was not compacted");
+    Testing::Require(result.runtimeImageCount == 0u, "direct image allocated runtime image metadata");
+    Testing::Require(result.shaderDataDwords < ShaderRecompiler::RuntimeAbi::ShaderDataDwords, "shader data was not compacted");
     for (const auto& binding : result.bindings) {
-        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) Require(binding.count == 1u, "single image expanded into unused descriptor slots");
+        if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages) Testing::Require(binding.count == 1u, "single image expanded into unused descriptor slots");
     }
     return result;
 }
@@ -51,21 +50,13 @@ void Run(AgcDriver::VulkanDevice& device) {
     shaders.clear();
     device.WaitIdle();
     for (std::uint32_t batch = 0u; batch < outputs.size(); ++batch) {
-        for (std::uint32_t pixel = 0u; pixel < 32u; ++pixel) Require(outputs[batch][pixel] == (batch == 3u ? 123u : batch == 2u ? 0u : texels[batch][pixel]), "descriptor heap lifetime or null image semantics failed: batch=" + std::to_string(batch) + " pixel=" + std::to_string(pixel) + " value=" + std::to_string(outputs[batch][pixel]));
+        for (std::uint32_t pixel = 0u; pixel < 32u; ++pixel) Testing::Require(outputs[batch][pixel] == (batch == 3u ? 123u : batch == 2u ? 0u : texels[batch][pixel]), "descriptor heap lifetime or null image semantics failed: batch=" + std::to_string(batch) + " pixel=" + std::to_string(pixel) + " value=" + std::to_string(outputs[batch][pixel]));
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        std::cout << "typed heap execution tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case descriptorHeap{"DescriptorHeap_DirectAndNullImagesAcrossSubmissions_KeepTheirDescriptors", [] {
+    Run(SharedVulkanTestDevice());
+}};
+
+} // namespace

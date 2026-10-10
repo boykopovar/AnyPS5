@@ -6,14 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 128;
@@ -134,21 +133,33 @@ void CheckRejections(const AgcDriver::VulkanDevice& device) {
     CheckRejected(device, noScalarBase, "global_load_dword_addtid supports only an SGPR pair as base address");
 }
 
-}
+const Testing::Case wave32Workgroup32{"GlobalLoadAddtid_Wave32With32Threads_LoadsLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[0]);
+    Check(Workgroups[0]);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        for (const auto& workgroup : Workgroups) {
-            Run(*device, workgroup);
-            Check(workgroup);
-        }
-        CheckRejections(*device);
-        std::puts("global load addtid tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case wave32Workgroup128{"GlobalLoadAddtid_Wave32With128Threads_LoadsLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[1]);
+    Check(Workgroups[1]);
+}};
+
+const Testing::Case wave64Workgroup64{"GlobalLoadAddtid_Wave64With64Threads_LoadsLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[2]);
+    Check(Workgroups[2]);
+}};
+
+const Testing::Case wave64Workgroup128{"GlobalLoadAddtid_Wave64With128Threads_LoadsLaneAddressedDwords", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, Workgroups[3]);
+    Check(Workgroups[3]);
+}};
+
+const Testing::Case unsupportedForms{"GlobalLoadAddtid_NonGlobalSegmentOrVgprBase_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckRejections(device);
+}};
+
+} // namespace

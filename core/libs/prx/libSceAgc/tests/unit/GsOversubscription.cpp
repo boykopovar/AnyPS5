@@ -3,10 +3,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 
+#include <Testing/Test.hpp>
+
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -23,19 +24,19 @@ struct GsSetup {
     Shader shader;
 };
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+using Testing::Require;
 
-template <typename TAction>
-void expectFailure(TAction action) {
+template<typename TAction>
+void ExpectFailure(TAction action) {
     try {
         action();
+    } catch (const Testing::Failure&) {
+        throw;
     } catch (const std::exception& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
-    throw std::runtime_error("expected an exception");
+    Testing::Fail("expected an exception");
 }
 
 Registers filled() {
@@ -62,17 +63,17 @@ void makeGs(GsSetup& setup, std::uint32_t onchip, std::uint32_t subgroup, std::u
 
 void expectRegs(const Shader* gs, std::uint32_t budget, float factor, std::uint32_t pcAlloc, std::uint32_t rsrc4, const char* message) {
     auto regs = filled();
-    check(sceAgcGetGsOversubscription(regs.data(), gs, budget, factor) == 0, message);
-    check(regs[0].offset == ShaderRegs::GE_PC_ALLOC && regs[1].offset == ShaderRegs::SPI_SHADER_PGM_RSRC4_GS, message);
-    check(regs[0].value == pcAlloc && regs[1].value == rsrc4, message);
+    Require(sceAgcGetGsOversubscription(regs.data(), gs, budget, factor) == 0, message);
+    Require(regs[0].offset == ShaderRegs::GE_PC_ALLOC && regs[1].offset == ShaderRegs::SPI_SHADER_PGM_RSRC4_GS, message);
+    Require(regs[0].value == pcAlloc && regs[1].value == rsrc4, message);
 }
 
-void testBudgetLimits() {
+void VerifyBudgetLimits() {
     expectRegs(nullptr, 0, 0.5f, 0, 0, "zero budget does not disable oversubscription");
     expectRegs(nullptr, std::numeric_limits<std::uint32_t>::max(), 0.5f, 0x7ffu, 0x7f0000u, "unlimited budget does not allow full oversubscription");
 }
 
-void testVertexBound() {
+void VerifyVertexBound() {
     GsSetup setup;
     makeGs(setup, 2u << 11u, 4, 3u << 2u, 0, 64, false);
     expectRegs(&setup.shader, 1u << 20u, 0.5f, 0x3ffu, 0x7f0000u, "vertex-bound oversubscription changed");
@@ -81,7 +82,7 @@ void testVertexBound() {
     expectRegs(&setup.shader, 1u << 20u, -1.0f, 0, 0, "factor reaching a zero target changed the registers");
 }
 
-void testExportBound() {
+void VerifyExportBound() {
     GsSetup setup;
     makeGs(setup, 8u << 11u, 8, 0, 7u << 21u, 64, true);
     expectRegs(&setup.shader, 1u << 20u, 0.75f, 0x7ffu, 0x5f0000u, "export-bound oversubscription changed");
@@ -90,7 +91,7 @@ void testExportBound() {
     expectRegs(&setup.shader, 1u << 20u, 0.25f, 0x7ffu, 0x1f0000u, "oversubscription without parameter cache exports changed");
 }
 
-void testRegisterFields() {
+void VerifyRegisterFields() {
     GsSetup setup;
     makeGs(setup, 5u << 11u, 2, 2u << 2u, 0, 128, false);
     expectRegs(&setup.shader, 16384, 0.75f, 0x301u, 0x7f0000u, "wave64 subgroup waves are not halved");
@@ -104,41 +105,53 @@ void testRegisterFields() {
     expectRegs(&setup.shader, 32768, 0.25f, 0x7ffu, 0x50000u, "primitive amplification factor is ignored");
 }
 
-void testRejections() {
+void VerifyRejections() {
     GsSetup setup;
     makeGs(setup, 2u << 11u, 4, 3u << 2u, 0, 64, false);
     auto regs = filled();
     const auto saved = regs;
-    expectFailure([&] { sceAgcGetGsOversubscription(nullptr, &setup.shader, 1u << 20u, 0.5f); });
-    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), nullptr, 1u << 20u, 0.5f); });
-    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, -2.0f); });
-    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, std::nanf("")); });
+    ExpectFailure([&] { sceAgcGetGsOversubscription(nullptr, &setup.shader, 1u << 20u, 0.5f); });
+    ExpectFailure([&] { sceAgcGetGsOversubscription(regs.data(), nullptr, 1u << 20u, 0.5f); });
+    ExpectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, -2.0f); });
+    ExpectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, std::nanf("")); });
     setup.shader.specials = nullptr;
-    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
+    ExpectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
     setup.shader.specials = &setup.specials;
     setup.cx[4].value = 0;
-    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
+    ExpectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
     setup.shader.num_cx_registers = 4;
-    expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
-    check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected call wrote registers");
+    ExpectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
+    Require(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected call wrote registers");
 }
 
 }
 
-int main() {
-    try {
-        testBudgetLimits();
-        testVertexBound();
-        testExportBound();
-        testRegisterFields();
-        testRejections();
-        LibcRunShutdown_nid_postfix();
-        std::puts("AGC GS oversubscription tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
-        return 1;
-    }
+namespace {
+
+const Testing::Case budget{"GsOversubscription_BudgetLimits_DisableOrAllowFullOversubscription", [] {
+    VerifyBudgetLimits();
+}};
+
+const Testing::Case vertexBound{"GsOversubscription_VertexBoundShader_ComputesRegisters", [] {
+    VerifyVertexBound();
+}};
+
+const Testing::Case exportBound{"GsOversubscription_ExportBoundShader_ComputesRegisters", [] {
+    VerifyExportBound();
+}};
+
+const Testing::Case fields{"GsOversubscription_RegisterFields_FollowWaveSizeAndExports", [] {
+    VerifyRegisterFields();
+}};
+
+const Testing::Case rejections{"GsOversubscription_InvalidArgumentsOrShader_ThrowWithoutWriting", [] {
+    VerifyRejections();
+}};
+
+} // namespace
+
+int main(int argc, char** argv) {
+    const int result = Testing::Run(argc, argv);
+    LibcRunShutdown_nid_postfix();
+    return result;
 }

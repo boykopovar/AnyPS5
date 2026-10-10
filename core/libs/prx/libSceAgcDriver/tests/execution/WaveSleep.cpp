@@ -5,14 +5,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 64;
@@ -57,22 +55,14 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Input[tid * Stride] + 1u;
         const auto actual = Output[tid * Stride];
-        Require(actual == expected, "wave sleep: thread " + std::to_string(tid) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+        Testing::Require(actual == expected, "wave sleep: thread " + std::to_string(tid) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
     }
 }
 
-}
+const Testing::Case sleep{"WaveSleep_SleepBetweenLoadAndStore_PreservesEveryLane", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        std::puts("wave sleep tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

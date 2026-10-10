@@ -8,7 +8,6 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <mutex>
 #include <span>
 #include <string>
@@ -16,7 +15,6 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 8;
@@ -79,36 +77,56 @@ void Store(AgcDriver::VulkanDevice& device, const std::uint32_t* texels, std::ui
 }
 
 void Check(const std::uint32_t* texels, bool last, const std::string& step) {
-    for (const auto offset : PastOffsets) Require(texels[offset / 4u] == StoredPast, step + ": byte offset " + std::to_string(offset) + " does not hold the store through level 3, past MAX_MIP 2, at its addrlib tail slot");
-    for (const auto offset : LastOffsets) Require(texels[offset / 4u] == (last ? StoredLast : Untouched), step + ": byte offset " + std::to_string(offset) + " of level 2 holds an unexpected value");
-    for (auto index = TailBlockBytes / 4u; index < SurfaceBytes / 4u; ++index) Require(texels[index] == Untouched, step + ": byte offset " + std::to_string(index * 4u) + " of levels 0 and 1 changed");
+    for (const auto offset : PastOffsets) Testing::Require(texels[offset / 4u] == StoredPast, step + ": byte offset " + std::to_string(offset) + " does not hold the store through level 3, past MAX_MIP 2, at its addrlib tail slot");
+    for (const auto offset : LastOffsets) Testing::Require(texels[offset / 4u] == (last ? StoredLast : Untouched), step + ": byte offset " + std::to_string(offset) + " of level 2 holds an unexpected value");
+    for (auto index = TailBlockBytes / 4u; index < SurfaceBytes / 4u; ++index) Testing::Require(texels[index] == Untouched, step + ": byte offset " + std::to_string(index * 4u) + " of levels 0 and 1 changed");
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        std::vector<std::uint32_t> storage((SurfaceBytes + 0x10000u) / 4u);
-        auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
+class MippedSurface {
+public:
+    explicit MippedSurface(AgcDriver::VulkanDevice& device) : device(device), storage((SurfaceBytes + 0x10000u) / 4u) {
+        texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + SurfaceBytes / 4u, Untouched);
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Add(texels, SurfaceBytes, true, true);
-        }
-        Store(*device, texels, 3u, StorePastCode);
-        Check(texels, false, "store through level 3");
-        Store(*device, texels, 2u, StoreLastCode);
-        Check(texels, true, "store through level 2 after level 3");
-        {
-            GuestAllocations::Mutation mutation;
-            mutation.Remove(texels);
-        }
-        std::puts("view past the last mip tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels, SurfaceBytes, true, true);
     }
-}
+
+    MippedSurface(const MippedSurface&) = delete;
+    MippedSurface& operator=(const MippedSurface&) = delete;
+
+    ~MippedSurface() {
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels);
+    }
+
+    std::uint32_t* Texels() const {
+        return texels;
+    }
+
+private:
+    AgcDriver::VulkanDevice& device;
+    std::vector<std::uint32_t> storage;
+    std::uint32_t* texels = nullptr;
+};
+
+const Testing::Case storePastLastMip{"ImageStore_ThroughLevelPastMaxMip_LandsInTheAddrlibTailSlot", [] {
+    auto& device = SharedVulkanTestDevice();
+    MippedSurface surface(device);
+    Store(device, surface.Texels(), 3u, StorePastCode);
+    Check(surface.Texels(), false, "store through level 3");
+}};
+
+const Testing::Case storeLastMipAfterPast{"ImageStore_ThroughLastLevelAfterPastLevel_KeepsBothStores", [] {
+    auto& device = SharedVulkanTestDevice();
+    MippedSurface surface(device);
+    Store(device, surface.Texels(), 3u, StorePastCode);
+    Store(device, surface.Texels(), 2u, StoreLastCode);
+    Check(surface.Texels(), true, "store through level 2 after level 3");
+}};
+
+} // namespace

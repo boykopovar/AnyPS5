@@ -8,14 +8,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -221,22 +220,23 @@ void Check(const std::uint32_t (&expected)[32][16], const char* mode) {
     }
 }
 
-}
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check(ExpectedNoIeee, "no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check(ExpectedNoIeee, "IEEE=0");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
-        Check(ExpectedIeee, "IEEE=1");
-        std::puts("nan quieting tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case noFloatMode{"NanQuieting_NoFloatMode_MatchesIeeeOffHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, std::nullopt);
+    Check(ExpectedNoIeee, "no float mode");
+}};
+
+const Testing::Case ieeeOff{"NanQuieting_IeeeOff_MatchesHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+    Check(ExpectedNoIeee, "IEEE=0");
+}};
+
+const Testing::Case ieeeOn{"NanQuieting_IeeeOn_MatchesHardwareResults", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
+    Check(ExpectedIeee, "IEEE=1");
+}};
+
+} // namespace

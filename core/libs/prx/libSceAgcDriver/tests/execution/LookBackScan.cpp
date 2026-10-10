@@ -5,14 +5,13 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 alignas(256) constexpr std::array<std::uint32_t, 43> ScanCode{
@@ -99,26 +98,24 @@ void CheckWhole(AgcDriver::VulkanDevice& device, std::uint32_t seed) {
     }
 }
 
+
+AgcDriver::VulkanDevice& ScanDevice() {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessCapability(device.Target(), spv::CapabilityInt64Atomics, "the device has no shaderBufferInt64Atomics");
+    if (device.Target().subgroupSize < 32) {
+        Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
+    }
+    return device;
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (!TargetHasCapability(device->Target(), spv::CapabilityInt64Atomics)) {
-            std::puts("skipped, the device has no shaderBufferInt64Atomics");
-            return VulkanTestSkipped;
-        }
-        if (device->Target().subgroupSize < 32) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        for (const std::uint32_t block : {0u, 1u, 2u, 63u, 64u, 1000u, Blocks - 1}) CheckLookBack(*device, block);
-        for (std::uint32_t seed = 0; seed < 50; ++seed) CheckWhole(*device, seed);
-        std::puts("look-back scan tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case lookBack{"LookBackScan_SingleBlockWithPublishedPredecessors_LooksBackToItsPrefix", [] {
+    auto& device = ScanDevice();
+    for (const std::uint32_t block : {0u, 1u, 2u, 63u, 64u, 1000u, Blocks - 1}) CheckLookBack(device, block);
+}};
+
+const Testing::Case wholeScan{"LookBackScan_AllBlocks_ProduceExclusivePrefixes", [] {
+    auto& device = ScanDevice();
+    for (std::uint32_t seed = 0; seed < 50; ++seed) CheckWhole(device, seed);
+}};
+
+} // namespace

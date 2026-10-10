@@ -14,13 +14,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t FillBytes = 4096;
@@ -65,11 +65,9 @@ bool Imported(VkDevice device, std::uint64_t address) {
     return AgcDriver::Graphics::HostImportCovers(probe, address, BlockBytes);
 }
 
-enum class Outcome : std::uint8_t { NoDevice, NoImport, Released };
+enum class Outcome : std::uint8_t { NoImport, Released };
 
-Outcome FillAndDestroy(GuestBlock& guest, const std::array<std::uint32_t, 4>& pattern, const std::string& which) {
-    auto device = OpenVulkanTestDevice();
-    if (!device) return Outcome::NoDevice;
+Outcome FillAndDestroy(std::unique_ptr<AgcDriver::VulkanDevice> device, GuestBlock& guest, const std::array<std::uint32_t, 4>& pattern, const std::string& which) {
     bool filled = false;
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
@@ -89,22 +87,11 @@ Outcome FillAndDestroy(GuestBlock& guest, const std::array<std::uint32_t, 4>& pa
     return Outcome::Released;
 }
 
-}
+const Testing::Case deviceTeardown{"HostImportTeardown_DeviceDestroyed_ReleasesGuestBlockImport", [] {
+    GuestBlock guest;
+    const auto first = FillAndDestroy(RequireVulkanTestDevice(), guest, {0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u}, "first device");
+    if (first == Outcome::NoImport) Testing::Skip("the device does not import guest memory");
+    Require(FillAndDestroy(std::make_unique<AgcDriver::VulkanDevice>(), guest, {0x55555555u, 0x66666666u, 0x77777777u, 0x88888888u}, "second device") == Outcome::Released, "host import teardown: the second device did not import the block the first one released");
+}};
 
-int main() {
-    try {
-        GuestBlock guest;
-        const auto first = FillAndDestroy(guest, {0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u}, "first device");
-        if (first == Outcome::NoDevice) return VulkanTestSkipped;
-        if (first == Outcome::NoImport) {
-            std::printf("skipped, the device does not import guest memory\n");
-            return VulkanTestSkipped;
-        }
-        Require(FillAndDestroy(guest, {0x55555555u, 0x66666666u, 0x77777777u, 0x88888888u}, "second device") == Outcome::Released, "host import teardown: the second device did not import the block the first one released");
-        std::puts("host import teardown tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

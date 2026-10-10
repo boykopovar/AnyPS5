@@ -8,13 +8,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <exception>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -49,7 +48,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("scalar sopk misc: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("scalar sopk misc: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 ShaderRecompiler::RecompileRequest Request(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, std::span<const ShaderRecompiler::MemoryRegion> memory) {
@@ -64,17 +63,21 @@ ShaderRecompiler::RecompileRequest Request(AgcDriver::VulkanDevice& device, std:
     return request;
 }
 
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    Testing::Fail(message);
+}
+
 void ExpectRefused(AgcDriver::VulkanDevice& device) {
     const std::span<const std::uint32_t> code(RoundTowardZeroCode);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const std::vector<std::uint32_t> userData(8, 0u);
-    bool refused = false;
-    try {
-        static_cast<void>(ShaderRecompiler::Recompile(Request(device, code, userData, memory)));
-    } catch (const std::exception&) {
-        refused = true;
-    }
-    Require(refused, "scalar sopk misc: s_setreg_imm32_b32 writing round toward zero to MODE was translated");
+    static_cast<void>(RequireRefusal([&] { static_cast<void>(ShaderRecompiler::Recompile(Request(device, code, userData, memory))); }, "scalar sopk misc: s_setreg_imm32_b32 writing round toward zero to MODE was translated"));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -100,19 +103,14 @@ void Check() {
     }
 }
 
-}
+const Testing::Case cmovkAndSetreg{"ScalarSopkMisc_CmovkAndSetregImm32_MatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        ExpectRefused(*device);
-        std::puts("scalar sopk misc tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case roundTowardZeroRefused{"ScalarSopkMisc_SetregImm32RoundTowardZero_IsRefused", [] {
+    ExpectRefused(SharedVulkanTestDevice());
+}};
+
+} // namespace

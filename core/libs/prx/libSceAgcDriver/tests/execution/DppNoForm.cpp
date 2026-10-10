@@ -5,14 +5,14 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 struct NoFormOpcode {
@@ -54,13 +54,8 @@ auto Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> cod
 
 void CheckRefused(AgcDriver::VulkanDevice& device, std::uint32_t word0, std::uint32_t word1, const std::string& reason, const std::string& what) {
     alignas(256) const std::array<std::uint32_t, 4> code{word0, word1, 0x3c003c00u, 0xbf810000u};
-    std::string refusal;
-    try {
-        static_cast<void>(Compile(device, code));
-    } catch (const std::exception& error) {
-        refusal = error.what();
-    }
-    Require(refusal.find(reason) != std::string::npos, what + " " + Hex(word0) + " was not refused");
+    const auto error = Testing::RequireThrows<std::runtime_error>([&] { static_cast<void>(Compile(device, code)); }, what + " " + Hex(word0) + " was not refused");
+    Require(std::string(error.what()).find(reason) != std::string::npos, what + " " + Hex(word0) + " was not refused");
 }
 
 void CheckAccepted(AgcDriver::VulkanDevice& device, std::uint32_t word0, std::uint32_t word1) {
@@ -68,30 +63,33 @@ void CheckAccepted(AgcDriver::VulkanDevice& device, std::uint32_t word0, std::ui
     static_cast<void>(Compile(device, code));
 }
 
+constexpr std::uint32_t Dpp16 = 0xff00b104u;
+constexpr std::uint32_t Dpp8 = 0x00fac604u;
+
 std::uint32_t Encode(const NoFormOpcode& op, std::uint32_t form) {
     return op.vop2 ? (op.opcode << 25u) | (10u << 17u) | (5u << 9u) | form : 0x7e000000u | (10u << 17u) | (op.opcode << 9u) | form;
 }
 
-}
-
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        constexpr std::uint32_t Dpp16 = 0xff00b104u;
-        constexpr std::uint32_t Dpp8 = 0x00fac604u;
-        for (const auto& op : NoFormOpcodes) {
-            const std::string name = op.name;
-            CheckRefused(*device, Encode(op, 0xfau), Dpp16, "DPP modifier is not supported for opcode", name + " with DPP16");
-            CheckRefused(*device, Encode(op, 0xe9u), Dpp8, "DPP8 modifier is not supported for opcode", name + " with DPP8");
-            CheckRefused(*device, Encode(op, 0xeau), Dpp8, "DPP8 modifier is not supported for opcode", name + " with DPP8 fi:1");
-        }
-        CheckAccepted(*device, 0x7e1402fau, Dpp16);
-        CheckAccepted(*device, 0x4a140afau, Dpp16);
-        std::puts("dpp no form tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+const Testing::Case dpp16Refused{"DppNoForm_Dpp16OnOpcodeWithoutDppForm_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (const auto& op : NoFormOpcodes) {
+        CheckRefused(device, Encode(op, 0xfau), Dpp16, "DPP modifier is not supported for opcode", std::string(op.name) + " with DPP16");
     }
-}
+}};
+
+const Testing::Case dpp8Refused{"DppNoForm_Dpp8OnOpcodeWithoutDppForm_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    for (const auto& op : NoFormOpcodes) {
+        const std::string name = op.name;
+        CheckRefused(device, Encode(op, 0xe9u), Dpp8, "DPP8 modifier is not supported for opcode", name + " with DPP8");
+        CheckRefused(device, Encode(op, 0xeau), Dpp8, "DPP8 modifier is not supported for opcode", name + " with DPP8 fi:1");
+    }
+}};
+
+const Testing::Case dpp16Accepted{"DppNoForm_Dpp16OnMovAndAdd_IsAccepted", [] {
+    auto& device = SharedVulkanTestDevice();
+    CheckAccepted(device, 0x7e1402fau, Dpp16);
+    CheckAccepted(device, 0x4a140afau, Dpp16);
+}};
+
+} // namespace

@@ -3,13 +3,8 @@ target_include_directories(libSceHmd2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHmd2)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_hmd2_tests ${LIBS_INCLUDE_DIR}/tests/GuestHmd2.cpp)
-    target_include_directories(guest_hmd2_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_hmd2_tests PRIVATE libSceHmd2 libc)
-    configure_windows_unwind(guest_hmd2_tests)
-    add_test(NAME guest_hmd2 COMMAND guest_hmd2_tests)
-    if(WIN32)
-        set_tests_properties(guest_hmd2 PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHmd2>")
-    endif()
+    anyps5_add_library_test(guest_hmd2_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestHmd2.cpp
+        LINK libSceHmd2 libc
+    )
 endif()

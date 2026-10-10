@@ -9,14 +9,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -223,24 +222,26 @@ void RequireRefused(AgcDriver::VulkanDevice& device) {
     Require(refusal.find("too few coordinate components") != std::string::npos, "image_sample_l 1d on a 2D texture was not refused: " + refusal);
 }
 
-}
+const Testing::Case flatTexture{"ImageAddressDimension_ArrayAndPlainAddressesOn2DTexture_ReadAddressedTexel", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    FillTexture();
+    Run(device, Code, TextureDescriptor(Texels.data()));
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillInput();
-        FillTexture();
-        Run(*device, Code, TextureDescriptor(Texels.data()));
-        Check();
-        FillVolume();
-        Run(*device, VolumeCode, VolumeDescriptor());
-        CheckVolume();
-        RequireRefused(*device);
-        std::puts("image address dimension tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case volumeTexture{"ImageAddressDimension_2DAddressOn3DTexture_ReadsFirstSlice", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    FillVolume();
+    Run(device, VolumeCode, VolumeDescriptor());
+    CheckVolume();
+}};
+
+const Testing::Case narrowAddress{"ImageAddressDimension_TooFewCoordinateComponents_IsRefused", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillInput();
+    RequireRefused(device);
+}};
+
+} // namespace

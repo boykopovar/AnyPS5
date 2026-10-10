@@ -1,14 +1,23 @@
+#include <Testing/Test.hpp>
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <future>
-#include <iostream>
+#include <condition_variable>
+#include <mutex>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
+using Testing::Case;
+
+void Check(bool condition, const char* message, std::source_location location = std::source_location::current()) {
+    Testing::Require(condition, message, location);
 }
 
 void FormatAndDrain() {
@@ -118,19 +127,10 @@ void ExplicitStop() {
     Check(failed, "write after stop was accepted");
 }
 
-}
+const Case formatAndDrain{"Print_FormattedAndLongLines_AreDrainedOnShutdown", FormatAndDrain};
+const Case slowWriter{"Write_BehindSlowWriter_KeepsOrderAndReportsBoundedOverflow", SlowWriter};
+const Case concurrentWriters{"Print_ConcurrentWriters_KeepEveryChunkIntact", ConcurrentWriters};
+const Case writerFailure{"FlushAndWrite_AfterWriterFailure_PropagateTheFailure", WriterFailure};
+const Case explicitStop{"Stop_PendingOutput_IsDrainedAndLaterWritesAreRejected", ExplicitStop};
 
-int main() {
-    try {
-        FormatAndDrain();
-        SlowWriter();
-        ConcurrentWriters();
-        WriterFailure();
-        ExplicitStop();
-        std::cout << "profile output tests passed\n";
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

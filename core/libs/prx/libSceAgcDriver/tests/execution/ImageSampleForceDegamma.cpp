@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -17,7 +16,7 @@
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -144,28 +143,31 @@ void Reject(AgcDriver::VulkanDevice& device, std::uint32_t format, std::string_v
         Require(std::string_view(error.what()).find(reason) != std::string_view::npos, std::string("unexpected rejection: ") + error.what());
         return;
     }
-    Require(false, std::string("expected rejection: ") + std::string(reason));
+    Testing::Fail(std::string("expected rejection: ") + std::string(reason));
 }
 
-}
+const Testing::Case forcedPoint{"ImageSampleForceDegamma_PointSampleSrgb_DecodesLikePlainSampler", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexels();
+    FillInput(true);
+    const auto forced = Sample(device, Format8888Srgb, FilterPoint, ForceDegamma);
+    RequireDecoded(forced);
+    RequireSame(forced, Sample(device, Format8888Srgb, FilterPoint, 0u), "8_8_8_8_SRGB, point");
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillInput(true);
-        const auto forcedPoint = Sample(*device, Format8888Srgb, FilterPoint, ForceDegamma);
-        RequireDecoded(forcedPoint);
-        RequireSame(forcedPoint, Sample(*device, Format8888Srgb, FilterPoint, 0u), "8_8_8_8_SRGB, point");
-        FillInput(false);
-        const auto forcedBilinear = Sample(*device, Format8888Srgb, FilterBilinear, ForceDegamma);
-        RequireSame(forcedBilinear, Sample(*device, Format8888Srgb, FilterBilinear, 0u), "8_8_8_8_SRGB, bilinear");
-        Reject(*device, Format8888UNorm, "guest format 56, which is not sRGB, is sampled through a sampler that forces sRGB decoding");
-        std::puts("image sample force degamma tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case forcedBilinear{"ImageSampleForceDegamma_BilinearSampleSrgb_MatchesPlainSampler", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexels();
+    FillInput(false);
+    const auto forced = Sample(device, Format8888Srgb, FilterBilinear, ForceDegamma);
+    RequireSame(forced, Sample(device, Format8888Srgb, FilterBilinear, 0u), "8_8_8_8_SRGB, bilinear");
+}};
+
+const Testing::Case nonSrgbRejected{"ImageSampleForceDegamma_NonSrgbFormat_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    FillTexels();
+    FillInput(false);
+    Reject(device, Format8888UNorm, "guest format 56, which is not sRGB, is sampled through a sampler that forces sRGB decoding");
+}};
+
+} // namespace

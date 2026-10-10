@@ -6,14 +6,14 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -97,19 +97,9 @@ void Run(AgcDriver::VulkanDevice& device) {
 }
 
 void Reject(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& reason) {
-    std::string error;
-    try {
-        Translate(device, code, [](const auto&) {});
-    } catch (const std::exception& exception) {
-        error = exception.what();
-    }
+    const auto rejection = Testing::RequireThrows<std::runtime_error>([&] { Translate(device, code, [](const auto&) {}); }, "ds wrxchg2: expected a rejection for \"" + reason + "\"");
+    const std::string error = rejection.what();
     Require(error.find(reason) != std::string::npos, "ds wrxchg2: expected a rejection for \"" + reason + "\", got \"" + error + "\"");
-}
-
-void CheckRejections(AgcDriver::VulkanDevice& device) {
-    Reject(device, CoincidingOffsets, "DS write exchange of one location through both offsets is not supported");
-    Reject(device, CoincidingOffsetsSt64, "DS write exchange of one location through both offsets is not supported");
-    Reject(device, DestinationOverflow, "DS write exchange destination register range overflow");
 }
 
 void Check() {
@@ -140,19 +130,21 @@ void Check() {
     }
 }
 
-}
+const Testing::Case exchange{"DsWrxchg2_ExchangeForms_ReturnOldValuesAndStoreNewOnes", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        CheckRejections(*device);
-        std::puts("ds wrxchg2 tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case coincidingOffsets{"DsWrxchg2_CoincidingOffsets_AreRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    Reject(device, CoincidingOffsets, "DS write exchange of one location through both offsets is not supported");
+    Reject(device, CoincidingOffsetsSt64, "DS write exchange of one location through both offsets is not supported");
+}};
+
+const Testing::Case destinationOverflow{"DsWrxchg2_DestinationRegisterOverflow_IsRejected", [] {
+    auto& device = SharedVulkanTestDevice();
+    Reject(device, DestinationOverflow, "DS write exchange destination register range overflow");
+}};
+
+} // namespace

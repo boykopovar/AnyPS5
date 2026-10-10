@@ -8,13 +8,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <iostream>
+#include <exception>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -137,7 +138,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("sdwa float selectors: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Testing::Require(actual == expected, std::string("sdwa float selectors: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
@@ -167,25 +168,21 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void CheckByteSelectorClampRefused(AgcDriver::VulkanDevice& device) {
-    constexpr std::array<std::array<std::uint32_t, 2>, 6> forms{{
-        {0x640a0cf9u, 0x04052004u},
-        {0x660a0cf9u, 0x04022504u},
-        {0x680a0cf9u, 0x03042604u},
-        {0x6a0a0cf9u, 0x05043304u},
-        {0x740a0cf9u, 0x06012404u},
-        {0x720a0cf9u, 0x00062604u},
-    }};
-    for (const auto& form : forms) {
-        alignas(256) const std::array<std::uint32_t, 3> code{form[0], form[1], 0xbf810000u};
-        std::string refusal;
-        try {
-            static_cast<void>(Compile(device, code));
-        } catch (const std::exception& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find("VOP2 SDWA clamp with byte selectors is not implemented") != std::string::npos, "f16 SDWA form " + Hex(form[0]) + " " + Hex(form[1]) + " with clamp was not refused");
+template<typename TAction>
+std::string RequireRefusal(TAction action, const std::string& message) {
+    try {
+        action();
+    } catch (const std::exception& error) {
+        return error.what();
     }
+    Testing::Fail(message);
+}
+
+void RequireClampRefused(AgcDriver::VulkanDevice& device, std::uint32_t word0, std::uint32_t word1) {
+    alignas(256) const std::array<std::uint32_t, 3> code{word0, word1, 0xbf810000u};
+    const std::string form = "f16 SDWA form " + Hex(word0) + " " + Hex(word1) + " with clamp";
+    const auto refusal = RequireRefusal([&] { static_cast<void>(Compile(device, code)); }, form + " was not refused");
+    Testing::Require(refusal.find("VOP2 SDWA clamp with byte selectors is not implemented") != std::string::npos, form + " was refused for another reason: " + refusal);
 }
 
 void Check() {
@@ -200,19 +197,34 @@ void Check() {
     }
 }
 
-}
+const Testing::Case floatSelectorsDispatch{"SdwaFloatSelectors_Vop2SrcAndDstSelectors_MatchExpectedTable", [] {
+    auto& device = SharedVulkanTestDevice();
+    Run(device);
+    Check();
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
-        CheckByteSelectorClampRefused(*device);
-        std::puts("sdwa float selectors tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case refuseAddF16Clamp{"SdwaFloatSelectors_AddF16ByteSelectorClamp_IsRefused", [] {
+    RequireClampRefused(SharedVulkanTestDevice(), 0x640a0cf9u, 0x04052004u);
+}};
+
+const Testing::Case refuseSubF16Clamp{"SdwaFloatSelectors_SubF16ByteSelectorClamp_IsRefused", [] {
+    RequireClampRefused(SharedVulkanTestDevice(), 0x660a0cf9u, 0x04022504u);
+}};
+
+const Testing::Case refuseSubrevF16Clamp{"SdwaFloatSelectors_SubrevF16ByteSelectorClamp_IsRefused", [] {
+    RequireClampRefused(SharedVulkanTestDevice(), 0x680a0cf9u, 0x03042604u);
+}};
+
+const Testing::Case refuseMulF16Clamp{"SdwaFloatSelectors_MulF16ByteSelectorClamp_IsRefused", [] {
+    RequireClampRefused(SharedVulkanTestDevice(), 0x6a0a0cf9u, 0x05043304u);
+}};
+
+const Testing::Case refuseMinF16Clamp{"SdwaFloatSelectors_MinF16ByteSelectorClamp_IsRefused", [] {
+    RequireClampRefused(SharedVulkanTestDevice(), 0x740a0cf9u, 0x06012404u);
+}};
+
+const Testing::Case refuseMaxF16Clamp{"SdwaFloatSelectors_MaxF16ByteSelectorClamp_IsRefused", [] {
+    RequireClampRefused(SharedVulkanTestDevice(), 0x720a0cf9u, 0x00062604u);
+}};
+
+} // namespace

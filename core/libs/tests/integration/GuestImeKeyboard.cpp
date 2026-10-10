@@ -1,7 +1,11 @@
 #include "SceTypes.hpp"
-#include <cstdio>
-#include <cstdlib>
+
+#include <Testing/Test.hpp>
+
+#include <cstddef>
 #include <cstring>
+#include <exception>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param);
@@ -10,58 +14,122 @@ int APS5_VABI sceImeKeyboardGetInfo(uint32_t resource_id, KeyboardInfo* info);
 int APS5_VABI sceImeKeyboardSetMode(int32_t user_id, uint32_t mode);
 }
 
+namespace {
+
+using Testing::Case;
+using Testing::RequireEqual;
+
 static_assert(sizeof(KeyboardInfo) == 36);
 
-constexpr int NotOpened = static_cast<int>(0x80bc0002u);
-constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
-constexpr int NoResourceId = static_cast<int>(0x80bc0023u);
-constexpr int InvalidMode = static_cast<int>(0x80bc0024u);
-constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
+constexpr int notOpened = static_cast<int>(0x80bc0002u);
+constexpr int invalidUserId = static_cast<int>(0x80bc0010u);
+constexpr int noResourceId = static_cast<int>(0x80bc0023u);
+constexpr int invalidMode = static_cast<int>(0x80bc0024u);
+constexpr int invalidAddress = static_cast<int>(0x80bc0031u);
+constexpr unsigned char filler = 0xa5;
 
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
+KeyboardInfo FilledInfo() {
+    KeyboardInfo info;
+    std::memset(&info, filler, sizeof(info));
+    return info;
 }
 
-static void RequireUntouched(const KeyboardInfo& info) {
+void RequireUntouched(const KeyboardInfo& info) {
     const auto* bytes = reinterpret_cast<const unsigned char*>(&info);
-    for (size_t i = 0; i < sizeof(info); ++i) Require(bytes[i] == 0xa5, "keyboard info written");
+    for (std::size_t index = 0; index < sizeof(info); ++index) {
+        RequireEqual(bytes[index], filler, "keyboard info byte " + std::to_string(index));
+    }
 }
 
-static void CheckClosed() {
-    KeyboardInfo info;
-    std::memset(&info, 0xa5, sizeof(info));
-    Require(sceImeKeyboardGetInfo(0, nullptr) == InvalidAddress, "null info");
-    Require(sceImeKeyboardGetInfo(0, &info) == NotOpened, "info without an open keyboard");
+class OpenKeyboard {
+public:
+    OpenKeyboard() {
+        const KeyboardParam param{};
+        RequireEqual(sceImeKeyboardOpen(1, &param), 0, "keyboard open");
+    }
+
+    ~OpenKeyboard() {
+        if (!open) return;
+        try {
+            sceImeKeyboardClose(1);
+        } catch (const std::exception&) {
+        }
+    }
+
+    OpenKeyboard(const OpenKeyboard&) = delete;
+    OpenKeyboard& operator=(const OpenKeyboard&) = delete;
+
+    int Close() {
+        open = false;
+        return sceImeKeyboardClose(1);
+    }
+
+private:
+    bool open = true;
+};
+
+const Case closedInfoNull{"GetInfo_NullInfoWithoutKeyboard_ReturnsInvalidAddress", [] {
+    RequireEqual(sceImeKeyboardGetInfo(0, nullptr), invalidAddress, "null info");
+}};
+
+const Case closedInfo{"GetInfo_WithoutKeyboard_ReturnsNotOpenedWithoutWriting", [] {
+    auto info = FilledInfo();
+    RequireEqual(sceImeKeyboardGetInfo(0, &info), notOpened, "info without an open keyboard");
     RequireUntouched(info);
-    Require(sceImeKeyboardSetMode(-1, 0) == InvalidUserId, "set mode invalid user");
-    Require(sceImeKeyboardSetMode(1, 0) == NotOpened, "set mode without an open keyboard");
-    Require(sceImeKeyboardSetMode(1, 0x80) == NotOpened, "set mode checks the mode before the keyboard");
-}
+}};
 
-static void CheckOpened() {
-    KeyboardParam param{};
-    Require(sceImeKeyboardOpen(1, &param) == 0, "keyboard open failed");
-    KeyboardInfo info;
-    std::memset(&info, 0xa5, sizeof(info));
-    Require(sceImeKeyboardGetInfo(0, nullptr) == InvalidAddress, "null info with an open keyboard");
-    Require(sceImeKeyboardGetInfo(0, &info) == NoResourceId, "resource id 0 reported as a keyboard");
-    Require(sceImeKeyboardGetInfo(0x12345678, &info) == NoResourceId, "unknown resource id reported as a keyboard");
+const Case closedSetModeInvalidUser{"SetMode_InvalidUserWithoutKeyboard_ReturnsInvalidUserId", [] {
+    RequireEqual(sceImeKeyboardSetMode(-1, 0), invalidUserId, "set mode for user -1");
+}};
+
+const Case closedSetMode{"SetMode_WithoutKeyboard_ReturnsNotOpenedBeforeCheckingMode", [] {
+    RequireEqual(sceImeKeyboardSetMode(1, 0), notOpened, "set mode 0");
+    RequireEqual(sceImeKeyboardSetMode(1, 0x80), notOpened, "set invalid mode 0x80");
+}};
+
+const Case openInfoNull{"GetInfo_NullInfoWithKeyboard_ReturnsInvalidAddress", [] {
+    const OpenKeyboard keyboard;
+    RequireEqual(sceImeKeyboardGetInfo(0, nullptr), invalidAddress, "null info with an open keyboard");
+}};
+
+const Case openInfoUnknownResource{"GetInfo_UnknownResourceWithKeyboard_ReturnsNoResourceIdWithoutWriting", [] {
+    const OpenKeyboard keyboard;
+    auto info = FilledInfo();
+    RequireEqual(sceImeKeyboardGetInfo(0, &info), noResourceId, "resource id 0");
+    RequireEqual(sceImeKeyboardGetInfo(0x12345678, &info), noResourceId, "resource id 0x12345678");
     RequireUntouched(info);
-    Require(sceImeKeyboardSetMode(-1, 0) == InvalidUserId, "set mode invalid user with an open keyboard");
-    Require(sceImeKeyboardSetMode(2, 0) == NotOpened, "set mode for a user without an open keyboard");
-    Require(sceImeKeyboardSetMode(1, 0) == 0, "mode 0 rejected");
-    Require(sceImeKeyboardSetMode(1, 0x7f) == 0, "all mode bits rejected");
-    Require(sceImeKeyboardSetMode(1, 0x41) == 0, "manual mode without format characters rejected");
-    Require(sceImeKeyboardSetMode(1, 0x80) == InvalidMode, "mode bit 7 accepted");
-    Require(sceImeKeyboardSetMode(1, 0x80000001u) == InvalidMode, "mode bit 31 accepted");
-    Require(sceImeKeyboardClose(1) == 0, "keyboard close failed");
-    Require(sceImeKeyboardGetInfo(0, &info) == NotOpened, "info after close");
-    Require(sceImeKeyboardSetMode(1, 0) == NotOpened, "set mode after close");
-}
+}};
 
-int main() {
-    CheckClosed();
-    CheckOpened();
-}
+const Case openSetModeInvalidUser{"SetMode_InvalidUserWithKeyboard_ReturnsInvalidUserId", [] {
+    const OpenKeyboard keyboard;
+    RequireEqual(sceImeKeyboardSetMode(-1, 0), invalidUserId, "set mode for user -1");
+}};
+
+const Case openSetModeOtherUser{"SetMode_UserWithoutKeyboard_ReturnsNotOpened", [] {
+    const OpenKeyboard keyboard;
+    RequireEqual(sceImeKeyboardSetMode(2, 0), notOpened, "set mode for user 2");
+}};
+
+const Case openSetModeValid{"SetMode_SupportedModeBits_Succeeds", [] {
+    const OpenKeyboard keyboard;
+    for (const uint32_t mode : {0x0u, 0x7fu, 0x41u}) {
+        RequireEqual(sceImeKeyboardSetMode(1, mode), 0, "mode " + std::to_string(mode));
+    }
+}};
+
+const Case openSetModeInvalid{"SetMode_UnsupportedModeBits_ReturnsInvalidMode", [] {
+    const OpenKeyboard keyboard;
+    for (const uint32_t mode : {0x80u, 0x80000001u}) {
+        RequireEqual(sceImeKeyboardSetMode(1, mode), invalidMode, "mode " + std::to_string(mode));
+    }
+}};
+
+const Case afterClose{"Close_OpenKeyboard_RestoresNotOpenedState", [] {
+    OpenKeyboard keyboard;
+    auto info = FilledInfo();
+    RequireEqual(keyboard.Close(), 0, "keyboard close");
+    RequireEqual(sceImeKeyboardGetInfo(0, &info), notOpened, "info after close");
+    RequireEqual(sceImeKeyboardSetMode(1, 0), notOpened, "set mode after close");
+}};
+
+} // namespace

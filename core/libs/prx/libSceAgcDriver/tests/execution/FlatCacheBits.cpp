@@ -14,13 +14,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
+using Testing::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
@@ -160,18 +159,10 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     }
 }
 
-}
+const Testing::Case wave32CacheBits{"FlatCacheBits_Wave32_LoadsAndAtomicsMatchReference", [] {
+    auto& device = SharedVulkanTestDevice();
+    GuestBlock guest;
+    Run(device, guest, 32);
+}};
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        GuestBlock guest;
-        Run(*device, guest, 32);
-        std::puts("flat cache bits tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+} // namespace

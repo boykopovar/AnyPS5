@@ -1,6 +1,8 @@
 #include "SceTypes.hpp"
+
+#include <Testing/Test.hpp>
+
 #include <cstdint>
-#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -14,13 +16,16 @@ void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
 
 namespace {
 
-using Destructor = void (APS5_VABI*)(void*);
+using Testing::Case;
+using Testing::Require;
+using Testing::RequireEqual;
 
-void Require(bool value) { if (!value) std::abort(); }
+using Destructor = void (APS5_VABI*)(void*);
 
 int dsoHandle = 0;
 std::vector<std::intptr_t> calls;
 std::vector<Pthread> callers;
+int failedCallbackRegistrations = 0;
 
 void* Object(std::intptr_t value) { return reinterpret_cast<void*>(value); }
 
@@ -35,12 +40,12 @@ void APS5_VABI Record(void* object) {
 
 void APS5_VABI RecordAndRegister(void* object) {
     Record(object);
-    Require(Register(Record, 9) == 0);
+    if (Register(Record, 9) != 0) ++failedCallbackRegistrations;
 }
 
 void* APS5_VABI Worker(void*) {
-    Require(Register(Record, 4) == 0);
-    Require(Register(Record, 5) == 0);
+    if (Register(Record, 4) != 0) ++failedCallbackRegistrations;
+    if (Register(Record, 5) != 0) ++failedCallbackRegistrations;
     return nullptr;
 }
 
@@ -53,35 +58,82 @@ bool DestructorsThrow() {
     return false;
 }
 
+class ThreadDestructorFixture {
+public:
+    ThreadDestructorFixture() { Reset(); }
+
+    ~ThreadDestructorFixture() {
+        for (int attempt = 0; attempt < 64; ++attempt) {
+            if (!DrainThrows()) break;
+        }
+        Reset();
+    }
+
+    ThreadDestructorFixture(const ThreadDestructorFixture&) = delete;
+    ThreadDestructorFixture& operator=(const ThreadDestructorFixture&) = delete;
+
+private:
+    static bool DrainThrows() {
+        try {
+            _sceLibcInternalThreadDtors_nid_postfix();
+        } catch (...) {
+            return true;
+        }
+        return false;
+    }
+
+    static void Reset() {
+        calls.clear();
+        callers.clear();
+        failedCallbackRegistrations = 0;
+    }
+};
+
+void RegisterMainThreadSequence() {
+    RequireEqual(Register(Record, 1), 0, "register 1");
+    RequireEqual(Register(RecordAndRegister, 2), 0, "register 2");
+    RequireEqual(Register(Record, 3), 0, "register 3");
 }
 
-int main() {
+const Case mainThread{"ThreadDtors_MainThread_RunsInReverseOrderIncludingNestedRegistration", [] {
+    const ThreadDestructorFixture fixture;
     const Pthread mainThread = scePthreadSelf();
-    Require(Register(Record, 1) == 0);
-    Require(Register(RecordAndRegister, 2) == 0);
-    Require(Register(Record, 3) == 0);
+    RegisterMainThreadSequence();
     _sceLibcInternalThreadDtors_nid_postfix();
-    Require(calls == std::vector<std::intptr_t>{3, 2, 9, 1});
-    Require(callers == std::vector<Pthread>(4, mainThread));
-    _sceLibcInternalThreadDtors_nid_postfix();
-    Require(calls.size() == 4);
+    Require(calls == std::vector<std::intptr_t>{3, 2, 9, 1}, "destructor order 3, 2, 9, 1");
+    Require(callers == std::vector<Pthread>(4, mainThread), "every destructor ran on the main thread");
+    RequireEqual(failedCallbackRegistrations, 0, "failed registrations inside destructors");
+}};
 
-    calls.clear();
-    callers.clear();
+const Case calledAgain{"ThreadDtors_CalledAgain_RunsNothing", [] {
+    const ThreadDestructorFixture fixture;
+    RegisterMainThreadSequence();
+    _sceLibcInternalThreadDtors_nid_postfix();
+    _sceLibcInternalThreadDtors_nid_postfix();
+    RequireEqual(calls.size(), std::size_t {4}, "destructor calls after the second pass");
+}};
+
+const Case workerThread{"ThreadDtors_WorkerThreadExit_RunsWorkerDestructorsOnWorker", [] {
+    const ThreadDestructorFixture fixture;
     Pthread worker = nullptr;
-    Require(scePthreadCreate(&worker, nullptr, Worker, nullptr, "ThreadAtexit") == 0);
-    Require(scePthreadJoin(worker, nullptr) == 0);
-    Require(calls == std::vector<std::intptr_t>{5, 4});
-    Require(callers == std::vector<Pthread>(2, worker));
+    RequireEqual(scePthreadCreate(&worker, nullptr, Worker, nullptr, "ThreadAtexit"), 0, "create the worker");
+    RequireEqual(scePthreadJoin(worker, nullptr), 0, "join the worker");
+    RequireEqual(failedCallbackRegistrations, 0, "failed registrations on the worker");
+    Require(calls == std::vector<std::intptr_t>{5, 4}, "destructor order 5, 4");
+    Require(callers == std::vector<Pthread>(2, worker), "every destructor ran on the worker");
+}};
 
-    calls.clear();
+const Case invalidDestructors{"ThreadDtors_DestructorsOutsideLoadedImage_ThrowUntilDroppedThenValidOneRuns", [] {
     std::vector<unsigned char> heap(64);
-    Require(Register(Record, 6) == 0);
-    Require(Register(nullptr, 7) == 0);
-    Require(Register(reinterpret_cast<Destructor>(heap.data()), 8) == 0);
-    Require(DestructorsThrow());
-    Require(DestructorsThrow());
-    Require(calls.empty());
+    const ThreadDestructorFixture fixture;
+    RequireEqual(Register(Record, 6), 0, "register 6");
+    RequireEqual(Register(nullptr, 7), 0, "register a null destructor");
+    RequireEqual(Register(reinterpret_cast<Destructor>(heap.data()), 8), 0, "register a heap destructor");
+    Require(DestructorsThrow(), "first pass throws");
+    Require(DestructorsThrow(), "second pass throws");
+    Require(calls.empty(), "no destructor ran while invalid entries remained");
     _sceLibcInternalThreadDtors_nid_postfix();
-    Require(calls == std::vector<std::intptr_t>{6});
-}
+    Require(calls == std::vector<std::intptr_t>{6}, "the valid destructor runs afterwards");
+}};
+
+} // namespace

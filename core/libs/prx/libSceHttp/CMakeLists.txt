@@ -3,17 +3,12 @@ target_include_directories(libSceHttp PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHttp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_http_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp.cpp)
-    target_include_directories(guest_http_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_http_tests PRIVATE libSceHttp)
-    add_test(NAME guest_http COMMAND guest_http_tests)
-    add_test_executable(guest_http_response_header_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpResponseHeader.cpp)
-    target_include_directories(guest_http_response_header_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_http_response_header_tests PRIVATE libSceHttp libc)
-    configure_windows_unwind(guest_http_response_header_tests)
-    add_test(NAME guest_http_response_header COMMAND guest_http_response_header_tests)
-    if(WIN32)
-        set_tests_properties(guest_http guest_http_response_header PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
-    endif()
+    anyps5_add_library_test(guest_http_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestHttp.cpp
+        LINK libSceHttp libc
+    )
+    anyps5_add_library_test(guest_http_response_header_tests
+        SOURCES ${LIBS_INCLUDE_DIR}/tests/integration/GuestHttpResponseHeader.cpp
+        LINK libSceHttp libc
+    )
 endif()

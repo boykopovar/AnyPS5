@@ -1,42 +1,49 @@
-#include "BdaTests.hpp"
+#include <Testing/Test.hpp>
+#include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <source_location>
 #include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
 using namespace AgcDriver::Graphics;
+using Testing::Case;
+using Testing::Require;
 
 template<typename TAction>
-void reject(TAction action) {
-    try { action(); }
-    catch (const std::runtime_error&) { return; }
-    throw std::runtime_error("expected color layout rejection");
+void requireLayoutRejection(const TAction& action, std::string_view what, std::source_location location = std::source_location::current()) {
+    Testing::RequireThrows<std::runtime_error>(action, std::string("expected color layout rejection: ") + std::string(what), location);
 }
 
-}
-
-void RunColorTargetLayoutTests() {
+const Case tileModes{"DecodeColorTileMode_Descriptors_AcceptOnlySupportedTileModes", [] {
     Require(DecodeColorTileMode(0x4dc6c000) == ColorTileMode::RenderTarget, "logged color descriptor was rejected");
     Require(DecodeColorTileMode(0x09000000) == ColorTileMode::Linear, "linear descriptor changed");
-    reject([] { DecodeColorTileMode(0x4dc6c001); });
-    reject([] { DecodeColorTileMode(0x4dc6e000); });
-    reject([] { DecodeColorTileMode(0xcdc6c000); });
-    reject([] { DecodeColorTileMode(0x09004000); });
     Require(DecodeColorTileMode(0x4cc6c000) == ColorTileMode::RenderTarget, "1D color descriptor was rejected");
-    reject([] { DecodeColorTileMode(0x4cc6c001); });
-    reject([] { DecodeColorTileMode(0x4fc6c000); });
     Require(DecodeColorTileMode(0x08000000) == ColorTileMode::Linear, "linear 1D color descriptor was rejected");
-    reject([] { DecodeColorTileMode(0x08014000); });
-    reject([] { DecodeColorTileMode(0x08024000); });
-    reject([] { ColorTargetLayout(0, 1, ColorTileMode::RenderTarget); });
+    Require(DecodeColorTileMode(0x4dc14000) == ColorTileMode::Standard4KB, "4 KiB standard color descriptor was rejected");
+    Require(DecodeColorTileMode(0x4dc24000) == ColorTileMode::Standard64KB, "64 KiB standard color descriptor was rejected");
+    for (const std::uint32_t descriptor : {0x4dc6c001u, 0x4dc6e000u, 0xcdc6c000u, 0x09004000u, 0x4cc6c001u, 0x4fc6c000u, 0x08014000u, 0x08024000u}) {
+        requireLayoutRejection([&] { DecodeColorTileMode(descriptor); }, "descriptor " + std::to_string(descriptor));
+    }
+}};
+
+const Case linearPadding{"ColorTargetLayout_LinearRows_ArePaddedTo256Bytes", [] {
+    requireLayoutRejection([] { ColorTargetLayout(0, 1, ColorTileMode::RenderTarget); }, "an empty target");
     const ColorTargetLayout padded(63, 2, ColorTileMode::Linear);
     Require(padded.Bytes() == 512 && padded.LinearBytes() == 504 && padded.Offset(0, 1) == 256, "linear rows are not padded to 256 bytes");
+}};
+
+const Case renderTargetAddressing{"ColorTargetLayout_RenderTarget_AddressesBlocksInRasterOrderWithXorSwizzle", [] {
     const ColorTargetLayout screen(3840, 2160, ColorTileMode::RenderTarget);
     Require(screen.Bytes() == 33423360 && screen.LinearBytes() == 33177600 && screen.Alignment() == 65536, "4K color backing layout is incorrect");
     const ColorTargetLayout layout(257, 129, ColorTileMode::RenderTarget);
@@ -44,7 +51,10 @@ void RunColorTargetLayoutTests() {
     Require(layout.Offset(128, 0) == 65536 && layout.Offset(0, 128) == 3 * 65536, "block raster order is incorrect");
     Require(layout.Offset(16, 0) == 0x2200 && layout.Offset(0, 8) == 0x1100, "render-target XOR addressing is incorrect");
     Require(layout.Offset(256, 0) == 2 * 65536, "third block address is incorrect");
-    Require(DecodeColorTileMode(0x4dc14000) == ColorTileMode::Standard4KB, "4 KiB standard color descriptor was rejected");
+    requireLayoutRejection([&] { layout.Offset(257, 0); }, "an offset past the width");
+}};
+
+const Case standardLayouts{"ColorTargetLayout_StandardModes_MatchTheTextureLayout", [] {
     const ColorTargetLayout standard(256, 256, ColorTileMode::Standard4KB);
     Require(standard.Bytes() == ComputeSurfaceSize(ComputeElementMipLayout(TextureTileMode::kStandard4KB, 4, 256, 256, 1), 1) && standard.Alignment() == 4096, "4 KiB standard color layout differs from the texture layout");
     Require(standard.Offset(32, 0) == 4096 && standard.Offset(0, 32) == 8 * 4096 && standard.Offset(1, 0) == 4 && standard.Offset(0, 1) == 16, "4 KiB standard block or element addressing is incorrect");
@@ -59,24 +69,27 @@ void RunColorTargetLayoutTests() {
     for (const auto mode : {ColorTileMode::Standard4KB, ColorTileMode::Standard64KB}) {
         for (const std::uint32_t bpe : {1u, 2u, 4u, 8u, 16u}) {
             const auto block = mode == ColorTileMode::Standard64KB ? 65536u : 4096u;
+            const auto what = " (" + std::to_string(block) + " byte blocks, " + std::to_string(bpe) + " bytes per element)";
             const ColorTargetLayout sized(512, 512, mode, bpe);
-            Require(sized.Alignment() == block && sized.Bytes() == ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(mode), bpe, 512, 512, 1), 1), "standard color layout differs from the texture layout");
+            Require(sized.Alignment() == block && sized.Bytes() == ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(mode), bpe, 512, 512, 1), 1), "standard color layout differs from the texture layout" + what);
             std::vector<bool> seen(block / bpe);
             std::uint32_t count = 0;
             for (std::uint32_t y = 0; y < 512 && count < seen.size(); ++y) {
                 for (std::uint32_t x = 0; x < 512; ++x) {
                     const auto address = sized.Offset(x, y);
                     if (address >= block) continue;
-                    Require(address % bpe == 0 && !seen[address / bpe], "standard block aliases its texels");
+                    Require(address % bpe == 0 && !seen[address / bpe], "standard block aliases its texels" + what);
                     seen[address / bpe] = true;
                     ++count;
                 }
             }
-            Require(count == seen.size(), "standard block leaves texels unaddressed");
+            Require(count == seen.size(), "standard block leaves texels unaddressed" + what);
         }
     }
-    Require(DecodeColorTileMode(0x4dc24000) == ColorTileMode::Standard64KB, "64 KiB standard color descriptor was rejected");
-    reject([&] { layout.Offset(257, 0); });
+}};
+
+const Case tilingRoundTrip{"ColorTargetLayout_TileAndDetile_RoundTripAndKeepThePadding", [] {
+    const ColorTargetLayout layout(257, 129, ColorTileMode::RenderTarget);
     std::vector<std::byte> tiled(layout.Bytes(), std::byte{0x5a});
     std::vector<std::byte> linear(layout.LinearBytes());
     std::vector<std::byte> restored(linear.size());
@@ -94,11 +107,14 @@ void RunColorTargetLayoutTests() {
     layout.Detile(tiled, restored);
     Require(restored == linear, "color tiling round trip lost pixels");
     for (std::size_t i = 0; i < tiled.size(); ++i) {
-        if (!visited[i / 4]) Require(tiled[i] == std::byte{0x5a}, "color tiling overwrote padding");
+        if (!visited[i / 4]) Require(tiled[i] == std::byte{0x5a}, "color tiling overwrote padding at byte " + std::to_string(i));
     }
-    reject([&] { layout.Detile(std::span(tiled).first(4), restored); });
-    reject([&] { layout.Tile(std::span(linear).first(4), tiled); });
-    static std::vector<std::byte> storage(2 * 65536);
+    requireLayoutRejection([&] { layout.Detile(std::span(tiled).first(4), restored); }, "a short tiled source");
+    requireLayoutRejection([&] { layout.Tile(std::span(linear).first(4), tiled); }, "a short linear source");
+}};
+
+const Case guestTransfer{"WriteColorTarget_GuestTarget_RoundTripsThroughReadAndKeepsThePadding", [] {
+    std::vector<std::byte> storage(2 * 65536);
     const std::span guest(reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu}), 65536);
     std::fill(guest.begin(), guest.end(), std::byte{0x6b});
     ColorTarget target{reinterpret_cast<std::uintptr_t>(guest.data()), {2, 2}, VK_FORMAT_R8G8B8A8_UNORM, guest.size(), 0xe4, ColorTileMode::RenderTarget};
@@ -117,4 +133,6 @@ void RunColorTargetLayoutTests() {
     std::array<std::byte, 512> linearReadback{};
     ReadColorTarget(target, linearReadback);
     Require(linearReadback == linearPixels && guest[512] == std::byte{0x6b}, "linear guest color transfer changed");
-}
+}};
+
+} // namespace

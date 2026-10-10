@@ -4,14 +4,12 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdio>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace {
 
-using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t MaxThreads = 64;
@@ -58,29 +56,27 @@ void Check(std::uint32_t waveSize, std::uint32_t firstActiveLane) {
     for (std::uint32_t tid = 0; tid < waveSize; ++tid) {
         for (std::uint32_t j = 0; j < expected.size(); ++j) {
             const auto actual = Output[tid * Stride + j];
-            Require(actual == expected[j], "read first lane wave" + std::to_string(waveSize) + ": lane " + std::to_string(tid) + " result " + std::to_string(j) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
+            Testing::Require(actual == expected[j], "read first lane wave" + std::to_string(waveSize) + ": lane " + std::to_string(tid) + " result " + std::to_string(j) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[j]));
         }
     }
 }
 
+void SkipUnlessWave32(AgcDriver::VulkanDevice& device) {
+    if (device.Target().subgroupSize < 32) Testing::Skip("subgroup size " + std::to_string(device.Target().subgroupSize) + " cannot hold a wave32");
 }
 
-int main() {
-    try {
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        if (device->Target().subgroupSize < 32) {
-            std::printf("skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
-            return VulkanTestSkipped;
-        }
-        Run(*device, ReadFirstLaneWave32Code, 32);
-        Check(32, 4);
-        Run(*device, ReadFirstLaneWave64Code, 64);
-        Check(64, 40);
-        std::puts("read first lane tests passed");
-        return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-}
+const Testing::Case readFirstLaneWave32{"ReadFirstLane_Wave32_ReturnsFirstActiveLaneValue", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWave32(device);
+    Run(device, ReadFirstLaneWave32Code, 32);
+    Check(32, 4);
+}};
+
+const Testing::Case readFirstLaneWave64{"ReadFirstLane_Wave64_ReturnsFirstActiveLaneValue", [] {
+    auto& device = SharedVulkanTestDevice();
+    SkipUnlessWave32(device);
+    Run(device, ReadFirstLaneWave64Code, 64);
+    Check(64, 40);
+}};
+
+} // namespace
