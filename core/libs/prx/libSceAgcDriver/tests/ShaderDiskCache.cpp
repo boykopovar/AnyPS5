@@ -79,6 +79,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(sameBindings(left.bindings, right.bindings), prefix + "bindings differ");
     require(left.pushConstants == right.pushConstants, prefix + "push constants differ");
     require(left.specialization == right.specialization, prefix + "specialization constants differ");
+    require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
     require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
     require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
@@ -137,6 +138,7 @@ RecompileResult sampleResult() {
     result.bdaAbiVersion = 3;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
+    result.workgroupMemoryDwords = 32769u;
     result.vertexInputs = {{1, 4, 2}, {5, 2, 0}};
     result.vertexInputPatches = {{1, 20, {7, 8, 9}}, {5, 40, {10, 11, 12}}};
     result.specialization = {{512, 4}, {516, 0x3f800000u}, {517, 0}};

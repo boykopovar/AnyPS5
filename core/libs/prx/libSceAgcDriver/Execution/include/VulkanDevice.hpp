@@ -227,16 +227,6 @@ public:
     // variant (design_cpu_final M4): only when the resource cache served or took the object
     // (reusable, cacheable) and recipes are on (APS5_NO_DISPATCH_RECIPE=1 builds none); else null.
     void Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::uint64_t programAddress = 0, std::shared_ptr<PreparedDispatch> prepared = nullptr, std::shared_ptr<const Recipe>* recipe = nullptr);
-    // A dispatch whose group counts are the three dwords at `arguments` in guest memory
-    // (DISPATCH_INDIRECT): the GPU reads them in place from the host import, ordered after everything
-    // recorded before, so the CPU never waits for the shader that wrote them. When the GPU could not
-    // see the current bytes the counts are read on the CPU instead (through the flush hook, as the
-    // driver resolved every indirect dispatch before) and the dispatch is recorded as a direct one:
-    // cpuReason 1 storage-image results were pending over them, 2 a recorded dispatch writes them
-    // through a copied buffer (its CPU write-back lands only when the batch is reaped) or a label
-    // over those dwords is pending, 3 the memory is not host-imported; 0 when recorded GPU-side. argumentReadMs is
-    // what that CPU read (its sync) took. The device limit on group counts is not checked GPU-side.
-    // Debug aid: APS5_NO_GPU_INDIRECT=1 (in the driver) keeps every indirect dispatch on the CPU path.
     struct IndirectOutcome {
         int cpuReason;
         double argumentReadMs;

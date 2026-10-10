@@ -167,6 +167,7 @@ int main(int argc, char** argv) {
         translateOptions.userDataBaseRegister = request.context.userDataBaseRegister;
         translateOptions.userDataCount = static_cast<std::uint32_t>(request.context.userData.size());
         translateOptions.scratchDwords = request.context.compute.has_value() ? request.context.compute->scratchDwords : 0u;
+        translateOptions.sharedMemoryBytes = request.context.compute.has_value() && static_cast<std::uint64_t>(request.context.compute->ldsSizeDwords) * 4u + 4u > request.target.maxWorkgroupSharedMemoryBytes ? request.context.compute->ldsSizeDwords * 4u : 0u;
         translateOptions.inputInfo = inputInfo;
 
         InstructionTranslator translator;

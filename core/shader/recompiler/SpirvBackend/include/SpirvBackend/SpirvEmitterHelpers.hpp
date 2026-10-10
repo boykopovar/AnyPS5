@@ -101,6 +101,9 @@ std::uint32_t EmitBinaryU32(SpirvEmitterState& state, std::uint32_t opcode, std:
 std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dwordIndex);
 void EmitMemoryOffsets(SpirvEmitterState& state);
 std::uint32_t LdsDwordCount(const SpirvEmitterState& state);
+bool LdsInDeviceMemory(const SpirvEmitterState& state);
+std::uint32_t LdsMemorySemantics(const SpirvEmitterState& state);
+void EmitLdsBufferBase(SpirvEmitterState& state);
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem);
 std::uint32_t EmitMemoryElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t rawIndex);
@@ -223,10 +226,10 @@ std::uint32_t EmitValueIfElse(SpirvEmitterState& state, std::uint32_t condition,
 template<typename TFunction>
 std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer, ResourceKind kind, std::uint32_t type, TFunction&& function) {
     const auto scope = kind == ResourceKind::Lds ? spv::ScopeWorkgroup : spv::ScopeDevice;
-    const auto memory = [&]() {
+    const auto memory = [&]() -> std::uint32_t {
         switch (kind) {
         case ResourceKind::Lds:
-            return spv::MemorySemanticsWorkgroupMemoryMask;
+            return LdsMemorySemantics(state);
         case ResourceKind::Image:
             return spv::MemorySemanticsImageMemoryMask;
         default:
