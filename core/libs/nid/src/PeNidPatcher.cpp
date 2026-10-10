@@ -86,6 +86,10 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
     if (exportTable.NumberOfNames == 0u) throw std::runtime_error("no exported names");
 
+    const std::size_t functionsArrayOffset = RvaToOffset(
+        pe, exportTable.AddressOfFunctions,
+        peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+
     const std::size_t namesArrayOffset = RvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
     const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
 
@@ -166,14 +170,54 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
             throw std::runtime_error("export name ordinal out of bounds");
         const auto nameOffset = RvaToOffset(pe, nameRva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         exportNames.push_back({ReadCStr(pe, nameOffset), nameRva, ordinal});
+
     }
-    std::sort(exportNames.begin(), exportNames.end(), [](const ExportName& left, const ExportName& right) { return left.Name < right.Name; });
-    for (std::size_t i = 0; i < exportNames.size(); ++i) {
-        if (i != 0 && exportNames[i - 1].Name == exportNames[i].Name)
-            throw std::runtime_error("duplicate patched export name: " + exportNames[i].Name);
-        Write(pe, namesArrayOffset + i * sizeof(std::uint32_t), exportNames[i].Rva);
-        Write(pe, ordinalsArrayOffset + i * sizeof(std::uint16_t), exportNames[i].Ordinal);
+
+    std::sort(exportNames.begin(), exportNames.end(),
+        [](const ExportName& left, const ExportName& right) {
+            return left.Name < right.Name;
+        });
+
+    std::vector<ExportName> uniqueExports;
+    uniqueExports.reserve(exportNames.size());
+
+    for (const auto& entry : exportNames) {
+        if (!uniqueExports.empty() &&
+            uniqueExports.back().Name == entry.Name) {
+
+            const auto& previous = uniqueExports.back();
+
+            const auto previousRva = Read<std::uint32_t>(
+                pe, functionsArrayOffset +
+                previous.Ordinal * sizeof(std::uint32_t));
+
+            const auto currentRva = Read<std::uint32_t>(
+                pe, functionsArrayOffset +
+                entry.Ordinal * sizeof(std::uint32_t));
+
+            if (previousRva != currentRva)
+                throw std::runtime_error(
+                    "conflicting patched export name: " + entry.Name);
+
+            // Both exports reference the same function.
+            // Keep one name-table entry.
+            continue;
+        }
+
+        uniqueExports.push_back(entry);
     }
+
+    for (std::size_t i = 0; i < uniqueExports.size(); ++i) {
+        Write(pe, namesArrayOffset + i * sizeof(std::uint32_t),
+              uniqueExports[i].Rva);
+        Write(pe, ordinalsArrayOffset + i * sizeof(std::uint16_t),
+              uniqueExports[i].Ordinal);
+    }
+
+    auto updatedExportTable = exportTable;
+    updatedExportTable.NumberOfNames =
+        static_cast<std::uint32_t>(uniqueExports.size());
+    Write(pe, exportDirOffset, updatedExportTable);
 
     constexpr std::size_t kImportDirIndex = 1u;
     if (dataDirectoryOffset + (kImportDirIndex + 1u) * sizeof(PeDataDirectory) > pe.size())

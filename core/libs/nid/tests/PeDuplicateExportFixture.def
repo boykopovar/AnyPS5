@@ -1,0 +1,3 @@
+EXPORTS
+    LibwuIonIBw_nid_no_patch_cut=DuplicateExportTarget
+    sceVideoOutAddVrrActiveStatusEvent=DuplicateExportTarget

@@ -134,6 +134,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_process_arguments PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    if(WIN32)
+        add_library(pe_duplicate_export_fixture SHARED
+            ${LIBS_INCLUDE_DIR}/nid/tests/PeDuplicateExportFixture.cpp
+            ${LIBS_INCLUDE_DIR}/nid/tests/PeDuplicateExportFixture.def)
+        add_dependencies(pe_duplicate_export_fixture nid_patcher)
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME nid_patcher_pe_duplicate_exports COMMAND ${Python3_EXECUTABLE}
+                ${LIBS_INCLUDE_DIR}/nid/tests/test_pe_duplicate_exports.py
+                $<TARGET_FILE:nid_patcher> $<TARGET_FILE:pe_duplicate_export_fixture>)
+        endif()
+    endif()
     add_library(guest_module_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GuestModuleFixture.cpp)
     target_include_directories(guest_module_fixture PRIVATE ${LIBS_INCLUDE_DIR})
     add_custom_command(TARGET guest_module_fixture POST_BUILD
