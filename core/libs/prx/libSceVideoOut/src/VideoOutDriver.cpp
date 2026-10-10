@@ -419,6 +419,10 @@ void VideoOutDriver::vblankEnd() {
         std::lock_guard cfgLock(cfg->mutex);
         if (!cfg->opened || cfg->failure) continue;
         require(cfg->vblankStatus.count != std::numeric_limits<uint64_t>::max(), "vblank counter overflow");
+        ++cfg->preVblankStatus.count;
+        cfg->preVblankStatus.processTime = sceKernelGetProcessTime();
+        cfg->preVblankStatus.processTimeCounter = sceKernelGetProcessTimeCounter();
+        triggerEvents(*cfg, VIDEO_OUT_EVENT_PRE_VBLANK_START, reinterpret_cast<void*>(cfg->preVblankStatus.count));
         ++cfg->vblankStatus.count;
         cfg->vblankStatus.processTime = sceKernelGetProcessTime();
         cfg->vblankStatus.processTimeCounter = sceKernelGetProcessTimeCounter();

@@ -266,6 +266,13 @@ void testControls() {
     }
     check(sceVideoOutWaitVblank(handle) == 0, "vblank wait failed");
     check(owner->GetTriggeredEvents(&event, 1) == 1 && event.udata == &settings && sceVideoOutGetEventId(&event) == VIDEO_OUT_EVENT_VBLANK, "vblank event or updated user data missing");
+    check(sceVideoOutAddPreVblankStartEvent(queue, handle, &mode) == 0, "pre-vblank subscription failed");
+    check(sceVideoOutWaitVblank(handle) == 0, "vblank wait failed");
+    KernelEvent events[2]{};
+    check(owner->GetTriggeredEvents(events, 2) == 2, "pre-vblank or vblank event missing");
+    const auto& preVblank = sceVideoOutGetEventId(&events[0]) == VIDEO_OUT_EVENT_PRE_VBLANK_START ? events[0] : events[1];
+    check(sceVideoOutGetEventId(&preVblank) == VIDEO_OUT_EVENT_PRE_VBLANK_START && preVblank.udata == &mode, "pre-vblank event missing");
+    check(sceVideoOutDeletePreVblankStartEvent(queue, handle) == 0, "pre-vblank unsubscription failed");
     std::vector<std::byte> allocation(65536 + 65535);
     const auto storage = alignedBuffer(allocation);
     VideoOutBuffers buffer{storage.data(), nullptr, {allocation.data(), storage.data()}};
