@@ -28,6 +28,12 @@ void RunColorTargetLayoutTests() {
     reject([] { DecodeColorTileMode(0x4dc6e000); });
     reject([] { DecodeColorTileMode(0xcdc6c000); });
     reject([] { DecodeColorTileMode(0x09004000); });
+    Require(DecodeColorTileMode(0x4cc6c000) == ColorTileMode::RenderTarget, "1D color descriptor was rejected");
+    reject([] { DecodeColorTileMode(0x4cc6c001); });
+    reject([] { DecodeColorTileMode(0x4fc6c000); });
+    Require(DecodeColorTileMode(0x08000000) == ColorTileMode::Linear, "linear 1D color descriptor was rejected");
+    reject([] { DecodeColorTileMode(0x08014000); });
+    reject([] { DecodeColorTileMode(0x08024000); });
     reject([] { ColorTargetLayout(0, 1, ColorTileMode::RenderTarget); });
     const ColorTargetLayout padded(63, 2, ColorTileMode::Linear);
     Require(padded.Bytes() == 512 && padded.LinearBytes() == 504 && padded.Offset(0, 1) == 256, "linear rows are not padded to 256 bytes");

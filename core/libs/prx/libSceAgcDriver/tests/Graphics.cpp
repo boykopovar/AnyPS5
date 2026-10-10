@@ -872,6 +872,15 @@ void DepthStencilTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DCC 3D color targets");
 }
 
+void OneDimensionalColorTests() {
+    auto queue = makeState();
+    queue.context[0x3b8] = 0x08000000;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "taller than one row");
+    queue.context[0x3b0] = 63u << 14u;
+    const auto line = AgcDriver::Graphics::DecodeState(queue);
+    Require(line.color.extent.width == 64u && line.color.extent.height == 1u && line.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()) && line.color.depth == 1u, "a 1D color target did not decode as one row");
+}
+
 void depthMaintenanceTests() {
     for (const auto mode : {0x4u, 0x8u, 0x10u, 0x80u, 0x100u, 0x1000u, 0x4000u}) {
         for (const auto clear : {0u, 1u, 2u, 3u}) {
@@ -3049,6 +3058,7 @@ int main() {
         srgb8TargetTests();
         DepthClipTests();
         DepthStencilTests();
+        OneDimensionalColorTests();
         ZExportTests();
         DepthBoundsBiasTests();
         conservativeZExportTests();
