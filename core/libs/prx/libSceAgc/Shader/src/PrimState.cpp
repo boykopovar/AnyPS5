@@ -46,14 +46,17 @@ int APS5_VABI sceAgcCreatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_
     }
     std::array<ShaderRegister, 3> primitiveValues{gs->specials->ge_cntl, hs != nullptr ? hs->specials->ge_user_vgpr_en : gs->specials->ge_user_vgpr_en, ShaderRegister{ShaderRegs::VGT_PRIMITIVE_TYPE, prim_type}};
     const std::array<const Shader*, 2> stages{hs, gs};
-    AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span(stages).subspan(hs == nullptr ? 1u : 0u), contextValues, primitiveValues);
+    const bool patch = prim_type == static_cast<std::uint32_t>(ShaderRegs::PrimitiveType::Patch);
+    if (patch == ((contextValues[0].value & ShaderRegs::VGT_SHADER_STAGES_HS_BIT) != 0)) {
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span(stages).subspan(hs == nullptr ? 1u : 0u), contextValues, primitiveValues);
+    }
     if (cx_regs != nullptr) std::copy(contextValues.begin(), contextValues.end(), cx_regs);
     if (uc_regs != nullptr) std::copy(primitiveValues.begin(), primitiveValues.end(), uc_regs);
     return 0;
 }
 
 int APS5_VABI sceAgcUpdatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_regs, std::uint32_t prim_type) {
-    if (cx_regs != nullptr && (cx_regs[0].value & (ShaderRegs::VGT_SHADER_STAGES_GS_BIT | ShaderRegs::VGT_SHADER_STAGES_NGG_BIT)) == 0) {
+    if (cx_regs != nullptr && (cx_regs[0].value & (ShaderRegs::VGT_SHADER_STAGES_GS_BIT | ShaderRegs::VGT_SHADER_STAGES_HS_BIT)) == 0) {
         cx_regs[1].value &= ~0x7u;
         cx_regs[1].value |= GraphicsPrimTypeToGsOut(prim_type);
     }

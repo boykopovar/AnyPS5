@@ -110,6 +110,19 @@ int main() {
                 }
             }
         }
+        preparations = 0;
+        std::array<ShaderRegister, 2> patchContext{};
+        std::array<ShaderRegister, 3> patchPrimitive{};
+        Require(sceAgcCreatePrimState(patchContext.data(), patchPrimitive.data(), nullptr, &vertex, 9) == 0);
+        Require(preparations == 0 && patchContext[0].offset == VGT_SHADER_STAGES_EN && patchContext[0].value == 0 && patchPrimitive[2].offset == VGT_PRIMITIVE_TYPE && patchPrimitive[2].value == 9);
+        ShaderSpecialRegs hullSpecial = special;
+        hullSpecial.vgt_shader_stages_en.value = VGT_SHADER_STAGES_HS_BIT;
+        hull.specials = &hullSpecial;
+        Require(sceAgcCreatePrimState(patchContext.data(), patchPrimitive.data(), &hull, &vertex, 4) == 0);
+        Require(preparations == 0 && patchContext[0].value == VGT_SHADER_STAGES_HS_BIT && patchPrimitive[2].value == 4);
+        Require(sceAgcCreatePrimState(patchContext.data(), patchPrimitive.data(), &hull, &vertex, 9) == 0);
+        Require(preparations == 1 && stageCount == 2 && preparedContext[0].value == VGT_SHADER_STAGES_HS_BIT && preparedPrimitive[2].value == 9 && patchPrimitive[2].value == 9);
+        hull.specials = &special;
         std::array<ShaderRegister, 34> linkedContext{};
         std::array<ShaderRegister, 3> linkedPrimitive{};
         for (auto& value : linkedContext) value.value = 0xdeadbeef;
