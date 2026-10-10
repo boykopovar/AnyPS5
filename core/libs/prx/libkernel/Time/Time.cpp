@@ -439,9 +439,8 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
 }
 
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
-    if (tv == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
+    KernelTimeval ignoredTime{};
+    if (tv == nullptr) tv = &ignoredTime;
 #ifdef _WIN32
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
@@ -465,9 +464,8 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
 }
 
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
-    if (res == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
+    KernelTimespec ignoredResolution{};
+    if (res == nullptr) res = &ignoredResolution;
     if (IsCpuClock(clockId))
         return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {

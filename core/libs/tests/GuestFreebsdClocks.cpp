@@ -170,6 +170,11 @@ static void CalendarConversionsInitializeTheirState() {
 int main() {
     CalendarConversionsInitializeTheirState();
     SecondClockReportsWholeSeconds();
+    KernelTimezone zone{-1, -1};
+    Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    const int nullResolutionClocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_SECOND, GUEST_CLOCK_PROCESS_CPUTIME_ID};
+    for (const int clockId : nullResolutionClocks) Require(clock_getres_nid_postfix(clockId, nullptr) == SCE_OK);
 
     KernelTimespec time{-1, -1};
     Require(sceKernelClockGettime(GUEST_CLOCK_VIRTUAL, &time) == SCE_OK);
