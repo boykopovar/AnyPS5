@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 extern "C" int* APS5_VABI __error_nid_postfix();
+extern "C" int APS5_VABI getpid_nid_postfix(void);
 
 struct GuestSignalSet {
     std::uint32_t bits[4];
@@ -119,6 +120,12 @@ int APS5_VABI raise_nid_postfix(int guest) {
     const int result = std::raise(native);
     if (result) *__error_nid_postfix() = 22;
     return result ? -1 : 0;
+}
+int APS5_VABI kill_nid_postfix(int pid, int guest) {
+    if (guest < 0 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
+    const int self = getpid_nid_postfix();
+    if (pid != self && pid != 0 && pid != -self) { *__error_nid_postfix() = 3; return -1; }
+    return guest == 0 ? 0 : raise_nid_postfix(guest);
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {
     GuestStack replacement = alternateStack;
