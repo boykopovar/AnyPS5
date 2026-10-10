@@ -273,6 +273,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_call_registry.py $<TARGET_FILE:relinker>)
         add_test(NAME jmprel_table_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_jmprel_table_bounds.py $<TARGET_FILE:relinker>)
+        if(WIN32)
+            add_test(NAME windows_diagnostic_fixture_isolation COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/test_windows_diagnostic_fixture_isolation.py $<TARGET_FILE:windows_dependency_diagnostics_tests>)
+            set_tests_properties(windows_diagnostic_fixture_isolation PROPERTIES TIMEOUT 30)
+        endif()
     else()
         message(STATUS "Python3 interpreter not found; skipping Python relinker tests")
     endif()
