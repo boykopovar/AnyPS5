@@ -10,6 +10,10 @@
 
 extern "C" {
 
+int APS5_VABI abs_nid_postfix(int x) {
+    return x < 0 ? -x : x;
+}
+
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long numerator, long long denominator) {
     return std::lldiv(numerator, denominator);
 }
@@ -71,6 +75,22 @@ float APS5_VABI atanf_nid_postfix(float x) { return std::atan(x); }
 double APS5_VABI atan2_nid_postfix(double y, double x) { return std::atan2(y, x); }
 float APS5_VABI powf_nid_postfix(float base, float exp) { return std::pow(base, exp); }
 double APS5_VABI pow_nid_postfix(double base, double exp) { return std::pow(base, exp); }
+double APS5_VABI __powidf2_nid_postfix(double a, int b) {
+    const bool recip = b < 0;
+    double r = 1.0;
+    unsigned int exp = recip ? 0u - static_cast<unsigned int>(b) : static_cast<unsigned int>(b);
+    while (exp > 0) {
+        if (exp & 1) {
+            r *= a;
+        }
+        exp >>= 1;
+        if (exp == 0) {
+            break;
+        }
+        a *= a;
+    }
+    return recip ? 1.0 / r : r;
+}
 float APS5_VABI expf_nid_postfix(float x) { return std::exp(x); }
 float APS5_VABI exp2f_nid_postfix(float x) { return std::exp2(x); }
 float APS5_VABI logf_nid_postfix(float x) { return std::log(x); }
