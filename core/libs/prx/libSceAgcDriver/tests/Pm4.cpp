@@ -352,7 +352,15 @@ void testCopies() {
     check(source == destination, "DMA_DATA GDS round trip failed");
     expectFailure([&] { execute(state, makePacket(0x50, {0x60100000, low(source.data()), high(source.data()), 0xfffc, 0, 8})); }, "exceeds the GDS");
     expectFailure([&] { execute(state, makePacket(0x50, {0x20000000, 0, 1, low(destination.data()), high(destination.data()), 4})); }, "exceeds the GDS");
-    expectFailure([&] { execute(state, makePacket(0x50, {0x60200000, low(source.data()), high(source.data()), 0, 0, 4})); }, "destination is not implemented");
+    destination = {};
+    const auto prefetch = makePacket(0x50, {0x60200000, low(source.data()), high(source.data()), low(source.data()), high(source.data()), 0x80000010});
+    const auto prefetchStore = AgcDriver::Pm4::ResolveStore(prefetch, state, 64);
+    check(prefetchStore.has_value() && prefetchStore->Bytes().empty(), "a DMA_DATA prefetch resolved as a memory store");
+    check(!AgcDriver::Pm4::DecodeMemoryCopy(prefetch).has_value(), "a DMA_DATA prefetch decoded as a copy");
+    execute(state, prefetch);
+    check(source[0] == 11 && source[1] == 12 && destination[0] == 0, "a DMA_DATA prefetch wrote memory");
+    expectFailure([&] { execute(state, makePacket(0x50, {0x40200000, 1, 0, 0, 0, 4})); }, "prefetch of a register");
+    expectFailure([&] { execute(state, makePacket(0x50, {0x60200000, low(source.data()), high(source.data()), 0, 0, 4 | (1u << 27u)})); }, "register destination");
     expectFailure([&] { execute(state, makePacket(0x50, {0x60000000 | (1u << 15u), low(source.data()), high(source.data()), low(destination.data()), high(destination.data()), 4})); }, "reserved fields");
     expectFailure([&] { execute(state, makePacket(0x37, {0x100, 0x1000, 0, 1})); }, "guest");
 #ifdef _WIN32

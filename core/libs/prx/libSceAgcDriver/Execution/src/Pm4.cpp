@@ -114,6 +114,7 @@ std::vector<std::byte> copySource(std::uint64_t source, std::size_t bytes, bool 
 }
 
 constexpr std::uint32_t DmaSelectGds = 1;
+constexpr std::uint32_t DmaSelectNowhere = 2;
 
 bool gdsRange(std::uint64_t offset, std::size_t bytes) {
     return offset <= GdsBytes && bytes <= GdsBytes - offset;
@@ -445,7 +446,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x50:
             size(7);
             require((packet[1] & ~(0xe0300001u | DmaSourceCachePolicy | DmaDestinationCachePolicy)) == 0, "DMA_DATA reserved fields are not implemented");
-            require(memorySelector(dmaDestination(packet)) || dmaDestination(packet) == DmaSelectGds, "DMA_DATA register or prefetch destination is not implemented");
+            require(memorySelector(dmaDestination(packet)) || dmaDestination(packet) == DmaSelectGds || dmaDestination(packet) == DmaSelectNowhere, "DMA_DATA register destination is not implemented");
+            require(dmaDestination(packet) != DmaSelectNowhere || memorySelector(dmaSource(packet)), "DMA_DATA prefetch of a register, GDS or immediate source is not implemented");
             require(memorySelector(dmaSource(packet)) || dmaSource(packet) == 2 || dmaSource(packet) == DmaSelectGds, "DMA_DATA register source is not implemented");
             require(dmaSource(packet) != DmaSelectGds || (packet[3] == 0 && gdsRange(packet[2], packet[6] & 0x3ffffffu)), "DMA_DATA GDS source range exceeds the GDS");
             require(dmaDestination(packet) != DmaSelectGds || (packet[5] == 0 && gdsRange(packet[4], packet[6] & 0x3ffffffu)), "DMA_DATA GDS destination range exceeds the GDS");
@@ -571,6 +573,7 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
         }
         case 0x50: {
             if (packet.size() < 7 || dmaDestination(packet) == DmaSelectGds) return std::nullopt;
+            if (dmaDestination(packet) == DmaSelectNowhere) return StoreWrite{address(packet[2], packet[3]), {}, {}};
             const std::size_t bytes = packet[6] & 0x3ffffffu;
             const auto destination = address(packet[4], packet[5]);
             if (!fits(destination, bytes)) return std::nullopt;
@@ -871,7 +874,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         }
         case 0x50: {
             const std::size_t bytes = packet[6] & 0x3ffffffu;
-            if (bytes == 0) return;
+            if (bytes == 0 || dmaDestination(packet) == DmaSelectNowhere) return;
             auto data = dmaSourceBytes(packet);
             const auto destination = dmaDestination(packet) == DmaSelectGds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), bytes, 1, true);
