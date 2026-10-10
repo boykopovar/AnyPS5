@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #ifndef _WIN32
@@ -8,6 +9,7 @@
 #include <stdexcept>
 #include <thread>
 extern "C" {
+int APS5_VABI sceKernelDlsym(std::int32_t, const char*, void**);
 void* APS5_VABI dlopen_nid_postfix(const char*, int);
 void* APS5_VABI dlsym_nid_postfix(void*, const char*);
 int APS5_VABI dlclose_nid_postfix(void*);
@@ -16,9 +18,7 @@ int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
 int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
 }
 static void Require(bool value) { if (!value) std::abort(); }
-#ifndef _WIN32
 extern "C" int APS5_VABI GuestDefaultScopeOnly(int a, int b) { return a * b; }
-#endif
 template<typename TFunction>
 static bool ThrowsRuntimeError(TFunction function) {
     try {
@@ -36,6 +36,12 @@ int main(int argc, char** argv) {
     Require(dlerror_nid_postfix() == nullptr);
     Require(dlopen_nid_postfix("anyps5-missing-module-for-test.prx", 2) == nullptr);
     Require(dlerror_nid_postfix() != nullptr);
+    void* mainSymbol = nullptr;
+    Require(sceKernelDlsym(0, "GuestDefaultScopeOnly", &mainSymbol) == 0 && mainSymbol != nullptr);
+    using MainFunction = int (APS5_VABI *)(int, int);
+    Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
+    Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
+    dlerror_nid_postfix();
     void* executable = dlopen_nid_postfix(nullptr, 2);
     Require(executable != nullptr && dlclose_nid_postfix(executable) == 0);
     void* module = dlopen_nid_postfix(argv[1], 2 | 0x100);

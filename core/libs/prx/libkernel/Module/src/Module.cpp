@@ -92,7 +92,9 @@ extern "C" {
 
 int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** addr) {
  if (!symbol || !addr) return SCE_KERNEL_ERROR_EFAULT;
- void* found = dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle)), symbol);
+ void* module = handle == 0 ? dlopen_nid_postfix(nullptr, kRtldNow) : reinterpret_cast<void*>(static_cast<intptr_t>(handle));
+ void* found = dlsym_nid_postfix(module, symbol);
+ if (handle == 0 && module) dlclose_nid_postfix(module);
  if (!found) return SCE_KERNEL_ERROR_ESRCH;
  *addr = found;
  return 0;
