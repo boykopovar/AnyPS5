@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -574,6 +575,29 @@ constexpr DivisionVector DivisionVectors[] = {
     {0x2210592fu, 0x0ac8fdd3u, 0x56b7dabeu},
 };
 
+struct FmasNanVector {
+    std::uint32_t s0, s1, s2, noIeee, ieee;
+};
+
+constexpr FmasNanVector FmasNanVectors[] = {
+    {0xff812345u, 0x3f800000u, 0x3f800000u, 0xff812345u, 0xffc12345u},
+    {0x7f812345u, 0x3f800000u, 0x3f800000u, 0x7f812345u, 0x7fc12345u},
+    {0x3f800000u, 0xff812345u, 0x3f800000u, 0xff812345u, 0xffc12345u},
+    {0x3f800000u, 0x3f800000u, 0xff812345u, 0xff812345u, 0xffc12345u},
+    {0x7fc12345u, 0xff812345u, 0xff812345u, 0x7fc12345u, 0x7fc12345u},
+    {0xff812345u, 0x7fc12345u, 0x7f812345u, 0xff812345u, 0xffc12345u},
+    {0x3f800000u, 0x7fc12345u, 0xff812345u, 0x7fc12345u, 0x7fc12345u},
+    {0x3f800000u, 0x3f800000u, 0x7fc12345u, 0x7fc12345u, 0x7fc12345u},
+    {0x7f800000u, 0x00000000u, 0x7fc12345u, 0xffc00000u, 0xffc00000u},
+    {0xff800000u, 0x80000000u, 0xff812345u, 0xffc00000u, 0xffc00000u},
+    {0x00000000u, 0xff800000u, 0x7f812345u, 0xffc00000u, 0xffc00000u},
+    {0x80000000u, 0x7f800000u, 0xffc12345u, 0xffc00000u, 0xffc00000u},
+    {0x7f800000u, 0x3f800000u, 0xff800000u, 0xffc00000u, 0xffc00000u},
+    {0x3f800000u, 0x7f7fffffu, 0xff7fffffu, 0x00000000u, 0x00000000u},
+    {0x3f800000u, 0xf1800000u, 0x71800000u, 0x00000000u, 0x00000000u},
+    {0x7f800000u, 0x3f800000u, 0x3f800000u, 0x7f800000u, 0x7f800000u},
+};
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (4u << 16u), count, 0x11016facu};
@@ -581,7 +605,8 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t co
 
 class Shader {
 public:
-    Shader(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) : device(device), code(code) {
+    Shader(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code,
+        const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}) : device(device), code(code) {
         std::vector<std::uint32_t> userData(8, 0u);
         const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
         const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
@@ -596,7 +621,7 @@ public:
             {0, 0, 0, 128}
         };
         request.useCache = false;
-        request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
+        request.context.floatMode = floatMode;
         result = ShaderRecompiler::Recompile(request);
     }
 
@@ -651,6 +676,24 @@ void CheckHelpers(AgcDriver::VulkanDevice& device, bool fused) {
     }
 }
 
+void CheckFmasNan(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
+    Shader shader(device, HelperCode, floatMode);
+    Input.fill(0u);
+    for (std::uint32_t lane = 0; lane < std::size(FmasNanVectors) * 2u; ++lane) {
+        const auto& vector = FmasNanVectors[lane / 2u];
+        std::copy_n(std::array<std::uint32_t, 4>{vector.s0, vector.s1, vector.s2, lane & 1u}.begin(), 4, Input.begin() + lane * Stride);
+    }
+    shader.Run();
+    const bool ieee = floatMode.has_value() && floatMode->ieeeMode;
+    for (std::uint32_t lane = 0; lane < std::size(FmasNanVectors) * 2u; ++lane) {
+        const auto& vector = FmasNanVectors[lane / 2u];
+        const auto actual = Output[lane * Stride + 2u];
+        const auto expected = ieee ? vector.ieee : vector.noIeee;
+        const std::string mode = floatMode.has_value() ? Hex(floatMode->floatMode) + " IEEE=" + std::to_string(ieee) : "no float mode";
+        Require(actual == expected, "division fmas nan: lane " + std::to_string(lane) + " " + mode + " vcc " + std::to_string(lane & 1u) + ": v_div_fmas_f32 is " + Hex(actual) + ", expected " + Hex(expected));
+    }
+}
+
 void CheckDivision(AgcDriver::VulkanDevice& device) {
     Shader shader(device, DivisionCode);
     constexpr std::uint32_t count = sizeof(DivisionVectors) / sizeof(DivisionVectors[0]);
@@ -677,10 +720,15 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool fused = HostFusesFma(*device);
         CheckHelpers(*device, fused);
+        CheckFmasNan(*device, std::nullopt);
+        CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
+        CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+        CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, false, false, false});
+        CheckFmasNan(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, false, true, false});
         if (fused) {
             CheckDivision(*device);
         } else {
-            std::puts("the device splits fma into a multiply and an add, so v_div_fmas_f32 and the division macro are not checked");
+            std::puts("the device splits fma into a multiply and an add, so only the directed v_div_fmas_f32 rows are checked and the division macro is not checked");
         }
         std::puts("division tests passed");
         return 0;
