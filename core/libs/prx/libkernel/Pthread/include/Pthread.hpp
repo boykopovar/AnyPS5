@@ -95,6 +95,9 @@ struct PthreadPrivate {
 #endif
     std::thread::id threadId;
     std::atomic<unsigned> references{2};
+    std::atomic<bool> inWait{false};
+    std::atomic<int> pendingException{0};
+    void* wakeEvent = nullptr;
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
     std::atomic<int> waitCount{0};

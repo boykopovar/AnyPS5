@@ -706,5 +706,12 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_sandbox_random_word PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test_executable(guest_mutex_raise_exception_tests ${LIBS_INCLUDE_DIR}/tests/GuestMutexRaiseException.cpp)
+        target_include_directories(guest_mutex_raise_exception_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_mutex_raise_exception_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_mutex_raise_exception_tests)
+        add_test(NAME guest_mutex_raise_exception COMMAND guest_mutex_raise_exception_tests)
+        set_tests_properties(guest_mutex_raise_exception PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
 endif()

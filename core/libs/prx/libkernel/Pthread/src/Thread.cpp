@@ -1,5 +1,6 @@
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
+#include "../include/WindowsThreadLocal.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
@@ -43,8 +44,18 @@ struct ThreadArgs {
 static std::atomic<thread_dtors_func_t> threadDtors{nullptr};
 static std::atomic<get_thread_atexit_count_func_t> threadAtexitCount{nullptr};
 static std::atomic<thread_atexit_report_func_t> threadAtexitReport{nullptr};
-static thread_local PthreadPrivate* currentThread = nullptr;
-static thread_local bool threadFinishing = false;
+struct GuestThreadState {
+    PthreadPrivate* current = nullptr;
+    bool finishing = false;
+};
+static GuestThreadState& CurrentGuestState() {
+#ifdef _WIN32
+    return WindowsThreadLocal<GuestThreadState>::Get();
+#else
+    static thread_local GuestThreadState state;
+    return state;
+#endif
+}
 static std::mutex stackLock;
 static std::map<PthreadPrivate*, std::pair<std::uintptr_t, std::uintptr_t>> liveStacks;
 
@@ -80,9 +91,9 @@ static void SetStackFromHost(PthreadPrivate* thread) {
 }
 
 static bool CurrentStack(std::uintptr_t* low, std::uintptr_t* high) {
-    if (currentThread && currentThread->stackAddress) {
-        *low = reinterpret_cast<std::uintptr_t>(currentThread->stackAddress);
-        *high = *low + currentThread->stackSize;
+    if (CurrentGuestState().current && CurrentGuestState().current->stackAddress) {
+        *low = reinterpret_cast<std::uintptr_t>(CurrentGuestState().current->stackAddress);
+        *high = *low + CurrentGuestState().current->stackSize;
         return true;
     }
     return HostStackLimits(low, high);
@@ -238,11 +249,11 @@ void ThreadLifecycle::SetThreadAtexitReport(thread_atexit_report_func_t callback
 }
 
 static void finishThread(PthreadPrivate* self, void* retval) {
-    if (!self || self != currentThread)
+    if (!self || self != CurrentGuestState().current)
         throw std::runtime_error("Finishing an unregistered guest thread");
-    if (threadFinishing)
+    if (CurrentGuestState().finishing)
         throw std::runtime_error("Guest thread is already finishing");
-    threadFinishing = true;
+    CurrentGuestState().finishing = true;
     UnregisterStack(self);
     if (const auto callback = threadDtors.load())
         callback();
@@ -262,11 +273,11 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     if (!self->stackAddress) SetStackFromHost(self);
-    currentThread = self;
+    CurrentGuestState().current = self;
     RegisterStack(self);
     args.reset();
     finishThread(self, entry(arg));
-    currentThread = nullptr;
+    CurrentGuestState().current = nullptr;
 }
 
 static void ReleaseThread(PthreadPrivate* thread) {
@@ -275,6 +286,8 @@ static void ReleaseThread(PthreadPrivate* thread) {
     if (thread->references.fetch_sub(1, std::memory_order_acq_rel) != 1)
         return;
 #ifdef _WIN32
+    if (thread->wakeEvent)
+        CloseHandle(static_cast<HANDLE>(thread->wakeEvent));
     if (!CloseHandle(thread->nativeHandle))
         throw std::system_error(GetLastError(), std::system_category(), "Closing guest thread handle");
 #endif
@@ -335,7 +348,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
             cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
         }
         self->threadId = std::this_thread::get_id();
-        currentThread = self;
+        CurrentGuestState().current = self;
         if (!self->name.empty()) {
             const std::wstring description(self->name.begin(), self->name.end());
             SetThreadDescription(GetCurrentThread(), description.c_str());
@@ -351,7 +364,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
     auto guest = std::move(args->guest);
     args.reset();
     RunThread(std::move(guest));
-    currentThread = nullptr;
+    CurrentGuestState().current = nullptr;
     ReleaseThread(self);
     return 0;
 }
@@ -408,7 +421,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         struct ThreadGuard {
             PthreadPrivate* self;
             ~ThreadGuard() {
-                currentThread = nullptr;
+                CurrentGuestState().current = nullptr;
                 ReleaseThread(self);
             }
         } guard{self};
@@ -438,7 +451,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval) {
     if (!thread) throw std::runtime_error("scePthreadJoin: null thread");
     if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
-    if (thread == currentThread)
+    if (thread == CurrentGuestState().current)
         throw std::runtime_error("scePthreadJoin: cannot join current thread");
 #ifdef _WIN32
     if (WaitForSingleObject(thread->nativeHandle, INFINITE) != WAIT_OBJECT_0)
@@ -467,11 +480,11 @@ int APS5_VABI scePthreadDetach(Pthread thread) {
 }
 
 void APS5_VABI scePthreadExit(void* retval) {
-    if (!currentThread)
+    if (!CurrentGuestState().current)
         throw std::runtime_error("scePthreadExit: current thread is not registered");
-    auto* self = currentThread;
+    auto* self = CurrentGuestState().current;
     finishThread(self, retval);
-    currentThread = nullptr;
+    CurrentGuestState().current = nullptr;
 #ifdef _WIN32
     ReleaseThread(self);
     _endthreadex(0);
@@ -485,7 +498,7 @@ void APS5_VABI scePthreadExit(void* retval) {
 
 Pthread APS5_VABI scePthreadSelf() {
 #ifdef _WIN32
-    if (!currentThread) {
+    if (!CurrentGuestState().current) {
         auto adopted = std::make_unique<PthreadPrivate>();
         HANDLE handle = nullptr;
         if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
@@ -496,20 +509,20 @@ Pthread APS5_VABI scePthreadSelf() {
         adopted->references.store(1, std::memory_order_relaxed);
         TimedWait::BindThreadWaitState(&adopted->waitCount);
         SetStackFromHost(adopted.get());
-        currentThread = adopted.release();
+        CurrentGuestState().current = adopted.release();
     }
 #else
-    if (!currentThread) {
+    if (!CurrentGuestState().current) {
         adoptedThread = std::make_unique<PthreadPrivate>();
         adoptedThread->_detached = true;
         adoptedThread->_adopted = true;
         BindHostCpuClock(adoptedThread.get());
         adoptedThread->threadId = std::this_thread::get_id();
         SetStackFromHost(adoptedThread.get());
-        currentThread = adoptedThread.get();
+        CurrentGuestState().current = adoptedThread.get();
     }
 #endif
-    return currentThread;
+    return CurrentGuestState().current;
 }
 
 void APS5_VABI scePthreadYield() {

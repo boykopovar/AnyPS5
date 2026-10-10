@@ -161,7 +161,14 @@ int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
 }
 
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) {
-    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { native.lock(); return true; }, 0, false);
+    return acquireMutex(resolveMutex(mutex, true), [](auto& native) {
+#ifdef _WIN32
+        while (!native.try_lock()) TimedWait::SleepNanos(1000000);
+#else
+        native.lock();
+#endif
+        return true;
+    }, 0, false);
 }
 
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {

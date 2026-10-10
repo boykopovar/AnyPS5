@@ -1,4 +1,5 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/Pthread/include/WindowsThreadLocal.hpp"
 
 #include <cstdlib>
 #include <limits>
@@ -17,8 +18,18 @@ namespace {
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
 constexpr std::uint64_t LEAD_NANOS = 500000ULL;
 
-thread_local std::atomic<int> ownWaitState{0};
-thread_local std::atomic<int>* waitState = &ownWaitState;
+struct ThreadWaitState {
+    std::atomic<int> own{0};
+    std::atomic<int>* bound = &own;
+};
+ThreadWaitState& WaitState() {
+#ifdef _WIN32
+    return WindowsThreadLocal<ThreadWaitState>::Get();
+#else
+    static thread_local ThreadWaitState state;
+    return state;
+#endif
+}
 
 #ifdef _WIN32
 
@@ -31,29 +42,24 @@ void DrainApcs() {
 }
 
 DWORD AlertableWait(DWORD count, const HANDLE* handles, DWORD milliseconds) {
-    waitState->fetch_add(1, std::memory_order_seq_cst);
+    WaitState().bound->fetch_add(1, std::memory_order_seq_cst);
     DWORD result;
     do {
         result = WaitForMultipleObjectsEx(count, handles, FALSE, milliseconds, TRUE);
     } while (result == WAIT_IO_COMPLETION);
-    waitState->fetch_sub(1, std::memory_order_seq_cst);
+    WaitState().bound->fetch_sub(1, std::memory_order_seq_cst);
     DrainApcs();
     return result;
 }
 
 void AlertableSleep(DWORD milliseconds) {
-    waitState->fetch_add(1, std::memory_order_seq_cst);
+    WaitState().bound->fetch_add(1, std::memory_order_seq_cst);
     SleepEx(milliseconds, TRUE);
-    waitState->fetch_sub(1, std::memory_order_seq_cst);
+    WaitState().bound->fetch_sub(1, std::memory_order_seq_cst);
     DrainApcs();
 }
 
-void WINAPI DestroyWaiter(void* value);
-
-DWORD WaiterSlotIndex() {
-    static const DWORD index = FlsAlloc(DestroyWaiter);
-    return index;
-}
+HANDLE ThreadTimer(unsigned kind);
 
 HANDLE CreateHighResolutionTimer() {
     return CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -88,7 +94,7 @@ void SleepNanosCoarse(std::uint64_t nanos) {
         SwitchToThread();
         return;
     }
-    thread_local HANDLE timer = CreateHighResolutionTimer();
+    const HANDLE timer = ThreadTimer(0);
     if (TimerWait(timer, nanos)) return;
     AlertableSleep(static_cast<DWORD>((nanos + 999999ULL) / 1000000ULL));
 }
@@ -102,6 +108,7 @@ void SleepNanosCoarse(std::uint64_t nanos) {
 struct Waiter {
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     HANDLE timer = CreateHighResolutionTimer();
+    HANDLE sleepTimers[3]{};
     Waiter* previous = nullptr;
     Waiter* next = nullptr;
     Waiter* nested = nullptr;
@@ -112,23 +119,20 @@ struct Waiter {
         delete nested;
         if (event) CloseHandle(event);
         if (timer) CloseHandle(timer);
+        for (const auto sleepTimer : sleepTimers) if (sleepTimer) CloseHandle(sleepTimer);
     }
 };
 
 namespace {
 
-void WINAPI DestroyWaiter(void* value) {
-    delete static_cast<Waiter*>(value);
+Waiter* ThisThreadWaiter() {
+    return &WindowsThreadLocal<Waiter>::Get();
 }
 
-Waiter* ThisThreadWaiter() {
-    thread_local Waiter* waiter = nullptr;
-    if (!waiter) {
-        waiter = new Waiter();
-        const DWORD slot = WaiterSlotIndex();
-        if (slot != FLS_OUT_OF_INDEXES) FlsSetValue(slot, waiter);
-    }
-    return waiter;
+HANDLE ThreadTimer(unsigned kind) {
+    auto& timer = ThisThreadWaiter()->sleepTimers[kind];
+    if (!timer) timer = CreateHighResolutionTimer();
+    return timer;
 }
 
 Waiter* AcquireWaiter() {
@@ -248,7 +252,8 @@ void Condition::NotifyAll() {
 #endif
 
 void BindThreadWaitState(std::atomic<int>* state) {
-    waitState = state != nullptr ? state : &ownWaitState;
+    auto& local = WaitState();
+    local.bound = state != nullptr ? state : &local.own;
 }
 
 bool Coarse() {
@@ -293,7 +298,7 @@ void SleepUntil(std::uint64_t deadlineNanos) {
 #ifdef _WIN32
     std::uint64_t now = NowNanos();
     if (deadlineNanos > now + LEAD_NANOS) {
-        thread_local HANDLE timer = CreateHighResolutionTimer();
+        const HANDLE timer = ThreadTimer(1);
         if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS)) AlertableSleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
         now = NowNanos();
     }
@@ -311,7 +316,7 @@ void PollSleepUntil(std::uint64_t deadlineNanos) {
 #ifdef _WIN32
     const std::uint64_t now = NowNanos();
     if (deadlineNanos <= now) return;
-    thread_local HANDLE timer = CreateHighResolutionTimer();
+    const HANDLE timer = ThreadTimer(2);
     if (!TimerWait(timer, deadlineNanos - now)) AlertableSleep(WholeMilliseconds(deadlineNanos - now));
 #else
     SleepUntil(deadlineNanos);

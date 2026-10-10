@@ -1,4 +1,5 @@
 #include "../include/Pthread.hpp"
+#include "../include/WindowsThreadLocal.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
 #include <atomic>
@@ -54,7 +55,14 @@ struct ThreadValues {
     }
 };
 
-static thread_local ThreadValues g_values;
+static ThreadValues& Values() {
+#ifdef _WIN32
+    return WindowsThreadLocal<ThreadValues>::Get();
+#else
+    static thread_local ThreadValues values;
+    return values;
+#endif
+}
 
 extern "C" {
 
@@ -83,7 +91,7 @@ int APS5_VABI scePthreadKeyDelete(PthreadKey key) {
 
 void* APS5_VABI scePthreadGetspecific(PthreadKey key) {
     if (key < 0 || key >= MAX_KEYS) return nullptr;
-    const ThreadValue& entry = g_values.values[key];
+    const ThreadValue& entry = Values().values[key];
     return entry.sequence == g_keys[key].sequence.load(std::memory_order_acquire) ? entry.value : nullptr;
 }
 
@@ -91,7 +99,7 @@ int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value) {
     if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
     const std::uint64_t sequence = g_keys[key].sequence.load(std::memory_order_acquire);
     if (sequence == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
-    g_values.values[key] = {value, sequence};
+    Values().values[key] = {value, sequence};
     return SCE_OK;
 }
 
