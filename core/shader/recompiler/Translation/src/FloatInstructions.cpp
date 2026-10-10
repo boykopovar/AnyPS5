@@ -615,6 +615,12 @@ bool TranslationContext::minMaxF16(const RdnaInstruction& inst, IrOpcode opcode)
     for (std::uint32_t index = 0u; index < (ternary ? 3u : 2u); ++index) {
         const RdnaOperand& operand = sourceAt(inst, index);
         args[index] = Half{&readF16AsF32(operand).Value(), readF16Bits(operand)};
+        if (!ternary && floatMode.has_value() && (floatMode->floatMode & 0x40u) == 0u) {
+            const IrU1 tiny(ir.ULessThan(ir.BitwiseAnd(args[index].bits.Value(), ir.Constant(0x7fffu)), ir.Constant(0x0400u)));
+            const IrU32 sign(ir.BitwiseAnd(args[index].bits.Value(), ir.Constant(0x8000u)));
+            args[index].bits = IrU32(ir.Select(tiny.Value(), sign.Value(), args[index].bits.Value()));
+            args[index].value = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&tiny.Value(), &ir.BitCastF32(ir.ShiftLeftLogical(sign.Value(), ir.Constant(16u))), args[index].value});
+        }
     }
     const auto pair = [&](IrOpcode pairOpcode, const Half& lhs, const Half& rhs) {
         IrValue& value = ir.Emit(pairOpcode, IrType::F32, {lhs.value, rhs.value});

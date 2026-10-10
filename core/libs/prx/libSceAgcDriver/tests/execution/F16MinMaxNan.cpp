@@ -30,6 +30,20 @@ alignas(256) constexpr std::array<std::uint32_t, 30> Code{
     0x42020b04u, 0xe0781000u, 0x80010a03u, 0xe0781010u, 0x80010e03u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 26> SdwaLowCode{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
+    0x7e1a0280u, 0x7e1c0280u, 0x7e1e0280u, 0x7e200280u, 0x7e220280u, 0x74140af9u, 0x04041404u, 0x72160af9u,
+    0x04041404u, 0x741e0af9u, 0x24141404u, 0x72200af9u, 0x14241404u, 0xe0781000u, 0x80010a03u, 0xe0781010u,
+    0x80010e03u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 26> SdwaHighCode{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
+    0x7e1a0280u, 0x7e1c0280u, 0x7e1e0280u, 0x7e200280u, 0x7e220280u, 0x74140af9u, 0x05051404u, 0x72160af9u,
+    0x05051404u, 0x741e0af9u, 0x25151404u, 0x72200af9u, 0x15251404u, 0xe0781000u, 0x80010a03u, 0xe0781010u,
+    0x80010e03u, 0xbf810000u,
+};
+
 constexpr std::uint32_t Rows[128][4] = {
     {0x12340000u, 0x56780000u, 0x9abcc000u, 0x00000000u},
     {0x12340000u, 0x56788000u, 0x9abc0001u, 0x00000000u},
@@ -420,9 +434,181 @@ constexpr std::uint32_t ExpectedIeee[128][7] = {
     {0x00007e00u, 0x00007e00u, 0x00003c00u, 0x00003c00u, 0x00003c00u, 0x0000fe00u, 0x00007e00u},
     {0x00008001u, 0x00000001u, 0x00007e01u, 0x00007e01u, 0x00007e01u, 0x00008001u, 0x00000001u}
 };
+constexpr std::uint32_t DenormalRows[32][4] = {
+    {0x12343c01u, 0x567803ffu, 0x00000000u, 0x00000000u},
+    {0x1234bc01u, 0x567803ffu, 0x00000000u, 0x00000000u},
+    {0x12340001u, 0x56788001u, 0x00000000u, 0x00000000u},
+    {0x123403ffu, 0x567883ffu, 0x00000000u, 0x00000000u},
+    {0x12340001u, 0x56780000u, 0x00000000u, 0x00000000u},
+    {0x12348001u, 0x56788000u, 0x00000000u, 0x00000000u},
+    {0x123403ffu, 0x56780400u, 0x00000000u, 0x00000000u},
+    {0x123483ffu, 0x56788400u, 0x00000000u, 0x00000000u},
+    {0x12340001u, 0x56787e00u, 0x00000000u, 0x00000000u},
+    {0x12348001u, 0x5678fe55u, 0x00000000u, 0x00000000u},
+    {0x123403ffu, 0x56787c01u, 0x00000000u, 0x00000000u},
+    {0x123483ffu, 0x5678fd23u, 0x00000000u, 0x00000000u},
+    {0x12340001u, 0x56787c00u, 0x00000000u, 0x00000000u},
+    {0x12348001u, 0x5678fc00u, 0x00000000u, 0x00000000u},
+    {0x123403ffu, 0x56780001u, 0x00000000u, 0x00000000u},
+    {0x123483ffu, 0x56788001u, 0x00000000u, 0x00000000u},
+    {0x123403ffu, 0x56783c01u, 0x00000000u, 0x00000000u},
+    {0x123403ffu, 0x5678bc01u, 0x00000000u, 0x00000000u},
+    {0x12348001u, 0x56780001u, 0x00000000u, 0x00000000u},
+    {0x123483ffu, 0x567803ffu, 0x00000000u, 0x00000000u},
+    {0x12340000u, 0x56780001u, 0x00000000u, 0x00000000u},
+    {0x12348000u, 0x56788001u, 0x00000000u, 0x00000000u},
+    {0x12340400u, 0x567803ffu, 0x00000000u, 0x00000000u},
+    {0x12348400u, 0x567883ffu, 0x00000000u, 0x00000000u},
+    {0x12347e00u, 0x56780001u, 0x00000000u, 0x00000000u},
+    {0x1234fe55u, 0x56788001u, 0x00000000u, 0x00000000u},
+    {0x12347c01u, 0x567803ffu, 0x00000000u, 0x00000000u},
+    {0x1234fd23u, 0x567883ffu, 0x00000000u, 0x00000000u},
+    {0x12347c00u, 0x56780001u, 0x00000000u, 0x00000000u},
+    {0x1234fc00u, 0x56788001u, 0x00000000u, 0x00000000u},
+    {0x12340001u, 0x567803ffu, 0x00000000u, 0x00000000u},
+    {0x12348001u, 0x567883ffu, 0x00000000u, 0x00000000u},
+};
+constexpr std::uint32_t DenormalFlushed[32][4] = {
+    {0x00000000u, 0x00003c01u, 0x0000bc01u, 0x00003c01u},
+    {0x0000bc01u, 0x00000000u, 0x00000000u, 0x00003c01u},
+    {0x00008000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000400u, 0x00008000u, 0x00000000u},
+    {0x00008400u, 0x00008000u, 0x00000000u, 0x00000400u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00007c00u, 0x00008000u, 0x00000000u},
+    {0x0000fc00u, 0x00008000u, 0x00000000u, 0x00007c00u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00003c01u, 0x00008000u, 0x00000000u},
+    {0x0000bc01u, 0x00000000u, 0x00008000u, 0x00003c01u},
+    {0x00008000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00008000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000400u, 0x00008400u, 0x00000400u},
+    {0x00008400u, 0x00008000u, 0x00000000u, 0x00000400u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00008000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00008000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00007c00u, 0x0000fc00u, 0x00007c00u},
+    {0x0000fc00u, 0x00008000u, 0x00000000u, 0x00007c00u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+};
+constexpr std::uint32_t DenormalKept[32][4] = {
+    {0x000003ffu, 0x00003c01u, 0x0000bc01u, 0x00003c01u},
+    {0x0000bc01u, 0x000003ffu, 0x000003ffu, 0x00003c01u},
+    {0x00008001u, 0x00000001u, 0x00008001u, 0x00000001u},
+    {0x000083ffu, 0x000003ffu, 0x000083ffu, 0x000003ffu},
+    {0x00000000u, 0x00000001u, 0x00008001u, 0x00000001u},
+    {0x00008001u, 0x00008000u, 0x00000000u, 0x00000001u},
+    {0x000003ffu, 0x00000400u, 0x000083ffu, 0x000003ffu},
+    {0x00008400u, 0x000083ffu, 0x000003ffu, 0x00000400u},
+    {0x00000001u, 0x00000001u, 0x00008001u, 0x00000001u},
+    {0x00008001u, 0x00008001u, 0x00000001u, 0x00000001u},
+    {0x000003ffu, 0x000003ffu, 0x000083ffu, 0x000003ffu},
+    {0x000083ffu, 0x000083ffu, 0x000003ffu, 0x000003ffu},
+    {0x00000001u, 0x00007c00u, 0x00008001u, 0x00000001u},
+    {0x0000fc00u, 0x00008001u, 0x00000001u, 0x00007c00u},
+    {0x00000001u, 0x000003ffu, 0x000083ffu, 0x000003ffu},
+    {0x000083ffu, 0x00008001u, 0x00000001u, 0x000003ffu},
+    {0x000003ffu, 0x00003c01u, 0x000083ffu, 0x000003ffu},
+    {0x0000bc01u, 0x000003ffu, 0x000083ffu, 0x00003c01u},
+    {0x00008001u, 0x00000001u, 0x00000001u, 0x00000001u},
+    {0x000083ffu, 0x000003ffu, 0x000003ffu, 0x000003ffu},
+    {0x00000000u, 0x00000001u, 0x00008000u, 0x00000000u},
+    {0x00008001u, 0x00008000u, 0x00000000u, 0x00000001u},
+    {0x000003ffu, 0x00000400u, 0x00008400u, 0x00000400u},
+    {0x00008400u, 0x000083ffu, 0x000003ffu, 0x00000400u},
+    {0x00000001u, 0x00000001u, 0x00000001u, 0x00008001u},
+    {0x00008001u, 0x00008001u, 0x00000001u, 0x00000001u},
+    {0x000003ffu, 0x000003ffu, 0x000003ffu, 0x000083ffu},
+    {0x000083ffu, 0x000083ffu, 0x000003ffu, 0x000003ffu},
+    {0x00000001u, 0x00007c00u, 0x0000fc00u, 0x00007c00u},
+    {0x0000fc00u, 0x00008001u, 0x00000001u, 0x00007c00u},
+    {0x00000001u, 0x000003ffu, 0x00008001u, 0x00000001u},
+    {0x000083ffu, 0x00008001u, 0x00000001u, 0x000003ffu},
+};
+constexpr std::uint32_t DenormalFlushedIeee[32][4] = {
+    {0x00000000u, 0x00003c01u, 0x0000bc01u, 0x00003c01u},
+    {0x0000bc01u, 0x00000000u, 0x00000000u, 0x00003c01u},
+    {0x00008000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000400u, 0x00008000u, 0x00000000u},
+    {0x00008400u, 0x00008000u, 0x00000000u, 0x00000400u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00007e01u, 0x00007e01u, 0x00007e01u, 0x0000fe01u},
+    {0x0000ff23u, 0x0000ff23u, 0x00007f23u, 0x00007f23u},
+    {0x00000000u, 0x00007c00u, 0x00008000u, 0x00000000u},
+    {0x0000fc00u, 0x00008000u, 0x00000000u, 0x00007c00u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00003c01u, 0x00008000u, 0x00000000u},
+    {0x0000bc01u, 0x00000000u, 0x00008000u, 0x00003c01u},
+    {0x00008000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00008000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00000000u, 0x00000400u, 0x00008400u, 0x00000400u},
+    {0x00008400u, 0x00008000u, 0x00000000u, 0x00000400u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00008000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+    {0x00007e01u, 0x00007e01u, 0x0000fe01u, 0x00007e01u},
+    {0x0000ff23u, 0x0000ff23u, 0x00007f23u, 0x00007f23u},
+    {0x00000000u, 0x00007c00u, 0x0000fc00u, 0x00007c00u},
+    {0x0000fc00u, 0x00008000u, 0x00000000u, 0x00007c00u},
+    {0x00000000u, 0x00000000u, 0x00008000u, 0x00000000u},
+    {0x00008000u, 0x00008000u, 0x00000000u, 0x00000000u},
+};
+constexpr std::uint32_t DenormalKeptIeee[32][4] = {
+    {0x000003ffu, 0x00003c01u, 0x0000bc01u, 0x00003c01u},
+    {0x0000bc01u, 0x000003ffu, 0x000003ffu, 0x00003c01u},
+    {0x00008001u, 0x00000001u, 0x00008001u, 0x00000001u},
+    {0x000083ffu, 0x000003ffu, 0x000083ffu, 0x000003ffu},
+    {0x00000000u, 0x00000001u, 0x00008001u, 0x00000001u},
+    {0x00008001u, 0x00008000u, 0x00000000u, 0x00000001u},
+    {0x000003ffu, 0x00000400u, 0x000083ffu, 0x000003ffu},
+    {0x00008400u, 0x000083ffu, 0x000003ffu, 0x00000400u},
+    {0x00000001u, 0x00000001u, 0x00008001u, 0x00000001u},
+    {0x00008001u, 0x00008001u, 0x00000001u, 0x00000001u},
+    {0x00007e01u, 0x00007e01u, 0x00007e01u, 0x0000fe01u},
+    {0x0000ff23u, 0x0000ff23u, 0x00007f23u, 0x00007f23u},
+    {0x00000001u, 0x00007c00u, 0x00008001u, 0x00000001u},
+    {0x0000fc00u, 0x00008001u, 0x00000001u, 0x00007c00u},
+    {0x00000001u, 0x000003ffu, 0x000083ffu, 0x000003ffu},
+    {0x000083ffu, 0x00008001u, 0x00000001u, 0x000003ffu},
+    {0x000003ffu, 0x00003c01u, 0x000083ffu, 0x000003ffu},
+    {0x0000bc01u, 0x000003ffu, 0x000083ffu, 0x00003c01u},
+    {0x00008001u, 0x00000001u, 0x00000001u, 0x00000001u},
+    {0x000083ffu, 0x000003ffu, 0x000003ffu, 0x000003ffu},
+    {0x00000000u, 0x00000001u, 0x00008000u, 0x00000000u},
+    {0x00008001u, 0x00008000u, 0x00000000u, 0x00000001u},
+    {0x000003ffu, 0x00000400u, 0x00008400u, 0x00000400u},
+    {0x00008400u, 0x000083ffu, 0x000003ffu, 0x00000400u},
+    {0x00000001u, 0x00000001u, 0x00000001u, 0x00008001u},
+    {0x00008001u, 0x00008001u, 0x00000001u, 0x00000001u},
+    {0x00007e01u, 0x00007e01u, 0x0000fe01u, 0x00007e01u},
+    {0x0000ff23u, 0x0000ff23u, 0x00007f23u, 0x00007f23u},
+    {0x00000001u, 0x00007c00u, 0x0000fc00u, 0x00007c00u},
+    {0x0000fc00u, 0x00008001u, 0x00000001u, 0x00007c00u},
+    {0x00000001u, 0x000003ffu, 0x00008001u, 0x00000001u},
+    {0x000083ffu, 0x00008001u, 0x00000001u, 0x000003ffu},
+};
 constexpr std::uint32_t Chunks = 4;
 std::uint32_t Chunk = 0;
 bool Ieee = false;
+std::uint32_t Denorm16 = 4u;
+std::uint32_t SourceForm = 0u;
 constexpr const char* Names[7] = {
     "v_min_f16 v10, v4, v5",
     "v_max_f16 v11, v4, v5",
@@ -434,7 +620,12 @@ constexpr const char* Names[7] = {
 };
 
 void Fill(std::uint32_t tid, std::uint32_t* words) {
-    std::copy(std::begin(Rows[Chunk * Threads + tid]), std::end(Rows[Chunk * Threads + tid]), words);
+    const auto& row = Denorm16 < 4u ? DenormalRows[tid] : Rows[Chunk * Threads + tid];
+    std::copy(std::begin(row), std::end(row), words);
+    if (SourceForm == 2u) {
+        words[0] = (words[0] << 16u) | 0x1234u;
+        words[1] = (words[1] << 16u) | 0x5678u;
+    }
 }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -449,7 +640,7 @@ std::string Hex(std::uint32_t value) {
 }
 
 void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string(Ieee ? "f16 min max nan, IEEE mode: row " : "f16 min max nan: row ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+    Require(actual == expected, std::string(Ieee ? "f16 min max nan, IEEE mode: row " : "f16 min max nan: row ") + std::to_string(tid) + ", denorm16 " + std::to_string(Denorm16) + ", source form " + std::to_string(SourceForm) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
@@ -460,7 +651,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
+    const std::span<const std::uint32_t> code = SourceForm == 1u ? std::span<const std::uint32_t>(SdwaLowCode) : (SourceForm == 2u ? std::span<const std::uint32_t>(SdwaHighCode) : std::span<const std::uint32_t>(Code));
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -470,7 +661,8 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
+    if (Denorm16 < 4u) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{Denorm16 << 6u, true, Ieee, false};
+    else if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -480,6 +672,12 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* in = &Input[tid * Inputs];
         const std::uint32_t* out = &Output[tid * Results];
+        if (Denorm16 < 4u) {
+            const auto& expected = Ieee ? ((Denorm16 & 1u) != 0u ? DenormalKeptIeee : DenormalFlushedIeee) : ((Denorm16 & 1u) != 0u ? DenormalKept : DenormalFlushed);
+            constexpr std::array<std::uint32_t, 4> indices{0u, 1u, 5u, 6u};
+            for (std::uint32_t i = 0u; i < indices.size(); ++i) Expect(tid, out[indices[i]], expected[tid][i], Names[indices[i]]);
+            continue;
+        }
         for (std::uint32_t i = 0; i < 7; ++i) {
             Expect(Chunk * Threads + tid, out[i], (Ieee ? ExpectedIeee : Expected)[Chunk * Threads + tid][i], Names[i]);
         }
@@ -498,6 +696,13 @@ int main() {
                 Run(*device);
                 Check();
             }
+            for (SourceForm = 0u; SourceForm < 3u; ++SourceForm) {
+                for (Denorm16 = 0u; Denorm16 < 4u; ++Denorm16) {
+                    Run(*device);
+                    Check();
+                }
+            }
+            SourceForm = 0u;
         }
         std::puts("f16 min max nan tests passed");
         return 0;
