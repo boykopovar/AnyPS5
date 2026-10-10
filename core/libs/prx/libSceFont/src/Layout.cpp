@@ -428,9 +428,12 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
     metrics->Horizontal.bearingX = static_cast<float>(slot->metrics.horiBearingX) / 64.0f * ratioX;
     metrics->Horizontal.bearingY = static_cast<float>(slot->metrics.horiBearingY) / 64.0f * ratioY;
     metrics->Horizontal.advance = static_cast<float>(slot->metrics.horiAdvance) / 64.0f * ratioX;
-    metrics->Vertical.bearingX = 0.0f;
-    metrics->Vertical.bearingY = 0.0f;
-    metrics->Vertical.advance = 0.0f;
+    const bool vertical = FT_HAS_VERTICAL(face);
+    const FT_Pos vertBearingX = vertical ? slot->metrics.vertBearingX : slot->metrics.horiBearingX - slot->metrics.horiAdvance / 2;
+    const FT_Pos vertBearingY = vertical ? slot->metrics.vertBearingY : (slot->metrics.vertAdvance - slot->metrics.height) / 2;
+    metrics->Vertical.bearingX = static_cast<float>(vertBearingX) / 64.0f * ratioX;
+    metrics->Vertical.bearingY = static_cast<float>(vertBearingY) / 64.0f * ratioY;
+    metrics->Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f * ratioY;
     return finish(SCE_FONT_OK);
 }
 
