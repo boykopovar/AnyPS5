@@ -101,7 +101,9 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
 }
 
 bool ValidateSampleLocations(const Context& context, const State& state) {
-    const bool enabled = (context.sampleLocationSampleCounts & state.samples) != 0 && (!state.depth || SampleLocationsCompatibleDepth(context, state.depth->format, state.depth->samples));
+    const bool extensionSupportsSamples = (context.sampleLocationSampleCounts & state.samples) != 0;
+    Require(!state.customSampleLocations || extensionSupportsSamples, "custom sample locations require VK_EXT_sample_locations support for the draw's sample count");
+    const bool enabled = extensionSupportsSamples && (!state.depth || SampleLocationsCompatibleDepth(context, state.depth->format, state.depth->samples));
     Require(!state.customSampleLocations || enabled, "custom sample locations require a compatible depth format and sample count");
     return enabled;
 }
