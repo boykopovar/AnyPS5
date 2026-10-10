@@ -341,6 +341,16 @@ void matcherSubstitutions() {
     overlongMonitorx.insert(overlongMonitorx.end(), {0x0F, 0x01, 0xFA});
     const auto overlong = match(overlongMonitorx);
     require(overlong && overlong->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "MONITORX longer than 15 bytes was replaced instead of failing");
+    const auto mcommit = match({0xF3, 0x0F, 0x01, 0xFA});
+    require(mcommit && mcommit->Lowering == Codegen::Amd64OnlyLowering::InPlace && mcommit->ReplacementBytes == Bytes{0xF8, 0x0F, 0x1F, 0x00} && mcommit->InstructionName == "MCOMMIT", "MCOMMIT was not replaced by CLC");
+    const auto prefixedMcommit = match({0x2E, 0xF3, 0x0F, 0x01, 0xFA});
+    require(prefixedMcommit && prefixedMcommit->ReplacementBytes == Bytes{0xF8, 0x0F, 0x1F, 0x40, 0x00}, "Prefixed MCOMMIT was not padded to its length");
+    const auto lockedMcommit = match({0xF0, 0xF3, 0x0F, 0x01, 0xFA});
+    require(lockedMcommit && lockedMcommit->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK MCOMMIT was replaced instead of failing");
+    Bytes overlongMcommit(13, 0x2E);
+    overlongMcommit.insert(overlongMcommit.end(), {0xF3, 0x0F, 0x01, 0xFA});
+    const auto overlongMcommitMatch = match(overlongMcommit);
+    require(overlongMcommitMatch && overlongMcommitMatch->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "MCOMMIT longer than 15 bytes was replaced instead of failing");
     const auto clzero = match({0x0F, 0x01, 0xFC});
     require(clzero && clzero->Lowering == Codegen::Amd64OnlyLowering::Trampoline && clzero->InstructionName == "CLZERO", "CLZERO was not lowered through a stub");
     for (const std::uint8_t prefix : {std::uint8_t{0x66}, std::uint8_t{0xF2}, std::uint8_t{0xF3}}) {

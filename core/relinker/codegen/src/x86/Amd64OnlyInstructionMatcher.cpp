@@ -266,7 +266,7 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
         return _unsupported(kRdpru, length);
 
     if (instr.IsMcommit())
-        return _unsupported(kMcommit, length);
+        return _validWait(instr) ? _inPlace(kMcommit, length, {0xF8}) : _unsupported(kMcommit, length);
 
     return std::nullopt;
 }
