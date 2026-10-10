@@ -1280,6 +1280,21 @@ void DepthClipTests() {
     queue.context[0xb4] = std::bit_cast<std::uint32_t>(2.0f);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "inverted viewport depth clamp");
     queue.context[0xb4] = 0;
+    auto collapsedQueue = makeState();
+    collapsedQueue.context[0x10f] = 0;
+    collapsedQueue.context[0x110] = 0;
+    collapsedQueue.context[0x111] = std::bit_cast<std::uint32_t>(-0.0f);
+    collapsedQueue.context[0x112] = 0;
+    const auto collapsed = AgcDriver::Graphics::DecodeState(collapsedQueue);
+    Require(collapsed.scissor.extent.width == 0 && collapsed.scissor.extent.height == 0, "a triangle draw through a zero-scale viewport rasterizes");
+    Require(collapsed.viewport.width > 0 && collapsed.viewport.height > 0 && collapsed.viewport.minDepth == 0 && collapsed.viewport.maxDepth == 1, "a zero-scale viewport did not become a valid Vulkan viewport");
+    collapsedQueue.userConfig[0x242] = 2;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(collapsedQueue); }, "unsupported viewport transform");
+    collapsedQueue.userConfig[0x242] = 4;
+    collapsedQueue.context[0x10f] = std::bit_cast<std::uint32_t>(-0.0f);
+    Require(AgcDriver::Graphics::DecodeState(collapsedQueue).scissor.extent.width == 0, "a negative-zero viewport scale was not collapsed");
+    collapsedQueue.context[0x10f] = std::bit_cast<std::uint32_t>(-1.0f);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(collapsedQueue); }, "unsupported viewport transform");
     for (std::uint32_t bit = 0; bit < 32; ++bit) {
         if (bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
         for (const auto linearBit : {0u, 0x01000000u}) {
