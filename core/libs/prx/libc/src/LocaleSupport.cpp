@@ -176,19 +176,17 @@ constexpr auto g_classificationTable = MakeClassificationTable();
 constexpr auto g_lowerTable = MakeCaseTable(false);
 constexpr auto g_upperTable = MakeCaseTable(true);
 
-void ValidateCharacter(int value) {
-    if (value != EOF && (value < 0 || value > UCHAR_MAX)) throw std::invalid_argument("Invalid character value");
+bool IsSingleByte(int value) {
+    return value >= 0 && value <= UCHAR_MAX;
 }
 
 int ClassifyCharacter(int value, std::ctype_base::mask mask) {
-    ValidateCharacter(value);
-    if (value == EOF) return 0;
+    if (!IsSingleByte(value)) return 0;
     return std::use_facet<std::ctype<char>>(std::locale::classic()).is(mask, static_cast<char>(value));
 }
 
 int ConvertCharacter(int value, bool upper) {
-    ValidateCharacter(value);
-    if (value == EOF) return EOF;
+    if (!IsSingleByte(value)) return value;
     const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
     const auto character = static_cast<char>(value);
     return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));

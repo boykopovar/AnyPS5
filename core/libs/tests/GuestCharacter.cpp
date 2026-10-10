@@ -1,8 +1,10 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cctype>
+#include <climits>
 #include <clocale>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 extern "C" {
 int APS5_VABI isupper_nid_postfix(int);
 int APS5_VABI islower_nid_postfix(int);
@@ -41,5 +43,15 @@ int main() {
         Require(tolower_nid_postfix(c) == std::tolower(c));
         Require(toupper_nid_postfix(c) == _Getptoupper_nid_postfix()[c]);
         Require(tolower_nid_postfix(c) == _Getptolower_nid_postfix()[c]);
+    }
+    int (APS5_VABI* const classifiers[])(int) = {
+        isupper_nid_postfix, islower_nid_postfix, isalpha_nid_postfix, isdigit_nid_postfix, isalnum_nid_postfix,
+        isspace_nid_postfix, isblank_nid_postfix, iscntrl_nid_postfix, isprint_nid_postfix, isgraph_nid_postfix,
+        ispunct_nid_postfix, isxdigit_nid_postfix,
+    };
+    for (const int c : {-2, -23, -128, -129, 256, 257, 0x100, 0x1e9, 0xffff, 0x10000, INT_MAX, INT_MIN}) {
+        for (const auto classify : classifiers) Require(classify(c) == 0);
+        Require(toupper_nid_postfix(c) == c);
+        Require(tolower_nid_postfix(c) == c);
     }
 }
