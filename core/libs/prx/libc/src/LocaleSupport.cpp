@@ -24,6 +24,8 @@
 extern "C" {
 void* APS5_VABI _Znwm_nid_postfix(std::size_t size);
 void APS5_VABI _ZdlPv_nid_postfix(void* pointer);
+std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
+std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 }
 
 namespace {
@@ -282,18 +284,18 @@ void APS5_VABI _ZNSt8_LocinfoD1Ev_nid_postfix(GuestLocale::LocinfoStorage* self)
 
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st) {
     if (dst == nullptr || src == nullptr || st == nullptr || count == 0) throw std::invalid_argument("_Mbtowcx: invalid conversion arguments");
-    wchar_t converted{};
-    const auto result = std::mbrtowc(&converted, src, count, st);
+    std::uint16_t converted{};
+    const auto result = mbrtowc_nid_postfix(&converted, src, count, st);
     if (result == static_cast<std::size_t>(-1)) throw std::runtime_error("_Mbtowcx: invalid multibyte character");
     if (result == static_cast<std::size_t>(-2)) throw std::runtime_error("_Mbtowcx: incomplete multibyte character");
-    if (result > static_cast<std::size_t>(std::numeric_limits<int>::max()) || static_cast<std::uint32_t>(converted) > 0xffff) throw std::runtime_error("_Mbtowcx: conversion exceeds guest character limits");
+    if (result > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("_Mbtowcx: conversion exceeds guest character limits");
     *dst = static_cast<std::uint16_t>(converted);
     return static_cast<int>(result);
 }
 
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, mbstate_t* st) {
     if (dst == nullptr || st == nullptr) throw std::invalid_argument("_Wctombx: invalid conversion arguments");
-    const auto result = std::wcrtomb(dst, static_cast<wchar_t>(src), st);
+    const auto result = wcrtomb_nid_postfix(dst, src, st);
     if (result == static_cast<std::size_t>(-1)) throw std::runtime_error("_Wctombx: invalid wide character");
     if (result > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("_Wctombx: conversion size exceeds guest limits");
     return static_cast<int>(result);
