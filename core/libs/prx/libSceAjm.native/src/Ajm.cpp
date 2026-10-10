@@ -144,13 +144,13 @@ struct Instance {
     }
 };
 
-std::mutex g_lock;
-std::map<std::uint32_t, std::unique_ptr<Instance>> g_instances;
+std::mutex& g_lock = *new std::mutex();
+std::map<std::uint32_t, std::unique_ptr<Instance>>& g_instances = *new std::map<std::uint32_t, std::unique_ptr<Instance>>();
 std::atomic<std::uint32_t> g_nextContext{1};
 std::atomic<std::uint32_t> g_nextInstance{1};
 std::atomic<std::uint32_t> g_nextBatch{1};
-std::mutex g_batchLock;
-std::set<std::uint32_t> g_batches;
+std::mutex& g_batchLock = *new std::mutex();
+std::set<std::uint32_t>& g_batches = *new std::set<std::uint32_t>();
 
 enum class JobKind : std::uint32_t {
     Initialize = 1,
