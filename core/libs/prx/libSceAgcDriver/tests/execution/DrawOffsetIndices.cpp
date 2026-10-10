@@ -285,10 +285,10 @@ public:
         pixelInfo.wave32 = true;
         pixelInfo.targetOutputMode[0] = 9u;
         pixelInfo.targetExportMapping.fill(0xe4u);
-        ShaderRecompiler::RecompileRequest pixelRequest{{ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}}, {32u, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}}, device->Target(), {0u, 0u, vertexPush, 128u - vertexPush}};
+        ShaderRecompiler::RecompileRequest pixelRequest{{ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}}, {32u, 0u, {}, std::nullopt, pixelInfo, std::nullopt, {}}, device->Target(), PixelPushLayout(vertexPush, device->Target())};
         pixelRequest.useCache = false;
         const auto pixel = ShaderRecompiler::Recompile(pixelRequest);
-        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, vertexPush}}};
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0u}, {ShaderStage::Fragment, &pixel, PixelPushOffset(vertexPush, device->Target())}}};
         Output.fill(Unwritten);
         device->Draw(State(), draw, shaders);
         device->WaitIdle();

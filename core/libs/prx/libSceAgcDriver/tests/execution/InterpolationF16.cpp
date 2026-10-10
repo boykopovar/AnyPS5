@@ -133,7 +133,7 @@ ShaderRecompiler::RecompileResult RecompilePixel(std::span<const std::uint32_t> 
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, pixelUserData, std::nullopt, PixelStage(waveSize, input0), std::nullopt, pixelMemory},
         target,
-        {0, 0, pushOffset, 128 - pushOffset}
+        PixelPushLayout(pushOffset, target)
     };
     fragment.useCache = false;
     fragment.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
@@ -162,7 +162,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     const auto pixelResult = RecompilePixel(PixelCode, waveSize, Fp16Input, target, vertexPush);
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, vertexPush}
+        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
     }};
 
     AgcDriver::Graphics::State state{};

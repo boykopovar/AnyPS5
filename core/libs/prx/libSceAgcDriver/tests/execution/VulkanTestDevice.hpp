@@ -27,4 +27,13 @@ inline std::unique_ptr<AgcDriver::VulkanDevice> OpenVulkanTestDevice() {
     }
 }
 
+inline std::uint32_t PixelPushOffset(std::uint32_t vertexPush, const ShaderRecompiler::SpirvTarget& target) {
+    return AgcDriver::Graphics::StagePushOffset(vertexPush, ShaderRecompiler::ShaderStage::Fragment, target.fixedPushSlots);
+}
+
+inline ShaderRecompiler::BindingLayout PixelPushLayout(std::uint32_t vertexPush, const ShaderRecompiler::SpirvTarget& target) {
+    const auto offset = PixelPushOffset(vertexPush, target);
+    return {0, 0, offset, AgcDriver::Graphics::PipelinePushSlotBytes - offset % AgcDriver::Graphics::PipelinePushSlotBytes};
+}
+
 #endif

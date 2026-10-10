@@ -1494,7 +1494,7 @@ void pushDrawConstants(const Pipeline& pipeline, VkCommandBuffer commands, const
     const auto firstVertex = draw.indirect ? draw.indirect->vertexConstant : draw.firstVertex;
     const auto firstInstance = draw.indirect ? draw.indirect->instanceConstant : draw.firstInstance;
     const std::array<std::uint32_t, ShaderRecompiler::MeshDrawPushBytes / 4> words{draw.indexCount, firstVertex, firstInstance, draw.indexed ? draw.indexSize : 0u, static_cast<std::uint32_t>(meshArguments), static_cast<std::uint32_t>(meshArguments >> 32u)};
-    static_assert(ShaderRecompiler::MeshDrawPushOffsetBytes + ShaderRecompiler::MeshDrawPushBytes == PipelinePushConstantBytes);
+    static_assert(ShaderRecompiler::MeshDrawPushOffsetBytes + ShaderRecompiler::MeshDrawPushBytes == PipelinePushSlotBytes);
     std::memcpy(block.data() + ShaderRecompiler::MeshDrawPushOffsetBytes, words.data(), sizeof(words));
     pipeline.PushConstants(commands, stages | VK_SHADER_STAGE_MESH_BIT_EXT, block);
 }
@@ -1611,10 +1611,25 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
     const bool capture = CaptureInputsEnabled();
     const bool meshIndirect = state.stages.mesh && args != nullptr;
-    const bool continued = !capture && !readsTarget && !gpuIndirect && !meshIndirect && recorder->ContinuesRenderPass(passKey);
+    const bool addressBased = resources.HoldsLease();
+    auto passReads = addressBased ? std::vector<std::pair<std::uint64_t, std::uint64_t>>{} : resources.DeviceReads();
+    if (gpuIndirect) {
+        passReads.emplace_back(args->arguments, args->arguments + args->RangeBytes());
+        if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
+    }
+    const auto passImages = resources.StorageImages();
+    std::vector<std::pair<VkImage, bool>> passAttachments;
+    passAttachments.reserve(record.targets.size());
+    for (const auto& target : record.targets) {
+        if (target != nullptr) passAttachments.emplace_back(target->Image(), true);
+    }
+    const PassAccess passAccess{passReads, resources.GpuWrites(), passImages, passAttachments, addressBased || resources.NeedsCompletion(), addressBased || resources.NeedsCompletion()};
+    const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect, fenced, passAccess);
+    const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
-    const auto commands = continued ? recorder->CommandsInRenderPass() : recorder->Commands();
+    const auto commands = start.commands;
     if (!continued) recorder->PrepareSampleSlot();
     if (capture) captureInputs(context, *recorder, commands, resources, drawBindings, record.targets.empty() || record.targets.front() == nullptr ? 0 : record.targets.front()->Descriptor().baseAddress);
     // The draw's [gputime] class range: from its first barrier to the pass's trailing barrier (a
@@ -1643,9 +1658,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             proxy->RecordAttachmentProxyLoad(commands, VK_IMAGE_LAYOUT_GENERAL);
             countBarrier(2);
         }
-        const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
-        context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | inputs.shaderStages, 0, 1, &before, 0, nullptr, 0, nullptr);
-        countBarrier(1);
+        if (start.barrier) {
+            const VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
+            context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+            countBarrier(1);
+        }
         APS5_LOG_CHARS_OUT_DEBUG("Upload barrier recorded");
         if (meshIndirect) {
             meshArguments = recordMeshArguments(context, commands, recorder, true, state, draw, *record.indirect, countBarrier);
@@ -1677,9 +1694,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     if (args != nullptr) CountIndirectDraw(record.indirect->path, record.indirect->readMs, rewritten);
     auto checkRecords = indirectRecordCheck(record.indirect);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
-    // The pass stays open for the next draw of these attachments; the recorder ends it (and the
-    // draw class range) before anything else is recorded. A draw that wrote memory owes the next
-    // one a barrier, so its pass cannot be continued.
     std::function<void(VkCommandBuffer)> storeProxies;
     if (!continued && !record.proxies.empty()) {
         storeProxies = [proxies = record.proxies](VkCommandBuffer passCommands) {
@@ -1689,7 +1703,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             }
         };
     }
-    recorder->LeaveRenderPassOpen(passKey, drawTiming, !resources.WritesMemory(), std::move(storeProxies));
+    recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
     timer.phase(PhaseKeep);

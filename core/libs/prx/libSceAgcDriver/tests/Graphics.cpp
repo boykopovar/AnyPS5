@@ -1918,11 +1918,16 @@ void pushConstantTests() {
     std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 8}}};
     Require(AgcDriver::Graphics::PushConstantStages(shaders) == (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT), "push constant stage union changed");
     const auto bytes = AgcDriver::Graphics::AssemblePushConstants(shaders);
-    Require(bytes.size() == 128 && bytes[0] == std::byte{1} && bytes[7] == std::byte{1} && bytes[8] == std::byte{2} && bytes[19] == std::byte{2} && bytes[20] == std::byte{0} && bytes[127] == std::byte{0}, "assembled push constants are misplaced");
+    Require(bytes.size() == AgcDriver::Graphics::PipelinePushConstantBytes && bytes[0] == std::byte{1} && bytes[7] == std::byte{1} && bytes[8] == std::byte{2} && bytes[19] == std::byte{2} && bytes[20] == std::byte{0} && bytes[127] == std::byte{0} && bytes.back() == std::byte{0}, "assembled push constants are misplaced");
     shaders[1].pushConstantOffset = 4;
     expectFailure([&] { AgcDriver::Graphics::AssemblePushConstants(shaders); }, "overlap");
     shaders[1].pushConstantOffset = 120;
+    expectFailure([&] { AgcDriver::Graphics::AssemblePushConstants(shaders); }, "crosses a push constant slot");
+    shaders[1].pushConstantOffset = AgcDriver::Graphics::PipelinePushConstantBytes - 4;
     expectFailure([&] { AgcDriver::Graphics::AssemblePushConstants(shaders); }, "outside the pipeline push constant block");
+    shaders[1].pushConstantOffset = AgcDriver::Graphics::PipelinePushSlotBytes;
+    const auto slotted = AgcDriver::Graphics::AssemblePushConstants(shaders);
+    Require(slotted[128] == std::byte{2} && slotted[139] == std::byte{2} && slotted[8] == std::byte{0}, "a pixel shader in its push slot was misplaced");
     shaders[1].pushConstantOffset = 2;
     expectFailure([&] { AgcDriver::Graphics::AssemblePushConstants(shaders); }, "DWORD aligned");
     shaders[1].pushConstantOffset = 8;

@@ -49,7 +49,8 @@ struct UniformFillPlan {
     std::array<IrValue*, 4> values{};
 };
 
-inline constexpr std::uint32_t NativePushConstantSize = sizeof(PushData);
+inline constexpr std::uint32_t NativePushSlotSize = sizeof(PushData);
+inline constexpr std::uint32_t NativePushConstantSize = 2u * NativePushSlotSize;
 
 struct IrResourcePlan {
     IrShaderStage stage = IrShaderStage::Unknown;

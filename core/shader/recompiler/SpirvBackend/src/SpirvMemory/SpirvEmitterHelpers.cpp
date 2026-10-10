@@ -120,7 +120,7 @@ std::uint32_t PushConstantArrayType(SpirvEmitterState& state) {
 
 std::uint32_t PushConstantBlockType(SpirvEmitterState& state) {
     return state.module.DecoratedType(spv::OpTypeStruct,
-        {{spv::OpMemberDecorate, {0u, spv::DecorationOffset, 0u}},
+        {{spv::OpMemberDecorate, {0u, spv::DecorationOffset, state.program.Metadata().bindings.PushSlotDword() * 4u}},
          {spv::OpDecorate, {spv::DecorationBlock}}},
         PushConstantArrayType(state));
 }

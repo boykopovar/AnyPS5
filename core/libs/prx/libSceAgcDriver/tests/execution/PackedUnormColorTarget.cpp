@@ -217,7 +217,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
         {waveSize, 0, {}, std::nullopt, AgcDriver::Graphics::DecodePixelStageInfo(context, {}), std::nullopt, pixelMemory},
         target,
-        {0, 0, vertexPush, 128 - vertexPush}
+        PixelPushLayout(vertexPush, target)
     };
     const auto handle = ShaderRecompiler::PrepareShader(fragment);
     AgcDriver::DriverDetail::ShaderSnapshot snapshot{codeAddress, 0, 1, {pixelCode.begin(), pixelCode.end()}, {}};
@@ -238,7 +238,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     Require(plain->PipelineVariantId() != pixelResult->PipelineVariantId() && materialize(fragment)->PipelineVariantId() == pixelResult->PipelineVariantId(), "the 10_11_11 unorm packing did not key its own specialization");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, pixelResult.get(), vertexPush}
+        {ShaderStage::Fragment, pixelResult.get(), PixelPushOffset(vertexPush, target)}
     }};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);

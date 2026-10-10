@@ -89,6 +89,9 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     if (layout.pushConstantOffsetBytes + layout.pushConstantSizeBytes > NativePushConstantSize) {
         fail("shader binding layout failed: push constant range exceeds the native push constant size");
     }
+    if (layout.pushConstantSizeBytes != 0u && layout.pushConstantOffsetBytes / NativePushSlotSize != (layout.pushConstantOffsetBytes + layout.pushConstantSizeBytes - 1u) / NativePushSlotSize) {
+        fail("shader binding layout failed: push constant range crosses a stage slot");
+    }
 
     const ShaderInfo& info = program.Resources().info;
 

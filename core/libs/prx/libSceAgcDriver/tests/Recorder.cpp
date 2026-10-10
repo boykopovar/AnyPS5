@@ -205,7 +205,7 @@ public:
                 VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT libraryProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT};
                 VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &libraryProperties};
                 function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
-                context.graphicsPipelineLibrary = library.graphicsPipelineLibrary == VK_TRUE && dynamicState.extendedDynamicState == VK_TRUE && rendering.dynamicRendering == VK_TRUE && libraryProperties.graphicsPipelineLibraryFastLinking == VK_TRUE;
+                context.graphicsPipelineLibrary = library.graphicsPipelineLibrary == VK_TRUE && dynamicState.extendedDynamicState == VK_TRUE && rendering.dynamicRendering == VK_TRUE && libraryProperties.graphicsPipelineLibraryFastLinking == VK_TRUE && properties.properties.limits.maxPushConstantsSize >= PipelinePushConstantBytes;
             }
             rendering = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR, address.pNext, VK_TRUE};
             library = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, &dynamicState, VK_TRUE};
@@ -2799,8 +2799,9 @@ public:
     CoverPass& operator=(const CoverPass&) = delete;
 
     bool Draw(Recorder& recorder) const {
-        const bool continued = recorder.ContinuesRenderPass(PassKey);
-        const auto commands = continued ? recorder.CommandsInRenderPass() : recorder.Commands();
+        const auto start = recorder.StartDrawPass(PassKey, false, false, PassAccess{});
+        const bool continued = start.continued;
+        const auto commands = start.commands;
         if (!continued) {
             recorder.PrepareSampleSlot();
             VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -2812,7 +2813,7 @@ public:
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         recorder.NoteSampledDraw(commands);
         context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
-        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, true, {});
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, false, PassAccess{});
         return continued;
     }
 
@@ -3815,12 +3816,21 @@ void pipelineLibraryTests(const Device& device) {
     input.attributes.push_back({0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0});
     static_cast<void>(lookup());
     Require(counters().built == std::array<std::uint64_t, 4>{2, 1, 1, 2} && counters().linked == 4, "a vertex input change rebuilt more than the vertex input library");
+    Require(StagePushOffset(88, ShaderRecompiler::ShaderStage::Fragment, true) == PipelinePushSlotBytes && StagePushOffset(88, ShaderRecompiler::ShaderStage::Fragment, false) == 88 && StagePushOffset(40, ShaderRecompiler::ShaderStage::TessellationEvaluation, true) == 40, "a stage got the wrong push offset");
+    const auto beforeSlots = counters().built;
+    ShaderRecompiler::RecompileResult otherVertex = vertex;
+    otherVertex.variantId = 14;
+    std::array slotted{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}};
+    static_cast<void>(CachedPipeline(context, state, input, resources, slotted, VK_IMAGE_LAYOUT_GENERAL));
+    slotted.front().program = &otherVertex;
+    static_cast<void>(CachedPipeline(context, state, input, resources, slotted, VK_IMAGE_LAYOUT_GENERAL));
+    Require(counters().built[2] == beforeSlots[2] + 1u && counters().built[1] == beforeSlots[1] + 1u, "a pixel shader in its fixed slot built its library again for another vertex shader");
     fragment.variantId = 13;
     static_cast<void>(lookup());
-    Require(counters().built == std::array<std::uint64_t, 4>{2, 1, 2, 2}, "a new pixel shader rebuilt more than the fragment shader library");
+    Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 3, 2}, "a new pixel shader rebuilt more than the fragment shader library");
     state.colors.front().format = VK_FORMAT_R16G16B16A16_SFLOAT;
     static_cast<void>(lookup());
-    Require(counters().built == std::array<std::uint64_t, 4>{2, 1, 2, 3}, "another target format rebuilt more than the fragment output library");
+    Require(counters().built == std::array<std::uint64_t, 4>{2, 2, 3, 3}, "another target format rebuilt more than the fragment output library");
     ClearCachedPipelines(context.device);
     Require(counters().linked == 0, "clearing the pipelines kept the device's libraries");
     std::cout << "Pipeline library reuse tests passed\n";

@@ -38,7 +38,7 @@ std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dw
     const auto value = state.module.AllocateId();
     if (layout.UsesPushData()) {
         const auto base = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::PushDataOffset, layout.pushDataStartDword);
-        const auto index = Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, dwordIndex));
+        const auto index = Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), base, ConstantU32(state, layout.PushSlotDword())), ConstantU32(state, dwordIndex));
         state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0), index);
     } else if (state.shaderDataStorageVariable != 0) {
         state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0), ConstantU32(state, dwordIndex));

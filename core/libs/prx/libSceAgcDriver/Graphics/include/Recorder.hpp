@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -58,16 +59,13 @@ public:
     // destination access mask.
     void MarkCovered(VkAccessFlags access);
     void MarkShaderReadsCovered() { MarkCovered(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT); }
-    // A recorded draw's render pass (Draw.cpp) is left open after the draw: the next draw of the
-    // same attachments (`key`: the views and the extent) continues it when nothing was recorded in
-    // between and the earlier draw allowed it (`continuable`: it wrote nothing but its
-    // attachments, so no barrier is owed inside the pass), and anything else recorded first ends
-    // it (vkCmdEndRenderPass, one trailing barrier for the pass, the end of the draw class range
-    // `timing`): Commands(), RecordStore and Submit end it; CommandsInRenderPass hands a
-    // continuing draw the command buffer without ending it.
-    bool ContinuesRenderPass(std::uint64_t key) const;
-    VkCommandBuffer CommandsInRenderPass();
-    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool continuable, std::function<void(VkCommandBuffer)> afterPass = {});
+    struct DrawPassStart {
+        VkCommandBuffer commands = VK_NULL_HANDLE;
+        bool continued = false;
+        bool barrier = true;
+    };
+    DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
+    void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
     // DCC "uncompressed" key stores (DccMetadata.cpp StoreUncompressedOnGpu): queued on the open
     // batch and recorded as one run (one barrier pair for every queued fill) at Submit, before a
     // label store (RecordStore), or before a command that writes or reads a queued range (the
@@ -607,14 +605,14 @@ private:
             };
             std::vector<Image> images;
         } tracker;
-        // The render pass a recorded draw left open (see ContinuesRenderPass).
         struct RenderPass {
             bool open = false;
-            bool continuable = false;
+            bool fenced = false;
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(VkCommandBuffer)> afterPass;
         } renderPass;
+        PassHazards passHazards;
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.
         bool hostReadOwed = false;
         // Queued DCC key stores (see QueueKeyStore).
@@ -714,7 +712,7 @@ private:
     // form, toward the host only); returns whether the batch's host-read barrier was included.
     bool closeStoreRun(bool atSubmit = false);
     // Ends the render pass a draw left open (vkCmdEndRenderPass, the pass's trailing barrier).
-    void endOpenRenderPass();
+    void endOpenRenderPass(bool barrier = true);
     // Records the queued key stores as one run (`forWriter`: before a command writing, reading or
     // labelling over one, not at Submit).
     void recordKeyStores(bool forWriter);

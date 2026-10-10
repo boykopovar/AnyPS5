@@ -92,7 +92,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::spa
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {64u, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
-        {0, 0, vertexPush, 128 - vertexPush}
+        PixelPushLayout(vertexPush, target)
     };
     fragment.useCache = false;
     auto pixelResult = ShaderRecompiler::Recompile(fragment);
@@ -102,7 +102,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::spa
         geometry = ShaderRecompiler::BuildBarycentricGeometryShader(vertexResult, pixelResult, target, device.GeometryLimits());
         shaders.push_back({ShaderStage::Geometry, &geometry, 0});
     }
-    shaders.push_back({ShaderStage::Fragment, &pixelResult, vertexPush});
+    shaders.push_back({ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)});
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};

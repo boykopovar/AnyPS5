@@ -78,13 +78,13 @@ void Draw(AgcDriver::VulkanDevice& device, float frontBias, float backBias) {
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
         {WaveSize, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
-        {0, 0, vertexPush, 128 - vertexPush}
+        PixelPushLayout(vertexPush, target)
     };
     fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, vertexPush}
+        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
     }};
 
     AgcDriver::Graphics::State state{};
