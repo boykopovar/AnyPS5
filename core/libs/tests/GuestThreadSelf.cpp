@@ -50,8 +50,8 @@ static constexpr std::intptr_t WorkerRetval = 0x1234;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-static long ThreadIdField(Pthread thread) {
-    long tid = 0;
+static std::int64_t ThreadIdField(Pthread thread) {
+    std::int64_t tid = 0;
     std::memcpy(&tid, static_cast<const void*>(thread), sizeof(tid));
     return tid;
 }
@@ -59,7 +59,7 @@ static long ThreadIdField(Pthread thread) {
 struct WorkerContext {
     Pthread thread = nullptr;
     Pthread selfFromWorker = nullptr;
-    long workerTid = 0;
+    std::int64_t workerTid = 0;
     int workerThreadId = 0;
     bool workerStackReported = false;
     PthreadMutex* mutex = nullptr;
@@ -90,7 +90,7 @@ int main() {
     const Pthread mainSelf = scePthreadSelf();
     Require(mainSelf != nullptr);
     Require(scePthreadSelf() == mainSelf);
-    const long mainTid = ThreadIdField(mainSelf);
+    const std::int64_t mainTid = ThreadIdField(mainSelf);
     Require(mainTid != 0);
     Require(scePthreadGetthreadid() == static_cast<int>(mainTid));
     int local = 0;
