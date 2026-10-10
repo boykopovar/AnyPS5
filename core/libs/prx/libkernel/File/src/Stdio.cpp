@@ -138,7 +138,7 @@ std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_
     }
     if (!ok) {
         if (!write && error == ERROR_HANDLE_EOF) return 0;
-        errno = EIO;
+        errno = error == ERROR_ACCESS_DENIED ? EBADF : EIO;
         return -1;
     }
     return done;
@@ -313,23 +313,24 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
 
 int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
     if (length < 0) {
-        APS5_INVALID_ARG_EX;
+        return PosixFailure(GUEST_EINVAL);
     }
 #ifdef _WIN32
     int error = NativeFtruncate(d, length);
     if (error != 0) {
-        throw std::runtime_error(std::string(__func__) + ": ftruncate failed, fd=" + std::to_string(d) + ", error=" + std::to_string(error));
+        if (error == EACCES) error = GUEST_EINVAL;
+        return PosixFailure(SceErrorFromErrno(error) & 0xffff);
     }
 #else
     if (NativeFtruncate(d, length) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": ftruncate failed, fd=" + std::to_string(d) + ", errno=" + std::to_string(errno));
+        return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     }
 #endif
     return 0;
 }
 
 int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
-    return ftruncate_nid_postfix(d, length);
+    return ftruncate_nid_postfix(d, length) == 0 ? 0 : SceErrorFromErrno(*__error_nid_postfix());
 }
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
@@ -577,11 +578,21 @@ static bool OpenIovecs(const KernelIovec* iov, int iovcnt, std::deque<GuestArena
 #ifdef _WIN32
 
 int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset) {
- return pread_nid_postfix(d, buf, nbytes, offset);
+    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(GUEST_EFAULT);
+    if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
+    const GuestArena::HostWrite destination(buf, nbytes);
+    if (!destination.Open()) return SceErrorFromErrno(GUEST_EFAULT);
+    char empty = 0;
+    const auto result = NativePread(d, nbytes == 0 && buf == nullptr ? &empty : buf, nbytes, offset);
+    return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
 int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
- return pwrite_nid_disambig1_nid_postfix(d, buf, nbytes, offset);
+    if (buf == nullptr && nbytes != 0) return SceErrorFromErrno(GUEST_EFAULT);
+    if (offset < 0) return SceErrorFromErrno(GUEST_EINVAL);
+    char empty = 0;
+    const auto result = NativePwrite(d, nbytes == 0 && buf == nullptr ? &empty : buf, nbytes, offset);
+    return result < 0 ? SceErrorFromErrno(errno) : result;
 }
 
 static std::int64_t TransferIovecs(int d, const KernelIovec* iov, int iovcnt, const std::int64_t* offset, bool write) {

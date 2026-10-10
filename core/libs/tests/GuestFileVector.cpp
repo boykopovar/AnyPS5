@@ -36,6 +36,9 @@ std::int64_t APS5_VABI sceKernelReadv(int, const GuestIovec*, int);
 std::int64_t APS5_VABI sceKernelWritev(int, const GuestIovec*, int);
 std::int64_t APS5_VABI sceKernelPreadv(int, const GuestIovec*, int, std::int64_t);
 std::int64_t APS5_VABI sceKernelPwritev(int, const GuestIovec*, int, std::int64_t);
+std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
+std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
+int APS5_VABI sceKernelFtruncate(int, std::int64_t);
 }
 
 static void Check(bool value, int line) {
@@ -120,11 +123,36 @@ int main() {
     Require(sceKernelPwritev(file, writes, 2, -1) == ErrorEinval);
     Require(Contents(path) == "01ABCDE7ABCDE");
 
+    char byte = 0;
+    Require(sceKernelPread(file, &byte, 1, 2) == 1 && byte == 'A');
+    Require(sceKernelPread(file, nullptr, 0, 0) == 0);
+    Require(sceKernelPwrite(file, nullptr, 0, 0) == 0);
+    Require(sceKernelPread(file, nullptr, 1, 0) == ErrorEfault);
+    Require(sceKernelPwrite(file, nullptr, 1, 0) == ErrorEfault);
+    Require(sceKernelPread(file, &byte, 1, -1) == ErrorEinval);
+    Require(sceKernelPwrite(file, &byte, 1, -1) == ErrorEinval);
+    Require(sceKernelFtruncate(file, -1) == ErrorEinval);
+    const int readOnly = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(readOnly >= 0);
+    Require(sceKernelPwrite(readOnly, "X", 1, 0) == ErrorEbadf);
+    Require(sceKernelFtruncate(readOnly, 0) == ErrorEinval);
+    Require(sceKernelClose(readOnly) == 0);
+    const int writeOnly = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_WRONLY, 0);
+    Require(writeOnly >= 0);
+    Require(sceKernelPread(writeOnly, &byte, 1, 0) == ErrorEbadf);
+    Require(sceKernelClose(writeOnly) == 0);
+    Require(Contents(path) == "01ABCDE7ABCDE");
+    Require(sceKernelFtruncate(file, 5) == 0);
+    Require(Contents(path) == "01ABC");
+
     Require(sceKernelClose(file) == 0);
     Require(sceKernelReadv(file, reads, 2) == ErrorEbadf);
     Require(sceKernelWritev(file, writes, 2) == ErrorEbadf);
     Require(sceKernelPreadv(file, reads, 2, 0) == ErrorEbadf);
     Require(sceKernelPwritev(file, writes, 2, 0) == ErrorEbadf);
+    Require(sceKernelPread(file, &byte, 1, 0) == ErrorEbadf);
+    Require(sceKernelPwrite(file, &byte, 1, 0) == ErrorEbadf);
+    Require(sceKernelFtruncate(file, 0) == ErrorEbadf);
 
     int ends[2] = {};
     Require(MakePipe(ends) == 0);
