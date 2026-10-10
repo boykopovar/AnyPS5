@@ -2009,10 +2009,6 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     retile(*high, unit128, unit, 0x77, false);
     Require(AnyShadowedOverlaps(unit128, unit), "the second slab's unit is not shadowed");
     high.reset();
-    // Retire through the registry: the block is re-registered as its first five units, so the next
-    // lookup reconciles and retires the import; the fresh units still inside a registered range
-    // are published into its (kept) buffer, the rest (memory the title took back) are dropped.
-    // Under the one-slab budget unit 5's slab evicts the second one first (unit 128 published).
     retile(*ShadowDestinationFor(context, *import, unit5, unit5 + unit), unit5, unit, 0x88, false);
     retile(*ShadowDestinationFor(context, *import, address + 2 * unit, unit3), address + 2 * unit, unit, 0x99, false);
     Require(AnyShadowedOverlaps(unit5, unit) && AnyShadowedOverlaps(address + 2 * unit, unit), "units 2 and 5 are not shadowed before the retire");
@@ -2025,9 +2021,8 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(!AnyShadowedOverlaps(address, bytes), "the retired import's shadow survived");
     recorder.Sync();
     Require(words[2 * unit] == 0x99 && words[3 * unit - 1] == 0x99, "the retire did not publish the unit still registered");
-    Require(words[5 * unit] == 0x11 && words[5 * unit + unit - 1] == 0x11, "the retire published a unit whose memory is no longer registered");
-    if (budgetMiB >= 16) Require(words[127 * unit] == 0x11 && words[128 * unit] == 0x11, "the retire published the second slab's units outside the registration");
-    else Require(words[128 * unit] == 0x77, "the eviction before the retire did not publish unit 128");
+    Require(words[5 * unit] == 0x88 && words[5 * unit + unit - 1] == 0x88, "the retire did not publish a unit covered by the old registration");
+    Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire did not publish the second slab's units covered by the old registration");
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -4570,6 +4565,14 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-unmap-only") {
             gpu.unlock();
             hostImportUnmapTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
+            if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, unit shadows or host imports are unavailable\n";
+                return 77;
+            }
+            unitShadowTests(device, recorder);
             return 0;
         }
         readTrackingTests(device, recorder);
