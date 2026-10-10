@@ -83,6 +83,8 @@ TextureKey MakeTextureKey(VkDevice device, std::span<const std::uint32_t> words,
     TextureKey key{device, {}, {static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)}};
     key.depthCompare = depthCompare;
     std::copy(words.begin(), words.end(), key.words.begin());
+    key.words[5] &= ~((0xfffu << 8u) | (1u << 25u));
+    key.words[6] &= ~0xffu;
     return key;
 }
 
@@ -776,6 +778,14 @@ std::uint64_t SampledTextureCacheBudget(const Context& context) {
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words) {
     const auto resource = DecodeTextureResource(words);
     return cachedTexture(context, words, resource, ViewComponents(resource));
+}
+
+bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second) {
+    Require(first.size() == 8 && second.size() == 8, "sampled texture keys take eight descriptor words");
+    const VkComponentMapping components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    const auto firstKey = MakeTextureKey(VK_NULL_HANDLE, first, components);
+    const auto secondKey = MakeTextureKey(VK_NULL_HANDLE, second, components);
+    return firstKey == secondKey && TextureKeyHash{}(firstKey) == TextureKeyHash{}(secondKey);
 }
 
 void FlushCachedTextures(VkDevice device) {

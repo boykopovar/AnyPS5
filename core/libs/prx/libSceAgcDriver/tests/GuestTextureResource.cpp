@@ -1,6 +1,7 @@
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <algorithm>
 #include <array>
@@ -408,4 +409,24 @@ void RunGuestTextureResourceTests() {
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2D), "3D shape must never match a guest dimension");
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2DArray), "3D shape must never match a guest dimension");
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::kCube), "3D shape must never match a guest dimension");
+
+    Fields streamed = base;
+    streamed.minLodWarn = 0xabc;
+    streamed.mipStatsCntEn = true;
+    streamed.mipStatsCntId = 0x5a;
+    Require(SampledTexturesShareEntry(pack(base), pack(streamed)), "T#s differing only in MIN_LOD_WARN, MIP_STATS_COUNTER_EN and MIP_STATS_COUNTER_ID must share a sampled texture entry");
+    for (const auto& field : {&Fields::minLodWarn, &Fields::mipStatsCntId}) {
+        Fields one = base;
+        one.*field = 1;
+        Require(SampledTexturesShareEntry(pack(base), pack(one)), "a T# differing in one streaming-feedback field must share a sampled texture entry");
+    }
+    Fields moved = streamed;
+    moved.base40 = base.base40 + 1;
+    Require(!SampledTexturesShareEntry(pack(base), pack(moved)), "T#s with different base addresses must not share a sampled texture entry");
+    Fields reformatted = streamed;
+    reformatted.format = 57;
+    Require(!SampledTexturesShareEntry(pack(base), pack(reformatted)), "T#s with different formats must not share a sampled texture entry");
+    Fields cornered = base;
+    cornered.cornerSample = true;
+    Require(!SampledTexturesShareEntry(pack(base), pack(cornered)), "T#s differing in a field next to the feedback fields must not share a sampled texture entry");
 }

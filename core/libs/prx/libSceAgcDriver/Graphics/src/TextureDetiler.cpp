@@ -115,8 +115,8 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
     std::array<std::uint32_t, 22> values{elementBytes, BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
     if (thick) {
-        const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : 0u;
-        Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_64KB_S or SW_64KB_S_X");
+        const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : tileMode == TextureTileMode::kD64KBX ? 0x11au : 0u;
+        Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_64KB_S, SW_64KB_S_X or SW_64KB_D_X");
         const auto* equation = FindTextureSwizzleEquation(thickMode, elementBytes);
         Require(equation != nullptr, "no thick swizzle equation for the element size");
         values[2] = 2u;

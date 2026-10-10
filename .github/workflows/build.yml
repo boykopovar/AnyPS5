@@ -18,7 +18,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 env:
   CONFIGURE: >-
@@ -200,7 +200,7 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: linux
-          save: false
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - name: Install lavapipe for the GPU execution tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
@@ -264,7 +264,7 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: windows
-          save: false
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - shell: cmd
         run: cmake -S . -B build %CONFIGURE%

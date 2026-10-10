@@ -1341,13 +1341,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
-    if (import == nullptr) {
-        // Memory the GPU has no view of: the store is a completion action of the batch (it runs after
-        // the recorded work, in order, like a label behind write-backs) instead of a device drain.
-        if (drain) return 3;
-        recorder.AfterCompletions(address, bytes, stamp, queue, false);
-        return 6;
-    }
+    if (import == nullptr) return 3;
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
     // FlushPending of their own.
