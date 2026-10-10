@@ -46,6 +46,21 @@ int main() {
     Require(*__error_nid_postfix() == 20);
     Require(opendir_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
     Require(closedir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    const std::u8string folder = u8"セーブ";
+    const std::u8string file = u8"été.txt";
+    Require(std::filesystem::create_directory(root / std::filesystem::path(folder)));
+    { std::ofstream stream(root / std::filesystem::path(folder) / std::filesystem::path(file)); stream << "x"; }
+    const std::string guestFolder = root.string() + "/" + std::string(folder.begin(), folder.end());
+    void* unicode = opendir_nid_postfix(guestFolder.c_str());
+    Require(unicode != nullptr);
+    std::map<std::string, int> names;
+    while (auto* entry = readdir_nid_postfix(unicode)) {
+        Require(entry->nameLength == std::strlen(entry->name));
+        names[entry->name] = entry->type;
+    }
+    Require(names.at(std::string(file.begin(), file.end())) == 8 && names.size() == 3);
+    Require(closedir_nid_postfix(unicode) == 0);
+    std::filesystem::remove_all(root / std::filesystem::path(folder));
     std::filesystem::remove(root / "sample.txt");
     std::filesystem::remove(root / "subdirectory");
     std::filesystem::remove(root);
