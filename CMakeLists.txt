@@ -3,8 +3,14 @@ project(Relinker CXX)
 
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
+function(set_cxx_standard target std)
+  target_compile_features(${target} PRIVATE "cxx_std_${std}")
+  set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
+endfunction()
+
 function(add_test_executable target)
     add_executable(${target} ${ARGN})
+    set_cxx_standard(${target} 20)
     set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
 endfunction()
 
@@ -26,9 +32,6 @@ endif()
 option(ANYPS5_ENABLE_SPIRV_TOOLS "Enable SPIRV-Tools validation and optimization" OFF)
 option(APS5_ENABLE_TIMING_LOG "Write frame timings asynchronously to frame-timing.log" OFF)
 add_compile_definitions(APS5_ENABLE_TIMING_LOG=$<BOOL:${APS5_ENABLE_TIMING_LOG}>)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT APPLE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")

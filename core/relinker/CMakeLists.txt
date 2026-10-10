@@ -77,6 +77,8 @@ target_include_directories(relinker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
 )
 
+set_cxx_standard(relinker 20)
+
 if(WIN32)
     add_test_executable(windows_dependency_diagnostics_tests EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsDependencyDiagnosticsTests.cpp
