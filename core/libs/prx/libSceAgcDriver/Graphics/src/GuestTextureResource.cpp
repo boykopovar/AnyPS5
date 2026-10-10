@@ -212,6 +212,10 @@ float EffectiveMinLod(const GuestTextureResource& resource) {
     return std::min(static_cast<float>(resource.minLod) / 256.0f, static_cast<float>(resource.lastLevel));
 }
 
+bool DescriptorSingleLevel(std::span<const std::uint32_t> words) {
+    return ((words[3] >> 12u) & 0xfu) == ((words[3] >> 16u) & 0xfu);
+}
+
 bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, TextureDimension dimension) {
     switch (shape) {
         case ShaderRecompiler::DescriptorImageShape::Image1D: return dimension == TextureDimension::k1D;

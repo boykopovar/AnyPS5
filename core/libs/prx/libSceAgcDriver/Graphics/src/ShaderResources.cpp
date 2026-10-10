@@ -158,6 +158,11 @@ void noteUncached(const std::shared_ptr<StorageTexture>& image) {
     uncached.any.store(true, std::memory_order_release);
 }
 
+bool SamplerCacheDisabled() {
+    static const bool disabled = std::getenv("APS5_NO_SAMPLER_CACHE") != nullptr;
+    return disabled;
+}
+
 bool TextureHashEnabled() {
     static const bool disabled = std::getenv("APS5_NO_TEXTURE_HASH") != nullptr;
     return !disabled;
@@ -2823,8 +2828,7 @@ void ShaderResources::addImageBinding(const ShaderRecompiler::DescriptorBinding&
             const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
             const bool compareEnable = binding.samplerDepthCompare.at(element);
             const bool unnormalized = element < binding.samplerUnnormalized.size() && binding.samplerUnnormalized[element];
-            static const bool noSamplerCache = std::getenv("APS5_NO_SAMPLER_CACHE") != nullptr;
-            if (context.samplerCache != nullptr && !noSamplerCache) {
+            if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
                 samplers.push_back(context.samplerCache->Get(context, words, compareEnable, unnormalized, true));
             } else {
                 auto resource = DecodeSamplerResource(words, unnormalized, true);
@@ -2972,7 +2976,7 @@ void ShaderResources::applyAnisoOverride() {
         const auto variant = SingleLevelSamplerWords(source.words, source.singleLevelImage, source.mipmappedImage);
         if (!variant.has_value()) continue;
         const auto& words = *variant;
-        if (context.samplerCache != nullptr && std::getenv("APS5_NO_SAMPLER_CACHE") == nullptr) {
+        if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
             samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized);
         } else {
             auto resource = DecodeSamplerResource(words, source.unnormalized);
@@ -3018,7 +3022,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             RequireFilterMinmax(context, texture->ViewFormat(), binding.imageSamplers[element], shaderSamplers);
             RequireBorderSwizzle(resource.bcSwizzle, binding.imageSamplers[element], shaderSamplers);
             if (!shaderSamplers.empty()) {
-                const bool singleLevel = texture->SampledViewRange(firstLayer).levels == 1u;
+                const bool singleLevel = DescriptorSingleLevel(words);
                 const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
                 for (std::uint32_t sampler = 0; sampler < shaderSamplers.size() && sampler < 32u; ++sampler) {
                     if (((binding.imageSamplers[element] >> sampler) & 1u) == 0) continue;
