@@ -22,6 +22,8 @@
 #include "ResidentPresent.hpp"
 #include "SampleLod_spv.h"
 #include "SampleArray_spv.h"
+#include "Cover_vert_spv.h"
+#include "Cover_frag_spv.h"
 #include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -158,6 +160,11 @@ public:
             queue.pQueuePriorities = &priority;
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
+            graphics = (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+            VkPhysicalDeviceFeatures supported{};
+            function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
+            enabled.occlusionQueryPrecise = supported.occlusionQueryPrecise;
+            context.occlusionQueryPrecise = supported.occlusionQueryPrecise == VK_TRUE;
             address.pNext = &bytes;
             std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             VkPhysicalDeviceDriverProperties driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -200,6 +207,7 @@ public:
             context.limits = properties.limits;
             context.bufferDeviceAddress = true;
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
+            context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
             pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -213,6 +221,7 @@ public:
 
     ~Device() { release(); }
     const Context& GetContext() const { return context; }
+    bool Graphics() const { return graphics; }
     void WaitQueue() const { Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle"); }
 
 private:
@@ -238,6 +247,7 @@ private:
     PFN_vkGetInstanceProcAddr instanceProc = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
+    bool graphics = false;
 };
 
 using Kind = Recorder::ReadKind;
@@ -2318,6 +2328,286 @@ void importWindowTests(const Device& device, Recorder& recorder) {
 #endif
 }
 
+void queuedWriteGroupTests() {
+    using Write = Recorder::QueuedWrite;
+    using Groups = std::vector<std::size_t>;
+    const auto paint = [](const std::vector<Write>& writes, const Groups& groups, std::size_t bytes) {
+        std::vector<std::uint8_t> memory(bytes, 0);
+        std::size_t first = 0;
+        for (const auto end : groups) {
+            for (const bool computed : {false, true}) {
+                for (auto i = first; i < end; ++i) {
+                    if (writes[i].computed != computed) continue;
+                    for (auto at = writes[i].begin; at < writes[i].end; ++at) memory[at] = static_cast<std::uint8_t>(i + 1);
+                }
+            }
+            first = end;
+        }
+        return memory;
+    };
+    const auto programOrder = [](const std::vector<Write>& writes, std::size_t bytes) {
+        std::vector<std::uint8_t> memory(bytes, 0);
+        for (std::size_t i = 0; i < writes.size(); ++i) {
+            for (auto at = writes[i].begin; at < writes[i].end; ++at) memory[at] = static_cast<std::uint8_t>(i + 1);
+        }
+        return memory;
+    };
+    Require(Recorder::QueuedWriteGroups({}).empty(), "no queued writes made a group");
+    const std::vector<Write> query{{0x100, 0x200, false}, {0x100, 0x1f8, true}, {0x108, 0x200, true}, {0x200, 0x300, false}, {0x200, 0x2f8, true}, {0x208, 0x300, true}};
+    Require(Recorder::QueuedWriteGroups(query) == Groups{6}, "a clear, a begin dump and an end dump per query slot are not one group");
+    const std::vector<Write> reused{{0x100, 0x1f8, true}, {0x100, 0x200, false}, {0x100, 0x1f8, true}};
+    Require(Recorder::QueuedWriteGroups(reused) == Groups{1, 3}, "a store over a computed write of its group did not start a new group");
+    const std::vector<Write> apart{{0x100, 0x1f8, true}, {0x1f8, 0x200, false}, {0x300, 0x310, false}};
+    Require(Recorder::QueuedWriteGroups(apart) == Groups{3}, "stores beside the computed writes left their group");
+    const std::vector<Write> stores{{0x100, 0x110, false}, {0x100, 0x110, false}};
+    Require(Recorder::QueuedWriteGroups(stores) == Groups{2}, "stores alone were split into groups");
+    std::uint64_t seed = 0x9e3779b97f4a7c15ull;
+    const auto next = [&](std::uint64_t bound) {
+        seed ^= seed << 13u;
+        seed ^= seed >> 7u;
+        seed ^= seed << 17u;
+        return seed % bound;
+    };
+    constexpr std::size_t bytes = 64;
+    for (int round = 0; round < 20000; ++round) {
+        std::vector<Write> writes;
+        const auto count = 1 + next(12);
+        for (std::uint64_t i = 0; i < count; ++i) {
+            const auto begin = next(bytes - 1);
+            const auto end = begin + 1 + next(std::min<std::uint64_t>(16, bytes - begin));
+            writes.push_back({begin, std::min<std::uint64_t>(end, bytes), next(2) == 0});
+        }
+        const auto groups = Recorder::QueuedWriteGroups(writes);
+        Require(!groups.empty() && groups.back() == writes.size() && std::is_sorted(groups.begin(), groups.end()), "queued write groups do not end at the last write in order");
+        Require(paint(writes, groups, bytes) == programOrder(writes, bytes), "recording each group's stores before its computed writes changed the final bytes of the program order");
+    }
+}
+
+constexpr std::uint64_t SampleReady = 1ull << 63u;
+
+void queuedSampleDumpTests(Recorder& recorder, const HostImport& import, std::uint64_t* words, std::uint64_t address, VkDeviceAddress target) {
+    constexpr std::uint64_t untouched = 0xaaaaaaaaaaaaaaaaull;
+    const auto storeZero = [&](std::uint64_t at, std::size_t bytes) {
+        const std::vector<std::byte> zero(bytes);
+        recorder.RecordStore(import.buffer, at - import.base, zero, at);
+    };
+    recorder.Sync();
+    const auto base = recorder.SamplesTotal();
+    std::fill(words, words + 256, untouched);
+    Require(recorder.DumpSamples(target, address), "a dump was not queued");
+    Require(recorder.HasQueuedStores() && recorder.QueuedStoreOverlaps(address + 240, 8) && !recorder.QueuedStoreOverlaps(address + 248, 8), "a queued dump does not cover its 16 counters");
+    recorder.FlushStoresOverlapping(address + 256, 64);
+    Require(recorder.HasQueuedStores(), "a reader of other bytes recorded the queued dump");
+    Require(words[0] == untouched, "a queued dump landed before anything recorded it");
+    recorder.FlushStoresOverlapping(address + 16, 8);
+    Require(!recorder.HasQueuedStores(), "a reader of the dumped bytes left the dump queued");
+    recorder.Sync();
+    Require(words[0] == (base | SampleReady) && words[2] == SampleReady && words[1] == untouched, "the dump a reader recorded stored the wrong counters");
+    std::fill(words, words + 256, untouched);
+    storeZero(address, 256);
+    Require(recorder.DumpSamples(target, address), "a dump after a clear was not queued");
+    storeZero(address + 512, 16);
+    Require(recorder.DumpSamples(target + 8, address + 8), "the end dump was not queued");
+    Require(recorder.DumpSamples(target + 256, address + 256), "a dump of another slot was not queued");
+    storeZero(address + 256, 16);
+    Require(recorder.DumpSamples(target + 256 + 8, address + 256 + 8), "a dump after a store over an earlier dump was not queued");
+    recorder.Sync();
+    Require(words[0] == (base | SampleReady) && words[1] == (base | SampleReady) && words[2] == SampleReady && words[3] == SampleReady, "a clear and its dumps landed out of order");
+    Require(words[32] == 0 && words[34] == SampleReady, "a store after a dump of its bytes did not land last");
+    Require(words[33] == (base | SampleReady) && words[35] == SampleReady, "a dump after a store over an earlier dump landed before it");
+    Require(words[64] == 0 && words[65] == 0 && words[66] == untouched, "a store between dumps was lost");
+}
+
+class CoverPass {
+public:
+    explicit CoverPass(const Context& context) : context(context), target(context, ColorTarget{0, {8, 8}, VK_FORMAT_R8G8B8A8_UNORM, 8 * 8 * 4, 0}, false) {
+        try {
+            VkAttachmentDescription attachment{};
+            attachment.format = VK_FORMAT_R8G8B8A8_UNORM;
+            attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachment.finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+            const VkAttachmentReference color{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments = &color;
+            VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            passInfo.attachmentCount = 1;
+            passInfo.pAttachments = &attachment;
+            passInfo.subpassCount = 1;
+            passInfo.pSubpasses = &subpass;
+            Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &passInfo, nullptr, &renderPass), "vkCreateRenderPass cover");
+            const auto view = target.View();
+            VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            framebufferInfo.renderPass = renderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = &view;
+            framebufferInfo.width = 8;
+            framebufferInfo.height = 8;
+            framebufferInfo.layers = 1;
+            Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer cover");
+            VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "vkCreatePipelineLayout cover");
+            const auto module = [&](const std::uint32_t* code, std::size_t bytes) {
+                VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+                info.codeSize = bytes;
+                info.pCode = code;
+                VkShaderModule result = VK_NULL_HANDLE;
+                Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &info, nullptr, &result), "vkCreateShaderModule cover");
+                return result;
+            };
+            vertex = module(COVER_VERT_SPV, sizeof(COVER_VERT_SPV));
+            fragment = module(COVER_FRAG_SPV, sizeof(COVER_FRAG_SPV));
+            std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+            stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main", nullptr};
+            stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main", nullptr};
+            VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+            assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            const VkViewport viewport{0, 0, 8, 8, 0, 1};
+            const VkRect2D scissor{{0, 0}, {8, 8}};
+            VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+            viewportState.viewportCount = 1;
+            viewportState.pViewports = &viewport;
+            viewportState.scissorCount = 1;
+            viewportState.pScissors = &scissor;
+            VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            raster.polygonMode = VK_POLYGON_MODE_FILL;
+            raster.cullMode = VK_CULL_MODE_NONE;
+            raster.lineWidth = 1;
+            VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+            multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            VkPipelineColorBlendAttachmentState blend{};
+            blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            VkPipelineColorBlendStateCreateInfo blendState{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            blendState.attachmentCount = 1;
+            blendState.pAttachments = &blend;
+            VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            pipelineInfo.stageCount = static_cast<std::uint32_t>(stages.size());
+            pipelineInfo.pStages = stages.data();
+            pipelineInfo.pVertexInputState = &vertexInput;
+            pipelineInfo.pInputAssemblyState = &assembly;
+            pipelineInfo.pViewportState = &viewportState;
+            pipelineInfo.pRasterizationState = &raster;
+            pipelineInfo.pMultisampleState = &multisample;
+            pipelineInfo.pColorBlendState = &blendState;
+            pipelineInfo.layout = layout;
+            pipelineInfo.renderPass = renderPass;
+            Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines cover");
+        } catch (...) {
+            release();
+            throw;
+        }
+    }
+    ~CoverPass() { release(); }
+    CoverPass(const CoverPass&) = delete;
+    CoverPass& operator=(const CoverPass&) = delete;
+
+    bool Draw(Recorder& recorder) const {
+        const bool continued = recorder.ContinuesRenderPass(PassKey);
+        const auto commands = continued ? recorder.CommandsInRenderPass() : recorder.Commands();
+        if (!continued) {
+            recorder.PrepareSampleSlot();
+            VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            begin.renderPass = renderPass;
+            begin.framebuffer = framebuffer;
+            begin.renderArea = {{0, 0}, {8, 8}};
+            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        }
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        recorder.NoteSampledDraw(commands);
+        context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
+        recorder.LeaveRenderPassOpen(PassKey, Recorder::NoTiming, true, {});
+        return continued;
+    }
+
+    static constexpr std::uint64_t Samples = 64;
+
+private:
+    static constexpr std::uint64_t PassKey = 0xc0de;
+    void release() noexcept {
+        const auto device = context.device;
+        if (pipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(device, pipeline, nullptr);
+        if (vertex != VK_NULL_HANDLE) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(device, vertex, nullptr);
+        if (fragment != VK_NULL_HANDLE) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(device, fragment, nullptr);
+        if (layout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(device, layout, nullptr);
+        if (framebuffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(device, framebuffer, nullptr);
+        if (renderPass != VK_NULL_HANDLE) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(device, renderPass, nullptr);
+        pipeline = VK_NULL_HANDLE;
+        vertex = fragment = VK_NULL_HANDLE;
+        layout = VK_NULL_HANDLE;
+        framebuffer = VK_NULL_HANDLE;
+        renderPass = VK_NULL_HANDLE;
+    }
+    const Context& context;
+    RenderTarget target;
+    VkRenderPass renderPass = VK_NULL_HANDLE;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkShaderModule vertex = VK_NULL_HANDLE;
+    VkShaderModule fragment = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+};
+
+void inPassSampleDumpTests(Recorder& recorder, const Context& context, const CoverPass& cover, std::uint64_t* words, std::uint64_t address, VkDeviceAddress target) {
+    const auto samples = [&](std::uint64_t word) { return word & ~SampleReady; };
+    recorder.Sync();
+    auto base = recorder.SamplesTotal();
+    std::fill(words, words + 64, 0);
+    Require(!cover.Draw(recorder), "the first draw of a batch continued a pass");
+    Require(recorder.DumpSamples(target, address), "a dump inside a render pass was not made on the GPU");
+    Require(cover.Draw(recorder), "an occlusion dump ended the render pass");
+    Require(recorder.DumpSamples(target + 8, address + 8), "the second dump inside the pass was not made on the GPU");
+    Require(cover.Draw(recorder), "the second occlusion dump ended the render pass");
+    Require(words[0] == 0 && words[1] == 0, "a dump inside the pass landed before its batch ran");
+    recorder.Sync();
+    const auto first = samples(words[0]) - base, second = samples(words[1]) - base, total = recorder.SamplesTotal() - base;
+    Require((words[0] & SampleReady) != 0 && (words[1] & SampleReady) != 0, "a dump inside a pass lost its ready bit");
+    Require(first > 0 && second > first && total > second, "dumps inside one pass do not split its draws' samples in order");
+    if (context.occlusionQueryPrecise) Require(first == CoverPass::Samples && second == 2 * CoverPass::Samples && total == 3 * CoverPass::Samples, "dumps inside one pass counted the wrong samples");
+    base = recorder.SamplesTotal();
+    Require(!cover.Draw(recorder), "the first draw of a new batch continued a pass");
+    Require(recorder.DumpSamples(target, address), "a dump before a reader was not made on the GPU");
+    recorder.FlushStoresOverlapping(address, 8);
+    Require(!cover.Draw(recorder), "a reader of a queued dump recorded it inside the render pass");
+    recorder.Sync();
+    Require(samples(words[0]) > base && samples(words[0]) < recorder.SamplesTotal(), "the dump a reader recorded in the pass counted the wrong draws");
+    base = recorder.SamplesTotal();
+    constexpr std::size_t slots = 160;
+    std::fill(words, words + slots * 32, 0);
+    std::size_t continued = 0;
+    for (std::size_t i = 0; i < slots; ++i) {
+        if (cover.Draw(recorder)) ++continued;
+        Require(recorder.DumpSamples(target + 256 * i, address + 256 * i), "a dump of many in one pass was not made on the GPU");
+    }
+    recorder.Sync();
+    Require(continued + 2 >= slots, "draws between dumps did not keep their render pass");
+    std::uint64_t previous = base;
+    for (std::size_t i = 0; i < slots; ++i) {
+        const auto value = samples(words[32 * i]);
+        Require((words[32 * i] & SampleReady) != 0 && value > previous, "a dump past one query pool's slots counted the wrong draws");
+        if (context.occlusionQueryPrecise) Require(value == base + (i + 1) * CoverPass::Samples, "a dump past one query pool's slots counted the wrong samples");
+        previous = value;
+    }
+    base = recorder.SamplesTotal();
+    constexpr std::size_t passes = 70;
+    for (std::size_t i = 0; i < passes; ++i) {
+        Require(!cover.Draw(recorder), "a draw after other work continued a pass");
+        recorder.Commands();
+    }
+    recorder.Submit();
+    Require(recorder.DumpSamples(target, address), "a dump after many passes was not made on the GPU");
+    recorder.Sync();
+    const auto folded = samples(words[0]);
+    Require(folded > base && folded == recorder.SamplesTotal(), "segments folded at Submit without a dump were lost");
+    if (context.occlusionQueryPrecise) Require(folded == base + passes * CoverPass::Samples, "segments folded at Submit without a dump counted the wrong samples");
+}
+
 void pendingKeyStoreTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
@@ -2426,7 +2716,7 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
     const auto target = import->address + (address - import->base);
     recorder.Sync();
     constexpr std::uint64_t ready = 1ull << 63u;
-    Require(recorder.DumpSamples(target), "the occlusion counters were not dumped on the GPU");
+    Require(recorder.DumpSamples(target, address), "the occlusion counters were not dumped on the GPU");
     Require(words[0] == untouched && !recorder.Idle(), "the occlusion counter dump waited for the GPU or landed before its batch ran");
     recorder.Sync();
     const auto begin = recorder.SamplesTotal();
@@ -2434,7 +2724,7 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
         Require(words[db * 2] == ((db == 0 ? begin : 0) | ready), "an occlusion counter dump stored the wrong value");
         Require(words[db * 2 + 1] == untouched, "an occlusion counter dump stored over the next counter");
     }
-    Require(recorder.DumpSamples(target + 8), "the second occlusion counter dump was not made on the GPU");
+    Require(recorder.DumpSamples(target + 8, address + 8), "the second occlusion counter dump was not made on the GPU");
     recorder.Submit();
     recorder.Sync();
     for (std::size_t db = 0; db < 16; ++db) {
@@ -2442,9 +2732,17 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
         Require(words[db * 2] == ((db == 0 ? begin : 0) | ready), "the second dump stored over the first");
     }
     Require(recorder.SamplesTotal() == begin, "the sample total moved with nothing drawn");
-    for (int i = 0; i < 40; ++i) Require(recorder.DumpSamples(target), "a dump past one batch's query slots was not made on the GPU");
+    for (int i = 0; i < 40; ++i) Require(recorder.DumpSamples(target, address), "a dump past one batch's query slots was not made on the GPU");
     recorder.Sync();
     Require(words[0] == (begin | ready) && recorder.SamplesTotal() == begin, "dumps past one batch's query slots moved the total");
+    Require(recorder.QueuesSampleDumps(), "occlusion dumps are recorded at once, not queued with the batch's stores");
+    queuedSampleDumpTests(recorder, *import, words, address, target);
+    if (!device.Graphics()) {
+        std::cout << "the test queue has no graphics: occlusion dumps inside a render pass not tested\n";
+        return;
+    }
+    CoverPass cover(context);
+    inPassSampleDumpTests(recorder, context, cover, words, address, target);
 }
 
 void metadataPassTests(const Device& device, Recorder& recorder) {
@@ -3142,6 +3440,7 @@ int main(int argc, char** argv) {
         drawInputReuseTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         storeRunTests(device, recorder);
+        queuedWriteGroupTests();
         remappedImportTests(device);
         movedMetadataTests(device, recorder);
         viewPastLastMipTests(device, recorder);

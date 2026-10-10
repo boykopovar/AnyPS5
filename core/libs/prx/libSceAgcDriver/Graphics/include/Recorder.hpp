@@ -184,8 +184,25 @@ public:
     void CountSamples();
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
     std::uint64_t SamplesTotal();
-    bool DumpSamples(VkDeviceAddress target);
-    void NoteSampledDraw();
+    bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
+    void NoteSampledDraw(VkCommandBuffer commands);
+    bool QueuesSampleDumps() const;
+    void PrepareSampleSlot();
+    void EndPassSamples();
+    struct SampleDumpStatistics {
+        std::uint64_t queued;
+        std::uint64_t queuedInPass;
+        std::uint64_t recordedAtOnce;
+        std::uint64_t segments;
+        std::uint64_t folds;
+    };
+    static SampleDumpStatistics SampleDumpCounts();
+    struct QueuedWrite {
+        std::uint64_t begin;
+        std::uint64_t end;
+        bool computed;
+    };
+    static std::vector<std::size_t> QueuedWriteGroups(std::span<const QueuedWrite> writes);
     // Waits only for the batches up to the newest one that writes the range (submitting the open
     // batch when it is that one); later batches stay in flight. Fences of one queue signal in
     // submission order, so completions still run in order. Debug aid: APS5_NO_SYNC_THROUGH=1 syncs all.
@@ -519,6 +536,12 @@ private:
         std::shared_ptr<void> samplePool;
         bool sampleActive = false;
         bool samplesDrawn = false;
+        VkQueryPool segments = VK_NULL_HANDLE;
+        std::shared_ptr<void> segmentPool;
+        std::uint32_t segmentNext = 0;
+        std::uint32_t segmentSlot = 0;
+        bool segmentActive = false;
+        std::uint32_t queuedDumps = 0;
         std::vector<std::uint64_t> timedKeys;
         std::vector<std::uint64_t> timedBytes;
         // The whole-batch timed range (BatchTimingKey) and its stamps once read (see Completed).
@@ -560,6 +583,9 @@ private:
                 VkDeviceSize offset;
                 std::vector<std::byte> bytes;
                 std::uint64_t address;
+                VkDeviceAddress dumpTarget = 0;
+                std::uint32_t dumpSegments = 0;
+                std::uint64_t End() const;
             };
             std::vector<Queued> queued;
         } run;
@@ -622,9 +648,21 @@ private:
     bool gpuSampleCounter();
     void endSamples(Batch& batch);
     void foldSamples(Batch& batch, VkDeviceAddress target);
+    bool segmentMode() const;
+    bool segmentSlotReady(const Batch& batch) const;
+    void takeSegmentPool(Batch& batch);
+    void beginSegment(Batch& batch);
+    void endSegment(Batch& batch);
+    void copySegments(VkCommandBuffer commands, std::uint32_t count);
+    void retireSegments(std::uint32_t count);
+    void recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes);
+    void dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment);
+    void foldSegments();
+    void foldQueuedDumps(VkCommandBuffer commands, std::span<const Batch::StoreRun::Queued> writes, std::size_t first, std::size_t end, std::uint32_t& dumpIndex, std::uint32_t& consumed);
     struct SampleSegment {
         std::shared_ptr<void> pool;
         VkQueryPool handle;
+        std::uint32_t slot = 0;
     };
     std::vector<SampleSegment> pendingSamples;
     bool countingSamples = false;
@@ -636,6 +674,9 @@ private:
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;
     VkPipeline samplePipeline = VK_NULL_HANDLE;
     std::shared_ptr<void> samplePools;
+    VkPipelineLayout dumpLayout = VK_NULL_HANDLE;
+    VkPipeline dumpPipeline = VK_NULL_HANDLE;
+    std::shared_ptr<void> segmentPools;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
