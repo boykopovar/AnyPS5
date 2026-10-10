@@ -619,6 +619,24 @@ def main():
             zero_filled[0x1910:0x1910 + len(TLS_LOAD)] = TLS_LOAD
             pe = convert_padded("zero-filled-after-padding", zero_filled)
             assert pe_bytes_at(pe, 0x11910, len(TLS_LOAD)) == TLS_LOAD, "zero-filled-after-padding"
+            stack_guard = bytes.fromhex("64 48 8b 04 25 28 00 00 00")
+            zero_aligned = make_image("register", "unwind")
+            zero_aligned[0x18f0:0x1900] = b"\xcc" * 16
+            zero_aligned[0x1900:0x1910] = bytes.fromhex("31 c0 c3") + bytes(13)
+            zero_aligned[0x1910:0x1920] = stack_guard + b"\xe8" + struct.pack("<i", 0x1900 - 0x191e) + bytes(2)
+            zero_aligned[0x1920:0x1930] = TLS_LOAD + bytes.fromhex("89 c0 c3") + bytes(1)
+            zero_aligned[0x1930:0x1940] = stack_guard + b"\xeb" + struct.pack("<b", 0x1900 - 0x193b) + bytes(5)
+            zero_aligned[0x1940:0x1940 + len(stack_guard) + 1] = stack_guard + b"\xc3"
+            pe = convert_padded("zero-aligned-functions", zero_aligned)
+            for address in (0x11910, 0x11920, 0x11930, 0x11940):
+                assert pe_bytes_at(pe, address, 1)[0] == 0xe9, ("zero-aligned-functions", hex(address))
+            assert pe_bytes_at(pe, 0x11850, len(TLS_LOAD)) == TLS_LOAD, "zero-aligned-functions"
+            straight_line = make_image("register", "unwind")
+            straight_line[0x18f0:0x1900] = b"\xcc" * 16
+            straight_line[0x1900:0x1910] = b"\x90" + bytes(15)
+            straight_line[0x1910:0x1910 + len(stack_guard)] = stack_guard
+            pe = convert_padded("zero-fill-after-straight-line-code", straight_line)
+            assert pe_bytes_at(pe, 0x11910, len(stack_guard)) == stack_guard, "zero-fill-after-straight-line-code"
         if args.group in ("all", "register_loads"):
             for register in range(16):
                 offset, body = register_load(register)

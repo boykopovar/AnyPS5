@@ -229,7 +229,15 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             while (address < size && !paddedStart(address)) address += 16;
             return address;
         };
+        bool afterTransfer = false;
         for (std::size_t position = nextPaddedStart(0); position < size;) {
+            const auto aligned = (position + 15) & ~std::size_t{15};
+            const bool zeroPadding = afterTransfer && aligned != position && aligned <= size && std::all_of(text + position, text + aligned, [](const std::uint8_t value) { return value == 0; });
+            afterTransfer = false;
+            if (zeroPadding) {
+                position = aligned;
+                continue;
+            }
             if (position + 1 < size && text[position] == 0 && text[position + 1] == 0) {
                 position = nextPaddedStart(position);
                 continue;
@@ -253,6 +261,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             }
             const auto opcode = position + info.OpcodeOffset;
             if (info.SegmentPrefix == 0x64 && opcode + 2 < next && (text[opcode + 1] & 0xc7) == 0x04 && text[opcode + 2] == 0x25) addRoot(header.MappedAddress + position);
+            afterTransfer = info.FlowKind != Codegen::ControlFlowKind::Sequential && info.FlowKind != Codegen::ControlFlowKind::ConditionalBranch;
             position = next;
         }
     }
