@@ -10,7 +10,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("HW_ORACLE_CACHE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "anyps5-hw-oracle")
-ROWS_PER_DISPATCH = 1024
+ROWS_PER_DISPATCH = 512
 DEFAULT_LDS = 4096
 MAX_LDS = 65536
 
@@ -72,7 +72,7 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
         text = text.replace(key, value)
     (work / "k.s").write_text(text)
     subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True)
-    subprocess.run([tool("ld.lld"), "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True)
+    subprocess.run([tool("ld.lld"), "-m", "elf64_amdgpu", "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True)
     return work / "k.co"
 
 
