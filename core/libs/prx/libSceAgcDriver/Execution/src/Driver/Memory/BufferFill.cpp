@@ -3,6 +3,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include <bit>
 #include <cstdlib>
 #include <cstring>
@@ -196,6 +197,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         }
         phase(FillFlush);
         const bool stored = cleared || localDevice->FillBuffer(base, bytes, pattern);
+        if (stored && pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3]) Graphics::NoteDepthMetadataFill(base, bytes, pattern[0]);
         phase(FillDevice);
         if (uniformKeysFill && stored && !cleared) {
             Graphics::DccKeys filled = Graphics::DccKeys::Mixed;
