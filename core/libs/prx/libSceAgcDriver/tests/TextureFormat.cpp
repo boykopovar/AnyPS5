@@ -5,8 +5,10 @@
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -55,6 +57,28 @@ void reject(TAction action, std::string_view reason) {
     throw std::runtime_error(std::string("expected texture format rejection: ") + std::string(reason));
 }
 
+int channelLowBit(VkFormat format, VkComponentSwizzle channel) {
+    const auto index = static_cast<std::size_t>(channel - VK_COMPONENT_SWIZZLE_R);
+    switch (format) {
+        case VK_FORMAT_R5G6B5_UNORM_PACK16: return std::array{11, 5, 0, -1}[index];
+        case VK_FORMAT_A1R5G5B5_UNORM_PACK16: return std::array{10, 5, 0, 15}[index];
+        case VK_FORMAT_R4G4B4A4_UNORM_PACK16: return std::array{12, 8, 4, 0}[index];
+        default: throw std::runtime_error("no channel layout for packed format " + std::to_string(format));
+    }
+}
+
+void packedChannelTests() {
+    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 3> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {136u, {0, 4, 8, 12}}}};
+    constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    for (const auto& [format, lowBits] : packed) {
+        for (std::size_t component = 0; component < components.size(); ++component) {
+            const auto channel = TextureComponentChannel(format, components[component]);
+            Require(channelLowBit(ResolveTextureFormat(format), channel) == lowBits[component], "format " + std::to_string(format) + " component " + std::to_string(component) + " is not read from bit " + std::to_string(lowBits[component]));
+        }
+    }
+    Require(TextureComponentChannel(133, VK_COMPONENT_SWIZZLE_ONE) == VK_COMPONENT_SWIZZLE_ONE && TextureComponentChannel(56, VK_COMPONENT_SWIZZLE_R) == VK_COMPONENT_SWIZZLE_R, "constant selectors and other formats must keep their channels");
+}
+
 void convertedDccClearTests() {
     alignas(64) std::array<std::uint8_t, 16> keys{};
     GuestTextureResource resource{};
@@ -76,6 +100,7 @@ void convertedDccClearTests() {
 
 void RunTextureFormatTests() {
     srgbDecodeTests();
+    packedChannelTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
     Require(ResolveTextureFormat(2) == VK_FORMAT_R8_SNORM, "format 2 must resolve to R8_SNORM");
     Require(BytesPerElement(1) == 1u, "format 1 must be one byte wide");

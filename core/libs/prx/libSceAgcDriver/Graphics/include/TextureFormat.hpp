@@ -13,6 +13,7 @@ namespace AgcDriver::Graphics {
 struct Context;
 
 VkFormat ResolveTextureFormat(std::uint32_t guestFormat);
+VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponentSwizzle component);
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical);
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat);
 bool IsSrgbTextureFormat(std::uint32_t guestFormat);

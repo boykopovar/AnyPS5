@@ -154,6 +154,20 @@ std::optional<std::uint32_t> FindGuestTextureFormat(VkFormat format, std::uint32
     return std::nullopt;
 }
 
+VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponentSwizzle component) {
+    if (component < VK_COMPONENT_SWIZZLE_R || component > VK_COMPONENT_SWIZZLE_A) return component;
+    const auto index = static_cast<std::size_t>(component - VK_COMPONENT_SWIZZLE_R);
+    constexpr std::array<VkComponentSwizzle, 4> bgrb{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_B};
+    constexpr std::array<VkComponentSwizzle, 4> bgra{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A};
+    constexpr std::array<VkComponentSwizzle, 4> abgr{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R};
+    switch (guestFormat) {
+        case 133: return bgrb[index];
+        case 134: return bgra[index];
+        case 136: return abgr[index];
+        default: return component;
+    }
+}
+
 std::uint32_t BytesPerElement(std::uint32_t guestFormat) {
     return findFormatEntry(guestFormat).bytesPerElement;
 }
