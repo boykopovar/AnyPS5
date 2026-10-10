@@ -180,7 +180,7 @@ private:
             if (augmentationEnd > end) throw RelinkerException("Strict filter: FDE augmentation exceeds record", address);
             if (cie.LsdaEncoding != 0xFF) {
                 const auto lsda = encoded(position, cie.LsdaEncoding, 0, begin);
-                if (lsda != 0) readLsda(lsda, region);
+                if (lsda != 0 && cie.Personality != 0) readLsda(lsda, region);
             }
             if (position > augmentationEnd) throw RelinkerException("Strict filter: FDE augmentation size mismatch", address);
         }

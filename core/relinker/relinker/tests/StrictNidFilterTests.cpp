@@ -183,10 +183,13 @@ void vectorInstructionLengths() {
 
 void exceptionLandingPads() {
     std::vector<std::uint8_t> bytes(0x400);
-    write<std::uint32_t>(bytes, 0x200, 15);
+    write<std::uint32_t>(bytes, 0x200, 25);
     write<std::uint8_t>(bytes, 0x208, 1);
-    const std::vector<std::uint8_t> augmentation = {'z', 'L', 'R', 0, 1, 0x78, 16, 2, 0, 0};
+    const std::vector<std::uint8_t> augmentation = {'z', 'P', 'L', 'R', 0, 1, 0x78, 16, 11, 0};
     std::copy(augmentation.begin(), augmentation.end(), bytes.begin() + 0x209);
+    write<std::uint64_t>(bytes, 0x213, 0x1000);
+    write<std::uint8_t>(bytes, 0x21B, 0);
+    write<std::uint8_t>(bytes, 0x21C, 0);
     write<std::uint32_t>(bytes, 0x220, 29);
     write<std::uint32_t>(bytes, 0x224, 0x24);
     write<std::uint64_t>(bytes, 0x228, 0x1000);
@@ -204,13 +207,38 @@ void exceptionLandingPads() {
     const std::vector<Relinker::ProgramHeader> headers = {{1, 4, 0, 0, 0, bytes.size(), bytes.size(), 8}, {0x6474E550, 4, 0x300, 0x300, 0, 32, 32, 4}};
     auto input = fixture();
     input.Functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
-    require(input.Functions.size() == 1 && input.Functions[0].ExtraTargets == std::vector<std::uint64_t>{0x1040}, "LSDA landing pad outside the function was not recovered");
+    require(input.Functions.size() == 1 && input.Functions[0].ExtraTargets == std::vector<std::uint64_t>{0x1000, 0x1040}, "LSDA landing pad outside the function was not recovered");
     emit(input, 0, {0x0F, 0x0B});
     emit(input, 31, {0xC3});
     importThunk(input, 64, 0x2000);
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Exception-only import was removed");
     write<std::uint8_t>(bytes, 0x282, 0xFF);
     requireFailure([&] { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }, "Malformed LSDA was accepted");
+}
+
+void exceptionDataWithoutPersonality() {
+    std::vector<std::uint8_t> bytes(0x400);
+    write<std::uint32_t>(bytes, 0x200, 15);
+    write<std::uint8_t>(bytes, 0x208, 1);
+    const std::vector<std::uint8_t> augmentation = {'z', 'L', 'R', 0, 1, 0x78, 16, 2, 0, 0};
+    std::copy(augmentation.begin(), augmentation.end(), bytes.begin() + 0x209);
+    write<std::uint32_t>(bytes, 0x220, 29);
+    write<std::uint32_t>(bytes, 0x224, 0x24);
+    write<std::uint64_t>(bytes, 0x228, 0x1000);
+    write<std::uint64_t>(bytes, 0x230, 0x20);
+    write<std::uint8_t>(bytes, 0x238, 8);
+    write<std::uint64_t>(bytes, 0x239, 0x280);
+    const std::vector<std::uint8_t> lsda = {0xFF, 0xFF, 1, 3, 0, 1, 0x40, 0};
+    std::copy(lsda.begin(), lsda.end(), bytes.begin() + 0x280);
+    write<std::uint8_t>(bytes, 0x300, 1);
+    write<std::uint8_t>(bytes, 0x302, 3);
+    write<std::uint64_t>(bytes, 0x304, 0x200);
+    write<std::uint32_t>(bytes, 0x30C, 1);
+    write<std::uint64_t>(bytes, 0x310, 0x1000);
+    write<std::uint64_t>(bytes, 0x318, 0x220);
+    const std::vector<Relinker::ProgramHeader> headers = {{1, 4, 0, 0, 0, bytes.size(), bytes.size(), 8}, {0x6474E550, 4, 0x300, 0x300, 0, 32, 32, 4}};
+    const auto functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
+    require(functions.size() == 1 && functions[0].Begin == 0x1000 && functions[0].End == 0x1020 && functions[0].ExtraTargets.empty(), "LSDA without a personality routine was read as a C++ call-site table");
 }
 
 std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input) {
@@ -314,6 +342,7 @@ int main() {
         relativeTableAndWholeFunction();
         vectorInstructionLengths();
         exceptionLandingPads();
+        exceptionDataWithoutPersonality();
         filterCallbackDataImports();
         filterAndPltCompaction();
         std::cout << "Strict NID filter tests passed\n";
