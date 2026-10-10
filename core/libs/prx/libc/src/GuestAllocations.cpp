@@ -434,4 +434,14 @@ Lease GuestAllocationsAcquire_nid_postfix() {
     return result;
 }
 
+Lease GuestAllocationsAcquireAll_nid_postfix() {
+    std::lock_guard lock(registry().mutex);
+    Lease result;
+    result.reserve(registry().ranges.size());
+    for (const auto& [address, range] : registry().ranges) {
+        if (range->bytes != 0) result.push_back(range);
+    }
+    return result;
+}
+
 }

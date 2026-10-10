@@ -1081,8 +1081,85 @@ static void CheckDirectMemoryWriteWatch() {
 }
 #endif
 
+static void CheckVirtualQuerySplitFlexibleRanges() {
+    constexpr std::size_t page = 0x4000;
+    void* mapped = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapped, page * 3, 3, 0) == 0);
+    auto* bytes = static_cast<unsigned char*>(mapped);
+    bytes[0] = 17;
+    bytes[page * 2] = 29;
+    Require(sceKernelMprotect(bytes + page, page, 1) == 0);
+    for (std::size_t index = 0; index < 3; ++index) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(bytes + page * index, 0, &info, sizeof(info)) == 0);
+        Require(info.start == reinterpret_cast<std::uintptr_t>(bytes + page * index));
+        Require(info.end == info.start + page);
+        Require(info.protection == (index == 1 ? 1 : 3));
+        Require(info.is_committed && info.is_flexible && !info.is_direct);
+    }
+    Require(sceKernelMunmap(bytes + page, page) == 0);
+    for (std::size_t index : {std::size_t{0}, std::size_t{2}}) {
+        VirtualQueryInfo info{};
+        Require(sceKernelVirtualQuery(bytes + page * index, 0, &info, sizeof(info)) == 0);
+        Require(info.start == reinterpret_cast<std::uintptr_t>(bytes + page * index));
+        Require(info.end == info.start + page);
+    }
+    VirtualQueryInfo next{};
+    Require(sceKernelVirtualQuery(bytes + page, 1, &next, sizeof(next)) == 0);
+    Require(next.start == reinterpret_cast<std::uintptr_t>(bytes + page * 2));
+    Require(next.end == next.start + page && next.protection == 3);
+    Require(bytes[0] == 17 && bytes[page * 2] == 29);
+    Require(sceKernelMunmap(bytes, page) == 0);
+    Require(sceKernelMunmap(bytes + page * 2, page) == 0);
+}
+
+static void CheckVirtualQueryForNonReadableGuestRange() {
+    constexpr std::size_t page = 0x4000;
+    auto* mapped = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1002, -1, 0));
+    const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    Require(mapped != failed);
+    Require(mprotect_nid_postfix(mapped, page, 0) == 0);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapped, 0, &info, sizeof(info)) == 0);
+    Require(info.start == reinterpret_cast<std::uintptr_t>(mapped));
+    Require(info.end == info.start + page && info.protection == 0);
+    Require(sceKernelMunmap(mapped, page) == 0);
+}
+
+static void CheckVirtualQueryPartialMunmap() {
+    constexpr std::size_t page = 0x4000;
+    const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    void* raw = mmap_nid_postfix(nullptr, page * 3, 3, 0x1002, -1, 0);
+    Require(raw != failed);
+    auto* memory = static_cast<unsigned char*>(raw);
+    VirtualQueryInfo before{};
+    Require(sceKernelVirtualQuery(memory, 0, &before, sizeof(before)) == 0);
+    Require(before.start == reinterpret_cast<std::uintptr_t>(memory));
+    Require(before.end == reinterpret_cast<std::uintptr_t>(memory) + page * 3);
+    Require(munmap_nid_postfix(memory + page, page) == 0);
+    VirtualQueryInfo first{};
+    Require(sceKernelVirtualQuery(memory, 0, &first, sizeof(first)) == 0);
+    Require(first.start == reinterpret_cast<std::uintptr_t>(memory));
+    Require(first.end == reinterpret_cast<std::uintptr_t>(memory) + page);
+    VirtualQueryInfo middle{};
+    Require(sceKernelVirtualQuery(memory + page, 0, &middle, sizeof(middle)) == SCE_KERNEL_ERROR_EACCES);
+    VirtualQueryInfo next{};
+    Require(sceKernelVirtualQuery(memory + page, 1, &next, sizeof(next)) == 0);
+    Require(next.start == reinterpret_cast<std::uintptr_t>(memory) + page * 2);
+    Require(next.end == reinterpret_cast<std::uintptr_t>(memory) + page * 3);
+    VirtualQueryInfo tail{};
+    Require(sceKernelVirtualQuery(memory + page * 2, 0, &tail, sizeof(tail)) == 0);
+    Require(tail.start == reinterpret_cast<std::uintptr_t>(memory) + page * 2);
+    Require(tail.end == reinterpret_cast<std::uintptr_t>(memory) + page * 3);
+    Require(munmap_nid_postfix(memory, page) == 0);
+    Require(munmap_nid_postfix(memory + page * 2, page) == 0);
+}
+
 int main() {
+    CheckVirtualQuerySplitFlexibleRanges();
+    CheckVirtualQueryForNonReadableGuestRange();
     CheckReleaseFlexibleMemory();
+    CheckVirtualQueryPartialMunmap();
     CheckNamedAndHintedMappings();
     CheckInternalNamedFlexibleMapping();
     CheckBatchMapStopsAtInvalidEntry();
