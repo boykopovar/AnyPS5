@@ -40,6 +40,16 @@ static std::optional<GuestFileMode> ParseFileMode(const char* mode) {
     return result;
 }
 
+static std::FILE* OpenNative(const std::filesystem::path& path, const std::string& nativeMode) {
+#ifdef _WIN32
+    std::wstring wideMode;
+    for (const char character : nativeMode) wideMode.push_back(static_cast<unsigned char>(character));
+    return ::_wfopen(path.c_str(), wideMode.c_str());
+#else
+    return std::fopen(path.c_str(), nativeMode.c_str());
+#endif
+}
+
 extern "C" {
 
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
@@ -73,8 +83,8 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
     try {
-        const auto path = *filename ? ResolvePath_nid_no_patch(filename).string() : std::string{};
-        if (stream->Reopen(path.c_str(), parsed->native.c_str())) {
+        const std::filesystem::path path = *filename ? ResolvePath_nid_no_patch(filename) : std::filesystem::path{};
+        if (stream->Reopen(path, parsed->native.c_str())) {
             if (!path.empty() && parsed->writes) RecordWrittenPath_nid_no_patch(path);
             return stream;
         }
@@ -95,7 +105,7 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     }
     const std::filesystem::path fpath = ResolvePath_nid_no_patch(filename);
     const auto abs_path = fpath.string();
-    std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(std::fopen(abs_path.c_str(), parsed->native.c_str()), std::fclose);
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(OpenNative(fpath, parsed->native), std::fclose);
     if (!handle) {
         const int error = errno;
         if (error == ENOENT || (parsed->exclusive && error == EEXIST)) {
