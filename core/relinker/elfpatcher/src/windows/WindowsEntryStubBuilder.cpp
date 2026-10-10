@@ -146,6 +146,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             (import.Library.empty() ? std::string{} : " from " + import.Library) + "\n");
     const auto argumentError = errors.size();
     errors.push_back("FAIL: cannot prepare command-line arguments\n");
+    const auto directoryError = errors.size();
+    errors.push_back("FAIL: cannot make the executable directory the current directory\n");
     std::vector<std::uint32_t> errorRvas;
     for (const auto& error : errors)
         errorRvas.push_back(addString(error));
@@ -271,6 +273,10 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Emit({0x49, 0xff, 0xcc, 0x41, 0x80, 0x3c, 0x24, 0x5c});
     code.Rip({0x0f, 0x85}, findSeparator);
     code.Emit({0x49, 0xff, 0xc4});
+    code.Emit({0x41, 0xc6, 0x04, 0x24, 0x00});
+    code.Rip({0x48, 0x8d, 0x0d}, modulePath);
+    call("SetCurrentDirectoryA");
+    requireNonzero(directoryError, 0xc000000du);
 
     for (std::size_t index = 0; index < libraries.size(); ++index) {
         if (absolutePath && index >= guestModules.size()) {
