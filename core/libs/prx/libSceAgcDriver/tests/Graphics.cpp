@@ -891,7 +891,7 @@ void OneDimensionalColorTests() {
 }
 
 void depthMaintenanceTests() {
-    for (const auto mode : {0x4u, 0x8u, 0x10u, 0x80u, 0x100u, 0x1000u, 0x4000u}) {
+    for (const auto mode : {0x4u, 0x8u, 0x80u, 0x100u, 0x1000u, 0x4000u}) {
         for (const auto clear : {0u, 1u, 2u, 3u}) {
             auto queue = makeState();
             queue.context[0x000] = mode | clear;
@@ -909,6 +909,20 @@ void depthMaintenanceTests() {
         auto queue = makeState();
         queue.context[0x000] = control;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "ordinary depth controls were mistaken for maintenance");
+    }
+    for (const auto clear : {0u, 1u, 2u, 3u}) {
+        auto queue = makeState();
+        queue.context[0x000] = 0x10u | clear;
+        queue.context[0x200] = 0;
+        queue.context[0x8e] = 0;
+        queue.context[0x8f] = 0;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "a resummarize draw without depth, stencil or color work was rejected");
+        queue.context[0x200] = 2;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a resummarize draw with a depth test passed");
+        queue.context[0x200] = 0;
+        queue.context[0x8e] = 0xf;
+        queue.context[0x8f] = 0xf;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a resummarize draw with color writes passed");
     }
     auto absent = makeState();
     absent.context.erase(0x000);
