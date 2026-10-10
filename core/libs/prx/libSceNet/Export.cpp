@@ -30,6 +30,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
@@ -39,6 +40,7 @@
 namespace {
 // FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
+constexpr int NET_EINTR = 4;
 constexpr int NET_EBADF = 9;
 constexpr int NET_EACCES = 13;
 constexpr int NET_EFAULT = 14;
@@ -64,6 +66,9 @@ constexpr int NET_ECONNREFUSED = 61;
 constexpr int NET_EHOSTUNREACH = 65;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
+constexpr int NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION = 1;
+constexpr int NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION = 2;
+constexpr std::size_t NET_RESOLVER_HOSTNAME_LEN_MAX = 255;
 
 constexpr int NET_AF_INET = 2;
 constexpr int NET_AF_INET6 = 28;
@@ -289,7 +294,12 @@ struct NetMemoryPoolStats {
     std::size_t max_inuse_size;
     std::size_t current_inuse_size;
 };
-std::map<int, int> g_resolvers;
+struct ResolverState {
+    int error = 0;
+    bool abortNtoa = false;
+    bool abortAton = false;
+};
+std::map<int, ResolverState> g_resolvers;
 int g_next_sock = 32;
 int g_next_epoll = 0x4000;
 int g_next_pool = 1;
@@ -309,7 +319,16 @@ int fail(int err) {
 void set_resolver_error(int rid, int error) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
-    if (resolver != g_resolvers.end()) resolver->second = error;
+    if (resolver != g_resolvers.end()) resolver->second.error = error;
+}
+
+int begin_lookup(int rid, bool ResolverState::* preservedAbort) {
+    std::lock_guard lk(g_mutex);
+    const auto resolver = g_resolvers.find(rid);
+    if (resolver == g_resolvers.end()) return fail(NET_EBADF);
+    if (!std::exchange(resolver->second.*preservedAbort, false)) return 0;
+    resolver->second.error = NET_ERROR_BASE | NET_EINTR;
+    return fail(NET_EINTR);
 }
 
 void log_soft(const char* func, const char* what) {
@@ -1131,7 +1150,7 @@ int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags) {
     (void)flags;
     std::lock_guard lk(g_mutex);
     const int id = g_next_resolver++;
-    g_resolvers[id] = 0;
+    g_resolvers[id] = {};
     return id;
 }
 
@@ -1141,10 +1160,7 @@ int APS5_VABI sceNetResolverDestroy(int rid) {
 }
 
 int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std::uint32_t>& addresses) {
-    {
-        std::lock_guard lk(g_mutex);
-        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
-    }
+    if (const int error = begin_lookup(rid, &ResolverState::abortNtoa)) return error;
     if (!initialize_sockets()) return fail(5);
     addrinfo hints{};
     hints.ai_family = AF_INET;
@@ -1192,14 +1208,17 @@ struct NetResolverInfo {
 static_assert(sizeof(NetResolverRecord) == 32 && offsetof(NetResolverRecord, family) == 16);
 static_assert(sizeof(NetResolverInfo) == 384 && offsetof(NetResolverInfo, count) == 320 && offsetof(NetResolverInfo, count4) == 324);
 
-int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int rid, const char* hostname, NetResolverInfo* info, int timeout,
-    int retry, int flags) {
-    (void)timeout;
-    (void)retry;
-    if (flags != 0) throw std::runtime_error("sceNetResolverStartNtoaMultipleRecordsEx: flags " + std::to_string(flags) + " are not supported");
+int lookup_records(int rid, const char* hostname, NetResolverInfo* info, int flags, const char* func) {
+    if (flags != 0) throw std::runtime_error(std::string(func) + ": flags " + std::to_string(flags) + " are not supported");
+    {
+        std::lock_guard lk(g_mutex);
+        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
+    }
     if (!hostname || !info) return fail(NET_EINVAL);
+    const std::size_t length = ::strnlen(hostname, NET_RESOLVER_HOSTNAME_LEN_MAX + 1);
+    if (length == 0 || length > NET_RESOLVER_HOSTNAME_LEN_MAX) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
-    if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
+    if (const int error = lookup_ipv4(rid, hostname, func, addresses)) return error;
     *info = {};
     info->count = static_cast<std::int32_t>(std::min<std::size_t>(addresses.size(), std::size(info->records)));
     info->count4 = info->count;
@@ -1210,15 +1229,26 @@ int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int rid, const char* host
     return 0;
 }
 
+int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int rid, const char* hostname, NetResolverInfo* info, int timeout,
+    int retry, int flags) {
+    (void)timeout;
+    (void)retry;
+    return lookup_records(rid, hostname, info, flags, __func__);
+}
+
+int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int rid, const char* hostname, NetResolverInfo* info, int timeout,
+    int retry, int flags) {
+    (void)timeout;
+    (void)retry;
+    return lookup_records(rid, hostname, info, flags, __func__);
+}
+
 int APS5_VABI sceNetResolverStartAton(int rid, const void* addr, char* hostname, int len, int timeout, int retry, int flags) {
     (void)timeout;
     (void)retry;
     (void)flags;
     if (!addr || !hostname || len <= 0) return fail(NET_EINVAL);
-    {
-        std::lock_guard lk(g_mutex);
-        if (g_resolvers.count(rid) == 0) return fail(NET_EBADF);
-    }
+    if (const int error = begin_lookup(rid, &ResolverState::abortAton)) return error;
     if (!initialize_sockets()) return fail(5);
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -1240,17 +1270,18 @@ int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
-    *status = resolver->second;
+    *status = resolver->second.error;
     return 0;
 }
 
-int APS5_VABI sceNetResolverAbort(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNetResolverStartNtoaMultipleRecords() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNetResolverAbort(int rid, int flags) {
+    constexpr int known = NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION | NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION;
+    std::lock_guard lk(g_mutex);
+    const auto resolver = g_resolvers.find(rid);
+    if (resolver == g_resolvers.end()) return fail(NET_EBADF);
+    if ((flags & ~known) != 0) throw std::runtime_error("sceNetResolverAbort: flags " + std::to_string(flags) + " are not supported");
+    if ((flags & NET_RESOLVER_ABORT_FLAG_NTOA_PRESERVATION) != 0) resolver->second.abortNtoa = true;
+    if ((flags & NET_RESOLVER_ABORT_FLAG_ATON_PRESERVATION) != 0) resolver->second.abortAton = true;
     return 0;
 }
 

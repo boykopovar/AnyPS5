@@ -9,6 +9,7 @@
 #include <cstring>
 #include <future>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 extern "C" {
@@ -38,6 +39,9 @@ extern const std::uint32_t sce_net_in6addr_any[4];
 int APS5_VABI sceNetResolverCreate(const char*, int, int);
 int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int, const char*, void*, int, int, int);
+int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int, const char*, void*, int, int, int);
+int APS5_VABI sceNetResolverStartAton(int, const void*, char*, int, int, int, int);
+int APS5_VABI sceNetResolverAbort(int, int);
 int APS5_VABI sceNetResolverDestroy(int);
 int APS5_VABI sceNetResolverGetError(int, int*);
 int APS5_VABI sceNetCtlGetState(int*);
@@ -412,8 +416,94 @@ int main() {
         static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
     Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "guest-sce-net.invalid", records.data(), 5000000, 1, 0) ==
         static_cast<int>(0x804101E1) && records == resolved);
+    std::array<std::uint8_t, 512> plain{};
+    plain.fill(0xA5);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", plain.data(), 5000000, 1, 0) == 0);
+    Require(plain == resolved);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, nullptr, plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22 && plain == resolved);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", nullptr, 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "", plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22 && plain == resolved);
+    const std::string longest_name(255, 'a');
+    const std::string long_name(256, 'a');
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, long_name.c_str(), plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22 && plain == resolved);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, long_name.c_str(), plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22 && plain == resolved);
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, longest_name.c_str(), plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x804101E1) && plain == resolved);
+    bool resolver_threw = false;
+    try { sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", plain.data(), 5000000, 1, 1); }
+    catch (const std::runtime_error&) { resolver_threw = true; }
+    Require(resolver_threw && plain == resolved);
+
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
+    Require(sceNetResolverAbort(resolver, 0) == 0);
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    const std::array<std::uint8_t, 4> loopback_address{127, 0, 0, 1};
+    char reverse_name[256]{};
+    int reverse = sceNetResolverStartAton(resolver, loopback_address.data(), reverse_name, sizeof(reverse_name), 5000000, 1, 0);
+    Require(reverse == 0 || reverse == static_cast<int>(0x804101E1));
+    ipv4.fill(0xA5);
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410104) &&
+        *sceNetErrnoLoc() == 4 && ipv4[0] == 0xA5);
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == static_cast<int>(0x80410104));
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0 && ipv4[0] == 127);
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410104) && *sceNetErrnoLoc() == 4 && plain == resolved);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", plain.data(), 5000000, 1, 0) == 0);
+    Require(sceNetResolverAbort(resolver, 3) == 0);
+    reverse_name[0] = 0x5A;
+    Require(sceNetResolverStartAton(resolver, loopback_address.data(), reverse_name, sizeof(reverse_name), 5000000, 1, 0) ==
+        static_cast<int>(0x80410104) && *sceNetErrnoLoc() == 4 && reverse_name[0] == 0x5A);
+    Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410104) && *sceNetErrnoLoc() == 4);
+    reverse = sceNetResolverStartAton(resolver, loopback_address.data(), reverse_name, sizeof(reverse_name), 5000000, 1, 0);
+    Require(reverse == 0 || reverse == static_cast<int>(0x804101E1));
+    resolver_threw = false;
+    try { sceNetResolverAbort(resolver, 5); } catch (const std::runtime_error&) { resolver_threw = true; }
+    Require(resolver_threw);
+    resolver_threw = false;
+    try { sceNetResolverAbort(resolver, -1); } catch (const std::runtime_error&) { resolver_threw = true; }
+    Require(resolver_threw);
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    Require(sceNetResolverStartNtoa(resolver, nullptr, ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", nullptr, 5000000, 1, 0) == static_cast<int>(0x80410116));
+    resolver_threw = false;
+    try { sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", plain.data(), 5000000, 1, 1); }
+    catch (const std::runtime_error&) { resolver_threw = true; }
+    Require(resolver_threw);
+    Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "", plain.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410104));
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
+    const int second_resolver = sceNetResolverCreate(nullptr, 0, 0);
+    Require(second_resolver >= 0 && second_resolver != resolver);
+    Require(sceNetResolverAbort(second_resolver, 3) == 0);
+    Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
+    Require(sceNetResolverDestroy(second_resolver) == 0);
+    const int third_resolver = sceNetResolverCreate(nullptr, 0, 0);
+    Require(third_resolver >= 0);
+    Require(sceNetResolverStartNtoa(third_resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
+    Require(sceNetResolverDestroy(third_resolver) == 0);
     Require(sceNetResolverGetError(resolver, nullptr) == static_cast<int>(0x80410116) && *sceNetErrnoLoc() == 22);
     Require(sceNetResolverDestroy(resolver) == 0);
+    Require(sceNetResolverAbort(resolver, 0) == static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
+    Require(sceNetResolverAbort(resolver, 4) == static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, nullptr, nullptr, 5000000, 1, 0) ==
+        static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "localhost", plain.data(), 5000000, 1, 0) ==
+        static_cast<int>(0x80410109) && *sceNetErrnoLoc() == 9 && plain == resolved);
     resolver_error = -1;
     Require(sceNetResolverGetError(resolver, &resolver_error) == static_cast<int>(0x80410109) &&
         *sceNetErrnoLoc() == 9 && resolver_error == -1);
