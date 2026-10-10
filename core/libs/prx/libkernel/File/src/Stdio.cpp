@@ -463,6 +463,16 @@ int APS5_VABI sceKernelFsync(int fd) {
 #endif
 }
 
+int APS5_VABI sceKernelFdatasync(int fd) {
+    if (fd >= GuestSockets::FirstDescriptor) return SceErrorFromErrno(GuestSockets::IsOpen(fd) ? GUEST_EINVAL : GUEST_EBADF);
+#ifdef _WIN32
+    if (::_commit(fd) != 0) return SceErrorFromErrno(errno);
+#else
+    if (::fdatasync(fd) != 0) return SceErrorFromErrno(errno);
+#endif
+    return 0;
+}
+
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
     if (status == nullptr) throw std::invalid_argument("sceKernelWriteThrottlingStatus: status is null");
     status[0] = std::numeric_limits<std::uint32_t>::max();
@@ -792,13 +802,7 @@ int APS5_VABI fsync_nid_postfix(int fd) {
 }
 
 int APS5_VABI fdatasync_nid_postfix(int fd) {
-    if (fd >= GuestSockets::FirstDescriptor) return PosixFailure(GuestSockets::IsOpen(fd) ? GUEST_EINVAL : GUEST_EBADF);
-#ifdef _WIN32
-    if (::_commit(fd) != 0) return PosixResult(SceErrorFromErrno(errno));
-#else
-    if (::fdatasync(fd) != 0) return PosixResult(SceErrorFromErrno(errno));
-#endif
-    return 0;
+    return PosixResult(sceKernelFdatasync(fd));
 }
 
 }
