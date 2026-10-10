@@ -1406,6 +1406,7 @@ void uint16ExportTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(blended); }, "blending into an unsigned integer target");
     queue.context[0x1c5] = 8;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 8");
+}
 
 VkSampleCountFlags depthSampleCounts = VK_SAMPLE_COUNT_4_BIT;
 VkResult depthSampleResult = VK_SUCCESS;
