@@ -136,7 +136,15 @@ void Player::deliver(const Event& event) {
     callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
 }
 
+bool Player::readyLocked() const {
+    return source && state == State::Ready;
+}
+
 void Player::autoStart() {
+    {
+        std::lock_guard lock(mutex);
+        if (!readyLocked()) return;
+    }
     const int count = StreamCount();
     if (count <= 0) {
         Stop();
@@ -155,7 +163,8 @@ void Player::autoStart() {
     }
     if (video != -1) EnableStream(static_cast<std::uint32_t>(video));
     if (audio != -1) EnableStream(static_cast<std::uint32_t>(audio));
-    Start();
+    std::lock_guard lock(mutex);
+    if (readyLocked()) startLocked();
 }
 
 void Player::checkEndOfFile() {
@@ -246,6 +255,10 @@ int Player::ChangeStream(std::uint32_t from, std::uint32_t to) {
 
 int Player::Start() {
     std::lock_guard lock(mutex);
+    return startLocked();
+}
+
+int Player::startLocked() {
     if (!source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     if (state != State::Ready && state != State::Stop && stopLocked() != SCE_OK) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     const int result = source->Start();

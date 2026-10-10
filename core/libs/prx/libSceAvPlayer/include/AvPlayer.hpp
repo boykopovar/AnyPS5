@@ -130,6 +130,8 @@ private:
     void deliver(const Event& event);
     void autoStart();
     void checkEndOfFile();
+    bool readyLocked() const;
+    int startLocked();
     int stopLocked();
 
     AvPlayerFileReplacement file{};

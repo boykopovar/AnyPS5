@@ -1034,6 +1034,32 @@ void TestPs5ExtendedInitLayout() {
     run(true);
 }
 
+void TestAutoStartKeepsStartedPlayback() {
+    bool startedByTitle = false;
+    for (int attempt = 0; attempt < 10 && !startedByTitle; ++attempt) {
+        AvPlayerInitData init = InitData(nullptr);
+        auto* player = sceAvPlayerInit(&init);
+        Check(player != nullptr, "init failed");
+        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+        startedByTitle = sceAvPlayerEnableStream(player, VideoStream) == 0 && sceAvPlayerEnableStream(player, EnglishAudioStream) == 0;
+        if (startedByTitle) {
+            const auto releasedTextures = [] {
+                std::lock_guard lock(allocations.mutex);
+                return allocations.textures - ActiveTextureCountLocked();
+            };
+            Check(sceAvPlayerStart(player) == 0, "start failed");
+            const int released = releasedTextures();
+            AvPlayerFrameInfoEx frame{};
+            Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after the title's start");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            Check(releasedTextures() == released, "auto-start restarted playback the title had started");
+            Check(IsAllocation(frame.p_data, true), "auto-start released the frame the title holds");
+        }
+        Check(sceAvPlayerClose(player) == 0, "close failed");
+    }
+    Check(startedByTitle, "auto-start won every race against the title's own start");
+}
+
 void TestUnsyncedVideoKeepsUpWithAudio() {
     AvPlayerInitData init = InitData(nullptr);
     auto* player = sceAvPlayerInit(&init);
@@ -1075,6 +1101,7 @@ int main() {
         TestFileReplacementAutoStart();
         TestHandedOutFramesStayIntact();
         TestPs5ExtendedInitLayout();
+        TestAutoStartKeepsStartedPlayback();
         TestUnsyncedVideoKeepsUpWithAudio();
         std::puts("AvPlayer tests passed");
         return 0;
