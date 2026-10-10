@@ -45,7 +45,7 @@ public:
 #endif
         Require(block != nullptr, "depth fast clear submit: cannot allocate a guest block");
         std::memset(block, 0, bytes);
-        GuestAllocations::Mutation().Add(block, bytes, true, true);
+        GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
     GuestBlock(const GuestBlock&) = delete;
