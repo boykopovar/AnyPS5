@@ -298,7 +298,7 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
     char* strings[7];
     for (size_t i = 0; i < 7; ++i) {
         strings[i] = next;
-        std::memcpy(next, fields[i].data(), fields[i].size());
+        if (!fields[i].empty()) std::memcpy(next, fields[i].data(), fields[i].size());
         next[fields[i].size()] = '\0';
         next += fields[i].size() + 1;
     }

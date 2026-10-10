@@ -44,7 +44,7 @@ std::int64_t APS5_VABI readlink_nid_postfix(const char* path, char* buffer, std:
     if (error) return Fail(GuestError(error));
     const auto count = std::min(size, target.size());
     if (count != 0 && buffer == nullptr) return Fail(GuestEfault);
-    std::memcpy(buffer, target.data(), count);
+    if (count != 0) std::memcpy(buffer, target.data(), count);
     return static_cast<std::int64_t>(count);
 }
 
