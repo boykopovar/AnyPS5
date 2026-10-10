@@ -14,6 +14,7 @@ int APS5_VABI sceAudioInOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, s
 int APS5_VABI sceAudioInInput(int, void*);
 int APS5_VABI sceAudioInGetSilentState(int);
 int APS5_VABI sceAudioInClose(int);
+int APS5_VABI sceAudioInHqOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -41,6 +42,8 @@ void TestValidation() {
     Require(sceAudioInOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
     Require(sceAudioInOpen(user, 0, 0, 256, 48000, 3) == invalidParam);
     Require(sceAudioInOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
+    Require(sceAudioInHqOpen(user, 2, 0, 128, 48000, 2) == invalidType);
+    Require(sceAudioInHqOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
 }
 
 void TestCapture() {
