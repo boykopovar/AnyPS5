@@ -105,6 +105,14 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     return it == table.end() ? nullptr : it->second;
 }
 
+VkDeviceMemory MemoryOf(VkBuffer buffer) {
+    return mock.bound.at(buffer).first;
+}
+
+VkDeviceSize ClassOf(VkBuffer buffer) {
+    return mock.memoryBytes.at(MemoryOf(buffer));
+}
+
 Context mockContext() {
     Context context{};
     context.deviceProc = mockProc;
@@ -119,44 +127,46 @@ Context mockContext() {
 void SizeClassesAndDirections() {
     mock = MockDevice{};
     auto context = mockContext();
-    VkBuffer first = VK_NULL_HANDLE;
+    VkDeviceMemory first = VK_NULL_HANDLE;
     {
         DeviceBuffer upload(context, 10 * MiB + 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        first = upload.Handle();
-        Expect(mock.sizes.at(first) == 11 * MiB, "a 10 MiB + 4 KiB device buffer was created with " + std::to_string(mock.sizes.at(first)) + " bytes, not its 11 MiB class");
+        first = MemoryOf(upload.Handle());
+        Expect(mock.sizes.at(upload.Handle()) == 10 * MiB + 4096, "a 10 MiB + 4 KiB device buffer was created with " + std::to_string(mock.sizes.at(upload.Handle())) + " bytes, not the requested size");
+        Expect(ClassOf(upload.Handle()) == 11 * MiB, "a 10 MiB + 4 KiB device buffer has " + std::to_string(ClassOf(upload.Handle())) + " bytes of memory, not its 11 MiB class");
         constexpr VkBufferUsageFlags all = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        Expect((mock.usages.at(first) & all) == all, "a device buffer was created without storage and both transfer directions");
+        Expect((mock.usages.at(upload.Handle()) & all) == all, "a device buffer was created without storage and both transfer directions");
         Expect(upload.Size() == 10 * MiB + 4096, "a device buffer reports its class instead of the requested size");
     }
     const auto made = mock.allocations;
     DeviceBuffer writeBack(context, 10 * MiB + 512 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    Expect(writeBack.Handle() == first && mock.allocations == made, "a retained 11 MiB device buffer did not serve a write-back of another size and direction in its class");
+    Expect(MemoryOf(writeBack.Handle()) == first && mock.allocations == made, "a retained 11 MiB device buffer did not serve a write-back of another size and direction in its class");
     Expect(writeBack.Size() == 10 * MiB + 512 * 1024, "a reused device buffer reports the retained size");
+    Expect(mock.sizes.at(writeBack.Handle()) == 10 * MiB + 512 * 1024, "a reused device buffer kept the VkBuffer of the earlier size");
 }
 
 void LargerClass() {
     mock = MockDevice{};
     auto context = mockContext();
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    VkBuffer twelve = VK_NULL_HANDLE;
+    VkDeviceMemory twelve = VK_NULL_HANDLE;
     {
         DeviceBuffer large(context, 12 * MiB, usage);
-        twelve = large.Handle();
+        twelve = MemoryOf(large.Handle());
     }
     {
         DeviceBuffer smaller(context, 7 * MiB, usage);
-        Expect(smaller.Handle() == twelve, "a 7 MiB request did not take the retained 12 MiB buffer");
+        Expect(MemoryOf(smaller.Handle()) == twelve, "a 7 MiB request did not take the retained 12 MiB buffer");
     }
     const auto made = mock.allocations;
     {
         DeviceBuffer tooSmall(context, 5 * MiB, usage);
-        Expect(tooSmall.Handle() != twelve && mock.allocations == made + 1, "a 5 MiB request took a retained buffer of more than twice its size");
+        Expect(MemoryOf(tooSmall.Handle()) != twelve && mock.allocations == made + 1, "a 5 MiB request took a retained buffer of more than twice its size");
         Expect(mock.sizes.at(tooSmall.Handle()) == 5 * MiB, "a 5 MiB device buffer was not created at its own class");
     }
     DeviceBuffer again(context, 12 * MiB, usage);
-    Expect(again.Handle() == twelve, "a buffer served to a smaller request did not return to its own 12 MiB class");
+    Expect(MemoryOf(again.Handle()) == twelve, "a buffer served to a smaller request did not return to its own 12 MiB class");
     DeviceBuffer best(context, 4 * MiB + 1, usage);
-    Expect(best.Handle() != twelve && mock.sizes.at(best.Handle()) == 5 * MiB, "a 4 MiB + 1 request did not take the smallest retained class that fits (5 MiB)");
+    Expect(MemoryOf(best.Handle()) != twelve && ClassOf(best.Handle()) == 5 * MiB, "a 4 MiB + 1 request did not take the smallest retained class that fits (5 MiB)");
 }
 
 void KeptUntilFence() {
@@ -187,28 +197,28 @@ void Budget() {
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     std::vector<std::unique_ptr<DeviceBuffer>> live;
     for (int i = 0; i < 12; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, (48 + static_cast<std::size_t>(i) * 3) * MiB, usage));
-    const auto first = live.front()->Handle();
+    const auto first = MemoryOf(live.front()->Handle());
     VkDeviceSize madeBytes = 0;
-    for (const auto& buffer : live) madeBytes += mock.sizes.at(buffer->Handle());
+    for (const auto& buffer : live) madeBytes += ClassOf(buffer->Handle());
     Expect(madeBytes > 512 * MiB, "the budget case does not exceed the budget");
     for (auto& buffer : live) buffer.reset();
     Expect(mock.frees != 0 && mock.liveBytes <= 512 * MiB, "the device tier retains " + std::to_string(mock.liveBytes / MiB) + " MiB after " + std::to_string(mock.frees) + " evictions, over its 512 MiB budget");
     DeviceBuffer probe(context, 48 * MiB, usage);
-    Expect(probe.Handle() != first, "the least recently used device buffer survived the eviction");
+    Expect(MemoryOf(probe.Handle()) != first, "the least recently used device buffer survived the eviction");
 }
 
 void AddressAndHostUnchanged() {
     mock = MockDevice{};
     auto context = mockContext();
-    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratch = VK_NULL_HANDLE;
     {
         DeviceBuffer buffer(context, 2 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        scratch = buffer.Handle();
+        scratch = MemoryOf(buffer.Handle());
     }
     Buffer addressed(context, 2 * MiB, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Expect(addressed.Handle() != scratch && addressed.DeviceAddress() != 0, "an addressable device-local buffer took a scratch buffer without a device address");
+    Expect(MemoryOf(addressed.Handle()) != scratch && addressed.DeviceAddress() != 0, "an addressable device-local buffer took a scratch buffer without a device address");
     Buffer shadow(context, 2 * MiB - 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Expect(shadow.Handle() == scratch, "a device-local staging buffer did not share the scratch buffers' class");
+    Expect(MemoryOf(shadow.Handle()) == scratch, "a device-local staging buffer did not share the scratch buffers' class");
     VkBuffer host = VK_NULL_HANDLE;
     {
         Buffer copy(context, 10 * MiB + 4096, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible);
@@ -226,19 +236,19 @@ void SmallDeviceClasses() {
     mock = MockDevice{};
     auto context = mockContext();
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    VkBuffer mebibyte = VK_NULL_HANDLE;
-    VkBuffer half = VK_NULL_HANDLE;
+    VkDeviceMemory mebibyte = VK_NULL_HANDLE;
+    VkDeviceMemory half = VK_NULL_HANDLE;
     {
         DeviceBuffer one(context, MiB, usage);
-        mebibyte = one.Handle();
+        mebibyte = MemoryOf(one.Handle());
     }
     {
         DeviceBuffer smaller(context, 300 * 1024, usage);
-        Expect(smaller.Handle() != mebibyte && mock.sizes.at(smaller.Handle()) == 512 * 1024, "a 300 KiB request took a 1 MiB buffer or skipped its power-of-two class");
-        half = smaller.Handle();
+        Expect(MemoryOf(smaller.Handle()) != mebibyte && ClassOf(smaller.Handle()) == 512 * 1024, "a 300 KiB request took a 1 MiB buffer or skipped its power-of-two class");
+        half = MemoryOf(smaller.Handle());
     }
     DeviceBuffer again(context, 260 * 1024, usage);
-    Expect(again.Handle() == half, "a 260 KiB request did not take the retained 512 KiB buffer");
+    Expect(MemoryOf(again.Handle()) == half, "a 260 KiB request did not take the retained 512 KiB buffer");
     constexpr auto indirect = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     VkBuffer tiny = VK_NULL_HANDLE;
     {
