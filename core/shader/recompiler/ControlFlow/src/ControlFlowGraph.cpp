@@ -106,11 +106,13 @@ BasicBlock& ControlFlowGraph::FindBlockByProgramCounter(std::uint32_t programCou
 }
 
 bool ControlFlowGraph::Dominates(std::uint32_t dominator, std::uint32_t blockId) const {
-    return contains(FindBlock(blockId).dominators, dominator);
+    const auto& dominators = FindBlock(blockId).dominators;
+    return std::binary_search(dominators.begin(), dominators.end(), dominator);
 }
 
 bool ControlFlowGraph::PostDominates(std::uint32_t postDominator, std::uint32_t blockId) const {
-    return contains(FindBlock(blockId).postDominators, postDominator);
+    const auto& postDominators = FindBlock(blockId).postDominators;
+    return std::binary_search(postDominators.begin(), postDominators.end(), postDominator);
 }
 
 std::uint32_t ControlFlowGraph::FindNearestCommonPostDominator(std::uint32_t firstBlock, std::uint32_t secondBlock) const {

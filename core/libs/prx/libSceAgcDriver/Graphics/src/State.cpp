@@ -887,6 +887,8 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
         Require(maxMip == 0 && (info & 0x10000000u) == 0, "mipmapped or DCC 3D color targets are unsupported");
         Require(slice < color.depth, "the color view slice is beyond the 3D surface");
         color.depthSlice = slice;
+    } else if ((attrib3 & 0x1fffu) != 0) {
+        Require(slice <= (attrib3 & 0x1fffu), "the color view slice is beyond the array surface");
     }
     color.extent = {((attrib2 >> 14u) & 0x3fffu) + 1u, (attrib2 & 0x3fffu) + 1u};
     color.elementBytes = decoded.elementBytes;

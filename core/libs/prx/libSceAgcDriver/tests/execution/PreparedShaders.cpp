@@ -484,6 +484,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--deferred-undecodable") {
+            if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             DeferredUndecodableRegistration();
             std::cout << "deferred undecodable shader tests passed\n";
             return 0;

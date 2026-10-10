@@ -93,6 +93,7 @@ struct SamplerCapture {
     bool created = false;
     const void* next = nullptr;
     VkSamplerReductionMode reductionMode = VK_SAMPLER_REDUCTION_MODE_MAX_ENUM;
+    VkSamplerCreateFlags flags = 0;
 };
 SamplerCapture samplerCapture;
 
@@ -105,6 +106,7 @@ THandle fakeHandle(std::uint64_t value) {
 VKAPI_ATTR VkResult VKAPI_CALL captureCreateSampler(VkDevice, const VkSamplerCreateInfo* info, const VkAllocationCallbacks*, VkSampler* sampler) {
     samplerCapture.created = true;
     samplerCapture.next = info->pNext;
+    samplerCapture.flags = info->flags;
     const auto* reduction = static_cast<const VkSamplerReductionModeCreateInfoEXT*>(info->pNext);
     if (reduction != nullptr && reduction->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT && reduction->pNext == nullptr) samplerCapture.reductionMode = reduction->reductionMode;
     *sampler = fakeHandle<VkSampler>(0x5a);
@@ -233,6 +235,32 @@ void RunSamplerReductionTests(const Fields& base) {
     maxLinearMip.filterMode = 2;
     maxLinearMip.mipFilter = 2;
     reject([&] { pointFiltered(pack(maxLinearMip)); }, "needs point filtering");
+}
+
+void RunNonSeamlessCubeTests(const Fields& base) {
+    Fields nonSeamless = base;
+    nonSeamless.disableCubeWrap = true;
+    const auto decoded = DecodeSamplerResource(pack(nonSeamless));
+    Require(decoded.nonSeamlessCube, "DISABLE_CUBE_WRAP was not decoded as a non-seamless cube sampler");
+    Require(!DecodeSamplerResource(pack(base)).nonSeamlessCube, "a sampler without DISABLE_CUBE_WRAP decoded as non-seamless");
+
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    context.nonSeamlessCubeMap = true;
+    Require((createSampler(context, decoded).flags & VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT) != 0u, "a non-seamless cube sampler was created without VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT");
+    Require(createSampler(context, DecodeSamplerResource(pack(base))).flags == 0u, "a seamless sampler was created with flags");
+    const std::array honored{std::make_shared<Sampler>(context, decoded)};
+    Require(!honored[0]->RequiresNonSeamlessCube(), "a sampler created with the non-seamless flag still restricts cube textures");
+    RequireNonSeamlessCube(true, 0b1u, honored);
+
+    context.nonSeamlessCubeMap = false;
+    Require(createSampler(context, decoded).flags == 0u, "a sampler set the non-seamless flag without the device feature");
+    const std::array unsupported{std::make_shared<Sampler>(context, DecodeSamplerResource(pack(base))), std::make_shared<Sampler>(context, decoded)};
+    Require(unsupported[1]->RequiresNonSeamlessCube(), "a non-seamless sampler without the device feature does not restrict cube textures");
+    RequireNonSeamlessCube(false, 0b11u, unsupported);
+    RequireNonSeamlessCube(true, 0b01u, unsupported);
+    reject([&] { RequireNonSeamlessCube(true, 0b10u, unsupported); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
 }
 
 void RunSamplerCacheDegammaTests(const Fields& base) {
@@ -406,10 +434,7 @@ void RunGuestSamplerResourceTests() {
     truncated.anisoBias = 1;
     static_cast<void>(DecodeSamplerResource(pack(truncated)));
 
-    Fields badCubeWrap = base;
-    badCubeWrap.disableCubeWrap = true;
-    rejectFields(badCubeWrap, "seamless cube filtering");
-
+    RunNonSeamlessCubeTests(base);
     RunSamplerReductionTests(base);
 
     Fields badDegamma = base;

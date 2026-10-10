@@ -602,9 +602,15 @@ void PixelInputLayoutTests() {
     Require(pixel.linearCentroid && !pixel.noPerspective && PixelInputVgpr(pixel.inputAddr, PixelInput::LinearCentroid) == 4u && PixelInputVgpr(pixel.inputAddr, PixelInput::PositionX) == 6u && PixelInputVgpr(pixel.inputAddr, PixelInput::FrontFace) == 7u, "the linear centroid layout moved the inputs");
     pixel = decode(0x506u, 0x7afu);
     Require(pixel.inputAddr == 0x7afu && !pixel.posY && pixel.posZ && PixelInputVgpr(pixel.inputAddr, PixelInput::PerspectiveCentroid) == 4u && PixelInputVgpr(pixel.inputAddr, PixelInput::PositionX) == 12u && PixelInputVgpr(pixel.inputAddr, PixelInput::PositionZ) == 14u, "ADDR-only inputs did not reserve their VGPRs");
-    for (const auto bit : {0x8u, 0x80u, 0x4000u, 0x8000u}) {
+    for (const auto bit : {0x8u, 0x4000u}) {
         expectFailure([&] { static_cast<void>(decode(0x2u | bit, 0x2u | bit)); }, "unsupported SPI_PS_INPUT_ENA/ADDR");
     }
+    pixel = decode(0x80u, 0x80u);
+    Require(pixel.inputAddr == 0x80u && PixelInputVgpr(pixel.inputAddr, PixelInput::LineStipple) == 0u, "a pixel shader with only LINE_STIPPLE_TEX enabled was rejected");
+    pixel = decode(0x8082u, 0x8082u);
+    Require(PixelInputVgpr(pixel.inputAddr, PixelInput::LineStipple) == 2u && PixelInputVgpr(pixel.inputAddr, PixelInput::PositionFixedPoint) == 3u, "LINE_STIPPLE_TEX and POS_FIXED_PT did not take their VGPRs after the perspective center");
+    Require(readsBuiltin(pixelBuiltinsRead(0x8082u, 0x8082u, 3u), spv::BuiltInFragCoord), "POS_FIXED_PT is not read from the fragment coordinate");
+    Require(!readsBuiltin(pixelBuiltinsRead(0x82u, 0x82u, 2u), spv::BuiltInFragCoord), "LINE_STIPPLE_TEX read the fragment coordinate");
     pixel = decode(0x546u, 0x7c7u);
     {
         ShaderRecompiler::RecompileRequest request{};
@@ -940,6 +946,11 @@ void DepthStencilTests() {
     queue.context[0x31b] = 1u | (1u << 13u);
     const auto slice = AgcDriver::Graphics::DecodeState(queue);
     Require(slice.color.address == sliced + 1024u && slice.color.bytes == 1024u, "a color view of one slice did not move the target by one slice");
+    queue.context[0x3b8] = 0x09000001;
+    const auto arraySlice = AgcDriver::Graphics::DecodeState(queue);
+    Require(arraySlice.color.address == sliced + 1024u && arraySlice.color.bytes == 1024u && arraySlice.color.depth == 1u, "a color view of one slice of a 2D array target did not move the target by one slice");
+    queue.context[0x31b] = 2u | (2u << 13u);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "beyond the array surface");
     queue.context[0x3b8] = 0x0a000003;
     queue.context[0x31b] = 2u | (2u << 13u);
     const auto volume = AgcDriver::Graphics::DecodeState(queue);

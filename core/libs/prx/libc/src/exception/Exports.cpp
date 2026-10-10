@@ -76,5 +76,13 @@ unsigned NativeUncaughtExceptions() asm("__cxa_uncaught_exceptions");
 unsigned NativeUncaughtExceptions() { return LibcException::globals.uncaught; }
 bool NativeUncaughtException() asm("__cxa_uncaught_exception");
 bool NativeUncaughtException() { return LibcException::globals.uncaught != 0; }
+bool NativeStdUncaughtException() asm("_ZSt18uncaught_exceptionv");
+bool NativeStdUncaughtException() { return LibcException::globals.uncaught != 0; }
+int NativeStdUncaughtExceptions() asm("_ZSt19uncaught_exceptionsv");
+int NativeStdUncaughtExceptions() { return static_cast<int>(LibcException::globals.uncaught); }
+void* NativeInitPrimaryException(void* object, std::type_info* type, void (*destructor)(void*)) asm("__cxa_init_primary_exception");
+void* NativeInitPrimaryException(void* object, std::type_info* type, void (*destructor)(void*)) {
+    return __cxa_init_primary_exception_nid_postfix(object, type, destructor);
+}
 }
 #endif

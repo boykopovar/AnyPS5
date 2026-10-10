@@ -2,7 +2,10 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 
 #include <cstdio>
+#include <filesystem>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <cstdint>
 #include <cstddef>
@@ -66,11 +69,17 @@ public:
     }
 
     GuestFilePrefix& GuestState() { return _guest; }
-    bool Reopen(const char* filename, const char* mode) {
+    bool Reopen(const std::filesystem::path& filename, const char* mode) {
         auto* previous = GetHandle();
         _guest = {};
         encodingError = false;
-        _handle = std::freopen(filename, mode, previous);
+#ifdef _WIN32
+        std::wstring wideMode;
+        for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
+        _handle = ::_wfreopen(filename.c_str(), wideMode.c_str(), previous);
+#else
+        _handle = std::freopen(filename.c_str(), mode, previous);
+#endif
         if (!_handle) return false;
         _guest.flags = 0x10;
 #ifdef _WIN32

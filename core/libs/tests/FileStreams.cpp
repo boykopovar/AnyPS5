@@ -4,11 +4,14 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 extern "C" {
 FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode);
+FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode, FileStream* stream);
 int APS5_VABI fclose_nid_postfix(FileStream* stream);
 std::size_t APS5_VABI fread_nid_postfix(void* buffer, std::size_t size, std::size_t count, FileStream* stream);
 std::size_t APS5_VABI fwrite_nid_postfix(const void* buffer, std::size_t size, std::size_t count, FileStream* stream);
@@ -68,5 +71,25 @@ int main(int argc, char** argv) {
     errno = 0;
     Require(fopen_nid_postfix(argv[1], "rb") == nullptr);
     Require(errno == ENOENT);
+    const std::u8string unicodeName = u8"セーブé.tmp";
+    const std::string guestName(unicodeName.begin(), unicodeName.end());
+    const std::filesystem::path hostName(unicodeName);
+    constexpr char unicodePayload[] = "unicode";
+    stream = fopen_nid_postfix(guestName.c_str(), "wb");
+    Require(stream != nullptr);
+    Require(fwrite_nid_postfix(unicodePayload, 1, sizeof(unicodePayload), stream) == sizeof(unicodePayload));
+    Require(fclose_nid_postfix(stream) == 0);
+    Require(std::filesystem::exists(hostName));
+    Require(std::filesystem::file_size(hostName) == sizeof(unicodePayload));
+    stream = fopen_nid_postfix(guestName.c_str(), "rb");
+    Require(stream != nullptr);
+    std::array<char, sizeof(unicodePayload)> unicodeBuffer{};
+    Require(fread_nid_postfix(unicodeBuffer.data(), 1, unicodeBuffer.size(), stream) == unicodeBuffer.size());
+    Require(std::strcmp(unicodeBuffer.data(), unicodePayload) == 0);
+    stream = freopen_nid_postfix(guestName.c_str(), "wb", stream);
+    Require(stream != nullptr);
+    Require(fclose_nid_postfix(stream) == 0);
+    Require(std::filesystem::file_size(hostName) == 0);
+    std::filesystem::remove(hostName);
     std::cout << "PASS: stream objects, file operations, EOF and error handling\n";
 }
