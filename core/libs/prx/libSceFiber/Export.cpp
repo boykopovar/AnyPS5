@@ -349,6 +349,21 @@ int32_t APS5_VABI _sceFiberInitializeImpl_nid_postfix(FiberObject* object, const
     return SCE_OK;
 }
 
+int32_t APS5_VABI _sceFiberInitializeWithInternalOptionImpl(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, const void* opt_param, uint32_t flags, uint32_t build_version) {
+    if (flags != 0) NotImplemented_nid_no_patch("_sceFiberInitializeWithInternalOptionImpl: flags");
+    return _sceFiberInitializeImpl_nid_postfix(object, name, entry, arg_on_initialize, addr_context, size_context, opt_param, build_version);
+}
+
+int32_t APS5_VABI _sceFiberAttachContextAndRun() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int32_t APS5_VABI _sceFiberAttachContextAndSwitch() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int32_t APS5_VABI sceFiberFinalize(FiberObject* object) {
     auto* fiber = AsFiber(object);
     if (!fiber) return object ? SCE_FIBER_ERROR_INVALID : SCE_FIBER_ERROR_NULL;
@@ -456,6 +471,10 @@ int32_t APS5_VABI sceFiberGetThreadFramePointerAddress(uint64_t* addr_frame_poin
     if (!ThreadState().current) return SCE_FIBER_ERROR_PERMISSION;
     *addr_frame_pointer = ThreadState().threadFramePointer;
     return SCE_OK;
+}
+
+int32_t APS5_VABI _sceFiberGetThreadFramePointerAddress(uint64_t* addr_frame_pointer) {
+    return sceFiberGetThreadFramePointerAddress(addr_frame_pointer);
 }
 
 int32_t APS5_VABI sceFiberStartContextSizeCheck(uint32_t flags) {
