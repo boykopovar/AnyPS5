@@ -41,6 +41,7 @@ char* APS5_VABI fgets_nid_postfix(char*, int, FileStream*);
 int APS5_VABI feof_nid_postfix(FileStream*);
 int APS5_VABI fileno_nid_postfix(FileStream*);
 void APS5_VABI clearerr_nid_postfix(FileStream*);
+int APS5_VABI ferror_nid_postfix(FileStream*);
 int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
 void APS5_VABI setbuf_nid_postfix(FileStream*, char*);
 FileStream* APS5_VABI fdopen_nid_postfix(int, const char*);
@@ -211,6 +212,22 @@ int main() {
     Require(feof_nid_postfix(&stream) && (guest.flags & 0x20));
     clearerr_nid_postfix(&stream);
     Require(!feof_nid_postfix(&stream) && !(guest.flags & 0x20));
+    std::rewind(stream.GetHandle());
+    clearerr_nid_postfix(&stream);
+    for (const int invalidSize : {0, -1, INT32_MIN}) {
+        char untouched[4] = {'u', 'v', 'w', 'x'};
+        *__error_nid_postfix() = 0;
+        Require(fgets_nid_postfix(untouched, invalidSize, &stream) == nullptr);
+        Require(*__error_nid_postfix() == 22 && ferror_nid_postfix(&stream) && (guest.flags & 0x40));
+        Require(std::memcmp(untouched, "uvwx", 4) == 0 && ftello_nid_postfix(&stream) == 0);
+        clearerr_nid_postfix(&stream);
+        Require(!ferror_nid_postfix(&stream) && !(guest.flags & 0x40));
+    }
+    char single[4] = {'u', 'v', 'w', 'x'};
+    *__error_nid_postfix() = 0;
+    Require(fgets_nid_postfix(single, 1, &stream) == single && single[0] == '\0' && single[1] == 'v');
+    Require(*__error_nid_postfix() == 0 && !ferror_nid_postfix(&stream) && fgetc_nid_postfix(&stream) == 'A');
+    clearerr_nid_postfix(&stream);
     stream.Close();
     Require(guest.flags == 0 && guest.descriptor == -1);
 

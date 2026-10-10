@@ -51,7 +51,13 @@ int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream) {
     return result;
 }
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
-    auto* result = std::fgets(buffer, size, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (size <= 0) {
+        stream->SetEncodingError();
+        errno = EINVAL;
+        return nullptr;
+    }
+    auto* result = std::fgets(buffer, size, native);
     stream->SyncStatus();
     return result;
 }
