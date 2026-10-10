@@ -824,6 +824,28 @@ void verifyHalfWaveReduction() {
     };
     require(reductions(vertex(scan(0xffffffffu, 0x26000000u, 0x83800000u), 32u), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: the wave64 vertex UMin scan, whose entry EXEC is every invocation, did not read lane 31 as a subgroup UMin on 32 lanes");
     require(halves(vertex(scan(0x80000000u, 0x24000000u, 0x84000000u), 64u), spv::OpGroupNonUniformSMax, 0x80000000u), "half-wave reduction: the wave64 vertex SMax scan did not read lanes 31 and 63 as reductions of host invocations 0-31 and 32-63 on 64 lanes");
+    const auto floatScan = [&scan](std::uint32_t identity, std::uint32_t vector, std::uint32_t join) {
+        auto code = scan(identity, vector, 0u);
+        code[23] = join;
+        code[24] = 0x00000e06u;
+        return code;
+    };
+    const auto fmax = floatScan(0xff800000u, 0x20000000u, 0xd5100001u);
+    const auto fmin = floatScan(0x7f800000u, 0x1e000000u, 0xd50f0001u);
+    for (const auto& code : {fmax, fmin}) {
+        const auto narrow = pixel(code, 32u, false);
+        require(!narrow.empty() && reductions(narrow, spv::OpGroupNonUniformFMax) == 0u && reductions(narrow, spv::OpGroupNonUniformFMin) == 0u, "half-wave reduction: a wave64 v_max_f32/v_min_f32 scan did not read lane 63 as its -inf/+inf keys on 32 lanes");
+        require(!pixel(code, 64u, false).empty(), "half-wave reduction: a wave64 v_max_f32/v_min_f32 scan did not build on 64 lanes");
+    }
+    auto fmaxUnderExec = fmax;
+    fmaxUnderExec[3] = 0xbeea047eu;
+    expectFailure([&] { static_cast<void>(pixel(fmaxUnderExec, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a v_max_f32 scan under the entry EXEC read lane 63");
+    auto fmaxJoinedByMin = fmax;
+    fmaxJoinedByMin[17] = 0x1e000000u | 0x001a190du;
+    expectFailure([&] { static_cast<void>(pixel(fmaxJoinedByMin, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a v_max_f32 row scan joined by v_min_f32 read lane 63");
+    auto fmaxOfZero = fmax;
+    fmaxOfZero[6] = 0u;
+    expectFailure([&] { static_cast<void>(pixel(fmaxOfZero, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a v_max_f32 scan of 0 outside the live lanes read lane 63");
     const auto umin = scan(0xffffffffu, 0x26000000u, 0x83800000u);
     const auto patched = [&umin](std::initializer_list<std::pair<std::size_t, std::uint32_t>> words) {
         auto code = umin;

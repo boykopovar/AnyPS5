@@ -234,9 +234,10 @@ struct WaveReduction {
     IrOpcode opcode;
     std::uint32_t identity;
     spv::Op reduce;
+    bool floating = false;
 };
 
-constexpr std::array<WaveReduction, 7> WaveReductions{{
+constexpr std::array<WaveReduction, 9> WaveReductions{{
     {IrOpcode::UMin32, 0xffffffffu, spv::OpGroupNonUniformUMin},
     {IrOpcode::UMax32, 0u, spv::OpGroupNonUniformUMax},
     {IrOpcode::SMin32, 0x7fffffffu, spv::OpGroupNonUniformSMin},
@@ -244,6 +245,8 @@ constexpr std::array<WaveReduction, 7> WaveReductions{{
     {IrOpcode::IAdd32, 0u, spv::OpGroupNonUniformIAdd},
     {IrOpcode::BitwiseAnd32, 0xffffffffu, spv::OpGroupNonUniformBitwiseAnd},
     {IrOpcode::BitwiseOr32, 0u, spv::OpGroupNonUniformBitwiseOr},
+    {IrOpcode::FPMin32, 0x7f800000u, spv::OpNop, true},
+    {IrOpcode::FPMax32, 0xff800000u, spv::OpNop, true},
 }};
 
 struct HalfWaveScan {
@@ -267,6 +270,11 @@ bool IsU32(const IrValue* value, std::uint32_t expected) {
 template<typename TMatch>
 bool EitherOrder(const IrValue* value, TMatch&& match) {
     return match(Resolved(value->Argument(0)), Resolved(value->Argument(1))) || match(Resolved(value->Argument(1)), Resolved(value->Argument(0)));
+}
+
+template<typename TMatch>
+bool EitherOrder(const std::array<const IrValue*, 2>& operands, TMatch&& match) {
+    return match(operands[0], operands[1]) || match(operands[1], operands[0]);
 }
 
 std::optional<std::array<const IrValue*, 2>> LaneBitWords(const IrValue* bit) {
@@ -375,11 +383,38 @@ bool RowShiftFlags(const IrValue* value, std::uint32_t control) {
     return flags.control == control && flags.rowMask == 0xfu && flags.bankMask == 0xfu && !flags.boundControl && !flags.fetchInactive;
 }
 
+const IrValue* Unflushed(const IrValue* value) {
+    if (!Is(value, IrOpcode::SelectU32)) return value;
+    const auto* kept = Resolved(value->Argument(2));
+    const auto masked = [kept](const IrValue* candidate, std::uint32_t mask) {
+        return Is(candidate, IrOpcode::BitwiseAnd32) && EitherOrder(candidate, [&](const IrValue* source, const IrValue* constant) { return source == kept && IsU32(constant, mask); });
+    };
+    const auto* condition = Resolved(value->Argument(0));
+    const bool exponentZero = Is(condition, IrOpcode::IEqual32) && EitherOrder(condition, [&](const IrValue* exponent, const IrValue* zero) { return IsU32(zero, 0u) && masked(exponent, 0x7f800000u); });
+    return exponentZero && masked(Resolved(value->Argument(1)), 0x80000000u) ? kept : value;
+}
+
+std::optional<std::array<const IrValue*, 2>> ReductionOperands(const IrValue* combined, const WaveReduction& reduction) {
+    if (reduction.floating) {
+        combined = Unflushed(combined);
+        if (!Is(combined, IrOpcode::BitCastU32F32)) return std::nullopt;
+        combined = Resolved(combined->Argument(0));
+    }
+    if (!Is(combined, reduction.opcode)) return std::nullopt;
+    std::array<const IrValue*, 2> operands{Resolved(combined->Argument(0)), Resolved(combined->Argument(1))};
+    if (!reduction.floating) return operands;
+    for (auto& operand : operands) {
+        if (!Is(operand, IrOpcode::BitCastF32U32)) return std::nullopt;
+        operand = Unflushed(Resolved(operand->Argument(0)));
+    }
+    return operands;
+}
+
 const IrValue* RowScanStepInput(const IrValue* step, const WaveReduction& reduction, std::uint32_t control) {
     if (!Is(step, IrOpcode::DppUpdateU32) || !RowShiftFlags(step, control) || !AllLanesBit(step->Argument(2))) return nullptr;
     const auto* previous = Resolved(step->Argument(1));
-    const auto* combined = Resolved(step->Argument(0));
-    const bool matched = Is(combined, reduction.opcode) && EitherOrder(combined, [&](const IrValue* moved, const IrValue* own) {
+    const auto operands = ReductionOperands(Resolved(step->Argument(0)), reduction);
+    const bool matched = operands && EitherOrder(*operands, [&](const IrValue* moved, const IrValue* own) {
         return own == previous && Is(moved, IrOpcode::DppMoveU32) && RowShiftFlags(moved, control) && Resolved(moved->Argument(0)) == previous && AllLanesBit(moved->Argument(1));
     });
     return matched ? previous : nullptr;
@@ -399,9 +434,10 @@ bool CrossesRowsOf(const IrValue* value, const IrValue* scan) {
 
 std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value, IrShaderStage stage) {
     const auto* combined = Unmasked(Resolved(value));
-    const auto reduction = std::find_if(WaveReductions.begin(), WaveReductions.end(), [&](const WaveReduction& candidate) { return Is(combined, candidate.opcode); });
+    std::optional<std::array<const IrValue*, 2>> operands;
+    const auto reduction = std::find_if(WaveReductions.begin(), WaveReductions.end(), [&](const WaveReduction& candidate) { return (operands = ReductionOperands(combined, candidate)).has_value(); });
     const IrValue* scan = nullptr;
-    if (reduction == WaveReductions.end() || !EitherOrder(combined, [&](const IrValue* own, const IrValue* crossed) { scan = own; return CrossesRowsOf(crossed, own); })) return std::nullopt;
+    if (reduction == WaveReductions.end() || !EitherOrder(*operands, [&](const IrValue* own, const IrValue* crossed) { scan = own; return CrossesRowsOf(crossed, own); })) return std::nullopt;
     for (const auto control : {0x118u, 0x114u, 0x112u, 0x111u}) {
         scan = RowScanStepInput(scan, *reduction, control);
         if (scan == nullptr) return std::nullopt;
@@ -416,6 +452,10 @@ std::optional<std::uint32_t> EmitHalfWaveReduction(SpirvValueEmitContext& ctx, c
     if (state.program.WaveSize() != 64u || (lane & 31u) != 31u) return std::nullopt;
     const auto scan = MatchHalfWaveScan(inst.Argument(0), state.program.Resources().stage);
     if (!scan) return std::nullopt;
+    if (scan->reduction->floating) {
+        if (lane < 32u || state.hostSubgroupSize > 32u) return std::nullopt;
+        return ConstantU32(state, scan->reduction->identity);
+    }
     const auto read = "v_readlane_b32 of lane " + std::to_string(lane) + " of a wave64 half-wave reduction scan";
     const auto& capabilities = state.supportedCapabilities;
     if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformArithmetic)) == capabilities.end()) ctx.Fail(inst, (read + " needs subgroup arithmetic, which the device lacks").c_str());
