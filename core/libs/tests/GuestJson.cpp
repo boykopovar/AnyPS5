@@ -83,6 +83,7 @@ const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value*, std::size_t)
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value*, const String*);
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value*, std::size_t);
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(void*);
+void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(void*);
 void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(void*, void*, void*);
 void APS5_VABI _ZN3sce4Json14InitParameter217setFileBufferSizeEm(void*, std::size_t);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
@@ -347,16 +348,25 @@ static void ValueAccess() {
     alignas(16) std::uint8_t parameter[40];
     std::memset(parameter, 0xff, sizeof(parameter));
     _ZN3sce4Json14InitParameter2C1Ev(parameter);
+    alignas(16) std::uint8_t baseParameter[40];
+    std::memset(baseParameter, 0xff, sizeof(baseParameter));
+    _ZN3sce4Json14InitParameter2C2Ev(baseParameter);
+    Require(std::memcmp(parameter, baseParameter, sizeof(parameter)) == 0);
+    void* defaults[3]{};
+    std::memcpy(defaults, baseParameter, sizeof(defaults));
+    Require(defaults[0] == nullptr && defaults[1] == nullptr && defaults[2] == nullptr);
+    for (std::size_t i = sizeof(defaults); i < sizeof(baseParameter); ++i)
+        Require(baseParameter[i] == 0xff);
     int allocator = 0;
     int userData = 0;
-    _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(parameter, &allocator, &userData);
-    _ZN3sce4Json14InitParameter217setFileBufferSizeEm(parameter, 4096);
+    _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(baseParameter, &allocator, &userData);
+    _ZN3sce4Json14InitParameter217setFileBufferSizeEm(baseParameter, 4096);
     void* stored[3]{};
-    std::memcpy(stored, parameter, sizeof(stored));
+    std::memcpy(stored, baseParameter, sizeof(stored));
     Require(stored[0] == &allocator && stored[1] == &userData && reinterpret_cast<std::uintptr_t>(stored[2]) == 4096);
     alignas(16) std::uint8_t initializer[16]{};
     Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, parameter) == 0);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, baseParameter) == 0);
     Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
     Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
 }
