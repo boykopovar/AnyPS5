@@ -766,6 +766,7 @@ private:
         std::map<std::vector<IrValue*>, IrValue*> selectors;
         std::vector<std::pair<IrBlock*, IrValue*>> phis;
         std::unordered_map<IrValue*, IrValue*> resolved;
+        std::unordered_map<const IrBlock*, std::size_t> order;
     };
 
     IrValue* WebSelector(std::vector<IrValue*> tuple, DescriptorWeb& web, IrValue& position) {
@@ -803,7 +804,27 @@ private:
             web.arms.push_back(std::move(tuple));
             return &m_builder.Constant(static_cast<std::uint32_t>(web.arms.size() - 1u));
         }
-        IrBlock* block = (*phi)->Parent();
+        if (web.order.empty()) {
+            const auto& order = m_program.BlockOrder();
+            for (std::size_t index = 0; index < order.size(); index++) {
+                web.order.emplace(order[index], index);
+            }
+        }
+        IrBlock* block = nullptr;
+        std::size_t latest = 0;
+        for (const IrValue* value : tuple) {
+            if (!value->IsPhi()) {
+                continue;
+            }
+            const auto found = web.order.find(value->Parent());
+            if (found == web.order.end()) {
+                return nullptr;
+            }
+            if (block == nullptr || found->second > latest) {
+                block = value->Parent();
+                latest = found->second;
+            }
+        }
         if (block == nullptr || web.selectors.size() == DescriptorWeb::maxStates) {
             return nullptr;
         }
@@ -812,7 +833,7 @@ private:
             return nullptr;
         }
         for (const IrValue* value : tuple) {
-            if (value->IsPhi() && (value->Parent() != block || value->PhiBlockCount() != predecessors.size())) {
+            if (value->IsPhi() && value->Parent() == block && value->PhiBlockCount() != predecessors.size()) {
                 return nullptr;
             }
         }
@@ -822,7 +843,7 @@ private:
         for (IrBlock* predecessor : predecessors) {
             std::vector<IrValue*> incoming;
             for (IrValue* value : tuple) {
-                IrValue* edge = value->IsPhi() ? PhiIncoming(*value, predecessor) : value;
+                IrValue* edge = value->IsPhi() && value->Parent() == block ? PhiIncoming(*value, predecessor) : value;
                 if (edge == nullptr) {
                     return nullptr;
                 }
