@@ -27,9 +27,15 @@ int APS5_VABI sceAgcDriverFindResourcesPublic(const void*, void*);
 bool APS5_VABI sceAgcDriverIsCaptureInProgress(void);
 bool APS5_VABI sceAgcDriverIsTraceInProgress(void);
 bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void);
+int APS5_VABI sceAgcDriverSetSubmitValidationMode(std::uint32_t);
+int APS5_VABI sceAgcDriverGetSubmitValidationMode(std::uint32_t*);
+int APS5_VABI sceAgcDriverSetSubmitValidationConfig(const void*);
+int APS5_VABI sceAgcDriverGetSubmitValidationConfig(void*);
+int APS5_VABI sceAgcDriverSetValidationErrorOutputFrequency(std::uint32_t);
 }
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
+static constexpr int DebugUnavailable = static_cast<int>(0x8A6C1000);
 static void Require(bool value) { if (!value) std::abort(); }
 
 struct ResourceDescriptor {
@@ -90,5 +96,16 @@ int main() {
     Require(sceAgcDriverUnregisterWorkloadStream(1u) == 0);
     Require(!sceAgcDriverIsCaptureInProgress());
     Require(!sceAgcDriverIsTraceInProgress());
+    Require(!sceAgcDriverIsSubmitValidationEnabled());
+    std::uint32_t mode = 5u;
+    std::array<std::uint8_t, 64> config{};
+    config.fill(0x5a);
+    const auto originalConfig = config;
+    Require(sceAgcDriverSetSubmitValidationMode(1u) == DebugUnavailable);
+    Require(sceAgcDriverGetSubmitValidationMode(&mode) == DebugUnavailable);
+    Require(sceAgcDriverSetSubmitValidationConfig(config.data()) == DebugUnavailable);
+    Require(sceAgcDriverGetSubmitValidationConfig(config.data()) == DebugUnavailable);
+    Require(sceAgcDriverSetValidationErrorOutputFrequency(10u) == DebugUnavailable);
+    Require(mode == 5u && config == originalConfig);
     Require(!sceAgcDriverIsSubmitValidationEnabled());
 }
