@@ -29,6 +29,7 @@
 #include <set>
 #include <thread>
 #include <stop_token>
+#include <cerrno>
 #include <cstdlib>
 #include <cstdio>
 #include <chrono>
@@ -239,7 +240,15 @@ const char* createHostPointerImport(const Context& context, HostImport& entry, V
 
 #ifndef _WIN32
 int udmabufDevice() {
-    static const int device = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+    static const int device = [] {
+        const int result = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+        if (result < 0) {
+            const int error = errno;
+            std::fprintf(stderr, "[gpu] open /dev/udmabuf: %s; shared direct memory is copied instead of imported, and GPU stores through FLAT/GLOBAL addresses do not reach it%s\n",
+                std::strerror(error), error == EACCES ? " (give the user read-write access to /dev/udmabuf, for example through the kvm group)" : "");
+        }
+        return result;
+    }();
     return device;
 }
 
