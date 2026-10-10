@@ -72,7 +72,7 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
         text = text.replace(key, value)
     (work / "k.s").write_text(text)
     subprocess.run([tool("clang"), "-x", "assembler", "-target", "amdgcn-amd-amdhsa", f"-mcpu={target()}", *(["-mwavefrontsize64"] if wave64 else []), "-c", str(work / "k.s"), "-o", str(work / "k.o")], check=True)
-    subprocess.run([tool("ld.lld"), "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True)
+    subprocess.run([tool("ld.lld"), "-m", "elf64_amdgpu", "-shared", str(work / "k.o"), "-o", str(work / "k.co")], check=True)
     return work / "k.co"
 
 
