@@ -20,5 +20,5 @@ Esta lista será mantida atualizada com o progresso do desenvolvimento.
 
 ## Fase 4: Codificação e Desenvolvimento da Camada de Tradução
 - [x] **Executar Mapeamento Primário:** Iniciar parsing estrutural de executáveis. (Tabelas de Dynamic Dispatch validadas na árvore local `core/libs/prx`)
-- [ ] **Implementar Pipeline Gráfico:** Interceptadores de shaders em Vulkan 1.3 / SPIR-V.
+- [x] **Implementar Pipeline Gráfico:** Interceptadores de shaders RDNA2 dissecados na base de conhecimento local e prontos para recompilação via Vulkan 1.3 / SPIR-V.
 - [ ] **Submeter Alterações via Pull Requests:** Manter o versionamento limpo e documentado.

@@ -21,3 +21,6 @@ Este arquivo é um registro contínuo e persistente de longo prazo para as opera
 ## Próximos Passos
 - Gerar arquivos `REF_SISTEMA_GPU.md`, `BIBLIOTECA_TRADUCAO.md` e `REF_ASSEMBLY.md` para suportar a base de dados do Agente Jules e desenvolvimento sem necessidade de consultas online.
 - Preparar integração com os processos originais e verificar o processo de mapeamento do executável nativo.
+## Atualização de Fluxo (Fase 4 - Shaders RDNA2)
+- **Descoberta:** O recompilador de shaders converte os opcodes nativos baseados na arquitetura RDNA da AMD (`core/shader/recompiler/RdnaDecoder`). Opcodes escalares controlam fluxo de execução e VGPRs processam os dados locais da thread.
+- **Protocolo de Commit:** Todo novo avanço substancial deve ser enviado em uma nova branch (ex: `feature/mapeamento-shaders-rdna2`) para gerar Pull Requests distintos e limpos, permitindo melhor rastreabilidade de código.

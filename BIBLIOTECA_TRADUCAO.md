@@ -2,6 +2,30 @@
 
 Este repositório interno descreve as instruções, opcodes e convenções de funções da camada de tradução do ecossistema PlayStation 5 para as equivalências de hardware de PC, com a finalidade de servir de consulta rápida e base autônoma.
 
+## Módulo: Shaders e Gráficos RDNA 2 (`core/shader/recompiler/`)
+
+O recompilador intercepta shaders nativos AMD e decodifica instruções específicas do pipeline para conversão em SPIR-V intermediário.
+
+### Opcodes Escalares (S_ALU e Branches)
+Opcodes RDNA que manipulam os registradores SGPR (Scalar General-Purpose Registers), frequentemente usados para controle de fluxo e cálculos independentes de thread:
+- **`SMovB32` / `SMovB64`**: Instruções de Move escalar (32/64 bit).
+- **`SAddI32` / `SAddU32`**: Soma inteira escalar (S_ADD_I32).
+- **Controle de Fluxo Escalar**:
+  - `SCbranchScc0` / `SCbranchScc1`: Pulo condicional via registrador de condição escalar.
+  - `SCbranchVccz` / `SCbranchVccnz`: Pulo condicional baseado em VCC nulo/não-nulo.
+  - `SSetpcB64`: Set program counter (salto indireto para chamadas de função/continuation).
+  - `SWaitcnt`: Barreira explícita baseada em contadores (espera retorno de memória/textura).
+
+### Opcodes Vetoriais (V_ALU)
+Opcodes RDNA operando nos registradores VGPR, que contêm valores distintos por *workitem* (thread local da GPU):
+- **`VMovB32`**: Move vetorial simples.
+- **`VAddF32` / `VSubF32`**: Operações aritméticas de ponto flutuante vetorial.
+
+### Mapeamento Equivalente (SPIR-V / Vulkan):
+A tradução de `SCbranch*` e `SBranch` resulta em Blocos Básicos com instruções de `OpBranch` e `OpBranchConditional` no SPIR-V backend (`core/shader/recompiler/SpirvBackend`).
+
+*(Restante das instruções de sistema...)*
+
 ## Módulo: Funções de Sistema (Syscalls e Memory)
 
 ### [NID_UNMAPPED] - sceKernelAllocateDirectMemory
@@ -23,7 +47,17 @@ Este repositório interno descreve as instruções, opcodes e convenções de fu
 - **Funcionamento Técnico:** Carrega uma biblioteca dinâmica do sistema do console (PRX/ELF) na memória do processo do título.
 - **Mapeamento Equivalente:** No ecossistema do relinker, os módulos são escaneados estaticamente. Em tempo de execução, redirecionamos para os carregadores de biblioteca padrão do SO: `LoadLibrary` (Win32) ou `dlopen` (POSIX).
 
-## Módulo: Shaders e Gráficos (libSceAgc)
+### [NID_UNMAPPED] - sceKernelReserveVirtualRange
+- **Funcionamento Técnico:** Reserva intervalos virtuais gigantes no Address Space do jogo (podem passar de centenas de GiB) para mapeamentos futuros (Virtual Allocations).
+- **Mapeamento Equivalente:** Comportamento conhecido em SharpEmu - Requer thresholds para lidar com esses blocos grandes (ex: `SparseReservationThreshold` em ~64 GiB). No Windows é difícil achar chunks contíguos dessa magnitude sem o flag correto (`MEM_RESERVE` puro). No Linux, requer atenção a overcommits.
+
+### Módulo: Sincronização Posix do PS5 (libSceLibcInternal)
+As chamadas de sistema abaixo usam a ABI SystemV (estilo POSIX) e foram mapeadas por projetos C/C# (Kyty/SharpEmu):
+- **pthread_create_name_np**: Criação de thread com extensão de nomeamento.
+- **PthreadAttrSetsolosched**: Atribuição de afinidade e agendamento solitário em threads.
+- **KernelSyncOnAddress**: Primitiva fundamental de mutex baseada em Futex, usada para concorrência de GPU e CPU do PS5.
+
+### Módulo: Shaders e Gráficos (libSceAgc)
 
 ### [NID_UNMAPPED] - sceAgcCreateShader
 - **Funcionamento Técnico:** Cria e compila os objetos shader para a arquitetura gráfica (RDNA2).
@@ -40,16 +74,6 @@ Este repositório interno descreve as instruções, opcodes e convenções de fu
   ```
 
 *Aviso: Este arquivo é progressivo e deverá ser populado com NIDs (Network IDs - Hashes de Funções) validados à medida que o parsing de executáveis do sistema (`core/libs/prx`) progredir na Fase 4.*
-### [NID_UNMAPPED] - sceKernelReserveVirtualRange
-- **Funcionamento Técnico:** Reserva intervalos virtuais gigantes no Address Space do jogo (podem passar de centenas de GiB) para mapeamentos futuros (Virtual Allocations).
-- **Mapeamento Equivalente:** Comportamento conhecido em SharpEmu - Requer thresholds para lidar com esses blocos grandes (ex: `SparseReservationThreshold` em ~64 GiB). No Windows é difícil achar chunks contíguos dessa magnitude sem o flag correto (`MEM_RESERVE` puro). No Linux, requer atenção a overcommits.
-
-### Módulo: Sincronização Posix do PS5 (libSceLibcInternal)
-As chamadas de sistema abaixo usam a ABI SystemV (estilo POSIX) e foram mapeadas por projetos C/C# (Kyty/SharpEmu):
-- **pthread_create_name_np**: Criação de thread com extensão de nomeamento.
-- **PthreadAttrSetsolosched**: Atribuição de afinidade e agendamento solitário em threads.
-- **KernelSyncOnAddress**: Primitiva fundamental de mutex baseada em Futex, usada para concorrência de GPU e CPU do PS5.
-
 
 ### Atualização Fase 4 (Mapeamento PRX/Kernel Base)
 Após avaliação direta na árvore de código `core/libs/prx`, confirmamos as seguintes integrações (já incorporadas na branch upstream do original e portadas para a documentação de nosso agente Jules):
