@@ -48,15 +48,18 @@ namespace AgcDriver::Graphics {
         // restricts the move to part of the mip (a partial upload or write-back, StorageTexture),
         // leaving the other elements of both buffers alone.
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
+        void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
+        static VkFormat ImageElementFormat(std::uint32_t elementBytes);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
 
     private:
-        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick);
+        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
         void release() noexcept;
-        VkDescriptorSet allocateSet();
+        VkDescriptorSet allocateSet(bool image = false);
+        void checkWindow(const TileMipLayout& layout, const DetileWindow& window, std::uint32_t& columnEnd, std::uint32_t& rowEnd) const;
 
         const Context context;
         VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
@@ -71,6 +74,11 @@ namespace AgcDriver::Graphics {
         std::vector<VkDescriptorPool> cmaskDescriptorPools;
         std::size_t allocatedCmaskSets = 0;
         std::unique_ptr<Buffer> cmaskErrors;
+        VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
+        VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;
+        VkShaderModule imageModule = VK_NULL_HANDLE;
+        std::vector<VkDescriptorPool> imageDescriptorPools;
+        std::size_t allocatedImageSets = 0;
     };
 
 }

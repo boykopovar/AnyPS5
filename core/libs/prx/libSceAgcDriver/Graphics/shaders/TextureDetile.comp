@@ -1,4 +1,7 @@
 #version 450
+#ifdef LINEAR_IMAGE
+#extension GL_EXT_shader_image_load_formatted : require
+#endif
 
 layout(constant_id = 0) const uint ELEMENT_BYTES = 4u;
 layout(constant_id = 1) const uint BLOCK_BYTES = 256u;
@@ -29,8 +32,13 @@ layout(constant_id = 21) const uint BLOCK_HEIGHT = 0u;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
+#ifdef LINEAR_IMAGE
+layout(set = 0, binding = 0, std430) buffer Tiled { uint data[]; } tiledBuffer;
+layout(set = 0, binding = 1) uniform uimage2D linearImage;
+#else
 layout(set = 0, binding = 0, std430) readonly buffer Input { uint data[]; } inputBuffer;
 layout(set = 0, binding = 1, std430) buffer Output { uint data[]; } outputBuffer;
+#endif
 
 layout(push_constant) uniform Push {
     uint srcBase;
@@ -142,6 +150,43 @@ uvec2 blockExtent() {
     return uvec2(width, BLOCK_BYTES / (width * ELEMENT_BYTES));
 }
 
+#ifdef LINEAR_IMAGE
+void storeElement(uint src, uvec2 p) {
+    uvec4 value = uvec4(0u);
+    uint word = src >> 2;
+    if (ELEMENT_BYTES == 1u) {
+        value.x = (tiledBuffer.data[word] >> ((src & 3u) * 8u)) & 0xffu;
+    } else if (ELEMENT_BYTES == 2u) {
+        value.x = (tiledBuffer.data[word] >> ((src & 3u) * 8u)) & 0xffffu;
+    } else {
+        value.x = tiledBuffer.data[word];
+        if (ELEMENT_BYTES >= 8u) value.y = tiledBuffer.data[word + 1u];
+        if (ELEMENT_BYTES >= 16u) {
+            value.z = tiledBuffer.data[word + 2u];
+            value.w = tiledBuffer.data[word + 3u];
+        }
+    }
+    imageStore(linearImage, ivec2(p), value);
+}
+
+void loadElement(uvec2 p, uint dst) {
+    uvec4 value = imageLoad(linearImage, ivec2(p));
+    uint word = dst >> 2;
+    if (ELEMENT_BYTES >= 4u) {
+        tiledBuffer.data[word] = value.x;
+        if (ELEMENT_BYTES >= 8u) tiledBuffer.data[word + 1u] = value.y;
+        if (ELEMENT_BYTES >= 16u) {
+            tiledBuffer.data[word + 2u] = value.z;
+            tiledBuffer.data[word + 3u] = value.w;
+        }
+    } else {
+        uint mask = ELEMENT_BYTES == 1u ? 0xffu : 0xffffu;
+        uint shift = (dst & 3u) * 8u;
+        atomicAnd(tiledBuffer.data[word], ~(mask << shift));
+        atomicOr(tiledBuffer.data[word], (value.x & mask) << shift);
+    }
+}
+#else
 void copyElement(uint src, uint dst) {
     if (ELEMENT_BYTES >= 4u) {
         for (uint i = 0u; i < ELEMENT_BYTES; i += 4u) {
@@ -155,6 +200,7 @@ void copyElement(uint src, uint dst) {
         atomicOr(outputBuffer.data[dst >> 2], value << shift);
     }
 }
+#endif
 
 void main() {
     uvec2 p = gl_GlobalInvocationID.xy + uvec2(params.columnBegin, params.rowBegin);
@@ -170,11 +216,19 @@ void main() {
         if (linearOffset < params.rangeBegin || linearOffset >= params.rangeEnd) {
             return;
         }
+#ifdef LINEAR_IMAGE
+        if (RETILE != 0u) {
+            loadElement(p, params.dstBase + linearOffset - params.tiledBase);
+        } else {
+            storeElement(params.srcBase + linearOffset - params.tiledBase, p);
+        }
+#else
         if (RETILE != 0u) {
             copyElement(params.srcBase + linearOffset - params.linearBase, params.dstBase + linearOffset - params.tiledBase);
         } else {
             copyElement(params.srcBase + linearOffset - params.tiledBase, params.dstBase + linearOffset - params.linearBase);
         }
+#endif
         return;
     }
 
@@ -194,10 +248,18 @@ void main() {
     tiledOffset -= params.tiledBase;
     linearOffset -= params.linearBase;
 
+#ifdef LINEAR_IMAGE
+    if (RETILE != 0u) {
+        loadElement(p, params.dstBase + tiledOffset);
+    } else {
+        storeElement(params.srcBase + tiledOffset, p);
+    }
+#else
     if (RETILE != 0u) {
         copyElement(params.srcBase + linearOffset, params.dstBase + tiledOffset);
     } else {
         copyElement(params.srcBase + tiledOffset, params.dstBase + linearOffset);
     }
+#endif
 }
 

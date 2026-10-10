@@ -58,6 +58,9 @@ struct IrBindingLayout {
     [[nodiscard]] bool UsesPushData() const {
         return pushDataStartDword != PushData::NoStart;
     }
+    [[nodiscard]] std::uint32_t PushSlotDword() const {
+        return UsesPushData() ? pushDataStartDword / PushData::DwordCount * PushData::DwordCount : 0u;
+    }
     void AdvancePushData(std::uint32_t& cursor) const {
         if (UsesPushData()) {
             cursor = pushDataStartDword + ShaderDataDwords();

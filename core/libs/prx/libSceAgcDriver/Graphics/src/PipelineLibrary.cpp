@@ -1,6 +1,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <array>
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
+#include <functional>
+#include <thread>
 #include <map>
 #include <mutex>
 #include <string_view>
@@ -40,11 +45,39 @@ struct DeviceLibraries {
 struct LibraryStore {
     std::mutex mutex;
     std::map<VkDevice, DeviceLibraries> devices;
+    std::condition_variable idle;
+    std::condition_variable work;
+    std::deque<std::pair<VkDevice, std::function<void()>>> jobs;
+    std::map<VkDevice, std::size_t> pending;
+    bool started = false;
 };
 
 LibraryStore& Libraries() {
     static auto* store = new LibraryStore();
     return *store;
+}
+
+void runJobs(LibraryStore& store) {
+    std::unique_lock lock(store.mutex);
+    for (;;) {
+        store.work.wait(lock, [&] { return !store.jobs.empty(); });
+        auto [device, job] = std::move(store.jobs.front());
+        store.jobs.pop_front();
+        lock.unlock();
+        job();
+        lock.lock();
+        if (--store.pending[device] == 0) store.idle.notify_all();
+    }
+}
+
+void enqueue(LibraryStore& store, VkDevice device, std::function<void()> job) {
+    if (!store.started) {
+        std::thread(runJobs, std::ref(store)).detach();
+        store.started = true;
+    }
+    ++store.pending[device];
+    store.jobs.emplace_back(device, std::move(job));
+    store.work.notify_one();
 }
 
 Key Combined(const Key& part, const Key& context) {
@@ -66,7 +99,7 @@ std::span<const VkDynamicState> PipelineLibraryDynamicStates() {
     return dynamicStates;
 }
 
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys) {
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized) {
     Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     auto& store = Libraries();
     std::lock_guard lock(store.mutex);
@@ -115,7 +148,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, flags[part] == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT ? &rendering : &shaderRendering};
         library.flags = flags[part];
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
-        create.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
+        create.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
         create.pDynamicState = info.pDynamicState;
         create.layout = pipelineLayout->second;
         switch (flags[part]) {
@@ -158,12 +191,51 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     VkPipeline pipeline = VK_NULL_HANDLE;
     Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &create, nullptr, &pipeline), "vkCreateGraphicsPipelines link");
     ++device.counters.linked;
+    static const bool optimize = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
+    if (optimize && optimized != nullptr) {
+        auto slot = std::make_shared<OptimizedPipeline>();
+        slot->device = context.device;
+        slot->destroy = device.destroyPipeline;
+        *optimized = slot;
+        const auto createPipelines = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+        const auto cache = context.pipelineCache;
+        const auto pipelineLayout = info.layout;
+        enqueue(store, context.device, [slot, createPipelines, cache, pipelineLayout, libraries, &store, devicePointer = &device] {
+            if (slot->released.load()) return;
+            VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
+            linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
+            linked.pLibraries = libraries.data();
+            VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
+            create.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
+            create.layout = pipelineLayout;
+            VkPipeline result = VK_NULL_HANDLE;
+            if (createPipelines(slot->device, cache, 1, &create, nullptr, &result) != VK_SUCCESS) return;
+            slot->handle.store(result);
+            if (slot->released.load()) {
+                if (const auto handle = slot->handle.exchange(VK_NULL_HANDLE)) slot->destroy(slot->device, handle, nullptr);
+            }
+            std::lock_guard lock(store.mutex);
+            ++devicePointer->counters.optimized;
+        });
+    }
     return pipeline;
+}
+
+void OptimizedPipeline::Release() noexcept {
+    released.store(true);
+    if (const auto pipeline = handle.exchange(VK_NULL_HANDLE)) destroy(device, pipeline, nullptr);
+}
+
+void WaitForOptimizedPipelines(VkDevice device) {
+    auto& store = Libraries();
+    std::unique_lock lock(store.mutex);
+    store.idle.wait(lock, [&] { return store.pending[device] == 0; });
 }
 
 void ClearPipelineLibraries(VkDevice device) {
     auto& store = Libraries();
-    std::lock_guard lock(store.mutex);
+    std::unique_lock lock(store.mutex);
+    store.idle.wait(lock, [&] { return store.pending[device] == 0; });
     const auto found = store.devices.find(device);
     if (found == store.devices.end()) return;
     auto& libraries = found->second;

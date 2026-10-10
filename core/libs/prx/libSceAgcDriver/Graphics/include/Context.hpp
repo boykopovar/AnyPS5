@@ -165,6 +165,7 @@ struct Context {
     std::uint32_t srgbDecodeFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
+    bool singlePassStorage = false;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

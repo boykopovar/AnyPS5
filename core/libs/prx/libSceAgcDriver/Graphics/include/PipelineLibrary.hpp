@@ -3,6 +3,8 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <array>
+#include <atomic>
+#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -21,13 +23,24 @@ struct PipelineLibraryKeys {
 
 std::span<const VkDynamicState> PipelineLibraryDynamicStates();
 
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys);
+struct OptimizedPipeline {
+    VkDevice device = VK_NULL_HANDLE;
+    PFN_vkDestroyPipeline destroy = nullptr;
+    std::atomic<VkPipeline> handle{VK_NULL_HANDLE};
+    std::atomic<bool> released{false};
+    void Release() noexcept;
+};
+
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized = nullptr);
+
+void WaitForOptimizedPipelines(VkDevice device);
 
 void ClearPipelineLibraries(VkDevice device);
 
 struct PipelineLibraryCounters {
     std::array<std::uint64_t, 4> built{};
     std::uint64_t linked = 0;
+    std::uint64_t optimized = 0;
 };
 
 PipelineLibraryCounters PipelineLibraryCountersOf(VkDevice device);

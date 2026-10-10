@@ -295,6 +295,7 @@ public:
     // was still current (nothing uploaded).
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
+    static std::uint64_t SinglePassMoves();
     std::uint64_t GuestBytes() const;
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
 
@@ -430,6 +431,10 @@ private:
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;
     bool pendingUnitInside(std::uint64_t address, std::size_t bytes) const;
     VkImageView createView(std::uint32_t mip, bool firstLayer, VkFormat format) const;
+    bool singlePass();
+    VkImageView elementLayerView(std::uint32_t level, std::uint32_t layer);
+    void recordDirectUploadBarrier(VkCommandBuffer commands, bool discard);
+    void recordDirectUploadDone(VkCommandBuffer commands);
     void release() noexcept;
 
     Context context;
@@ -483,6 +488,8 @@ private:
     std::map<std::pair<std::uint32_t, bool>, VkImageView> atomicViews;
     std::map<std::pair<std::uint32_t, bool>, VkImageView> uintViews;
     VkImageView elementView = VK_NULL_HANDLE;
+    std::map<std::uint32_t, VkImageView> elementLayerViews;
+    std::int8_t singlePassState = -1;
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
     VkImage proxyImage = VK_NULL_HANDLE;

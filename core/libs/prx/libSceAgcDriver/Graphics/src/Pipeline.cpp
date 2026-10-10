@@ -117,6 +117,10 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 
 namespace {
 
+VkShaderStageFlags pushStagesOf(const Context& context) {
+    return PreRasterizationPushStages(context.meshShader, context.tessellationShader, context.geometryShader);
+}
+
 template<typename TValue>
 void appendKey(std::vector<std::byte>& key, const TValue& value) {
     static_assert(std::is_trivially_copyable_v<TValue>);
@@ -165,7 +169,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     }
     appendKey(keys.renderPass, state.depth.has_value());
     if (state.depth) appendKey(keys.renderPass, state.depth->format);
-    appendKey(keys.layout, PushConstantStages(shaders));
+    appendKey(keys.layout, pushStagesOf(context));
     for (const auto word : resources.LayoutKey()) appendKey(keys.layout, word);
     return true;
 }
@@ -200,7 +204,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(mesh.maxVertices <= context.meshLimits.maxMeshOutputVertices && mesh.maxPrimitives <= context.meshLimits.maxMeshOutputPrimitives && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.meshLimits.maxMeshSharedMemorySize, "mesh output or LDS exceeds device limits");
     }
     const auto pushStages = PushConstantStages(shaders);
-    Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PipelinePushConstantBytes, "graphics push constant range exceeds device limit");
+    Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PushBlockBytes(dynamicRendering), "graphics push constant range exceeds device limit");
+    if (dynamicRendering) {
+        for (const auto& shader : shaders) Require(shader.program->pushConstants.empty() || (shader.pushConstantOffset >= PipelinePushSlotBytes) == (shader.stage == ShaderRecompiler::ShaderStage::Fragment), "a stage's push constants lie outside its push constant slot");
+    }
     try {
         std::vector<VkPipelineShaderStageCreateInfo> stages(shaders.size());
         std::vector<PipelineSpecialization> specializations;
@@ -222,12 +229,13 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
         const auto setLayout = resources.Layout();
-        const VkPushConstantRange push{pushStages, 0, PipelinePushConstantBytes};
+        const VkPushConstantRange push{pushStages, 0, PipelinePushSlotBytes};
+        const std::array<VkPushConstantRange, 2> slots{{{pushStagesOf(context), 0, PipelinePushSlotBytes}, {VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes}}};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         layoutInfo.setLayoutCount = 1;
         layoutInfo.pSetLayouts = &setLayout;
-        layoutInfo.pushConstantRangeCount = pushStages != 0 ? 1 : 0;
-        layoutInfo.pPushConstantRanges = pushStages != 0 ? &push : nullptr;
+        layoutInfo.pushConstantRangeCount = dynamicRendering ? static_cast<std::uint32_t>(slots.size()) : pushStages != 0 ? 1 : 0;
+        layoutInfo.pPushConstantRanges = dynamicRendering ? slots.data() : pushStages != 0 ? &push : nullptr;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "vkCreatePipelineLayout graphics");
         std::vector<VkAttachmentDescription> colors;
         std::vector<VkAttachmentReference> references(state.blends.size(), VkAttachmentReference{VK_ATTACHMENT_UNUSED, attachmentLayout});
@@ -361,7 +369,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         pipelineInfo.renderPass = renderPass;
         if (dynamicRendering) pipelineInfo.pNext = &rendering;
         timing.Mark("modules_and_state");
-        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys);
+        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized);
         else Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
         if (state.depthBiasPerFace) {
             raster.cullMode = VK_CULL_MODE_FRONT_BIT;
@@ -383,6 +391,8 @@ Pipeline::~Pipeline() {
 
 void Pipeline::release() noexcept {
     framebuffers.clear();
+    if (optimized != nullptr) optimized->Release();
+    optimized.reset();
     if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
     if (backFaces) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, backFaces, nullptr);
     if (renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, renderPass, nullptr);
@@ -398,6 +408,8 @@ void Pipeline::release() noexcept {
 }
 
 void Pipeline::Abandon() noexcept {
+    if (optimized != nullptr) optimized->released.store(true);
+    optimized.reset();
     for (auto& entry : framebuffers) entry.framebuffer->Abandon();
     framebuffers.clear();
     pipeline = VK_NULL_HANDLE;
@@ -492,7 +504,8 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
 }
 
 void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
-    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, best != VK_NULL_HANDLE ? best : pipeline);
     context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     if (libraries) {
@@ -536,7 +549,12 @@ void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state) c
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
     if (stages == 0) return;
-    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, stages, 0, PipelinePushConstantBytes, bytes.data());
+    if (dynamicRendering) {
+        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, pushStagesOf(context), 0, PipelinePushSlotBytes, bytes.data());
+        context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes, bytes.data() + PipelinePushSlotBytes);
+        return;
+    }
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, layout, stages, 0, PipelinePushSlotBytes, bytes.data());
 }
 
 namespace {

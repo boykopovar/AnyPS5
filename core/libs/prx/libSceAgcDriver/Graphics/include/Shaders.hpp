@@ -9,7 +9,29 @@
 
 namespace AgcDriver::Graphics {
 
-inline constexpr std::uint32_t PipelinePushConstantBytes = 128;
+inline constexpr std::uint32_t PipelinePushConstantBytes = 256;
+inline constexpr std::uint32_t PipelinePushSlotBytes = 128;
+inline constexpr std::uint32_t ComputePushConstantBytes = 128;
+
+inline std::uint32_t PushBlockBytes(bool libraries) {
+    return libraries ? PipelinePushConstantBytes : PipelinePushSlotBytes;
+}
+
+inline VkShaderStageFlags PreRasterizationPushStages(bool meshShader, bool tessellation, bool geometry) {
+    VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT;
+    if (tessellation) stages |= VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+    if (geometry) stages |= VK_SHADER_STAGE_GEOMETRY_BIT;
+    if (meshShader) stages |= VK_SHADER_STAGE_MESH_BIT_EXT;
+    return stages;
+}
+
+inline std::uint32_t FixedPushOffset(ShaderRecompiler::ShaderStage stage) {
+    return stage == ShaderRecompiler::ShaderStage::Fragment ? PipelinePushSlotBytes : 0u;
+}
+
+inline std::uint32_t StagePushOffset(std::uint32_t cursor, ShaderRecompiler::ShaderStage stage, bool fixedSlots) {
+    return fixedSlots && stage == ShaderRecompiler::ShaderStage::Fragment ? PipelinePushSlotBytes : cursor;
+}
 
 struct CompiledShader {
     ShaderRecompiler::ShaderStage stage;
@@ -65,6 +87,7 @@ inline std::array<std::byte, PipelinePushConstantBytes> AssemblePushConstants(st
         if (bytes.empty()) continue;
         Require(bytes.size() % 4 == 0 && shader.pushConstantOffset % 4 == 0, "shader push constant range is not DWORD aligned");
         Require(shader.pushConstantOffset < PipelinePushConstantBytes && bytes.size() <= PipelinePushConstantBytes - shader.pushConstantOffset, "shader push constant range lies outside the pipeline push constant block");
+        Require(bytes.size() <= PipelinePushSlotBytes - shader.pushConstantOffset % PipelinePushSlotBytes, "shader push constant range crosses a push constant slot");
         for (std::size_t i = 0; i < bytes.size(); ++i) {
             const auto position = shader.pushConstantOffset + i;
             Require(!occupied[position], "shader push constant ranges of different stages overlap");
