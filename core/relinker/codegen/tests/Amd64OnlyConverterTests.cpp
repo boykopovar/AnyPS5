@@ -358,7 +358,8 @@ void matcherSubstitutions() {
         require(prefixedClzero && prefixedClzero->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "CLZERO with a 66, F2 or F3 prefix was not reported as unsupported");
     }
     const auto rdpru = match({0x0F, 0x01, 0xFD});
-    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported && rdpru->InstructionName == "RDPRU", "RDPRU was not reported as unsupported");
+    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Trampoline && rdpru->InstructionName == "RDPRU", "RDPRU was not lowered through a stub");
+    require(rdpru->StubBody.size() >= 10 && Bytes(rdpru->StubBody.begin(), rdpru->StubBody.begin() + 10) == Bytes{0xB8, 0x00, 0x00, 0x00, 0x00, 0xBA, 0x00, 0x00, 0x00, 0x00}, "RDPRU stub does not zero EDX:EAX");
     const auto registerForm = match({0x66, 0x0F, 0x79, 0xCA});
     require(registerForm && registerForm->Lowering == Codegen::Amd64OnlyLowering::Trampoline && registerForm->InstructionName == "EXTRQ register form", "EXTRQ register form was not lowered through a stub");
     const auto insertqRegisterForm = match({0xF2, 0x0F, 0x79, 0xCA});
@@ -498,12 +499,12 @@ void converterSegment() {
     auto branchInside = file;
     branchInside[0x207] = 0x02;
     requireFailure([&] { (void)converter->Convert(branchInside, {segmentHeader(20)}); }, "Branch into an AMD-only instruction was accepted");
-    auto rdpru = file;
-    rdpru[0x20F] = 0x0F;
-    rdpru[0x210] = 0x01;
-    rdpru[0x211] = 0xFD;
-    rdpru[0x212] = 0x90;
-    requireFailure([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was silently kept");
+    auto lockedMwaitx = file;
+    lockedMwaitx[0x20F] = 0xF0;
+    lockedMwaitx[0x210] = 0x0F;
+    lockedMwaitx[0x211] = 0x01;
+    lockedMwaitx[0x212] = 0xFB;
+    requireFailure([&] { (void)converter->Convert(lockedMwaitx, {segmentHeader(20)}); }, "LOCK MWAITX was silently kept");
     auto registerForm = file;
     const Bytes extrqRegister = {0x66, 0x0F, 0x79, 0xCA};
     std::copy(extrqRegister.begin(), extrqRegister.end(), registerForm.begin() + 0x20F);
@@ -766,10 +767,10 @@ void converterFailureOffsets() {
     auto movntsRegister = file;
     movntsRegister[0x212] = 0xC1;
     require(failureOffset([&] { (void)converter->Convert(movntsRegister, {segmentHeader(20)}); }, "MOVNTSS register form was accepted") == 0x20F, "MOVNTSS failure does not carry the file offset");
-    auto rdpru = file;
-    const Bytes rdpruBytes = {0x0F, 0x01, 0xFD, 0x90};
-    std::copy(rdpruBytes.begin(), rdpruBytes.end(), rdpru.begin() + 0x20F);
-    require(failureOffset([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
+    auto lockedMwaitx = file;
+    const Bytes lockedMwaitxBytes = {0xF0, 0x0F, 0x01, 0xFB};
+    std::copy(lockedMwaitxBytes.begin(), lockedMwaitxBytes.end(), lockedMwaitx.begin() + 0x20F);
+    require(failureOffset([&] { (void)converter->Convert(lockedMwaitx, {segmentHeader(20)}); }, "LOCK MWAITX was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
 }
 
 Bytes elfFixture(const Bytes& text) {
