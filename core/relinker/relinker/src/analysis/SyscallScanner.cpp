@@ -1,5 +1,6 @@
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <codegen/IInstructionScanner.hpp>
+#include <codegen/x86/DecodedInstruction.hpp>
 #include <memory>
 #include <sstream>
 
@@ -26,17 +27,16 @@ void SyscallScanner::ScanCodeSectionForSyscalls(
     const std::vector<std::uint8_t>& codeSection,
     const FileByteOffset codeSectionOffset,
     const FileByteOffset codeSectionSize) {
-    const std::size_t limit = std::min(codeSection.size(), static_cast<std::size_t>(codeSectionSize));
-
     const auto scanner = Codegen::MakeInstructionScanner();
     const auto matches = scanner->ScanCodeSection(codeSection, codeSectionOffset, codeSectionSize);
 
     for (const auto& [Offset, Length] : matches) {
         const std::size_t i = Offset - codeSectionOffset;
+        const auto opcodeOffset = Codegen::DecodedInstruction{codeSection.data() + i, Length}.OpcodeOffset();
 
-        if (i + 1 < limit) {
-            const std::uint8_t b0 = codeSection[i];
-            const std::uint8_t b1 = codeSection[i + 1];
+        if (opcodeOffset + 1 < Length) {
+            const std::uint8_t b0 = codeSection[i + opcodeOffset];
+            const std::uint8_t b1 = codeSection[i + opcodeOffset + 1];
 
             const bool isSyscall = (b0 == SYSCALL_BYTE0 && b1 == SYSCALL_BYTE1);
             const bool isInt80 = (b0 == INT80_BYTE0 && b1 == INT80_BYTE1);
