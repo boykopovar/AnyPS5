@@ -48,7 +48,7 @@ public:
 #endif
         Require(block != nullptr, "host import windows: cannot allocate a guest block of " + Hex(bytes));
         std::memset(block, 0, bytes);
-        GuestAllocations::Mutation().Add(block, bytes, true, true);
+        GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
     ~GuestBlock() {
@@ -119,7 +119,7 @@ Outcome WindowsFollowTheirRange() {
     Require(Graphics::HostImportSerial(probe, address, ProbeBytes, false) == first, "host import windows: the window at " + Hex(address) + " was dropped by an unrelated registration, although its range still owns it");
 
     GuestAllocations::Mutation().Remove(guest.Data());
-    GuestAllocations::Mutation().Add(guest.Data(), BlockBytes, true, true);
+    GuestAllocations::Mutation().Add(guest.Data(), BlockBytes, true, true, true);
     Require(Fill(*device, address), "host import windows: the window at " + Hex(address) + " cannot be filled after its range was mapped again");
     const auto second = Graphics::HostImportSerial(probe, address, ProbeBytes, false);
     Require(second != 0 && second != first, "host import windows: the window of the range mapped again kept the serial " + Hex(first));
