@@ -116,6 +116,10 @@ bool GetMipTailLayout(TextureTileMode tileMode, const BlockLayout& block, std::u
         case TextureTileMode::kD64KBX:
         case TextureTileMode::kR64KBX:
             out = MakeMipTailLayout(kMipTailThin64KB[index], block.blockWidth >> 1u, block.blockHeight);
+            if (tileMode == TextureTileMode::kZ64KBX && bytesPerElement <= 2u) {
+                out.widthLimit >>= 1u;
+                if (bytesPerElement == 1u) out.heightLimit >>= 1u;
+            }
             return true;
     }
     throw std::runtime_error("AGC graphics: GetMipTailLayout encountered an unknown tile mode");

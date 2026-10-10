@@ -303,6 +303,10 @@ void RunTextureTilingTests() {
         requireThinAddresses(TextureTileMode::kS4KBX, 1, 100, 70, 6, 3, 73728, 24576, atS4KBX, "swizzle mode 21, 1 bytes, 100x70, 6 levels, 3 slices");
         constexpr ElementAddress atD4KBX[] = {{0, 0, 0, 0, 0x2000}, {0, 32, 19, 0, 0x3030}, {0, 16, 6, 0, 0x2860}, {0, 32, 0, 0, 0x3400}, {0, 0, 19, 0, 0x2430}, {0, 0, 0, 1, 0x6800}, {0, 32, 19, 1, 0x7830}, {0, 16, 6, 1, 0x6060}, {0, 32, 0, 1, 0x7c00}, {0, 0, 19, 1, 0x6c30}, {1, 0, 0, 0, 0x1000}, {1, 15, 9, 0, 0x139c}, {1, 8, 3, 0, 0x1230}, {1, 15, 0, 0, 0x128c}, {1, 0, 9, 0, 0x1110}, {1, 0, 0, 1, 0x5800}, {1, 15, 9, 1, 0x5b9c}, {1, 8, 3, 1, 0x5a30}, {1, 15, 0, 1, 0x5a8c}, {1, 0, 9, 1, 0x5910}, {2, 0, 0, 0, 0x800}, {2, 7, 4, 0, 0x8cc}, {2, 4, 1, 0, 0x890}, {2, 7, 0, 0, 0x88c}, {2, 0, 4, 0, 0x840}, {2, 0, 0, 1, 0x4000}, {2, 7, 4, 1, 0x40cc}, {2, 4, 1, 1, 0x4090}, {2, 7, 0, 1, 0x408c}, {2, 0, 4, 1, 0x4040}, {3, 0, 0, 0, 0x600}, {3, 3, 1, 0, 0x61c}, {3, 2, 0, 0, 0x608}, {3, 3, 0, 0, 0x60c}, {3, 0, 1, 0, 0x610}, {3, 0, 0, 1, 0x4e00}, {3, 3, 1, 1, 0x4e1c}, {3, 2, 0, 1, 0x4e08}, {3, 3, 0, 1, 0x4e0c}, {3, 0, 1, 1, 0x4e10}};
         requireThinAddresses(TextureTileMode::kD4KBX, 56, 33, 20, 4, 2, 32768, 16384, atD4KBX, "swizzle mode 22, 4 bytes, 33x20, 4 levels, 2 slices");
+        constexpr ElementAddress atZ64KBX8[] = {{0, 0, 0, 0, 0x20000}, {1, 0, 0, 0, 0x10000}};
+        requireThinAddresses(TextureTileMode::kZ64KBX, 1, 256, 256, 9, 1, 196608, 196608, atZ64KBX8, "swizzle mode 24, 1 bytes, 256x256, 9 levels, 1 slices");
+        constexpr ElementAddress atZ64KBX16[] = {{0, 0, 0, 0, 0x10000}};
+        requireThinAddresses(TextureTileMode::kZ64KBX, 7, 128, 128, 8, 1, 131072, 131072, atZ64KBX16, "swizzle mode 24, 2 bytes, 128x128, 8 levels, 1 slices");
     }
 
     {
