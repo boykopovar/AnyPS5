@@ -260,6 +260,19 @@ int main() {
     Require(fscanf_nid_postfix(&scanMany, "%d", &unmatched) == EOF && unmatched == 123);
     scanMany.Close();
 
+    FileStream scanWrapped(std::tmpfile());
+    Require(std::fputs("3735928559 4294967296 -2147483649 4294967297 65536 300 99999999999999999999", scanWrapped.GetHandle()) >= 0);
+    std::rewind(scanWrapped.GetHandle());
+    int identifier = 0, wrappedZero = 1, wrappedNegative = 0, saturated = 0;
+    unsigned wrappedUnsigned = 0;
+    short wrappedShort = 1;
+    unsigned char wrappedByte = 0;
+    Require(fscanf_nid_postfix(&scanWrapped, "%d %i %d %u %hd %hhu %d", &identifier, &wrappedZero, &wrappedNegative,
+        &wrappedUnsigned, &wrappedShort, &wrappedByte, &saturated) == 7);
+    Require(static_cast<unsigned>(identifier) == 0xdeadbeefu && wrappedZero == 0 && wrappedNegative == INT32_MAX);
+    Require(wrappedUnsigned == 1 && wrappedShort == 0 && wrappedByte == 44 && saturated == -1);
+    scanWrapped.Close();
+
     FileStream positioned(std::tmpfile());
     constexpr std::int64_t largeOffset = INT64_C(4294967313);
     Require(fseeko_nid_postfix(&positioned, largeOffset, SEEK_SET) == 0);
