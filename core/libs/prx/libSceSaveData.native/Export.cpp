@@ -625,22 +625,40 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
     if (!have) {
         existed = 0;
     }
+    const bool needParam = (setup_param->init_param != nullptr && (setup_param->option & 1u) != 0);
+    const std::string paramPath = mem_path(setup_param->user_id, setup_param->slot_id, "param");
+    std::size_t paramSize = 0;
+    const bool haveParam = file_size_of(paramPath, &paramSize);
     // First run: create a zero-filled blob and report existed size 0 so the title treats it as a new save.
-    if (!have || existed < setup_param->memory_size) {
+    if (!have || existed < setup_param->memory_size || (needParam && !haveParam)) {
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+        std::vector<char> originalParam;
+        if (haveParam && !read_file_all(paramPath, originalParam)) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
         std::vector<char> data;
         if (have && !read_file_all(path, data)) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
-        data.resize(setup_param->memory_size, 0);
-        if (!write_file_replace(path, data)) {
-            return SAVE_DATA_ERROR_INTERNAL;
-        }
-        if (setup_param->init_param != nullptr && (setup_param->option & 1u) != 0) {
+        if (needParam) {
             std::vector<char> pd(sizeof(SaveDataParam));
             std::memcpy(pd.data(), setup_param->init_param, sizeof(SaveDataParam));
-            write_file_replace(mem_path(setup_param->user_id, setup_param->slot_id, "param"), pd);
+            if (!write_file_replace(paramPath, pd)) {
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+        }
+        data.resize(std::max(data.size(), setup_param->memory_size), 0);
+        if (!write_file_replace(path, data)) {
+            if (needParam) {
+                if (!haveParam) {
+                    std::error_code removeError;
+                    std::filesystem::remove(paramPath, removeError);
+                } else {
+                    write_file_replace(paramPath, originalParam);
+                }
+            }
+            return SAVE_DATA_ERROR_INTERNAL;
         }
     }
     if (result != nullptr) {

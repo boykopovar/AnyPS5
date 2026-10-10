@@ -19,6 +19,7 @@ extern "C" {
 int APS5_VABI sceSaveDataInitialize3(const void*);
 int APS5_VABI sceSaveDataTerminate();
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2*);
+int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2*, SaveDataMemorySetupResult*);
 }
 
 static void Check(bool value, int line) {
@@ -33,6 +34,51 @@ static std::vector<char> Read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     Require(file.is_open());
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+static void CheckMetadataRecovery(std::size_t requestedSize, std::size_t expectedSize) {
+    const auto base = std::filesystem::path("_sd_mem/u99") / ("slot" + std::to_string(requestedSize));
+    const auto paramPath = base.string() + ".param";
+    const auto binPath = base.string() + ".bin";
+    std::filesystem::create_directories(base.parent_path());
+    std::vector<char> original(64);
+    for (std::size_t index = 0; index < original.size(); ++index) {
+        original[index] = static_cast<char>(index * 3 + 7);
+    }
+    {
+        std::ofstream file(binPath, std::ios::binary);
+        file.write(original.data(), static_cast<std::streamsize>(original.size()));
+        Require(static_cast<bool>(file));
+    }
+    SaveDataParam param{};
+    param.user_param = 42;
+    SaveDataMemorySetup2 setup{};
+    setup.user_id = 99;
+    setup.slot_id = static_cast<std::uint32_t>(requestedSize);
+    setup.memory_size = requestedSize;
+    setup.option = 1;
+    setup.init_param = &param;
+    SaveDataMemorySetupResult result{};
+    result.existed_memory_size = 333;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup, &result) == 0);
+    Require(result.existed_memory_size == original.size());
+    auto expected = original;
+    expected.resize(expectedSize, 0);
+    const auto actual = Read(binPath);
+    if (actual.size() != expectedSize) {
+        std::fprintf(stderr, "Metadata recovery requested %zu bytes: expected %zu bytes, got %zu\n",
+                     requestedSize, expectedSize, actual.size());
+    }
+    Require(actual == expected);
+    const auto* paramBytes = reinterpret_cast<const char*>(&param);
+    const std::vector<char> expectedParam(paramBytes, paramBytes + sizeof(param));
+    Require(Read(paramPath) == expectedParam);
+    Require(sceSaveDataTerminate() == 0);
+    Require(sceSaveDataInitialize3(nullptr) == 0);
+    Require(sceSaveDataSetupSaveDataMemory2(&setup, &result) == 0);
+    Require(result.existed_memory_size == expectedSize);
+    Require(Read(binPath) == expected);
+    Require(Read(paramPath) == expectedParam);
 }
 
 int main() {
@@ -115,6 +161,90 @@ int main() {
     Require(sceSaveDataSetSaveDataMemory2(&set) == 0);
     std::copy(first.begin(), first.end(), memoryExpected.begin() + 4);
     Require(Read(memoryPath) == memoryExpected);
+    const auto setupParamPath = std::filesystem::path("_sd_mem/u42/slot0.param");
+    const auto setupBinPath = std::filesystem::path("_sd_mem/u42/slot0.bin");
+    const auto setupParamTemp = setupParamPath.string() + ".tmp";
+    Require(std::filesystem::create_directories(setupParamPath.parent_path()));
+    Require(std::filesystem::create_directory(setupParamTemp));
+    SaveDataParam setupParam{};
+    setupParam.user_param = 100;
+    SaveDataMemorySetup2 setup2{};
+    setup2.user_id = 42;
+    setup2.slot_id = 0;
+    setup2.memory_size = 128;
+    setup2.option = 1;
+    setup2.init_param = &setupParam;
+    SaveDataMemorySetupResult setupResult{};
+    setupResult.existed_memory_size = 555;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == static_cast<int>(0x809F000Bu));
+    Require(setupResult.existed_memory_size == 555);
+    Require(!std::filesystem::exists(setupBinPath));
+    Require(!std::filesystem::exists(setupParamPath));
+    Require(!std::filesystem::exists(setupParamTemp));
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
+    Require(setupResult.existed_memory_size == 0);
+    Require(Read(setupBinPath) == std::vector<char>(128, 0));
+    const auto* setupBytes = reinterpret_cast<const char*>(&setupParam);
+    Require(Read(setupParamPath) == std::vector<char>(setupBytes, setupBytes + sizeof(setupParam)));
+    std::vector<char> seededBin(128);
+    for (std::size_t i = 0; i < seededBin.size(); ++i) {
+        seededBin[i] = static_cast<char>(static_cast<unsigned char>(i * 3 + 7));
+    }
+    {
+        std::ofstream seededFile(setupBinPath, std::ios::binary);
+        seededFile.write(seededBin.data(), static_cast<std::streamsize>(seededBin.size()));
+        Require(static_cast<bool>(seededFile));
+    }
+    const auto growthParamTemp = setupParamPath.string() + ".tmp";
+    Require(std::filesystem::create_directory(growthParamTemp));
+    SaveDataParam previousParam = setupParam;
+    setupParam.user_param = 200;
+    setup2.memory_size = 256;
+    setupResult.existed_memory_size = 999;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == static_cast<int>(0x809F000Bu));
+    Require(setupResult.existed_memory_size == 999);
+    Require(Read(setupBinPath) == seededBin);
+    const auto* previousBytes = reinterpret_cast<const char*>(&previousParam);
+    Require(Read(setupParamPath) == std::vector<char>(previousBytes, previousBytes + sizeof(previousParam)));
+    Require(!std::filesystem::exists(growthParamTemp));
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
+    Require(setupResult.existed_memory_size == 128);
+    std::vector<char> expectedGrownBin = seededBin;
+    expectedGrownBin.resize(256, 0);
+    Require(Read(setupBinPath) == expectedGrownBin);
+    const auto* updatedBytes = reinterpret_cast<const char*>(&setupParam);
+    Require(Read(setupParamPath) == std::vector<char>(updatedBytes, updatedBytes + sizeof(setupParam)));
+    const auto growthBinTemp = setupBinPath.string() + ".tmp";
+    Require(std::filesystem::create_directory(growthBinTemp));
+    SaveDataParam beforeBlobFailParam = setupParam;
+    setupParam.user_param = 300;
+    setup2.memory_size = 512;
+    setupResult.existed_memory_size = 888;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == static_cast<int>(0x809F000Bu));
+    Require(setupResult.existed_memory_size == 888);
+    Require(Read(setupBinPath) == expectedGrownBin);
+    const auto* beforeBlobFailBytes = reinterpret_cast<const char*>(&beforeBlobFailParam);
+    Require(Read(setupParamPath) == std::vector<char>(beforeBlobFailBytes, beforeBlobFailBytes + sizeof(beforeBlobFailParam)));
+    Require(!std::filesystem::exists(growthBinTemp));
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
+    Require(setupResult.existed_memory_size == 256);
+    std::vector<char> expectedBlob512 = expectedGrownBin;
+    expectedBlob512.resize(512, 0);
+    Require(Read(setupBinPath) == expectedBlob512);
+    const auto* param300Bytes = reinterpret_cast<const char*>(&setupParam);
+    Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
+    CheckMetadataRecovery(32, 64);
+    CheckMetadataRecovery(64, 64);
+    CheckMetadataRecovery(96, 96);
+    Require(sceSaveDataTerminate() == 0);
+    Require(Read(setupBinPath) == expectedBlob512);
+    Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
+    Require(sceSaveDataInitialize3(nullptr) == 0);
+    setupResult.existed_memory_size = 111;
+    Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
+    Require(setupResult.existed_memory_size == 512);
+    Require(Read(setupBinPath) == expectedBlob512);
+    Require(Read(setupParamPath) == std::vector<char>(param300Bytes, param300Bytes + sizeof(setupParam)));
     Require(sceSaveDataTerminate() == 0);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
