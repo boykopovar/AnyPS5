@@ -153,8 +153,9 @@ int APS5_VABI sceNpWebApi2PushEventUnregisterPushContextCallback() {
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2SetRequestTimeout() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApi2SetRequestTimeout(int64_t request_id, uint32_t timeout) {
+    (void)request_id;
+    (void)timeout;
     return 0;
 }
 
