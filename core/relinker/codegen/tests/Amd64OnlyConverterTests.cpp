@@ -649,6 +649,56 @@ void converterClzero() {
     require(failureOffset([&] { (void)converter->Convert(segmentRelative, {segmentHeader(text.size())}); }, "FS-relative CLZERO was accepted") == 0x20A, "CLZERO operand failure does not carry the file offset");
 }
 
+void rosettaSubstitutions() {
+    using Codegen::Amd64OnlyLowering;
+    const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
+    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}})
+        require(!match(intel, bytes).has_value(), "RDSEED, RDPID or CLWB was converted for an Intel host");
+    const auto rdseed = match(rosetta, {0x48, 0x0F, 0xC7, 0xF9});
+    require(rdseed && rdseed->Lowering == Amd64OnlyLowering::InPlace && rdseed->ReplacementBytes == Bytes{0x48, 0x0F, 0xC7, 0xF1} && rdseed->InstructionName == "RDSEED", "RDSEED was not rewritten to RDRAND");
+    const auto rdseed16 = match(rosetta, {0x66, 0x41, 0x0F, 0xC7, 0xFA});
+    require(rdseed16 && rdseed16->ReplacementBytes == Bytes{0x66, 0x41, 0x0F, 0xC7, 0xF2}, "16-bit RDSEED was not rewritten to RDRAND");
+    require(!match(rosetta, {0x0F, 0xC7, 0x38}).has_value(), "VMPTRST (the memory form of 0F C7 /7) was taken for RDSEED");
+    const auto clwb = match(rosetta, {0x66, 0x0F, 0xAE, 0x74, 0x24, 0x08});
+    require(clwb && clwb->Lowering == Amd64OnlyLowering::InPlace && clwb->ReplacementBytes == Bytes{0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00} && clwb->InstructionName == "CLWB", "CLWB was not replaced by a NOP");
+    require(!match(rosetta, {0x66, 0x0F, 0xAE, 0xF1}).has_value(), "TPAUSE (the register form of 66 0F AE /6) was taken for CLWB");
+    require(!match(rosetta, {0x66, 0x0F, 0xAE, 0x38}).has_value(), "CLFLUSHOPT was taken for CLWB");
+    const auto rdpid = match(rosetta, {0xF3, 0x41, 0x0F, 0xC7, 0xFB});
+    require(rdpid && rdpid->Lowering == Amd64OnlyLowering::Trampoline && rdpid->Optional && rdpid->InstructionName == "RDPID", "RDPID was not lowered through an optional stub");
+    require(rdpid->ReturnBranchOffset == 6 && Bytes(rdpid->StubBody.begin(), rdpid->StubBody.begin() + 7) == Bytes{0x41, 0xBB, 0, 0, 0, 0, 0xE9}, "RDPID r11 stub does not load 0 before returning");
+}
+
+void converterRosetta() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes file(0x300, 0xCC);
+    const Bytes text = {
+        0x0F, 0xC7, 0xF8,
+        0xF3, 0x0F, 0xC7, 0xF9,
+        0x48, 0x83, 0xC1, 0x01,
+        0x66, 0x0F, 0xAE, 0x37,
+        0xC3};
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto result = converter->Convert(file, {segmentHeader(text.size())});
+    require(result.ReplacedCount == 2 && result.Trampolines.size() == 1 && result.KeptCount == 0 && result.Reports.size() == 3, "RDSEED, RDPID and CLWB were not converted for Rosetta");
+    const auto& site = result.Trampolines[0];
+    require(site.Offset == 0x203 && site.Length == 8 && result.Reports[1].InstructionName == "RDPID", "RDPID did not absorb the following instruction");
+    const Bytes add = {0x48, 0x83, 0xC1, 0x01};
+    require(Bytes(site.Body.begin(), site.Body.begin() + 5) == Bytes{0xB9, 0, 0, 0, 0} && Bytes(site.Body.begin() + static_cast<std::ptrdiff_t>(site.ReturnBranchOffset - add.size()), site.Body.begin() + static_cast<std::ptrdiff_t>(site.ReturnBranchOffset)) == add, "RDPID stub does not load 0 and then run the absorbed instruction");
+    auto expected = file;
+    expected[0x202] = 0xF0;
+    const Bytes nop = {0x0F, 0x1F, 0x40, 0x00};
+    std::copy(nop.begin(), nop.end(), expected.begin() + 0x20B);
+    require(result.Bytes == expected, "RDSEED or CLWB was replaced with the wrong bytes");
+    auto beforeReturn = file;
+    beforeReturn[0x207] = 0xC3;
+    const auto kept = converter->Convert(beforeReturn, {segmentHeader(text.size())});
+    require(kept.KeptCount == 1 && kept.Trampolines.empty() && kept.ReplacedCount == 2, "RDPID without room for a jump was not kept");
+    const auto intel = Codegen::MakeAmd64OnlyConverter()->Convert(file, {segmentHeader(text.size())});
+    require(intel.Reports.empty() && intel.Bytes == file, "The Intel target converted RDSEED, RDPID or CLWB");
+}
+
 void reciprocalOperands() {
     const auto vex2 = Codegen::DecodeVexReciprocal(Bytes{0xC5, 0xF8, 0x52, 0xD5}.data(), 4);
     require(vex2 && vex2->Operation == Codegen::ReciprocalOperation::ReciprocalSquareRoot && vex2->Destination == 2 && vex2->Source == 5, "VEX2 VRSQRTPS was not decoded");
@@ -1340,6 +1390,8 @@ int main() {
         converterSha1();
         converterMonitorWait();
         converterClzero();
+        rosettaSubstitutions();
+        converterRosetta();
         converterReciprocal();
         converterStrayRex();
         rewriterStrayRex();

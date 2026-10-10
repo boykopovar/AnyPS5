@@ -23,6 +23,9 @@ struct DecodedInstruction {
     [[nodiscard]] bool IsMcommit() const;
     [[nodiscard]] bool IsMovntss() const;
     [[nodiscard]] bool IsMovntsd() const;
+    [[nodiscard]] bool IsRdseed() const;
+    [[nodiscard]] bool IsRdpid() const;
+    [[nodiscard]] bool IsClwb() const;
 
 private:
     [[nodiscard]] std::size_t _skipPrefixesAndRex(bool* outHasOperandSizePrefix, bool* outHasRepnePrefix, bool* outHasRepPrefix) const;

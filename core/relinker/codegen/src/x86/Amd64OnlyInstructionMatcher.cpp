@@ -107,6 +107,19 @@ bool _isClzeroOpcode(const DecodedInstruction& instr) {
     return pos + 2 < instr.Length && instr.Data[pos] == X64OpcodeConstants::TwoByteOpcodeEscape && instr.Data[pos + 1] == X64OpcodeConstants::TwoByteGrp7 && instr.Data[pos + 2] == 0xFC;
 }
 
+std::vector<std::uint8_t> _rdpidReplacement(const DecodedInstruction& instr) {
+    using namespace X64OpcodeConstants;
+    const auto opcode = instr.OpcodeOffset();
+    const auto rex = opcode > 0 && instr.Data[opcode - 1] >= RexMin && instr.Data[opcode - 1] <= RexMax ? instr.Data[opcode - 1] : 0;
+    const auto reg = static_cast<std::uint8_t>((instr.Data[opcode + 2] & ModRmRmMask) | ((rex & 1) << 3));
+    std::vector<std::uint8_t> bytes;
+    if (reg >= 8)
+        bytes.push_back(0x41);
+    bytes.push_back(static_cast<std::uint8_t>(0xB8 + (reg & 7)));
+    bytes.insert(bytes.end(), 4, 0);
+    return bytes;
+}
+
 bool _validWait(const DecodedInstruction& instr) {
     const auto opcode = instr.Data + instr.OpcodeOffset();
     return instr.Length <= kMaxInstructionLength && std::find(instr.Data, opcode, X64OpcodeConstants::PrefixLock) == opcode;
@@ -114,6 +127,8 @@ bool _validWait(const DecodedInstruction& instr) {
 
 class Amd64OnlyInstructionMatcher : public IAmd64OnlyInstructionMatcher {
 public:
+    explicit Amd64OnlyInstructionMatcher(const Amd64OnlyTarget target) : _target(target) {}
+
     [[nodiscard]] std::optional<Amd64OnlyMatch> Match(
         const std::uint8_t* data,
         std::size_t length,
@@ -126,6 +141,7 @@ public:
     ) const override;
 
 private:
+    Amd64OnlyTarget _target;
     Sse4aLowering _lowering;
     Sha256Lowering _sha256Lowering;
     Sha1Lowering _sha1Lowering;
@@ -137,6 +153,7 @@ private:
     [[nodiscard]] Amd64OnlyMatch _matchSha256(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const;
     [[nodiscard]] Amd64OnlyMatch _matchSha1(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const;
     [[nodiscard]] Amd64OnlyMatch _matchClzero(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const;
+    [[nodiscard]] std::optional<Amd64OnlyMatch> _matchRosetta(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const;
 };
 
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchMovnts(const DecodedInstruction& instr, const Entry& entry) const {
@@ -177,6 +194,21 @@ Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchClzero(const DecodedInstructio
     return _trampoline(kClzero.Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { _clzeroLowering.EmitOutOfLine(body, operands); }));
 }
 
+std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const DecodedInstruction& instr, std::span<const std::uint8_t> trailing) const {
+    if (_target != Amd64OnlyTarget::Rosetta)
+        return std::nullopt;
+    if (instr.IsRdseed()) {
+        std::vector<std::uint8_t> replacement(instr.Data, instr.Data + instr.Length);
+        replacement[instr.OpcodeOffset() + 2] &= static_cast<std::uint8_t>(~(1u << X64OpcodeConstants::ModRmRegShift));
+        return Amd64OnlyMatch{kRdseed.Name, instr.Length, Amd64OnlyLowering::InPlace, std::move(replacement), {}, 0};
+    }
+    if (instr.IsClwb())
+        return _inPlace(kClwb, instr.Length, {});
+    if (instr.IsRdpid())
+        return _trampoline(kRdpid.Name, instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { body.Raw(_rdpidReplacement(instr)); }), true);
+    return std::nullopt;
+}
+
 std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
     std::span<const std::span<const std::uint8_t>> instructions,
     std::span<const std::uint8_t> trailing
@@ -211,13 +243,18 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
             if (name == nullptr)
                 name = _reciprocalEntry(*reciprocal).Name;
             _reciprocalLowering.EmitOutOfLine(body, *reciprocal);
+        } else if (_target == Amd64OnlyTarget::Rosetta && instr.IsRdpid()) {
+            if (name == nullptr)
+                name = kRdpid.Name;
+            body.Raw(_rdpidReplacement(instr));
         } else {
             return std::nullopt;
         }
         body.Advance(instr.Length);
     }
     _moveTrailing(body, trailing);
-    const bool optional = DecodeVexReciprocal(instructions.front().data(), instructions.front().size()).has_value();
+    const DecodedInstruction first{instructions.front().data(), instructions.front().size()};
+    const bool optional = DecodeVexReciprocal(first.Data, first.Length).has_value() || (_target == Amd64OnlyTarget::Rosetta && first.IsRdpid());
     return _trampoline(name, instructions.front().size(), body.Finish(), optional);
 }
 
@@ -268,13 +305,13 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
     if (instr.IsMcommit())
         return _unsupported(kMcommit, length);
 
-    return std::nullopt;
+    return _matchRosetta(instr, trailing);
 }
 
 }
 
-std::unique_ptr<IAmd64OnlyInstructionMatcher> MakeAmd64OnlyInstructionMatcher() {
-    return std::make_unique<Amd64OnlyInstructionMatcher>();
+std::unique_ptr<IAmd64OnlyInstructionMatcher> MakeAmd64OnlyInstructionMatcher(const Amd64OnlyTarget target) {
+    return std::make_unique<Amd64OnlyInstructionMatcher>(target);
 }
 
 }

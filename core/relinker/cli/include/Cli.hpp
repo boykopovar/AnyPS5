@@ -12,6 +12,7 @@ struct Args {
     bool skipSyscallCheck = false;
     bool skipSceModule = false;
     bool toIntel = false;
+    bool toRosetta = false;
     bool writeRegistry = false;
     bool toWindows = false;
     bool toMacos = false;
