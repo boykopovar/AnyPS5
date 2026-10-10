@@ -11,6 +11,7 @@
 #endif
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -184,6 +185,57 @@ void CheckPrivateMappingReuse() {
     GuestArena::GuestArenaReset_nid_postfix(replacement, 3 * Block);
     GuestArena::GuestArenaRelease_nid_postfix(replacement, 3 * Block);
 }
+
+void CheckPrewalk() {
+    if (std::getenv("APS5_NO_PREWALK") != nullptr) return;
+    void* memory = AllocateWatched(4 * Block);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto key = base;
+    const auto second = base + Block;
+    const auto third = base + 2 * Block;
+    std::memset(memory, 0x11, 4 * Block);
+    BeginPrewalk();
+    struct End {
+        void* memory;
+        ~End() {
+            EndPrewalk();
+            GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
+        }
+    } end{memory};
+    const auto epoch = [&] {
+        BumpCollectEpoch();
+        Require(CollectWrites(key, 64) != 0, "the epoch's first walk failed");
+        DrainPrewalk();
+    };
+    epoch();
+    CollectWrites(second, Block);
+    CollectWrites(third, Block);
+
+    epoch();
+    auto before = PrewalkStatistics();
+    CollectWrites(second, Block);
+    const auto seen = CollectWrites(third, Block);
+    Require(seen != 0, "a skipped collect lost its generation");
+    Require(PrewalkStatistics().skippedCollects == before.skippedCollects + 2, "clean ranges of the last epoch were walked again");
+
+    bytes[2 * Block + 4096 + 5] = 0x22;
+    epoch();
+    before = PrewalkStatistics();
+    CollectWrites(second, Block);
+    const auto written = CollectWrites(third, Block);
+    Require(written > seen && !UnchangedSince(third, Block, seen), "a write before the ordering point was hidden by the prewalk");
+    Require(PrewalkStatistics().skippedCollects == before.skippedCollects + 1, "a written range was skipped, or a clean one walked");
+
+    epoch();
+    CollectWrites(second, Block);
+    const auto looked = CollectWrites(third, Block);
+    bytes[2 * Block + 8] = 0x33;
+    epoch();
+    CollectWrites(second, Block);
+    CollectWrites(third, Block);
+    Require(!UnchangedSince(third, Block, looked), "a write after a look was lost at the next epoch");
+}
 #endif
 
 void CheckVersionRanges() {
@@ -312,6 +364,7 @@ int main() {
         CheckUnwatch();
 #ifdef _WIN32
         CheckPrivateMappingReuse();
+        CheckPrewalk();
 #endif
         CheckVersionRanges();
         CheckCollectBoundaries();
