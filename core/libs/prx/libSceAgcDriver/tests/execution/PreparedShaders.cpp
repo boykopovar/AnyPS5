@@ -189,7 +189,26 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
     ExpectFailure([&] { static_cast<void>(PrepareShader(request)); }, "storage image multisampling is unavailable on the target device");
 }
 
+void UnsupportedTypeRegistration() {
+    alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 8> registers{{{0, 0x1218}, {1, 0x40104004}, {2, 0xa0}, {5, 0}, {3, 6}, {4, 0xc}, {6, 0}, {7, 0}}};
+    } header;
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    header.shader.type = 8;
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
 void Registration(bool indirect) {
+    UnsupportedTypeRegistration();
     alignas(256) std::array<std::uint32_t, 1> code{0xbf810000u};
     struct Header {
         Shader shader{};

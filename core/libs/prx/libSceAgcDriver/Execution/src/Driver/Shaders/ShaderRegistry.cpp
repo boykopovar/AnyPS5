@@ -327,7 +327,12 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     case 5: stage = Stage::Local; programRegister = 0x148; resourceRegister = 0x10b; firstUser = 8; break;
     case 6: stage = Stage::Mesh; programRegister = 0x088; resourceRegister = 0x08b; break;
     case 7: stage = Stage::TessellationControl; programRegister = 0x108; resourceRegister = 0x10b; break;
-    default: throw std::runtime_error("AGC driver: unsupported registered shader type");
+    default:
+        if (registration) {
+            APS5_LOG_ERR("Shader 0x%llx has unsupported registered shader type %u; it is not prepared at registration", static_cast<unsigned long long>(snapshot.codeAddress), static_cast<unsigned>(snapshot.type));
+            return {};
+        }
+        throw std::runtime_error("AGC driver: unsupported registered shader type " + std::to_string(snapshot.type));
     }
     const auto defer = [&](const char* reason) {
         APS5_LOG_ERR("Shader 0x%llx could not be prepared at registration (%s); preparing it when it is used", static_cast<unsigned long long>(snapshot.codeAddress), reason);
