@@ -117,6 +117,13 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_process_time_tests)
     add_test(NAME guest_process_time COMMAND guest_process_time_tests)
     add_test(NAME guest_process_time_counter COMMAND guest_process_time_tests counter)
+    add_test(NAME guest_process_time_scaled COMMAND guest_process_time_tests)
+    add_test(NAME guest_process_time_counter_scaled COMMAND guest_process_time_tests counter)
+    set_tests_properties(guest_process_time_scaled guest_process_time_counter_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
+    if(WIN32)
+        set_tests_properties(guest_process_time_scaled guest_process_time_counter_scaled PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     if(WIN32)
         set_tests_properties(guest_process_time guest_process_time_counter PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
