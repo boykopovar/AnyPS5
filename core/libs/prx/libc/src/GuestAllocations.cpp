@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestAllocations.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -45,6 +46,8 @@ Registry& registry() {
 std::atomic<std::uint64_t> generation{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
 std::atomic<bool (*)(std::uintptr_t, std::size_t)> pinWaiter{nullptr};
+std::atomic<void (*)(const Mapped&, std::uint64_t)> gpuMapObserver{nullptr};
+std::atomic<std::uint32_t> gpuMapObserverCalls{0};
 
 std::chrono::milliseconds pinWait() {
     static const std::chrono::milliseconds value{[] {
@@ -64,6 +67,7 @@ void require(bool condition, const char* reason) {
 struct MutationState {
     std::unique_lock<std::mutex> lock;
     std::vector<std::pair<std::uintptr_t, std::size_t>> changed;
+    std::vector<std::pair<std::uintptr_t, std::size_t>> gpuMapped;
 };
 
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
@@ -110,11 +114,32 @@ void* GuestAllocationsBegin_nid_postfix() {
 
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept {
     auto* state = static_cast<MutationState*>(mutation);
-    generation.fetch_add(1, std::memory_order_release);
+    const auto ended = generation.fetch_add(1, std::memory_order_release) + 1;
     if (const auto callback = invalidator.load(std::memory_order_acquire)) {
         for (const auto& [address, bytes] : state->changed) callback(address, bytes);
     }
+    if (!state->gpuMapped.empty()) gpuMapObserverCalls.fetch_add(1);
+    const auto observer = state->gpuMapped.empty() ? nullptr : gpuMapObserver.load();
+    Lease mapped;
+    if (observer != nullptr) {
+        const auto& ranges = registry().ranges;
+        for (const auto& [address, bytes] : state->gpuMapped) {
+            auto it = ranges.upper_bound(address);
+            if (it != ranges.begin()) --it;
+            for (; it != ranges.end() && it->first < address + bytes; ++it) {
+                const auto& range = it->second;
+                if (range->gpu && range->readable && range->bytes != 0 && range->address + range->bytes > address) mapped.push_back(range);
+            }
+        }
+        std::sort(mapped.begin(), mapped.end(), [](const auto& left, const auto& right) { return left->address < right->address; });
+        mapped.erase(std::unique(mapped.begin(), mapped.end()), mapped.end());
+    }
+    const Mapped weak(mapped.begin(), mapped.end());
+    mapped.clear();
+    const bool noted = !state->gpuMapped.empty();
     delete state;
+    if (!weak.empty()) observer(weak, ended);
+    if (noted) gpuMapObserverCalls.fetch_sub(1);
 }
 
 std::uint64_t GuestAllocationsGeneration_nid_postfix() {
@@ -128,6 +153,15 @@ void GuestAllocationsSetInvalidator_nid_postfix(void (*callback)(std::uintptr_t,
 void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t bytes) {
     generation.fetch_add(1, std::memory_order_release);
     if (const auto callback = invalidator.load(std::memory_order_acquire)) callback(address, bytes);
+}
+
+void GuestAllocationsSetGpuMapObserver_nid_postfix(void (*callback)(const Mapped& ranges, std::uint64_t generation)) {
+    gpuMapObserver.store(callback);
+    while (gpuMapObserverCalls.load() != 0) std::this_thread::yield();
+}
+
+void GuestAllocationsNoteGpuMapping_nid_postfix(void* mutation, const void* pointer, std::size_t bytes) {
+    if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->gpuMapped.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
 
 void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t, std::size_t)) {

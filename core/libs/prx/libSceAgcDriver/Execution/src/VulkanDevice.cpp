@@ -1381,6 +1381,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
 
 VulkanDevice::~VulkanDevice() = default;
 
+bool VulkanDevice::ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
+    if (adoptDevice) GuestMemory::AssertGpuLockHeld("VulkanDevice::ImportGuestMemory");
+    return Graphics::ImportMappedRanges(graphicsContext(), ranges, generation, adoptDevice);
+}
+
 void VulkanDevice::PrepareForReplacement() {
     GuestMemory::AssertGpuLockHeld("VulkanDevice::PrepareForReplacement");
     require(state->recorder != nullptr && Graphics::Recorder::Active() == state->recorder.get(), "device replacement requires its active recorder");
