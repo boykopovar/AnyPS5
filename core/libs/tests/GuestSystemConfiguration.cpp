@@ -9,6 +9,7 @@ int APS5_VABI getpagesize_nid_postfix();
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI sysctl_nid_postfix(const int*, std::uint32_t, void*, std::size_t*, const void*, std::size_t);
 int APS5_VABI sysctlbyname_nid_postfix(const char*, void*, std::size_t*, const void*, std::size_t);
+extern char** environ_nid_postfix;
 }
 static void Require(bool value) { if (!value) std::abort(); }
 static void CheckProcessorCountSysctl() {
@@ -63,4 +64,5 @@ int main() {
     Require(sysconf_nid_postfix(-1) == -1); // verifies full-width signed return
     Require(*__error_nid_postfix() == 22);
     Require(sysconf_nid_postfix(0x7fffffff) == -1);
+    Require(environ_nid_postfix && !environ_nid_postfix[0]);
 }

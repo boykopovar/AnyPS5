@@ -152,6 +152,8 @@ extern "C" {
 
 // unknown data
 const char* __progname_nid_postfix = "eboot.bin";
+static char* emptyEnvironment[1];
+char** environ_nid_postfix = emptyEnvironment;
 
 int APS5_VABI getargc_nid_postfix(void) {
     return getProcessArguments().GetCount();
