@@ -252,6 +252,16 @@ int main() {
     Require(feof_nid_postfix(&scanned) && (scanned.GuestState().flags & 0x20));
     scanned.Close();
 
+#ifdef _WIN32
+    FileStream scanSuppressed(std::tmpfile());
+    Require(std::fputs("12", scanSuppressed.GetHandle()) >= 0);
+    std::rewind(scanSuppressed.GetHandle());
+    int suppressedTarget = 321;
+    Require(fscanf_nid_postfix(&scanSuppressed, "%*d%d", &suppressedTarget) == 0 && suppressedTarget == 321);
+    Require(fscanf_nid_postfix(&scanSuppressed, "%*d") == EOF);
+    scanSuppressed.Close();
+#endif
+
     FileStream scanMany(std::tmpfile());
     Require(std::fputs("7 1 2 3 4 5 6 7 8 4294967297 -4294967298 4294967299 abc %!", scanMany.GetHandle()) >= 0);
     std::rewind(scanMany.GetHandle());

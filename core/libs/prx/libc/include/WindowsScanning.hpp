@@ -3,7 +3,9 @@
 
 #include "WindowsFormatting.hpp"
 #include "General.hpp"
+#include <algorithm>
 #include <cerrno>
+#include <cstring>
 
 namespace LibcDetail {
 
@@ -12,6 +14,8 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
     if (!format || !source) { errno = 22; return EOF; }
     std::string translated;
     std::vector<void*> pointers;
+    std::vector<int> suppressedEnds(static_cast<size_t>(std::count(format, format + std::strlen(format), '%')), -1);
+    size_t suppressedCount = 0;
     FormatArguments args(source);
     while (*format) {
         const char value = *format++;
@@ -45,8 +49,15 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             translated += *format++;
         }
         if (!suppressed) pointers.push_back(args.Next<void*>());
+        else if (conversion != 'n') {
+            translated += "%n";
+            pointers.push_back(&suppressedEnds[suppressedCount++]);
+        }
     }
-    return scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+    const int result = scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+    if (result == EOF && std::any_of(suppressedEnds.begin(), suppressedEnds.begin() + suppressedCount, [](int end) { return end >= 0; }))
+        return 0;
+    return result;
 }
 
 inline int ScanWindows(const char* input, const char* format, const void* source) {
