@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <future>
 #include <iostream>
 #include <mutex>
@@ -104,17 +105,16 @@ void DeferredOperations() {
     }
 }
 
-void PreparationWhilePublicationBlocked() {
+void PreparationWhilePublicationBlocked(const ComputeFixture& invalid, const char* expected) {
     ComputeFixture warm;
     warm.header.registers[2].value = 8;
     AgcDriverRegisterShader_nid_postfix(&warm.header.shader);
-    ComputeFixture invalid(0xbf910001u);
     std::future<void> worker;
     bool prepared = false;
     {
         ShaderPreparationTransaction held;
         worker = std::async(std::launch::async, [&] {
-            ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, "s_sendmsghalt 1 at pc 0 halts the wave");
+            ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, expected);
         });
         prepared = worker.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
         held.Commit();
@@ -123,13 +123,12 @@ void PreparationWhilePublicationBlocked() {
     Require(prepared, "private shader preparation waited for an unrelated publication transaction");
 }
 
-void NestedFailure() {
+void NestedFailure(const ComputeFixture& invalid, const char* expected) {
     AgcDriver::DriverDetail::ShaderSnapshot pending;
-    ComputeFixture invalid(0xbf910001u);
     {
         ShaderPreparationTransaction transaction;
         transaction.Edit(pending).registeredAbis.push_back({17});
-        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, "s_sendmsghalt 1 at pc 0 halts the wave");
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&invalid.header.shader); }, expected);
         ExpectFailure([&] { transaction.Commit(); }, "transaction was aborted");
     }
     Require(pending.prepared->registeredAbis.empty(), "caught registration failure published the enclosing preparation transaction");
@@ -180,11 +179,15 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
-        PreparationWhilePublicationBlocked();
-        NestedFailure();
+        const bool synchronous = std::getenv("APS5_SYNC_SHADER_PREPARE") != nullptr;
+        ComputeFixture invalid(synchronous ? 0xbf910001u : 0xbf800000u);
+        if (!synchronous) invalid.header.registers[2].value = 0;
+        const auto* expected = synchronous ? "s_sendmsghalt 1 at pc 0 halts the wave" : "COMPUTE_NUM_THREAD_X/Y/Z must be nonzero";
+        PreparationWhilePublicationBlocked(invalid, expected);
+        NestedFailure(invalid, expected);
         ConcurrentRegistrations();
         AgcDriverShutdown_nid_postfix();
-        std::cout << "concurrent shader registration tests passed\n";
+        std::cout << "concurrent shader registration tests passed (" << (synchronous ? "synchronous" : "asynchronous") << ")\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
