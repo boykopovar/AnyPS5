@@ -126,6 +126,15 @@ static void CheckFreeBsdConversions() {
     CheckFormat(guest, "%%%k", "%22");
     CheckFormat(guest, "[%k][%l]", "[22][10]");
     CheckFormat(guest, "%Ek|%Ol|%Os|%Ev|%O+", "22|10|1699992800|14-Nov-2023|Tue Nov 14 22:13:20 UTC 2023");
+    CheckFormat(guest, "%E%k", "%k");
+    CheckFormat(guest, "%O%l", "%l");
+    CheckFormat(guest, "%E%s", "%s");
+    CheckFormat(guest, "%E%v", "%v");
+    CheckFormat(guest, "%O%+", "%+");
+    CheckFormat(guest, "%k|%E%l|%l", "22|%l|10");
+    CheckFormat(guest, "%E%", "%");
+    CheckFormat(guest, "%O%%k", "%22");
+    CheckFormat(guest, "%E%k%k", "%k22");
     CheckBufferSize(guest, "%k", 2);
     CheckBufferSize(guest, "%k:%l", 5);
     CheckBufferSize(guest, "%+", 28);
