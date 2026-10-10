@@ -1827,7 +1827,16 @@ void storageRefreshTests(const Device& device, Recorder& recorder, bool watched)
         draw({{1.0f, 0.0f, 0.0f, 1.0f}});
         image->Refresh();
         Require(holds({255, 0, 0, 255}), "a refresh under the image's own clear keys dropped the draw's results");
-        Require(memoryHolds({255, 0, 0, 255}), "the refresh's store of the results did not reach guest memory");
+        if (watched) {
+            Require(memoryHolds({255, 0, 0, 255}), "the refresh's store of the results did not reach watched guest memory");
+        } else {
+            Require(StorageTexture::FindPending(address, surfaceBytes) == image, "an unchanged untracked refresh discarded the pending image");
+            Require(StorageTexture::FlushPending(address, surfaceBytes, nullptr, "storage refresh visibility test"), "the pending untracked image was not flushed");
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            Require(memoryHolds({255, 0, 0, 255}), "an explicit flush did not make pending results visible in untracked guest memory");
+        }
         if (watched) {
             draw({{0.0f, 0.0f, 1.0f, 1.0f}});
             std::memset(texels, 0x33, 65536);
