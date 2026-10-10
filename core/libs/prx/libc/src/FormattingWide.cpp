@@ -159,7 +159,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 AppendNumber(out, spec + static_cast<char>(conversion), args.Next<double>());
             }
         } else if (conversion == u'p' && length.empty()) {
-            AppendNumber(out, spec + 'p', args.Next<void*>());
+            const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());
+            out.append(text.begin(), text.end());
         } else if (conversion == u'c' || conversion == u'C') {
             const int value = args.Next<int>();
             std::u16string text;

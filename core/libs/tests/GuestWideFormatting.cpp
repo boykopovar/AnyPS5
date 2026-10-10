@@ -89,6 +89,15 @@ static void CheckBounded() {
     Require(Format(buffer, 16, u"%s", nullNarrow) == 6 && buffer == std::u16string(u"(null)"), "vswprintf null %s argument");
 }
 
+static void CheckPointer() {
+    char16_t buffer[64];
+    const auto address = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
+    Require(Format(buffer, 64, u"%p|%p|%p", address(0), address(0x1234), address(0xdeadbeef12)) == 23 &&
+        buffer == std::u16string(u"0x0|0x1234|0xdeadbeef12"), "vswprintf %p uses the 0x form");
+    Require(Format(buffer, 64, u"[%8p][%-8p][%08p][%.6p]", address(0x1a), address(0x1a), address(0x1a), address(0x1a)) == 40 &&
+        buffer == std::u16string(u"[    0x1a][0x1a    ][0x00001a][0x00001a]"), "vswprintf %p width and precision");
+}
+
 static void CheckCount() {
     char16_t buffer[16];
     int count = -7;
@@ -138,6 +147,7 @@ static void CheckSwprintf() {
 
 int main() {
     CheckBounded();
+    CheckPointer();
     CheckCount();
     CheckSwprintf();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");

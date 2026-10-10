@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
 #include "SceTypes.hpp"
+#include <cstdint>
 #include <cstdio>
 #include <climits>
 #include <cstring>
@@ -121,6 +122,42 @@ inline void AppendUtf8(std::string& utf8, char32_t code) {
     }
 }
 
+inline std::string FormatPointer(const std::string& spec, const void* pointer) {
+    std::size_t index = 1;
+    bool left = false;
+    bool zero = false;
+    for (; index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
+        if (spec[index] == '-') left = true;
+        if (spec[index] == '0') zero = true;
+    }
+    const auto readNumber = [&] {
+        std::size_t number = 0;
+        for (; index < spec.size() && spec[index] >= '0' && spec[index] <= '9'; ++index) {
+            number = number * 10 + static_cast<std::size_t>(spec[index] - '0');
+            if (number > static_cast<std::size_t>(INT_MAX)) throw std::overflow_error("Formatted output exceeds INT_MAX");
+        }
+        return number;
+    };
+    const std::size_t width = readNumber();
+    bool hasPrecision = false;
+    std::size_t precision = 0;
+    if (index < spec.size() && spec[index] == '.') {
+        ++index;
+        hasPrecision = true;
+        precision = readNumber();
+    }
+    const auto value = static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(pointer));
+    std::string digits;
+    for (unsigned long long rest = value; rest != 0; rest >>= 4) digits.insert(digits.begin(), "0123456789abcdef"[rest & 15]);
+    if (digits.empty() && !(hasPrecision && precision == 0)) digits = "0";
+    if (digits.size() < precision) digits.insert(0, precision - digits.size(), '0');
+    const std::size_t used = digits.size() + 2;
+    const std::size_t padding = width > used ? width - used : 0;
+    if (left) return "0x" + digits + std::string(padding, ' ');
+    if (zero && !hasPrecision) return "0x" + std::string(padding, '0') + digits;
+    return std::string(padding, ' ') + "0x" + digits;
+}
+
 inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr) {
     if (!format || !source) throw std::invalid_argument("Null formatting argument");
     const char* const formatStart = format;
@@ -232,7 +269,8 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             }
             output.Value(spec + 's', utf8.c_str());
         } else if (conversion == 'p' && length.empty()) {
-            output.Value(spec + conversion, args.Next<void*>());
+            const std::string text = FormatPointer(spec, args.Next<void*>());
+            output.Append(text.data(), text.size());
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");
