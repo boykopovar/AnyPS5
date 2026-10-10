@@ -80,3 +80,18 @@ Após avaliação direta na árvore de código `core/libs/prx`, confirmamos as s
 
 1. **Memória Flexível / Direct Memory**: As instruções `sceKernelReserveVirtualRange` estão ligadas sob o módulo de Export em `DirectMemory` com mitigadores de reserva alocativa (fallback limits).
 2. **Sync / Threading**: Atributos complexos de agendamento POSIX (`scePthreadAttrSetsolosched`, etc) já constam mapeados e suportados nos diretórios PThread/SyncOnAddress na tradução C++.
+
+
+## Módulo: Afinidade e Escalonamento de Threads (CPU Host)
+
+As funções abaixo (mapeadas em `Pthread`) exigem atenção severa no momento do dispatch por conta da diferença arquitetural entre o console unificado e CPUs de desktop heterogêneas (Intel P-Cores/E-Cores, AMD Chiplets):
+
+### [NID_UNMAPPED] - scePthreadAttrSetaffinity
+- **Funcionamento Técnico:** Atribui uma máscara de bits onde cada bit representa o núcleo lógico (CPU Core) em que a thread poderá rodar no PS5.
+- **Mapeamento Equivalente (Win32):** `SetThreadAffinityMask(GetCurrentThread(), mask)`.
+- **Mapeamento Equivalente (Linux):** `sched_setaffinity(0, sizeof(cpu_set_t), &mask_set)`.
+- **Restrições de Otimização (Intel/AMD):** A tradução direta do *bitmask* do PS5 (que tem até 16 lógicos) pode acidentalmente cair num E-Core da Intel ou cruzar CCDs na AMD. O wrapper **deve** interceptar e realocar as prioridades das *worker threads* para núcleos P-Core ou mantê-las confinadas num único cluster L3.
+
+### [NID_UNMAPPED] - scePthreadYield
+- **Funcionamento Técnico:** Abdica do tempo restante da CPU (quantum) em favor de outras threads em fila de espera (context switch).
+- **Tradução:** Substituição nativa no PC por macros que emitam a instrução x86 `PAUSE` para liberar o pipeline sem causar overhead destrutivo no kernel em spinlocks curtos, ou `SwitchToThread()` / `sched_yield()` em loops longos.

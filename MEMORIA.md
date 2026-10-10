@@ -28,3 +28,7 @@ Este arquivo é um registro contínuo e persistente de longo prazo para as opera
 ## Expansão Documental Gráfica (Fase 2.5 - Otimização de Host)
 - **Novas Bases de Referência:** Adicionados `REF_VENDORS_GPU.md` (NVIDIA/AMD) e `REF_API_GRAFICA.md` (Vulkan/DX12). Estes documentos não são apenas guias de uso, mas regras arquiteturais vitais.
 - **Lição Crítica (NVIDIA):** A tradução de opcodes que assumem wavefronts de 64 (PS5/AMD) em hardware restrito a warps de 32 (NVIDIA) pode causar falhas em opcodes de cruzamento de lane (subgroup ops). No SPIR-V, priorizar emissão segura ou prever branches/shared memory de fallback.
+
+## Expansão Documental de Processadores (Fase 2.5 Concluída)
+- **Novas Bases de Referência:** Adicionado o manual `REF_VENDORS_CPU.md`, fechando a documentação técnica dos processadores host (Intel P/E-Cores, AMD Chiplets/CCD e instruções AVX).
+- **Diretriz de Design:** O Relinker e as bibliotecas estáticas (PThread PRX) no diretório `core/libs/prx` têm como dever traduzir os bitmasks de CPU rigorosamente, evitando instabilidade de agendamento que as engines de console não preveem em CPUs heterogêneas do PC.
