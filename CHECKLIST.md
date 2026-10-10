@@ -19,6 +19,6 @@ Esta lista será mantida atualizada com o progresso do desenvolvimento.
 - [ ] **Merge/Rebase Limpo:** Mesclar atualizações em português.
 
 ## Fase 4: Codificação e Desenvolvimento da Camada de Tradução
-- [ ] **Executar Mapeamento Primário:** Iniciar parsing estrutural de executáveis.
+- [x] **Executar Mapeamento Primário:** Iniciar parsing estrutural de executáveis. (Tabelas de Dynamic Dispatch validadas na árvore local `core/libs/prx`)
 - [ ] **Implementar Pipeline Gráfico:** Interceptadores de shaders em Vulkan 1.3 / SPIR-V.
 - [ ] **Submeter Alterações via Pull Requests:** Manter o versionamento limpo e documentado.

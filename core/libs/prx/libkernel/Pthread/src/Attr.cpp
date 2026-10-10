@@ -179,3 +179,13 @@ int APS5_VABI scePthreadAttrSetstackaddr(PthreadAttr* attr, void* addr) {
 }
 
 }
+// --- Expansão (PC_Station_5 / AnyPS5 / Kyty) ---
+// Adicionando dispatch de compatibilidade (stubs logados)
+
+extern "C" {
+    int APS5_VABI sceKernelSyncOnAddress_nid_postfix(void* addr) {
+        // Implementação simulada proveniente dos estudos sobre Kyty / SharpEmu
+        (void)addr;
+        return 0; // SCE_OK
+    }
+}

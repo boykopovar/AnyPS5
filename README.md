@@ -63,9 +63,19 @@ cmake --build build --target libs --parallel
 
 Certifique-se de ter dependências como SDL2, Vulkan, e FFmpeg devidamente configuradas.
 
-## Referências e Original
+## Progresso e Mapeamento
 
-Este projeto é um trabalho derivado de código aberto. Todo o crédito da arquitetura original vai para o [AnyPS5](https://github.com/boykopovar/AnyPS5).
+Nós acompanhamos ativamente a quantidade de NIDs (Network IDs - assinaturas de funções do PS5) que já foram mapeados e traduzidos na nossa camada PC_Station_5. Assim como no projeto original, a métrica de progresso avança à medida em que funções do Kernel e opcodes de Shaders RDNA2 são declarados dentro de `core/libs/prx` e do recompilador de shaders.
+
+*(Nota: Os gráficos SVG dinâmicos estão referenciados nas badges no topo do arquivo. Com a evolução dos nossos PRs internos, atualizaremos as porcentagens correspondentes ao volume de syscalls traduzidas em nosso framework de dispatch).*
+
+## Créditos e Referências Técnicas
+
+Este projeto é um trabalho colaborativo e derivado de código aberto focado em emulação, tradução e preservação do ecossistema PlayStation 5. Gostaríamos de creditar explicitamente as seguintes iniciativas e seus desenvolvedores originais:
+
+*   **[AnyPS5](https://github.com/boykopovar/AnyPS5):** Pela arquitetura original completa de Relinker (conversão ELF para PE/Linux Native) e pelas bibliotecas estáticas (PRX reimplementadas).
+*   **[KytyPS5](https://github.com/KytyPS5/KytyPS5):** Pela vasta pesquisa na tradução de Buffers de Comando Prospero / AGC (RDNA 2) e mapeamento da camada System V / POSIX do console.
+*   **[SharpEmu](https://github.com/sharpemu/sharpemu):** Pelo detalhamento minucioso da estrutura do Kernel (como a alocação `sceKernelReserveVirtualRange`) e limites operacionais de memória do host (Windows/C# mappings).
 
 ## Compatibilidade
 

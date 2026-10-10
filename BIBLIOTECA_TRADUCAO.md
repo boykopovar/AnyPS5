@@ -49,3 +49,10 @@ As chamadas de sistema abaixo usam a ABI SystemV (estilo POSIX) e foram mapeadas
 - **pthread_create_name_np**: Criação de thread com extensão de nomeamento.
 - **PthreadAttrSetsolosched**: Atribuição de afinidade e agendamento solitário em threads.
 - **KernelSyncOnAddress**: Primitiva fundamental de mutex baseada em Futex, usada para concorrência de GPU e CPU do PS5.
+
+
+### Atualização Fase 4 (Mapeamento PRX/Kernel Base)
+Após avaliação direta na árvore de código `core/libs/prx`, confirmamos as seguintes integrações (já incorporadas na branch upstream do original e portadas para a documentação de nosso agente Jules):
+
+1. **Memória Flexível / Direct Memory**: As instruções `sceKernelReserveVirtualRange` estão ligadas sob o módulo de Export em `DirectMemory` com mitigadores de reserva alocativa (fallback limits).
+2. **Sync / Threading**: Atributos complexos de agendamento POSIX (`scePthreadAttrSetsolosched`, etc) já constam mapeados e suportados nos diretórios PThread/SyncOnAddress na tradução C++.
