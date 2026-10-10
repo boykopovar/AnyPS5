@@ -22,6 +22,7 @@ int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
 int APS5_VABI sceHttpsLoadCert(int, int, void*, void*, void*);
 int APS5_VABI sceHttpGetLastErrno(int, int*);
 int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
+int APS5_VABI sceHttpSetRecvBlockSize(int, std::uint32_t);
 int APS5_VABI sceHttpRedirectCacheFlush(int);
 int APS5_VABI sceHttpsUnloadCert(int);
 int APS5_VABI sceHttpsSetSslVersion(int, int);
@@ -209,6 +210,7 @@ int main() {
     Require(sceHttpsLoadCert(1, 0, nullptr, nullptr, nullptr) == 0);
     Require(sceHttpsUnloadCert(1) == 0);
     Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == 0);
+    Require(sceHttpSetRecvBlockSize(1, 0x4000) == 0);
     Require(sceHttpRedirectCacheFlush(1) == 0);
     int authUserArg = 0;
     Require(sceHttpSetAuthInfoCallback(1, AuthInfo, &authUserArg) == 0);

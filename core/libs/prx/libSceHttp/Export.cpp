@@ -188,6 +188,12 @@ int APS5_VABI sceHttpSetRecvTimeOut(int id, uint32_t usec) {
     return 0;
 }
 
+int APS5_VABI sceHttpSetRecvBlockSize(int id, uint32_t block_size) {
+    (void)id;
+    (void)block_size;
+    return 0;
+}
+
 int APS5_VABI sceHttpSetResponseHeaderMaxSize(int id, uint64_t header_size) {
     (void)id;
     (void)header_size;
