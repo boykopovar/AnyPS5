@@ -9,6 +9,7 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/File/include/FileLock.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include <cerrno>
@@ -108,18 +109,7 @@ static int NativeFutimes(int descriptor, const KernelTimeval* times) {
     return result;
 }
 static int NativeFlock(int descriptor, int operation) {
-    HANDLE handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
-    if (handle == INVALID_HANDLE_VALUE) {
-        return -1;
-    }
-    OVERLAPPED overlapped{};
-    if (operation & 8) {
-        return ::UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &overlapped) ? 0 : -1;
-    }
-    DWORD flags = 0;
-    if (operation & 2) flags |= LOCKFILE_EXCLUSIVE_LOCK;
-    if (operation & 4) flags |= LOCKFILE_FAIL_IMMEDIATELY;
-    return ::LockFileEx(handle, flags, 0, MAXDWORD, MAXDWORD, &overlapped) ? 0 : -1;
+    return File::Flock(descriptor, operation);
 }
 std::int64_t NativePositioned_nid_no_patch(int descriptor, void* buf, std::size_t nbytes, std::int64_t offset, bool write) {
     if (nbytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
@@ -282,6 +272,7 @@ int APS5_VABI close_nid_postfix(int d) {
     if (d >= GuestSockets::FirstDescriptor) return GuestSockets::Close(d);
 #ifdef _WIN32
     File::ForgetDirectoryDescriptor(d);
+    File::ForgetFileLock(d);
     return _close(d);
 #else
     return ::close(d);
@@ -293,7 +284,9 @@ int APS5_VABI _close_nid_postfix(int descriptor) {
 }
 
 int APS5_VABI flock_nid_postfix(int d, int operation) {
-    if (NativeFlock(d, operation) != 0) {
+    const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
+    if (type == 0) return PosixFailure(GUEST_EBADF);
+    if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         throw std::runtime_error(std::string(__func__) + ": flock failed, fd=" + std::to_string(d) + ", error=" + std::to_string(::GetLastError()));
 #else
