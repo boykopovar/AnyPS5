@@ -173,7 +173,8 @@ std::uint32_t DefineBdaSpanReadFunction(SpirvEmitterState& state, bool coherent)
                 const auto pointer = state.module.AllocateId();
                 state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, Binary(state, spv::OpIAdd, u64, physical, delta));
                 const auto value = state.module.AllocateId();
-                state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(coherent), 4u);
+                if (coherent) state.module.AddFunction(spv::OpAtomicLoad, u32, value, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+                else state.module.AddFunction(spv::OpLoad, u32, value, pointer, BdaAccessMask(coherent), 4u);
                 return value;
             });
         }
@@ -234,7 +235,35 @@ void DefineBdaDwordReadFunctions(SpirvEmitterState& state) {
             EmitLabel(state, state.module.AllocateId());
             state.bdaStopsInvocations = stop;
             EmitBdaOverflowCheck(state, address, 4u, instruction);
-            const auto value = EmitBdaBytes(state, address, 4u, instruction, BdaAccessMask(coherent));
+            std::uint32_t value = 0;
+            if (coherent && state.bdaProbeFunction != 0) {
+                const auto u64t = TypeScalarU64(state);
+                const auto physical = state.module.AllocateId();
+                state.module.AddFunction(spv::OpFunctionCall, u64t, physical, state.bdaProbeFunction, address, ConstantU32(state, 4u), instruction);
+                const auto usable = Binary(state, spv::OpLogicalAnd, TypeBool(state), Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u)), Binary(state, spv::OpIEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u64t, physical, BdaConstant(state, 3u)), BdaConstant(state, 0u)));
+                const auto atomicLabel = state.module.AllocateId();
+                const auto byteLabel = state.module.AllocateId();
+                const auto byteExit = state.module.AllocateId();
+                const auto merge = state.module.AllocateId();
+                state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+                state.module.AddFunction(spv::OpBranchConditional, usable, atomicLabel, byteLabel);
+                EmitLabel(state, atomicLabel);
+                const auto pointer = state.module.AllocateId();
+                state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, physical);
+                const auto atomicValue = state.module.AllocateId();
+                state.module.AddFunction(spv::OpAtomicLoad, u32, atomicValue, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, 0u));
+                state.module.AddFunction(spv::OpBranch, merge);
+                EmitLabel(state, byteLabel);
+                const auto byteValue = EmitBdaBytes(state, address, 4u, instruction, BdaAccessMask(coherent));
+                state.module.AddFunction(spv::OpBranch, byteExit);
+                EmitLabel(state, byteExit);
+                state.module.AddFunction(spv::OpBranch, merge);
+                EmitLabel(state, merge);
+                value = state.module.AllocateId();
+                state.module.AddFunction(spv::OpPhi, u32, value, atomicValue, atomicLabel, byteValue, byteExit);
+            } else {
+                value = EmitBdaBytes(state, address, 4u, instruction, BdaAccessMask(coherent));
+            }
             const auto result = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeConstruct, pair, result, value, ConstantU32(state, 0u));
             state.module.AddFunction(spv::OpReturnValue, result);
