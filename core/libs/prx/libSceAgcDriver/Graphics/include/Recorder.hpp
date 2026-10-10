@@ -381,6 +381,7 @@ public:
     // The recorder of the current device, for code that only has guest addresses (the flush hook)
     // and for helpers that must not recycle resources the recorded work still uses.
     static Recorder* Active();
+    VkDevice Device() const { return context.device; }
     // Whether the calling thread runs inside a batch's completion action (finish()): a store made
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
