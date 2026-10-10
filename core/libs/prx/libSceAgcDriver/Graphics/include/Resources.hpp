@@ -6,6 +6,12 @@
 
 namespace AgcDriver::Graphics {
 
+enum class GpuMemoryKind : std::uint8_t { HostBuffer, DeviceBuffer, HostImport, Texture, StorageImage, DepthSurface, RenderTarget, ShadowSlab, Count };
+void CountGpuMemory(GpuMemoryKind kind, std::int64_t bytes);
+std::uint64_t LiveGpuMemory();
+VkResult AllocateGpuMemory(const Context& context, const VkMemoryAllocateInfo& allocation, VkDeviceMemory& memory, GpuMemoryKind kind, const char* what);
+std::uint64_t OutOfMemoryFailures();
+
 class Buffer {
 public:
     Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -88,6 +94,7 @@ private:
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize allocationBytes = 0;
 };
 
 class CommandBatch {

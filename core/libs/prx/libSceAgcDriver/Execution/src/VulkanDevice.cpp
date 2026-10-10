@@ -1388,6 +1388,10 @@ void VulkanDevice::PrepareForReplacement() {
     Graphics::DestroyShadows(state->device);
 }
 
+std::uint64_t VulkanDevice::RelieveMemory() {
+    return Graphics::RelieveGpuMemory(graphicsContext());
+}
+
 void VulkanDevice::WaitIdle() {
     APS5_LOG_CHARS_OUT_DEBUG("VulkanDevice::WaitIdle begin");
     RetirePresents(0);

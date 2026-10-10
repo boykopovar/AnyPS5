@@ -3,9 +3,100 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <exception>
+#include <string>
 
 namespace AgcDriver::Graphics {
+
+namespace {
+
+struct GpuMemoryCounts {
+    std::array<std::atomic<std::int64_t>, static_cast<std::size_t>(GpuMemoryKind::Count)> bytes{};
+    std::array<std::atomic<std::int64_t>, static_cast<std::size_t>(GpuMemoryKind::Count)> objects{};
+    std::atomic<std::int64_t> lastReport{0};
+};
+
+GpuMemoryCounts& MemoryCounts() {
+    static GpuMemoryCounts counts;
+    return counts;
+}
+
+thread_local std::uint64_t outOfMemoryFailures = 0;
+
+std::string describeGpuMemory() {
+    static constexpr std::array<const char*, static_cast<std::size_t>(GpuMemoryKind::Count)> names{"host buffers", "device buffers", "host imports", "textures", "storage images", "depth surfaces", "render targets", "shadow slabs"};
+    auto& counts = MemoryCounts();
+    std::string text;
+    std::int64_t objects = 0;
+    for (std::size_t kind = 0; kind < names.size(); ++kind) {
+        char item[96];
+        const auto count = counts.objects[kind].load(std::memory_order_relaxed);
+        objects += count;
+        std::snprintf(item, sizeof(item), "%s%s %.0f MiB (%lld)", kind == 0 ? "" : ", ", names[kind], counts.bytes[kind].load(std::memory_order_relaxed) / 1048576.0, static_cast<long long>(count));
+        text += item;
+    }
+    char tail[96];
+    std::snprintf(tail, sizeof(tail), "; %lld allocations", static_cast<long long>(objects));
+    return text + tail;
+}
+
+bool outOfMemory(VkResult result) {
+    return result == VK_ERROR_OUT_OF_DEVICE_MEMORY || result == VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+}
+
+void CountGpuMemory(GpuMemoryKind kind, std::int64_t bytes) {
+    auto& counts = MemoryCounts();
+    const auto index = static_cast<std::size_t>(kind);
+    counts.bytes[index].fetch_add(bytes, std::memory_order_relaxed);
+    counts.objects[index].fetch_add(bytes < 0 ? -1 : 1, std::memory_order_relaxed);
+    static const bool trace = std::getenv("APS5_TRACE_GPU_MEMORY") != nullptr;
+    if (!trace) return;
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto last = counts.lastReport.load(std::memory_order_relaxed);
+    if (now - last < 10 || !counts.lastReport.compare_exchange_strong(last, now)) return;
+    std::fprintf(stderr, "[gpumem] live: %s\n", describeGpuMemory().c_str());
+}
+
+std::uint64_t LiveGpuMemory() {
+    std::int64_t total = 0;
+    for (const auto& bytes : MemoryCounts().bytes) total += bytes.load(std::memory_order_relaxed);
+    return total > 0 ? static_cast<std::uint64_t>(total) : 0;
+}
+
+std::uint64_t OutOfMemoryFailures() {
+    return outOfMemoryFailures;
+}
+
+VkResult AllocateGpuMemory(const Context& context, const VkMemoryAllocateInfo& allocation, VkDeviceMemory& memory, GpuMemoryKind kind, const char* what) {
+    const auto allocate = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+    auto result = allocate(context.device, &allocation, nullptr, &memory);
+    if (result == VK_SUCCESS) {
+        CountGpuMemory(kind, static_cast<std::int64_t>(allocation.allocationSize));
+        return result;
+    }
+    memory = VK_NULL_HANDLE;
+    if (!outOfMemory(result)) return result;
+    ++outOfMemoryFailures;
+    const auto& type = context.memory.memoryTypes[allocation.memoryTypeIndex];
+    const auto& heap = context.memory.memoryHeaps[type.heapIndex];
+    static std::atomic<std::uint64_t> failures{0};
+    const auto failure = failures.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (failure > 4 && failure % 100 != 0) return result;
+    const auto pool = context.bufferPool != nullptr ? context.bufferPool->RetainedBytes() : std::pair<VkDeviceSize, VkDeviceSize>{0, 0};
+    const auto* recorder = GuestMemory::GpuMutex().HeldByThisThread() ? Recorder::Active() : nullptr;
+    char batches[48] = "";
+    if (recorder != nullptr) std::snprintf(batches, sizeof(batches), ", %zu batches in flight", recorder->InFlightBatches());
+    std::fprintf(stderr, "[gpumem] vkAllocateMemory %s of %.1f MiB failed (%d, failure %llu): memory type %u (flags 0x%x) in heap %u (%.0f MiB, flags 0x%x); live: %s of %u allowed; pool retains %.0f MiB host, %.0f MiB device; host import limit %.0f MiB%s\n", what, allocation.allocationSize / 1048576.0, static_cast<int>(result), static_cast<unsigned long long>(failure), allocation.memoryTypeIndex, type.propertyFlags, type.heapIndex, heap.size / 1048576.0, heap.flags, describeGpuMemory().c_str(), context.limits.maxMemoryAllocationCount, pool.first / 1048576.0, pool.second / 1048576.0, HostImportLimit() / 1048576.0, batches);
+    return result;
+}
 
 Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size, properties)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
@@ -47,7 +138,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         } else {
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, properties);
         }
-        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory buffer");
+        Check(AllocateGpuMemory(context, allocation, memory, (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 ? GpuMemoryKind::HostBuffer : GpuMemoryKind::DeviceBuffer, "buffer"), "vkAllocateMemory buffer");
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
         initializeAddress(usage);
         if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
@@ -69,7 +160,10 @@ void Buffer::release() noexcept {
     }
     if (mapping) context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")(context.device, memory);
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) {
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        CountGpuMemory((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 ? GpuMemoryKind::HostBuffer : GpuMemoryKind::DeviceBuffer, -static_cast<std::int64_t>(allocationBytes));
+    }
 }
 
 VkBuffer Buffer::Handle() const {
@@ -111,7 +205,7 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         allocation.allocationSize = requirements.size;
         allocationBytes = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory device buffer");
+        Check(AllocateGpuMemory(context, allocation, memory, GpuMemoryKind::DeviceBuffer, "device buffer"), "vkAllocateMemory device buffer");
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory device");
     } catch (...) {
         release();
@@ -129,7 +223,10 @@ void DeviceBuffer::release() noexcept {
         return;
     }
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) {
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        CountGpuMemory(GpuMemoryKind::DeviceBuffer, -static_cast<std::int64_t>(allocationBytes));
+    }
 }
 
 VkBuffer DeviceBuffer::Handle() const {
@@ -223,7 +320,8 @@ RenderTarget::RenderTarget(const Context& context, const ColorTarget& target, bo
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory render target");
+        Check(AllocateGpuMemory(context, allocation, memory, GpuMemoryKind::RenderTarget, "render target"), "vkAllocateMemory render target");
+        allocationBytes = allocation.allocationSize;
         Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory");
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = image;
@@ -244,7 +342,10 @@ RenderTarget::~RenderTarget() {
 void RenderTarget::release() noexcept {
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) {
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        CountGpuMemory(GpuMemoryKind::RenderTarget, -static_cast<std::int64_t>(allocationBytes));
+    }
 }
 
 VkImage RenderTarget::Image() const {
