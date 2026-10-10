@@ -103,6 +103,18 @@ def main():
             result, _ = convert(case, windows, ["--exclude-sce-module", "missing.prx"])
             assert result.returncode == 2 and "file not found" in result.stderr, result.stderr
 
+            for magic in (b"\x54\x14\xf5\xee", b"\x4f\x15\x3d\x1d"):
+                case = work / f"{windows}-self-{magic.hex()}"
+                (case / "sce_module").mkdir(parents=True)
+                wrapped = case / "sce_module" / "libc.prx"
+                wrapped.write_bytes(magic + b"\x00\x01\x01\x12" + bytes(0x1000))
+                result, output = convert(case, windows)
+                assert result.returncode == 2, (result.stdout, result.stderr)
+                assert "The bundled module is a SELF container, not an ELF" in result.stderr and str(wrapped) in result.stderr, result.stderr
+                assert not output.exists() and not (case / "app0").exists(), output
+                result, output = convert(case, windows, ["--exclude-sce-module", "libc.prx"])
+                assert result.returncode == 0 and output.exists(), result.stderr
+
             case = work / f"{windows}-invalid"
             case.mkdir()
             (case / "prx").write_text("not a directory")

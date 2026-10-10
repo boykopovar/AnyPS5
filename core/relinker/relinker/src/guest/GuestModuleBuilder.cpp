@@ -70,7 +70,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         char magic[4]{};
         stream.read(magic, 4);
         if (stream.bad()) throw Domain::RelinkerException("Cannot read guest candidate magic: " + path.string());
-        return stream.gcount() == 4 && static_cast<unsigned char>(magic[0]) == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        if (stream.gcount() != 4) return false;
+        const std::string_view bytes(magic, 4);
+        if (bytes == std::string_view("\x4f\x15\x3d\x1d", 4) || bytes == std::string_view("\x54\x14\xf5\xee", 4)) throw Domain::RelinkerException("The bundled module is a SELF container, not an ELF: " + path.string());
+        return bytes == std::string_view("\x7f" "ELF", 4);
     };
     for (const auto& directory : directories) {
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + directory.string());
