@@ -374,6 +374,11 @@ int* APS5_VABI sceNetErrnoLoc(void) {
     return errno_slot();
 }
 
+int APS5_VABI sceNetShowNetstat(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int PollSockets(KernelSocketPoll::Entry* entries, int count, int timeoutMilliseconds) {
     std::vector<std::shared_ptr<NativeSocketHandle>> natives(static_cast<std::size_t>(count));
     {
