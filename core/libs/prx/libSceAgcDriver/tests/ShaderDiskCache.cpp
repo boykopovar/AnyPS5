@@ -548,6 +548,23 @@ int runLoadingProcess() {
     return 0;
 }
 
+int runOppositeMaskedSelectLoadingProcess() {
+    constexpr auto name = "APS5_NO_PERF_MASKED_SELECT_SCRATCH";
+    const bool wasPresent = std::getenv(name) != nullptr;
+    if (wasPresent) {
+#ifdef _WIN32
+        require(_putenv_s(name, "") == 0, "cannot unset the masked-select scratch switch");
+#else
+        require(unsetenv(name) == 0, "cannot unset the masked-select scratch switch");
+#endif
+    } else {
+        setEnvironment(name, "1");
+    }
+    require((std::getenv(name) != nullptr) != wasPresent, "the child did not toggle the masked-select scratch switch presence");
+    std::cout << "opposite masked-select mode: " << (wasPresent ? "present -> absent" : "absent -> present") << std::endl;
+    return runLoadingProcess();
+}
+
 void verifyAcrossProcesses(const char* self) {
     ComputeRequest request(true);
     const auto before = ShaderDiskCache::Totals();
@@ -558,6 +575,8 @@ void verifyAcrossProcesses(const char* self) {
     require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
     const std::string command = "\"" + std::string(self) + "\" --load";
     require(std::system(command.c_str()) == 0, "the loading process failed");
+    const std::string oppositeCommand = "\"" + std::string(self) + "\" --load-opposite-masked-select";
+    require(std::system(oppositeCommand.c_str()) == 0, "the opposite masked-select mode loading process failed");
 }
 
 struct ClockRequest {
@@ -1021,6 +1040,7 @@ void verifyDefaultDirectory(const char* self) {
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--load") return runLoadingProcess();
+        if (argc == 2 && std::string_view(argv[1]) == "--load-opposite-masked-select") return runOppositeMaskedSelectLoadingProcess();
         if (argc == 2 && std::string_view(argv[1]) == "--no-failure-memo") return runWithoutFailureMemo();
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);

@@ -1,6 +1,8 @@
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/DeadCodeEliminator.hpp"
+#include "Optimization/MaskedSelectVisited.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
+#include <cstdlib>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -337,10 +339,9 @@ std::unordered_set<const IrBlock*> blocksOutsideLoops(const IrProgram& program) 
     return result;
 }
 
-bool unobservedWhereMasked(const IrProgram& program, const std::unordered_set<const IrBlock*>& once, const IrValue& select, const IrValue* mask) {
+template<typename Insert, typename Size>
+bool walkUnobservedUses(const IrProgram& program, const std::unordered_set<const IrBlock*>& once, const IrValue* mask, std::vector<const IrValue*>& pending, const Insert& insert, const Size& size) {
     const auto waveSize = program.WaveSize();
-    std::vector<const IrValue*> pending{&select};
-    std::unordered_set<const IrValue*> visited{&select};
     while (!pending.empty()) {
         const IrValue* value = pending.back();
         pending.pop_back();
@@ -351,8 +352,8 @@ bool unobservedWhereMasked(const IrProgram& program, const std::unordered_set<co
             if (user->Opcode() == IrOpcode::LogicalAnd && use.operand < 2u && implies(user->Argument(1u - use.operand), mask, waveSize)) continue;
             if (readsOnlyWhereActive(user->Opcode()) && use.operand + 1u < user->ArgumentCount() && implies(user->Argument(user->ArgumentCount() - 1u), mask, waveSize)) continue;
             if (!user->IsPhi() && !isLaneLocal(user->Opcode()) && !isExplicitLodSample(program, *user)) return false;
-            if (visited.insert(user).second) {
-                if (visited.size() > VisitLimit) return false;
+            if (insert(user)) {
+                if (size() > VisitLimit) return false;
                 pending.push_back(user);
             }
         }
@@ -360,11 +361,28 @@ bool unobservedWhereMasked(const IrProgram& program, const std::unordered_set<co
     return true;
 }
 
+bool unobservedWhereMasked(const IrProgram& program, const std::unordered_set<const IrBlock*>& once, const IrValue& select, const IrValue* mask) {
+    std::vector<const IrValue*> pending{&select};
+    std::unordered_set<const IrValue*> visited{&select};
+    return walkUnobservedUses(program, once, mask, pending, [&](const IrValue* value) { return visited.insert(value).second; }, [&] { return visited.size(); });
+}
+
+bool unobservedWhereMasked(const IrProgram& program, const std::unordered_set<const IrBlock*>& once, const IrValue& select, const IrValue* mask, MaskedSelectVisited<>& visited, std::vector<const IrValue*>& pending) {
+    pending.clear();
+    pending.push_back(&select);
+    visited.Begin();
+    visited.Insert(&select);
+    return walkUnobservedUses(program, once, mask, pending, [&](const IrValue* value) { return visited.Insert(value); }, [&] { return visited.Size(); });
+}
+
 }
 
 MaskedSelectEliminationStats MaskedSelectEliminator::Eliminate(IrProgram& program) const {
     MaskedSelectEliminationStats stats;
     const auto once = blocksOutsideLoops(program);
+    const bool reuse = std::getenv("APS5_NO_PERF_MASKED_SELECT_SCRATCH") == nullptr;
+    std::optional<MaskedSelectVisited<>> visited;
+    std::vector<const IrValue*> pending;
     bool changed = true;
     while (changed) {
         changed = false;
@@ -377,7 +395,12 @@ MaskedSelectEliminationStats MaskedSelectEliminator::Eliminate(IrProgram& progra
                 IrValue* inst = *it;
                 if (!isSelect(inst->Opcode()) || inst->ArgumentCount() != 3u || !inst->HasUses()) continue;
                 const IrValue* mask = inst->Argument(0)->Resolve();
-                if (!alwaysTrue(mask, program.WaveSize()) && (!single || !unobservedWhereMasked(program, once, *inst, mask))) continue;
+                if (!alwaysTrue(mask, program.WaveSize())) {
+                    if (!single) continue;
+                    if (reuse && !visited) visited.emplace(program);
+                    const bool unobserved = visited ? unobservedWhereMasked(program, once, *inst, mask, *visited, pending) : unobservedWhereMasked(program, once, *inst, mask);
+                    if (!unobserved) continue;
+                }
                 inst->ReplaceAllUsesWith(inst->Argument(1));
                 inst->Invalidate();
                 inst->SetParent(nullptr);

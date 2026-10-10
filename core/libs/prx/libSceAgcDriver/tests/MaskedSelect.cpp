@@ -1,12 +1,19 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/MaskedSelectEliminator.hpp"
+#include "Optimization/MaskedSelectVisited.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <functional>
 #include <initializer_list>
+#include <limits>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <unordered_set>
 #include <utility>
 
 using namespace ShaderRecompiler;
@@ -25,6 +32,7 @@ struct Builder {
     IrBlock& newBlock() {
         auto& created = program.CreateBlock();
         program.BlockOrder().push_back(&created);
+        program.Metadata().blockInfo.push_back({.id = created.Id()});
         return created;
     }
 
@@ -104,10 +112,175 @@ bool run(const char* name, const std::function<bool()>& test) {
     }
 }
 
+struct ScratchSwitch {
+    std::optional<std::string> previous;
+
+    static void set(const char* value) {
+#ifdef _WIN32
+        if (_putenv_s("APS5_NO_PERF_MASKED_SELECT_SCRATCH", value == nullptr ? "" : value) != 0) throw std::runtime_error("cannot set masked select scratch switch");
+#else
+        const auto result = value == nullptr ? unsetenv("APS5_NO_PERF_MASKED_SELECT_SCRATCH") : setenv("APS5_NO_PERF_MASKED_SELECT_SCRATCH", value, 1);
+        if (result != 0) throw std::runtime_error("cannot set masked select scratch switch");
+#endif
+    }
+
+    explicit ScratchSwitch(bool disabled) {
+        if (const auto* value = std::getenv("APS5_NO_PERF_MASKED_SELECT_SCRATCH")) previous = value;
+        set(disabled ? "1" : nullptr);
+    }
+
+    ~ScratchSwitch() {
+#ifdef _WIN32
+        _putenv_s("APS5_NO_PERF_MASKED_SELECT_SCRATCH", previous ? previous->c_str() : "");
+#else
+        if (previous) setenv("APS5_NO_PERF_MASKED_SELECT_SCRATCH", previous->c_str(), 1);
+        else unsetenv("APS5_NO_PERF_MASKED_SELECT_SCRATCH");
+#endif
+    }
+};
+
+bool sameElimination(Builder& optimized, Builder& reference, std::uint32_t expected) {
+    std::uint32_t originalCount = 0;
+    {
+        const ScratchSwitch original(true);
+        originalCount = reference.eliminate();
+    }
+    std::uint32_t optimizedCount = 0;
+    {
+        const ScratchSwitch scratch(false);
+        optimizedCount = optimized.eliminate();
+    }
+    return originalCount == expected && optimizedCount == originalCount && ProgramToString(optimized.program) == ProgramToString(reference.program);
+}
+
+bool differential(const std::function<void(Builder&)>& build, std::uint32_t expected) {
+    Builder optimized;
+    Builder reference;
+    build(optimized);
+    build(reference);
+    if (ProgramToString(optimized.program) != ProgramToString(reference.program) || !sameElimination(optimized, reference, expected)) return false;
+    const auto fixed = ProgramToString(optimized.program);
+    return sameElimination(optimized, reference, 0u) && ProgramToString(optimized.program) == fixed;
+}
+
+template<typename Generation>
+bool visitedIdentity() {
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    auto& first = program.CreateValue(IrOpcode::LaneId, IrType::U32);
+    auto& second = program.CreateValue(IrOpcode::LaneId, IrType::U32);
+    block.AppendInstruction(&first);
+    block.AppendInstruction(&second);
+    IrValue foreign(IrOpcode::LaneId, IrType::U32, first.Id());
+    IrValue duplicateId(IrOpcode::LaneId, IrType::U32, first.Id());
+    IrValue futureId(IrOpcode::LaneId, IrType::U32, static_cast<std::uint32_t>(program.Values().size()));
+    IrValue sparse(IrOpcode::LaneId, IrType::U32, 1000000u);
+    IrValue largest(IrOpcode::LaneId, IrType::U32, std::numeric_limits<std::uint32_t>::max());
+    MaskedSelectVisited<Generation> visited(program);
+    std::unordered_set<const IrValue*> reference;
+    const auto insert = [&](const IrValue* value) {
+        const bool expected = reference.insert(value).second;
+        return visited.Insert(value) == expected && visited.Size() == reference.size();
+    };
+    visited.Begin();
+    if (visited.Size() != 0u) return false;
+    for (const auto* value : {&first, &foreign, &duplicateId, &first, &foreign, &sparse, &largest, &largest, &futureId}) {
+        if (!insert(value)) return false;
+    }
+    auto& added = program.CreateValue(IrOpcode::LaneId, IrType::U32);
+    block.AppendInstruction(&added);
+    if (!insert(&added) || !insert(&added) || !insert(&futureId)) return false;
+    block.RemoveInstruction(&first);
+    first.Invalidate();
+    if (!insert(&first)) return false;
+    visited.Begin();
+    reference.clear();
+    if (visited.Size() != 0u || !insert(&first) || !insert(&added) || !insert(&foreign)) return false;
+    MaskedSelectVisited<Generation> epochs(program);
+    for (unsigned epoch = 0; epoch < 520u; ++epoch) {
+        epochs.Begin();
+        reference.clear();
+        if (epochs.Size() != 0u) return false;
+        const auto check = [&](const IrValue* value) {
+            const bool expected = reference.insert(value).second;
+            return epochs.Insert(value) == expected && epochs.Size() == reference.size();
+        };
+        if ((epoch == 0u || epoch >= 255u) && !check(&first)) return false;
+        for (const auto* value : {&second, &foreign, &duplicateId, &sparse, &largest, &added, &foreign, &second}) {
+            if (!check(value)) return false;
+        }
+    }
+    return true;
+}
+
 }
 
 int main() {
     bool passed = true;
+
+    passed &= run("visited scratch preserves pointer identity and generation wrap", [] {
+        return visitedIdentity<std::uint32_t>() && visitedIdentity<std::uint8_t>();
+    });
+
+    passed &= run("scratch preserves the seeded 4096 visit limit and duplicate user counting", [] {
+        for (const auto count : {4095u, 4096u}) {
+            for (const bool duplicateUse : {false, true}) {
+                if (!differential([&](Builder& b) {
+                    auto& exec = b.mask(16u);
+                    auto& old = b.lane();
+                    auto& written = b.select(exec, b.add(old, 1u), old);
+                    auto& one = b.constant(1u);
+                    auto* tail = &written;
+                    for (unsigned index = 0; index < count; ++index) tail = &b.emit(IrOpcode::IAdd32, IrType::U32, {tail, duplicateUse ? tail : &one});
+                    b.keep(b.select(exec, *tail, old));
+                }, count == 4095u ? 1u : 0u)) return false;
+            }
+        }
+        return true;
+    });
+
+    passed &= run("scratch preserves shared DAGs, distinct masks, pending cleanup and fixed-point mutation", [] {
+        Builder optimized;
+        Builder reference;
+        for (auto* builder : {&optimized, &reference}) {
+            auto& b = *builder;
+            auto& firstExec = b.mask(16u);
+            auto& secondExec = b.mask(32u);
+            auto& old = b.lane();
+            auto& first = b.select(firstExec, b.add(old, 1u), old);
+            auto& shared = b.emit(IrOpcode::IAdd32, IrType::U32, {&first, &first});
+            auto& left = b.add(shared, 2u);
+            auto& right = b.add(shared, 3u);
+            b.keep(b.select(firstExec, b.emit(IrOpcode::IAdd32, IrType::U32, {&left, &right}), old));
+            auto& second = b.select(secondExec, b.add(old, 4u), old);
+            b.keep(b.select(secondExec, b.add(second, 5u), old));
+            b.emit(IrOpcode::ReadFirstLane, IrType::U32, {&second, &secondExec});
+        }
+        if (ProgramToString(optimized.program) != ProgramToString(reference.program) || !sameElimination(optimized, reference, 2u)) return false;
+        if (!sameElimination(optimized, reference, 0u)) return false;
+        for (auto* builder : {&optimized, &reference}) {
+            auto& b = *builder;
+            auto& exec = b.mask(8u);
+            auto& old = b.lane();
+            auto& written = b.select(exec, b.add(old, 6u), old);
+            b.keep(b.select(exec, b.add(written, 7u), old));
+        }
+        return sameElimination(optimized, reference, 1u) && sameElimination(optimized, reference, 0u);
+    });
+
+    passed &= run("scratch preserves selects observed in a loop", [] {
+        return differential([](Builder& b) {
+            auto& exec = b.mask(16u);
+            auto& old = b.lane();
+            auto& outside = b.select(exec, b.add(old, 1u), old);
+            auto& loop = b.newBlock();
+            b.block->AddBranch(&loop);
+            loop.AddBranch(&loop);
+            b.block = &loop;
+            auto& inside = b.select(exec, b.add(outside, 2u), old);
+            b.keep(b.select(exec, b.add(inside, 3u), old));
+        }, 0u);
+    });
 
     passed &= run("a write read only under its own exec must lose its select", [] {
         Builder b;

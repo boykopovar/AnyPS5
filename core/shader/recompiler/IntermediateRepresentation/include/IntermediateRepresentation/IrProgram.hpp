@@ -13,6 +13,7 @@ class IrProgram {
 public:
     [[nodiscard]] std::vector<std::unique_ptr<IrBlock>>& Blocks();
     [[nodiscard]] const std::vector<std::unique_ptr<IrBlock>>& Blocks() const;
+    [[nodiscard]] const std::vector<std::unique_ptr<IrValue>>& Values() const;
     [[nodiscard]] IrBlock& EntryBlock() const;
     [[nodiscard]] ShaderInfo& Info();
     [[nodiscard]] const ShaderInfo& Info() const;

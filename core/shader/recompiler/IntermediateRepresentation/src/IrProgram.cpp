@@ -215,6 +215,10 @@ const std::vector<std::unique_ptr<IrBlock>>& IrProgram::Blocks() const {
     return blocks;
 }
 
+const std::vector<std::unique_ptr<IrValue>>& IrProgram::Values() const {
+    return values;
+}
+
 IrBlock& IrProgram::EntryBlock() const {
     if (entryBlock == nullptr) {
         throw std::runtime_error("IrProgram::EntryBlock has not been set");
