@@ -161,7 +161,8 @@ void testContextAndBases() {
     execute(state, makePacket(0x10, {0x00636261}, 0x2c));
     check(state.markers.back() == "abc", "marker text lost");
     execute(state, makePacket(0x10, {0}, 0x30));
-    expectFailure([&] { execute(state, makePacket(0x10, {0}, 0x30)); }, "underflow");
+    execute(state, makePacket(0x10, {0}, 0x30));
+    check(state.markers.empty(), "an unbalanced marker pop changed the marker stack");
     execute(state, makePacket(0x10, {0}, 0x24));
     check(state.shader.empty() && state.context == AgcDriver::InitialContextRegisters() && state.dispatchIndirectBase == 0 && state.indexBase == 0 && !state.savedContext, "dispatch reset retained state");
 }
