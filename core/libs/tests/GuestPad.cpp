@@ -24,6 +24,8 @@ int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
 int APS5_VABI scePadIsRemoteController(int, bool*);
 int APS5_VABI scePadGetControllerInformation(int, PadControllerInformation*);
 int APS5_VABI scePadGetExtControllerInformation(int, void*);
+int APS5_VABI scePadDeviceClassGetExtendedInformation(int, PadDeviceClassExtendedInformation*);
+int APS5_VABI scePadDeviceClassParseData(int, const PadData*, PadDeviceClassData*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -116,6 +118,30 @@ static void CheckControllerInformation(int handle) {
     for (std::size_t i = sizeof(base); i < sizeof(ext); ++i) Require(ext[i] == 0);
 }
 
+static void CheckDeviceClass(int handle) {
+    PadDeviceClassExtendedInformation info;
+    std::memset(&info, 0xff, sizeof(info));
+    Require(scePadDeviceClassGetExtendedInformation(handle + 1, &info) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDeviceClassGetExtendedInformation(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadDeviceClassGetExtendedInformation(handle, &info) == PAD_OK);
+    Require(info.deviceClass == PAD_DEVICE_CLASS_STANDARD);
+    for (const auto byte : info.classData.data) Require(byte == 0);
+
+    PadData data{};
+    PadDeviceClassData classData;
+    std::memset(&classData, 0xff, sizeof(classData));
+    Require(scePadDeviceClassParseData(handle + 1, &data, &classData) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDeviceClassParseData(handle, nullptr, &classData) == PAD_ERROR_INVALID_ARG);
+    Require(scePadDeviceClassParseData(handle, &data, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadDeviceClassParseData(handle, &data, &classData) == PAD_OK);
+    Require(classData.deviceClass == PAD_DEVICE_CLASS_STANDARD);
+    Require(!classData.dataValid);
+    for (const auto byte : classData.classData.data) Require(byte == 0);
+    data.connected = true;
+    Require(scePadDeviceClassParseData(handle, &data, &classData) == PAD_OK);
+    Require(classData.dataValid);
+}
+
 int main() {
     constexpr int noHandle = static_cast<int>(0x80920008);
     constexpr int user = 0x10000000;
@@ -138,6 +164,7 @@ int main() {
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
     CheckControllerInformation(handle);
+    CheckDeviceClass(handle);
     Require(scePadSetVibrationMode(handle, 1) == 0);
     Require(scePadSetVibrationMode(handle, 2) == 0);
     Require(scePadSetVibrationMode(handle, 3) == PAD_ERROR_INVALID_ARG);
