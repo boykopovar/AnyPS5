@@ -78,7 +78,7 @@ int APS5_VABI unsetenv_nid_postfix(const char* name) {
     try {
         std::lock_guard lock(environmentMutex);
         auto& entries = Environment();
-        const std::string key(name);
+        const std::string_view key(name);
         std::erase_if(entries, [&key](auto& entry) { return entry.Matches(key); });
         return 0;
     } catch (const std::bad_alloc&) { return EnvironmentError(12); }
