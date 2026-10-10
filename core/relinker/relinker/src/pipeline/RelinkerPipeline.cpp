@@ -29,6 +29,9 @@ std::string RelinkerPipeline::_relocationTypeName(std::uint32_t type) {
         case 6: return "R_X86_64_GLOB_DAT";
         case 7: return "R_X86_64_JUMP_SLOT";
         case 10: return "R_X86_64_32";
+        case 16: return "R_X86_64_DTPMOD64";
+        case 17: return "R_X86_64_DTPOFF64";
+        case 18: return "R_X86_64_TPOFF64";
         default: {
             std::ostringstream oss;
             oss << "UNKNOWN(" << type << ")";
@@ -212,8 +215,8 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
-            if (relType == 8) {
-                if (symIdx != 0)
+            if (relType == 8 || symIdx == 0) {
+                if (relType == 8 && symIdx != 0)
                     throw RelinkerException("RELATIVE relocation has a nonzero symbol index", pos);
                 continue;
             }

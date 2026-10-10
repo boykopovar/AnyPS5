@@ -84,5 +84,31 @@ void* NativeInitPrimaryException(void* object, std::type_info* type, void (*dest
 void* NativeInitPrimaryException(void* object, std::type_info* type, void (*destructor)(void*)) {
     return __cxa_init_primary_exception_nid_postfix(object, type, destructor);
 }
+
+struct SjLj_Function_Context {
+    SjLj_Function_Context* prev;
+    int personality;
+    void* data[4];
+    std::size_t call_site;
+};
+
+static thread_local SjLj_Function_Context* sjlj_head = nullptr;
+
+void _Unwind_SjLj_Register(SjLj_Function_Context* fc) {
+    fc->prev = sjlj_head;
+    sjlj_head = fc;
+}
+
+void _Unwind_SjLj_Unregister(SjLj_Function_Context* fc) {
+    sjlj_head = fc->prev;
+}
+
+[[noreturn]] void _Unwind_SjLj_Resume(void*) {
+    std::abort();
+}
+
+int __gxx_personality_sj0(int, int, std::uint64_t, void*, void*) {
+    std::abort();
+}
 }
 #endif

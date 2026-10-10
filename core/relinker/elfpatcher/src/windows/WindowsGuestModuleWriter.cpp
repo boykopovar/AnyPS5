@@ -122,6 +122,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         } else rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
         if (!exports.emplace(symbol.Name, rva).second) throw Domain::RelinkerException("Duplicate guest export: " + symbol.Name);
     }
+    if (guest.Init != 0) {
+        exports.emplace("__aps5_module_start", image.GetRva(guest.Init));
+    }
     if (!tlsExports.Data.empty()) {
         nextRva = AlignRva(nextRva + tlsExports.Data.size());
         sections.push_back(std::move(tlsExports));

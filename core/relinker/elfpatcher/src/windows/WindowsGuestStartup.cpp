@@ -29,6 +29,7 @@ void WindowsGuestStartup::callLifecycle(WindowsStubEmitter& code, const std::uin
 
 void WindowsGuestStartup::Initialize(WindowsStubEmitter& code, const std::vector<Domain::GuestRuntime>& modules, const std::uint32_t handles) const {
     for (std::size_t index = 0; index < modules.size(); ++index) {
+        if (!modules[index].AutoInitialize) continue;
         const auto handle = CheckedRva(handles + index * 8);
         callLifecycle(code, handle, modules[index].InitRva);
         for (const auto slot : modules[index].InitArrayRvas) callLifecycle(code, handle, slot, true);
@@ -41,6 +42,7 @@ void WindowsGuestStartup::Finalize(WindowsStubEmitter& code, const std::vector<D
     code.Emit({0x85, 0xc0});
     const auto skip = code.Branch({0x0f, 0x85});
     for (std::size_t index = modules.size(); index > 0; --index) {
+        if (!modules[index - 1].AutoInitialize) continue;
         const auto handle = CheckedRva(handles + (index - 1) * 8);
         const auto& module = modules[index - 1];
         for (auto slot = module.FiniArrayRvas.rbegin(); slot != module.FiniArrayRvas.rend(); ++slot) callLifecycle(code, handle, *slot, true);

@@ -28,25 +28,70 @@ const char* findModuleName(const std::uint32_t id) {
 std::mutex gMutex;
 std::unordered_map<std::uint32_t, std::int32_t> gLoadCount;
 
-bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 #ifdef _WIN32
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) {
-        return false;
-    }
+struct CachedRegionUnwind {
+    std::uint64_t base = 0;
+    std::uint64_t size = 0;
+    char name[256] = {};
+};
+
+static std::mutex g_sysmoduleUnwindMutex;
+static std::vector<CachedRegionUnwind> g_sysmoduleUnwindCache;
+static std::unordered_map<void*, std::string> g_allocPathCache;
+
+bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     info->st_size = sizeof(ModuleInfoForUnwind);
     info->eh_frame_hdr_addr = 0;
     info->eh_frame_addr = 0;
     info->eh_frame_size = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(g_sysmoduleUnwindMutex);
+        for (const auto& entry : g_sysmoduleUnwindCache) {
+            if (addr >= entry.base && (addr - entry.base) < entry.size) {
+                info->seg0_addr = entry.base;
+                info->seg0_size = entry.size;
+                std::memcpy(info->name, entry.name, sizeof(info->name));
+                return true;
+            }
+        }
+    }
+
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) {
+        return false;
+    }
+
     info->seg0_addr = reinterpret_cast<std::uint64_t>(mbi.BaseAddress);
     info->seg0_size = mbi.RegionSize;
+
     char path[4096] = {};
-    DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.BaseAddress, path, sizeof(path) - 1);
-    path[len] = '\0';
+    if (mbi.Type == MEM_IMAGE && mbi.AllocationBase != nullptr) {
+        std::lock_guard<std::mutex> lock(g_sysmoduleUnwindMutex);
+        auto it = g_allocPathCache.find(mbi.AllocationBase);
+        if (it != g_allocPathCache.end()) {
+            std::strncpy(path, it->second.c_str(), sizeof(path) - 1);
+        } else {
+            DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.AllocationBase, path, sizeof(path) - 1);
+            path[len] = '\0';
+            g_allocPathCache[mbi.AllocationBase] = path;
+        }
+    }
     std::strncpy(info->name, path, sizeof(info->name) - 1);
     info->name[sizeof(info->name) - 1] = '\0';
+
+    CachedRegionUnwind entry{};
+    entry.base = reinterpret_cast<std::uint64_t>(mbi.BaseAddress);
+    entry.size = mbi.RegionSize;
+    std::memcpy(entry.name, info->name, sizeof(entry.name));
+
+    {
+        std::lock_guard<std::mutex> lock(g_sysmoduleUnwindMutex);
+        g_sysmoduleUnwindCache.push_back(entry);
+    }
     return true;
 #else
+bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     std::ifstream maps("/proc/self/maps");
     if (!maps) {
         throw std::runtime_error("sceSysmoduleGetModuleInfoForUnwind: failed to open /proc/self/maps");

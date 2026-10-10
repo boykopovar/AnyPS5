@@ -49,7 +49,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath, const std::vector<std::string>& extraModuleDirs) const {
     const auto root = std::filesystem::absolute(sceModulePath).lexically_normal();
     if (!std::filesystem::exists(root)) throw Domain::RelinkerException("Guest module parent directory does not exist: " + root.string());
     if (!std::filesystem::is_directory(root)) throw Domain::RelinkerException("Guest module parent path is not a directory: " + root.string());
@@ -65,6 +65,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
+    for (const auto& extraDir : extraModuleDirs) {
+        const auto candidate = (std::filesystem::path(extraDir).is_absolute()) ? std::filesystem::path(extraDir) : (root / extraDir);
+        if (!std::filesystem::exists(candidate))
+            throw Domain::RelinkerException("Guest module directory does not exist: " + candidate.string());
+        if (!std::filesystem::is_directory(candidate))
+            throw Domain::RelinkerException("Guest module directory path is not a directory: " + candidate.string());
+        directories.push_back(candidate.lexically_normal());
+    }
     std::vector<std::filesystem::path> paths;
     std::set<std::string> unmatchedExclusions = excludedModules;
     const auto isElf = [](const std::filesystem::path& path) {
@@ -83,6 +91,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + directory.string());
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             if (entry.path().filename().string().ends_with(GuestModuleSuffix)) continue;
+            if (entry.path().filename().string().ends_with(".self")) continue;
             if (excludedModules.contains(entry.path().filename().string())) {
                 unmatchedExclusions.erase(entry.path().filename().string());
                 continue;
@@ -291,6 +300,20 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto& name : hostLibraries) addNeeded(name);
     if (!windows && runPath != "$ORIGIN" && !runPath.starts_with("$ORIGIN/") && !std::filesystem::path(runPath).is_absolute()) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
     const auto outputDirectory = std::filesystem::absolute(outputPath).parent_path().lexically_normal();
+    std::set<std::size_t> neededIndices;
+    for (const auto& name : neededNames) {
+        const auto found = findGuest(name);
+        if (found != guestNames.end()) neededIndices.insert(found->second);
+    }
+    bool addedNeeded = true;
+    while (addedNeeded) {
+        addedNeeded = false;
+        for (const auto idx : std::vector<std::size_t>(neededIndices.begin(), neededIndices.end())) {
+            for (const auto dep : dependencies[idx]) {
+                if (neededIndices.insert(dep).second) addedNeeded = true;
+            }
+        }
+    }
     std::vector<GuestArtifact> artifacts;
     for (const auto index : order) {
         const auto& image = images[index];
@@ -304,6 +327,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runtime.UsePlatformTlsResolver = image.UsePlatformTlsResolver;
         runtime.Path = relativeDirectory + "/" + image.OutputName;
         runtime.Names = {image.SourcePath.filename().string(), image.Soname};
+        runtime.AutoInitialize = neededNames.empty() || neededIndices.contains(index);
         std::vector<std::uint8_t> output;
         if (windows) output = Elfpatcher::GuestModuleWriter().WriteWindows(image, runtime);
         else {

@@ -3,6 +3,8 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <mutex>
+#include <set>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
@@ -23,18 +25,41 @@
 
 #ifdef _WIN32
 namespace {
-void FillGuestUnwindInfo(const std::uint8_t* base, ModuleInfoForUnwind* info) {
+struct CachedModuleUnwind {
+  std::uint64_t base = 0;
+  std::uint64_t size = 0;
+  ModuleInfoForUnwind info{};
+  std::uint32_t headerFirst4 = 0;
+  std::uint32_t framesFirst4 = 0;
+  bool hasTables = false;
+};
+
+static std::mutex g_unwindCacheMutex;
+static std::vector<CachedModuleUnwind> g_unwindCache;
+
+void FillGuestUnwindInfo(const std::uint8_t* base, ModuleInfoForUnwind* info, CachedModuleUnwind& cacheEntry) {
   const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
   if (dos->e_magic != IMAGE_DOS_SIGNATURE) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: image without a DOS header");
   const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
   if (nt->Signature != IMAGE_NT_SIGNATURE) throw std::runtime_error("sceKernelGetModuleInfoForUnwind: image without an NT header");
+  info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
+  info->seg0_size = nt->OptionalHeader.SizeOfImage;
   EhFrame::Tables tables;
-  if (!EhFrame::ReadEhmeta(reinterpret_cast<std::uintptr_t>(base), *nt, "sceKernelGetModuleInfoForUnwind", tables)) return;
+  if (!EhFrame::ReadEhmeta(reinterpret_cast<std::uintptr_t>(base), *nt, "sceKernelGetModuleInfoForUnwind", tables)) {
+    cacheEntry.hasTables = false;
+    return;
+  }
   info->eh_frame_hdr_addr = tables.header;
   info->eh_frame_addr = tables.frames;
   info->eh_frame_size = tables.framesSize;
-  info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
-  info->seg0_size = nt->OptionalHeader.SizeOfImage;
+
+  cacheEntry.hasTables = true;
+  if (tables.header != 0) {
+    std::memcpy(&cacheEntry.headerFirst4, reinterpret_cast<const void*>(tables.header), sizeof(std::uint32_t));
+  }
+  if (tables.frames != 0) {
+    std::memcpy(&cacheEntry.framesFirst4, reinterpret_cast<const void*>(tables.frames), sizeof(std::uint32_t));
+  }
 }
 }
 #elif !defined(__APPLE__)
@@ -102,6 +127,31 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
   (void)flags;
   if (!info) return SCE_KERNEL_ERROR_EFAULT;
 #ifdef _WIN32
+  {
+    std::lock_guard<std::mutex> lock(g_unwindCacheMutex);
+    for (auto& entry : g_unwindCache) {
+      if (addr >= entry.base && (addr - entry.base) < entry.size) {
+        bool valid = true;
+        if (entry.hasTables) {
+          if (entry.info.eh_frame_hdr_addr != 0) {
+            std::uint32_t curHeader = 0;
+            std::memcpy(&curHeader, reinterpret_cast<const void*>(entry.info.eh_frame_hdr_addr), sizeof(std::uint32_t));
+            if (curHeader != entry.headerFirst4) valid = false;
+          }
+          if (valid && entry.info.eh_frame_addr != 0) {
+            std::uint32_t curFrames = 0;
+            std::memcpy(&curFrames, reinterpret_cast<const void*>(entry.info.eh_frame_addr), sizeof(std::uint32_t));
+            if (curFrames != entry.framesFirst4) valid = false;
+          }
+        }
+        if (valid) {
+          *info = entry.info;
+          return 0;
+        }
+      }
+    }
+  }
+
   MEMORY_BASIC_INFORMATION mbi{};
   if (!VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))) return SCE_KERNEL_ERROR_ESRCH;
   info->st_size = sizeof(ModuleInfoForUnwind);
@@ -110,12 +160,36 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
   info->eh_frame_size = 0;
   info->seg0_addr = reinterpret_cast<std::uint64_t>(mbi.BaseAddress);
   info->seg0_size = mbi.RegionSize;
-  if (mbi.Type == MEM_IMAGE) FillGuestUnwindInfo(static_cast<const std::uint8_t*>(mbi.AllocationBase), info);
-  char path[4096] = {};
-  DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.BaseAddress, path, sizeof(path) - 1);
-  path[len] = '\0';
-  std::strncpy(info->name, path, sizeof(info->name) - 1);
-  info->name[sizeof(info->name) - 1] = '\0';
+
+  CachedModuleUnwind newEntry{};
+  newEntry.base = reinterpret_cast<std::uint64_t>(mbi.AllocationBase);
+  newEntry.size = mbi.RegionSize;
+
+  if (mbi.Type == MEM_IMAGE) {
+    FillGuestUnwindInfo(static_cast<const std::uint8_t*>(mbi.AllocationBase), info, newEntry);
+    newEntry.base = reinterpret_cast<std::uint64_t>(mbi.AllocationBase);
+    newEntry.size = info->seg0_size > 0 ? info->seg0_size : mbi.RegionSize;
+
+    char path[4096] = {};
+    DWORD len = GetMappedFileNameA(GetCurrentProcess(), mbi.AllocationBase, path, sizeof(path) - 1);
+    path[len] = '\0';
+    std::strncpy(info->name, path, sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+
+    newEntry.info = *info;
+    {
+      std::lock_guard<std::mutex> lock(g_unwindCacheMutex);
+      for (auto it = g_unwindCache.begin(); it != g_unwindCache.end(); ++it) {
+        if (it->base == newEntry.base) {
+          g_unwindCache.erase(it);
+          break;
+        }
+      }
+      g_unwindCache.push_back(newEntry);
+    }
+  } else {
+    info->name[0] = '\0';
+  }
   return 0;
 #elif defined(__APPLE__)
   struct Search {
@@ -230,6 +304,37 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  pendingModuleInitResult = 0;
  if (res) *res = started;
  if (!handle) return static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
+#ifdef _WIN32
+ void* startSym = nullptr;
+ if (sceKernelDlsym(static_cast<KernelModule>(reinterpret_cast<intptr_t>(handle)), "__aps5_module_start", &startSym) == 0 && startSym) {
+     static std::set<void*> startedModules;
+     static std::mutex startedMutex;
+     bool first = false;
+     {
+         std::lock_guard lock(startedMutex);
+         first = startedModules.insert(handle).second;
+     }
+     if (first) {
+         struct UnityPluginRegistration {
+             std::uint32_t size = 0x10;
+             std::uint32_t version = 0x200;
+             const void* callback = nullptr;
+         };
+         static const UnityPluginRegistration defaultUnityPluginReg{};
+
+         std::size_t callArgs = args;
+         const void* callArgp = argp;
+         if (callArgs == 0 || callArgp == nullptr) {
+             callArgs = sizeof(defaultUnityPluginReg);
+             callArgp = &defaultUnityPluginReg;
+         }
+
+         auto* modStart = reinterpret_cast<int(APS5_VABI *)(size_t, const void*, void*)>(startSym);
+         const int modRes = modStart(callArgs, callArgp, nullptr);
+         if (res) *res = modRes;
+     }
+ }
+#endif
  return static_cast<KernelModule>(reinterpret_cast<intptr_t>(handle));
 }
 

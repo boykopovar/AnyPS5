@@ -134,6 +134,9 @@ inline constexpr std::uint32_t R_X86_64_RELATIVE = 8;
 inline constexpr std::uint32_t R_X86_64_GOTPCREL = 9;
 inline constexpr std::uint32_t R_X86_64_32 = 10;
 inline constexpr std::uint32_t R_X86_64_32S = 11;
+inline constexpr std::uint32_t R_X86_64_DTPMOD64 = 16;
+inline constexpr std::uint32_t R_X86_64_DTPOFF64 = 17;
+inline constexpr std::uint32_t R_X86_64_TPOFF64 = 18;
 inline constexpr std::uint32_t R_X86_64_GOTPCRELX = 41;
 inline constexpr std::uint32_t R_X86_64_REX_GOTPCRELX = 42;
 

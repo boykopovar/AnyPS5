@@ -481,4 +481,50 @@ int APS5_VABI sceKernelDeleteAmprSystemEvent(KernelEqueue eq, int id) {
     return sceKernelDeleteAmprEvent(eq, id);
 }
 
+int APS5_VABI kqueue(void) {
+    KernelEqueue eq = 0;
+    int ret = sceKernelCreateEqueue(&eq, "kqueue");
+    if (ret != 0) {
+        return -1;
+    }
+    return static_cast<int>(eq);
+}
+
+int APS5_VABI kevent(int kq, const KernelEvent* changelist, int nchanges, KernelEvent* eventlist, int nevents, const KernelTimespec* timeout) {
+    if (changelist != nullptr && nchanges > 0) {
+        for (int i = 0; i < nchanges; ++i) {
+            const auto& ev = changelist[i];
+            if ((ev.flags & EV_ADD) != 0) {
+                KernelEqueueEvent qev{};
+                qev.event = ev;
+                if (ev.filter == EVFILT_TIMER) {
+                    uint64_t intervalNs = static_cast<uint64_t>(ev.data) * 1000000ULL;
+                    qev.intervalNs = (ev.flags & EV_ONESHOT) ? 0 : intervalNs;
+                    qev.deadlineNs = KernelEqueuePrivate::MonotonicNs() + intervalNs;
+                }
+                EqueueAddEvent_nid_postfix(kq, qev);
+            } else if ((ev.flags & 0x0002 /* EV_DELETE */) != 0) {
+                EqueueDeleteEvent_nid_postfix(kq, ev.ident, ev.filter);
+            }
+        }
+    }
+    if (eventlist != nullptr && nevents > 0) {
+        auto owner = EqueuePin_nid_postfix(kq);
+        if (!owner) {
+            return -1;
+        }
+        if (timeout != nullptr && timeout->tv_sec == 0 && timeout->tv_nsec == 0) {
+            int ret = owner->GetTriggeredEvents(eventlist, nevents);
+            return ret >= 0 ? ret : -1;
+        }
+        uint32_t timeoutUs = 0;
+        if (timeout != nullptr) {
+            timeoutUs = static_cast<uint32_t>(timeout->tv_sec * 1000000ULL + timeout->tv_nsec / 1000ULL);
+        }
+        int ret = owner->WaitForEvents(eventlist, nevents, timeoutUs);
+        return ret >= 0 ? ret : -1;
+    }
+    return 0;
+}
+
 }

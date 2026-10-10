@@ -29,7 +29,16 @@ static constexpr int PORTS_MAX = 32;
 static constexpr int DEFAULT_VOLUME = 32768;
 static constexpr int DEFAULT_PADSPK_MIX_LEVEL = 11626;
 static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
-static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
+static inline std::uint64_t getTargetLatencyUs() {
+    static const std::uint64_t latency = [] {
+        if (const char* env = std::getenv("APS5_AUDIO_LATENCY_US")) {
+            const long val = std::strtol(env, nullptr, 10);
+            if (val > 0) return static_cast<std::uint64_t>(val);
+        }
+        return 80000ULL; // 80 ms default to prevent underruns on frame rate dips
+    }();
+    return latency;
+}
 static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 
@@ -96,7 +105,7 @@ struct Port {
 };
 
 static std::mutex g_mutex;
-static std::mutex g_outputMutex;
+static std::mutex g_portOutputMutex[PORTS_MAX];
 static Port g_ports[PORTS_MAX];
 static bool g_sdlInitialized = false;
 
@@ -119,7 +128,7 @@ static bool openDevice(Port& port) {
     desired.freq = static_cast<int>(port.freq);
     desired.format = sdlFormat(port.format);
     desired.channels = static_cast<Uint8>(port.channels);
-    desired.samples = static_cast<Uint16>(port.samplesNum);
+    desired.samples = static_cast<Uint16>(std::max<std::uint32_t>(port.samplesNum * 4, 1024u));
     desired.callback = nullptr;
     SDL_AudioSpec obtained{};
     port.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, SDL_AUDIO_ALLOW_ANY_CHANGE);
@@ -192,22 +201,9 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
     return buf.data();
 }
 
-static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
-    lock.unlock();
-    PreciseSleepUs(us);
-    lock.lock();
-}
-
-static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+template<typename SleepFn>
+static void queueAudio(Port& port, const void* data, SleepFn&& sleepFn) {
     if (data == nullptr) {
-        const std::uint64_t waitStart = sceKernelGetProcessTime();
-        while (SDL_GetQueuedAudioSize(port.device) > 0) {
-            if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-                SDL_ClearQueuedAudio(port.device);
-                break;
-            }
-            sleepUs(lock, DRAIN_SLEEP_US);
-        }
         return;
     }
 
@@ -246,17 +242,16 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         ? (1000000ULL * port.samplesNum) / port.freq
         : 0;
     const std::uint32_t buffers = bufferUs != 0
-        ? static_cast<std::uint32_t>((TARGET_LATENCY_US + bufferUs - 1) / bufferUs)
+        ? static_cast<std::uint32_t>((getTargetLatencyUs() + bufferUs - 1) / bufferUs)
         : 2u;
-    const std::uint32_t minQueued = queueSize * std::clamp(buffers, 2u, 16u);
+    const std::uint32_t minQueued = queueSize * std::clamp(buffers, 2u, 64u);
     const std::uint64_t waitStart = sceKernelGetProcessTime();
 
     while (SDL_GetQueuedAudioSize(port.device) > minQueued) {
         if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-            SDL_ClearQueuedAudio(port.device);
             break;
         }
-        sleepUs(lock, DRAIN_SLEEP_US);
+        sleepFn(DRAIN_SLEEP_US);
     }
 
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
@@ -265,15 +260,16 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
     // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
 }
 
-static void paceVirtualPort(Port& port, bool hasData, std::unique_lock<std::mutex>& lock) {
+template<typename SleepFn>
+static void paceVirtualPort(Port& port, bool hasData, SleepFn&& sleepFn) {
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto queued = static_cast<std::int64_t>(port.virtualQueueEnd - now);
     if (queued <= 0) port.virtualQueueEnd = now;
     if (!hasData) {
-        if (queued > 0) sleepUs(lock, static_cast<std::uint64_t>(queued));
+        if (queued > 0) sleepFn(static_cast<std::uint64_t>(queued));
         return;
     }
-    if (queued > static_cast<std::int64_t>(TARGET_LATENCY_US)) sleepUs(lock, static_cast<std::uint64_t>(queued) - TARGET_LATENCY_US);
+    if (queued > static_cast<std::int64_t>(getTargetLatencyUs())) sleepFn(static_cast<std::uint64_t>(queued) - getTargetLatencyUs());
     port.virtualQueueEnd += (1000000ULL * port.samplesNum) / port.freq;
 }
 
@@ -356,7 +352,11 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
 }
 
 int APS5_VABI sceAudioOutClose(int handle) {
-    std::lock_guard<std::mutex> outputLock(g_outputMutex);
+    const int idx = handle - 1;
+    if (idx < 0 || idx >= PORTS_MAX) {
+        return -2144993277;
+    }
+    std::lock_guard<std::mutex> outputLock(g_portOutputMutex[idx]);
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
@@ -368,19 +368,46 @@ int APS5_VABI sceAudioOutClose(int handle) {
 }
 
 int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) {
-    std::lock_guard<std::mutex> outputLock(g_outputMutex);
+    const int idx = handle - 1;
+    if (idx < 0 || idx >= PORTS_MAX) {
+        return -2144993277;
+    }
+    if (ptr == nullptr) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        Port* port = getPort(handle);
+        if (port == nullptr) {
+            return -2144993277;
+        }
+        return static_cast<int>(port->samplesNum);
+    }
+
+    std::unique_lock<std::mutex> outputLock(g_portOutputMutex[idx]);
     std::unique_lock<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
         return -2144993277;
     }
 
-    if (port->device == 0) {
-        paceVirtualPort(*port, ptr != nullptr, lock);
-    } else {
-        queueAudio(*port, ptr, lock);
+    static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
+    if (trace) {
+        static std::atomic<int> count{0};
+        if (++count <= 50) {
+            std::fprintf(stderr, "[audioout] output handle=%d ptr=%p tid=%lu time=%llu\n", handle, ptr, static_cast<unsigned long>(GetCurrentThreadId()), static_cast<unsigned long long>(sceKernelGetProcessTime()));
+        }
     }
-    if (ptr != nullptr) port->lastDataOutputTime = sceKernelGetProcessTime();
+    auto sleepFn = [&](std::uint64_t us) {
+        lock.unlock();
+        outputLock.unlock();
+        PreciseSleepUs(us);
+        outputLock.lock();
+        lock.lock();
+    };
+    if (port->device == 0) {
+        paceVirtualPort(*port, true, sleepFn);
+    } else {
+        queueAudio(*port, ptr, sleepFn);
+    }
+    port->lastDataOutputTime = sceKernelGetProcessTime();
     return static_cast<int>(port->samplesNum);
 }
 
@@ -389,7 +416,22 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
         return -2144993276;
     }
 
-    std::lock_guard<std::mutex> outputLock(g_outputMutex);
+    std::vector<int> portIndices;
+    for (std::uint32_t i = 0; i < num; i++) {
+        const int idx = param[i].handle - 1;
+        if (idx < 0 || idx >= PORTS_MAX) {
+            return -2144993277;
+        }
+        portIndices.push_back(idx);
+    }
+    std::sort(portIndices.begin(), portIndices.end());
+    portIndices.erase(std::unique(portIndices.begin(), portIndices.end()), portIndices.end());
+
+    std::vector<std::unique_lock<std::mutex>> portLocks;
+    portLocks.reserve(portIndices.size());
+    for (int idx : portIndices) {
+        portLocks.emplace_back(g_portOutputMutex[idx]);
+    }
     std::unique_lock<std::mutex> lock(g_mutex);
 
     for (std::uint32_t i = 0; i < num; i++) {
@@ -398,13 +440,24 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
         }
     }
 
+    auto sleepFn = [&](std::uint64_t us) {
+        lock.unlock();
+        for (auto& pl : portLocks) pl.unlock();
+        PreciseSleepUs(us);
+        for (auto& pl : portLocks) pl.lock();
+        lock.lock();
+    };
+
     Port& first = *getPort(param[0].handle);
     for (std::uint32_t i = 0; i < num; i++) {
+        if (param[i].ptr == nullptr) {
+            continue;
+        }
         Port& port = *getPort(param[i].handle);
         if (port.device == 0) {
-            paceVirtualPort(port, param[i].ptr != nullptr, lock);
+            paceVirtualPort(port, true, sleepFn);
         } else {
-            queueAudio(port, param[i].ptr, lock);
+            queueAudio(port, param[i].ptr, sleepFn);
         }
     }
 

@@ -135,7 +135,10 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     return fd;
 }
 
+extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
+
 int APS5_VABI sceKernelClose(int d) {
+    if (d > 0 && sceKernelDeleteEqueue(d) == 0) return 0;
     File::ForgetRandomDevice(d);
 #ifdef _WIN32
     File::ForgetDirectoryDescriptor(d);
