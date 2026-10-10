@@ -3,6 +3,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
@@ -2475,17 +2476,60 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
     drawSnapshots.erase(entry);
 }
 
-std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived) {
+std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation) {
     auto found = use == SnapshotUse::Vertex ? drawSnapshots.lower_bound({address, use, bytes}) : drawSnapshots.find({address, use, bytes});
     if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) return {};
-    if (found->second.registryGeneration != GuestAllocations::GuestAllocationsGeneration_nid_postfix() || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
-        eraseDrawSnapshot(found);
-        return {};
+    const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    if (!sameRegistry || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+        if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
+            eraseDrawSnapshot(found);
+            return {};
+        }
+        found->second.generation = generation;
     }
     auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
     recency.splice(recency.end(), recency, found->second.recent);
     if (derived != nullptr) *derived = found->second.derived;
     return found->second.buffer;
+}
+
+bool Recorder::refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes) {
+    const auto held = entry.buffer->Bytes();
+    if (held.size() != bytes || bytes == 0) return false;
+    constexpr std::uint64_t block = 65536;
+    const auto aligned = address / block * block;
+    const auto end = address + bytes;
+    const auto count = static_cast<std::size_t>((end - 1) / block - address / block + 1);
+    thread_local std::vector<std::uint64_t> generations;
+    thread_local std::vector<std::uint8_t> changed;
+    thread_local std::vector<std::pair<std::size_t, std::size_t>> differing;
+    thread_local std::vector<CompareSpan> spans;
+    thread_local std::vector<std::uint8_t> equal;
+    generations.assign(count, entry.generation);
+    changed.assign(count, GuestMemory::BlockWritten);
+    differing.clear();
+    spans.clear();
+    const bool sole = entry.buffer.use_count() == 1;
+    GuestMemory::ChangedBlocks(address, bytes, generations, changed);
+    for (std::size_t k = 0; k < count; ++k) {
+        if (changed[k] == GuestMemory::BlockUnchanged) continue;
+        const auto from = std::max(address, aligned + k * block);
+        const auto to = std::min(end, aligned + (k + 1) * block);
+        const auto offset = static_cast<std::size_t>(from - address);
+        spans.push_back({held.data() + offset, reinterpret_cast<const void*>(from), static_cast<std::size_t>(to - from)});
+    }
+    equal.assign(spans.size(), 0);
+    CompareSpans(spans, equal);
+    for (std::size_t k = 0; k < spans.size(); ++k) {
+        if (equal[k] != 0) continue;
+        const auto offset = static_cast<std::size_t>(static_cast<const std::byte*>(spans[k].first) - held.data());
+        const auto length = spans[k].bytes;
+        if (!sole) return false;
+        if (!differing.empty() && differing.back().first + differing.back().second == offset) differing.back().second += length;
+        else differing.emplace_back(offset, length);
+    }
+    for (const auto& [offset, length] : differing) std::memcpy(held.data() + offset, reinterpret_cast<const void*>(address + offset), length);
+    return true;
 }
 
 void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived) {

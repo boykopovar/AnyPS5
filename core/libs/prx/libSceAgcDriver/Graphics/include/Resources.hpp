@@ -35,6 +35,8 @@ private:
     // the handles a failed construction left.
     bool ready = false;
     VkDeviceSize allocationBytes = 0;
+    VkDeviceSize offset = 0;
+    bool slab = false;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags properties;
     std::shared_ptr<BufferPool> cache;

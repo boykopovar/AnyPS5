@@ -1,9 +1,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +36,7 @@ struct MockDevice {
     std::uint64_t destroyedBuffers = 0;
     VkDeviceSize liveBytes = 0;
     std::map<VkDeviceMemory, VkDeviceSize> memoryBytes;
+    std::map<VkBuffer, std::pair<VkDeviceMemory, VkDeviceSize>> bound;
 };
 
 MockDevice mock;
@@ -57,7 +61,9 @@ VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAlloca
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL mockBindBufferMemory(VkDevice, VkBuffer, VkDeviceMemory, VkDeviceSize) {
+VKAPI_ATTR VkResult VKAPI_CALL mockBindBufferMemory(VkDevice, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize offset) {
+    if (offset + mock.sizes.at(buffer) > mock.memoryBytes.at(memory)) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    mock.bound[buffer] = {memory, offset};
     return VK_SUCCESS;
 }
 
@@ -244,6 +250,65 @@ void SmallDeviceClasses() {
     Expect(nextArgs.Handle() == tiny && mock.allocations == made, "a 20-byte device request did not reuse the retained 256-byte buffer of its class");
 }
 
+void Slabs() {
+    Expect(BufferPool::SlabEligible(512, 256, 512, 64), "a size class with a smaller alignment and atom was refused a slab");
+    Expect(!BufferPool::SlabEligible(512, 1024, 512, 64), "a size class below its alignment was given a slab");
+    Expect(!BufferPool::SlabEligible(512, 256, 640, 64), "a buffer needing more than its class was given a slab");
+    Expect(!BufferPool::SlabEligible(512, 256, 512, 1024), "a size class below the non-coherent atom was given a slab");
+    Expect(!BufferPool::SlabEligible(MiB, 256, MiB, 64), "an exact-size buffer was given a slab");
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        context.limits.nonCoherentAtomSize = 64;
+        constexpr VkBufferUsageFlags storage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        {
+            Buffer a(context, 300, storage);
+            Buffer b(context, 300, storage);
+            Buffer c(context, 260, storage);
+            Expect(mock.allocations == 1, "buffers of one size class did not share one memory block");
+            const auto block = mock.bound.at(a.Handle()).first;
+            std::set<VkDeviceSize> offsets;
+            for (auto* buffer : {&a, &b, &c}) {
+                const auto [memory, offset] = mock.bound.at(buffer->Handle());
+                Expect(memory == block, "buffers of one size class were bound to different blocks");
+                Expect(offset % 512 == 0, "a slab slot is not aligned to its size class");
+                Expect(offsets.insert(offset).second, "two live buffers share a slab slot");
+                Expect(buffer->Bytes().data() == mock.hostMemory.at(memory).data() + offset, "a slab buffer's mapping is not its slot");
+            }
+            std::memset(a.Bytes().data(), 0x11, a.Bytes().size());
+            std::memset(b.Bytes().data(), 0x22, b.Bytes().size());
+            std::memset(c.Bytes().data(), 0x33, c.Bytes().size());
+            Expect(std::all_of(a.Bytes().begin(), a.Bytes().end(), [](std::byte value) { return value == std::byte{0x11}; }), "a neighbouring slab buffer overwrote another");
+            Expect(std::all_of(b.Bytes().begin(), b.Bytes().end(), [](std::byte value) { return value == std::byte{0x22}; }), "a neighbouring slab buffer overwrote another");
+            Buffer larger(context, 600, storage);
+            Expect(mock.allocations == 2 && mock.bound.at(larger.Handle()).first != block, "another size class did not get a block of its own");
+        }
+        Expect(mock.frees == 0, "releasing slab buffers freed device memory");
+        Buffer again(context, 300, storage);
+        Expect(mock.allocations == 2, "a released slab buffer was not reused");
+    }
+    Expect(mock.liveBytes == 0, "slab blocks outlived their pool");
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        BufferPool pool(context);
+        constexpr std::size_t slot = 512 * 1024;
+        const auto perBlock = static_cast<std::size_t>(BufferPool::SlabBlockBytes(slot) / slot);
+        std::vector<SlabSlot> slots;
+        for (std::size_t i = 0; i <= perBlock; ++i) slots.push_back(pool.TakeSlot(context, 1, slot, false));
+        Expect(mock.allocations == 2 && pool.SlabBlocks() == 2, "a full block did not open a second one");
+        std::set<std::pair<VkDeviceMemory, VkDeviceSize>> distinct;
+        for (const auto& taken : slots) distinct.insert({taken.memory, taken.offset});
+        Expect(distinct.size() == slots.size(), "a slab handed out one slot twice");
+        for (const auto& taken : slots) pool.PutSlot(taken.memory, taken.offset);
+        Expect(mock.frees == 1 && pool.SlabBlocks() == 1, "emptied blocks were not freed down to one spare");
+        const auto reused = pool.TakeSlot(context, 1, slot, false);
+        Expect(mock.allocations == 2, "the spare block was not reused");
+        pool.PutSlot(reused.memory, reused.offset);
+    }
+    Expect(mock.liveBytes == 0, "slab blocks outlived their pool");
+}
+
 }
 
 int main() {
@@ -254,6 +319,7 @@ int main() {
         Budget();
         AddressAndHostUnchanged();
         SmallDeviceClasses();
+        Slabs();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

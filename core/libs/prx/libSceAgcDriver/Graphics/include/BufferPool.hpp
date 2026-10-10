@@ -22,6 +22,14 @@ struct BufferAllocation {
     std::size_t bytes;
     VkBufferUsageFlags usage;
     VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VkDeviceSize offset = 0;
+    bool slab = false;
+};
+
+struct SlabSlot {
+    VkDeviceMemory memory;
+    VkDeviceSize offset;
+    void* mapping;
 };
 
 // Released buffer allocations kept for reuse, since creating, binding and mapping one costs tens of
@@ -55,8 +63,27 @@ public:
     static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void Put(const BufferAllocation& allocation) noexcept;
+    static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
+    static VkDeviceSize SlabBlockBytes(std::size_t capacity);
+    SlabSlot TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable);
+    void PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noexcept;
+    std::size_t SlabBlocks();
 
 private:
+    struct SlabBlock {
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        std::byte* mapping = nullptr;
+        VkDeviceSize slotBytes = 0;
+        std::vector<std::uint32_t> free;
+        std::uint32_t used = 0;
+        std::uint64_t slab = 0;
+    };
+    struct Slab {
+        std::vector<SlabBlock*> available;
+        std::size_t emptyBlocks = 0;
+    };
+    static std::uint64_t SlabKey(std::uint32_t memoryType, std::size_t capacity, bool addressable);
+    void freeBlock(SlabBlock& block) noexcept;
     struct Slot {
         BufferAllocation allocation;
         std::uint64_t lastUse;
@@ -102,12 +129,17 @@ private:
     PFN_vkUnmapMemory unmap;
     PFN_vkDestroyBuffer destroyBuffer;
     PFN_vkFreeMemory freeMemory;
+    PFN_vkAllocateMemory allocateMemory;
+    PFN_vkMapMemory mapMemory;
     std::mutex mutex;
     // Not `small`/`large`: <rpcndr.h> (via <windows.h>) defines `small` as a macro.
     Tier smallTier;
     Tier largeTier;
     Tier deviceTier;
     std::uint64_t clock = 0;
+    std::mutex slabMutex;
+    std::unordered_map<std::uint64_t, Slab> slabs;
+    std::unordered_map<VkDeviceMemory, std::unique_ptr<SlabBlock>> slabBlocks;
     static constexpr VkDeviceSize budget = 512ull * 1024 * 1024;
     // The small tier's own budget (slots of at most half a MiB each): pinned host memory the large
     // tier's budget does not count.

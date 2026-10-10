@@ -7,6 +7,11 @@
 
 extern "C" {
 
+int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceVideoOutAdjustColor_(int handle, const VideoOutColorSettings* settings, uint32_t settings_size) {
     if (settings_size < sizeof(VideoOutColorSettings)) throw std::runtime_error("sceVideoOutAdjustColor_: VIDEO_OUT_ERROR_INVALID_VALUE");
     return sceVideoOutAdjustColor(handle, settings);

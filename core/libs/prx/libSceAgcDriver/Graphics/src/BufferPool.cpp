@@ -26,7 +26,7 @@ constexpr VkBufferUsageFlags deviceUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | 
 
 }
 
-BufferPool::BufferPool(const Context& context) : device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))) {
+BufferPool::BufferPool(const Context& context) : device(context.device), unmap(context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), allocateMemory(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")), mapMemory(context.Function<PFN_vkMapMemory>("vkMapMemory")), maxSlots(std::max<std::size_t>(1, std::min<std::size_t>(MaxSlots(), context.limits.maxMemoryAllocationCount / 6u))) {
     smallTier.budget = smallBudget;
     largeTier.budget = budget;
     deviceTier.budget = DeviceTierEnabled() ? DeviceBudget(context.memory) : 0;
@@ -38,6 +38,98 @@ BufferPool::~BufferPool() {
             for (const auto& slot : slots) destroy(slot.allocation);
         }
     }
+    for (auto& [memory, block] : slabBlocks) freeBlock(*block);
+}
+
+bool BufferPool::SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom) {
+    if (capacity >= classLimit || size > capacity || !std::has_single_bit(capacity)) return false;
+    const auto alignmentOk = alignment == 0 || (std::has_single_bit(alignment) && alignment <= capacity);
+    const auto atomOk = atom <= 1 || (std::has_single_bit(atom) && atom <= capacity);
+    return alignmentOk && atomOk;
+}
+
+VkDeviceSize BufferPool::SlabBlockBytes(std::size_t capacity) {
+    return std::max<VkDeviceSize>(VkDeviceSize{2} << 20u, static_cast<VkDeviceSize>(capacity) * 8u);
+}
+
+std::uint64_t BufferPool::SlabKey(std::uint32_t memoryType, std::size_t capacity, bool addressable) {
+    return (static_cast<std::uint64_t>(memoryType) << 40u) | (static_cast<std::uint64_t>(addressable ? 1u : 0u) << 39u) | static_cast<std::uint64_t>(capacity);
+}
+
+SlabSlot BufferPool::TakeSlot(const Context& context, std::uint32_t memoryType, std::size_t capacity, bool addressable) {
+    const auto key = SlabKey(memoryType, capacity, addressable);
+    const auto takeFrom = [&](SlabBlock& block, Slab& slab) {
+        const auto index = block.free.back();
+        block.free.pop_back();
+        if (block.used++ == 0) --slab.emptyBlocks;
+        if (block.free.empty()) slab.available.erase(std::find(slab.available.begin(), slab.available.end(), &block));
+        const auto offset = static_cast<VkDeviceSize>(index) * block.slotBytes;
+        return SlabSlot{block.memory, offset, block.mapping != nullptr ? block.mapping + offset : nullptr};
+    };
+    {
+        std::lock_guard lock(slabMutex);
+        auto& slab = slabs[key];
+        if (!slab.available.empty()) return takeFrom(*slab.available.back(), slab);
+    }
+    const auto blockBytes = SlabBlockBytes(capacity);
+    auto block = std::make_unique<SlabBlock>();
+    block->slotBytes = capacity;
+    block->slab = key;
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
+    if (addressable) allocation.pNext = &flags;
+    allocation.allocationSize = blockBytes;
+    allocation.memoryTypeIndex = memoryType;
+    Check(allocateMemory(device, &allocation, nullptr, &block->memory), "vkAllocateMemory buffer slab");
+    if ((context.memory.memoryTypes[memoryType].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+        void* mapping = nullptr;
+        const auto mapped = mapMemory(device, block->memory, 0, VK_WHOLE_SIZE, 0, &mapping);
+        if (mapped != VK_SUCCESS) freeMemory(device, block->memory, nullptr);
+        Check(mapped, "vkMapMemory buffer slab");
+        block->mapping = static_cast<std::byte*>(mapping);
+    }
+    const auto slots = static_cast<std::uint32_t>(blockBytes / capacity);
+    block->free.reserve(slots);
+    for (std::uint32_t index = slots; index-- != 0;) block->free.push_back(index);
+    std::lock_guard lock(slabMutex);
+    auto& slab = slabs[key];
+    auto& inserted = *block;
+    slabBlocks.emplace(inserted.memory, std::move(block));
+    slab.available.push_back(&inserted);
+    ++slab.emptyBlocks;
+    return takeFrom(*slab.available.back(), slab);
+}
+
+void BufferPool::freeBlock(SlabBlock& block) noexcept {
+    if (block.mapping != nullptr) unmap(device, block.memory);
+    freeMemory(device, block.memory, nullptr);
+}
+
+void BufferPool::PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noexcept {
+    std::unique_ptr<SlabBlock> released;
+    {
+        std::lock_guard lock(slabMutex);
+        const auto found = slabBlocks.find(memory);
+        if (found == slabBlocks.end()) return;
+        auto& block = *found->second;
+        auto& slab = slabs[block.slab];
+        if (block.free.empty()) slab.available.push_back(&block);
+        block.free.push_back(static_cast<std::uint32_t>(offset / block.slotBytes));
+        if (--block.used != 0) return;
+        if (slab.emptyBlocks == 0) {
+            ++slab.emptyBlocks;
+            return;
+        }
+        slab.available.erase(std::find(slab.available.begin(), slab.available.end(), &block));
+        released = std::move(found->second);
+        slabBlocks.erase(found);
+    }
+    freeBlock(*released);
+}
+
+std::size_t BufferPool::SlabBlocks() {
+    std::lock_guard lock(slabMutex);
+    return slabBlocks.size();
 }
 
 bool BufferPool::DeviceTierEnabled() {
@@ -59,6 +151,11 @@ VkDeviceSize BufferPool::DeviceBudget(const VkPhysicalDeviceMemoryProperties& me
 }
 
 void BufferPool::destroy(const BufferAllocation& allocation) noexcept {
+    if (allocation.slab) {
+        destroyBuffer(device, allocation.buffer, nullptr);
+        PutSlot(allocation.memory, allocation.offset);
+        return;
+    }
     // Device-local allocations (see DeviceBuffer) are never mapped.
     if (allocation.mapping != nullptr) unmap(device, allocation.memory);
     destroyBuffer(device, allocation.buffer, nullptr);

@@ -371,6 +371,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 const auto& buffer = info.buffers.at(resource);
                 physical.bufferAtomic.push_back(buffer.atomic);
                 physical.bufferWritten.push_back(buffer.written || buffer.atomic);
+                physical.bufferRead.push_back(buffer.read);
                 if (buffer.written || buffer.atomic) ++entry.writtenBuffers;
                 else ++entry.readOnlyBuffers;
             }
