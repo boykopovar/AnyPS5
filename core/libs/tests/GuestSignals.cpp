@@ -105,4 +105,16 @@ int main() {
         Require(sigaction_nid_postfix(fixed, &defaults, &current) == 0 && current.handler == 0);
     }
     Require(sigaction_nid_postfix(15, nullptr, nullptr) == 0);
+    Require(signal_nid_postfix(15, Callback) != invalid);
+    GuestSignalSet termMask{{1u << 14, 0, 0, 0}};
+    received = 0;
+    Require(sigprocmask_nid_postfix(1, &termMask, nullptr) == 0);
+    Require(raise_nid_postfix(15) == 0 && received == 0);
+    Require(sigprocmask_nid_postfix(2, &termMask, nullptr) == 0);
+    Require(raise_nid_postfix(15) == 0 && received == 15);
+    GuestSignalSet urgMask{{1u << 15, 0, 0, 0}};
+    received = 0;
+    Require(sigprocmask_nid_postfix(1, &urgMask, nullptr) == 0);
+    Require(raise_nid_postfix(15) == 0 && received == 15);
+    Require(sigprocmask_nid_postfix(2, &urgMask, nullptr) == 0);
 }

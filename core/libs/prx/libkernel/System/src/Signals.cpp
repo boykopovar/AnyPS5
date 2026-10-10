@@ -53,7 +53,7 @@ void Dispatch(int native) {
     // Preserve the guest's persistent registration across CRT delivery.
     std::signal(native, Dispatch);
 #endif
-    if ((blockedMask.load() & (1u << guest)) != 0) return;
+    if ((blockedMask.load() & (1u << (guest - 1))) != 0) return;
     const auto callback = handlers[guest].load();
     if (reinterpret_cast<std::uintptr_t>(callback) > 1) callback(guest);
 }
