@@ -12,6 +12,7 @@ namespace Relinker {
 
 inline constexpr char GuestSymbolSuffix[] = "#guest";
 inline constexpr char GuestModuleSuffix[] = ".guest.prx";
+inline constexpr char GuestModulePattern[] = "sce_module/*.prx";
 inline constexpr std::uint16_t AbsoluteSection = 0xfff1;
 
 struct GuestSymbol {
@@ -57,7 +58,7 @@ struct GuestArtifact {
 
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const;
+    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath) const;
 };
 
 }

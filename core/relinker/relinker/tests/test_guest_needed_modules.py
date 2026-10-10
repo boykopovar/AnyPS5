@@ -104,29 +104,30 @@ def main():
 
         for windows in (False, True):
             case = work / f"{windows}-found"
-            modules = case / "Media" / "Modules"
+            modules = case / "sce_module"
             modules.mkdir(parents=True)
             (modules / "needed.prx").write_bytes(module_with_symbol(True))
+            (case / "Media").mkdir()
             (case / "Media" / "needed.prx").write_text("not ELF")
             result, output = convert(case, windows)
             assert result.returncode == 0, (result.stdout, result.stderr)
-            artifact = case / "app0" / "Media" / "Modules" / "needed.prx.guest.prx"
+            artifact = case / "app0" / "sce_module" / "needed.prx.guest.prx"
             assert artifact.read_bytes().startswith(b"MZ" if windows else b"\x7fELF"), artifact
             assert list((case / "app0").rglob("*.guest.prx")) == [artifact]
-            assert "    Media/Modules/needed.prx.guest.prx\n" in result.stdout, result.stdout
+            assert "    sce_module/needed.prx.guest.prx\n" in result.stdout, result.stdout
             if windows and os.name == "nt":
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                 assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
             if not windows:
                 needed = needed_libraries(output.read_bytes())
-                assert needed == ["$ORIGIN/app0/Media/Modules/needed.prx.guest.prx"], needed
+                assert needed == ["$ORIGIN/app0/sce_module/needed.prx.guest.prx"], needed
 
             case = work / f"{windows}-repeated-system"
             result, output = convert(case, windows, b"libSceVideoOut.prx", repeats=2)
             assert result.returncode == 0, (result.stdout, result.stderr)
             assert output.exists(), output
 
-            for directory in ("Media/Modules", "sce_module", "sce_module/nested", "sce_modules/nested", "prx/shipping"):
+            for directory in ("sce_module", "sce_modules", "prx"):
                 case = work / f"{windows}-debug-name-{directory.replace('/', '-')}"
                 (case / directory).mkdir(parents=True)
                 (case / directory / "needed.prx").write_bytes(module_with_symbol(True))
@@ -158,16 +159,22 @@ def main():
             (case / "first" / "needed.prx").write_bytes(module_with_symbol(True))
             (case / "first" / "needed.sprx").write_bytes(module_with_symbol(True))
             result, output = convert(case, windows, b"needed.debug_prx")
-            assert result.returncode == 2 and "Ambiguous needed module" in result.stderr, result.stderr
-            assert not output.exists(), output
+            assert result.returncode == 0, result.stderr
+            assert output.exists(), output
+            assert not list((case / "app0").rglob("*.guest.prx"))
+            if not windows:
+                assert needed_libraries(output.read_bytes()) == ["needed.debug_prx" if "debug-name" in case.name else "needed.prx"]
 
             case = work / f"{windows}-ambiguous"
             for name in ("first", "second"):
                 (case / name).mkdir(parents=True)
                 (case / name / "needed.prx").write_bytes(module_with_symbol(True))
             result, output = convert(case, windows)
-            assert result.returncode == 2 and "Ambiguous needed module" in result.stderr, result.stderr
-            assert not output.exists(), output
+            assert result.returncode == 0, result.stderr
+            assert output.exists(), output
+            assert not list((case / "app0").rglob("*.guest.prx"))
+            if not windows:
+                assert needed_libraries(output.read_bytes()) == ["needed.debug_prx" if "debug-name" in case.name else "needed.prx"]
         case = work / "macos-repeated-system"
         (case / "sce_module").mkdir(parents=True)
         source = case / "input.elf"

@@ -49,16 +49,19 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules) const {
-    const auto root = std::filesystem::absolute(inputPath).parent_path();
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath) const {
+    const auto root = std::filesystem::absolute(sceModulePath).lexically_normal();
+    if (!std::filesystem::exists(root)) throw Domain::RelinkerException("Guest module parent directory does not exist: " + root.string());
+    if (!std::filesystem::is_directory(root)) throw Domain::RelinkerException("Guest module parent path is not a directory: " + root.string());
+    const auto missingModuleMessage = std::string(GuestModulePattern) + " was not found in: " + root.string() + ". Use --skip-sce-module to disable guest module processing.";
     const auto singular = root / "sce_module";
     const auto plural = root / "sce_modules";
     const auto prx = root / "prx";
     const bool hasSingular = std::filesystem::exists(singular);
     const bool hasPlural = std::filesystem::exists(plural);
     const bool hasPrx = std::filesystem::exists(prx);
-    if (hasSingular && hasPlural) throw Domain::RelinkerException("Both sce_module and sce_modules exist beside the input executable");
-    if (!hasSingular && !hasPlural && !hasPrx) throw Domain::RelinkerException("sce_module/sce_modules/prx was not found beside the input executable: " + root.string() + ". Use --skip-sce-module only if this game can run without these modules.");
+    if (hasSingular && hasPlural) throw Domain::RelinkerException("Both sce_module and sce_modules exist in the guest module parent directory");
+    if (!hasSingular && !hasPlural && !hasPrx) throw Domain::RelinkerException(missingModuleMessage);
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
@@ -99,40 +102,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (alias != paths.end()) neededAliases.emplace(name, *alias);
         else missingNeeded.insert(name);
     }
-    if (!missingNeeded.empty() || !unmatchedExclusions.empty()) {
-        std::map<std::string, std::filesystem::path> found;
-        std::map<std::string, std::filesystem::path> foundByStem;
-        const auto record = [](std::map<std::string, std::filesystem::path>& matches, const std::string& name, const std::filesystem::path& path) {
-            if (!matches.emplace(name, path).second) throw Domain::RelinkerException("Ambiguous needed module: " + matches.at(name).string() + " and " + path.string());
-        };
-        for (auto it = std::filesystem::recursive_directory_iterator(root); it != std::filesystem::recursive_directory_iterator(); ++it) {
-            if (!it->is_regular_file()) continue;
-            const auto name = it->path().filename().string();
-            if (name.ends_with(GuestModuleSuffix)) continue;
-            if (excludedModules.contains(name)) {
-                for (auto parent = it->path().parent_path(); parent != root && !parent.empty(); parent = parent.parent_path()) {
-                    if (std::any_of(directories.begin(), directories.end(), [&](const auto& directory) { return std::filesystem::equivalent(parent, directory); })) unmatchedExclusions.erase(name);
-                }
-                continue;
-            }
-            const auto stem = ModuleStem(name, windows);
-            std::vector<std::string> stemMatches;
-            if (!stem.empty()) {
-                for (const auto& needed : missingNeeded) if (needed != name && ModuleStem(needed, windows) == stem) stemMatches.push_back(needed);
-            }
-            if ((!missingNeeded.contains(name) && stemMatches.empty()) || !isElf(it->path())) continue;
-            if (missingNeeded.contains(name)) record(found, name, it->path());
-            for (const auto& needed : stemMatches) record(foundByStem, needed, it->path());
-        }
-        for (const auto& name : missingNeeded) {
-            const auto exact = found.find(name);
-            const auto byStem = foundByStem.find(name);
-            if (exact == found.end() && byStem == foundByStem.end()) continue;
-            const auto& path = exact != found.end() ? exact->second : byStem->second;
-            if (exact == found.end()) neededAliases.emplace(name, path);
-            if (std::find(paths.begin(), paths.end(), path) == paths.end()) paths.push_back(path);
-        }
-    }
     Io::FileReader reader;
     std::map<std::filesystem::path, GuestImage> discovered;
     const auto matchesIdentity = [](const std::string& name, const std::vector<std::string>& identities) {
@@ -140,38 +109,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             return name == identity || name == identity + ".prx" || name == identity + ".sprx" || name == identity + ".suprx";
         });
     };
-    const auto foldFilename = [](std::string name) {
-        for (auto& character : name) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
-        return name;
-    };
     for (const auto& path : paths) discovered.emplace(path, GuestImageReader().Read(path, reader.Read(path.string())));
-    std::set<std::string> unresolved;
-    for (const auto& name : missingNeeded) {
-        if (std::none_of(discovered.begin(), discovered.end(), [&](const auto& entry) {
-            const auto& [path, image] = entry;
-            return path.filename().string() == name || image.Soname == name ||
-                (windows && foldFilename(path.filename().string()) == foldFilename(name)) || matchesIdentity(name, image.ModuleNames);
-        })) unresolved.insert(name);
-    }
-    if (!unresolved.empty()) {
-        std::map<std::string, std::filesystem::path> identities;
-        for (auto it = std::filesystem::recursive_directory_iterator(root); it != std::filesystem::recursive_directory_iterator(); ++it) {
-            const auto& path = it->path();
-            const auto extension = path.extension().string();
-            if (!it->is_regular_file() || (extension != ".prx" && extension != ".sprx" && extension != ".suprx") ||
-                path.filename().string().ends_with(GuestModuleSuffix) || excludedModules.contains(path.filename().string()) || discovered.contains(path) || !isElf(path)) continue;
-            const auto names = GuestImageReader().ReadModuleNames(reader.Read(path.string()));
-            for (const auto& name : unresolved) {
-                if (!matchesIdentity(name, names)) continue;
-                if (!identities.emplace(name, path).second) throw Domain::RelinkerException("Ambiguous needed module identity: " + name);
-            }
-        }
-        for (const auto& [name, path] : identities) {
-            if (discovered.contains(path)) continue;
-            discovered.emplace(path, GuestImageReader().Read(path, reader.Read(path.string())));
-            paths.push_back(path);
-        }
-    }
     if (!unmatchedExclusions.empty()) throw Domain::RelinkerException("Excluded guest module file not found: " + *unmatchedExclusions.begin());
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());

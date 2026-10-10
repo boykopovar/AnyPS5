@@ -48,97 +48,36 @@ def main():
         unsupported = declared_provider(77, ('libUnused',))
         struct.pack_into('<qQ', unsupported, 0x600 + 5 * 16, 0x70000000, 0)
         for windows in (True, False):
-            for directory in ('prx/shipping', 'sce_module/nested', 'sce_modules/nested'):
+            for directory in ('prx/shipping', 'sce_module/nested', 'sce_modules/nested', 'Media/Modules', 'old/games/app0/sce_module'):
                 label = f'{windows}-{directory.replace("/", "-")}'
                 for identity in (False, True):
                     filename = 'renamed.prx' if identity else 'libGuest.suprx'
-                    relative = directory + '/' + filename
-                    files = {relative: declared_provider(22, ('libGuest' if identity else 'other',)),
+                    files = {directory + '/' + filename: declared_provider(22, ('libGuest',)),
+                             directory + '/deeper/' + filename: declared_provider(33, ('libGuest',)),
                              directory + '/unused.prx': unsupported,
-                             directory + '/opaque.sprx': b'not an ELF',
+                             directory + '/self.prx': bytes.fromhex('4f153d1d') + bytes(128),
                              directory + '/old.prx.guest.prx': b'\x7fELF'}
                     result, output = convert(f'{label}-{identity}', windows, 'libGuest.suprx', files)
-                    success(result, output, relative, windows)
-
-                    other = directory + '/deeper/' + ('duplicate.prx' if identity else filename)
-                    files[other] = declared_provider(33, ('libGuest',))
-                    result, output = convert(f'{label}-{identity}-ambiguous', windows, 'libGuest.suprx', files)
-                    diagnostic = 'Ambiguous needed module identity' if identity else 'Ambiguous needed module:'
-                    assert result.returncode == 2 and diagnostic in result.stderr, result.stderr
-                    assert not output.exists()
-
-                for soname in (False, True):
-                    standard = directory.split('/')[0]
-                    relative = standard + ('/physical.prx' if soname else '/libGuest.suprx')
-                    files = {relative: declared_provider(22, ('other',), 'libGuest.suprx' if soname else None),
-                             directory + '/renamed.prx': declared_provider(11, ('libGuest',))}
-                    result, output = convert(f'{label}-precedence-{soname}', windows, 'libGuest.suprx', files)
-                    success(result, output, relative, windows)
-
-                files = {directory + '/kept.prx': declared_provider(22, ('libGuest',)),
-                         directory + '/omitted.prx': declared_provider(11, ('libGuest',))}
-                result, output = convert(f'{label}-excluded-identity', windows, 'libGuest.suprx', files, ('omitted.prx',))
-                success(result, output, directory + '/kept.prx', windows)
-
-                files = {directory + '/libGuest.prx': declared_provider(22, ('libGuest',)),
-                         directory + '/libGuest.sprx': declared_provider(33, ('libGuest',))}
-                result, output = convert(f'{label}-excluded-stem', windows, 'libGuest.debug_prx', files, ('libGuest.sprx',))
-                success(result, output, directory + '/libGuest.prx', windows)
-
-                result, output = convert(f'{label}-ambiguous-stem', windows, 'libGuest.debug_prx', files)
-                assert result.returncode == 2 and 'Ambiguous needed module:' in result.stderr, result.stderr
-                assert not output.exists()
-
-                files = {directory + '/libGuest.prx': declared_provider(22, ('libGuest',))}
-                result, output = convert(f'{label}-excluded-only-stem', windows, 'libGuest.debug_prx', files, ('libGuest.prx',))
-                assert result.returncode == 0, result.stderr
-                assert not list((output.parent / 'app0').rglob('*.guest.prx'))
-                if not windows:
-                    assert 'libGuest.debug_prx' in needed_libraries(output.read_bytes())
-
-                files = {directory + '/libGuest.suprx': declared_provider(22, ('libGuest',))}
-                result, output = convert(f'{label}-excluded-required', windows, 'libGuest.suprx', files, ('libGuest.suprx',))
-                assert result.returncode == 0, result.stderr
-                assert not list((output.parent / 'app0').rglob('*.guest.prx'))
-
-                files = {directory + '/kept.prx': declared_provider(22, ('libGuest',)),
-                         'unrelated/omitted.prx': declared_provider(11, ('other',))}
-                for excluded in ('absent.prx', 'omitted.prx'):
-                    result, output = convert(f'{label}-unknown-{excluded}', windows, 'libGuest.suprx', files, (excluded,))
+                    assert result.returncode == 0, (result.stdout, result.stderr)
+                    assert output.is_file()
+                    assert not list((output.parent / 'app0').rglob('*.guest.prx'))
+                    if not windows:
+                        assert needed_libraries(output.read_bytes()) == ['libGuest.suprx']
+                    result, output = convert(f'{label}-{identity}-excluded', windows, 'libGuest.suprx', files, (filename,))
                     assert result.returncode == 2 and 'Excluded guest module file not found' in result.stderr, result.stderr
                     assert not output.exists()
 
-                generated = 'libGuest.prx.guest.prx'
-                files = {directory + '/' + generated: declared_provider(22, ('libGuest',))}
-                result, output = convert(f'{label}-generated-required', windows, generated, files)
+                standard = directory.split('/')[0] if directory.split('/')[0] in ('prx', 'sce_module', 'sce_modules') else 'sce_module'
+                relative = standard + '/renamed.prx'
+                files = {relative: declared_provider(22, ('libGuest',)),
+                         directory + '/duplicate.prx': declared_provider(33, ('libGuest',)),
+                         directory + '/libGuest.suprx': bytes.fromhex('4f153d1d') + bytes(128)}
+                result, output = convert(f'{label}-direct', windows, 'libGuest.suprx', files)
+                success(result, output, relative, windows)
+                result, output = convert(f'{label}-direct-excluded', windows, 'libGuest.suprx', files, ('renamed.prx',))
                 assert result.returncode == 0, result.stderr
                 assert not list((output.parent / 'app0').rglob('*.guest.prx'))
-                if not windows:
-                    assert generated in needed_libraries(output.read_bytes())
-                result, output = convert(f'{label}-generated-excluded', windows, generated, files, (generated,))
-                assert result.returncode == 2 and 'Excluded guest module file not found' in result.stderr, result.stderr
-                assert not output.exists()
 
-        if os.name == 'nt':
-            for windows in (True, False):
-                for directory in ('PrX/shipping', 'Sce_Module/nested', 'Sce_Modules/nested'):
-                    label = f'host-case-{windows}-{directory.replace("/", "-")}'
-                    files = {directory + '/kept.prx': declared_provider(22, ('libGuest',)),
-                             directory + '/omitted.prx': declared_provider(11, ('libGuest',))}
-                    result, output = convert(label, windows, 'libGuest.suprx', files, ('omitted.prx',))
-                    success(result, output, directory + '/kept.prx', windows)
-
-                    files = {directory + '/libGuest.suprx': declared_provider(22, ('libGuest',))}
-                    result, output = convert(label + '-required', windows, 'libGuest.suprx', files, ('libGuest.suprx',))
-                    assert result.returncode == 0, result.stderr
-                    assert not list((output.parent / 'app0').rglob('*.guest.prx'))
-
-        for filename, identity in (('party.prx', 'Party'), ('libplayfabmultiplayer.prx', 'libPlayFabMultiplayer')):
-            relative = 'prx/shipping/' + filename
-            for windows in (True, False):
-                result, output = convert(f'case-identity-{windows}-{filename}', windows, identity + '.prx',
-                    {relative: declared_provider(22, (identity, 'libGuest'))})
-                success(result, output, relative, windows)
     print('Nested required guest module tests passed')
 
 

@@ -1,4 +1,5 @@
 #include <Cli.hpp>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -6,13 +7,14 @@
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
            "Example: relinker input.elf output.elf";
 }
 
 Args ParseArgs(int argc, char* argv[]) {
     Args args;
     bool unusedFilterSpecified = false;
+    bool sceModulePathSpecified = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -22,6 +24,11 @@ Args ParseArgs(int argc, char* argv[]) {
             args.skipSyscallCheck = true;
         } else if (arg == "--skip-sce-module") {
             args.skipSceModule = true;
+        } else if (arg == "--sce-module-path") {
+            if (sceModulePathSpecified) throw std::runtime_error("--sce-module-path must be specified once");
+            if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--")) throw std::runtime_error("--sce-module-path requires a nonempty path");
+            args.sceModulePath = argv[++i];
+            sceModulePathSpecified = true;
         } else if (arg == "--exclude-sce-module") {
             if (i + 1 >= argc)
                 throw std::runtime_error("--exclude-sce-module requires a file name");
@@ -63,6 +70,8 @@ Args ParseArgs(int argc, char* argv[]) {
         }
     }
 
+    if (args.skipSceModule && sceModulePathSpecified) throw std::runtime_error("--sce-module-path conflicts with --skip-sce-module");
+
     if (args.skipSceModule && !args.excludedSceModules.empty())
         throw std::runtime_error("--exclude-sce-module conflicts with --skip-sce-module");
 
@@ -77,6 +86,8 @@ Args ParseArgs(int argc, char* argv[]) {
     if (!args.showHelp && (args.inputPath.empty() || args.outputPath.empty()))
         throw std::runtime_error(Usage());
 
+
+    if (!sceModulePathSpecified && !args.skipSceModule && !args.inputPath.empty()) args.sceModulePath = std::filesystem::absolute(args.inputPath).parent_path().string();
 
     return args;
 }

@@ -15,7 +15,7 @@ def main():
         work = Path(directory)
         failures = []
         checked = 0
-        for index, module_directory in enumerate((".", "sce_module", "Media/Modules", "Media/Modules/runtime")):
+        for index, module_directory in enumerate(("sce_module", "prx")):
             for label, run_path in (("default", None), ("origin", "$ORIGIN"),
                                     ("custom", "$ORIGIN/host libs"), ("absolute", str(work / "absolute libs"))):
                 case = work / f"{index}-{label}"

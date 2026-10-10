@@ -22,6 +22,7 @@ struct Args {
     std::uint32_t unusedFilterLevel = 0;
     std::string inputPath;
     std::string outputPath;
+    std::string sceModulePath;
     std::string runPath = "$ORIGIN/libs";
     std::set<std::string> excludedSceModules;
 };

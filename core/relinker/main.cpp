@@ -88,7 +88,7 @@ int main(const int argc, char* argv[]) {
         );
 
         std::cout << "System: " << (args.toWindows ? "Windows" : args.toMacos ? "macOS" : "Linux") << "; unused-filter=" << args.unusedFilterLevel << "\n";
-        std::cout << "sce_module/sce_modules/prx processing: " << (args.skipSceModule ? "disabled (--skip-sce-module)" : "enabled") << '\n';
+        std::cout << Relinker::GuestModulePattern << " processing: " << (args.skipSceModule ? "disabled (--skip-sce-module)" : "enabled") << '\n';
         for (const auto& name : args.excludedSceModules) std::cout << "Guest module excluded: " << name << '\n';
         auto result = pipeline->Relink(sourceBytes);
         for (const auto& patch : result.Patches) {
@@ -99,7 +99,7 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toMacos, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toMacos, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules, args.sceModulePath);
         }
 
         if (args.writeRegistry) {

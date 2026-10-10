@@ -43,8 +43,8 @@ def main():
         source.write_bytes(fixture())
         missing = subprocess.run([str(relinker), str(source), str(output)], capture_output=True, text=True, timeout=20)
         assert missing.returncode != 0 and not output.exists(), missing
-        assert "sce_module/sce_modules/prx was not found" in missing.stderr, missing.stderr
-        assert "--skip-sce-module only if this game" in missing.stderr, missing.stderr
+        assert "sce_module/*.prx was not found" in missing.stderr, missing.stderr
+        assert "--skip-sce-module to disable guest module processing" in missing.stderr, missing.stderr
         result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True, timeout=20)
         if result.returncode != 0:
             raise AssertionError((result.returncode, result.stdout, result.stderr))
