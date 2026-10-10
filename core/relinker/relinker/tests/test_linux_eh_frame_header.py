@@ -46,9 +46,39 @@ def relink(relinker, directory, name, image):
     return result, output.read_bytes()
 
 
+def header_bounds(relinker, directory):
+    encodings = (("fixed", struct.pack("<BBBBQI", 1, 0, 3, 0, 0x900, 0)),
+                 ("leb", bytes((1, 1, 1, 0, 0x80, 0x12, 0x80, 0))))
+    for mode, flags in (("linux-strict", ["unused-filter=2"]), ("windows", ["--windows"])):
+        for encoding, data in encodings:
+            for size in (len(data), *range(1, len(data))):
+                image = fixture(7)
+                struct.pack_into("<Q", image, 24, 0x100)
+                image[0x4100:0x4106] = image[0x4000:0x4006]
+                struct.pack_into("<qQqQ", image, 0x4670, 4, 0x6A0, 0, 0)
+                struct.pack_into("<QQ", image, 120 + 32, 9 * 16, 9 * 16)
+                struct.pack_into("<IIII", image, 0x46A0, 1, 1, 0, 0)
+                image[0x4800:0x4800 + len(data)] = data
+                struct.pack_into("<QQ", image, 176 + 32, size, size)
+                name = f"bounds-{mode}-{encoding}-{size}"
+                source = Path(directory) / (name + ".elf")
+                output = Path(directory) / (name + ".out")
+                source.write_bytes(image)
+                result = subprocess.run([str(relinker), "--skip-sce-module", *flags, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert source.read_bytes() == image, (name, "source changed")
+                if size == len(data):
+                    assert result.returncode == 0 and output.is_file(), (name, result.returncode, result.stderr)
+                else:
+                    assert result.returncode == 2, (name, result.returncode, result.stdout, result.stderr)
+                    assert "EH frame header exceeds segment" in result.stderr, (name, result.stderr)
+                    assert not output.exists(), (name, "output written for a truncated EH frame header")
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-eh-frame-") as directory:
+        header_bounds(relinker, directory)
         image = fixture(7)
         result, elf = relink(relinker, directory, "spare-slot", image)
         assert "PT_GNU_EH_FRAME" not in result.stderr, result.stderr

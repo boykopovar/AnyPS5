@@ -21,6 +21,7 @@ public:
         std::vector<StrictCodeRegion> result;
         for (const auto& segment : headers) {
             if (segment.Type != 0x6474E550 || segment.FileSize == 0) continue;
+            if (segment.FileSize < 4) throw RelinkerException("Strict filter: EH frame header exceeds segment", segment.MappedAddress);
             auto position = segment.MappedAddress;
             const auto version = read<std::uint8_t>(position);
             const auto frameEncoding = read<std::uint8_t>(position);
@@ -30,6 +31,8 @@ public:
                 throw RelinkerException("Strict filter: unsupported EH frame header", segment.MappedAddress);
             encoded(position, frameEncoding, segment.MappedAddress);
             const auto count = encoded(position, countEncoding, segment.MappedAddress);
+            if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize)
+                throw RelinkerException("Strict filter: EH frame header exceeds segment", position);
             if (count > segment.FileSize / 2) throw RelinkerException("Strict filter: invalid EH frame count", position);
             for (std::uint64_t index = 0; index < count; ++index) {
                 const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
