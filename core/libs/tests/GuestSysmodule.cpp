@@ -17,6 +17,7 @@ void Require(bool value) { if (!value) std::abort(); }
 constexpr std::uint16_t kFiberModuleId = 0x0006;
 constexpr std::uint16_t kUltModuleId = 0x0007;
 constexpr int kModuleUnloaded = static_cast<int>(0x805A1001);
+constexpr std::uint16_t kTrophy2ModuleId = 0x0110;
 
 }
 
@@ -37,4 +38,14 @@ int main() {
     Require(sceSysmoduleIsLoaded(kUltModuleId) == 0);
     Require(sceSysmoduleUnloadModule(kUltModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kUltModuleId) == kModuleUnloaded);
+
+    Require(sceSysmoduleIsLoaded(kTrophy2ModuleId) == kModuleUnloaded);
+    Require(sceSysmoduleLoadModuleInternal(kTrophy2ModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kTrophy2ModuleId) == 0);
+    Require(sceSysmoduleLoadModuleInternal(kTrophy2ModuleId) == 0);
+    Require(sceSysmoduleUnloadModuleInternal(kTrophy2ModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kTrophy2ModuleId) == 0);
+    Require(sceSysmoduleUnloadModuleInternal(kTrophy2ModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kTrophy2ModuleId) == kModuleUnloaded);
+    Require(sceSysmoduleUnloadModuleInternal(kTrophy2ModuleId) == kModuleUnloaded);
 }
