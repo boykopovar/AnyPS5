@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <algorithm>
@@ -106,6 +107,65 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(viewport.width <= context.limits.maxViewportDimensions[0] && std::abs(viewport.height) <= context.limits.maxViewportDimensions[1], "viewport dimensions exceed device limits");
     Require(viewport.x >= context.limits.viewportBoundsRange[0] && viewport.x + viewport.width <= context.limits.viewportBoundsRange[1], "viewport X exceeds device bounds");
     Require(std::min(viewport.y, viewport.y + viewport.height) >= context.limits.viewportBoundsRange[0] && std::max(viewport.y, viewport.y + viewport.height) <= context.limits.viewportBoundsRange[1], "viewport Y exceeds device bounds");
+}
+
+namespace {
+
+template<typename TValue>
+void appendKey(std::vector<std::byte>& key, const TValue& value) {
+    static_assert(std::is_trivially_copyable_v<TValue>);
+    const auto bytes = std::as_bytes(std::span(&value, 1));
+    key.insert(key.end(), bytes.begin(), bytes.end());
+}
+
+bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    using Stage = ShaderRecompiler::ShaderStage;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList) return false;
+    keys = {};
+    for (const auto& shader : shaders) {
+        if (shader.stage == Stage::Geometry || shader.program->PipelineVariantId() == 0) return false;
+        auto& key = shader.stage == Stage::Fragment ? keys.fragmentShader : keys.preRasterization;
+        appendKey(key, shader.stage);
+        appendKey(key, shader.program->PipelineVariantId());
+        appendKey(key, shader.pushConstantOffset);
+    }
+    for (const auto& binding : input.bindings) {
+        appendKey(keys.vertexInput, binding.binding);
+        appendKey(keys.vertexInput, binding.stride);
+        appendKey(keys.vertexInput, binding.inputRate);
+    }
+    appendKey(keys.vertexInput, input.attributes.size());
+    for (const auto& attribute : input.attributes) {
+        appendKey(keys.vertexInput, attribute.location);
+        appendKey(keys.vertexInput, attribute.binding);
+        appendKey(keys.vertexInput, attribute.format);
+        appendKey(keys.vertexInput, attribute.offset);
+    }
+    appendKey(keys.vertexInput, state.topology);
+    appendKey(keys.vertexInput, state.primitiveRestart);
+    appendKey(keys.preRasterization, state.provokingVertexMode);
+    appendKey(keys.preRasterization, state.negativeOneToOne);
+    appendKey(keys.preRasterization, state.depthClamp && context.depthClamp);
+    appendKey(keys.preRasterization, state.conservativeRasterization);
+    appendKey(keys.preRasterization, state.depth.has_value() && state.depthBias);
+    appendKey(keys.preRasterization, state.stages.tessellation.has_value());
+    if (state.stages.tessellation) appendKey(keys.preRasterization, state.stages.tessellation->inputControlPoints);
+    appendKey(keys.fragmentShader, state.depth.has_value());
+    for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, blend);
+    for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
+    appendKey(keys.renderPass, attachmentLayout);
+    appendKey(keys.renderPass, state.blends.size());
+    for (const auto& color : state.colors) {
+        appendKey(keys.renderPass, color.format);
+        appendKey(keys.renderPass, color.exportIndex);
+    }
+    appendKey(keys.renderPass, state.depth.has_value());
+    if (state.depth) appendKey(keys.renderPass, state.depth->format);
+    appendKey(keys.layout, PushConstantStages(shaders));
+    for (const auto word : resources.LayoutKey()) appendKey(keys.layout, word);
+    return true;
+}
+
 }
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias) {
@@ -221,9 +281,12 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (state.negativeOneToOne) viewports.pNext = &depthClip;
         viewports.viewportCount = 1;
         viewports.scissorCount = 1;
+        PipelineLibraryKeys keys;
+        libraries = libraryKeys(keys, context, state, vertexInput, resources, shaders, attachmentLayout);
         std::vector<VkDynamicState> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
         if (depthBounds) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BOUNDS);
         if (depthBias) dynamicStates.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
+        if (libraries) dynamicStates.assign(PipelineLibraryDynamicStates().begin(), PipelineLibraryDynamicStates().end());
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
         dynamic.pDynamicStates = dynamicStates.data();
@@ -278,7 +341,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         pipelineInfo.layout = layout;
         pipelineInfo.renderPass = renderPass;
         timing.Mark("modules_and_state");
-        Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
+        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, passInfo, layoutInfo, keys);
+        else Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
         if (state.depthBiasPerFace) {
             raster.cullMode = VK_CULL_MODE_FRONT_BIT;
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &backFaces), "vkCreateGraphicsPipelines");
@@ -382,9 +446,34 @@ void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
+    if (libraries) {
+        setLibraryState(commands, state);
+        return;
+    }
     if (depthBias) context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, state.depthBiasConstant, state.depthBiasClamp, state.depthBiasSlope);
     if (!depthBounds) return;
     context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+}
+
+void Pipeline::setLibraryState(VkCommandBuffer commands, const State& state) const {
+    const bool depth = state.depth.has_value();
+    context.Resolved(&DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, state.cullMode);
+    context.Resolved(&DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, state.frontFace);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, depthBias ? state.depthBiasConstant : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
+    context.Resolved(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, depth && state.depthTest);
+    context.Resolved(&DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, depth && state.depthWrite);
+    context.Resolved(&DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, depth ? state.depthCompare : VK_COMPARE_OP_ALWAYS);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBoundsTestEnable, "vkCmdSetDepthBoundsTestEnableEXT")(commands, depthBounds);
+    context.Resolved(&DeviceFunctions::cmdSetStencilTestEnable, "vkCmdSetStencilTestEnableEXT")(commands, depth && state.stencilTest);
+    const auto stencil = [&](VkStencilFaceFlags face, const VkStencilOpState& op) {
+        context.Resolved(&DeviceFunctions::cmdSetStencilOp, "vkCmdSetStencilOpEXT")(commands, face, op.failOp, op.passOp, op.depthFailOp, op.compareOp);
+        context.Resolved(&DeviceFunctions::cmdSetStencilCompareMask, "vkCmdSetStencilCompareMask")(commands, face, op.compareMask);
+        context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, face, op.writeMask);
+        context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, face, op.reference);
+    };
+    stencil(VK_STENCIL_FACE_FRONT_BIT, depth ? state.stencilFront : VkStencilOpState{});
+    stencil(VK_STENCIL_FACE_BACK_BIT, depth ? state.stencilBack : VkStencilOpState{});
 }
 
 void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state) const {
@@ -625,6 +714,7 @@ void ClearCachedPipelines(VkDevice device) {
         store.index.erase(it->hash);
         it = store.entries.erase(it);
     }
+    ClearPipelineLibraries(device);
 }
 
 }

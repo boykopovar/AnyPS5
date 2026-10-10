@@ -62,6 +62,7 @@ private:
         std::shared_ptr<Framebuffer> framebuffer;
     };
     void release() noexcept;
+    void setLibraryState(VkCommandBuffer commands, const State& state) const;
     Context context;
     std::vector<VkShaderModule> _modules;
     VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -72,6 +73,7 @@ private:
     std::size_t colorAttachments = 0;
     bool depthBounds = false;
     bool depthBias = false;
+    bool libraries = false;
     std::vector<CachedFramebuffer> framebuffers;
 };
 

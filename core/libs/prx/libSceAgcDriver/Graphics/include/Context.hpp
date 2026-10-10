@@ -56,6 +56,17 @@ struct DeviceFunctions {
     PFN_vkCmdSetScissor cmdSetScissor = nullptr;
     PFN_vkCmdSetDepthBounds cmdSetDepthBounds = nullptr;
     PFN_vkCmdSetDepthBias cmdSetDepthBias = nullptr;
+    PFN_vkCmdSetCullModeEXT cmdSetCullMode = nullptr;
+    PFN_vkCmdSetFrontFaceEXT cmdSetFrontFace = nullptr;
+    PFN_vkCmdSetDepthTestEnableEXT cmdSetDepthTestEnable = nullptr;
+    PFN_vkCmdSetDepthWriteEnableEXT cmdSetDepthWriteEnable = nullptr;
+    PFN_vkCmdSetDepthCompareOpEXT cmdSetDepthCompareOp = nullptr;
+    PFN_vkCmdSetDepthBoundsTestEnableEXT cmdSetDepthBoundsTestEnable = nullptr;
+    PFN_vkCmdSetStencilTestEnableEXT cmdSetStencilTestEnable = nullptr;
+    PFN_vkCmdSetStencilOpEXT cmdSetStencilOp = nullptr;
+    PFN_vkCmdSetStencilCompareMask cmdSetStencilCompareMask = nullptr;
+    PFN_vkCmdSetStencilWriteMask cmdSetStencilWriteMask = nullptr;
+    PFN_vkCmdSetStencilReference cmdSetStencilReference = nullptr;
     PFN_vkCmdBindVertexBuffers cmdBindVertexBuffers = nullptr;
     PFN_vkCmdBindIndexBuffer cmdBindIndexBuffer = nullptr;
     PFN_vkCmdDraw cmdDraw = nullptr;
@@ -148,6 +159,7 @@ struct Context {
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
     bool pipelineExecutableInfo = false;
+    bool graphicsPipelineLibrary = false;
     std::uint32_t srgbDecodeFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;

@@ -166,6 +166,19 @@ void FillDeviceFunctions(const Context& context, DeviceFunctions& functions) {
     functions.cmdSetScissor = context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor");
     functions.cmdSetDepthBounds = context.Function<PFN_vkCmdSetDepthBounds>("vkCmdSetDepthBounds");
     functions.cmdSetDepthBias = context.Function<PFN_vkCmdSetDepthBias>("vkCmdSetDepthBias");
+    if (context.graphicsPipelineLibrary) {
+        functions.cmdSetCullMode = context.Function<PFN_vkCmdSetCullModeEXT>("vkCmdSetCullModeEXT");
+        functions.cmdSetFrontFace = context.Function<PFN_vkCmdSetFrontFaceEXT>("vkCmdSetFrontFaceEXT");
+        functions.cmdSetDepthTestEnable = context.Function<PFN_vkCmdSetDepthTestEnableEXT>("vkCmdSetDepthTestEnableEXT");
+        functions.cmdSetDepthWriteEnable = context.Function<PFN_vkCmdSetDepthWriteEnableEXT>("vkCmdSetDepthWriteEnableEXT");
+        functions.cmdSetDepthCompareOp = context.Function<PFN_vkCmdSetDepthCompareOpEXT>("vkCmdSetDepthCompareOpEXT");
+        functions.cmdSetDepthBoundsTestEnable = context.Function<PFN_vkCmdSetDepthBoundsTestEnableEXT>("vkCmdSetDepthBoundsTestEnableEXT");
+        functions.cmdSetStencilTestEnable = context.Function<PFN_vkCmdSetStencilTestEnableEXT>("vkCmdSetStencilTestEnableEXT");
+        functions.cmdSetStencilOp = context.Function<PFN_vkCmdSetStencilOpEXT>("vkCmdSetStencilOpEXT");
+        functions.cmdSetStencilCompareMask = context.Function<PFN_vkCmdSetStencilCompareMask>("vkCmdSetStencilCompareMask");
+        functions.cmdSetStencilWriteMask = context.Function<PFN_vkCmdSetStencilWriteMask>("vkCmdSetStencilWriteMask");
+        functions.cmdSetStencilReference = context.Function<PFN_vkCmdSetStencilReference>("vkCmdSetStencilReference");
+    }
     functions.cmdBindVertexBuffers = context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers");
     functions.cmdBindIndexBuffer = context.Function<PFN_vkCmdBindIndexBuffer>("vkCmdBindIndexBuffer");
     functions.cmdDraw = context.Function<PFN_vkCmdDraw>("vkCmdDraw");

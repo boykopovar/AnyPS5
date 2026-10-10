@@ -164,6 +164,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
@@ -657,6 +658,14 @@ configure_windows_unwind(agc_driver_recorder_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_driver_recorder_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_pipeline_cache COMMAND agc_driver_recorder_tests --pipeline-cache-only)
+    add_test(NAME agc_pipeline_library COMMAND agc_driver_recorder_tests --pipeline-library-only)
+    add_test(NAME agc_pipeline_library_off COMMAND agc_driver_recorder_tests --pipeline-library-only)
+    set_tests_properties(agc_pipeline_library agc_pipeline_library_off PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(agc_pipeline_library_off PROPERTIES ENVIRONMENT "APS5_NO_GPL=1")
+    if(WIN32)
+        set_tests_properties(agc_pipeline_library agc_pipeline_library_off PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(agc_pipeline_cache PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(agc_pipeline_cache PROPERTIES ENVIRONMENT_MODIFICATION
@@ -722,6 +731,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         Graphics/src/Draw.cpp
         Graphics/src/DepthSurface.cpp
         Graphics/src/Pipeline.cpp
+        Graphics/src/PipelineLibrary.cpp
         Graphics/src/State.cpp
         Graphics/src/ColorTargetLayout.cpp
         Graphics/src/ColorTargetTransfer.cpp
