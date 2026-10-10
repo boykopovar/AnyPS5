@@ -4211,8 +4211,8 @@ void pipelineCacheTests(const Device& device, bool benchmark) {
     state.cullMode = VK_CULL_MODE_BACK_BIT;
     Require(lookup(input) != first, "pipeline cache ignored changed raster state");
     state.cullMode = 0;
-    for (const auto attributes : {0u, 8u, 32u}) {
-        Require(attributes <= context.limits.maxVertexInputBindings && attributes <= context.limits.maxVertexInputAttributes, "pipeline cache fixture exceeds vertex input limits");
+    const auto largest = std::min({32u, context.limits.maxVertexInputBindings, context.limits.maxVertexInputAttributes});
+    for (const auto attributes : {0u, 8u, largest}) {
         input.bindings.clear();
         input.attributes.clear();
         for (std::uint32_t i = 0; i < attributes; ++i) {
