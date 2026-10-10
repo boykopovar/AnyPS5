@@ -14,6 +14,7 @@
 extern "C" {
 int APS5_VABI remove_nid_postfix(const char*);
 int APS5_VABI rename_nid_postfix(const char*, const char*);
+int APS5_VABI chmod_nid_postfix(const char*, int);
 int APS5_VABI sceKernelChmod_nid_postfix(const char*, unsigned short);
 int APS5_VABI sceKernelFchmod(int, unsigned short);
 int APS5_VABI fchmod_nid_postfix(int, int);
@@ -125,6 +126,13 @@ int main() {
     const auto sized = root / "sized.txt";
     { std::ofstream stream(sized); stream << "0123456789abcdef"; }
     Require(sceKernelChmod_nid_postfix(sized.string().c_str(), 0600) == 0);
+    const auto missingPath = (root / "no-such-file").string();
+    Require(chmod_nid_postfix(missingPath.c_str(), 0600) == -1 && *__error_nid_postfix() == 2);
+    Require(chmod_nid_postfix("", 0600) == -1 && *__error_nid_postfix() == 2);
+    Require(chmod_nid_postfix(nullptr, 0600) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelChmod_nid_postfix(missingPath.c_str(), 0600) == static_cast<int>(0x80020002u));
+    Require(sceKernelChmod_nid_postfix("", 0600) == static_cast<int>(0x80020002u));
+    Require(sceKernelChmod_nid_postfix(nullptr, 0600) == static_cast<int>(0x8002000eu));
     Require(sceKernelTruncate_nid_postfix(sized.string().c_str(), 6) == 0);
     Require(std::filesystem::file_size(sized) == 6);
     { std::ifstream stream(sized); std::string contents; std::getline(stream, contents);
