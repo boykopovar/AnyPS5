@@ -20,15 +20,18 @@ constexpr std::uint32_t CustomPopMarker = 0x0c;
 namespace Agc::Marker {
 
 std::uint32_t* Push(CommandBuffer* buf, const char* str, const char* function) {
+    return Push(buf, str, str ? std::strlen(str) : 0, function);
+}
+
+std::uint32_t* Push(CommandBuffer* buf, const char* str, std::size_t length, const char* function) {
     Agc::Command::Require(buf != nullptr, function, "null command buffer");
-    const char* text = str ? str : "";
-    const std::size_t bytes = std::strlen(text) + 1;
-    const auto payload = static_cast<std::uint32_t>((bytes + 3) / 4);
-    Agc::Command::Require(payload <= 0x4000u, function, "marker text too long");
+    Agc::Command::Require(str != nullptr || length == 0, function, "null marker text");
+    Agc::Command::Require(length < 0x10000u, function, "marker text too long");
+    const auto payload = static_cast<std::uint32_t>((length + 4) / 4);
     auto* packet = Agc::Command::Allocate(buf, payload + 1, function);
     packet[0] = Agc::Command::Header(OpcodeNop, payload + 1, CustomPushMarker << 2);
     std::memset(packet + 1, 0, payload * sizeof(std::uint32_t));
-    std::memcpy(packet + 1, text, bytes);
+    if (length != 0) std::memcpy(packet + 1, str, length);
     return packet;
 }
 
@@ -58,6 +61,18 @@ uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf) {
 uint32_t* APS5_VABI sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {
     (void)color;
     return Agc::Marker::Push(buf, str, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcDcbSetMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    auto* packet = Agc::Marker::Push(buf, str, length, __func__);
+    Agc::Marker::Pop(buf, __func__);
+    return packet;
+}
+
+uint32_t* APS5_VABI sceAgcDcbPushMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    return Agc::Marker::Push(buf, str, length, __func__);
 }
 
 }

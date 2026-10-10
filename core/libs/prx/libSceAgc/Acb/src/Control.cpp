@@ -79,4 +79,16 @@ uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint
     return packet;
 }
 
+uint32_t* APS5_VABI sceAgcAcbPushMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    return Agc::Marker::Push(buf, str, length, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    auto* packet = Agc::Marker::Push(buf, str, length, __func__);
+    Agc::Marker::Pop(buf, __func__);
+    return packet;
+}
+
 }
