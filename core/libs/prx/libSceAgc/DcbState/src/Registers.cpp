@@ -29,7 +29,7 @@ std::uint32_t* APS5_VABI sceAgcDcbSetCxRegistersIndirect(CommandBuffer* buf, con
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetCxRegistersIndirectGetSize(std::uint32_t numRegs) {
-    Agc::Command::CheckBits(numRegs, 0x3fffu, __func__);
+    static_cast<void>(numRegs);
     return 20;
 }
 
@@ -46,7 +46,7 @@ std::uint32_t* APS5_VABI sceAgcDcbSetShRegistersIndirect(CommandBuffer* buf, con
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetShRegistersIndirectGetSize(std::uint32_t numRegs) {
-    Agc::Command::CheckBits(numRegs, 0x3fffu, __func__);
+    static_cast<void>(numRegs);
     return 20;
 }
 
@@ -63,7 +63,7 @@ std::uint32_t* APS5_VABI sceAgcDcbSetUcRegistersIndirect(CommandBuffer* buf, con
 }
 
 std::uint32_t APS5_VABI sceAgcDcbSetUcRegistersIndirectGetSize(std::uint32_t numRegs) {
-    Agc::Command::CheckBits(numRegs, 0x3fffu, __func__);
+    static_cast<void>(numRegs);
     return 20;
 }
 

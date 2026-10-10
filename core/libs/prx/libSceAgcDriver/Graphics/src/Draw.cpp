@@ -132,6 +132,25 @@ void storeClearTexels(const Context& context, const ColorTarget& color, const st
     MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
 }
 
+void storeSingleTexels(const Context& context, const ColorTarget& color) {
+    Require(color.tileMode != ColorTileMode::Linear, "comp-to-single DCC keys of a linear color target");
+    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
+    Require(surface.Bytes() == color.bytes, "comp-to-single DCC keys over a color target whose layout differs from its surface");
+    StorageTexture::FlushPending(color.address, color.bytes, nullptr, "comp-to-single expansion");
+    std::vector<std::byte> texels(color.bytes);
+    GuestMemory::Read(color.address, texels, surface.Alignment());
+    constexpr std::size_t BlockBytes = 256;
+    for (std::uint32_t y = 0; y < color.extent.height; ++y) {
+        for (std::uint32_t x = 0; x < color.extent.width; ++x) {
+            const auto offset = surface.Offset(x, y);
+            const auto first = offset / BlockBytes * BlockBytes;
+            if (offset != first) std::memcpy(texels.data() + offset, texels.data() + first, color.elementBytes);
+        }
+    }
+    GuestMemory::Write(color.address, texels, surface.Alignment());
+    MarkDccUncompressed(context, color.dccAddress, color.bytes, colorKeyCount(color, color.bytes));
+}
+
 void materializeRegisterClear(const Context& context, const ColorTarget& color, StorageTexture& resident) {
     if (color.dccAddress == 0 || resident.Descriptor().dccAddress != color.dccAddress) return;
     if (ProvedCurrentDccKeys(color.dccAddress, color.bytes, resident.TargetKeyProof()) != DccKeys::ClearRegister) return;
@@ -2459,6 +2478,12 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         if (color.dccAddress == 0) continue;
         auto keys = CurrentDccKeys(color.dccAddress, color.bytes);
         if (keys == DccKeys::Uncompressed) continue;
+        if (keys == DccKeys::ClearSingle) {
+            Require(pass.mode == ColorMetadataPass::Mode::DccDecompress, "CB fast-clear eliminate over comp-to-single DCC keys (whether it expands them is not modeled)");
+            storeSingleTexels(context, color);
+            if (const auto resident = metadataPassResident(context, color)) resident->Refresh();
+            continue;
+        }
         Require(IsDccClear(keys), std::string("CB metadata pass over DCC keys that are ") + DccKeysName(keys) + " (per-block metadata is not modeled)");
         const auto texel = clearTexel(color, keys);
         const auto resident = metadataPassResident(context, color);

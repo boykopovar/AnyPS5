@@ -82,6 +82,10 @@ void NoteLabel(std::vector<RunLabel>& labels, std::uint64_t address, std::span<c
     labels.push_back({address, bytes.size(), value});
 }
 
+bool WritesThroughPointers(const ShaderRecompiler::RecompileResult& compiled) {
+    return std::any_of(compiled.bindings.begin(), compiled.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
+}
+
 bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<RunLabel>& labels) {
     for (const auto& label : labels) {
         for (const auto& region : regions) {
@@ -104,6 +108,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
     QueueState scratch = live;
     std::vector<RunLabel> labels;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
+    bool unknownWrites = false;
     for (const auto& label : deferredLabels().labels) NoteLabel(labels, label.address, std::span<const std::byte>(label.bytes).first(label.size));
     struct Resolving {
         std::size_t offset;
@@ -130,6 +135,21 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
             if (!Pm4::WaitSatisfiedUnchecked(packet) && !WrittenByRun(packet, labels)) break;
         } else if (opcode == 0x15 || opcode == 0x16) {
             if (resolved.contains(cursor)) break;
+            if (opcode == 0x16) {
+                std::uint64_t arguments = 0;
+                try {
+                    arguments = Pm4::DispatchArgumentAddress(packet, scratch);
+                } catch (const std::exception&) {
+                    break;
+                }
+                const auto argumentsEnd = arguments + 3u * sizeof(std::uint32_t);
+                const bool written = std::any_of(writes.begin(), writes.end(), [&](const auto& range) { return range.first < argumentsEnd && arguments < range.second; })
+                    || std::any_of(labels.begin(), labels.end(), [&](const RunLabel& label) { return label.address < argumentsEnd && arguments < label.address + label.size; });
+                if (unknownWrites || written) {
+                    ++stats.writtenBefore;
+                    break;
+                }
+            }
             currentPacketOffset() = cursor;
             try {
                 if (opcode == 0x15) dispatch(scratch, packet, submission);
@@ -150,6 +170,9 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     break;
                 }
                 if (found->second.compiledResult != nullptr) appendWrittenRanges(*found->second.compiledResult, writes);
+                if (found->second.compiledResult == nullptr || WritesThroughPointers(*found->second.compiledResult)) unknownWrites = true;
+            } else {
+                unknownWrites = true;
             }
         } else if (opcode == 0x37 || opcode == 0x49) {
             const auto label = Pm4::DecodeLabelWrite(packet);

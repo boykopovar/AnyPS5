@@ -62,7 +62,7 @@ def spinning_provider():
     return image
 
 
-def check(relinker, work, name, extra):
+def check(relinker, work, name, extra, renamed=None):
     case = work / name / 'app'
     (case / 'prx').mkdir(parents=True)
     (case / 'prx' / 'a.prx').write_bytes(spinning_provider())
@@ -74,6 +74,11 @@ def check(relinker, work, name, extra):
     assert result.returncode == 0, (result.stdout, result.stderr)
     if os.name != 'nt':
         return
+    if renamed is not None:
+        (work / name).rename(work / renamed)
+        name = renamed
+        case = work / name / 'app'
+        output = case / 'output.exe'
     elsewhere = work / name / 'elsewhere'
     elsewhere.mkdir()
     process = subprocess.Popen([str(output)], cwd=elsewhere, stdin=subprocess.DEVNULL,
@@ -103,6 +108,7 @@ def main():
         work = Path(directory)
         check(relinker, work, 'console', [])
         check(relinker, work, 'gui', ['--windows-gui'])
+        check(relinker, work, 'unicode', [], 'unicode ü日')
     print('Windows working directory integration tests passed')
 
 

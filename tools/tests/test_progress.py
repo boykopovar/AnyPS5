@@ -9,6 +9,17 @@ import progress
 
 
 class ProgressTests(unittest.TestCase):
+    def test_nonvoid_stub_wrappers_keep_callers_unimplemented(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "static int SupportFormat() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                "int APS5_VABI sceExampleSupportFormat() { return SupportFormat(); }\n")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], [])
+            self.assertEqual(group["todo_names"], ["sceExampleSupportFormat"])
+
     def test_test_sources_do_not_change_library_progress(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "tests" / "prx"

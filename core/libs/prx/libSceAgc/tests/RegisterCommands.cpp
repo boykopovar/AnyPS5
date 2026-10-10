@@ -116,8 +116,8 @@ void testIndirect() {
             check(storage.words == expected, "count setter modified unrelated packet data");
         }
         const auto before = storage.words;
-        for (const auto count : {0x4000u, 0xffffffffu}) {
-            expectFailure([&] { sizes[i](count); });
+        for (const auto count : {0x4000u, 0xffffffffu, 0xf5f5039cu}) {
+            check(sizes[i](count) == 20, "indirect size depends on the count");
             expectFailure([&] { setters[i](packet, count); });
         }
         expectFailure([&] { setters[i](nullptr, 0); });

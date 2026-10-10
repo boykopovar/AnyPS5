@@ -68,6 +68,12 @@ void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("Vulkan presentation: ") + reason);
 }
 
+std::string workgroupLimitError(std::uint32_t x, std::uint32_t y, std::uint32_t z, const std::uint32_t* limit) {
+    char text[160];
+    std::snprintf(text, sizeof(text), "Vulkan dispatch: workgroup count %ux%ux%u exceeds device limits %ux%ux%u", x, y, z, limit[0], limit[1], limit[2]);
+    return text;
+}
+
 // The ShaderResources content cache dispatches share with recorded draws: Graphics::ResourceCache,
 // one process-wide instance (see SharedResourceCache) that the State references so this file keeps
 // its Find/Insert/Remove/Clear calls; the device clears it at teardown before its descriptor caches
@@ -1995,7 +2001,6 @@ void VulkanDevice::Resize(std::uint32_t width, std::uint32_t height) {
         return;
     }
     if (state->extent.width == width && state->extent.height == height) return;
-    WaitIdle();
     VkSurfaceCapabilitiesKHR surface{};
     check(state->InstanceFunction<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>("vkGetPhysicalDeviceSurfaceCapabilitiesKHR")(state->physical, state->surface, &surface), "vkGetPhysicalDeviceSurfaceCapabilitiesKHR resize");
     // The window's drawable size and the surface's extent can disagree for a moment while the window
@@ -2004,11 +2009,13 @@ void VulkanDevice::Resize(std::uint32_t width, std::uint32_t height) {
         width = surface.currentExtent.width;
         height = surface.currentExtent.height;
         if (width == 0 || height == 0) {
+            WaitIdle();
             state->extent = {0, 0};
             return;
         }
         if (state->extent.width == width && state->extent.height == height) return;
     }
+    WaitIdle();
     require(width >= surface.minImageExtent.width && width <= surface.maxImageExtent.width && height >= surface.minImageExtent.height && height <= surface.maxImageExtent.height, "unsupported resized output extent");
     require((surface.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0 && (surface.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) != 0 && (surface.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) != 0, "resized surface capabilities are unsupported");
     VkSwapchainCreateInfoKHR create{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
@@ -3449,7 +3456,11 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     record.arguments = 0;
     timer.indirect = false;
     std::snprintf(groupsText, 40, "%ux%ux%u", record.x, record.y, record.z);
-    if (record.x > limit[0] || record.y > limit[1] || record.z > limit[2]) throw std::runtime_error("Vulkan dispatch: workgroup count exceeds device limits");
+    if (record.x > limit[0] || record.y > limit[1] || record.z > limit[2]) {
+        char where[96];
+        std::snprintf(where, sizeof(where), " (indirect arguments at 0x%llx read by the CPU, reason %d)", static_cast<unsigned long long>(arguments), outcome.cpuReason);
+        throw std::runtime_error(workgroupLimitError(record.x, record.y, record.z, limit) + where);
+    }
 }
 
 void VulkanDevice::recordDispatch(RecordedDispatch& record) {
@@ -3601,7 +3612,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     const auto context = graphicsContext();
     const auto* limit = state->properties.limits.maxComputeWorkGroupCount;
     if (arguments == 0 && (x > limit[0] || y > limit[1] || z > limit[2])) {
-        throw std::runtime_error("Vulkan dispatch: workgroup count exceeds device limits");
+        throw std::runtime_error(workgroupLimitError(x, y, z, limit));
     }
     // Pipelines are shared by dispatches of one compiled variant; descriptor set layouts built from the
     // same bindings are compatible, so the pipeline layout of the first dispatch serves them all.
@@ -3888,7 +3899,7 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     const auto context = graphicsContext();
     const auto* limit = state->properties.limits.maxComputeWorkGroupCount;
     if (arguments == 0 && (x > limit[0] || y > limit[1] || z > limit[2])) {
-        throw std::runtime_error("Vulkan dispatch: workgroup count exceeds device limits");
+        throw std::runtime_error(workgroupLimitError(x, y, z, limit));
     }
     if (recipe.needsCompletion || recipe.holdsLease || !hit->resources->Reusable()) throw std::runtime_error("Vulkan dispatch: recipe over a non-reusable template");
     // Without the refresh the template holds the words it was keyed with: a data-only hit takes

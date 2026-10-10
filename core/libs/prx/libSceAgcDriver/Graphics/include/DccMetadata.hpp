@@ -19,7 +19,7 @@ struct Context;
 // uncompressed here, so the keys that matter are the fast-clear codes a title writes into the metadata
 // (the surface then reads as a constant whatever its texels hold) and "uncompressed", which the driver
 // stores after it writes a surface so later reads see the texels.
-enum class DccKeys { Uncompressed, Clear0000, Clear0001, Clear1110, Clear1111, ClearRegister, Mixed, Unreadable };
+enum class DccKeys { Uncompressed, Clear0000, Clear0001, Clear1110, Clear1111, ClearRegister, ClearSingle, Mixed, Unreadable };
 
 const char* DccKeysName(DccKeys keys);
 std::size_t DccKeyBytes(std::uint64_t surfaceBytes);

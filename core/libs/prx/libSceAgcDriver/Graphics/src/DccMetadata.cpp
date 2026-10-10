@@ -51,6 +51,7 @@ DccKeys ByteKeys(std::uint8_t key) {
         case 0x80: return DccKeys::Clear1110;
         case 0xc0: return DccKeys::Clear1111;
         case 0x20: return DccKeys::ClearRegister;
+        case 0x10: return DccKeys::ClearSingle;
         case 0xff: return DccKeys::Uncompressed;
         default: return DccKeys::Mixed;
     }
@@ -384,6 +385,7 @@ const char* DccKeysName(DccKeys keys) {
         case DccKeys::Clear1110: return "1110";
         case DccKeys::Clear1111: return "1111";
         case DccKeys::ClearRegister: return "register";
+        case DccKeys::ClearSingle: return "single";
         case DccKeys::Mixed: return "mixed";
         case DccKeys::Unreadable: return "unreadable";
     }

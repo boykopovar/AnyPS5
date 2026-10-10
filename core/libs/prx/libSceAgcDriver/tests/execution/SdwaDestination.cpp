@@ -22,7 +22,7 @@ constexpr std::uint32_t Garbage = 0xabcd1234u;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 69> SdwaCode{
+alignas(256) constexpr std::array<std::uint32_t, 81> SdwaCode{
     0x34020082, 0x34060084, 0xe0302000, 0x80000401, 0xe0302004, 0x80000501, 0xe0302008, 0x80000601,
     0x7e1402ff, 0xabcd1234, 0x7e1602ff, 0xabcd1234, 0x7e1802ff, 0xabcd1234, 0x7e1a02ff, 0xabcd1234,
     0x7e1c02ff, 0xabcd1234, 0x7e1e02ff, 0xabcd1234, 0x7e2002ff, 0xabcd1234, 0x7e2202ff, 0xabcd1234,
@@ -30,9 +30,10 @@ alignas(256) constexpr std::array<std::uint32_t, 69> SdwaCode{
     0x7e1814f9, 0x00061505, 0x7e1a14f9, 0x00060604, 0x7e1c14f9, 0x00060605, 0xd746000d, 0x0435210e,
     0x641e0cf9, 0x05040606, 0x7e2002f9, 0x00061004, 0x7e2202f9, 0x00061204, 0x7e2402f9, 0x00060104,
     0x7e2602ff, 0xabcd1234, 0x7e266ef9, 0x00061404,
+    0x7e2802ff, 0xabcd1234, 0x7e28a0f9, 0x00031404, 0x7e2a02ff, 0xabcd1234, 0x7e2aa2f9, 0x000b1404,
     0xe0702000, 0x80010a03, 0xe0702004, 0x80010b03, 0xe0702008, 0x80010c03,
     0xe070200c, 0x80010d03, 0xe0702010, 0x80010f03, 0xe0702014, 0x80011003, 0xe0702018, 0x80011103,
-    0xe070201c, 0x80011203, 0xe0702020, 0x80011303, 0xbf810000,
+    0xe070201c, 0x80011203, 0xe0702020, 0x80011303, 0xe0702024, 0x80011403, 0xe0702028, 0x80011503, 0xbf810000,
 };
 
 float Quarter(std::uint32_t index) {
@@ -109,6 +110,11 @@ void Check() {
         Require(out[7] == (low << 8u), where(7) + ", expected " + Hex(low << 8u) + ": v_mov_b32_sdwa dst_sel:BYTE_1 dst_unused:UNUSED_PAD must zero the other bytes");
         const auto inverted = ~in[0] & 0xffffu;
         Require(out[8] == ((Garbage & 0xffff0000u) | inverted), where(8) + ", expected " + Hex((Garbage & 0xffff0000u) | inverted) + ": v_not_b32_sdwa dst_sel:WORD_0 dst_unused:UNUSED_PRESERVE must keep the high half");
+        const auto top = in[0] >> 24u;
+        const auto unsignedHalf = HalfBits(static_cast<float>(top));
+        Require(out[9] == ((Garbage & 0xffff0000u) | unsignedHalf), where(9) + ", expected " + Hex((Garbage & 0xffff0000u) | unsignedHalf) + ": v_cvt_f16_u16_sdwa dst_sel:WORD_0 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_3 must convert the zero-extended top byte");
+        const auto signedHalf = HalfBits(static_cast<float>(static_cast<std::int8_t>(top)));
+        Require(out[10] == ((Garbage & 0xffff0000u) | signedHalf), where(10) + ", expected " + Hex((Garbage & 0xffff0000u) | signedHalf) + ": v_cvt_f16_i16_sdwa dst_sel:WORD_0 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_3 src0_sext must convert the sign-extended top byte");
     }
 }
 

@@ -130,4 +130,10 @@ int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle
     return 0;
 }
 
+unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds);
+
+unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
+    return GuestAlarm_nid_no_patch(seconds);
+}
+
 }

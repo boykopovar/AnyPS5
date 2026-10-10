@@ -18,4 +18,9 @@ void Driver::reportDrawCache(DrawEntryCounters& counters) {
     counters = DrawEntryCounters{};
 }
 
+DrawEntryCounters Driver::DrawCacheCounters() {
+    std::lock_guard cacheLock(drawCacheMutex);
+    return drawEntryCounters;
+}
+
 }

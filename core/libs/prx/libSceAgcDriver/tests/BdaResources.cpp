@@ -569,6 +569,55 @@ void gpuMappingTests(const Context& context) {
     ::operator delete(gpu, std::align_val_t{bytes});
 }
 
+void stridedOverhangTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t allocation = 0x8000;
+    constexpr std::uint32_t stride = 20;
+    constexpr std::uint32_t records = (allocation + stride - 1) / stride;
+    auto* block = static_cast<std::byte*>(::operator new(allocation * 2, std::align_val_t{allocation}));
+    std::memset(block, 0x5a, allocation * 2);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, allocation, true, false, true);
+    }
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    ShaderRecompiler::RecompileResult shader;
+    auto buffer = binding(Role::GuestBuffers, 6);
+    buffer.guestDescriptor = {static_cast<std::uint32_t>(address), (static_cast<std::uint32_t>(address >> 32) & 0xffffu) | (stride << 16u), records, 0x31000000u};
+    buffer.bufferWritten = {false};
+    shader.bindings = {buffer};
+    CompiledShader compiled{ShaderRecompiler::ShaderStage::Compute, &shader, 0};
+    {
+        ShaderResources resources(context, compiled);
+        Require(access.descriptor(6).range == allocation, "a strided buffer's rounded-up last record was bound past its allocation");
+        resources.WriteBack();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block + allocation, allocation, true, false, true);
+    }
+    {
+        ShaderResources resources(context, compiled);
+        Require(access.descriptor(6).range == allocation, "a strided buffer's rounded-up last record was bound into the next allocation");
+        resources.WriteBack();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block + allocation);
+    }
+    buffer.guestDescriptor[2] = records - 1;
+    shader.bindings = {buffer};
+    {
+        ShaderResources resources(context, compiled);
+        Require(access.descriptor(6).range == static_cast<VkDeviceSize>(records - 1) * stride, "a strided buffer inside its allocation was shortened");
+        resources.WriteBack();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    ::operator delete(block, std::align_val_t{allocation});
+}
+
 void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     alignas(64) std::array<std::uint32_t, 16> guest{};
     guest[0] = 123;
@@ -731,6 +780,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importWatchTests();
     importedFreshTests(context);
     gpuMappingTests(context);
+    stridedOverhangTests(context, access);
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");

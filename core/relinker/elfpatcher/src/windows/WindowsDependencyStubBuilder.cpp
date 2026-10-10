@@ -23,6 +23,9 @@ WindowsDependencyStubBuilder::WindowsDependencyStubBuilder(PeSection& data) {
         storage.emplace(name, CheckedRva(data.Rva + data.Data.size()));
         data.Data.resize(data.Data.size() + 32);
     }
+    Io::AlignBuffer(data.Data, 2);
+    storage.emplace("wide", CheckedRva(data.Rva + data.Data.size()));
+    data.Data.resize(data.Data.size() + PathCapacity * 2);
     const std::map<std::string, std::string> messages = {
         {"invalid", "FAIL: invalid or unsupported PE dependency metadata\n"},
         {"limit", "FAIL: dependency diagnostics capacity exceeded\n"},
@@ -103,6 +106,37 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Api("lstrcpyA");
     a.Test(Ax);
     a.Jump("io", 0x84);
+    a.End();
+
+    a.Begin("wide");
+    a.Mov(R8, Cx);
+    a.Value(Cx, 65001);
+    a.Value(Dx, 0);
+    a.Value(R9, 0xffffffffffffffffu);
+    a.Data(Ax, "wide");
+    a.Store(Sp, 32, Ax);
+    a.Value(Ax, PathCapacity);
+    a.Store(Sp, 40, Ax);
+    a.Api("MultiByteToWideChar");
+    a.Test(Ax);
+    a.Jump("limit", 0x84);
+    a.Data(Ax, "wide");
+    a.End();
+
+    a.Begin("narrow");
+    a.Store(Sp, 32, Cx);
+    a.Value(Cx, 65001);
+    a.Value(Dx, 0);
+    a.Data(R8, "wide");
+    a.Value(R9, 0xffffffffffffffffu);
+    a.Value(Ax, PathCapacity);
+    a.Store(Sp, 40, Ax);
+    a.Value(Ax, 0);
+    a.Store(Sp, 48, Ax);
+    a.Store(Sp, 56, Ax);
+    a.Api("WideCharToMultiByte");
+    a.Test(Ax);
+    a.Jump("limit", 0x84);
     a.End();
 
     a.Begin("directory");
@@ -201,14 +235,18 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Mov(Dx, Si);
     a.Call("copy");
     a.Address(Cx, Bx, 64);
-    a.Api("GetModuleHandleA");
+    a.Call("wide");
+    a.Mov(Cx, Ax);
+    a.Api("GetModuleHandleW");
     a.Store(Bx, 8, Ax);
     a.Test(Ax);
     a.Jump("registerMapped", 0x85);
     a.Address(Cx, Bx, 64);
+    a.Call("wide");
+    a.Mov(Cx, Ax);
     a.Value(Dx, 0);
     a.Value(R8, 0x20);
-    a.Api("LoadLibraryExA");
+    a.Api("LoadLibraryExW");
     a.Test(Ax);
     a.Jump("io", 0x84);
     a.Mask(Ax, 0xfffffffcu);
@@ -263,7 +301,9 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
         a.Mov(R8, Bx);
         a.Call("join");
         a.Data(Cx, "scratch");
-        a.Api("GetFileAttributesA");
+        a.Call("wide");
+        a.Mov(Cx, Ax);
+        a.Api("GetFileAttributesW");
         a.Value(Dx, 0xffffffffu);
         a.Compare(Ax, Dx);
         a.Jump(std::string("resolveNext") + directory, 0x84);
@@ -295,13 +335,15 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Jump("io", 0x84);
     a.Mark("resolveLoaded");
     a.Mov(Cx, Ax);
-    a.Data(Dx, "scratch");
+    a.Data(Dx, "wide");
     a.Value(R8, PathCapacity);
-    a.Api("GetModuleFileNameA");
+    a.Api("GetModuleFileNameW");
     a.Test(Ax);
     a.Jump("io", 0x84);
     a.CompareValue(Ax, PathCapacity);
     a.Jump("limit", 0x83);
+    a.Data(Cx, "scratch");
+    a.Call("narrow");
     a.Mark("resolvePath");
     a.Data(Cx, "scratch");
     a.Call("register");
@@ -623,11 +665,17 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Data(Cx, "executableDirectory");
     a.Mov(Dx, Si);
     a.Call("directory");
-    a.Data(Cx, "systemDirectory");
+    a.Data(Cx, "wide");
     a.Value(Dx, PathCapacity - 1);
-    a.Api("GetSystemDirectoryA");
+    a.Api("GetSystemDirectoryW");
     a.Test(Ax);
     a.Jump("io", 0x84);
+    a.CompareValue(Ax, PathCapacity - 1);
+    a.Jump("limit", 0x83);
+    a.Data(Cx, "systemDirectory");
+    a.Call("narrow");
+    a.Data(Cx, "systemDirectory");
+    a.Api("lstrlenA");
     a.CompareValue(Ax, PathCapacity - 1);
     a.Jump("limit", 0x83);
     a.Data(Dx, "systemDirectory");

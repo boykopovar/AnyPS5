@@ -45,7 +45,7 @@ const DescriptorSource* Source(const IrResourcePlan& program, std::uint32_t sour
 
 }
 
-bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources, std::vector<SrtReadPoison>* poison) {
+bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources, std::vector<SrtReadPoison>* poison, std::uint32_t* nullRootReads) {
     failureReason().clear();
     static const bool debug = std::getenv("APS5_SRT_DEBUG") != nullptr;
     if (debug) {
@@ -94,9 +94,14 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
         }
     }
     InaccessibleRead inaccessible;
+    std::uint32_t nullRoots = 0;
     if (evaluateFlat && poison != nullptr) {
         evaluator.ReportInaccessibleReads(&inaccessible);
         cleanEvaluator.ReportInaccessibleReads(&inaccessible);
+        if (nullRootReads != nullptr) {
+            evaluator.ReportNullRootReads(&nullRoots);
+            cleanEvaluator.ReportNullRootReads(&nullRoots);
+        }
     }
     std::vector<std::pair<std::uint32_t, InaccessibleRead>> zeroedSources;
     std::vector<DescriptorValue> evaluated;
@@ -175,6 +180,10 @@ bool EvaluateRuntimeSourcesImpl(const IrResourcePlan& program, std::span<const s
     }
     if (poison != nullptr) {
         *poison = std::move(poisoned);
+    }
+    if (nullRootReads != nullptr) {
+        if (debug && nullRoots != 0u) std::fprintf(stderr, "[srt] %u reads through a null user-data pointer: zero words\n", nullRoots);
+        *nullRootReads = nullRoots;
     }
     return true;
 }

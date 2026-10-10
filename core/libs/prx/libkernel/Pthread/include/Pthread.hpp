@@ -55,6 +55,7 @@ struct PthreadRwlockPrivate {
     }
     std::shared_timed_mutex _lock;
     std::atomic<std::thread::id> _writer;
+    std::atomic<int> _readers{0};
 };
 
 struct PthreadCondattrPrivate {

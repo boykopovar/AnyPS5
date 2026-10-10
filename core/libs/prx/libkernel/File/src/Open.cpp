@@ -127,6 +127,13 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
         return fd < 0 ? SceErrorFromErrno(errno) : fd;
     }
     auto native = ResolvePath_nid_no_patch(path);
+#ifdef _WIN32
+    if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
+        std::error_code error;
+        const auto status = std::filesystem::status(native, error);
+        if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
+    }
+#endif
     int fd = NativeOpen(native, MapFlags(flags), mode);
 #ifdef _WIN32
     if (fd < 0 && errno != ENOENT) {

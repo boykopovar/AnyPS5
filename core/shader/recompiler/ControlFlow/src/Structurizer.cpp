@@ -426,6 +426,59 @@ std::uint32_t mergeBesideReturns(const ControlFlowGraph& graph, const BasicBlock
     return *merge;
 }
 
+std::uint32_t iterationSelectionMerge(const ControlFlowGraph& graph, const NaturalLoop& loop, const BasicBlock& header, std::uint32_t join) {
+    const auto count = static_cast<std::uint32_t>(graph.blocks.size());
+    const auto escapes = [&](std::uint32_t blockId) { return blockId == loop.continueBlock || blockId == loop.mergeBlock; };
+    std::vector<bool> joins(count, false);
+    std::vector<std::uint32_t> pending = {join};
+    joins[join] = true;
+    while (!pending.empty()) {
+        const auto blockId = pending.back();
+        pending.pop_back();
+        for (const auto predecessor : graph.FindBlock(blockId).predecessors) {
+            if (!joins[predecessor] && !escapes(predecessor)) {
+                joins[predecessor] = true;
+                pending.push_back(predecessor);
+            }
+        }
+    }
+    const auto trueTarget = header.terminator.trueBlock;
+    const auto falseTarget = header.terminator.falseBlock;
+    if (!joins[trueTarget] || !joins[falseTarget]) {
+        return InvalidControlFlowId;
+    }
+    std::vector<std::vector<std::uint32_t>> postDominators(count, allBlockIds(count));
+    postDominators[join] = {join};
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& block : graph.blocks) {
+            if (!joins[block.id] || block.id == join) {
+                continue;
+            }
+            auto next = allBlockIds(count);
+            for (const auto successor : block.successors) {
+                if (joins[successor]) {
+                    next = intersectSorted(next, postDominators[successor]);
+                }
+            }
+            addUnique(next, block.id);
+            sortUnique(next);
+            if (next != postDominators[block.id]) {
+                postDominators[block.id] = std::move(next);
+                changed = true;
+            }
+        }
+    }
+    const auto common = intersectSorted(postDominators[trueTarget], postDominators[falseTarget]);
+    const auto merge = std::find_if(common.begin(), common.end(), [&](std::uint32_t candidate) {
+        return std::all_of(common.begin(), common.end(), [&](std::uint32_t other) { return contains(postDominators[candidate], other); });
+    });
+    if (merge == common.end() || *merge == join || *merge == header.id || !graph.Dominates(header.id, *merge) || !isInsideLoopConstruct(graph, loop, *merge)) {
+        return InvalidControlFlowId;
+    }
+    return *merge;
+}
+
 std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock& block) {
     const auto globalMerge = graph.FindNearestCommonPostDominator(block.terminator.trueBlock, block.terminator.falseBlock);
     const auto* loop = findInnermostContainingLoop(graph, block.id);
@@ -482,6 +535,14 @@ std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock
         const bool falseJoins = reachesWithinIteration(graph, *loop, falseTarget, globalMerge);
         if (trueJoins != falseJoins) {
             return trueJoins ? trueTarget : falseTarget;
+        }
+        const auto escapesAround = [&](std::uint32_t arm) {
+            return canReachBefore(graph, arm, loop->continueBlock, globalMerge) || canReachBefore(graph, arm, loop->mergeBlock, globalMerge);
+        };
+        if (trueJoins && !graph.Dominates(block.id, globalMerge) && (escapesAround(trueTarget) || escapesAround(falseTarget))) {
+            if (const auto merge = iterationSelectionMerge(graph, *loop, block, globalMerge); merge != InvalidControlFlowId) {
+                return merge;
+            }
         }
     }
     return globalMerge;

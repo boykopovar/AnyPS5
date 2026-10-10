@@ -21,8 +21,9 @@ using namespace Elfpatcher::Windows;
 Fs::path createFixtureDirectory(const Fs::path& parent) {
     std::random_device random;
     for (int attempt = 0; attempt < 100; ++attempt) {
-        const auto directory = parent / ("windows-diagnostic-fixtures-" +
-                                        std::to_string(GetCurrentProcessId()) + "-" + std::to_string(random()));
+        auto name = Fs::path(u8"windows-diagnostic-fixtures-ü日-");
+        name += std::to_string(GetCurrentProcessId()) + "-" + std::to_string(random());
+        const auto directory = parent / name;
         if (Fs::create_directory(directory))
             return directory;
     }
@@ -172,15 +173,15 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
     HANDLE output = nullptr;
     if (!CreatePipe(&input, &output, &security, 0) || !SetHandleInformation(input, HANDLE_FLAG_INHERIT, 0))
         throw std::runtime_error("Cannot create diagnostic test pipe");
-    STARTUPINFOA startup{};
+    STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdOutput = output;
     startup.hStdError = output;
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION process{};
-    const auto filename = runner.string();
-    if (!CreateProcessA(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, runner.parent_path().string().c_str(), &startup, &process))
+    const auto filename = runner.wstring();
+    if (!CreateProcessW(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, runner.parent_path().wstring().c_str(), &startup, &process))
         throw std::runtime_error("Cannot start diagnostic test: " + std::to_string(GetLastError()));
     CloseHandle(output);
     if (WaitForSingleObject(process.hProcess, 20000) != WAIT_OBJECT_0) {

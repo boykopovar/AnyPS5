@@ -398,11 +398,13 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
             if (number == floating) return single(VK_FORMAT_R16_SFLOAT, 2);
             if (number == uint) return single(VK_FORMAT_R16_UINT, 2);
             return fail();
-        case 3:
-            if (swap != 0) return fail();
-            if (number == unorm) return {VK_FORMAT_R8G8_UNORM, 2};
-            if (number == snorm) return {VK_FORMAT_R8G8_SNORM, 2};
+        case 3: {
+            if (swap > 1) return fail();
+            const auto mapping = static_cast<std::uint8_t>(alternate ? 0xecu : 0xe4u);
+            if (number == unorm) return {VK_FORMAT_R8G8_UNORM, 2, mapping};
+            if (number == snorm) return {VK_FORMAT_R8G8_SNORM, 2, mapping};
             return fail();
+        }
         case 4:
             if (number == floating) return single(VK_FORMAT_R32_SFLOAT, 4);
             if (number == uint) return single(VK_FORMAT_R32_UINT, 4);
@@ -725,6 +727,7 @@ State DecodeState(const QueueState& queue) {
         state.blendEnable = (blend >> 30u) & 1u;
         if (state.blendEnable && (mapping == 0x1bu || mapping == 0x93u)) throw std::runtime_error("AGC graphics: blending into a color target with a reversed component order is not implemented");
         Require(!state.blendEnable || !color.uintExport, "blending into an unsigned integer target is unsupported");
+        if (state.blendEnable && mapping == 0xecu) throw std::runtime_error("AGC graphics: blending into an 8_8 color target with the alternate component order is not implemented");
         if (state.blendEnable) {
             Require((read(cx, 0x31c + slot * 0xfu) & 0x10000u) == 0, "blend bypass conflicts with enabled blending");
             state.srcColorBlendFactor = blendFactor(blend & 0x1fu);

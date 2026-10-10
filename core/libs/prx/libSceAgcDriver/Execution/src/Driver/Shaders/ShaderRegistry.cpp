@@ -264,20 +264,24 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 
 namespace {
 
-bool PreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
+void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
-        return true;
+        return;
     }
-    if (!snapshot.header.empty()) return snapshot.prepared->deferred;
+    if (!snapshot.header.empty()) {
+        if (!snapshot.prepared->deferred) APS5_LOG_ERR("Shader 0x%llx stage %u has no artifact prepared at registration for the state of this draw or dispatch; preparing it at use", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<std::uint32_t>(request.shader.stage));
+        return;
+    }
     if (snapshot.type != 0 || request.shader.stage != ShaderRecompiler::ShaderStage::Compute) throw std::runtime_error("AGC driver: unregistered program is not a compute shader");
     APS5_LOG_ERR("Compute shader 0x%llx was not registered; preparing its artifact at dispatch", static_cast<unsigned long long>(snapshot.codeAddress));
-    return true;
 }
 
 }
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+    require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
+    require(std::ranges::equal(request.shader.code, std::span(snapshot.code).subspan(codeOffset)), "prepared shader request does not refer to registered code");
     struct PreparedKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
     ShaderRecompiler::BuildPreparedShaderKey(request, key);
@@ -286,18 +290,10 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const Shad
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
     }
-    if (PreparedAtUse(snapshot, request)) {
-        auto handle = PrepareShaderWithDiagnostics(request);
-        snapshot.prepared->entries.push_back({codeOffset, handle});
-        return handle;
-    }
-    std::string layouts;
-    for (const auto& entry : snapshot.prepared->entries) {
-        if (entry.codeOffset != codeOffset || entry.handle == nullptr || entry.handle->artifact == nullptr) continue;
-        const auto& layout = entry.handle->artifact->layout;
-        layouts += " [" + std::to_string(layout.pushConstantOffsetBytes) + "," + std::to_string(layout.pushConstantSizeBytes) + "]";
-    }
-    throw std::runtime_error("AGC driver: prepared shader artifact is missing for the requested static ABI: address=" + std::to_string(request.shader.codeAddress) + " stage=" + std::to_string(static_cast<std::uint32_t>(request.shader.stage)) + " wave=" + std::to_string(request.context.waveSize) + " pushOffset=" + std::to_string(request.layout.pushConstantOffsetBytes) + " pushCapacity=" + std::to_string(request.layout.pushConstantSizeBytes) + " preparedLayouts=" + layouts);
+    ReportPreparedAtUse(snapshot, request);
+    auto handle = PrepareShaderWithDiagnostics(request);
+    snapshot.prepared->entries.push_back({codeOffset, handle});
+    return handle;
 }
 
 ShaderRecompiler::RectListShaders PreparedRectangle(const ShaderSnapshot& snapshot, std::uint64_t vertexId, std::uint64_t fragmentId) {
@@ -337,22 +333,14 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
         if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
     }
-    if (PreparedAtUse(snapshot, request)) {
-        auto handle = PrepareShaderWithDiagnostics(request);
-        invocationRequest = request;
-        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-        auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
-        if (!invocation.has_value()) throw std::runtime_error("AGC driver: raw compute artifact does not match its invocation");
-        snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
-        return std::move(*invocation);
-    }
-    std::string layouts;
-    for (const auto& entry : snapshot.prepared->entries) {
-        if (entry.codeOffset != codeOffset || entry.handle == nullptr || entry.handle->artifact == nullptr) continue;
-        const auto& layout = entry.handle->artifact->layout;
-        layouts += " [" + std::to_string(layout.pushConstantOffsetBytes) + "," + std::to_string(layout.pushConstantSizeBytes) + "]";
-    }
-    throw std::runtime_error("AGC driver: prepared shader artifact is missing for the requested static ABI: address=" + std::to_string(request.shader.codeAddress) + " stage=" + std::to_string(static_cast<std::uint32_t>(request.shader.stage)) + " wave=" + std::to_string(request.context.waveSize) + " pushOffset=" + std::to_string(request.layout.pushConstantOffsetBytes) + " pushCapacity=" + std::to_string(request.layout.pushConstantSizeBytes) + " preparedLayouts=" + layouts);
+    ReportPreparedAtUse(snapshot, request);
+    auto handle = PrepareShaderWithDiagnostics(request);
+    invocationRequest = request;
+    invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+    if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
+    snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
+    return std::move(*invocation);
 }
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot) {
     if (snapshot.registeredState == nullptr) return std::nullopt;
@@ -563,15 +551,22 @@ public:
     }
 
     void Submit(std::function<void()> task) {
-        if (threads == 0) {
-            task();
-            return;
-        }
         {
-            std::lock_guard lock(mutex);
-            tasks.push_back(std::move(task));
+            std::unique_lock lock(mutex);
+            if (threads != 0 && !closed) {
+                tasks.push_back(std::move(task));
+                lock.unlock();
+                ready.notify_one();
+                return;
+            }
         }
-        ready.notify_one();
+        task();
+    }
+
+    void Close() {
+        std::unique_lock lock(mutex);
+        closed = true;
+        idle.wait(lock, [&] { return tasks.empty() && running == 0; });
     }
 
 private:
@@ -599,16 +594,26 @@ private:
                 pool.ready.wait(lock, [&] { return !pool.tasks.empty(); });
                 task = std::move(pool.tasks.front());
                 pool.tasks.pop_front();
+                ++pool.running;
             }
             task();
+            task = nullptr;
+            {
+                std::lock_guard lock(pool.mutex);
+                --pool.running;
+                if (pool.tasks.empty() && pool.running == 0) pool.idle.notify_all();
+            }
         }
         return nullptr;
     }
 
     std::mutex mutex;
     std::condition_variable ready;
+    std::condition_variable idle;
     std::deque<std::function<void()>> tasks;
     unsigned threads = 0;
+    unsigned running = 0;
+    bool closed = false;
 };
 
 bool AsyncRegistrationPrepare() {
@@ -617,7 +622,7 @@ bool AsyncRegistrationPrepare() {
 }
 
 void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
-    RegistrationPreparePool::Instance().Submit([snapshot = std::move(snapshot), plan = std::move(plan)] {
+    SubmitRegistrationPreparation([snapshot = std::move(snapshot), plan = std::move(plan)] {
         PerformanceContext timingContext(FrameTiming::Preparation());
         std::vector<PreparedShaders::Entry> entries;
         std::exception_ptr failure;
@@ -641,6 +646,14 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
     });
 }
 
+}
+
+void SubmitRegistrationPreparation(std::function<void()> task) {
+    RegistrationPreparePool::Instance().Submit(std::move(task));
+}
+
+void CloseRegistrationPreparation() {
+    RegistrationPreparePool::Instance().Close();
 }
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target) {
