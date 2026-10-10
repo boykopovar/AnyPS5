@@ -11,7 +11,7 @@
 
 extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
-extern "C" bool StopAtBinaryPrefix_nid_no_patch(const char* str, char** endptr, int base);
+extern "C" bool StopAtRadixPrefix_nid_no_patch(const char* str, char** endptr, int base);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 // Guest path aliases: a guest prefix such as "/savedata0" (a save-data mount point) resolves to a host

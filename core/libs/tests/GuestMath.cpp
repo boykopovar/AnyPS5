@@ -93,6 +93,11 @@ static void CheckIntegerConversions() {
         {" -0B1!", 0, 0, 3, 0},
         {"0b2", 0, 0, 1, 0},
         {"0b101", 16, 0xb101, 5, 0},
+        {"0x", 0, 0, 1, 0},
+        {"0X!", 16, 0, 1, 0},
+        {" -0xg", 16, 0, 3, 0},
+        {"+0x ", 0, 0, 2, 0},
+        {"0x1f", 16, 31, 4, 0},
         {"z!", 36, 35, 1, 0},
         {"", 10, 0, 0, 0},
         {" \t+!", 10, 0, 0, 0},
@@ -138,6 +143,11 @@ static void CheckIntegerConversions() {
         {"0B11", 2, 0, 1, 0},
         {" +0b1!", 2, 0, 3, 0},
         {"0b101", 16, 0xb101, 5, 0},
+        {"0x", 16, 0, 1, 0},
+        {"0Xz", 0, 0, 1, 0},
+        {"-0x", 16, 0, 2, 0},
+        {"0x ff", 16, 0, 1, 0},
+        {"0xff", 16, 255, 4, 0},
         {"z!", 36, 35, 1, 0},
         {"", 10, 0, 0, 0},
         {" \t-!", 10, 0, 0, 0},
@@ -151,6 +161,16 @@ static void CheckIntegerConversions() {
             std::fprintf(stderr, "Guest strtoul failed for '%s' in base %d\n", test.text, test.base);
             std::abort();
         }
+    }
+    for (const int base : {0, 16}) {
+        const char text[] = " -0x!";
+        char* end = nullptr;
+        Require(strtoll_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoull_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoumax_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoimax_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(_Stoull_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(_Stoul_nid_postfix(text, &end, base) == 0 && end == text + 3);
     }
     for (const int base : {0, 2}) {
         const char text[] = " -0B11";

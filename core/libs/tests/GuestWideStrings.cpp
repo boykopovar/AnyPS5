@@ -119,6 +119,13 @@ int main() {
     const char16_t* hex = u"0x1F!";
     require(wcstoll_nid_postfix(hex, &end, 16) == 31 && end == hex + 4);
     require(wcstoll_nid_postfix(hex, &end, 0) == 31 && end == hex + 4);
+    const char16_t* bareHex = u" -0x!";
+    for (const int base : {0, 16}) {
+        require(wcstol_nid_postfix(bareHex, &end, base) == 0 && end == bareHex + 3);
+        require(wcstoll_nid_postfix(bareHex, &end, base) == 0 && end == bareHex + 3);
+        require(wcstoul_nid_postfix(bareHex, &end, base) == 0 && end == bareHex + 3);
+        require(wcstoull_nid_postfix(bareHex, &end, base) == 0 && end == bareHex + 3);
+    }
     const char16_t* wideSpace = u"　12";
     require(wcstoul_nid_postfix(wideSpace, &end, 10) == 0 && end == wideSpace);
     const char16_t* wideDigit = u"12١";

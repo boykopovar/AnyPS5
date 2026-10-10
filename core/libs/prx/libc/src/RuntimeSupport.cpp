@@ -95,12 +95,12 @@ unsigned int APS5_VABI _Atomic_load_4_nid_postfix(volatile unsigned int* target,
 }
 
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char* str, char** endptr, int base) {
-    if (StopAtBinaryPrefix_nid_no_patch(str, endptr, base)) return 0;
+    if (StopAtRadixPrefix_nid_no_patch(str, endptr, base)) return 0;
     return std::strtoimax(str, endptr, base);
 }
 
 std::uintmax_t APS5_VABI strtoumax_nid_postfix(const char* str, char** endptr, int base) {
-    if (StopAtBinaryPrefix_nid_no_patch(str, endptr, base)) return 0;
+    if (StopAtRadixPrefix_nid_no_patch(str, endptr, base)) return 0;
     return std::strtoumax(str, endptr, base);
 }
 
@@ -134,7 +134,7 @@ void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
 }
 
 std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
-    if (StopAtBinaryPrefix_nid_no_patch(str, endptr, base)) return 0;
+    if (StopAtRadixPrefix_nid_no_patch(str, endptr, base)) return 0;
     return std::strtoull(str, endptr, base);
 }
 
