@@ -46,6 +46,7 @@ struct PreparedShaderState {
     std::vector<RectangleProgress> rectangleProgress;
     std::vector<std::weak_ptr<const ShaderSnapshot>> fragments;
     bool rectangleRequested = false;
+    bool deferred = false;
 };
 struct PreparedShaders : PreparedShaderState {
     std::mutex mutex;

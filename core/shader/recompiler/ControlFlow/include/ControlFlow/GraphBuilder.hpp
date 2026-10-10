@@ -4,6 +4,7 @@
 #include "ControlFlow/ControlFlowGraph.hpp"
 #include "RdnaDecoder/RdnaProgram.hpp"
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -23,6 +24,8 @@ struct SwappcCall {
     std::uint32_t returnIndex = 0;
     std::uint32_t returnTargetProgramCounter = 0;
 };
+
+[[nodiscard]] std::optional<std::uint32_t> UnresolvableSwappcTarget(const RdnaProgram& program, const SwappcInfo* swappc);
 
 class GraphBuilder {
 public:
