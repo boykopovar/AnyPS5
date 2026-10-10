@@ -1,7 +1,7 @@
 #include <Cli.hpp>
 #include <domain/Types.hpp>
 #include <io/FileReader.hpp>
-#include <io/FileWriter.hpp>
+#include <io/NativePath.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
@@ -10,6 +10,7 @@
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
 #include <elfpatcher/macos/MacOsMachOPatcher.hpp>
 #include <io/ByteWriter.hpp>
+#include <io/FileWriter.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
@@ -22,13 +23,21 @@
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <map>
 #include <codegen/CodegenException.hpp>
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 
-int main(const int argc, char* argv[]) {
+#ifdef _WIN32
+#include <windows.h>
+#include <cwchar>
+#endif
+
+namespace {
+
+int Run(const int argc, char* argv[]) {
     Cli::Args args;
     try {
         args = Cli::ParseArgs(argc, argv);
@@ -43,16 +52,16 @@ int main(const int argc, char* argv[]) {
     }
 
     try {
-        auto extension = std::filesystem::path(args.outputPath).extension().string();
+        auto extension = Io::Utf8Path(Io::NativePath(args.outputPath).extension());
         for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
         if (!args.toWindows && !args.toMacos && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
         Io::FileReader fileReader;
         Io::FileWriter fileWriter;
 
         auto sourceBytes = fileReader.Read(args.inputPath);
-        if (std::filesystem::exists(args.outputPath) && std::filesystem::equivalent(args.inputPath, args.outputPath))
+        if (std::filesystem::exists(Io::NativePath(args.outputPath)) && std::filesystem::equivalent(Io::NativePath(args.inputPath), Io::NativePath(args.outputPath)))
             throw Domain::RelinkerException("Executable output would overwrite the input executable");
-        const std::string absPath = std::filesystem::absolute(args.outputPath).string();
+        const std::string absPath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.outputPath)));
 
         std::vector<Codegen::TrampolineSite> trampolines;
         if (args.toIntel) {
@@ -99,17 +108,17 @@ int main(const int argc, char* argv[]) {
 
         std::vector<Relinker::GuestArtifact> guestArtifacts;
         if (!args.skipSceModule) {
-            guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toMacos, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules, args.sceModulePath);
+            guestArtifacts = Relinker::GuestModuleBuilder().Build(Io::NativePath(args.inputPath), Io::NativePath(absPath), result.DynamicSection, args.toWindows, args.toMacos, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules, Io::NativePath(args.sceModulePath));
         }
 
         if (args.writeRegistry) {
-            const std::filesystem::path outFsPath(absPath);
-            const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
+            const std::filesystem::path outFsPath = Io::NativePath(absPath);
+            const std::string registryPath = Io::Utf8Path(outFsPath.parent_path() / Io::NativePath(Io::Utf8Path(outFsPath.stem()) + ".registry.json"));
             const auto registryWriter = std::make_shared<Relinker::CallRegistryWriter>();
             fileWriter.Write(registryPath, registryWriter->WriteCallRegistry(result.RegistryEntries));
             for (const auto& artifact : guestArtifacts) {
-                const auto modulePath = outFsPath.parent_path() / (outFsPath.stem().string() + "." + artifact.Path.filename().string() + ".registry.json");
-                fileWriter.Write(modulePath.string(), registryWriter->WriteModuleImports(artifact.Imports));
+                const auto modulePath = outFsPath.parent_path() / Io::NativePath(Io::Utf8Path(outFsPath.stem()) + "." + Io::Utf8Path(artifact.Path.filename()) + ".registry.json");
+                fileWriter.Write(Io::Utf8Path(modulePath), registryWriter->WriteModuleImports(artifact.Imports));
             }
         }
 
@@ -119,7 +128,7 @@ int main(const int argc, char* argv[]) {
         if (args.toMacos) {
             patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>();
         } else if (args.toWindows) {
-            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, std::filesystem::path(args.inputPath).parent_path() / "sce_sys" / "icon0.png");
+            patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(args.windowsGui, Io::NativePath(args.inputPath).parent_path() / "sce_sys" / "icon0.png");
         } else {
             patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
                 std::make_shared<Elfpatcher::EntryStubBuilder>(),
@@ -141,16 +150,19 @@ int main(const int argc, char* argv[]) {
         }
         for (const auto& artifact : guestArtifacts) {
             std::filesystem::create_directories(artifact.Path.parent_path());
-            fileWriter.Write(artifact.Path.string(), artifact.Bytes);
-            std::cout << "Guest module: " << artifact.Path.string() << '\n';
+            fileWriter.Write(Io::Utf8Path(artifact.Path), artifact.Bytes);
+            std::cout << "Guest module: " << Io::Utf8Path(artifact.Path) << '\n';
         }
         fileWriter.Write(absPath, executableBytes);
         std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
         std::cout << "Expected runtime layout (relative to the output executable):\n"
-                  << std::filesystem::path(absPath).filename().string() << "\n"
+                  << Io::Utf8Path(Io::NativePath(absPath).filename()) << "\n"
                   << "libs/\n    *.prx\napp0/\n    <game resources>\n";
-        for (const auto& artifact : guestArtifacts)
-            std::cout << "    " << artifact.Path.lexically_relative(std::filesystem::path(absPath).parent_path() / "app0").generic_string() << '\n';
+        for (const auto& artifact : guestArtifacts) {
+            std::string relative = Io::Utf8Path(artifact.Path.lexically_relative(Io::NativePath(absPath).parent_path() / "app0"));
+            std::replace(relative.begin(), relative.end(), '\\', '/');
+            std::cout << "    " << relative << '\n';
+        }
         std::cout << "Game resources and system libraries must be placed in this layout separately.\n";
         if (args.runPath != "$ORIGIN/libs") std::cout << "Custom library search path (--rpath): " << args.runPath << '\n';
 
@@ -174,3 +186,45 @@ int main(const int argc, char* argv[]) {
 
     return 0;
 }
+
+#ifdef _WIN32
+
+std::string Utf8Argument(const wchar_t* argument) {
+    const std::size_t argumentSize = std::wcslen(argument);
+    if (argumentSize == 0) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, static_cast<int>(argumentSize), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) throw std::runtime_error("Cannot encode the command line as UTF-8");
+    std::string utf8(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, static_cast<int>(argumentSize), utf8.data(), size, nullptr, nullptr) != size)
+        throw std::runtime_error("Cannot encode the command line as UTF-8");
+    return utf8;
+}
+
+}
+
+int wmain(const int argc, wchar_t* argv[]) {
+    try {
+        std::vector<std::string> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc));
+        arguments.emplace_back();
+        for (int index = 1; index < argc; ++index) arguments.push_back(Utf8Argument(argv[index]));
+        std::vector<char*> pointers;
+        pointers.reserve(arguments.size() + 1);
+        for (auto& argument : arguments) pointers.push_back(argument.data());
+        pointers.push_back(nullptr);
+        return Run(static_cast<int>(arguments.size()), pointers.data());
+    } catch (const std::exception& error) {
+        std::cerr << "FAIL: " << error.what() << "\n";
+        return 1;
+    }
+}
+
+#else
+
+}
+
+int main(const int argc, char* argv[]) {
+    return Run(argc, argv);
+}
+
+#endif

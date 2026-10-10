@@ -221,6 +221,10 @@ def main():
                 run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                 assert run.returncode == (11 if owner == 'a.prx' else 22), (run.returncode, run.stdout, run.stderr)
 
+        result, output = convert('unicode-ü日', 'a.prx', guest_owner='b.prx')
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert output.is_file() and (output.parent / 'app0' / 'prx' / 'a.prx.guest.prx').is_file()
+
         check_internal_guest_libc(convert, work, relinker)
 
         for filename, module_name in [('foo.native.prx', 'foo_native'),

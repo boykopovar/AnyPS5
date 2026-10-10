@@ -1,4 +1,5 @@
 #include <Cli.hpp>
+#include <io/NativePath.hpp>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -87,7 +88,7 @@ Args ParseArgs(int argc, char* argv[]) {
         throw std::runtime_error(Usage());
 
 
-    if (!sceModulePathSpecified && !args.skipSceModule && !args.inputPath.empty()) args.sceModulePath = std::filesystem::absolute(args.inputPath).parent_path().string();
+    if (!sceModulePathSpecified && !args.skipSceModule && !args.inputPath.empty()) args.sceModulePath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.inputPath)).parent_path());
 
     return args;
 }
