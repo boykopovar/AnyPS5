@@ -1,9 +1,21 @@
+
 #include "SceTypes.hpp"
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
+
+static_assert(sizeof(int) == 4);
+static_assert(sizeof(intptr_t) == 8);
+static_assert(sizeof(KernelEvent) == 32);
+static_assert(offsetof(KernelEvent, ident) == 0);
+static_assert(offsetof(KernelEvent, filter) == 8);
+static_assert(offsetof(KernelEvent, flags) == 10);
+static_assert(offsetof(KernelEvent, fflags) == 12);
+static_assert(offsetof(KernelEvent, data) == 16);
+static_assert(offsetof(KernelEvent, udata) == 24);
 
 extern "C" {
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
@@ -16,6 +28,7 @@ int APS5_VABI sceKernelAddHRTimerEvent(KernelEqueue eq, int id, const KernelTime
 int APS5_VABI sceKernelAddTimerEvent(KernelEqueue eq, int id, KernelUseconds usec, void* udata);
 int APS5_VABI sceKernelDeleteTimerEvent(KernelEqueue eq, int id);
 intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent* ev);
+int APS5_VABI sceKernelGetEventError(const KernelEvent* ev);
 intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev);
 int APS5_VABI sceKernelGetEventFilter(const KernelEvent* ev);
 uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
@@ -29,6 +42,7 @@ static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
 static constexpr int EVFILT_TIMER = -7;
 static constexpr int EVFILT_USER = -11;
 static constexpr int EVFILT_HRTIMER = -15;
+static constexpr std::uint16_t EV_ERROR = 0x4000;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -142,6 +156,7 @@ int main() {
     Require(sceKernelGetEventFilter(&userEvent) == EVFILT_USER);
     Require(sceKernelGetEventData(&userEvent) == reinterpret_cast<intptr_t>(&payload));
     Require(sceKernelGetEventUserData(&userEvent) == &payload);
+    Require(sceKernelGetEventError(&userEvent) == 0);
     Require(sceKernelGetEventFflags(&userEvent) == 0);
     Require(sceKernelDeleteUserEvent(eq, 7) == SCE_OK);
 
@@ -153,6 +168,7 @@ int main() {
     Require(sceKernelGetEventId(&timerEvent) == 9);
     Require(sceKernelGetEventFilter(&timerEvent) == EVFILT_HRTIMER);
     Require(sceKernelGetEventUserData(&timerEvent) == &payload);
+    Require(sceKernelGetEventError(&timerEvent) == 0);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 
     KernelEvent rawEvent{};
@@ -166,7 +182,35 @@ int main() {
     Require(sceKernelGetEventData(&rawEvent) == -5);
     Require(sceKernelGetEventUserData(&rawEvent) == nullptr);
 
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+
+    rawEvent.flags = EV_ERROR;
+    rawEvent.data = 22;
+    Require(sceKernelGetEventError(&rawEvent) == 22);
+
+    rawEvent.flags = EV_ERROR | 0x8000 | 0x0020;
+    Require(sceKernelGetEventError(&rawEvent) == 22);
+    Require(sceKernelGetEventData(&rawEvent) == 22);
+    Require(rawEvent.flags == (EV_ERROR | 0x8000 | 0x0020));
+
+    rawEvent.data = 0;
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+    rawEvent.data = -5;
+    Require(sceKernelGetEventError(&rawEvent) == -5);
+    rawEvent.data = INT32_MIN;
+    Require(sceKernelGetEventError(&rawEvent) == INT32_MIN);
+    rawEvent.data = INT32_MAX;
+    Require(sceKernelGetEventError(&rawEvent) == INT32_MAX);
+
+    rawEvent.flags = 0x8000 | 0x0020;
+    rawEvent.fflags = EV_ERROR;
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+
+    rawEvent.flags = 0;
+    Require(sceKernelGetEventError(&rawEvent) == 0);
+
     Require(RejectsNull(sceKernelGetEventData));
+    Require(RejectsNull(sceKernelGetEventError));
     Require(RejectsNull(sceKernelGetEventFflags));
     Require(RejectsNull(sceKernelGetEventFilter));
     Require(RejectsNull(sceKernelGetEventId));
