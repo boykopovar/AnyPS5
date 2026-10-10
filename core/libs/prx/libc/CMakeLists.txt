@@ -418,6 +418,31 @@ if(BUILD_TESTING)
 endif()
 
 if(MINGW)
+    if(BUILD_TESTING)
+        enable_language(ASM)
+        add_test_executable(guest_message_destructor_abi_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestMessageDestructorAbi.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestMessageDestructorAbi.S)
+        target_include_directories(guest_message_destructor_abi_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_message_destructor_abi_tests PRIVATE libc)
+        configure_windows_unwind(guest_message_destructor_abi_tests)
+        foreach(mode IN ITEMS control decoy zero release regex-decoy regex-zero
+                unshared-decoy unshared-zero regex-unshared-decoy regex-unshared-zero)
+            add_test(NAME guest_message_destructor_${mode} COMMAND guest_message_destructor_abi_tests ${mode})
+            set_tests_properties(guest_message_destructor_${mode} PROPERTIES TIMEOUT 10
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endforeach()
+        foreach(kind IN ITEMS message plain)
+            foreach(operation IN ITEMS what destroy delete)
+                foreach(register IN ITEMS decoy zero)
+                    set(mode "vtable-${kind}-${operation}-${register}")
+                    add_test(NAME guest_exception_${mode} COMMAND guest_message_destructor_abi_tests ${mode})
+                    set_tests_properties(guest_exception_${mode} PROPERTIES TIMEOUT 10
+                        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+                endforeach()
+            endforeach()
+        endforeach()
+    endif()
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
         string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
     endforeach()

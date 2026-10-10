@@ -9,9 +9,9 @@ struct ExceptionObject { const void* vtable; const char* message; };
 struct ExceptionVtable {
     std::ptrdiff_t offset;
     const TypeRecord* type;
-    void (*destroy)(ExceptionObject*);
-    void (*deleteObject)(ExceptionObject*);
-    const char* (*what)(const ExceptionObject*);
+    void (APS5_VABI *destroy)(ExceptionObject*);
+    void (APS5_VABI *deleteObject)(ExceptionObject*);
+    const char* (APS5_VABI *what)(const ExceptionObject*);
 };
 struct Message {
     std::size_t length;
@@ -71,6 +71,9 @@ void ReleaseMessage(const char* message) {
 void DestroyPlain(ExceptionObject*) {}
 void DeletePlain(ExceptionObject* object) { std::free(object); }
 void DestroyMessage(ExceptionObject* object) { ReleaseMessage(object->message); object->message = nullptr; }
+static void APS5_VABI DestroyGuestMessage_nid_no_patch(void* object) {
+    DestroyMessage(static_cast<ExceptionObject*>(object));
+}
 void DeleteMessage(ExceptionObject* object) { DestroyMessage(object); std::free(object); }
 const char* PlainWhat(const ExceptionObject* object) {
     auto* table = static_cast<const ExceptionVtable*>(object->vtable);
@@ -86,6 +89,12 @@ const char* PlainWhat(const ExceptionObject* object) {
     return name;
 }
 const char* MessageWhat(const ExceptionObject* object) { return object->message ? object->message : ""; }
+static void APS5_VABI GuestDestroyPlain_nid_no_patch(ExceptionObject* object) { DestroyPlain(object); }
+static void APS5_VABI GuestDeletePlain_nid_no_patch(ExceptionObject* object) { DeletePlain(object); }
+static const char* APS5_VABI GuestPlainWhat_nid_no_patch(const ExceptionObject* object) { return PlainWhat(object); }
+static void APS5_VABI GuestDestroyMessage_nid_no_patch(ExceptionObject* object) { DestroyMessage(object); }
+static void APS5_VABI GuestDeleteMessage_nid_no_patch(ExceptionObject* object) { DeleteMessage(object); }
+static const char* APS5_VABI GuestMessageWhat_nid_no_patch(const ExceptionObject* object) { return MessageWhat(object); }
 void Construct(ExceptionObject* object, const ExceptionVtable& table, const char* message) {
     object->vtable = &table.destroy;
     object->message = CopyMessage(message);
@@ -102,7 +111,8 @@ ExceptionObject* Assign(ExceptionObject* object, const ExceptionObject* source) 
 [[noreturn]] void ThrowMessage(const ExceptionVtable& table, const char* message) {
     auto* object = static_cast<ExceptionObject*>(__cxa_allocate_exception_nid_postfix(sizeof(ExceptionObject)));
     Construct(object, table, message);
-    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)), [](void* p) { DestroyMessage(static_cast<ExceptionObject*>(p)); });
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
+        reinterpret_cast<decltype(Header::destructor)>(DestroyGuestMessage_nid_no_patch));
 }
 [[noreturn]] void ThrowPlain(const ExceptionVtable& table) {
     auto* object = static_cast<ExceptionObject*>(__cxa_allocate_exception_nid_postfix(sizeof(void*)));
@@ -114,7 +124,7 @@ ExceptionObject* Assign(ExceptionObject* object, const ExceptionObject* source) 
 extern "C" {
 LibcException::TypeRecord _ZTISt8ios_base_nid_postfix {LibcException::ClassTypeVtable + 2, "St8ios_base", nullptr};
 LibcException::TypeRecord _ZTISt9exception_nid_postfix {LibcException::ClassTypeVtable + 2, "St9exception", nullptr};
-LibcException::ExceptionVtable _ZTVSt9exception_nid_postfix {0, &_ZTISt9exception_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt9exception_nid_postfix {0, &_ZTISt9exception_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt9exceptionD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt9exceptionD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt9exceptionD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
@@ -132,7 +142,7 @@ void APS5_VABI _ZNSt9exceptionC1Ev_nid_postfix(LibcException::ExceptionObject* s
 void APS5_VABI _ZNSt9exceptionC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9exception_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt8bad_cast_nid_postfix {LibcException::SingleTypeVtable + 2, "St8bad_cast", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt8bad_cast_nid_postfix {0, &_ZTISt8bad_cast_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt8bad_cast_nid_postfix {0, &_ZTISt8bad_cast_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt8bad_castD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt8bad_castD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt8bad_castD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
@@ -141,7 +151,7 @@ void APS5_VABI _ZNSt8bad_castC1Ev_nid_postfix(LibcException::ExceptionObject* se
 void APS5_VABI _ZNSt8bad_castC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt8bad_cast_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt10bad_typeid_nid_postfix {LibcException::SingleTypeVtable + 2, "St10bad_typeid", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt10bad_typeid_nid_postfix {0, &_ZTISt10bad_typeid_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt10bad_typeid_nid_postfix {0, &_ZTISt10bad_typeid_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt10bad_typeidD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt10bad_typeidD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt10bad_typeidD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
@@ -150,7 +160,7 @@ void APS5_VABI _ZNSt10bad_typeidC1Ev_nid_postfix(LibcException::ExceptionObject*
 void APS5_VABI _ZNSt10bad_typeidC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt10bad_typeid_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt9bad_alloc_nid_postfix {LibcException::SingleTypeVtable + 2, "St9bad_alloc", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt9bad_alloc_nid_postfix {0, &_ZTISt9bad_alloc_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt9bad_alloc_nid_postfix {0, &_ZTISt9bad_alloc_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt9bad_allocD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt9bad_allocD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt9bad_allocD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
@@ -159,7 +169,7 @@ void APS5_VABI _ZNSt9bad_allocC1Ev_nid_postfix(LibcException::ExceptionObject* s
 void APS5_VABI _ZNSt9bad_allocC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt9bad_alloc_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt20bad_array_new_length_nid_postfix {LibcException::SingleTypeVtable + 2, "St20bad_array_new_length", &_ZTISt9bad_alloc_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt20bad_array_new_length_nid_postfix {0, &_ZTISt20bad_array_new_length_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt20bad_array_new_length_nid_postfix {0, &_ZTISt20bad_array_new_length_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt20bad_array_new_lengthD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt20bad_array_new_lengthD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt20bad_array_new_lengthD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
@@ -168,7 +178,7 @@ void APS5_VABI _ZNSt20bad_array_new_lengthC1Ev_nid_postfix(LibcException::Except
 void APS5_VABI _ZNSt20bad_array_new_lengthC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt20bad_array_new_length_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt17bad_function_call_nid_postfix {LibcException::SingleTypeVtable + 2, "St17bad_function_call", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt17bad_function_call_nid_postfix {0, &_ZTISt17bad_function_call_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt17bad_function_call_nid_postfix {0, &_ZTISt17bad_function_call_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt17bad_function_callD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt17bad_function_callD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt17bad_function_callD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
@@ -177,14 +187,14 @@ void APS5_VABI _ZNSt17bad_function_callC1Ev_nid_postfix(LibcException::Exception
 void APS5_VABI _ZNSt17bad_function_callC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt17bad_function_call_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt12bad_weak_ptr_nid_postfix {LibcException::SingleTypeVtable + 2, "St12bad_weak_ptr", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt12bad_weak_ptr_nid_postfix {0, &_ZTISt12bad_weak_ptr_nid_postfix, LibcException::DestroyPlain, LibcException::DeletePlain, LibcException::PlainWhat};
+LibcException::ExceptionVtable _ZTVSt12bad_weak_ptr_nid_postfix {0, &_ZTISt12bad_weak_ptr_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
 void APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt12bad_weak_ptrD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt12bad_weak_ptrD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
 const char* APS5_VABI _ZNKSt12bad_weak_ptr4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
 
 LibcException::TypeRecord _ZTISt11logic_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11logic_error", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt11logic_error_nid_postfix {0, &_ZTISt11logic_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt11logic_error_nid_postfix {0, &_ZTISt11logic_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt11logic_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt11logic_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt11logic_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -196,7 +206,7 @@ void APS5_VABI _ZNSt11logic_errorC2ERKS__nid_postfix(LibcException::ExceptionObj
 LibcException::ExceptionObject* APS5_VABI _ZNSt11logic_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt13runtime_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St13runtime_error", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt13runtime_error_nid_postfix {0, &_ZTISt13runtime_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt13runtime_error_nid_postfix {0, &_ZTISt13runtime_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt13runtime_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt13runtime_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt13runtime_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -208,7 +218,7 @@ void APS5_VABI _ZNSt13runtime_errorC2ERKS__nid_postfix(LibcException::ExceptionO
 LibcException::ExceptionObject* APS5_VABI _ZNSt13runtime_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt16invalid_argument_nid_postfix {LibcException::SingleTypeVtable + 2, "St16invalid_argument", &_ZTISt11logic_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt16invalid_argument_nid_postfix {0, &_ZTISt16invalid_argument_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt16invalid_argument_nid_postfix {0, &_ZTISt16invalid_argument_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt16invalid_argumentD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt16invalid_argumentD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt16invalid_argumentD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -220,7 +230,7 @@ void APS5_VABI _ZNSt16invalid_argumentC2ERKS__nid_postfix(LibcException::Excepti
 LibcException::ExceptionObject* APS5_VABI _ZNSt16invalid_argumentaSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt12out_of_range_nid_postfix {LibcException::SingleTypeVtable + 2, "St12out_of_range", &_ZTISt11logic_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt12out_of_range_nid_postfix {0, &_ZTISt12out_of_range_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt12out_of_range_nid_postfix {0, &_ZTISt12out_of_range_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt12out_of_rangeD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12out_of_rangeD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12out_of_rangeD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -232,7 +242,7 @@ void APS5_VABI _ZNSt12out_of_rangeC2ERKS__nid_postfix(LibcException::ExceptionOb
 LibcException::ExceptionObject* APS5_VABI _ZNSt12out_of_rangeaSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt12domain_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St12domain_error", &_ZTISt11logic_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt12domain_error_nid_postfix {0, &_ZTISt12domain_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt12domain_error_nid_postfix {0, &_ZTISt12domain_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt12domain_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12domain_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12domain_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -244,7 +254,7 @@ void APS5_VABI _ZNSt12domain_errorC2ERKS__nid_postfix(LibcException::ExceptionOb
 LibcException::ExceptionObject* APS5_VABI _ZNSt12domain_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt12length_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St12length_error", &_ZTISt11logic_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt12length_error_nid_postfix {0, &_ZTISt12length_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt12length_error_nid_postfix {0, &_ZTISt12length_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt12length_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12length_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12length_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -256,7 +266,7 @@ void APS5_VABI _ZNSt12length_errorC2ERKS__nid_postfix(LibcException::ExceptionOb
 LibcException::ExceptionObject* APS5_VABI _ZNSt12length_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt12system_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St12system_error", &_ZTISt13runtime_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt12system_error_nid_postfix {0, &_ZTISt12system_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt12system_error_nid_postfix {0, &_ZTISt12system_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt12system_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12system_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt12system_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -266,7 +276,7 @@ void APS5_VABI _ZNSt12system_errorC2ERKS__nid_postfix(LibcException::ExceptionOb
 LibcException::ExceptionObject* APS5_VABI _ZNSt12system_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt11regex_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11regex_error", &_ZTISt13runtime_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt11regex_error_nid_postfix {0, &_ZTISt11regex_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt11regex_error_nid_postfix {0, &_ZTISt11regex_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt11regex_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt11regex_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt11regex_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -276,13 +286,13 @@ void APS5_VABI _ZNSt11regex_errorC2ERKS__nid_postfix(LibcException::ExceptionObj
 LibcException::ExceptionObject* APS5_VABI _ZNSt11regex_erroraSERKS__nid_postfix(LibcException::ExceptionObject* self, const LibcException::ExceptionObject* source) { return LibcException::Assign(self, source); }
 
 LibcException::TypeRecord _ZTISt11range_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11range_error", &_ZTISt13runtime_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt11range_error_nid_postfix {0, &_ZTISt11range_error_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVSt11range_error_nid_postfix {0, &_ZTISt11range_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt11range_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt11range_errorD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt11range_errorD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
 
 LibcException::TypeRecord _ZTINSt8ios_base7failureE_nid_postfix {LibcException::SingleTypeVtable + 2, "NSt8ios_base7failureE", &_ZTISt12system_error_nid_postfix};
-LibcException::ExceptionVtable _ZTVNSt8ios_base7failureE_nid_postfix {0, &_ZTINSt8ios_base7failureE_nid_postfix, LibcException::DestroyMessage, LibcException::DeleteMessage, LibcException::MessageWhat};
+LibcException::ExceptionVtable _ZTVNSt8ios_base7failureE_nid_postfix {0, &_ZTINSt8ios_base7failureE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt8ios_base7failureD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt8ios_base7failureD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 void APS5_VABI _ZNSt8ios_base7failureD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeleteMessage(self); }
@@ -304,6 +314,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
     auto* object = static_cast<RegexObject*>(__cxa_allocate_exception_nid_postfix(sizeof(RegexObject)));
     LibcException::Construct(&object->base, _ZTVSt11regex_error_nid_postfix, "regular expression error");
     object->code = code;
-    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(&_ZTISt11regex_error_nid_postfix), [](void* p) { LibcException::DestroyMessage(static_cast<LibcException::ExceptionObject*>(p)); });
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(&_ZTISt11regex_error_nid_postfix),
+        reinterpret_cast<decltype(LibcException::Header::destructor)>(LibcException::DestroyGuestMessage_nid_no_patch));
 }
 }
