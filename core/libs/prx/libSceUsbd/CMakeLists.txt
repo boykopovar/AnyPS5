@@ -1,11 +1,15 @@
-add_library(libSceUsbd SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceUsbd SHARED EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/UsbdTransfer.cpp
+)
 target_include_directories(libSceUsbd PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceUsbd PRIVATE usb-1.0)
 configure_windows_unwind(libSceUsbd)
 
 if(BUILD_TESTING)
     add_test_executable(guest_usbd_tests ${LIBS_INCLUDE_DIR}/tests/GuestUsbd.cpp)
     target_include_directories(guest_usbd_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_usbd_tests PRIVATE libSceUsbd libc)
+    target_link_libraries(guest_usbd_tests PRIVATE libSceUsbd libc usb-1.0)
     configure_windows_unwind(guest_usbd_tests)
     add_test(NAME guest_usbd COMMAND guest_usbd_tests)
     if(WIN32)
