@@ -204,7 +204,6 @@ private:
         std::uint64_t received;
     };
     static std::vector<PendingWait>& pendingWaits();
-    static bool landWaitsEnabled();
     static void notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received);
     void landPendingWaits(std::uint32_t queue);
     struct ResolvedDispatch {
@@ -225,7 +224,6 @@ private:
         double resolveMs = 0, resolveMaxMs = 0, ageMs = 0, ageMaxMs = 0;
         std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
     };
-    static bool groupCaptureEnabled();
     static std::map<std::size_t, ResolvedDispatch>& resolvedAhead();
     static GroupCaptureStats& groupCaptureStats();
     static std::size_t& currentPacketOffset();

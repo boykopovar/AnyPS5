@@ -48,7 +48,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     ResolvedDispatch ahead;
     bool fromAhead = false;
     auto& groupStats = groupCaptureStats();
-    if (!resolving && groupCaptureEnabled()) {
+    if (!resolving) {
         auto& parked = resolvedAhead();
         if (const auto found = parked.find(currentPacketOffset()); found != parked.end()) {
             ahead = std::move(found->second);

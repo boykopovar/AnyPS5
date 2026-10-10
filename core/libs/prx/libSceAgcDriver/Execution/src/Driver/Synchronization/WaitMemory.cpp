@@ -58,13 +58,8 @@ std::vector<Driver::PendingWait>& Driver::pendingWaits() {
     return waits;
 }
 
-bool Driver::landWaitsEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_LAND_WAITS") == nullptr;
-    return enabled;
-}
-
 void Driver::notePendingWait(std::span<const std::uint32_t> packet, std::uint32_t queue, std::uint64_t received) {
-    if (!landWaitsEnabled() || packet.size() > std::tuple_size_v<decltype(PendingWait::words)>) return;
+    if (packet.size() > std::tuple_size_v<decltype(PendingWait::words)>) return;
     static const bool allQueues = std::getenv("APS5_LAND_WAITS_ALL_QUEUES") != nullptr;
     if (!allQueues && queue == 0) return;
     if (Pm4::WaitSatisfiedUnchecked(packet)) return;

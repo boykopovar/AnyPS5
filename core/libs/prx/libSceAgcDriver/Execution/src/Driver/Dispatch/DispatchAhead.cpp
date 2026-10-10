@@ -9,11 +9,6 @@
 
 namespace AgcDriver::DriverDetail {
 
-bool Driver::groupCaptureEnabled() {
-    static const bool enabled = std::getenv("APS5_NO_GROUP_CAPTURE") == nullptr && landWaitsEnabled();
-    return enabled;
-}
-
 std::map<std::size_t, Driver::ResolvedDispatch>& Driver::resolvedAhead() {
     static thread_local std::map<std::size_t, ResolvedDispatch> resolved;
     return resolved;
@@ -99,7 +94,6 @@ bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, cons
 }
 
 void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from) {
-    if (!groupCaptureEnabled()) return;
     static const bool allQueues = std::getenv("APS5_GROUP_CAPTURE_ALL_QUEUES") != nullptr;
     if (!allQueues && submission.queue == 0) return;
     auto& resolved = resolvedAhead();
