@@ -360,6 +360,19 @@ bool ClearedViewEnabled() {
     return !disabled;
 }
 
+bool DepthCopyEnabled() {
+    static const bool disabled = std::getenv("APS5_NO_DEPTH_COPY") != nullptr;
+    return !disabled;
+}
+
+std::uint64_t DepthCopyMinBytes() {
+    static const std::uint64_t bytes = [] {
+        const char* text = std::getenv("APS5_DEPTH_COPY_MIN_KIB");
+        return (text != nullptr ? std::strtoull(text, nullptr, 10) : 1024ull) << 10u;
+    }();
+    return bytes;
+}
+
 // Surfaces whose storage image could not be made (no writable committed pages, say): remembered
 // so the sampled lookup does not throw and fall back on every use. A failure is keyed by the surface
 // (address and size: the heap reuses addresses) and holds only while the guest mappings are what
@@ -484,8 +497,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // A storage image whose results for this surface (or for a mip chain containing it) are still on
     // the GPU supplies the texture by a view of it; anything else needs those results in guest
     // memory first.
+    const bool depthCopy = depthCompare && DepthCopyEnabled() && guestBytes >= DepthCopyMinBytes() && Texture::DepthCopyFormat(ResolveTextureFormat(resource.format)) != VK_FORMAT_UNDEFINED && resource.dimension != TextureDimension::k3D;
     auto source = StorageTexture::FindPending(address, guestBytes);
-    if (source != nullptr && (depthCompare || !Texture::CanCopyFrom(*source, resource) || MetadataMoved(*source, resource))) source.reset();
+    if (source != nullptr && (depthCompare ? !depthCopy || !Texture::CanDepthCopyFrom(*source, resource) : !Texture::CanCopyFrom(*source, resource))) source.reset();
+    if (source != nullptr && MetadataMoved(*source, resource)) source.reset();
     std::optional<DccKeys> keys;
     bool clearThroughKeys = false;
     if (source != nullptr && resource.dccAddress != 0 && IsDccClear(source->FilledKeys())) {
@@ -509,12 +524,13 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     // import, recorded behind the producer, so no bytes are read or compared on the CPU and nothing
     // waits for the producer. A fast-cleared surface (keys) is viewed only through an image whose own
     // descriptor carries the DCC address (below); it stays a snapshot otherwise, its texels not read.
-    if (!depthCompare && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes)) {
+    if ((!depthCompare || depthCopy) && source == nullptr && !clearThroughKeys && SampledFromStorageEligible(context, resource, guestBytes)) {
 
         keys = scanKeys();
         if (*keys == DccKeys::Uncompressed) {
             source = sampledStorageSource(context, resource, guestBytes);
-        } else if (ClearedViewEnabled() && StorageClearAvailable(context, resource.format, *keys)) {
+            if (source != nullptr && depthCompare && !Texture::CanDepthCopyFrom(*source, resource)) source.reset();
+        } else if (!depthCompare && ClearedViewEnabled() && StorageClearAvailable(context, resource.format, *keys)) {
             // A fast-cleared surface is viewed as well, through its image cleared on the GPU (the
             // lookup's Refresh, see StorageTexture::upload), when the image's own descriptor names
             // the same DCC metadata so the refresh sees the keys. A snapshot of the clear texels
@@ -549,6 +565,11 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     if (!keys.has_value()) keys = scanKeys();
     if (disabled) {
+        if (source != nullptr && depthCompare) {
+            auto texture = std::make_shared<Texture>(context, source, resource, components, Texture::DepthCopyTag{});
+            texture->RefreshDepthCopy();
+            return texture;
+        }
         if (source != nullptr) return std::make_shared<Texture>(context, source, resource, components);
         std::vector<std::byte> snapshot(bytes);
         ReadTextureSurface(resource, *keys, snapshot);
@@ -565,6 +586,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             // see (keys, and no pending results to prefer) ends the view: a snapshot holds the clear.
             if ((source == nullptr || source == it->source) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, resource.dccAddress)) {
                 if (!GuestMemory::UnchangedSince(address, bytes, it->source->Generation())) it->source->Refresh();
+                if (it->texture->IsDepthCopy()) it->texture->RefreshDepthCopy();
                 it->keys = *keys;
                 touchTexture(cache, it);
                 logLookup({it->texture.get(), resource, guestBytes, *keys, 0, it->source.get()});
@@ -597,7 +619,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     if (source != nullptr) {
         entry.source = source;
         entry.sourceVersion = source->Version();
-        entry.texture = std::make_shared<Texture>(context, source, resource, components);
+        if (depthCompare) {
+            entry.texture = std::make_shared<Texture>(context, source, resource, components, Texture::DepthCopyTag{});
+            entry.texture->RefreshDepthCopy();
+        } else {
+            entry.texture = std::make_shared<Texture>(context, source, resource, components);
+        }
         entry.accounted = source->Cached() ? 0u : heldBytes(*source);
         counters.fromStorage.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -2243,6 +2270,9 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         }
     }
     pendingSerialSeen = EpochRevalidate() && StorageTexture::PendingSerial() == serialBefore ? serialBefore : 0;
+    for (const auto& texture : textures) {
+        if (texture != nullptr && texture->IsDepthCopy()) texture->RefreshDepthCopy();
+    }
     return finish(fast, true);
 }
 
