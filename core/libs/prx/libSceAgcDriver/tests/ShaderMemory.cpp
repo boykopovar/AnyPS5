@@ -5,6 +5,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
+#include "Optimization/SrtWalker/SrtDescriptorEvaluation.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
@@ -378,6 +379,66 @@ void verifyEvaluatedValues() {
     require(table.Find(values[7].get(), found) && found == 21u, "evaluated values: a second insert replaced the first value");
     IrValue absent(IrOpcode::Void, IrType::U32, 1000u);
     require(!table.Find(&absent, found), "evaluated values: a value that was never inserted was found");
+}
+
+void verifySignedSrtComparison() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.userDataBase = 8;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t id = 0;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        auto value = std::make_unique<IrValue>(opcode, type, id++);
+        for (auto* argument : arguments) value->AddArgument(argument);
+        values.push_back(std::move(value));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& registerValue = make(IrOpcode::Void, IrType::ScalarReg);
+    registerValue.SetRegister({RegisterBank::Scalar, 8u});
+    auto& userData = make(IrOpcode::GetUserData, IrType::U32, {&registerValue});
+    auto& zero = constant(0u);
+    auto& intMin = constant(0x80000000u);
+    auto& intMax = constant(0x7fffffffu);
+    auto& negative = constant(0xau);
+    auto& nonnegative = constant(0xbu);
+    auto& greaterThanMin = constant(0xcu);
+    auto& equalMin = constant(0xdu);
+    auto& belowMax = constant(0xeu);
+    auto& equalMax = constant(0xfu);
+    auto& isNegative = make(IrOpcode::SLessThan32, IrType::Bool, {&userData, &zero});
+    auto& aboveMin = make(IrOpcode::SLessThan32, IrType::Bool, {&intMin, &userData});
+    auto& belowMaxValue = make(IrOpcode::SLessThan32, IrType::Bool, {&userData, &intMax});
+    DescriptorSource source;
+    source.dwordCount = 3u;
+    source.dwords[0] = &make(IrOpcode::SelectU32, IrType::U32, {&isNegative, &negative, &nonnegative});
+    source.dwords[1] = &make(IrOpcode::SelectU32, IrType::U32, {&aboveMin, &greaterThanMin, &equalMin});
+    source.dwords[2] = &make(IrOpcode::SelectU32, IrType::U32, {&belowMaxValue, &belowMax, &equalMax});
+    plan.descriptorSources.push_back(source);
+    const std::array<std::uint32_t, 1> sourceIndex{0u};
+    const std::array<std::pair<std::uint32_t, std::array<std::uint32_t, 3>>, 4> cases{{
+        {0x80000000u, {0xau, 0xdu, 0xeu}},
+        {0xffffffffu, {0xau, 0xcu, 0xeu}},
+        {0u, {0xbu, 0xcu, 0xeu}},
+        {0x7fffffffu, {0xbu, 0xcu, 0xfu}},
+    }};
+    std::vector<DescriptorValue> descriptors;
+    std::vector<std::uint32_t> flat;
+    std::vector<std::uint8_t> active;
+    for (const auto& [input, expected] : cases) {
+        const std::array<std::uint32_t, 1> userDataWords{input};
+        const SrtRuntime runtime{userDataWords};
+        require(Detail::EvaluateRuntimeSourcesImpl(plan, sourceIndex, runtime, descriptors, flat, false, {}, active), "signed SRT comparison: descriptor expression could not be evaluated");
+        require(descriptors.size() == 1u && descriptors[0].dwordCount == expected.size(), "signed SRT comparison: descriptor shape changed");
+        for (std::size_t index = 0; index < expected.size(); ++index) {
+            require(descriptors[0].dwords[index] == expected[index], "signed SRT comparison: signed boundary selected the wrong descriptor dword");
+        }
+    }
 }
 
 // The pure flat slots of a hand-built plan (Detail::ComputePureFlatSlots): a slot is pure unless
@@ -2471,6 +2532,18 @@ void verifyGuardedNullPointers() {
 #endif
 }
 
+void verifyCubeDepthCompareMode() {
+    using namespace ShaderRecompiler;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2DArray;
+    image.depthCompare = true;
+    const DescriptorValue descriptor{{0x02143930u, 0x08200000u, 0u, 0xb0500facu, 5u, 0x00700000u, 0u, 0u}, 8u};
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+    require(modes[selected].cube && (modes[selected].emulatedCompare & EmulatedCompare::Enabled) != 0u, "cube color comparison did not select its emulated runtime mode");
+}
+
 int main(int argc, char** argv) {
     try {
         using namespace ShaderRecompiler;
@@ -2488,6 +2561,7 @@ int main(int argc, char** argv) {
         verifyRegisterSources();
         verifyEvaluatedValues();
         verifyFrontendPair();
+        verifySignedSrtComparison();
         verifyPureFlatSlots();
         verifyBindlessTable();
         verifyDescriptorPhis();
@@ -2511,6 +2585,7 @@ int main(int argc, char** argv) {
         verifyBdaReadFallbackFunctions();
         verifyFunctionLdsBound();
         verifyGuardedNullPointers();
+        verifyCubeDepthCompareMode();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{
             0x07230203u, 0x00010000u, 0u, 5u, 0u,

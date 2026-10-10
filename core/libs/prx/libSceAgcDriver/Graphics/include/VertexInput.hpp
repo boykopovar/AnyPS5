@@ -171,10 +171,10 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     Require(attribute.fetchIndex <= 1, "unsupported vertex fetch index");
     const auto index = attribute.fetchIndex == 0 ? maxIndex : firstInstance + instances - 1u;
     const auto bytes = DecodeVertexFormat(attribute).bytes;
-    Require(stride == 0 || index < records, "vertex fetch exceeds descriptor record count");
-    const auto available = stride == 0 ? ZeroStrideAvailableBytes(attribute) : static_cast<std::uint64_t>(records) * stride;
+    Require(stride == 0 || VertexBufferOutOfBoundsSelect(attribute) <= 1u || index < records, "vertex fetch exceeds descriptor record count");
     const auto required = static_cast<std::uint64_t>(stride) * index + bytes;
-    Require(required <= available && required <= std::numeric_limits<std::size_t>::max(), "vertex fetch exceeds descriptor byte range");
+    Require(stride != 0 || required <= ZeroStrideAvailableBytes(attribute), "vertex fetch exceeds descriptor byte range");
+    Require(required <= std::numeric_limits<std::size_t>::max(), "vertex fetch exceeds addressable byte range");
     const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
     Require(address != 0 && required <= std::numeric_limits<std::uint64_t>::max() - address, "invalid vertex buffer address range");
     return static_cast<std::size_t>(required);
@@ -244,6 +244,15 @@ inline std::optional<std::uint32_t> HighestDrawIndex(std::span<const std::byte> 
         highest = std::max(highest.value_or(0u), index);
     }
     return highest;
+}
+
+inline std::vector<std::size_t> SoloZeroPaddedFetchIndices(const std::vector<VertexFetch>& fetches, const std::vector<std::size_t>& fetchValid) {
+    Require(fetchValid.size() == fetches.size(), "fetch validity does not match the fetch count");
+    std::vector<std::size_t> solo;
+    for (std::size_t i = 0; i < fetches.size(); ++i) {
+        if (fetchValid[i] < fetches[i].end - fetches[i].begin) solo.push_back(i);
+    }
+    return solo;
 }
 
 }

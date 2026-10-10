@@ -102,10 +102,15 @@ void testRegisters() {
         pairs[4] = 0xffffffffu;
         expectFailure([&] { execute(state, packet); }, "sentinel");
         check(!registers.contains(0x12), "invalid indirect packet partially changed state");
+        std::array<std::uint32_t, 2> values{0x11223344, 0x55667788};
+        execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x0a, 2}));
+        check(registers.at(0x0a) == 0x11223344 && registers.at(0x0b) == 0x55667788, "consecutive indirect registers lost");
+        expectFailure([&] { execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0xffff, 2})); }, "indirect-register");
+        expectFailure([&] { execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x4000000a, 2})); }, "indirect-register");
         packet[1] = 0x1000;
         packet[2] = 0;
         expectFailure([&] { execute(state, packet); }, "guest");
-        packet[3] = 0;
+        packet[3] = 0x10000;
         expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, "control");
     }
     execute(state, makePacket(0x69, {0x11, 50, 51}));
@@ -114,7 +119,17 @@ void testRegisters() {
     check(state.userConfig.at(0x10) == 60, "uconfig index zero failed");
     execute(state, makePacket(0x7a, {0x20000243, 0x441}));
     check(state.indexType == 1 && state.userConfig.at(0x243) == 0x441, "indexed VGT_INDEX_TYPE write lost state");
+    execute(state, makePacket(0x7a, {0x10000242, 0x11}));
+    check(state.userConfig.at(0x242) == 0x11, "indexed VGT_PRIMITIVE_TYPE write lost state");
     expectFailure([&] { execute(state, makePacket(0x7a, {0x10000010, 1})); }, "bank selection");
+    expectFailure([&] { execute(state, makePacket(0x7a, {0x10000243, 1})); }, "bank selection");
+    expectFailure([&] { execute(state, makePacket(0x7a, {0x20000242, 1})); }, "bank selection");
+    execute(state, makePacket(0x28, {0x80000000, 0x80000000}));
+    execute(state, makePacket(0x28, {0, 0}));
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000001, 0x80000000}), 0); }, "shadowing");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000, 0x80000002}), 0); }, "shadowing");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000, 0x80000000}), 0x20); }, "compute queue");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x28, {0x80000000}), 0); }, "packet size");
     expectFailure([&] { execute(state, makePacket(0x69, {0xffff, 1, 2})); }, "overflow");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x9f, {0, 0, 0x80000000, 0}), 0x20); }, "compute");
 }
@@ -165,6 +180,10 @@ void testContextAndBases() {
     AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x2041}), 0);
     AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0xa041}), 0);
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x4041}), 0); }, "dispatch modifiers");
+    AgcDriver::Pm4::Validate(makePacket(0x15, {0x280, 1, 1, 0x2045}, 2), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x2045}, 2), 0);
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x41}, 4), 0); }, "header flags");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x49}), 0); }, "dispatch modifiers");
     execute(state, makePacket(0x13, {32}));
     execute(state, makePacket(0x26, {0x1000, 1}));
     execute(state, makePacket(0x2a, {1}));
@@ -313,6 +332,8 @@ void testMemory() {
     check(data[0] == 41 && data[1] == 42, "WRITE_DATA from the PFP failed");
     execute(state, makePacket(0x37, {0x04100200, low(data.data()), high(data.data()), 61, 62}));
     check(data[0] == 61 && data[1] == 62, "WRITE_DATA with a cache policy failed");
+    execute(state, makePacket(0x37, {0x40100500, low(data.data()), high(data.data()), 81, 82}));
+    check(data[0] == 81 && data[1] == 82, "WRITE_DATA to memory from the graphics queue failed");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x08000100, low(data.data()), high(data.data()), 71}), 0); }, "reserved");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x80000100, low(data.data()), high(data.data()), 51}), 0); }, "engine");
     execute(state, makePacket(0x81, {4, 31, 32}));
@@ -552,6 +573,15 @@ void testEventWrite() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x410, 0, 0}), 0); }, "packet size");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x13a, 0, 0}), 0); }, "event type 58");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x0d}), 0); }, "event type 13");
+    for (const auto eventType : {0x19u, 0x1au, 0x26u}) {
+        AgcDriver::Pm4::Validate(makePacket(0x46, {eventType}), 0);
+        AgcDriver::Pm4::Validate(makePacket(0x46, {eventType}), 0x20);
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x100u | eventType}), 0); }, "pipeline statistics or SQ event index");
+    }
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x24}), 0);
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x24}), 0x20); }, "compute queue");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x424}), 0); }, "VGT_FLUSH event index");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x1e, 0x1000, 0}), 0); }, "event type 30");
 }
 
 void testAcquireMem() {
@@ -584,12 +614,14 @@ void testAcquireMem() {
     invalidWord(0, captured[0] | 2u, "header flags");
     invalidWord(1, 4, "control flags");
     invalidWord(1, 0x00800000, "control flags");
-    invalidWord(3, 1, "above 40 bits");
-    invalidWord(5, 1, "above 40 bits");
+    invalidWord(3, 0x100, "range high bits");
+    invalidWord(5, 0x100, "range high bits");
     invalidWord(6, 0x10000, "poll interval");
     invalidWord(7, 0x40000, "GCR flags");
     invalidWord(7, 0x2000, "cache discard");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 2, 0, 0xffffffff, 0, 0, 0}), 0); }, "range exceeds");
+    AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0xffffffff, 0xff, 0, 0, 10, 0xc3b1}), 0);
+    AgcDriver::Pm4::Validate(makePacket(0x58, {0, 2, 0, 0xffffffff, 0, 0, 0}), 0);
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 2, 0, 0xffffffff, 0xff, 0, 0}), 0); }, "range exceeds");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0, 0, 0, 0}), 0); }, "packet size");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0, 0, 0, 0, 0, 0, 0}), 0); }, "packet size");
 }

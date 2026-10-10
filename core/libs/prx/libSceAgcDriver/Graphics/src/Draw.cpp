@@ -914,6 +914,17 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
     return copy;
 }
 
+DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t validBytes) {
+    Require(validBytes <= bytes, "the valid bytes of a vertex fetch exceed the fetch");
+    GuestMemory::FlushGpuWrites(address, bytes);
+    DrawInputCopy copy;
+    copy.buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    const auto span = copy.buffer->Bytes();
+    GuestMemory::Read(address, span.subspan(0, validBytes), 1);
+    std::fill(span.begin() + static_cast<std::ptrdiff_t>(validBytes), span.end(), std::byte{0});
+    return copy;
+}
+
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
     if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
@@ -1077,7 +1088,9 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.maxIndex += draw.firstVertex;
     }
     std::vector<VertexFetch> fetches;
+    std::vector<std::size_t> fetchValid;
     fetches.reserve(attributes.size());
+    fetchValid.reserve(attributes.size());
     std::vector<std::size_t> fetchOf(attributes.size(), 0);
     std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
     for (std::size_t i = 0; i < attributes.size(); ++i) {
@@ -1091,10 +1104,24 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
+        const auto stride = (fields[1] >> 16u) & 0x3fffu;
         fetchOf[i] = fetches.size();
-        fetches.push_back({address, address + bytes, (fields[1] >> 16u) & 0x3fffu, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
+        fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
+        const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
+        fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
     }
-    const auto plan = PlanVertexCopies(fetches);
+    const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
+    std::vector<bool> isSolo(fetches.size(), false);
+    for (const auto f : soloFetches) isSolo[f] = true;
+    std::vector<VertexFetch> plannedFetches;
+    plannedFetches.reserve(fetches.size());
+    std::vector<std::size_t> plannedOf(fetches.size(), 0);
+    for (std::size_t f = 0; f < fetches.size(); ++f) {
+        if (isSolo[f]) continue;
+        plannedOf[f] = plannedFetches.size();
+        plannedFetches.push_back(fetches[f]);
+    }
+    const auto plan = PlanVertexCopies(plannedFetches);
     std::vector<VkBuffer> rangeHandles;
     std::vector<VkDeviceSize> rangeOffsets;
     rangeHandles.reserve(plan.copies.size());
@@ -1115,6 +1142,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         rangeOffsets.push_back(0);
         inputs.vertexBuffers.push_back(std::move(copy.buffer));
     }
+    std::vector<VkBuffer> soloHandles(fetches.size(), VK_NULL_HANDLE);
+    for (const auto f : soloFetches) {
+        const auto begin = fetches[f].begin;
+        const auto bytes = static_cast<std::size_t>(fetches[f].end - begin);
+        auto copy = CopyZeroPaddedDrawInput(context, begin, bytes, fetchValid[f]);
+        soloHandles[f] = copy.buffer->Handle();
+        inputs.vertexBuffers.push_back(std::move(copy.buffer));
+    }
     for (std::size_t i = 0; i < attributes.size(); ++i) {
         if (zeroed[i] != nullptr) {
             inputs.vertexHandles.push_back(zeroed[i]->Handle());
@@ -1122,8 +1157,15 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             inputs.vertexBuffers.push_back(std::move(zeroed[i]));
             continue;
         }
-        inputs.vertexHandles.push_back(rangeHandles[plan.copyOf[fetchOf[i]]]);
-        inputs.vertexOffsets[i] = rangeOffsets[plan.copyOf[fetchOf[i]]] + plan.offsets[fetchOf[i]];
+        const auto f = fetchOf[i];
+        if (isSolo[f]) {
+            inputs.vertexHandles.push_back(soloHandles[f]);
+            inputs.vertexOffsets[i] = 0;
+            continue;
+        }
+        const auto j = plannedOf[f];
+        inputs.vertexHandles.push_back(rangeHandles[plan.copyOf[j]]);
+        inputs.vertexOffsets[i] = rangeOffsets[plan.copyOf[j]] + plan.offsets[j];
     }
     timer.phase(PhaseVertex);
     return inputs;

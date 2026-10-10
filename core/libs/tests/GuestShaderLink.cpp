@@ -16,7 +16,9 @@ static unsigned links = 0;
 static const Shader* mappedPixel = nullptr;
 
 extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
-    Require(!stages.empty() && stages[0] != nullptr && context.size() == 2u && primitive.size() == 3u);
+    Require(!stages.empty() && stages[0] != nullptr && primitive.size() == 3u);
+    Require((stages.size() == 1u && context.size() == 2u) ||
+            (stages.size() == 2u && stages[1] == mappedPixel && context.size() == 34u));
     ++preparations;
 }
 
@@ -104,5 +106,5 @@ int main() {
     input.default_value = 2;
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == 0);
     Require(context[2].value == 0x220);
-    Require(preparations == 4u && mappings == 3u && links == 7u);
+    Require(preparations == 7u && mappings == 3u && links == 7u);
 }

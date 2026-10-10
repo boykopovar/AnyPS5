@@ -55,6 +55,8 @@ public:
     void AddMemoryModel(std::uint32_t addressingModel, std::uint32_t memoryModel);
     void AddName(std::uint32_t target, const std::string& name);
     void AddFunction(std::span<const std::uint32_t> words);
+    void BeginHelperFunction();
+    void EndHelperFunction();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
     void PatchDeferredPhi(SpirvDeferredPhi phi, std::size_t incoming, std::uint32_t value, std::uint32_t parent);
 
@@ -253,6 +255,8 @@ private:
     std::vector<std::uint32_t> typeDeclarations;
     std::vector<std::uint32_t> globalVariables;
     std::vector<std::uint32_t> functionInstructions;
+    std::vector<std::uint32_t> helperFunctionInstructions;
+    bool inHelperFunction = false;
 };
 
 }

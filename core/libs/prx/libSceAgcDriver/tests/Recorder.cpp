@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -3654,6 +3655,100 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void denormalClearTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: denormal fill clears not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 64;
+    constexpr std::size_t bytes = 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the denormal clear block");
+    std::memset(block, 0x55, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{base, block, address};
+    if (HostImportFor(base, address, bytes) == nullptr) {
+        std::cout << "host import of the denormal clear block refused: denormal fill clears not tested\n";
+        return;
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 29;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(ResolveTextureFormat(resource.format) == VK_FORMAT_R16G16_SFLOAT, "guest format 29 is not R16G16_SFLOAT");
+    const bool keeps = ClearKeepsDenormals(context, VK_FORMAT_R16G16_SFLOAT);
+    std::cout << "denormal half clears are " << (keeps ? "kept" : "flushed") << " by this device\n";
+    Require(ClearKeepsDenormals(context, VK_FORMAT_R16G16_SFLOAT) == keeps, "the denormal clear probe changed its answer");
+    Require(!ClearKeepsDenormals(context, VK_FORMAT_R32G32B32A32_SFLOAT), "a format without small floats probed as keeping denormals");
+    {
+        auto image = std::make_shared<StorageTexture>(context, detiler, resource, 0);
+        const auto holds = [&](std::uint32_t texel) {
+            Buffer readback(context, side * side * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.imageExtent = {side, side, 1};
+            context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            const auto pixels = readback.Bytes();
+            for (std::size_t at = 0; at + 4 <= pixels.size(); at += 4) {
+                std::uint32_t value = 0;
+                std::memcpy(&value, pixels.data() + at, 4);
+                if (value != texel) return false;
+            }
+            return true;
+        };
+        const char* refusal = nullptr;
+        const std::array<std::uint32_t, 4> normal{0x3c00bc00u, 0x3c00bc00u, 0x3c00bc00u, 0x3c00bc00u};
+        Require(image->FillClear(normal, StorageTexture::WholeImage, refusal), "a normal half pattern was refused");
+        Require(holds(0x3c00bc00u), "a normal half fill clear stored other bits");
+        const std::array<std::uint32_t, 4> denormal{0x83ff0001u, 0x83ff0001u, 0x83ff0001u, 0x83ff0001u};
+        refusal = nullptr;
+        const bool cleared = image->FillClear(denormal, StorageTexture::WholeImage, refusal);
+        Require(cleared == keeps, keeps ? "a denormal half pattern was refused on a device whose clears keep denormals" : "a denormal half pattern was cleared on a device whose clears flush them");
+        if (cleared) Require(holds(0x83ff0001u), "a denormal half fill clear stored other bits");
+        const std::array<std::uint32_t, 4> nan{0x7e007e00u, 0x7e007e00u, 0x7e007e00u, 0x7e007e00u};
+        refusal = nullptr;
+        Require(!image->FillClear(nan, StorageTexture::WholeImage, refusal), "a NaN half pattern was cleared");
+    }
+    recorder.Sync();
+}
+
 int main(int argc, char** argv) {
     try {
         std::unique_ptr<Device> created;
@@ -3724,6 +3819,7 @@ int main(int argc, char** argv) {
         movedMetadataTests(device, recorder);
         viewPastLastMipTests(device, recorder);
         keysFillTests(device, recorder);
+        denormalClearTests(device, recorder);
         unitShadowTests(device, recorder);
         storageRefreshTests(device, recorder, false);
         storageRefreshTests(device, recorder, true);

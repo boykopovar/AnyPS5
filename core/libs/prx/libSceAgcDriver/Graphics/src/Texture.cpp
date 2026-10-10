@@ -902,7 +902,7 @@ bool ClearLayoutFor(VkFormat format, ClearLayout& layout) {
 
 // A float of `bits` (16: IEEE half; 11 and 10: the unsigned 5-bit-exponent floats of
 // B10G11R11) as a float32, or nullopt for a NaN, a denormal or (unsigned) an infinity.
-std::optional<float> SmallFloat(std::uint32_t code, std::uint32_t bits) {
+std::optional<float> SmallFloat(std::uint32_t code, std::uint32_t bits, bool denormals = false) {
     const std::uint32_t mantissaBits = bits == 16 ? 10u : bits - 5u;
     const bool negative = bits == 16 && (code >> 15u) != 0;
     const std::uint32_t exponent = (code >> mantissaBits) & 0x1fu;
@@ -912,8 +912,9 @@ std::optional<float> SmallFloat(std::uint32_t code, std::uint32_t bits) {
         return negative ? -std::numeric_limits<float>::infinity() : std::numeric_limits<float>::infinity();
     }
     if (exponent == 0) {
-        if (mantissa != 0) return std::nullopt;
-        return negative ? -0.0f : 0.0f;
+        if (mantissa != 0 && !denormals) return std::nullopt;
+        const float value = std::ldexp(static_cast<float>(mantissa) / static_cast<float>(1u << mantissaBits), -14);
+        return negative ? -value : value;
     }
     const float value = std::ldexp(1.0f + static_cast<float>(mantissa) / static_cast<float>(1u << mantissaBits), static_cast<int>(exponent) - 15);
     return negative ? -value : value;
@@ -925,7 +926,7 @@ std::optional<float> SmallFloat(std::uint32_t code, std::uint32_t bits) {
 // to the same code), float ones the decoded value. Codes a clear might store differently are
 // refused: NaNs and denormals (an implementation may canonicalize or flush them) and the most
 // negative SNORM code (stored as its neighbour, the same -1.0).
-bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear) {
+bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear, bool denormals = false) {
     ClearLayout layout{};
     if (elementBytes == 0 || elementBytes > 16 || 16 % elementBytes != 0 || !ClearLayoutFor(format, layout)) return false;
     std::array<std::byte, 16> bytes{};
@@ -961,13 +962,13 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
                     if ((exponent == 0xffu && mantissa != 0) || (exponent == 0 && mantissa != 0)) return false;
                     clear.float32[channel.component] = std::bit_cast<float>(code);
                 } else {
-                    const auto value = SmallFloat(code, channel.bits);
+                    const auto value = SmallFloat(code, channel.bits, denormals);
                     if (!value) return false;
                     clear.float32[channel.component] = *value;
                 }
                 break;
             case ClearKind::UFloat: {
-                const auto value = SmallFloat(code, channel.bits);
+                const auto value = SmallFloat(code, channel.bits, denormals);
                 if (!value) return false;
                 clear.float32[channel.component] = *value;
                 break;
@@ -1002,6 +1003,93 @@ bool AdjacentGenerationEnabled() {
 
 bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear) {
     return FillClearColor(format, elementBytes, pattern, clear);
+}
+
+bool ClearKeepsDenormals(const Context& context, VkFormat format) {
+    static std::mutex mutex;
+    static std::map<std::pair<VkDevice, VkFormat>, bool> known;
+    std::lock_guard lock(mutex);
+    if (const auto found = known.find({context.device, format}); found != known.end()) return found->second;
+    ClearLayout layout{};
+    bool smallFloats = ClearLayoutFor(format, layout) && (layout.kind == ClearKind::Float || layout.kind == ClearKind::UFloat);
+    std::array<std::uint32_t, 4> pattern{};
+    VkClearColorValue clear{};
+    std::uint32_t elementBits = 0;
+    constexpr std::array<std::uint32_t, 4> halfCodes{0x0001u, 0x83ffu, 0x0200u, 0x8001u};
+    for (std::uint32_t i = 0; smallFloats && i < layout.channels; ++i) {
+        const auto& channel = layout.channel[i];
+        if (channel.bits == 32) {
+            smallFloats = false;
+            break;
+        }
+        const auto code = channel.bits == 16 ? halfCodes[i] : 1u;
+        pattern[channel.offset / 32u] |= code << (channel.offset % 32u);
+        clear.float32[channel.component] = *SmallFloat(code, channel.bits, true);
+        elementBits = std::max(elementBits, channel.offset + channel.bits);
+    }
+    bool keeps = false;
+    if (smallFloats) {
+        const auto elementBytes = static_cast<std::size_t>((elementBits + 7u) / 8u);
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        struct Release {
+            const Context& context;
+            VkImage& image;
+            VkDeviceMemory& memory;
+            ~Release() {
+                if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+                if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+            }
+        } release{context, image, memory};
+        VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType = VK_IMAGE_TYPE_2D;
+        info.format = format;
+        info.extent = {1, 1, 1};
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage denormal clear probe");
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory denormal clear probe");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory denormal clear probe");
+        Buffer readback(context, elementBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkImageMemoryBarrier toClear{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toClear.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toClear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toClear.image = image;
+        toClear.subresourceRange = range;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toClear);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+        VkImageMemoryBarrier toCopy = toClear;
+        toCopy.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toCopy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        toCopy.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toCopy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toCopy);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {1, 1, 1};
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.Handle(), 1, &region);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        keeps = std::memcmp(readback.Bytes().data(), pattern.data(), elementBytes) == 0;
+    }
+    known.emplace(std::pair{context.device, format}, keeps);
+    return keeps;
 }
 
 VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFormat format) const {
@@ -3023,7 +3111,8 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
         }
     } traceRefusal{*this, pattern, layer, refusal};
     VkClearColorValue clearValue{};
-    if (!FillClearColor(storageFormat, BytesPerElement(descriptor.format), pattern, clearValue)) {
+    const auto elementBytes = BytesPerElement(descriptor.format);
+    if (!FillClearColor(storageFormat, elementBytes, pattern, clearValue) && !(ClearKeepsDenormals(context, storageFormat) && FillClearColor(storageFormat, elementBytes, pattern, clearValue, true))) {
         refusal = "pattern";
         return false;
     }

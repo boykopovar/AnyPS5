@@ -527,7 +527,7 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     if ((image.emulatedCompare & EmulatedCompare::RequiresSingleLevel) != 0u && ((descriptor.dwords[3] >> 12u) & 0xfu) != ((descriptor.dwords[3] >> 16u) & 0xfu)) throw std::runtime_error("color comparison requires a single mip level");
     const auto reference = colorCompareReference(format);
     const auto type = rawImageType(descriptor);
-    if (type != ImageType::Color2D && type != ImageType::Color2DArray) throw std::runtime_error("comparison sampling of a color texture is implemented only for 2D and 2D array views");
+    if (type != ImageType::Color2D && type != ImageType::Color2DArray && type != ImageType::Cube) throw std::runtime_error("comparison sampling of a color texture is implemented only for 2D, 2D array and cube views");
     if ((descriptorImageSwizzle(descriptor) & 0x7u) != 4u) throw std::runtime_error("comparison sampling of a color texture is implemented only when the view's X channel is red");
     std::optional<std::uint32_t> samplerState;
     for (const auto& pair : info.sampledPairs) {
@@ -541,6 +541,9 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
         if (((words[0] >> 29u) & 0x3u) != 0u) throw std::runtime_error("comparison sampling of a color texture through a min or max reduction sampler is not implemented");
         const auto magFilter = (words[2] >> 20u) & 0x3u;
         const auto minFilter = (words[2] >> 22u) & 0x3u;
+        if (type == ImageType::Cube && magFilter == 1u && ((words[0] >> 28u) & 1u) == 0u) {
+            throw std::runtime_error("bilinear cube comparison requires DISABLE_CUBE_WRAP to avoid seamless face filtering");
+        }
         const auto addressMode = [](std::uint32_t clamp) {
             if (clamp == 0u) return EmulatedCompare::AddressWrap;
             if (clamp == 2u) return EmulatedCompare::AddressEdge;
@@ -633,6 +636,11 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             plane.dimension = RdnaImageDimension::Dim2D;
             modes.push_back(plane);
         }
+        if (image.dimension == RdnaImageDimension::Dim2D && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
+            auto line = mode;
+            line.dimension = RdnaImageDimension::Dim1D;
+            modes.push_back(line);
+        }
         if (image.dimension == RdnaImageDimension::Dim2D && image.flatLineCompatible && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto line = mode;
             line.dimension = RdnaImageDimension::Dim1D;
@@ -702,6 +710,10 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.packedFormat = IrBufferFormat::Invalid;
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         modes.push_back(mode);
+        if (image.dimension == RdnaImageDimension::Dim2DArray) {
+            mode.cube = true;
+            modes.push_back(mode);
+        }
     }
     if (image.srgbDecodeFormats != 0u && image.srgbDecodeCompatible && !storage && !image.depthCompare && !image.packed) {
         const auto count = modes.size();
