@@ -5,6 +5,7 @@ import sys
 import tempfile
 
 from test_guest_intel_trampolines import PLAIN_SITE, elf_loads, guest_fixture, main_fixture
+from test_windows_import_modules import consumer, provider
 
 DYNAMIC = 0x4800
 STRINGS = 0x4A00
@@ -36,15 +37,18 @@ def guest_module(symbols):
     return image
 
 
-def importing_executable(names):
+def importing_executable(names, modules=()):
     image = main_fixture()
-    strings, offsets = string_table(names)
+    needed = [module + ".prx" for module in modules]
+    strings, offsets = string_table([*names, *needed, *modules])
     image[STRINGS:STRINGS + len(strings)] = strings
-    for index, offset in enumerate(offsets, 1):
+    for index, offset in enumerate(offsets[:len(names)], 1):
         struct.pack_into("<IBBHQQ", image, SYMBOLS + index * 24, offset, 0x12, 0, 0, 0, 0)
         struct.pack_into("<QQq", image, RELOCATIONS + (index - 1) * 24, GOT + (index - 1) * 8, (index << 32) | 6, 0)
-    tags = [(5, STRINGS), (10, len(strings)), (6, SYMBOLS), (11, 24),
-            (7, RELOCATIONS), (8, len(names) * 24), (9, 24), (0, 0)]
+    tags = [(1, offset) for offset in offsets[len(names):len(names) + len(needed)]]
+    tags += [(0x61000045, (index << 48) | offset) for index, offset in enumerate(offsets[len(names) + len(needed):], 1)]
+    tags += [(5, STRINGS), (10, len(strings)), (6, SYMBOLS), (11, 24),
+             (7, RELOCATIONS), (8, len(names) * 24), (9, 24), (0, 0)]
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, DYNAMIC + index * 16, *tag)
     struct.pack_into("<QQQQQ", image, 120 + 8, DYNAMIC, DYNAMIC, DYNAMIC, len(tags) * 16, len(tags) * 16)
@@ -120,17 +124,23 @@ def imported_symbols(image):
     return names
 
 
-def convert(relinker, case):
+def relink(relinker, case, executable, modules):
     (case / "sce_module").mkdir(parents=True)
     source = case / "input.elf"
-    source.write_bytes(importing_executable(["AAAAAAAAAAA#A#A", "DDDDDDDDDDD#D#D"]))
-    (case / "sce_module" / "libc.prx").write_bytes(
-        guest_module([("AAAAAAAAAAA#A#A", True), ("BBBBBBBBBBB#B#B", False), ("CCCCCCCCCCC#C#C", False), ("EEEEEEEEEEE", True)]))
-    (case / "sce_module" / "other.prx").write_bytes(guest_module([("BBBBBBBBBBB#B#B", True), ("EEEEEEEEEEE", True)]))
+    source.write_bytes(executable)
+    for name, image in modules.items():
+        (case / "sce_module" / name).write_bytes(image)
     output = case / "output.elf"
     result = subprocess.run([str(relinker), str(source), str(output)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, (result.stdout, result.stderr)
     return output
+
+
+def convert(relinker, case):
+    return relink(relinker, case, importing_executable(["AAAAAAAAAAA#A#A", "DDDDDDDDDDD#D#D"]), {
+        "libc.prx": guest_module([("AAAAAAAAAAA#A#A", True), ("BBBBBBBBBBB#B#B", False), ("CCCCCCCCCCC#C#C", False), ("EEEEEEEEEEE", True)]),
+        "other.prx": guest_module([("BBBBBBBBBBB#B#B", True), ("EEEEEEEEEEE", True)]),
+    })
 
 
 def main():
@@ -148,6 +158,21 @@ def main():
         check_hash_table((modules / "other.prx.guest.prx").read_bytes())
         imports = imported_symbols(output.read_bytes())
         assert imports == {"AAAAAAAAAAA#guest", "DDDDDDDDDDD"}, imports
+
+        declared = relink(relinker, work / "declared",
+                          importing_executable(["AAAAAAAAAAA#B#B", "EEEEEEEEEEE#C#C"], ["libc", "libSceLibcInternal"]),
+                          {"libc.prx": guest_module([("AAAAAAAAAAA", True), ("EEEEEEEEEEE", True)])})
+        imports = imported_symbols(declared.read_bytes())
+        assert imports == {"AAAAAAAAAAA#guest", "EEEEEEEEEEE"}, imports
+
+        guests = relink(relinker, work / "guest-declared", importing_executable([]), {
+            "b.prx": provider(7),
+            "c.prx": consumer("libSceLibcInternal.prx", module_name="libSceLibcInternal"),
+        }).parent / "app0" / "sce_module"
+        exporter = module_symbols((guests / "b.prx.guest.prx").read_bytes())
+        assert exporter == ["shared#guest"], exporter
+        importer = module_symbols((guests / "c.prx.guest.prx").read_bytes())
+        assert importer == ["shared"], importer
     print("Guest symbol name tests passed")
 
 

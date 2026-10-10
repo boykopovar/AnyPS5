@@ -267,7 +267,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         Io::WriteU32(symbols, index * 24, static_cast<std::uint32_t>(strings.size()));
         Io::AppendString(strings, name + GuestSymbolSuffix);
     };
+    const auto declaresHost = [&](const std::string& library) { return !windows && !library.empty() && findGuest(library) == guestNames.end(); };
     if (dynamic.DynSymData.size() % 24 != 0) throw Domain::RelinkerException("Invalid executable symbol table");
+    std::vector<std::string> executableModules(dynamic.DynSymData.size() / 24);
+    for (const auto* table : {&dynamic.RelaData, &dynamic.RelaPltData}) {
+        if (table->size() % 24 != 0) throw Domain::RelinkerException("Invalid executable relocation table");
+        for (std::size_t offset = 0; offset < table->size(); offset += 24) {
+            const auto symbol = Io::ReadU64(*table, offset + 8) >> 32;
+            const auto module = dynamic.ImportModules.find(Io::ReadU64(*table, offset));
+            if (symbol != 0 && symbol < executableModules.size() && module != dynamic.ImportModules.end()) executableModules[symbol] = module->second;
+        }
+    }
     for (std::size_t offset = 0; offset < dynamic.DynSymData.size(); offset += 24) {
         if (Io::ReadU16(dynamic.DynSymData, offset + 6) != 0) continue;
         const auto nameOffset = Io::ReadU32(dynamic.DynSymData, offset);
@@ -276,6 +286,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         const auto end = std::find(start, dynamic.DynStrData.end(), 0);
         if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated executable symbol name");
         const std::string name(start, end);
+        if (declaresHost(executableModules[offset / 24])) continue;
         rejectSharedImport(name.substr(0, name.find('#')), inputPath.string());
         if (!windows && exports.contains(name)) rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
     }
@@ -293,7 +304,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         for (std::size_t symbolIndex = 0; symbolIndex < images[index].Symbols.size(); ++symbolIndex) {
             const auto& symbol = images[index].Symbols[symbolIndex];
-            if (symbol.Section != 0 || symbol.Name.empty()) continue;
+            if (symbol.Section != 0 || symbol.Name.empty() || declaresHost(symbol.Library)) continue;
             rejectSharedImport(symbol.Name, images[index].SourcePath.string());
             const auto found = exports.find(symbol.Name);
             std::vector<std::size_t> providers;
@@ -318,7 +329,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
                 const auto& symbol = image.Symbols[index];
                 const bool exported = symbol.Section != 0 && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
-                if ((symbol.Section == 0 || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
+                if (((symbol.Section == 0 && !declaresHost(symbol.Library)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
             }
         }
     }
