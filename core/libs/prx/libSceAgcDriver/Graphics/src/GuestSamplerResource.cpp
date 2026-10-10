@@ -54,7 +54,7 @@ float toSignedLodBias(std::uint32_t raw) {
 
 }
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven) {
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired) {
     Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
 
     const auto clampX = (words[0] >> 0u) & 0x7u;
@@ -99,7 +99,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
     }
-    Require(!forceSrgb, "guest sampler descriptor forces sRGB decoding which is not implemented");
+    Require(!forceSrgb || forceDegammaPaired, "guest sampler descriptor forces sRGB decoding which is not implemented");
     // TRUNC_COORD picks point-sampled texels by truncation instead of rounding, and the perf fields
     // trade mip/depth precision for speed; Vulkan's nearest filtering already floors, so these only
     // move texel selection by half a texel at most and are accepted as is. ANISO_THRESHOLD and
@@ -161,6 +161,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     result.reductionMode = reductionMode;
     const std::array compareOps{VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS};
     result.compareOp = compareOps.at(depthCompareFunc);
+    result.forceDegamma = forceSrgb;
     if (forceUnormCoords) {
         result.unnormalizedCoordinates = true;
         result.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;

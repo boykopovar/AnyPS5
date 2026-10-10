@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <cerrno>
 #include <string_view>
@@ -17,6 +18,22 @@ char* APS5_VABI basename_nid_postfix(const char* path) {
     if (name.size() >= sizeof(buffer)) { errno = 63; return nullptr; }
     std::memcpy(buffer, name.data(), name.size());
     buffer[name.size()] = '\0';
+    return buffer;
+}
+
+char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int address) {
+    thread_local char buffer[sizeof("255.255.255.255")];
+    unsigned char bytes[sizeof(address)];
+    std::memcpy(bytes, &address, sizeof(bytes));
+    char* end = buffer;
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) {
+        if (index != 0) *end++ = '.';
+        const unsigned value = bytes[index];
+        if (value >= 100) *end++ = static_cast<char>('0' + value / 100);
+        if (value >= 10) *end++ = static_cast<char>('0' + value / 10 % 10);
+        *end++ = static_cast<char>('0' + value % 10);
+    }
+    *end = 0;
     return buffer;
 }
 
@@ -54,6 +71,12 @@ std::size_t APS5_VABI strlcat_nid_postfix(char* destination, const char* source,
     return destinationLength + sourceLength;
 }
 
+char* APS5_VABI stpcpy_nid_postfix(char* destination, const char* source) {
+    const auto length = std::strlen(source);
+    std::memcpy(destination, source, length + 1);
+    return destination + length;
+}
+
 char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** state) {
     if (text == nullptr) text = *state;
     if (text == nullptr) return nullptr;
@@ -71,6 +94,62 @@ char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** 
 char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters) {
     thread_local char* state = nullptr;
     return strtok_r_nid_postfix(text, delimiters, &state);
+}
+
+
+int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
+    std::uint8_t parts[3];
+    std::size_t count = 0;
+    std::uint64_t value = 0;
+    bool digit = false;
+    char c = *text;
+    for (;;) {
+        if (c < '0' || c > '9') return 0;
+        value = 0;
+        unsigned base = 10;
+        digit = false;
+        if (c == '0') {
+            c = *++text;
+            if (c == 'x' || c == 'X') {
+                base = 16;
+                c = *++text;
+            } else {
+                base = 8;
+                digit = true;
+            }
+        }
+        for (;; c = *++text, digit = true) {
+            const char lower = static_cast<char>(c | 0x20);
+            if (c >= '0' && c <= '9') {
+                if (base == 8 && c >= '8') return 0;
+                value = value * base + static_cast<unsigned>(c - '0');
+            } else if (base == 16 && lower >= 'a' && lower <= 'f') {
+                value = (value << 4) | static_cast<unsigned>(lower - 'a' + 10);
+            } else {
+                break;
+            }
+        }
+        if (c != '.') break;
+        if (count == 3 || value > 0xff) return 0;
+        parts[count++] = static_cast<std::uint8_t>(value);
+        c = *++text;
+    }
+    if (c != '\0' && c != ' ' && (c < '\t' || c > '\r')) return 0;
+    if (!digit) return 0;
+    constexpr std::uint64_t limits[] = {UINT64_MAX, 0xffffff, 0xffff, 0xff};
+    if (value > limits[count]) return 0;
+    for (std::size_t index = 0; index < count; ++index) value |= std::uint64_t{parts[index]} << (24 - 8 * index);
+    if (address) {
+        const std::uint8_t bytes[4] = {static_cast<std::uint8_t>(value >> 24), static_cast<std::uint8_t>(value >> 16),
+            static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value)};
+        std::memcpy(address, bytes, sizeof(bytes));
+    }
+    return 1;
+}
+
+std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char* text) {
+    std::uint32_t address;
+    return __inet_aton_nid_postfix(text, &address) ? address : 0xffffffff;
 }
 
 }

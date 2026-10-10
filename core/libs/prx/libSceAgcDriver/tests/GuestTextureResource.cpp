@@ -1,6 +1,7 @@
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include <algorithm>
 #include <array>
@@ -119,8 +120,10 @@ void RunGuestTextureResourceTests() {
     tileModes.tileModeRaw = 0x09;
     Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kStandard64KB, "tile mode 0x09 must decode to standard 64KB");
     tileModes.tileModeRaw = 0x1b;
-    rejectFields(tileModes, "pipe/bank XOR base");
+    const auto xorBase = DecodeTextureResource(pack(tileModes));
+    Require(xorBase.baseAddress == 0x12340000ull && xorBase.pipeBankXor == 0x5600u, "a 64 KiB XOR swizzle did not split its base into the block base and its pipe/bank XOR");
     tileModes.base40 = 0x120000ull;
+    Require(DecodeTextureResource(pack(tileModes)).pipeBankXor == 0u, "an aligned 64 KiB XOR base gained a pipe/bank XOR");
     Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::RenderTarget64KB, "tile mode 0x1b must decode to render target 64KB");
     constexpr std::array<std::pair<std::uint32_t, TextureTileMode>, 7> added{{{0x02, TextureTileMode::kD256B}, {0x06, TextureTileMode::kD4KB}, {0x0a, TextureTileMode::kD64KB}, {0x11, TextureTileMode::kS64KBT}, {0x12, TextureTileMode::kD64KBT}, {0x15, TextureTileMode::kS4KBX}, {0x16, TextureTileMode::kD4KBX}}};
     for (const auto& [raw, mode] : added) {
@@ -131,10 +134,18 @@ void RunGuestTextureResourceTests() {
     tileModes.base40 = 0x120010ull;
     Require(DecodeTextureResource(pack(tileModes)).tileMode == TextureTileMode::kD4KBX, "a 4 KiB XOR swizzle must accept a 4 KiB aligned base");
     tileModes.base40 = 0x120011ull;
-    rejectFields(tileModes, "pipe/bank XOR base");
+    const auto xor4Kb = DecodeTextureResource(pack(tileModes));
+    Require(xor4Kb.baseAddress == 0x12001000ull && xor4Kb.pipeBankXor == 0x100u, "a 4 KiB XOR swizzle did not split its base into the block base and its pipe/bank XOR");
     tileModes.tileModeRaw = 0x12;
     tileModes.base40 = 0x120010ull;
-    rejectFields(tileModes, "pipe/bank XOR base");
+    const auto xorT = DecodeTextureResource(pack(tileModes));
+    Require(xorT.baseAddress == 0x12000000ull && xorT.pipeBankXor == 0x1000u, "a 64 KiB T swizzle did not split its base into the block base and its pipe/bank XOR");
+    tileModes.tileModeRaw = 0x09;
+    const auto standard = DecodeTextureResource(pack(tileModes));
+    Require(standard.baseAddress == 0x12001000ull && standard.pipeBankXor == 0u, "a swizzle without XOR addressing split its base");
+    tileModes.tileModeRaw = 0x1b;
+    tileModes.base40 = 0x56ull;
+    rejectFields(tileModes, "null base address");
     tileModes.base40 = base.base40;
     tileModes.tileModeRaw = 0x03;
     rejectFields(tileModes, "unsupported tile mode");
@@ -326,9 +337,16 @@ void RunGuestTextureResourceTests() {
         Require(image.dccPipeAligned == pipeAligned && stored == expected && std::all_of(keys, keys + expected, [](std::uint8_t key) { return key == 0xff; }), std::string("a 1920x1080 SW_64KB_R_X storage image with ") + (pipeAligned ? "pipe-aligned" : "unaligned") + " DCC stored " + std::to_string(stored) + " uncompressed keys, expected " + std::to_string(expected));
     }
 
-    Fields badSwizzle = base;
-    badSwizzle.bcSwizzle = 1;
-    rejectFields(badSwizzle, "BC swizzle");
+    for (std::uint32_t swizzle = 0; swizzle <= 5u; ++swizzle) {
+        Fields borderSwizzle = base;
+        borderSwizzle.bcSwizzle = swizzle;
+        Require(DecodeTextureResource(pack(borderSwizzle)).bcSwizzle == swizzle, "a texture descriptor lost its BC swizzle " + std::to_string(swizzle));
+    }
+    for (std::uint32_t swizzle : {6u, 7u}) {
+        Fields badSwizzle = base;
+        badSwizzle.bcSwizzle = swizzle;
+        rejectFields(badSwizzle, "reserved BC swizzle");
+    }
 
     Fields badLevels = base;
     badLevels.baseLevel = 2;
@@ -408,4 +426,24 @@ void RunGuestTextureResourceTests() {
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2D), "3D shape must never match a guest dimension");
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::k2DArray), "3D shape must never match a guest dimension");
     Require(!MatchesGuestDimension(Shape::Image3D, TextureDimension::kCube), "3D shape must never match a guest dimension");
+
+    Fields streamed = base;
+    streamed.minLodWarn = 0xabc;
+    streamed.mipStatsCntEn = true;
+    streamed.mipStatsCntId = 0x5a;
+    Require(SampledTexturesShareEntry(pack(base), pack(streamed)), "T#s differing only in MIN_LOD_WARN, MIP_STATS_COUNTER_EN and MIP_STATS_COUNTER_ID must share a sampled texture entry");
+    for (const auto& field : {&Fields::minLodWarn, &Fields::mipStatsCntId}) {
+        Fields one = base;
+        one.*field = 1;
+        Require(SampledTexturesShareEntry(pack(base), pack(one)), "a T# differing in one streaming-feedback field must share a sampled texture entry");
+    }
+    Fields moved = streamed;
+    moved.base40 = base.base40 + 1;
+    Require(!SampledTexturesShareEntry(pack(base), pack(moved)), "T#s with different base addresses must not share a sampled texture entry");
+    Fields reformatted = streamed;
+    reformatted.format = 57;
+    Require(!SampledTexturesShareEntry(pack(base), pack(reformatted)), "T#s with different formats must not share a sampled texture entry");
+    Fields cornered = base;
+    cornered.cornerSample = true;
+    Require(!SampledTexturesShareEntry(pack(base), pack(cornered)), "T#s differing in a field next to the feedback fields must not share a sampled texture entry");
 }

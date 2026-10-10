@@ -334,6 +334,9 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("StoreAddressU8", Void, AddressResource, U32, U32, U8, U1),
     makeMeta("StoreAddressU16", Void, AddressResource, U32, U32, U16, U1),
     makeMeta("StoreAddressU32", Void, AddressResource, U32, U32, U32, U1),
+    makeMeta("StoreAddressU32x2", Void, AddressResource, U32, U32, U32x2, U1),
+    makeMeta("StoreAddressU32x3", Void, AddressResource, U32, U32, U32x3, U1),
+    makeMeta("StoreAddressU32x4", Void, AddressResource, U32, U32, U32x4, U1),
     makeMeta("AddressAtomicSwap32", U32, AddressResource, U32, U32, U32, U1),
     makeMeta("AddressAtomicCmpSwap32", U32, AddressResource, U32, U32, U32, U32, U1),
     makeMeta("AddressAtomicIAdd32", U32, AddressResource, U32, U32, U32, U1),
@@ -501,6 +504,8 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("GetAttribute", U32, U32, U32),
     makeMeta("GetInterpolationParameter", U32, U32, U32, U32),
     makeMeta("GetInterpolationParameterF16", F32, U32, U32, U32, U32),
+    makeMeta("InterpolateHostP1", F32, U32, U32, F32),
+    makeMeta("InterpolateHostP2", Void, U32, U32, F32, F32, U1),
     makeMeta("SetAttribute", Void, U32x4, U1),
     makeMeta("ControlNop", Void),
     makeMeta("Waitcnt", Void),
@@ -747,6 +752,12 @@ AddressOpcodeInfo AddressOpcodeInfoOf(IrOpcode opcode) {
             return {AddressAccess::Write, 16u};
         case IrOpcode::StoreAddressU32:
             return {AddressAccess::Write, 32u};
+        case IrOpcode::StoreAddressU32x2:
+            return {AddressAccess::Write, 32u, 2u};
+        case IrOpcode::StoreAddressU32x3:
+            return {AddressAccess::Write, 32u, 3u};
+        case IrOpcode::StoreAddressU32x4:
+            return {AddressAccess::Write, 32u, 4u};
         case IrOpcode::AddressAtomicSwap32:
         case IrOpcode::AddressAtomicCmpSwap32:
         case IrOpcode::AddressAtomicIAdd32:
@@ -873,6 +884,7 @@ bool IrOpcodeHasSideEffects(IrOpcode opcode) {
         case IrOpcode::Reference:
         case IrOpcode::ReferenceU32:
         case IrOpcode::SetTessellationAttribute:
+        case IrOpcode::InterpolateHostP2:
         case IrOpcode::SetThreadBitScalarRegister:
         case IrOpcode::SetScalarMaskTag:
         case IrOpcode::SetScalarRegister:

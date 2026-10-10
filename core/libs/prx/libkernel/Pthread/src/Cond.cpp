@@ -61,8 +61,12 @@ int waitUntil(PthreadCond* cond, PthreadMutex* mutex, std::optional<std::uint64_
         const auto previousCount = m->_count;
         m->_count = 0;
         m->_owner.store(std::thread::id{}, std::memory_order_release);
+        for (int level = 1; level < previousCount; ++level)
+            m->_rmtx.unlock();
         if (deadlineNanos) timedOut = !c->_cv.WaitUntil(lock, *deadlineNanos);
         else c->_cv.Wait(lock);
+        for (int level = 1; level < previousCount; ++level)
+            m->_rmtx.lock();
         m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
         m->_count = previousCount;
         lock.release();

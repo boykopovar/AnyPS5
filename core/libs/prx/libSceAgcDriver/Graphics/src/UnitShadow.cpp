@@ -116,15 +116,24 @@ VkDeviceSize SlabBytes(const ShadowSlab& slab) {
 }
 
 // The shadows overlapping [address, end): imports never overlap, so at most a few.
-std::vector<std::shared_ptr<UnitShadow>> overlapping(const Shadows& registry, std::uint64_t address, std::uint64_t end) {
-    std::vector<std::shared_ptr<UnitShadow>> result;
-    if (end <= address || registry.byBase.empty()) return result;
+template<typename TVisit>
+bool anyOverlapping(const Shadows& registry, std::uint64_t address, std::uint64_t end, TVisit&& visit) {
+    if (end <= address || registry.byBase.empty()) return false;
     auto it = registry.byBase.upper_bound(address);
     if (it != registry.byBase.begin()) --it;
     for (; it != registry.byBase.end() && it->first < end; ++it) {
         const auto& shadow = it->second;
-        if (address < shadow->ImportEnd() && shadow->importBase < end) result.push_back(shadow);
+        if (address < shadow->ImportEnd() && shadow->importBase < end && visit(shadow)) return true;
     }
+    return false;
+}
+
+std::vector<std::shared_ptr<UnitShadow>> overlapping(const Shadows& registry, std::uint64_t address, std::uint64_t end) {
+    std::vector<std::shared_ptr<UnitShadow>> result;
+    anyOverlapping(registry, address, end, [&](const std::shared_ptr<UnitShadow>& shadow) {
+        result.push_back(shadow);
+        return false;
+    });
     return result;
 }
 
@@ -485,15 +494,15 @@ bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
     const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
     auto& registry = Registry();
     std::lock_guard lock(registry.mutex);
-    for (const auto& shadow : overlapping(registry, address, end)) {
-        if (shadow->liveUnits == 0) continue;
+    return anyOverlapping(registry, address, end, [&](const std::shared_ptr<UnitShadow>& shadow) {
+        if (shadow->liveUnits == 0) return false;
         const auto begin = std::max(address, shadow->importBase);
         const auto stop = std::min(end, shadow->ImportEnd());
         for (auto unit = shadow->UnitOf(begin); unit <= shadow->UnitOf(stop - 1); ++unit) {
             if (shadow->Live(unit)) return true;
         }
-    }
-    return false;
+        return false;
+    });
 }
 
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
@@ -727,7 +736,7 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
     StorageTexture::BumpPendingSerial();
 }
 
-void RetireShadow(const Context& context, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered) {
+void RetireShadow(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered) {
     if (!UnitShadowEnabled()) return;
     auto& registry = Registry();
     std::shared_ptr<UnitShadow> shadow;
@@ -757,7 +766,7 @@ void RetireShadow(const Context& context, const HostImport& import, const std::f
     if (dropped != 0) Stats().droppedOnRetire.fetch_add(dropped, std::memory_order_relaxed);
     std::size_t published = 0;
     if (any) {
-        if (GuestMemory::GpuMutex().HeldByThisThread() && shadow->context.device == context.device) {
+        if (GuestMemory::GpuMutex().HeldByThisThread() && shadow->context.device == device) {
             published = publishUnits(shadow, 0, shadow->Units() - 1, selected, PublishReason::Retire);
         } else {
             Stats().lostOnRetire.fetch_add(shadow->liveUnits, std::memory_order_relaxed);

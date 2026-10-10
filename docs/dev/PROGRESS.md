@@ -6,9 +6,11 @@
 
 The scanner reads `APS5_VABI` function definitions under `core/libs/prx/<library>/`, excluding `tests` subdirectories and their descendants. Test callbacks do not contribute to library counts. A definition is pending when its body calls `NotImplemented_nid_no_patch`, directly or through a recognized local stub wrapper. Other definitions are counted as implemented. These counts describe declared functions, not every firmware export, verified ABI compatibility or playable games. Silent behavior and unverified assumptions remain in [Technical debt](TechnicalDebt.md).
 
-A library with no scanned definitions can include a sibling library's source builder. The scanner recognizes literal `include(${CMAKE_CURRENT_SOURCE_DIR}/../<library>/<file>.cmake)` references, including quoted paths. It does not evaluate arbitrary CMake expressions.
+A library with no scanned definitions can include a sibling library's source builder. The scanner recognizes literal `include(${CMAKE_CURRENT_SOURCE_DIR}/../<library>/<file>.cmake)` references, including quoted paths. It does not evaluate arbitrary CMake expressions. It also recognizes a top-level `.cpp` that includes another library's source with `#include "prx/<library>/<file>.cpp"`.
 
 For these wrappers, the JSON group adds `shared_sources` with the source library's directory name. Its own counts and name lists remain empty. The HTML table links to the source library instead of showing `0/0`; the source library's map tooltip lists its wrappers. Global totals count the definitions at the source library once.
+
+A library with no scanned definitions and no shared sources, such as one whose `Export.cpp` only has `APS5_DUMMY_FUN` because its functions are implemented in another library, is listed as having no exports instead of `0/0`. It is left out of the map.
 
 ## Comparisons
 

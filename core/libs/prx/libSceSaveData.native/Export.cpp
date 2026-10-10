@@ -71,7 +71,7 @@ namespace {
 // with a small .param sidecar holding the last SaveDataParam the title wrote. Keying by user as well as slot
 // keeps two users' in-memory saves from colliding on the same console.
 constexpr char MEM_DIR[] = "_sd_mem";
-constexpr std::size_t MEM_MAX_SIZE = 0x1000000;  // 16 MiB
+constexpr std::size_t MEM_MAX_SIZE = 32u * 1024u * 1024u;
 std::mutex g_mem_mutex;
 
 std::string mem_path(std::int32_t user_id, std::uint32_t slot, const char* ext) {
@@ -140,7 +140,7 @@ SaveDataParam load_param(const std::string& real_path) {
         std::error_code ec;
         const auto written = std::filesystem::last_write_time(real_path, ec);
         if (!ec) {
-            const auto system = std::chrono::clock_cast<std::chrono::system_clock>(written);
+            const auto system = std::filesystem::file_time_type::clock::to_sys(written);
             param.mtime = std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
         }
     }

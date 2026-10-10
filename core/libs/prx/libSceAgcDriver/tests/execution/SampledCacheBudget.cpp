@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -25,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -39,6 +41,7 @@ constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
 constexpr std::size_t Surfaces = 12;
 constexpr std::size_t BlockBytes = SurfaceBytes * Surfaces;
 constexpr std::uint64_t Budget = 1ull << 20u;
+constexpr std::uint64_t Ceiling = Budget + Budget / 4u;
 
 class Device {
 public:
@@ -278,6 +281,162 @@ void snapshotTests(const Context& context) {
     Require(TextureCacheUsage().sampledBytes == tiny->AllocationBytes(), "a snapshot whose " + std::to_string(tiny->AllocationBytes()) + "-byte image is smaller than its " + std::to_string(guestBytes) + " guest bytes counted " + std::to_string(TextureCacheUsage().sampledBytes) + " bytes, not its allocation");
 }
 
+void heldTests(const Context& context) {
+    Block block(context);
+    auto held = Sampled(context, block.Surface(0));
+    const auto bytes = TextureCacheUsage().sampledBytes;
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require((capacity + 1u) * bytes <= Ceiling && capacity + 2u < Surfaces, "a snapshot of the 256 KiB surface counts " + std::to_string(bytes) + " bytes, which the test's ceiling does not fit as planned");
+    std::vector<std::weak_ptr<Texture>> released;
+    for (std::size_t surface = 1; surface < capacity; ++surface) released.push_back(Sampled(context, block.Surface(surface)));
+    Sampled(context, block.Surface(capacity));
+    Require(Sampled(context, block.Surface(0)) == held, "the sampled texture cache evicted a texture its caller still holds");
+    Require(released.front().expired(), "the least recently used texture nobody holds was not evicted in place of the held one");
+    held.reset();
+    ClearCachedTextures(context.device);
+    std::vector<std::shared_ptr<Texture>> all;
+    for (std::size_t surface = 0; surface <= capacity; ++surface) all.push_back(Sampled(context, block.Surface(surface)));
+    Require(TextureCacheUsage().sampledEntries == capacity + 1u && TextureCacheUsage().sampledBytes > Budget, "textures their callers hold left a cache over its budget");
+    for (std::size_t surface = 0; surface < all.size(); ++surface) Require(Sampled(context, block.Surface(surface)) == all[surface], "surface " + std::to_string(surface) + " was made again while its texture was held");
+    all.push_back(Sampled(context, block.Surface(capacity + 1u)));
+    Require(TextureCacheUsage().sampledEntries == capacity + 1u && TextureCacheUsage().sampledBytes <= Ceiling, "held textures took the sampled texture cache past a quarter over its budget");
+    for (std::size_t surface = 1; surface < all.size(); ++surface) Require(Sampled(context, block.Surface(surface)) == all[surface], "past the ceiling, surface " + std::to_string(surface) + " left in place of the least recently used held texture");
+    all.clear();
+    Sampled(context, block.Surface(capacity + 2u));
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "released textures were not evicted down to the budget");
+}
+
+void rescanTests(const Context& context) {
+    constexpr std::uint32_t SmallSide = 128;
+    constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide * 4u;
+    Block block(context);
+    const auto small = [&](std::size_t surface) { return Sampled(context, block.Surface(0) + surface * SmallBytes, SmallSide); };
+    std::vector<std::shared_ptr<Texture>> all{small(0)};
+    const auto bytes = TextureCacheUsage().sampledBytes;
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require((capacity + 3u) * bytes <= Ceiling && (capacity + 3u) * SmallBytes <= BlockBytes, "a snapshot of the 64 KiB surface counts " + std::to_string(bytes) + " bytes, which the test's ceiling does not fit as planned");
+    for (std::size_t surface = 1; surface <= capacity; ++surface) all.push_back(small(surface));
+    const std::weak_ptr<Texture> newest = all.back();
+    all.pop_back();
+    all.push_back(small(capacity + 1u));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    all.push_back(small(capacity + 2u));
+    Require(newest.expired(), "a released texture behind held ones was still cached a second later");
+    Require(TextureCacheUsage().sampledEntries == capacity + 2u, "the rescan left " + std::to_string(TextureCacheUsage().sampledEntries) + " entries, not the " + std::to_string(capacity + 2u) + " textures still held");
+}
+
+void viewEvictionTests(const Context& context) {
+    if (context.hostImportAlignment == 0) return;
+    Block snapshots(context);
+    Block imported(context);
+    if (HostImportFor(context, imported.Surface(0), BlockBytes) == nullptr) return;
+    const std::weak_ptr<Texture> view = Sampled(context, imported.Surface(0));
+    Require(!view.expired() && TextureCacheUsage().sampledBytes == 0, "the view of a cached storage image did not enter the sampled texture cache at 0 bytes");
+    Sampled(context, snapshots.Surface(0));
+    const auto capacity = static_cast<std::size_t>(Budget / TextureCacheUsage().sampledBytes);
+    for (std::size_t surface = 1; surface <= capacity; ++surface) Sampled(context, snapshots.Surface(surface));
+    Require(!view.expired(), "the sampled texture cache evicted a view of a cached storage image, which frees no memory");
+}
+
+void frameTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    const auto frame = capacity + 2u;
+    Require(capacity >= 2u && 2u * frame <= Surfaces && TextureCacheUsage().sampledEntries == 1u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    std::vector<std::weak_ptr<Texture>> made(frame);
+    for (std::size_t surface = 0; surface < frame; ++surface) made[surface] = Sampled(context, block.Surface(surface));
+    Require(TextureCacheUsage().sampledEntries == capacity, "a frame of " + std::to_string(frame) + " textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " cached, not the " + std::to_string(capacity) + " the budget holds");
+    for (std::size_t surface = capacity; surface < frame; ++surface) Require(made[surface].expired(), "surface " + std::to_string(surface) + ", used once in a frame whose textures fill the cache, was cached in place of an earlier one");
+    Recorder::CountPresent();
+    std::size_t hits = 0;
+    for (std::size_t surface = 0; surface < frame; ++surface) {
+        const auto again = Sampled(context, block.Surface(surface));
+        hits += again == made[surface].lock();
+    }
+    Require(hits == capacity, "the next frame over the same " + std::to_string(frame) + " textures found " + std::to_string(hits) + " of them cached, not the " + std::to_string(capacity) + " the cache kept");
+    auto admitted = Sampled(context, block.Surface(frame - 1u));
+    Require(Sampled(context, block.Surface(frame - 1u)) == admitted, "a texture used a second time in the frame was not cached");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "the texture admitted on its second use left the cache over its budget");
+    admitted.reset();
+    Recorder::CountPresent();
+    std::vector<std::weak_ptr<Texture>> moved(frame);
+    for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
+    for (std::size_t surface = 0; surface < frame; ++surface) Require(moved[surface].expired(), "surface " + std::to_string(frame + surface) + ", first used in the frame after the cached textures were, was cached in place of one of them");
+    Require(TextureCacheUsage().sampledEntries == capacity, "a frame over other textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " of the previous frame's textures cached");
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
+    for (std::size_t surface = 0; surface < capacity; ++surface) Require(!moved[surface].expired(), "surface " + std::to_string(frame + surface) + " of a second frame over other textures did not replace the textures last used two frames before");
+    Require(TextureCacheUsage().sampledEntries == capacity, "a second frame over other textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " entries cached");
+}
+
+void earlyMissTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity < Surfaces && TextureCacheUsage().sampledEntries == 1u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    std::vector<std::weak_ptr<Texture>> cached(capacity);
+    for (std::size_t surface = 0; surface < capacity; ++surface) cached[surface] = Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) {
+        const auto again = Sampled(context, block.Surface(surface));
+        Require(again == cached[surface].lock(), "surface " + std::to_string(surface) + " missed in a frame over the textures the cache holds");
+    }
+    Recorder::CountPresent();
+    Sampled(context, block.Surface(capacity));
+    std::size_t hits = 0;
+    for (std::size_t surface = 0; surface < capacity; ++surface) {
+        const auto again = Sampled(context, block.Surface(surface));
+        hits += again == cached[surface].lock();
+    }
+    Require(hits == capacity, "a frame that first uses a new texture before its " + std::to_string(capacity) + " cached ones found " + std::to_string(hits) + " of them cached");
+}
+
+constexpr std::uint64_t KeyHashBasis = 14695981039346656037ull;
+constexpr std::uint64_t KeyHashPrime = 1099511628211ull;
+
+std::array<std::array<std::uint32_t, 8>, 2> CollidingDescriptors(VkDevice device, std::uint64_t address) {
+    const auto words = Descriptor(address);
+    auto prefix = KeyHashBasis ^ reinterpret_cast<std::uintptr_t>(device);
+    for (std::size_t word = 0; word < 6; ++word) prefix = (prefix ^ words[word]) * KeyHashPrime;
+    std::unordered_map<std::uint32_t, std::uint32_t> word6ByHighHalf;
+    for (std::uint32_t candidate = 0; candidate < 0x200u; ++candidate) {
+        const auto word6 = ((candidate >> 1u) << 24u) | (candidate & 1u);
+        const auto hash = (prefix ^ word6) * KeyHashPrime;
+        const auto [match, added] = word6ByHighHalf.emplace(static_cast<std::uint32_t>(hash >> 32u), word6);
+        if (added) continue;
+        auto first = words;
+        auto second = words;
+        first[6] = match->second;
+        second[6] = word6;
+        second[7] = static_cast<std::uint32_t>(hash ^ ((prefix ^ match->second) * KeyHashPrime));
+        return {first, second};
+    }
+    throw std::runtime_error("no two descriptors of the surface that differ only in word 6's statistics counter and the unused meta address collide in TextureKeyHash");
+}
+
+void collidingKeyTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity < Surfaces && TextureCacheUsage().sampledEntries == 1u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    std::vector<std::weak_ptr<Texture>> cached(capacity);
+    for (std::size_t surface = 0; surface < capacity; ++surface) cached[surface] = Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    const auto [first, second] = CollidingDescriptors(context.device, block.Surface(capacity));
+    CachedSampledTexture(context, first);
+    CachedSampledTexture(context, second);
+    std::size_t kept = 0;
+    for (const auto& texture : cached) kept += !texture.expired();
+    Require(kept == capacity && TextureCacheUsage().sampledEntries == capacity, "the first use of a descriptor whose cache key hash equals that of another descriptor first used in the frame left " + std::to_string(kept) + " of the " + std::to_string(capacity) + " textures the last frame used cached");
+}
+
 constexpr std::uint64_t ReportedBudget = 64ull << 30u;
 constexpr std::uint64_t ReportedUsage = 12ull << 30u;
 
@@ -350,7 +509,13 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             reportedBudgetTests(context);
             snapshotTests(context);
+            heldTests(context);
+            rescanTests(context);
+            viewEvictionTests(context);
             viewTests(context);
+            frameTests(context);
+            earlyMissTests(context);
+            collidingKeyTests(context);
             ClearCachedTextures(context.device);
         }
         std::puts("sampled texture cache budget tests passed");

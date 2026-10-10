@@ -26,9 +26,12 @@ from the GPU (`HW_ORACLE_TARGET` overrides it).
 
 - `v4`-`v7` hold the row's 4 input dwords. `v10`-`v25` start at 0 and are stored as the result (16 dwords).
 - Leave `v0` (lane id), `v1` (input offset), `v2` (output offset) and `s[4:7]` (input and output addresses) unchanged.
-- 4 KiB of LDS. Rows run in workgroups of up to 1024 lanes, padded to whole waves with zero rows.
+- 4 KiB of LDS, or the group segment size `--lds` (Python `lds`) gives in bytes, up to 64 KiB. Rows run in workgroups of up to
+  1024 lanes, padded to whole waves with zero rows.
 - Bytes passed as `extra` follow the rows of each dispatch, at `s[4:5] + 16 * rows`: buffer contents, texels, etc.
-  Build buffer and image descriptors in SGPRs from that address.
+  Build buffer and image descriptors in SGPRs from that address. A kernel that needs more than 4 input dwords per lane
+  takes the rest from there too, for example `v_lshlrev_b32 v40, 3, v0` / `v_add_nc_u32 v40, 16 * rows, v40` /
+  `global_load_dwordx2 v[8:9], v40, s[4:5]` for two more dwords per lane, with `rows` the padded count.
 
 Every run must explicitly set all floating-point controls, including runs of integer instructions. The CLI flags
 use hyphens; Python keywords use underscores. Record these settings alongside the GPU and measured results.
@@ -39,7 +42,7 @@ use hyphens; Python keywords use underscores. Record these settings alongside th
 | `dx10_clamp` | 0 or 1: DX10 clamp disabled or enabled |
 | `denorm32`, `denorm16` | 0: flush input/output; 1: preserve input, flush output; 2: flush input, preserve output; 3: preserve both |
 | `round32`, `round16` | 0: nearest even; 1: toward +infinity; 2: toward -infinity; 3: toward zero |
-| `fp16_overflow` | 0: overflow to infinity; 1: clamp computed overflow to the largest finite value (infinite inputs and division by zero still produce infinity) |
+| `fp16_overflow` | 0: overflow to infinity; 1: clamp computed overflow to the largest finite value (an infinite source operand still produces infinity, as does `v_div_fixup_f16` for a zero denominator or an infinite numerator, but not for an infinite quotient; `v_rcp_f16`, `v_rsq_f16` and `v_log_f16` of zero are clamped) |
 
 `denorm16` and `round16` control both f16 and f64. These values follow the
 [LLVM AMDGPU kernel descriptor documentation](https://llvm.org/docs/AMDGPUUsage.html#amdhsa-kernel-descriptor).

@@ -141,7 +141,7 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
 // The import retires because its registration vanished or changed size, so the rest of its memory
 // belongs to the title again and is dropped (counted `dropped on retire`); `lost on retire` counts
 // the units nothing could record.
-void RetireShadow(const Context& context, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
+void RetireShadow(VkDevice device, const HostImport& import, const std::function<bool(std::uint64_t, std::uint64_t)>& registered);
 // Teardown: every shadow of the context's device is published; DestroyShadows then drops them.
 void PublishAllShadows(const Context& context, PublishReason reason);
 void DestroyShadows(VkDevice device);

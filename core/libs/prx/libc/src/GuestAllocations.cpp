@@ -43,7 +43,7 @@ Registry& registry() {
 
 std::atomic<std::uint64_t> generation{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
-std::atomic<bool (*)()> pinWaiter{nullptr};
+std::atomic<bool (*)(std::uintptr_t, std::size_t)> pinWaiter{nullptr};
 
 std::chrono::milliseconds pinWait() {
     static const std::chrono::milliseconds value{[] {
@@ -129,7 +129,7 @@ void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t 
     if (const auto callback = invalidator.load(std::memory_order_acquire)) callback(address, bytes);
 }
 
-void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)()) {
+void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t, std::size_t)) {
     pinWaiter.store(callback, std::memory_order_release);
 }
 
@@ -233,7 +233,7 @@ void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t 
 
 [[noreturn]] void PinnedFailure(std::uintptr_t address, std::size_t bytes, const char* why) {
     char message[160];
-    std::snprintf(message, sizeof(message), "guest allocation 0x%llx+0x%llx is owned by an active GPU command (%s)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), why);
+    std::snprintf(message, sizeof(message), "guest allocation 0x%llx+0x%llx is still pinned by GPU work or an import (%s)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), why);
     throw std::runtime_error(message);
 }
 
@@ -269,7 +269,7 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         bool progressed = false;
         if (state != nullptr && state->lock.owns_lock()) {
             state->lock.unlock();
-            if (waiter != nullptr) progressed = waiter();
+            if (waiter != nullptr) progressed = waiter(address, bytes);
             else std::this_thread::yield();
             state->lock.lock();
         } else {
@@ -430,6 +430,16 @@ Lease GuestAllocationsAcquire_nid_postfix() {
     Lease result;
     for (const auto& [address, range] : registry().ranges) {
         if (range->readable && range->bytes != 0) result.push_back(range);
+    }
+    return result;
+}
+
+Lease GuestAllocationsAcquireAll_nid_postfix() {
+    std::lock_guard lock(registry().mutex);
+    Lease result;
+    result.reserve(registry().ranges.size());
+    for (const auto& [address, range] : registry().ranges) {
+        if (range->bytes != 0) result.push_back(range);
     }
     return result;
 }

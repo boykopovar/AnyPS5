@@ -74,7 +74,7 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
         case 0x46u: return RdnaOpcode::SAndn1WrexecB32;
         case 0x47u: return RdnaOpcode::SAndn2WrexecB32;
         case 0x49u: return RdnaOpcode::SMovrelsd2B32;
-        default: throw std::invalid_argument("unsupported SOP1 opcode " + std::to_string(opcode));
+        default: throw UnsupportedInstructionError("unsupported SOP1 opcode " + std::to_string(opcode));
     }
 }
 
@@ -131,7 +131,7 @@ RdnaOpcode decodeSop2Opcode(std::uint32_t opcode) {
         case 0x34u: return RdnaOpcode::SPackHhB32B16;
         case 0x35u: return RdnaOpcode::SMulHiU32;
         case 0x36u: return RdnaOpcode::SMulHiI32;
-        default: throw std::invalid_argument("unsupported SOP2 opcode " + std::to_string(opcode));
+        default: throw UnsupportedInstructionError("unsupported SOP2 opcode " + std::to_string(opcode));
     }
 }
 
@@ -155,7 +155,7 @@ RdnaOpcode decodeSopcOpcode(std::uint32_t opcode) {
         case 0x0fu: return RdnaOpcode::SBitcmp1B64;
         case 0x12u: return RdnaOpcode::SCmpEqU64;
         case 0x13u: return RdnaOpcode::SCmpLgU64;
-        default: throw std::invalid_argument("unsupported SOPC opcode " + std::to_string(opcode));
+        default: throw UnsupportedInstructionError("unsupported SOPC opcode " + std::to_string(opcode));
     }
 }
 
@@ -188,7 +188,7 @@ RdnaOpcode decodeSopkOpcode(std::uint32_t opcode) {
         case 0x1au: return RdnaOpcode::SWaitcnt;
         case 0x1bu: return RdnaOpcode::SSubvectorLoopBegin;
         case 0x1cu: return RdnaOpcode::SSubvectorLoopEnd;
-        default: throw std::invalid_argument("unsupported SOPK opcode " + std::to_string(opcode));
+        default: throw UnsupportedInstructionError("unsupported SOPK opcode " + std::to_string(opcode));
     }
 }
 
@@ -231,7 +231,7 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x24u: return RdnaOpcode::SRoundMode;
         case 0x25u: return RdnaOpcode::SDenormMode;
         case 0x28u: return RdnaOpcode::STtracedata;
-        default: throw std::invalid_argument("unsupported SOPP opcode " + std::to_string(opcode));
+        default: throw UnsupportedInstructionError("unsupported SOPP opcode " + std::to_string(opcode));
     }
 }
 

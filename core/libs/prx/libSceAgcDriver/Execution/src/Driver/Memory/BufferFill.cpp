@@ -1,16 +1,22 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferFill.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include <algorithm>
 #include <bit>
 #include <cstdlib>
+#include <optional>
 #include <cstring>
 
 namespace AgcDriver::DriverDetail {
 
 bool Driver::matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
     static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
+    static const bool patternEnabled = std::getenv("APS5_NO_PATTERN_FILL_HLE") == nullptr;
     if (!enabled || userData.size() < 8 || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1) return false;
+    if (patternEnabled && MatchesPatternFillKernel(code, userData, compute)) return true;
     static constexpr std::array<std::uint32_t, 9> fillKernel{0xd7460004u, 0x04010c08u, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
     if (code.size() < fillKernel.size() || !std::equal(fillKernel.begin(), fillKernel.end(), code.begin())) return false;
 
@@ -21,6 +27,34 @@ bool Driver::matchesFillKernel(std::span<const std::uint32_t> code, const std::v
     const auto type = userData[3] >> 30u;
     const auto format = (userData[3] >> 12u) & 0x7fu;
     return type == 0 && stride == 16 && !swizzled && !addTid && dstSel == 0xfacu && format == 0x4bu;
+}
+
+std::optional<DwordPatternFill> MatchDwordPatternFill(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
+    static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
+    if (!enabled || userData.size() != 10 || packet.size() < 5 || !compute.groupIdEnable[0] || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1) return std::nullopt;
+    static constexpr std::array<std::uint32_t, 69> kernel{
+        0xbfa00003u, 0xd7460002u, 0x04010c0au, 0x7da80408u, 0xbf88003fu, 0x7e000c09u, 0xbf070980u, 0x858a807eu,
+        0x7e005700u, 0x100000ffu, 0x4f800000u, 0x7e060f00u, 0xd5766a00u, 0x02020609u, 0x7d8a0280u, 0x4c020080u,
+        0x02000101u, 0xd56a0001u, 0x00020700u, 0x4c000303u, 0x4a020303u, 0x02000101u, 0xd56a0000u, 0x00020500u,
+        0xd5690001u, 0x00020009u, 0x4c060302u, 0x7d860609u, 0x7d8c02f9u, 0x06068c02u, 0x87ea6a0cu, 0x50000080u,
+        0xd5286a00u, 0x003200c1u, 0xd5010000u, 0x002a00c1u, 0xd5690000u, 0x00020009u, 0x4c000102u, 0x7d0a0080u,
+        0xbe88246au, 0xbf880015u, 0x7d0a0081u, 0xbe8a246au, 0xbf88000cu, 0x7d0a0082u, 0xbeea246au, 0xbf880003u,
+        0x7e000207u, 0xe0102000u, 0x80000002u, 0x8afe7e6au, 0xbf880003u, 0x7e000206u, 0xe0102000u, 0x80000002u,
+        0xbefe046au, 0x8afe7e0au, 0xbf880003u, 0x7e000205u, 0xe0102000u, 0x80000002u, 0xbefe040au, 0x8afe7e08u,
+        0xbf880003u, 0x7e000204u, 0xe0102000u, 0x80000002u, 0xbf810000u};
+    if (code.size() < kernel.size() || !std::equal(kernel.begin(), kernel.end(), code.begin())) return std::nullopt;
+    const auto stride = (userData[1] >> 16u) & 0x3fffu;
+    const bool swizzled = ((userData[1] >> 31u) & 1u) != 0;
+    const bool addTid = ((userData[3] >> 23u) & 1u) != 0;
+    const auto type = userData[3] >> 30u;
+    const auto period = userData[9];
+    if (type != 0 || stride != 4 || swizzled || addTid || (period != 1u && period != 2u && period != 4u) || (packet[4] & 0x20u) != 0 || packet[2] != 1 || packet[3] != 1) return std::nullopt;
+    const auto dwords = std::min<std::uint64_t>({static_cast<std::uint64_t>(packet[1]) * 64u, userData[8], userData[2]});
+    const auto base = userData[0] | (static_cast<std::uint64_t>(userData[1] & 0xffffu) << 32u);
+    if (dwords == 0 || dwords % 4u != 0 || base % 16u != 0) return std::nullopt;
+    DwordPatternFill fill{base, static_cast<std::size_t>(dwords * 4u), {}};
+    for (std::uint32_t i = 0; i < 4; ++i) fill.pattern[i] = userData[4 + i % period];
+    return fill;
 }
 
 bool Driver::fillClearEnabled() {
@@ -88,20 +122,49 @@ void Driver::fillClearCount(const Graphics::StorageTexture::FillCoverage& covera
 }
 
 bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::shared_ptr<VulkanDevice>& localDevice) {
-    if (!matchesFillKernel(code, userData, compute)) return false;
-    const auto numRecords = userData[2];
-    std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
-    if ((packet[4] & 0x20u) != 0) {
-        for (std::uint32_t axis = 0; axis < 3; ++axis) {
-            const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
-            groups[axis] = (groups[axis] + threads - 1) / threads;
+    const auto dwordFill = MatchDwordPatternFill(packet, code, userData, compute);
+    if (!dwordFill && !matchesFillKernel(code, userData, compute)) return false;
+    std::uint64_t base;
+    std::size_t bytes;
+    std::array<std::uint32_t, 4> pattern;
+    std::unique_lock inputLock(GuestMemory::GpuMutex(), std::defer_lock);
+    if (dwordFill) {
+        base = dwordFill->base;
+        bytes = dwordFill->bytes;
+        pattern = dwordFill->pattern;
+    } else if (MatchesPatternFillKernel(code, userData, compute)) {
+        const auto range = DecodePatternFillRange(userData, packet);
+        if (!range) return false;
+        if (range->invocations == 0) return true;
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Fill);
+        inputLock.lock();
+        recordLabelsForPacket(localDevice.get(), queueId);
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->control), 8)) return false;
+        std::array<std::uint32_t, 2> control;
+        GuestMemory::Read(range->control, std::as_writable_bytes(std::span(control)), 4);
+        const auto count = range->UniformBytes(control[0], control[1]);
+        if (!count) return false;
+        if (*count == 0) return true;
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->source), 4)) return false;
+        GuestMemory::Read(range->source, std::as_writable_bytes(std::span(pattern).first(1)), 4);
+        std::fill(pattern.begin() + 1, pattern.end(), pattern[0]);
+        base = range->destination;
+        bytes = *count;
+    } else {
+        const auto numRecords = userData[2];
+        std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
+        if ((packet[4] & 0x20u) != 0) {
+            for (std::uint32_t axis = 0; axis < 3; ++axis) {
+                const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
+                groups[axis] = (groups[axis] + threads - 1) / threads;
+            }
         }
+        if (groups[1] != 1 || groups[2] != 1) return false;
+        const auto records = std::min<std::uint64_t>(static_cast<std::uint64_t>(groups[0]) * 64u, numRecords);
+        base = userData[0] | (static_cast<std::uint64_t>(userData[1] & 0xffffu) << 32u);
+        bytes = static_cast<std::size_t>(records * 16u);
+        pattern = {userData[4], userData[5], userData[6], userData[7]};
     }
-    if (groups[1] != 1 || groups[2] != 1) return false;
-    const auto records = std::min<std::uint64_t>(static_cast<std::uint64_t>(groups[0]) * 64u, numRecords);
-    const auto base = userData[0] | (static_cast<std::uint64_t>(userData[1] & 0xffffu) << 32u);
-    const auto bytes = static_cast<std::size_t>(records * 16u);
-    const std::array<std::uint32_t, 4> pattern{userData[4], userData[5], userData[6], userData[7]};
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static std::atomic<std::uint64_t> fills{0}, filledBytes{0}, cpuFills{0};
 

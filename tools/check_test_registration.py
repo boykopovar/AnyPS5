@@ -5,10 +5,7 @@ from pathlib import Path
 
 TEST_OUTPUT = r"tests[\\/]"
 
-KNOWN_UNRUN = {
-    "agc_driver_recorder_tests",
-    "video_out_flip_tests",
-}
+KNOWN_UNRUN = set()
 
 
 def built(build):
@@ -37,7 +34,8 @@ def registered(build):
             found = re.match(r"\s*add_test\s*\((.*)\)\s*$", line)
             if not found:
                 continue
-            for token in re.findall(r'"([^"]*)"|(\S+)', found.group(1)):
+            tokens = re.findall(r'"([^"]*)"|(\S+)', found.group(1))
+            for token in tokens[1:]:
                 argument = token[0] or token[1]
                 base = re.split(r"[\\/]", argument)[-1]
                 if base.endswith(".exe"):

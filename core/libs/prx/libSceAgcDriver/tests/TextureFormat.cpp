@@ -77,6 +77,7 @@ void convertedDccClearTests() {
 void RunTextureFormatTests() {
     srgbDecodeTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
+    Require(ResolveTextureFormat(2) == VK_FORMAT_R8_SNORM, "format 2 must resolve to R8_SNORM");
     Require(BytesPerElement(1) == 1u, "format 1 must be one byte wide");
     Require(!IsBlockCompressed(1), "format 1 must not be block compressed");
     Require(BlockWidth(1) == 1u && BlockHeight(1) == 1u, "format 1 must have a one-texel block");
@@ -114,7 +115,9 @@ void RunTextureFormatTests() {
     reject([] { ResolveTextureFormat(0); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(183); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(9999); }, "unsupported guest texture format");
-    reject([] { BytesPerElement(2); }, "unsupported guest texture format");
+    reject([] { BytesPerElement(3); }, "unsupported guest texture format");
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
+    for (const std::uint32_t format : {128u, 129u, 130u, 170u, 172u, 174u, 182u}) Require(IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must be an sRGB texture format");
+    for (const std::uint32_t format : {1u, 14u, 56u, 71u, 169u, 171u, 173u, 181u}) Require(!IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must not be an sRGB texture format");
     convertedDccClearTests();
 }

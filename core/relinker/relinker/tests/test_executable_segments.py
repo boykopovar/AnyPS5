@@ -57,6 +57,28 @@ def main():
         result, output = run_case(relinker, work, "syscall-filter", ["unused-filter=1"], b"\x0f\x05\xc3")
         assert result.returncode == 2 and "Forbidden syscall instruction" in result.stderr and not output.exists(), result
 
+        forbidden = (
+            ("rex-syscall", b"\x48\x0f\x05"),
+            ("operand-syscall", b"\x66\x0f\x05"),
+            ("address-sysenter", b"\x67\x0f\x34"),
+            ("segment-sysenter", b"\x2e\x0f\x34"),
+            ("rex-sysret", b"\x48\x0f\x07"),
+            ("mixed-sysret", b"\x66\x67\x48\x0f\x07"),
+            ("operand-int80", b"\x66\xcd\x80"),
+            ("segment-int80", b"\x64\xcd\x80"),
+        )
+        for name, instruction in forbidden:
+            result, output = run_case(relinker, work, name, [], b"\x90" + instruction + b"\xc3")
+            assert result.returncode == 2 and not output.exists(), (name, result.stdout, result.stderr)
+            assert "Forbidden syscall instruction at code offset 0x1801" in result.stderr, (name, result.stderr)
+
+        result, output = run_case(relinker, work, "immediate-decoys", [],
+                                  b"\x48\xb8\x0f\x05\xcd\x80\x0f\x34\x0f\x07\xc3")
+        assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
+
+        result, output = run_case(relinker, work, "skip-prefixed", ["--skip-syscall-check"], b"\x48\x0f\x05\xc3")
+        assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
+
         result, output = run_case(relinker, work, "skip", ["--skip-syscall-check"], b"\x0f\x05\xc3")
         assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
         second_code = b"\x90" * 16 + b"\xb8\x2a\x00\x00\x00\xc3"

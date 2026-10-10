@@ -1,4 +1,5 @@
 #include "ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstdio>
@@ -12,36 +13,8 @@ namespace ShaderRecompiler {
 
 namespace {
 
-std::string toHexString(std::uint32_t value) {
-    char buffer[11];
-    std::snprintf(buffer, sizeof(buffer), "0x%08x", value);
-    return std::string(buffer);
-}
-
 std::uint32_t instructionEndProgramCounter(const RdnaInstruction& instruction) {
     return instruction.programCounter + instruction.wordCount * 4u;
-}
-
-void addUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
-    if (std::find(values.begin(), values.end(), value) == values.end()) {
-        values.push_back(value);
-    }
-}
-
-void sortUnique(std::vector<std::uint32_t>& values) {
-    std::sort(values.begin(), values.end());
-    values.erase(std::unique(values.begin(), values.end()), values.end());
-}
-
-std::uint32_t remapId(std::uint32_t id, const std::vector<std::uint32_t>& idMap) {
-    return id != InvalidControlFlowId && id < idMap.size() ? idMap[id] : id;
-}
-
-void remapIds(std::vector<std::uint32_t>& values, const std::vector<std::uint32_t>& idMap) {
-    for (auto& value : values) {
-        value = remapId(value, idMap);
-    }
-    sortUnique(values);
 }
 
 std::uint32_t estimatedSpirvWords(const RdnaInstruction& instruction) {
@@ -463,6 +436,18 @@ const SwappcCall* findReturnAt(const std::vector<SwappcCall>& calls, std::uint32
     return nullptr;
 }
 
+bool isFetchCall(const RdnaProgram& program, std::uint32_t index, const SwappcInfo* swappc, bool outsideProgram) {
+    const auto& instruction = program.instructions[index];
+    const bool positional = std::all_of(program.instructions.begin(), program.instructions.begin() + index, isFetchCallPrefixOpcode);
+    const std::uint32_t targetRegister = scalarIndex(instruction.source0);
+    const bool userDataPair = swappc != nullptr && targetRegister != NoScalarRegister &&
+        targetRegister >= swappc->userDataBaseRegister && targetRegister + 1u < swappc->userDataBaseRegister + swappc->userDataCount &&
+        std::none_of(program.instructions.begin(), program.instructions.end(), [&](const RdnaInstruction& other) {
+            return writesScalar(other, targetRegister) || writesScalar(other, targetRegister + 1u);
+        });
+    return swappc != nullptr && swappc->fetchCallAllowed && positional && (userDataPair || outsideProgram);
+}
+
 std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const SwappcInfo* swappc) {
     std::vector<SwappcCall> calls;
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
@@ -489,15 +474,7 @@ std::vector<SwappcCall> analyzeSwappcCalls(const RdnaProgram& program, const Swa
         if (instruction.op == RdnaOpcode::SCallB64 && call.targetIndex == InvalidControlFlowId) {
             throw std::invalid_argument("s_call_b64 at program counter " + toHexString(instruction.programCounter) + " targets invalid instruction boundary " + toHexString(target));
         }
-        const bool positional = std::all_of(program.instructions.begin(), program.instructions.begin() + index, isFetchCallPrefixOpcode);
-        const std::uint32_t targetRegister = scalarIndex(instruction.source0);
-        const bool userDataPair = swappc != nullptr && targetRegister != NoScalarRegister &&
-            targetRegister >= swappc->userDataBaseRegister && targetRegister + 1u < swappc->userDataBaseRegister + swappc->userDataCount &&
-            std::none_of(program.instructions.begin(), program.instructions.end(), [&](const RdnaInstruction& other) {
-                return writesScalar(other, targetRegister) || writesScalar(other, targetRegister + 1u);
-            });
-        const bool outsideProgram = staticTarget && call.targetIndex == InvalidControlFlowId;
-        if (instruction.op == RdnaOpcode::SSwappcB64 && swappc != nullptr && swappc->fetchCallAllowed && positional && (userDataPair || outsideProgram)) {
+        if (instruction.op == RdnaOpcode::SSwappcB64 && isFetchCall(program, index, swappc, staticTarget && call.targetIndex == InvalidControlFlowId)) {
             call.fetch = true;
             call.returnTargetProgramCounter = instructionEndProgramCounter(instruction);
             calls.push_back(call);
@@ -639,21 +616,6 @@ BranchCondition conditionForOpcode(RdnaOpcode opcode) {
         default: break;
     }
     throw std::logic_error("unreachable branch condition for opcode " + std::to_string(static_cast<int>(opcode)));
-}
-
-void rebuildPredecessors(ControlFlowGraph& graph) {
-    for (auto& block : graph.blocks) {
-        block.predecessors.clear();
-        sortUnique(block.successors);
-    }
-    for (const auto& block : graph.blocks) {
-        for (const auto successor : block.successors) {
-            addUnique(graph.blocks[successor].predecessors, block.id);
-        }
-    }
-    for (auto& block : graph.blocks) {
-        sortUnique(block.predecessors);
-    }
 }
 
 void pruneUnreachableBlocks(ControlFlowGraph& graph) {
@@ -888,6 +850,22 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
     for (auto& block : blocks) {
         sortUnique(block.predecessors);
     }
+}
+
+std::optional<std::uint32_t> UnresolvableSwappcTarget(const RdnaProgram& program, const SwappcInfo* swappc) {
+    for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
+        const auto& instruction = program.instructions[index];
+        if (instruction.op != RdnaOpcode::SSwappcB64) {
+            continue;
+        }
+        std::uint32_t target = instruction.branchTarget;
+        const bool staticTarget = resolveSetpcTarget(program, index, target);
+        const bool inProgram = staticTarget && instructionIndexOfProgramCounter(program, target) != InvalidControlFlowId;
+        if (!inProgram && !isFetchCall(program, index, swappc, staticTarget)) {
+            return instruction.programCounter;
+        }
+    }
+    return std::nullopt;
 }
 
 ControlFlowGraph GraphBuilder::Build(const RdnaProgram& program, const SwappcInfo* swappc) const {

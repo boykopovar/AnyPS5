@@ -55,6 +55,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
     bool vexPresent = false;
     bool evexPresent = false;
     std::uint8_t vexMap = 0;
+    std::uint8_t xopMap = 0;
     std::uint8_t threeByteMap = 0;
     bool threeByteEscape = false;
 
@@ -76,6 +77,12 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             throw CodegenException("Instruction truncated after VEX3 prefix");
         }
         pos += 1;
+    } else if (opcode == XopPrefix && pos < available && (data[pos] & Vex3MapMask) >= XopMapMin) {
+        if (pos + 1 >= available) {
+            throw CodegenException("Instruction truncated after XOP prefix");
+        }
+        xopMap = static_cast<std::uint8_t>(data[pos] & Vex3MapMask);
+        pos += 2;
     } else if (opcode == EvexPrefix) {
         if (pos + 2 >= available) {
             throw CodegenException("Instruction truncated after EVEX prefix");
@@ -101,7 +108,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         }
     }
 
-    if (vexPresent || evexPresent) {
+    if (vexPresent || evexPresent || xopMap != 0) {
         if (pos >= available) {
             throw CodegenException("Instruction truncated after VEX prefix");
         }
@@ -114,7 +121,14 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
 
     const bool vectorImmediate = vexMap == 1 && ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xC2 || opcode == 0xC4 || opcode == 0xC5 || opcode == 0xC6);
 
-    if (vexPresent) {
+    if (xopMap != 0) {
+        hasModRm = true;
+        if (xopMap == XopMap8) {
+            immediateSize = ImmSize8;
+        } else if (xopMap == XopMapA) {
+            immediateSize = ImmSize32;
+        }
+    } else if (vexPresent) {
         if (vexMap == 1 && opcode >= VexNoModRmMin && opcode <= VexNoModRmMax) {
             hasModRm = false;
         } else {
@@ -379,8 +393,9 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
     std::uint8_t op = data[pos++];
     bool twoByteOpcode = false;
 
-    if (op == OneByteVex2 || op == OneByteVex3 || op == EvexPrefix) {
-        pos += (op == OneByteVex2 ? 1 : (op == OneByteVex3 ? 2 : EvexPrefixLength - 1)) + 1;
+    const bool xop = op == XopPrefix && pos < info.Length && (data[pos] & Vex3MapMask) >= XopMapMin;
+    if (op == OneByteVex2 || op == OneByteVex3 || op == EvexPrefix || xop) {
+        pos += (op == OneByteVex2 ? 1 : (op == OneByteVex3 || xop ? 2 : EvexPrefixLength - 1)) + 1;
         if (pos < info.Length)
             readModRm(pos, false);
         info.FlowKind = ControlFlowKind::Sequential;

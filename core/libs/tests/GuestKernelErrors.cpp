@@ -99,6 +99,7 @@ int main() {
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_KERNEL_ERROR_EDEADLK);
+    Require(scePthreadMutexDestroy(&mutex) == SCE_KERNEL_ERROR_EBUSY);
     Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
 

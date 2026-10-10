@@ -36,6 +36,7 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer);
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, const std::function<void()>& apply);
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply);
 Lease GuestAllocationsAcquire_nid_postfix();
+Lease GuestAllocationsAcquireAll_nid_postfix();
 // Changes whenever a mutation ends, so callers can cache facts about guest mappings between changes.
 std::uint64_t GuestAllocationsGeneration_nid_postfix();
 // Precise invalidation for such caches: the callback runs, after the generation changed, for every
@@ -47,7 +48,7 @@ void GuestAllocationsInvalidate_nid_postfix(std::uintptr_t address, std::size_t 
 // and finishes the GPU work that holds leases; it returns whether it finished any (a round that found
 // nothing to wait for counts against the same bound as a plain spin). Without one the mutation spins
 // until the lease is dropped by another thread.
-void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)());
+void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t address, std::size_t bytes));
 }
 
 class Mutation {

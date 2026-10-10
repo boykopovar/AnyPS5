@@ -90,7 +90,12 @@ constexpr std::uint64_t Sign = 0x8000000000000000ull;
 
 bool Nan(std::uint64_t bits) { return (bits & ~Sign) > 0x7ff0000000000000ull; }
 std::uint64_t OrderKey(std::uint64_t bits) { return (bits & Sign) != 0u ? ~bits : bits | Sign; }
+constexpr std::uint64_t Quiet = 0x0008000000000000ull;
+
+bool Signaling(std::uint64_t bits) { return Nan(bits) && (bits & Quiet) == 0u; }
 std::uint64_t MinMax(std::uint64_t old, std::uint64_t data, bool max) {
+    if (Signaling(data)) return data | Quiet;
+    if (Signaling(old)) return old | Quiet;
     if (Nan(old)) return data;
     if (Nan(data)) return old;
     return (max ? OrderKey(data) > OrderKey(old) : OrderKey(data) < OrderKey(old)) ? data : old;
@@ -114,7 +119,7 @@ void Fill(std::uint32_t tid, std::uint32_t* words) {
     std::array<std::uint64_t, 3> values{};
     if (kind == 0u) values = {seed, seed * 0xbf58476d1ce4e5b9ull, seed ^ 0x94d049bb133111ebull};
     if (kind == 1u) values = {tid % 7u, (tid * 3u) % 7u, tid % 5u};
-    if (kind == 2u) values = {floats[tid % 12u], floats[(tid / 2u + 3u) % 12u], floats[(tid + 5u) % 12u]};
+    if (kind == 2u) values = {floats[tid % 12u], floats[(tid / 4u + 9u) % 12u], floats[(tid + 5u) % 12u]};
     if (kind == 3u) values = {seed, (tid & 4u) != 0u ? seed : seed + 0x100000000ull, seed * 3u};
     for (std::uint32_t i = 0; i < values.size(); ++i) {
         words[i * 2u] = static_cast<std::uint32_t>(values[i]);

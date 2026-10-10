@@ -35,8 +35,8 @@ void RunAndRequireRejected(const std::string& binary, const Bytes& image, const 
     WriteFile(input, image);
     const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
     require(run.ExitCode != 0, "Relinker accepted a relocation table " + what + " and exited 0:\n" + run.Output);
-    require(run.Output.find("Relocation entry out of bounds") != std::string::npos,
-            "Relinker did not report the entry as out of bounds for a table " + what + ":\n" + run.Output);
+    require(run.Output.find("Relocation table is out of bounds") != std::string::npos,
+            "Relinker did not report the table as out of bounds for a table " + what + ":\n" + run.Output);
 }
 
 }

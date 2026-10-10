@@ -557,7 +557,7 @@ void cpuExecution() {
             for (std::uint8_t src = 0; src < 16; ++src)
                 executeSha256(harness, *matcher, {{opcode, dst, src}}, random, 2);
     for (int sequence = 0; sequence < 256; ++sequence) {
-        std::vector<Sha256Step> steps(2 + random() % 2);
+        std::vector<Sha256Step> steps(2 + random() % 2, Sha256Step{});
         for (auto& step : steps) step = {static_cast<std::uint8_t>(0xCB + random() % 3), static_cast<std::uint8_t>(random() % 16), static_cast<std::uint8_t>(random() % 16)};
         executeSha256(harness, *matcher, steps, random, 2);
     }
@@ -616,6 +616,7 @@ void peBuilder() {
     std::array<PeDirectory, 16> directories{};
     const auto file = WindowsPeWriter().Write(sections, LoadRva, directories);
     require(file.size() > 0x400, "PE writer rejected the stub section");
+    require(read<std::uint16_t>(file, 0x96) == 0x22, "PE writer marked a fixed image as relocation-stripped");
     auto altered = converted.Bytes;
     altered[0x205] = 0xDC;
     requireFailure([&] {

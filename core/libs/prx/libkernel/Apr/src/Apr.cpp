@@ -39,15 +39,15 @@ struct AprFile {
     std::uint64_t size;
 };
 
-std::mutex g_filesLock;
-std::vector<AprFile> g_files;
-std::unordered_map<std::string, std::uint32_t> g_idsByPath;
+std::mutex& g_filesLock = *new std::mutex();
+std::vector<AprFile>& g_files = *new std::vector<AprFile>();
+std::unordered_map<std::string, std::uint32_t>& g_idsByPath = *new std::unordered_map<std::string, std::uint32_t>();
 
 // File sizes by directory, listed on first use. Titles resolve thousands of package paths at startup,
 // and one size query per path took over 20 s; a listing costs one directory read. Names are compared
 // case-insensitively, like the host file system.
-std::mutex g_directoriesLock;
-std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>> g_directories;
+std::mutex& g_directoriesLock = *new std::mutex();
+std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>();
 
 std::string _foldCase(std::string text) {
     for (auto& character : text) {
@@ -164,7 +164,7 @@ void _writeAddress(const Apr::WriteAddressCommand& command) {
 
 std::array<std::atomic<std::uint32_t>, 256> g_counters{};
 
-std::mutex g_counterWrites;
+std::mutex& g_counterWrites = *new std::mutex();
 
 std::uint32_t _counter(std::uint32_t index) {
     return g_counters[index % g_counters.size()].load(std::memory_order_acquire);
@@ -263,7 +263,7 @@ struct AmmState {
 };
 
 AmmState& _amm() {
-    static AmmState state;
+    static auto& state = *new AmmState();
     return state;
 }
 
@@ -704,7 +704,7 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
 
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
     (void)priority;
-    if (!buffer || buffer->type != Apr::BufferType::Apr) return _fail(GUEST_EINVAL);
+    if (!buffer) return _fail(GUEST_EINVAL);
     _execute(*buffer);
     return 0;
 }

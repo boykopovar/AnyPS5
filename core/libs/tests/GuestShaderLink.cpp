@@ -16,7 +16,9 @@ static unsigned links = 0;
 static const Shader* mappedPixel = nullptr;
 
 extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
-    Require(!stages.empty() && stages[0] != nullptr && context.size() == 2u && primitive.size() == 3u);
+    Require(!stages.empty() && stages[0] != nullptr && primitive.size() == 3u);
+    Require((stages.size() == 1u && context.size() == 2u) ||
+            (stages.size() == 2u && stages[1] == mappedPixel && context.size() == 34u));
     ++preparations;
 }
 
@@ -50,7 +52,7 @@ int main() {
     }
     Require(hasRenderTarget && hasRasterizer);
     ShaderSpecialRegs special{};
-    special.vgt_shader_stages_en = {VGT_SHADER_STAGES_EN, VGT_SHADER_STAGES_NGG_BIT};
+    special.vgt_shader_stages_en = {VGT_SHADER_STAGES_EN, 0x2000u};
     special.vgt_gs_out_prim_type = {VGT_GS_OUT_PRIM_TYPE, 0};
     special.ge_cntl = {GE_CNTL, 0x123};
     special.ge_user_vgpr_en = {GE_USER_VGPR_EN, 7};
@@ -64,7 +66,7 @@ int main() {
     context.back() = {0xdeadbeef, 0xcafebabe};
     primitive.back() = context.back();
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == 0);
-    Require(context[0].offset == VGT_SHADER_STAGES_EN && context[0].value == VGT_SHADER_STAGES_NGG_BIT);
+    Require(context[0].offset == VGT_SHADER_STAGES_EN && context[0].value == 0x2000u);
     Require(context[1].offset == VGT_GS_OUT_PRIM_TYPE && context[1].value == 2);
     for (unsigned i = 0; i < 32; ++i)
         Require(context[i + 2].offset == SPI_PS_INPUT_CNTL_0 + i && context[i + 2].value == i);
@@ -104,5 +106,5 @@ int main() {
     input.default_value = 2;
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == 0);
     Require(context[2].value == 0x220);
-    Require(preparations == 4u && mappings == 3u && links == 7u);
+    Require(preparations == 7u && mappings == 3u && links == 7u);
 }

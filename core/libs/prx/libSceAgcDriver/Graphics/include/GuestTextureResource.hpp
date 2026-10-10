@@ -76,6 +76,8 @@ struct GuestTextureResource {
     std::uint8_t dstSelY;
     std::uint8_t dstSelZ;
     std::uint8_t dstSelW;
+    std::uint32_t pipeBankXor = 0;
+    std::uint8_t bcSwizzle = 0;
     // Last mip level the view exposes; the surface itself holds mipCount levels.
     std::uint32_t lastLevel = 0;
     // DCC metadata of a compressed surface, or 0 (see DccMetadata.hpp).

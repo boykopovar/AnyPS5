@@ -3,6 +3,18 @@
 #include <cstdint>
 
 namespace GuestResolver {
+struct HostEntry {
+    char* name;
+    char** aliases;
+    std::int32_t family;
+    std::int32_t length;
+    char** addresses;
+};
+static_assert(sizeof(HostEntry) == 32);
+static_assert(offsetof(HostEntry, family) == 16);
+static_assert(offsetof(HostEntry, length) == 20);
+static_assert(offsetof(HostEntry, addresses) == 24);
+
 struct AddressInfo {
     std::int32_t flags;
     std::int32_t family;

@@ -5,6 +5,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -16,6 +17,7 @@
 extern "C" Pthread APS5_VABI scePthreadSelf();
 #ifdef _WIN32
 extern "C" void Aps5RedirectedEntryStub();
+extern "C" [[noreturn]] void Aps5RedirectedExit(CONTEXT* context, const void* vectors, void (*restore)(CONTEXT*, EXCEPTION_RECORD*));
 #endif
 
 namespace {
@@ -101,12 +103,21 @@ GuestExceptionHandler Handler(int signum) {
 #ifdef _WIN32
 constexpr std::size_t RedZone = 128;
 constexpr std::size_t HomeArea = 32;
+constexpr auto RetryLimit = std::chrono::seconds(1);
+constexpr std::size_t VectorBytes = 16 * 32;
 
 struct Delivery {
     GuestExceptionHandler handler;
     int signum;
     CONTEXT context;
+    std::uint8_t vectors[VectorBytes];
+    std::uint64_t saveVectors;
 };
+
+const bool SaveVectors = [] {
+    __builtin_cpu_init();
+    return __builtin_cpu_supports("avx") != 0;
+}();
 
 void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
     GuestUcontext ucontext{};
@@ -159,8 +170,7 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
 [[noreturn]] void RedirectedEntry(Delivery* delivery) {
     CONTEXT context = delivery->context;
     Deliver(delivery->handler, delivery->signum, context);
-    RtlRestoreContext(&context, nullptr);
-    std::abort();
+    Aps5RedirectedExit(&context, delivery->saveVectors != 0 ? delivery->vectors : nullptr, RtlRestoreContext);
 }
 
 bool StackWritable(DWORD64 low, DWORD64 high) {
@@ -185,9 +195,26 @@ void CALLBACK WaitingEntry(ULONG_PTR parameter) {
 
 static_assert(HomeArea + 8 == 40, "Aps5RedirectedEntryStub finds the delivery 40 bytes above its stack pointer");
 static_assert(offsetof(Delivery, context) == 16 && offsetof(CONTEXT, Rax) == 0x78 && offsetof(CONTEXT, Rbp) == 0xa0 && offsetof(CONTEXT, R15) == 0xf0, "Aps5RedirectedEntryStub stores the live registers into the delivery's context");
+static_assert(offsetof(Delivery, vectors) == 1248 && offsetof(Delivery, saveVectors) == 1760, "Aps5RedirectedEntryStub stores ymm0-ymm15 into the delivery when saveVectors is set");
 
 bool Exited(HANDLE native) {
     return WaitForSingleObject(native, 0) == WAIT_OBJECT_0;
+}
+
+bool RestoringContext(DWORD64 rip) {
+    static const std::array<DWORD64, 2> stubs = [] {
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return std::array<DWORD64, 2>{reinterpret_cast<DWORD64>(GetProcAddress(ntdll, "NtContinue")), reinterpret_cast<DWORD64>(GetProcAddress(ntdll, "NtContinueEx"))};
+    }();
+    for (const DWORD64 stub : stubs)
+        if (stub != 0 && rip - stub < 0x20) return true;
+    return false;
+}
+
+bool InWinpthread(DWORD64 rip) {
+    static const HMODULE winpthread = GetModuleHandleW(L"libwinpthread-1.dll");
+    MEMORY_BASIC_INFORMATION info{};
+    return winpthread != nullptr && VirtualQuery(reinterpret_cast<const void*>(rip), &info, sizeof(info)) == sizeof(info) && info.AllocationBase == winpthread;
 }
 
 bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
@@ -198,27 +225,34 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         return true;
     }
     const auto native = static_cast<HANDLE>(thread->nativeHandle);
-    auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}});
-    if (SuspendThread(native) == static_cast<DWORD>(-1)) {
-        if (Exited(native)) return false;
-        throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
-    }
-    if (Exited(native)) {
+    auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}, {}, 0});
+    alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
+    const auto retryDeadline = std::chrono::steady_clock::now() + RetryLimit;
+    for (;;) {
+        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+            if (Exited(native)) return false;
+            throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
+        }
+        if (Exited(native)) {
+            ResumeThread(native);
+            return false;
+        }
+        delivery.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+        if (!GetThreadContext(native, &delivery.context)) {
+            ResumeThread(native);
+            throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
+        }
+        if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
+            const bool accepted = QueueUserAPC(WaitingEntry, native, reinterpret_cast<ULONG_PTR>(queued.get())) != 0;
+            ResumeThread(native);
+            if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
+            queued.release();
+            return true;
+        }
+        if (!RestoringContext(delivery.context.Rip) && !InWinpthread(delivery.context.Rip)) break;
         ResumeThread(native);
-        return false;
-    }
-    if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
-        const bool accepted = QueueUserAPC(WaitingEntry, native, reinterpret_cast<ULONG_PTR>(queued.get())) != 0;
-        ResumeThread(native);
-        if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
-        queued.release();
-        return true;
-    }
-    alignas(16) Delivery delivery{handler, signum, {}};
-    delivery.context.ContextFlags = CONTEXT_FULL | CONTEXT_FLOATING_POINT;
-    if (!GetThreadContext(native, &delivery.context)) {
-        ResumeThread(native);
-        throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
+        if (std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue or winpthreads for 1 s");
+        SwitchToThread();
     }
     const DWORD64 slot = (delivery.context.Rsp - RedZone - sizeof(Delivery)) & ~static_cast<DWORD64>(15);
     if (!StackWritable(slot - HomeArea - 8, delivery.context.Rsp - RedZone)) {
@@ -262,8 +296,50 @@ asm(".text\n"
     "    movq %r13, 280(%rsp)\n"
     "    movq %r14, 288(%rsp)\n"
     "    movq %r15, 296(%rsp)\n"
+    "    cmpq $0, 1800(%rsp)\n"
+    "    je 1f\n"
+    "    vmovdqu %ymm0, 1288(%rsp)\n"
+    "    vmovdqu %ymm1, 1320(%rsp)\n"
+    "    vmovdqu %ymm2, 1352(%rsp)\n"
+    "    vmovdqu %ymm3, 1384(%rsp)\n"
+    "    vmovdqu %ymm4, 1416(%rsp)\n"
+    "    vmovdqu %ymm5, 1448(%rsp)\n"
+    "    vmovdqu %ymm6, 1480(%rsp)\n"
+    "    vmovdqu %ymm7, 1512(%rsp)\n"
+    "    vmovdqu %ymm8, 1544(%rsp)\n"
+    "    vmovdqu %ymm9, 1576(%rsp)\n"
+    "    vmovdqu %ymm10, 1608(%rsp)\n"
+    "    vmovdqu %ymm11, 1640(%rsp)\n"
+    "    vmovdqu %ymm12, 1672(%rsp)\n"
+    "    vmovdqu %ymm13, 1704(%rsp)\n"
+    "    vmovdqu %ymm14, 1736(%rsp)\n"
+    "    vmovdqu %ymm15, 1768(%rsp)\n"
+    "1:\n"
     "    leaq 40(%rsp), %rcx\n"
-    "    jmp Aps5RedirectedEntry\n");
+    "    jmp Aps5RedirectedEntry\n"
+    ".globl Aps5RedirectedExit\n"
+    "Aps5RedirectedExit:\n"
+    "    testq %rdx, %rdx\n"
+    "    je 1f\n"
+    "    vmovdqu 0(%rdx), %ymm0\n"
+    "    vmovdqu 32(%rdx), %ymm1\n"
+    "    vmovdqu 64(%rdx), %ymm2\n"
+    "    vmovdqu 96(%rdx), %ymm3\n"
+    "    vmovdqu 128(%rdx), %ymm4\n"
+    "    vmovdqu 160(%rdx), %ymm5\n"
+    "    vmovdqu 192(%rdx), %ymm6\n"
+    "    vmovdqu 224(%rdx), %ymm7\n"
+    "    vmovdqu 256(%rdx), %ymm8\n"
+    "    vmovdqu 288(%rdx), %ymm9\n"
+    "    vmovdqu 320(%rdx), %ymm10\n"
+    "    vmovdqu 352(%rdx), %ymm11\n"
+    "    vmovdqu 384(%rdx), %ymm12\n"
+    "    vmovdqu 416(%rdx), %ymm13\n"
+    "    vmovdqu 448(%rdx), %ymm14\n"
+    "    vmovdqu 480(%rdx), %ymm15\n"
+    "1:\n"
+    "    xorl %edx, %edx\n"
+    "    jmp *%r8\n");
 #endif
 
 extern "C" {

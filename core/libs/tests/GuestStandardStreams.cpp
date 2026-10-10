@@ -95,7 +95,7 @@ static bool CheckBinaryModes() {
     const auto filename = directory + "/bytes";
     const std::string original("A\r\n\x1a" "B\0C", 7);
     const std::string written("D\n\x1a" "E\0F", 6);
-    const char* modes[] = {"r", "r+", "w", "w+", "a", "a+", "rb", "rb+", "r+b", "wb", "wb+", "w+b", "ab", "ab+", "a+b"};
+    const char* modes[] = {"r", "r+", "w", "w+", "a", "a+", "rb", "rb+", "r+b", "wb", "wb+", "w+b", "ab", "ab+", "a+b", "rt", "r+t", "wt", "w+e", "ae", "rbv"};
     bool correct = true;
     for (const auto* mode : modes) {
         for (const bool reopen : {false, true}) {
@@ -124,6 +124,20 @@ static bool CheckBinaryModes() {
             correct &= CheckFileBytes(filename, expected, mode, reopen);
         }
     }
+    for (const auto* mode : {"", "q", "tr", "rx", "rbx"}) {
+        FileStream redirected(std::tmpfile());
+        Require(fopen_nid_postfix(filename.c_str(), mode) == nullptr && *__error_nid_postfix() == 22);
+        Require(freopen_nid_postfix(filename.c_str(), mode, &redirected) == nullptr && *__error_nid_postfix() == 22);
+    }
+    Require(fopen_nid_postfix(filename.c_str(), "wx") == nullptr && *__error_nid_postfix() == 17);
+    FileStream* readOnly = fopen_nid_postfix(filename.c_str(), "rt+");
+    Require(readOnly != nullptr && fputc_nid_postfix('X', readOnly) == EOF);
+    Require(fclose_nid_postfix(readOnly) == 0);
+    Require(std::filesystem::remove(filename));
+    FileStream* created = fopen_nid_postfix(filename.c_str(), "wx");
+    Require(created != nullptr && fputc_nid_postfix('Y', created) == 'Y');
+    Require(fclose_nid_postfix(created) == 0);
+    correct &= CheckFileBytes(filename, "Y", "wx", false);
     Require(std::filesystem::remove(filename));
     Require(std::filesystem::remove(directory));
     return correct;

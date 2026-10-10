@@ -20,6 +20,7 @@
 #include <sys/resource.h>
 #endif
 #include <algorithm>
+#include <cassert>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -216,7 +217,12 @@ int APS5_VABI sceKernelReleaseFlexibleMemory(void* addr, size_t len) {
 
 int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || len == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if ((static_cast<std::uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 ||
+     len > DIRECT_MEMORY_SIZE || static_cast<std::uint64_t>(start) > DIRECT_MEMORY_SIZE - len)
+     return SCE_KERNEL_ERROR_EINVAL;
+ const auto views = DirectMemoryViews(start, len);
  DirectMemoryFree(start, len);
+ UnmapDirectMemoryViews(views);
  return 0;
 }
 
@@ -228,9 +234,6 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  if (!info || info_size < sizeof(VirtualQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
  memset(info, 0, sizeof(VirtualQueryInfo));
  const auto address = reinterpret_cast<uintptr_t>(addr);
- // The mapping that contains the address, or with SCE_KERNEL_VQ_FIND_NEXT (flags bit 0) the first
- // mapping at or above it: titles walk their mappings and check that a mapping covers a whole
- // allocation, so the answer must be the registered allocation, not a page.
  constexpr int findNext = 1;
  std::uintptr_t reservedStart = 0;
  std::uintptr_t reservedEnd = 0;
@@ -239,17 +242,18 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
   info->end = reservedEnd;
   return 0;
  }
- const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+ const auto lease = GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
+ assert(std::is_sorted(lease.begin(), lease.end(), [](const auto& left, const auto& right) { return left->address < right->address; }));
  const GuestAllocations::Range* best = nullptr;
  for (const auto& range : lease) {
-  const auto begin = range->allocationAddress;
-  const auto end = begin + range->allocationBytes;
+  const auto begin = range->address;
+  const auto end = begin + range->bytes;
   if (address >= begin && address < end) { best = range.get(); break; }
-  if ((flags & findNext) != 0 && begin > address && (best == nullptr || begin < best->allocationAddress)) best = range.get();
+  if ((flags & findNext) != 0 && begin > address && (best == nullptr || begin < best->address)) best = range.get();
  }
  if (best != nullptr) {
-  info->start = best->allocationAddress;
-  info->end = best->allocationAddress + best->allocationBytes;
+  info->start = best->address;
+  info->end = best->address + best->bytes;
   info->protection = (best->readable ? 1 : 0) | (best->writable ? 2 : 0) | (!best->releasable ? 4 : 0);
   int recorded = 0;
   if (GuestProtection(std::max<uintptr_t>(address, info->start), &recorded)) info->protection = recorded;
@@ -313,7 +317,10 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
 int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || (static_cast<uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
  if (len == 0) return 0;
- return DirectMemoryCheckedFree(start, len) ? 0 : SCE_KERNEL_ERROR_ENOENT;
+ const auto views = DirectMemoryViews(start, len);
+ if (!DirectMemoryCheckedFree(start, len)) return SCE_KERNEL_ERROR_ENOENT;
+ UnmapDirectMemoryViews(views);
+ return 0;
 }
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {
@@ -445,6 +452,15 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
 
 namespace {
 
+bool PageRange(void* address, std::uint64_t length, std::uintptr_t& start, std::uintptr_t& end) {
+    constexpr std::uintptr_t pageMask = PS5_PAGE_SIZE - 1;
+    const auto first = reinterpret_cast<std::uintptr_t>(address);
+    if (length > UINTPTR_MAX - first || first + length > UINTPTR_MAX - pageMask) return false;
+    start = first & ~pageMask;
+    end = (first + length + pageMask) & ~pageMask;
+    return true;
+}
+
 #ifdef _WIN32
 std::mutex g_workingSetLock;
 
@@ -475,6 +491,53 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     if (GetLastError() != ERROR_WORKING_SET_QUOTA) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualLock failed");
     return SCE_KERNEL_ERROR_EAGAIN;
 }
+
+std::uintptr_t HostPageSize() {
+    static const std::uintptr_t size = [] {
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        return static_cast<std::uintptr_t>(info.dwPageSize);
+    }();
+    return size;
+}
+
+int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
+    for (auto cursor = start; cursor < end;) {
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &region, sizeof(region)) != sizeof(region) || region.State == MEM_FREE) return SCE_KERNEL_ERROR_ENOMEM;
+        const auto next = std::min(end, reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize);
+        if (region.State == MEM_RESERVE) {
+            for (auto reserved = cursor; reserved < next;) {
+                std::uintptr_t reservationStart = 0;
+                std::uintptr_t reservationEnd = 0;
+                int recorded = 0;
+                if (GuestReservation(reserved, &reservationStart, &reservationEnd)) {
+                    reserved = reservationEnd;
+                } else if (GuestProtection(reserved, &recorded)) {
+                    reserved = (reserved & ~static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1)) + PS5_PAGE_SIZE;
+                } else {
+                    return SCE_KERNEL_ERROR_ENOMEM;
+                }
+            }
+        }
+        cursor = next;
+    }
+    for (auto cursor = start; cursor < end;) {
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &region, sizeof(region)) != sizeof(region)) return SCE_KERNEL_ERROR_ENOMEM;
+        const auto next = std::min(end, reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize);
+        if (region.State == MEM_COMMIT && (region.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0 && !VirtualUnlock(reinterpret_cast<void*>(cursor), next - cursor)) {
+            if (GetLastError() != ERROR_NOT_LOCKED) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualUnlock failed");
+            for (auto page = cursor; page < next; page += HostPageSize()) {
+                if (!VirtualUnlock(reinterpret_cast<void*>(page), std::min(HostPageSize(), next - page)) && GetLastError() != ERROR_NOT_LOCKED) {
+                    throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualUnlock failed");
+                }
+            }
+        }
+        cursor = next;
+    }
+    return 0;
+}
 #else
 int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     auto* const address = reinterpret_cast<void*>(start);
@@ -496,6 +559,13 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     default: throw std::system_error(error, std::generic_category(), "mlock failed");
     }
 }
+
+int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
+    if (::munlock(reinterpret_cast<void*>(start), end - start) == 0) return 0;
+    const int error = errno;
+    if (error == ENOMEM) return SCE_KERNEL_ERROR_ENOMEM;
+    throw std::system_error(error, std::generic_category(), "munlock failed");
+}
 #endif
 
 }
@@ -503,13 +573,19 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
 extern "C" {
 
 int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
-    constexpr std::uintptr_t pageMask = PS5_PAGE_SIZE - 1;
-    const auto first = reinterpret_cast<std::uintptr_t>(address);
-    if (length > UINTPTR_MAX - first || first + length > UINTPTR_MAX - pageMask) return SCE_KERNEL_ERROR_EINVAL;
-    const auto start = first & ~pageMask;
-    const auto end = (first + length + pageMask) & ~pageMask;
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
     if (start == end) return 0;
     return LockHostPages(start, end);
+}
+
+int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length) {
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    if (!PageRange(address, length, start, end)) return SCE_KERNEL_ERROR_EINVAL;
+    if (start == end) return 0;
+    return UnlockHostPages(start, end);
 }
 
 }

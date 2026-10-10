@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <cstdio>
@@ -39,7 +40,6 @@ static int APS5_VABI PrintList(const char* format, ...) {
     return result;
 }
 
-#ifdef _WIN32
 static bool CheckWidePrecision() {
     const char16_t input[] = u"A\u00e9\u20ac\U0001f600Z";
     const char* expected[] = {"", "A", "A", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9", "A\xc3\xa9\xe2\x82\xac",
@@ -65,9 +65,23 @@ static bool CheckWidePrecision() {
     Require(snprintf_nid_postfix(output, sizeof(output), "%.2ls", bounded) == 2 && std::strcmp(output, "AB") == 0);
     Require(snprintf_nid_postfix(nullptr, 0, "%.1ls", u"\u00e9") == 0);
     Require(snprintf_nid_postfix(output, sizeof(output), "%.1s", "\xc3\xa9") == 1 && static_cast<unsigned char>(output[0]) == 0xc3 && output[1] == 0);
+    Require(FormatList(output, sizeof(output), "%S:%lc:%C:%d", u"\u00e9", 0x20ac, 0x41, 7) == 10 && std::strcmp(output, "\xc3\xa9:\xe2\x82\xac:A:7") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%.*S", 3, u"\u00e9\u20ac") == 2 && std::strcmp(output, "\xc3\xa9") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%ls]", static_cast<const char16_t*>(nullptr)) == 8 && std::strcmp(output, "[(null)]") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "a%lcb%C", 0, 0) == 4 && std::memcmp(output, "a\0b\0", 5) == 0);
+#ifndef _WIN32
+    Require(FormatList(output, sizeof(output), "%%ls:%2$d:%1$d", 3, 7) == 7 && std::strcmp(output, "%ls:7:3") == 0);
+#endif
+    for (std::size_t capacity = 0; capacity <= 6; ++capacity) {
+        std::memset(output, '!', sizeof(output));
+        int count = -1;
+        Require(FormatList(capacity ? output : nullptr, capacity, "%ls%n", u"A\u00e9Z", &count) == 4 && count == 4);
+        const auto copied = capacity == 0 ? 0 : std::min<std::size_t>(capacity - 1, 4);
+        Require(std::memcmp(output, "A\xc3\xa9Z", copied) == 0 && output[capacity] == '!');
+        if (capacity) Require(output[copied] == 0);
+    }
     return correct;
 }
-#endif
 
 __attribute__((noinline)) static void APS5_VABI RunChecks() {
     char buffer[1024];
@@ -126,8 +140,4 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     std::puts("Formatting checks passed: 10000 iterations");
 }
 
-#ifdef _WIN32
 int main() { RunChecks(); return CheckWidePrecision() ? 0 : 1; }
-#else
-int main() { RunChecks(); }
-#endif

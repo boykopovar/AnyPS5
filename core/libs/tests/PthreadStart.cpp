@@ -1,4 +1,4 @@
-#include "prx/libkernel/Pthread/Pthread.hpp"
+#include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <future>
 #include <iostream>
 #include <stdexcept>
@@ -41,8 +41,7 @@ static void* APS5_VABI CheckThread(void* arg) {
     if (context.thread->threadId != std::this_thread::get_id() || !context.thread->nativeHandle)
         throw std::runtime_error("Native thread was not initialized");
 #else
-    if (context.thread->_thr.get_id() != std::this_thread::get_id()) throw std::runtime_error("Thread object was not initialized");
-    if (!context.thread->_thr.joinable()) throw std::runtime_error("Thread object is not joinable");
+    if (!pthread_equal(context.thread->hostThread, pthread_self())) throw std::runtime_error("Thread object was not initialized");
 #endif
     PthreadAttr attr = nullptr;
     if (scePthreadAttrInit(&attr) != 0) throw std::runtime_error("Attribute initialization failed");

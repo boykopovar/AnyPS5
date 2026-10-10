@@ -67,6 +67,7 @@ int NativeError() {
         case WSAECONNREFUSED: return 61;
         case WSAEINTR: return 4;
         case WSAEINVAL: return 22;
+        case WSAESHUTDOWN: return 32;
         default: return 5;
     }
 #else
@@ -179,6 +180,15 @@ int GuestSockets::Close(int descriptor) {
 bool GuestSockets::IsOpen(int descriptor) {
     std::lock_guard lock(socketsMutex);
     return sockets.contains(descriptor);
+}
+int GuestSockets::Family(int descriptor) {
+    std::lock_guard lock(socketsMutex);
+    const auto found = sockets.find(descriptor);
+    return found == sockets.end() ? -1 : found->second->family;
+}
+
+extern "C" bool GuestSocketIsOpen_nid_no_patch(int descriptor) {
+    return GuestSockets::IsOpen(descriptor);
 }
 
 namespace {
@@ -730,4 +740,13 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     }
     return ready;
 }
+}
+
+std::int64_t GuestSockets::Read(int descriptor, void* buffer, std::size_t length) {
+    if (length == 0) return IsOpen(descriptor) ? 0 : Fail(9);
+    return recv_nid_postfix(descriptor, buffer, std::min<std::size_t>(length, INT_MAX), 0);
+}
+
+std::int64_t GuestSockets::Write(int descriptor, const void* buffer, std::size_t length) {
+    return send_nid_postfix(descriptor, buffer, length, 0);
 }

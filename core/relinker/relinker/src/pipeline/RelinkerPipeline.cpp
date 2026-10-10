@@ -165,6 +165,9 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     if (hasPltRelocations && (dynJmpRelOffset > raw.size() || dynJmpRelSize > raw.size() - dynJmpRelOffset))
         throw RelinkerException("Jump relocation table is out of bounds", dynJmpRelOffset);
 
+    if (dynRelaOffset > raw.size() || dynRelaSize > raw.size() - dynRelaOffset)
+        throw RelinkerException("Relocation table is out of bounds", dynRelaOffset);
+
     auto readCStr = [&](FileByteOffset strOff) -> std::string {
         if (strOff >= dynStrTabSize)
             throw RelinkerException("Dynamic string offset is outside DT_STRSZ", strOff);
@@ -216,7 +219,7 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
             }
 
             const FileByteOffset symOff = dynSymTabOffset + static_cast<FileByteOffset>(symIdx) * symEntSize;
-            if (symOff + 4 > raw.size())
+            if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < 4)
                 throw RelinkerException("Symbol table entry out of bounds", symOff);
 
             std::uint32_t nameOff = 0;

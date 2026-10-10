@@ -114,7 +114,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     std::array<std::vector<std::uint32_t>, ImageBindingCount> imageGroups;
     const auto place = [&](std::uint32_t i) {
         const bool dynamic = info.images[i].mipMode == ImageMipMode::DynamicStorage;
-        const std::uint32_t count = dynamic ? RuntimeAbi::StorageHeapCapacity : 1u;
+        const std::uint32_t count = dynamic ? RuntimeAbi::StorageMipSlots : 1u;
         std::array<bool, ImageBindingCount> placed{};
         for (const auto& mode : ResourceMaterializer::RuntimeImageModes(info.images[i])) {
             const auto group = ImageBindingIndex(DescriptorBindingForImage(mode));
@@ -161,6 +161,8 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     }
     if (info.usesDma) {
         addBinding(next, DescriptorBindingKind::BdaPagetable);
+    }
+    if (info.usesDma || info.usesFaultBuffer) {
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
 

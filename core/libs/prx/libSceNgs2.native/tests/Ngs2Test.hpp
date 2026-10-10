@@ -25,6 +25,8 @@ int APS5_VABI sceNgs2SystemGetUserData(uintptr_t, uintptr_t*);
 int APS5_VABI sceNgs2SystemLock(uintptr_t);
 int APS5_VABI sceNgs2SystemUnlock(uintptr_t);
 int APS5_VABI sceNgs2SystemRender(uintptr_t, const Ngs2RenderBufferInfo*, uint32_t);
+int APS5_VABI sceNgs2PanInit(Ngs2PanWork*, const float*, float, uint32_t);
+int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork*, const Ngs2PanParam*, uint32_t, uint32_t, float*);
 int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t, const Ngs2RackOption*, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2RackCreate(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2ContextBufferInfo*, uintptr_t*);
 int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t, uint32_t, const Ngs2RackOption*, const Ngs2BufferAllocator*, uintptr_t*);

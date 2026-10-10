@@ -117,7 +117,7 @@ void Driver::recordDeferredLabels(VulkanDevice* localDevice, std::uint32_t queue
         const int reason = localDevice != nullptr ? localDevice->WriteLabelOnGpu(label.address, bytes, stamp, queue, first) : 4;
         first = false;
         countLabelOutcome(reason);
-        if (reason != 0 && reason != 5 && reason != 6) {
+        if (reason != 0 && reason != 5) {
             if (reason != 1 && localDevice != nullptr) localDevice->WaitIdle();
             GuestMemory::Write(label.address, bytes, 4);
         }

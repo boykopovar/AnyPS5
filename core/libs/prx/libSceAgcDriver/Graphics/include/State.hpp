@@ -38,6 +38,7 @@ struct ColorTarget {
     std::uint8_t componentMapping;
     ColorTileMode tileMode = ColorTileMode::Linear;
     std::uint32_t elementBytes = 4;
+    ShaderRecompiler::ColorExportPacking packing = ShaderRecompiler::ColorExportPacking::None;
     // DCC metadata of a compressed target (CB_COLOR_INFO DCC_ENABLE), or 0 (see DccMetadata.hpp).
     std::uint64_t dccAddress = 0;
     bool dccAlphaOnMsb = false;
@@ -54,6 +55,7 @@ struct ColorTarget {
     std::uint32_t depth = 1;
     std::uint32_t depthSlice = 0;
     std::uint32_t exportIndex = 0;
+    bool uintExport = false;
 };
 
 struct DepthTarget {
@@ -63,6 +65,7 @@ struct DepthTarget {
     VkFormat format;
     float clearDepth;
     std::uint8_t clearStencil;
+    std::uint64_t htileAddress = 0;
 };
 
 struct State {
@@ -78,6 +81,9 @@ struct State {
     float depthBiasConstant = 0.0f;
     float depthBiasSlope = 0.0f;
     float depthBiasClamp = 0.0f;
+    bool depthBiasPerFace = false;
+    float backDepthBiasConstant = 0.0f;
+    float backDepthBiasSlope = 0.0f;
     bool stencilTest = false;
     VkStencilOpState stencilFront{};
     VkStencilOpState stencilBack{};
@@ -96,6 +102,7 @@ struct State {
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkFrontFace frontFace;
+    VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
     std::array<float, 4> blendConstants;
 };
@@ -103,6 +110,7 @@ struct State {
 ShaderStages DecodeShaderStages(const QueueState& queue);
 State DecodeState(const QueueState& queue);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
+std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
 ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
@@ -151,8 +159,8 @@ struct DrawKeyRange {
     std::uint32_t first;
     std::uint32_t count;
 };
-inline constexpr std::array<DrawKeyRange, 45> DrawKeyRegisters{{
-    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 4},
+inline constexpr std::array<DrawKeyRange, 47> DrawKeyRegisters{{
+    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 1}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 5},
     {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 6},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL, SPI_SHADER_POS/Z/COL_FORMAT,
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.
@@ -161,7 +169,7 @@ inline constexpr std::array<DrawKeyRange, 45> DrawKeyRegisters{{
     // PA_SU_VTX_CNTL, the sample masks, PA_SC_CONSERVATIVE_RASTERIZATION_CNTL.
     {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
     // CB_COLOR0..7_BASE .. DCC_BASE (15 words a slot), CB_COLOR0..7_BASE_EXT, DCC_BASE_EXT, ATTRIB2, ATTRIB3.
-    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x3a8, 0x18},
+    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 8}, {RegisterBank::Context, 0x3a8, 0x18},
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program
     // address; the vertex/geometry-front RSRC1/RSRC2 and user words; the vertex program address;
     // the hull user pointer, program address, RSRC2 and user words; the local program address.

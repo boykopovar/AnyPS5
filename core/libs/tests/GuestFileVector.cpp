@@ -30,6 +30,7 @@ extern "C" {
 int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI sceKernelClose(int);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
+std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
 int APS5_VABI sceKernelLseek(int, std::int64_t, int);
 std::int64_t APS5_VABI sceKernelReadv(int, const GuestIovec*, int);
 std::int64_t APS5_VABI sceKernelWritev(int, const GuestIovec*, int);
@@ -135,6 +136,16 @@ int main() {
     Require(sceKernelPreadv(ends[0], reads, 2, 0) == ErrorEspipe);
     Require(sceKernelPwritev(ends[1], message, 1, 0) == ErrorEspipe);
     Require(ClosePipe(ends[0]) == 0 && ClosePipe(ends[1]) == 0);
+
+    const int random = sceKernelOpen("/dev/urandom", 0, 0);
+    Require(random >= 0);
+    unsigned char noise[48]{};
+    GuestIovec pieces[2] = {{noise, 16}, {noise + 16, 16}};
+    Require(sceKernelReadv(random, pieces, 2) == 32);
+    Require(sceKernelPreadv(random, pieces, 1, 1000) == 16);
+    Require(sceKernelPread(random, noise + 32, 16, 1000) == 16);
+    Require(std::memcmp(noise, noise + 16, 16) != 0 && std::memcmp(noise + 16, noise + 32, 16) != 0);
+    Require(sceKernelClose(random) == 0);
 
     std::filesystem::remove_all(root);
     return 0;

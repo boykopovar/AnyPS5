@@ -18,7 +18,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 env:
   CONFIGURE: >-
@@ -36,6 +36,8 @@ jobs:
       pull-requests: read
     outputs:
       sha: ${{ steps.gate.outputs.sha }}
+      pr: ${{ steps.gate.outputs.pr }}
+      head: ${{ steps.gate.outputs.head }}
       relinker: ${{ steps.gate.outputs.relinker }}
       full: ${{ steps.gate.outputs.full }}
     steps:
@@ -50,6 +52,8 @@ jobs:
                 throw new Error('Automatic full builds only run on main');
               }
               core.setOutput('sha', context.sha);
+              core.setOutput('pr', '');
+              core.setOutput('head', '');
               core.setOutput('relinker', true);
               core.setOutput('full', true);
               await core.summary.addRaw(`Building main at ${context.sha}: all builds and tests enabled`).write();
@@ -83,7 +87,7 @@ jobs:
             if (!manual && pr.head.sha !== context.payload.pull_request.head.sha) {
               throw new Error('The pull request has newer commits; use the latest run');
             }
-            if (pr.mergeable !== true || !pr.merge_commit_sha) {
+            if (pr.mergeable === false) {
               throw new Error('The pull request does not merge cleanly into main; rebase it first');
             }
             let relinker = manual;
@@ -93,11 +97,15 @@ jobs:
               });
               relinker = commits.length > 0;
             }
-            core.setOutput('sha', pr.merge_commit_sha);
+            const { data: main } = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            core.setOutput('sha', main.commit.sha);
+            core.setOutput('pr', String(pull_number));
+            core.setOutput('head', pr.head.sha);
             core.setOutput('relinker', relinker);
             core.setOutput('full', manual);
+            core.info(`PR #${pull_number} at ${pr.head.sha} merged into main at ${main.commit.sha}`);
             await core.summary.addRaw(
-              `PR #${pull_number} at ${pr.head.sha} merged into main as ${pr.merge_commit_sha}: full builds ${manual ? 'enabled' : 'disabled'}, ` +
+              `PR #${pull_number} at ${pr.head.sha} merged into main at ${main.commit.sha}: full builds ${manual ? 'enabled' : 'disabled'}, ` +
               `relinker ${relinker ? 'enabled' : 'skipped because the author has no commit in main'}`
             ).write();
 
@@ -127,6 +135,16 @@ jobs:
         with:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          git fetch --no-tags --unshallow origin "refs/pull/$PR_NUMBER/head"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$PR_HEAD" ]; then echo "::error::The pull request has newer commits; start a new build"; exit 1; fi
+          if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit FETCH_HEAD; then echo "::error::The pull request does not merge cleanly into main; rebase it first"; exit 1; fi
       - if: runner.os == 'Windows'
         id: toolchain
         uses: actions/cache@v6
@@ -143,6 +161,33 @@ jobs:
       - run: cmake --build build-relinker --parallel 3
       - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
 
+  register-context:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel]
+        configuration: [Debug, Release]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+      - run: cmake --build build/register-context --parallel
+      - run: ctest --test-dir build/register-context --output-on-failure --repeat until-fail:3 --no-tests=error
+
+  write-watch:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/write-watch --parallel
+      - run: ctest --test-dir build/write-watch --output-on-failure --repeat until-fail:3 --no-tests=error
+
   linux:
     needs: eligibility
     if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true' }}
@@ -154,10 +199,21 @@ jobs:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
           submodules: true
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          git fetch --no-tags --unshallow origin "refs/pull/$PR_NUMBER/head"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$PR_HEAD" ]; then echo "::error::The pull request has newer commits; start a new build"; exit 1; fi
+          if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit FETCH_HEAD; then echo "::error::The pull request does not merge cleanly into main; rebase it first"; exit 1; fi
+          git submodule update --init --recursive
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: linux
-          save: false
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - name: Install lavapipe for the GPU execution tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
@@ -166,10 +222,11 @@ jobs:
         run: python3 tools/check_test_registration.py build
       - run: cmake --build build
       - run: cmake --build build --target libs
-      - run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log
+      - run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
+      - run: python3 tools/check_skips.py build/ctest.xml
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash
@@ -196,6 +253,17 @@ jobs:
           ref: ${{ needs.eligibility.outputs.sha }}
           persist-credentials: false
           submodules: true
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          git fetch --no-tags --unshallow origin "refs/pull/$PR_NUMBER/head"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$PR_HEAD" ]; then echo "::error::The pull request has newer commits; start a new build"; exit 1; fi
+          if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit FETCH_HEAD; then echo "::error::The pull request does not merge cleanly into main; rebase it first"; exit 1; fi
+          git submodule update --init --recursive
       - id: toolchain
         uses: actions/cache@v6
         with:
@@ -209,7 +277,7 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: windows
-          save: false
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           evict-old-files: job
       - shell: cmd
         run: cmake -S . -B build %CONFIGURE%
@@ -221,7 +289,8 @@ jobs:
       - shell: cmd
         run: cmake --build build --target libs
       - shell: cmd
-        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log
+        run: ctest --test-dir build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
+      - run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
         shell: bash

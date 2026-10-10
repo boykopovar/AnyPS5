@@ -11,12 +11,15 @@
 
 extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*, std::uint32_t);
 extern "C" int APS5_VABI sceAgcCreatePrimState(ShaderRegister*, ShaderRegister*, const Shader*, const Shader*, std::uint32_t);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping(ShaderRegister*, const Shader*, const Shader*);
+extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister*, const Shader*, const Shader*);
 
 namespace {
 std::array<ShaderRegister, 2> preparedContext;
 std::array<ShaderRegister, 3> preparedPrimitive;
 std::size_t stageCount = 0;
+std::array<const Shader*, 2> linkedStages{};
+std::size_t linkedStageCount = 0;
+std::size_t linkedContextCount = 0;
 unsigned preparations = 0;
 unsigned mappings = 0;
 unsigned links = 0;
@@ -26,13 +29,39 @@ const Shader* mappedPixel = nullptr;
 void Require(bool condition) {
     if (!condition) throw std::runtime_error("shader helper preparation mismatch");
 }
+
+void OptionalGeometryOutputRegister(ShaderSpecialRegs& special, const Shader& vertex, const Shader& hull) {
+    using namespace ShaderRegs;
+    special.vgt_gs_out_prim_type = {};
+    std::array<ShaderRegister, 2> noGeometryContext{};
+    Require(sceAgcCreatePrimState(noGeometryContext.data(), nullptr, nullptr, &vertex, 7) == 0);
+    Require(noGeometryContext[0].offset == VGT_SHADER_STAGES_EN && noGeometryContext[1].offset == VGT_GS_OUT_PRIM_TYPE && noGeometryContext[1].value == static_cast<std::uint32_t>(GsOutputPrimitiveType::Rectangle2D));
+    bool rejectedMissingHullOutput = false;
+    try { static_cast<void>(sceAgcCreatePrimState(noGeometryContext.data(), nullptr, &hull, &vertex, 7)); }
+    catch (const std::runtime_error&) { rejectedMissingHullOutput = true; }
+    Require(rejectedMissingHullOutput);
+    special.vgt_shader_stages_en.value = VGT_SHADER_STAGES_GS_BIT;
+    bool rejectedMissingGeometryOutput = false;
+    try { static_cast<void>(sceAgcCreatePrimState(noGeometryContext.data(), nullptr, nullptr, &vertex, 7)); }
+    catch (const std::runtime_error&) { rejectedMissingGeometryOutput = true; }
+    Require(rejectedMissingGeometryOutput);
+    special.vgt_shader_stages_en.value = 0;
+    special.vgt_gs_out_prim_type = {VGT_GS_OUT_PRIM_TYPE, 2};
+}
 }
 
 extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
-    Require(context.size() == 2 && primitive.size() == 3);
-    std::copy(context.begin(), context.end(), preparedContext.begin());
-    std::copy(primitive.begin(), primitive.end(), preparedPrimitive.begin());
-    stageCount = stages.size();
+    Require((context.size() == 2 || context.size() == 34) && primitive.size() == 3);
+    if (context.size() == 2) {
+        std::copy(context.begin(), context.end(), preparedContext.begin());
+        std::copy(primitive.begin(), primitive.end(), preparedPrimitive.begin());
+        stageCount = stages.size();
+    } else {
+        Require(stages.size() == 2);
+        std::copy(stages.begin(), stages.end(), linkedStages.begin());
+        linkedStageCount = stages.size();
+        linkedContextCount = context.size();
+    }
     ++preparations;
 }
 
@@ -79,7 +108,7 @@ int main() {
                         context.back().value = primitive.back().value = 0xdeadbeef;
                         const auto prepare = [&] { Require(sceAgcCreatePrimState(outputs & 1 ? context.data() : nullptr, outputs & 2 ? primitive.data() : nullptr, hs, &vertex, 7) == 0); };
                         if (primitiveFirst) prepare();
-                        Require(sceAgcCreateInterpolantMapping(interpolants.data(), &vertex, &pixel) == 0);
+                        Require(sceAgcCreateInterpolantMapping_0100(interpolants.data(), &vertex, &pixel) == 0);
                         if (!primitiveFirst) prepare();
                         Require(preparations == 1 && mappings == 1 && links == 1 && stageCount == (hs ? 2u : 1u));
                         Require(preparedContext[0].offset == VGT_SHADER_STAGES_EN && preparedContext[1].offset == VGT_GS_OUT_PRIM_TYPE);
@@ -91,6 +120,19 @@ int main() {
                 }
             }
         }
+        preparations = 0;
+        std::array<ShaderRegister, 2> patchContext{};
+        std::array<ShaderRegister, 3> patchPrimitive{};
+        Require(sceAgcCreatePrimState(patchContext.data(), patchPrimitive.data(), nullptr, &vertex, 9) == 0);
+        Require(preparations == 0 && patchContext[0].offset == VGT_SHADER_STAGES_EN && patchContext[0].value == 0 && patchPrimitive[2].offset == VGT_PRIMITIVE_TYPE && patchPrimitive[2].value == 9);
+        ShaderSpecialRegs hullSpecial = special;
+        hullSpecial.vgt_shader_stages_en.value = VGT_SHADER_STAGES_HS_BIT;
+        hull.specials = &hullSpecial;
+        Require(sceAgcCreatePrimState(patchContext.data(), patchPrimitive.data(), &hull, &vertex, 4) == 0);
+        Require(preparations == 0 && patchContext[0].value == VGT_SHADER_STAGES_HS_BIT && patchPrimitive[2].value == 4);
+        Require(sceAgcCreatePrimState(patchContext.data(), patchPrimitive.data(), &hull, &vertex, 9) == 0);
+        Require(preparations == 1 && stageCount == 2 && preparedContext[0].value == VGT_SHADER_STAGES_HS_BIT && preparedPrimitive[2].value == 9 && patchPrimitive[2].value == 9);
+        hull.specials = &special;
         std::array<ShaderRegister, 34> linkedContext{};
         std::array<ShaderRegister, 3> linkedPrimitive{};
         for (auto& value : linkedContext) value.value = 0xdeadbeef;
@@ -104,23 +146,28 @@ int main() {
         for (const auto value : linkedContext) Require(value.value == 0xdeadbeef);
         for (const auto value : linkedPrimitive) Require(value.value == 0xdeadbeef);
         rejected = false;
-        try { sceAgcCreateInterpolantMapping(interpolants.data(), &vertex, &pixel); }
+        try { sceAgcCreateInterpolantMapping_0100(interpolants.data(), &vertex, &pixel); }
         catch (const std::runtime_error&) { rejected = true; }
         Require(rejected);
         for (const auto value : interpolants) Require(value.value == 0xdeadbeef);
         rejectLink = false;
         pixel.num_input_semantics = 33;
         rejected = false;
-        try { sceAgcCreateInterpolantMapping(interpolants.data(), &vertex, &pixel); }
+        try { sceAgcCreateInterpolantMapping_0100(interpolants.data(), &vertex, &pixel); }
         catch (const std::runtime_error&) { rejected = true; }
         Require(rejected);
         for (const auto value : interpolants) Require(value.value == 0xdeadbeef);
         pixel.num_input_semantics = 1;
+        preparations = mappings = links = 0;
+        linkedStageCount = linkedContextCount = 0;
         Require(sceAgcLinkShaders(linkedContext.data(), linkedPrimitive.data(), nullptr, &vertex, &pixel, 7) == 0);
+        Require(preparations == 2 && linkedStageCount == 2 && linkedContextCount == linkedContext.size());
+        Require(linkedStages[0] == &vertex && linkedStages[1] == &pixel);
         preparations = mappings = links = 0;
         Require(sceAgcCreatePrimState(nullptr, nullptr, nullptr, nullptr, 7) == 0);
-        Require(sceAgcCreateInterpolantMapping(interpolants.data(), &vertex, nullptr) == 0);
+        Require(sceAgcCreateInterpolantMapping_0100(interpolants.data(), &vertex, nullptr) == 0);
         Require(preparations == 0 && mappings == 0 && links == 0);
+        OptionalGeometryOutputRegister(special, vertex, hull);
         std::cout << "shader helper preparation tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

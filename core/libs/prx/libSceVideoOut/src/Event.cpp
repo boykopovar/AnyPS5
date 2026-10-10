@@ -13,6 +13,7 @@ static std::vector<EventRegistration>* getEventList(VideoOutConfig& cfg, int16_t
     if (eventKind == VIDEO_OUT_EVENT_VBLANK) return &cfg.vblankEvents;
     if (eventKind == VIDEO_OUT_EVENT_PRE_VBLANK_START) return &cfg.preVblankEvents;
     if (eventKind == VIDEO_OUT_EVENT_SET_MODE) return &cfg.outputModeEvents;
+    if (eventKind == VIDEO_OUT_EVENT_VRR_STATUS) return &cfg.vrrStatusEvents;
     throw std::runtime_error("getEventList: unknown event kind");
 }
 
@@ -120,16 +121,19 @@ int APS5_VABI sceVideoOutAddVblankEvent(KernelEqueue eq, int handle, void* udata
 }
 
 int APS5_VABI sceVideoOutAddPreVblankStartEvent(KernelEqueue eq, int handle, void* udata) try {
-    static_cast<void>(eq);
-    static_cast<void>(udata);
-    VideoOutDriver::Get().GetConfig(handle);
-    throw std::runtime_error("VideoOut: physical pre-vblank timing is not implemented");
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_PRE_VBLANK_START, udata);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata) try {
     return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_SET_MODE, udata);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutAddVrrActiveStatusEvent(KernelEqueue eq, int handle, void* udata) try {
+    return registerVideoOutEvent(handle, eq, VIDEO_OUT_EVENT_VRR_STATUS, udata);
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -160,7 +164,7 @@ int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
     }
     const int ident = static_cast<int>(ev->ident);
-    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE) {
+    if (ident != VIDEO_OUT_EVENT_FLIP && ident != VIDEO_OUT_EVENT_VBLANK && ident != VIDEO_OUT_EVENT_PRE_VBLANK_START && ident != VIDEO_OUT_EVENT_SET_MODE && ident != VIDEO_OUT_EVENT_VRR_STATUS) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT");
     }
     return ident;

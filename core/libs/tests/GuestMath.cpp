@@ -15,11 +15,17 @@ long double APS5_VABI strtold_nid_postfix(const char*, char**);
 std::int64_t APS5_VABI strtol_nid_postfix(const char*, char**, int);
 std::uint64_t APS5_VABI strtoul_nid_postfix(const char*, char**, int);
 std::intmax_t APS5_VABI strtoimax_nid_postfix(const char*, char**, int);
+long long APS5_VABI strtoll_nid_postfix(const char*, char**, int);
+unsigned long long APS5_VABI strtoull_nid_postfix(const char*, char**, int);
+std::uintmax_t APS5_VABI strtoumax_nid_postfix(const char*, char**, int);
+unsigned long long APS5_VABI _Stoull_nid_postfix(const char*, char**, int);
+std::uint64_t APS5_VABI _Stoul_nid_postfix(const char*, char**, int);
 int* APS5_VABI __error_nid_postfix();
 struct LibcFloatConstant { std::uint32_t bits[4]; };
 extern LibcFloatConstant _FInf_nid_postfix;
 extern LibcFloatConstant _FNan_nid_postfix;
 short APS5_VABI _FDtest_nid_postfix(const float*);
+int APS5_VABI __fpclassifyf_nid_postfix(float);
 float APS5_VABI fmodf_nid_postfix(float, float);
 float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
@@ -44,6 +50,7 @@ int APS5_VABI __isnormal_nid_postfix(double);
 int APS5_VABI __isnormalf_nid_postfix(float);
 int APS5_VABI __isinff_nid_postfix(float);
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
+std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t, std::int64_t);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -53,8 +60,12 @@ static void CheckIntegerConversions() {
             const auto result = lldiv_nid_postfix(numerator, denominator);
             Require(result.quot == numerator / denominator && result.rem == numerator % denominator);
             Require(result.quot * denominator + result.rem == numerator);
+            const auto wide = ldiv_nid_postfix(numerator, denominator);
+            Require(wide.quot == result.quot && wide.rem == result.rem);
         }
     }
+    const auto extreme = ldiv_nid_postfix(INT64_MIN, 2);
+    Require(extreme.quot == INT64_MIN / 2 && extreme.rem == 0);
     struct SignedCase {
         const char* text;
         int base;
@@ -77,6 +88,11 @@ static void CheckIntegerConversions() {
         {"0x8000000000000000!", 16, INT64_MAX, 18, 34},
         {"0100000000000!", 0, INT64_C(8589934592), 13, 0},
         {"100000000000000000000000000000000!", 2, INT64_C(4294967296), 33, 0},
+        {"0b101", 0, 0, 1, 0},
+        {"0b101", 2, 0, 1, 0},
+        {" -0B1!", 0, 0, 3, 0},
+        {"0b2", 0, 0, 1, 0},
+        {"0b101", 16, 0xb101, 5, 0},
         {"z!", 36, 35, 1, 0},
         {"", 10, 0, 0, 0},
         {" \t+!", 10, 0, 0, 0},
@@ -118,6 +134,10 @@ static void CheckIntegerConversions() {
         {"0x10000000000000000!", 16, UINT64_MAX, 19, 34},
         {"0100000000000!", 0, UINT64_C(8589934592), 13, 0},
         {"100000000000000000000000000000000!", 2, UINT64_C(4294967296), 33, 0},
+        {"0b101", 0, 0, 1, 0},
+        {"0B11", 2, 0, 1, 0},
+        {" +0b1!", 2, 0, 3, 0},
+        {"0b101", 16, 0xb101, 5, 0},
         {"z!", 36, 35, 1, 0},
         {"", 10, 0, 0, 0},
         {" \t-!", 10, 0, 0, 0},
@@ -132,11 +152,24 @@ static void CheckIntegerConversions() {
             std::abort();
         }
     }
+    for (const int base : {0, 2}) {
+        const char text[] = " -0B11";
+        char* end = nullptr;
+        Require(strtoll_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoull_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(strtoumax_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(_Stoull_nid_postfix(text, &end, base) == 0 && end == text + 3);
+        Require(_Stoul_nid_postfix(text, &end, base) == 0 && end == text + 3);
+    }
     *__error_nid_postfix() = 13;
     Require(strtol_nid_postfix("-4294967296", nullptr, 10) == -INT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
     Require(strtoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
     Require(*__error_nid_postfix() == 13);
+    Require(_Stoul_nid_postfix("4294967296", nullptr, 10) == UINT64_C(4294967296));
+    Require(*__error_nid_postfix() == 13);
+    Require(_Stoul_nid_postfix("18446744073709551615", nullptr, 10) == UINT64_MAX);
+    Require(_Stoul_nid_postfix("-1", nullptr, 10) == UINT64_MAX && *__error_nid_postfix() == 13);
     *__error_nid_postfix() = 0;
 }
 
@@ -153,6 +186,11 @@ static void CheckFloatClassification() {
         std::memcpy(&value, &test.bits, sizeof(value));
         if (_FDtest_nid_postfix(&value) != test.code) {
             std::fprintf(stderr, "Guest _FDtest failed for %08x\n", test.bits);
+            std::abort();
+        }
+        const int fpclass = test.code == 0 ? 0x10 : test.code == -2 ? 0x08 : test.code == -1 ? 0x04 : test.code == 1 ? 0x01 : 0x02;
+        if (__fpclassifyf_nid_postfix(value) != fpclass) {
+            std::fprintf(stderr, "Guest __fpclassifyf failed for %08x\n", test.bits);
             std::abort();
         }
     }

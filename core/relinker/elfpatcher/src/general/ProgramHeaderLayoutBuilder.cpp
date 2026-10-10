@@ -1,9 +1,11 @@
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace Elfpatcher {
 
@@ -131,23 +133,24 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     std::vector<std::uint8_t>& buf,
     const ProgramHeaderLayoutRequest& request
 ) const {
-    std::uint16_t keptCount = 0;
-    std::uint16_t frameCount = 0;
+    std::vector<Domain::ProgramHeader> kept;
+    std::size_t frameCount = 0;
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
             continue;
-        keptCount++;
+        kept.push_back(ph);
         if (ph.Type == PT_GNU_EH_FRAME)
             frameCount++;
     }
 
-    const bool keepFrames = keptCount + kSyntheticProgramHeaderCount < request.PhNum;
+    const bool keepFrames = kept.size() + kSyntheticProgramHeaderCount <= request.PhNum;
     if (!keepFrames && frameCount > 0) {
-        keptCount -= frameCount;
+        std::erase_if(kept, [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
         std::cerr << "WARNING: No free program header slot for PT_GNU_EH_FRAME; C++ exceptions thrown in the executable cannot be caught.\n";
     }
+    _sortLoadHeaders(kept);
 
-    const std::uint16_t neededPh = keptCount + kSyntheticProgramHeaderCount;
+    const std::size_t neededPh = kept.size() + kSyntheticProgramHeaderCount;
     if (neededPh > request.PhNum)
         throw Domain::RelinkerException(
             "Not enough program header slots: need " + std::to_string(neededPh) +
@@ -174,49 +177,38 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     const std::uint64_t dynamicSegmentVaddr = request.ExtraBlockVaddr + (request.DynamicSegmentOffset - request.ExtraBlockOffset);
     const std::uint64_t interpVaddr = request.ExtraBlockVaddr + (request.InterpOffset - request.ExtraBlockOffset);
 
-    std::uint16_t writtenPh = 0;
-
-    const std::size_t phdrEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-    _writeProgramHeader(buf, phdrEntOff, _makePhdrHeader(request.PhOff, headerBlockVaddr + request.PhOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize));
-    writtenPh++;
-
-    const std::size_t headerLoadEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-    _writeProgramHeader(buf, headerLoadEntOff, _makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
-    writtenPh++;
-
-    for (const auto& ph : request.OriginalHeaders) {
-        if (_segmentFilter->ShouldSkip(ph) || (!keepFrames && ph.Type == PT_GNU_EH_FRAME))
-            continue;
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-        if (ph.Type == PT_LOAD) {
-            Domain::ProgramHeader fixed = ph;
-            fixed.Flags = _fixLoadFlags(ph.Flags);
-            _writeProgramHeader(buf, phEntOff, fixed);
-        } else {
-            _writeProgramHeader(buf, phEntOff, ph);
-        }
-        writtenPh++;
+    std::vector<Domain::ProgramHeader> layout;
+    layout.push_back(_makePhdrHeader(request.PhOff, headerBlockVaddr + request.PhOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize));
+    layout.push_back(_makeInterpHeader(request.InterpOffset, interpVaddr, request.InterpSize));
+    for (auto ph : kept) {
+        if (ph.Type == PT_LOAD)
+            ph.Flags = _fixLoadFlags(ph.Flags);
+        layout.push_back(ph);
     }
+    layout.push_back(_makeLoadHeader(request.ExtraBlockOffset, request.ExtraBlockVaddr, request.ExtraBlockSize));
+    layout.push_back(_makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
+    layout.push_back(_makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
 
-    {
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-        _writeProgramHeader(buf, phEntOff, _makeLoadHeader(request.ExtraBlockOffset, request.ExtraBlockVaddr, request.ExtraBlockSize));
-        writtenPh++;
+    for (std::size_t index = 0; index < layout.size(); ++index)
+        _writeProgramHeader(buf, static_cast<std::size_t>(request.PhOff) + index * request.PhEntSize, layout[index]);
+
+    return static_cast<std::uint16_t>(layout.size());
+}
+
+void ProgramHeaderLayoutBuilder::_sortLoadHeaders(std::vector<Domain::ProgramHeader>& headers) const {
+    std::vector<Domain::ProgramHeader> loads;
+    for (const auto& ph : headers) {
+        if (ph.Type == PT_LOAD)
+            loads.push_back(ph);
     }
-
-    {
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-        _writeProgramHeader(buf, phEntOff, _makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
-        writtenPh++;
+    std::stable_sort(loads.begin(), loads.end(), [](const Domain::ProgramHeader& left, const Domain::ProgramHeader& right) {
+        return left.MappedAddress < right.MappedAddress;
+    });
+    std::size_t next = 0;
+    for (auto& ph : headers) {
+        if (ph.Type == PT_LOAD)
+            ph = loads[next++];
     }
-
-    {
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-        _writeProgramHeader(buf, phEntOff, _makeInterpHeader(request.InterpOffset, interpVaddr, request.InterpSize));
-        writtenPh++;
-    }
-
-    return writtenPh;
 }
 
 }

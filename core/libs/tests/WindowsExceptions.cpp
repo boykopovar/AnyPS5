@@ -4,6 +4,7 @@
 #include <atomic>
 #include <array>
 #include <exception>
+#include <future>
 #include <thread>
 #include <cstddef>
 #include <typeinfo>
@@ -105,9 +106,30 @@ static void testExceptionPointer() {
     if (std::current_exception()) throw std::runtime_error("stale current exception");
 }
 
+static void testFutureException() {
+    std::atomic<int> count{0};
+    {
+        std::promise<void> promise;
+        auto future = promise.get_future();
+        try {
+            throw TrackedError(&count);
+        } catch (const TrackedError&) {
+            promise.set_exception(std::current_exception());
+        }
+        try {
+            future.get();
+            throw std::runtime_error("future did not rethrow");
+        } catch (const TrackedError& error) {
+            if (std::strcmp(error.what(), "retained error")) throw std::runtime_error("future rethrew another error");
+        }
+    }
+    if (count != 1) throw std::runtime_error("future result destroyed its exception an incorrect number of times");
+}
+
 int main() {
     TestTypeInfoVtables();
     testExceptionPointer();
+    testFutureException();
     try {
         Rethrow();
         return 1;

@@ -13,6 +13,11 @@ std::uint64_t APS5_VABI sceUltUlthreadRuntimeGetWorkAreaSize(std::uint32_t, std:
 int APS5_VABI sceUltUlthreadRuntimeCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltUlthreadCreate(void*, const char*, UltUlthreadEntry, std::uint64_t, void*, std::uint64_t, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltUlthreadJoin(void*, std::int32_t*);
+int APS5_VABI sceUltUlthreadTryJoin(void*, std::int32_t*);
+int APS5_VABI sceUltUlthreadRuntimeDestroy(void*);
+int APS5_VABI _sceUltUlthreadRuntimeOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltUlthreadRuntimeCreate(void*, const char*, std::uint32_t, std::uint32_t, void*, const void*, std::uint32_t);
+int APS5_VABI _sceUltUlthreadCreate(void*, const char*, UltUlthreadEntry, std::uint64_t, void*, std::uint64_t, void*, const void*, std::uint32_t);
 }
 
 static constexpr int Ok = 0;
@@ -85,10 +90,55 @@ static void Validation() {
     CHECK(sceUltUlthreadRuntimeGetWorkAreaSize(1, 1) == 256u + 16u * 1024u);
 }
 
+static void TryJoin() {
+    Runtime runtime;
+    Thread thread;
+    std::uint8_t optParam[128];
+    std::memset(optParam, 0xff, sizeof(optParam));
+    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
+    CHECK(_sceUltUlthreadRuntimeOptParamInitialize(optParam, 0) == Ok && optParam[0] == 0);
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(_sceUltUlthreadCreate(&thread, "parked", Parked, 0x3C, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    while (!gStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+
+    std::int32_t status = 0;
+    const int running = sceUltUlthreadTryJoin(&thread, &status);
+    gRelease.store(true, std::memory_order_release);
+    int joined;
+    while ((joined = sceUltUlthreadTryJoin(&thread, &status)) == Busy) std::this_thread::yield();
+
+    CHECK(running == Busy);
+    CHECK(joined == Ok && status == 0x3C);
+    CHECK(sceUltUlthreadTryJoin(&thread, &status) == State);
+    CHECK(sceUltUlthreadTryJoin(nullptr, &status) == Null);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+}
+
+static void Destroy() {
+    Runtime runtime;
+    Runtime other;
+    Thread thread;
+    CHECK(sceUltUlthreadRuntimeDestroy(nullptr) == Null);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
+    CHECK(_sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(_sceUltUlthreadRuntimeCreate(&other, "other", 1, 1, nullptr, nullptr, 0) == Ok);
+    CHECK(_sceUltUlthreadCreate(&thread, "thread", Immediate, 0x11, nullptr, 0, &runtime, nullptr, 0) == Ok);
+    CHECK(sceUltUlthreadRuntimeDestroy(&other) == Ok);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Busy);
+    std::int32_t status = 0;
+    CHECK(sceUltUlthreadJoin(&thread, &status) == Ok && status == 0x11);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == Ok);
+    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == State);
+    CHECK(_sceUltUlthreadCreate(&thread, "thread", Immediate, 0, nullptr, 0, &runtime, nullptr, 0) == State);
+    CHECK(sceUltFinalize() == Ok);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     CHECK(sceUltInitialize() == Ok);
     if (std::strcmp(argv[1], "outstanding") == 0) Outstanding();
     else if (std::strcmp(argv[1], "validation") == 0) Validation();
+    else if (std::strcmp(argv[1], "tryjoin") == 0) TryJoin();
+    else if (std::strcmp(argv[1], "destroy") == 0) Destroy();
     else CHECK(false);
 }

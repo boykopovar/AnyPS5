@@ -14,6 +14,7 @@ int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
+int APS5_VABI shutdown_nid_postfix(int, int);
 int APS5_VABI close_nid_postfix(int);
 int* APS5_VABI __error_nid_postfix();
 }
@@ -53,6 +54,8 @@ int main() {
     Require(send_nid_postfix(client, request, sizeof(request), 0x20000) == sizeof(request));
     Require(recv_nid_postfix(accepted, received, sizeof(received), 0) == sizeof(received));
     Require(std::strcmp(request, received) == 0);
+    Require(shutdown_nid_postfix(client, 1) == 0);
+    Require(send_nid_postfix(client, request, sizeof(request), 0x20000) == -1 && *__error_nid_postfix() == 32);
 
     Require(close_nid_postfix(accepted) == 0);
 #ifndef _WIN32

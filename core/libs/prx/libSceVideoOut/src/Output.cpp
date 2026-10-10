@@ -11,18 +11,26 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 
+static constexpr std::uint32_t VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD = 0x00FF0000;
+static constexpr std::size_t VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD = 3;
+
 static int validateOutputConfig(int handle, uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, uint64_t reserved) {
-    if (!VideoOutDriver::Get().IsOpen(handle)) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
-    if (reservedPtr != nullptr || reserved != 0) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+    if (!VideoOutDriver::Get().HasConfig(handle) || !VideoOutDriver::Get().IsOpen(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
+    if (reservedPtr != nullptr || reserved != 0) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    switch (mode) {
+    case VIDEO_OUT_OUTPUT_MODE_DEFAULT:
+        break;
+    case 0x4: case 0x7: case 0x8: case 0xC: case 0xD: case 0xE: case VIDEO_OUT_OUTPUT_MODE_119_88HZ: case 0x10: case 0x11: case 0x13:
+        return VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE;
+    case 0x12:
+        throw std::runtime_error(std::string(__func__) + ": output mode 0x12 answers differently on two consoles");
+    default:
+        return VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE;
     }
     if (options != nullptr) {
-        for (auto v : options->internalData) {
-            if (v != 0) {
-                throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
-            }
+        for (std::size_t index = 0; index < std::size(options->internalData); ++index) {
+            const std::uint32_t expected = index == 0 ? VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD : 0;
+            if (index != VIDEO_OUT_OUTPUT_OPTIONS_FREE_WORD && options->internalData[index] != expected) return VIDEO_OUT_ERROR_INVALID_VALUE;
         }
     }
     return 0;
@@ -156,6 +164,27 @@ int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* statu
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status) try {
+    if (status == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+    }
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    if (cfg == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
+    }
+    std::unique_lock lock(cfg->mutex);
+    cfg->Check();
+    *status = VideoOutResolutionStatus{};
+    status->fullWidth = cfg->width;
+    status->fullHeight = cfg->height;
+    status->paneWidth = cfg->width;
+    status->paneHeight = cfg->height;
+    status->refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutIsFlipPending(int handle) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
@@ -184,10 +213,9 @@ int APS5_VABI sceVideoOutWaitVblank(int handle) try {
 }
 
 int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options) {
-    if (options == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
-    }
+    if (options == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     std::memset(options, 0, sizeof(VideoOutOutputOptions));
+    options->internalData[0] = VIDEO_OUT_OUTPUT_OPTIONS_FIRST_WORD;
     return 0;
 }
 
@@ -196,7 +224,7 @@ int APS5_VABI sceVideoOutIsOutputSupported(int handle, uint64_t mode, const Vide
     if (result != 0) {
         return result;
     }
-    return mode == VIDEO_OUT_OUTPUT_MODE_DEFAULT ? 1 : 0;
+    return 1;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
@@ -205,9 +233,6 @@ int APS5_VABI sceVideoOutConfigureOutput(int handle, uint64_t mode, const VideoO
     const int supported = sceVideoOutIsOutputSupported(handle, mode, options, reservedPtr, reserved);
     if (supported < 0) {
         return supported;
-    }
-    if (supported == 0) {
-        return VIDEO_OUT_ERROR_UNAVAILABLE_OUTPUT_MODE;
     }
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {
@@ -290,20 +315,8 @@ int APS5_VABI sceVideoOutVrrPegToFixedRate() try {
     LibcAwaitExit_nid_postfix();
 }
 
-APS5_EXPORT("kP2L8t3j-aM", sceVideoOutUnknown00);
-int APS5_VABI sceVideoOutUnknown00() try {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege() {
     return 0;
-} catch (const ProcessShutdown&) {
-    LibcAwaitExit_nid_postfix();
-}
-
-APS5_EXPORT("LibwuIonIBw", sceVideoOutUnknown01);
-int APS5_VABI sceVideoOutUnknown01() try {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-} catch (const ProcessShutdown&) {
-    LibcAwaitExit_nid_postfix();
 }
 
 }

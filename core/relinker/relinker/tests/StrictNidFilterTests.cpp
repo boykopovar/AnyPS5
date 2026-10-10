@@ -3,6 +3,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
+#include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <algorithm>
 #include <cstring>
@@ -86,6 +87,15 @@ void conditionalTailCall() {
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Conditional tail call was removed");
 }
 
+void fallthroughAfterZeroPadding() {
+    auto input = fixture();
+    ripOperand(input, 0, {0xE9}, 0x1000);
+    std::fill(input.Text.begin() + 5, input.Text.begin() + 16, 0);
+    importThunk(input, 16, 0x2000);
+    input.Functions = {{0x1000, 0x1010, {}}, {0x1010, 0x1018, {}}};
+    require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Zero padding after a region's last jump dropped its fall-through edge");
+}
+
 void callbackAndRelocationRoots() {
     auto input = fixture();
     ripOperand(input, 0, {0x48, 0x8D, 0x3D}, 0x1020);
@@ -158,6 +168,45 @@ void relativeTableAndWholeFunction() {
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Unknown switch target inside a live function was removed");
 }
 
+void exceptionLeb128Bounds() {
+    const auto check = [](const std::vector<std::uint8_t>& codeAlignment, const std::vector<std::uint8_t>& dataAlignment, bool overflowing) {
+        std::vector<std::uint8_t> bytes(0x400);
+        std::vector<std::uint8_t> cie{1, 0};
+        cie.insert(cie.end(), codeAlignment.begin(), codeAlignment.end());
+        cie.insert(cie.end(), dataAlignment.begin(), dataAlignment.end());
+        cie.push_back(16);
+        write<std::uint32_t>(bytes, 0x200, static_cast<std::uint32_t>(4 + cie.size()));
+        std::copy(cie.begin(), cie.end(), bytes.begin() + 0x208);
+        write<std::uint32_t>(bytes, 0x240, 20);
+        write<std::uint32_t>(bytes, 0x244, 0x44);
+        write<std::uint64_t>(bytes, 0x248, 0x1000);
+        write<std::uint64_t>(bytes, 0x250, 0x20);
+        write<std::uint8_t>(bytes, 0x300, 1);
+        write<std::uint8_t>(bytes, 0x302, 3);
+        write<std::uint64_t>(bytes, 0x304, 0x200);
+        write<std::uint32_t>(bytes, 0x30C, 1);
+        write<std::uint64_t>(bytes, 0x310, 0x1000);
+        write<std::uint64_t>(bytes, 0x318, 0x240);
+        const std::vector<Relinker::ProgramHeader> headers = {{1, 4, 0, 0, 0, bytes.size(), bytes.size(), 8}, {0x6474E550, 4, 0x300, 0x300, 0, 32, 32, 4}};
+        try {
+            const auto functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
+            require(!overflowing, "Overflowing CIE LEB128 value was accepted");
+            require(functions.size() == 1 && functions[0].Begin == 0x1000 && functions[0].End == 0x1020 && functions[0].ExtraTargets.empty(), "Valid CIE LEB128 changed the function range");
+        } catch (const Relinker::RelinkerException& error) {
+            require(overflowing && std::string(error.what()).find("overflowing LEB128 value") != std::string::npos, "CIE LEB128 was rejected for an unexpected reason");
+        }
+    };
+    check({1}, {0x78}, false);
+    for (const std::uint8_t prefix : {0x80, 0xFF}) {
+        for (unsigned terminal = 0; terminal < 0x80; ++terminal) {
+            std::vector<std::uint8_t> encoded(10, prefix);
+            encoded.back() = static_cast<std::uint8_t>(terminal);
+            check({1}, encoded, terminal != 0 && terminal != 0x7F);
+            check(encoded, {0x78}, terminal != 0 && terminal != 1);
+        }
+    }
+}
+
 void vectorInstructionLengths() {
     const Codegen::X64InstructionDecoder decoder;
     const std::vector<std::vector<std::uint8_t>> instructions = {
@@ -174,10 +223,13 @@ void vectorInstructionLengths() {
 
 void exceptionLandingPads() {
     std::vector<std::uint8_t> bytes(0x400);
-    write<std::uint32_t>(bytes, 0x200, 15);
+    write<std::uint32_t>(bytes, 0x200, 25);
     write<std::uint8_t>(bytes, 0x208, 1);
-    const std::vector<std::uint8_t> augmentation = {'z', 'L', 'R', 0, 1, 0x78, 16, 2, 0, 0};
+    const std::vector<std::uint8_t> augmentation = {'z', 'P', 'L', 'R', 0, 1, 0x78, 16, 11, 0};
     std::copy(augmentation.begin(), augmentation.end(), bytes.begin() + 0x209);
+    write<std::uint64_t>(bytes, 0x213, 0x1000);
+    write<std::uint8_t>(bytes, 0x21B, 0);
+    write<std::uint8_t>(bytes, 0x21C, 0);
     write<std::uint32_t>(bytes, 0x220, 29);
     write<std::uint32_t>(bytes, 0x224, 0x24);
     write<std::uint64_t>(bytes, 0x228, 0x1000);
@@ -195,13 +247,38 @@ void exceptionLandingPads() {
     const std::vector<Relinker::ProgramHeader> headers = {{1, 4, 0, 0, 0, bytes.size(), bytes.size(), 8}, {0x6474E550, 4, 0x300, 0x300, 0, 32, 32, 4}};
     auto input = fixture();
     input.Functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
-    require(input.Functions.size() == 1 && input.Functions[0].ExtraTargets == std::vector<std::uint64_t>{0x1040}, "LSDA landing pad outside the function was not recovered");
+    require(input.Functions.size() == 1 && input.Functions[0].ExtraTargets == std::vector<std::uint64_t>{0x1000, 0x1040}, "LSDA landing pad outside the function was not recovered");
     emit(input, 0, {0x0F, 0x0B});
     emit(input, 31, {0xC3});
     importThunk(input, 64, 0x2000);
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Exception-only import was removed");
     write<std::uint8_t>(bytes, 0x282, 0xFF);
     requireFailure([&] { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }, "Malformed LSDA was accepted");
+}
+
+void exceptionDataWithoutPersonality() {
+    std::vector<std::uint8_t> bytes(0x400);
+    write<std::uint32_t>(bytes, 0x200, 15);
+    write<std::uint8_t>(bytes, 0x208, 1);
+    const std::vector<std::uint8_t> augmentation = {'z', 'L', 'R', 0, 1, 0x78, 16, 2, 0, 0};
+    std::copy(augmentation.begin(), augmentation.end(), bytes.begin() + 0x209);
+    write<std::uint32_t>(bytes, 0x220, 29);
+    write<std::uint32_t>(bytes, 0x224, 0x24);
+    write<std::uint64_t>(bytes, 0x228, 0x1000);
+    write<std::uint64_t>(bytes, 0x230, 0x20);
+    write<std::uint8_t>(bytes, 0x238, 8);
+    write<std::uint64_t>(bytes, 0x239, 0x280);
+    const std::vector<std::uint8_t> lsda = {0xFF, 0xFF, 1, 3, 0, 1, 0x40, 0};
+    std::copy(lsda.begin(), lsda.end(), bytes.begin() + 0x280);
+    write<std::uint8_t>(bytes, 0x300, 1);
+    write<std::uint8_t>(bytes, 0x302, 3);
+    write<std::uint64_t>(bytes, 0x304, 0x200);
+    write<std::uint32_t>(bytes, 0x30C, 1);
+    write<std::uint64_t>(bytes, 0x310, 0x1000);
+    write<std::uint64_t>(bytes, 0x318, 0x220);
+    const std::vector<Relinker::ProgramHeader> headers = {{1, 4, 0, 0, 0, bytes.size(), bytes.size(), 8}, {0x6474E550, 4, 0x300, 0x300, 0, 32, 32, 4}};
+    const auto functions = Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {});
+    require(functions.size() == 1 && functions[0].Begin == 0x1000 && functions[0].End == 0x1020 && functions[0].ExtraTargets.empty(), "LSDA without a personality routine was read as a C++ call-site table");
 }
 
 std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input) {
@@ -289,6 +366,105 @@ void filterAndPltCompaction() {
     requireFailure([&] { Relinker::MakeStrictUnusedNidFilter()->Filter(references, exceptional, input.Text, input.TextVaddr); }, "Exception metadata was ignored");
 }
 
+void relativeRelocationTableBounds() {
+    std::vector<std::uint8_t> bytes(0x400, 0);
+    bytes[0] = 0x7F;
+    bytes[1] = 'E';
+    bytes[2] = 'L';
+    bytes[3] = 'F';
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write<std::uint16_t>(bytes, 16, 3);
+    write<std::uint16_t>(bytes, 18, 62);
+    write<std::uint64_t>(bytes, 32, 64);
+    write<std::uint16_t>(bytes, 54, 56);
+    write<std::uint16_t>(bytes, 56, 2);
+
+    write<std::uint32_t>(bytes, 64, 1);
+    write<std::uint32_t>(bytes, 68, 7);
+    write<std::uint64_t>(bytes, 72, 0x200);
+    write<std::uint64_t>(bytes, 80, 0x1000);
+    write<std::uint64_t>(bytes, 96, 0x100);
+    write<std::uint64_t>(bytes, 104, 0x100);
+
+    write<std::uint32_t>(bytes, 120, 2);
+    write<std::uint32_t>(bytes, 124, 6);
+    write<std::uint64_t>(bytes, 128, 0x100);
+    write<std::uint64_t>(bytes, 136, 0x2000);
+    write<std::uint64_t>(bytes, 152, 0x80);
+    write<std::uint64_t>(bytes, 160, 0x80);
+
+    write<std::int64_t>(bytes, 0x100, 7);
+    write<std::uint64_t>(bytes, 0x108, 0x10E8);
+    write<std::int64_t>(bytes, 0x110, 8);
+    write<std::uint64_t>(bytes, 0x118, 24);
+    write<std::int64_t>(bytes, 0x120, 0);
+    write<std::uint64_t>(bytes, 0x128, 0);
+
+    write<std::uint64_t>(bytes, 0x2E8, 0x5000);
+    write<std::uint64_t>(bytes, 0x2F0, 8);
+    write<std::int64_t>(bytes, 0x2F8, 0x6000);
+
+    write<std::uint64_t>(bytes, 0x300, 0x7000);
+    write<std::uint64_t>(bytes, 0x308, 8);
+    write<std::int64_t>(bytes, 0x310, 0x8000);
+
+    auto valid = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(bytes);
+    require(valid->TargetOfSlot(0x5000) == 0x6000, "Valid relative relocation was not indexed");
+    require(!valid->TargetOfSlot(0x7000).has_value(), "Out of segment relocation was indexed in valid table");
+
+    auto emptyRelocationTable = bytes;
+    write<std::uint64_t>(emptyRelocationTable, 0x108, ~std::uint64_t{0});
+    write<std::uint64_t>(emptyRelocationTable, 0x118, 0);
+    auto emptyIndex = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(emptyRelocationTable);
+    require(!emptyIndex->TargetOfSlot(0x5000).has_value(),
+            "Empty relocation table was unexpectedly parsed");
+
+    auto overextended = bytes;
+    write<std::uint64_t>(overextended, 0x118, 48);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overextended); }, "Relocation table extending beyond PT_LOAD was accepted");
+
+    auto badSize = bytes;
+    write<std::uint64_t>(badSize, 0x118, 25);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(badSize); }, "Unaligned relocation table size was accepted");
+
+    auto pltOverextended = bytes;
+    write<std::int64_t>(pltOverextended, 0x100, 23);
+    write<std::uint64_t>(pltOverextended, 0x108, 0x10E8);
+    write<std::int64_t>(pltOverextended, 0x110, 2);
+    write<std::uint64_t>(pltOverextended, 0x118, 48);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(pltOverextended); }, "PLT relocation table extending beyond PT_LOAD was accepted");
+
+    auto pltBadSize = bytes;
+    write<std::int64_t>(pltBadSize, 0x100, 23);
+    write<std::uint64_t>(pltBadSize, 0x108, 0x10E8);
+    write<std::int64_t>(pltBadSize, 0x110, 2);
+    write<std::uint64_t>(pltBadSize, 0x118, 1);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(pltBadSize); }, "Unaligned PLT relocation table size was accepted");
+
+    auto overflowSize = bytes;
+    write<std::uint64_t>(overflowSize, 0x118, (~std::uint64_t{0} / 24) * 24);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowSize); }, "Relocation table size near UINT64_MAX was accepted");
+
+    auto overflowRelaVa = bytes;
+    write<std::uint64_t>(overflowRelaVa, 0x108, ~std::uint64_t{0} - 15);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowRelaVa); }, "Relocation table vaddr near UINT64_MAX was accepted");
+
+    auto overflowLoadOffset = bytes;
+    write<std::uint64_t>(overflowLoadOffset, 72, ~std::uint64_t{0} - 16);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowLoadOffset); }, "PT_LOAD file offset near UINT64_MAX was accepted");
+
+    auto overflowLoadSize = bytes;
+    write<std::uint64_t>(overflowLoadSize, 96, ~std::uint64_t{0} - 16);
+    write<std::uint64_t>(overflowLoadSize, 0x118, 0x300);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowLoadSize); }, "Relocation table beyond file with fileSize near UINT64_MAX was accepted");
+
+    auto overflowDynamicOffset = bytes;
+    write<std::uint64_t>(overflowDynamicOffset, 128, ~std::uint64_t{0} - 16);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowDynamicOffset); }, "PT_DYNAMIC offset near UINT64_MAX was accepted");
+}
+
 }
 
 int main() {
@@ -296,16 +472,20 @@ int main() {
         deadTailAndExplicitEntry();
         ud1DeadTail();
         conditionalTailCall();
+        fallthroughAfterZeroPadding();
         callbackAndRelocationRoots();
         registerImportCall();
         mergedJumpTable();
         conservativeIndirectTargets();
         isolatedFunctionCycle();
         relativeTableAndWholeFunction();
+        exceptionLeb128Bounds();
         vectorInstructionLengths();
         exceptionLandingPads();
+        exceptionDataWithoutPersonality();
         filterCallbackDataImports();
         filterAndPltCompaction();
+        relativeRelocationTableBounds();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

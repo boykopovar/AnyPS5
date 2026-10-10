@@ -1,15 +1,15 @@
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <cstring>
 #include <limits>
-#include <map>
-#include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace Relinker::UnusedNidFilter {
 
 CompactedPlt CompactPlt(const std::vector<NidReference>& originalReferences, const std::vector<NidReference>& keptReferences, const std::vector<std::uint8_t>& text, VirtualAddress textVaddr, FileByteOffset textOffset, FileByteOffset tableOffset) {
     CompactedPlt result;
     result.References = keptReferences;
-    std::map<VirtualAddress, std::uint32_t> originalSlots;
+    std::unordered_map<VirtualAddress, std::uint32_t> originalSlots;
     for (const auto& reference : originalReferences) {
         if (reference.RelocationTypeValue != 7) continue;
         if (reference.RelocationTableOffset < tableOffset || (reference.RelocationTableOffset - tableOffset) % 24 != 0 || (reference.RelocationTableOffset - tableOffset) / 24 > std::numeric_limits<std::uint32_t>::max())
@@ -17,22 +17,21 @@ CompactedPlt CompactPlt(const std::vector<NidReference>& originalReferences, con
         if (!originalSlots.emplace(reference.RelocationAddress, static_cast<std::uint32_t>((reference.RelocationTableOffset - tableOffset) / 24)).second)
             throw RelinkerException("Strict filter: duplicate original PLT slot", reference.RelocationAddress);
     }
-    std::map<VirtualAddress, std::uint32_t> newSlots;
+    std::unordered_map<VirtualAddress, std::uint32_t> newSlots;
     for (auto& reference : result.References) {
         if (reference.RelocationTypeValue != 7) continue;
         if (!originalSlots.contains(reference.RelocationAddress) || !newSlots.emplace(reference.RelocationAddress, result.SlotCount).second)
             throw RelinkerException("Strict filter: invalid retained PLT slot", reference.RelocationAddress);
         reference.RelocationTableOffset = tableOffset + static_cast<std::uint64_t>(result.SlotCount++) * 24;
     }
-    std::set<VirtualAddress> found;
+    std::unordered_set<VirtualAddress> found;
     for (std::size_t offset = 0; offset + 16 <= text.size(); ++offset) {
-        if (text[offset] != 0xFF || text[offset + 1] != 0x25) continue;
+        if (text[offset] != 0xFF || text[offset + 1] != 0x25 || text[offset + 6] != 0x68 || text[offset + 11] != 0xE9) continue;
         std::int32_t displacement;
         std::memcpy(&displacement, text.data() + offset + 2, sizeof(displacement));
         const auto slot = textVaddr + offset + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
         const auto original = originalSlots.find(slot);
         if (original == originalSlots.end()) continue;
-        if (text[offset + 6] != 0x68 || text[offset + 11] != 0xE9) continue;
         std::uint32_t index;
         std::memcpy(&index, text.data() + offset + 7, sizeof(index));
         if (index != original->second) throw RelinkerException("Strict filter: PLT thunk index disagrees with its relocation", textVaddr + offset);

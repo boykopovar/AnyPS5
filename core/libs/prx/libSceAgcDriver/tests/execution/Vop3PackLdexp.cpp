@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -102,8 +104,123 @@ constexpr std::uint32_t Expected[32][14] = {
 };
 constexpr const char* Names[14] = {"cvt_pknorm_i16_f320", "cvt_pknorm_i16_f321", "cvt_pknorm_u16_f322", "cvt_pknorm_u16_f323", "ldexp_f324", "ldexp_f325", "ldexp_f326", "lerp_u87", "pack_b32_f168", "pack_b32_f169", "pack_b32_f1610", "pack_b32_f1611", "mul_lo_i32_0", "mul_lo_i32_1"};
 
-void Fill(std::uint32_t tid, std::uint32_t* words) {
-    std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), words);
+alignas(256) constexpr std::array<std::uint32_t, 22> PackCode{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xd711000au, 0x02020b04u, 0xd711180bu,
+    0x02020b04u, 0xd711020cu, 0x22020b04u, 0xd711090du, 0x42020905u, 0xe0781000u, 0x80010a03u, 0xe0781010u,
+    0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u, 0xbf810000u,
+};
+
+constexpr std::uint32_t PackRows[32][4] = {
+    {0xfd237c01u, 0xfc017dffu, 0x00000000u, 0x00000000u},
+    {0x7e00fd23u, 0x00007c00u, 0x00000000u, 0x00000000u},
+    {0x7c007dffu, 0xfd230001u, 0x00000000u, 0x00000000u},
+    {0x0000fc01u, 0xfc00fd23u, 0x00000000u, 0x00000000u},
+    {0x83ff7e00u, 0xc1007fffu, 0x00000000u, 0x00000000u},
+    {0x7c01fe55u, 0x7fff8000u, 0x00000000u, 0x00000000u},
+    {0xfc017fffu, 0x83ff7c01u, 0x00000000u, 0x00000000u},
+    {0x7fff7c00u, 0x7e00fe55u, 0x00000000u, 0x00000000u},
+    {0x3c00fc00u, 0x80000000u, 0x00000000u, 0x00000000u},
+    {0x00013c00u, 0x7dffc100u, 0x00000000u, 0x00000000u},
+    {0xc1000000u, 0x3c007e00u, 0x00000000u, 0x00000000u},
+    {0x7dff8000u, 0x7c013c00u, 0x00000000u, 0x00000000u},
+    {0xfe550001u, 0x7c007bffu, 0x00000000u, 0x00000000u},
+    {0xfc0083ffu, 0x7bfffc01u, 0x00000000u, 0x00000000u},
+    {0x80007bffu, 0xfe55fc00u, 0x00000000u, 0x00000000u},
+    {0x7bffc100u, 0x000183ffu, 0x00000000u, 0x00000000u},
+    {0xfd237dffu, 0xfc017c01u, 0x00000000u, 0x00000000u},
+    {0x7e007c00u, 0x0000fd23u, 0x00000000u, 0x00000000u},
+    {0x7c000001u, 0xfd237dffu, 0x00000000u, 0x00000000u},
+    {0x0000fd23u, 0xfc00fc01u, 0x00000000u, 0x00000000u},
+    {0x83ff7fffu, 0xc1007e00u, 0x00000000u, 0x00000000u},
+    {0x7c018000u, 0x7ffffe55u, 0x00000000u, 0x00000000u},
+    {0xfc017c01u, 0x83ff7fffu, 0x00000000u, 0x00000000u},
+    {0x7ffffe55u, 0x7e007c00u, 0x00000000u, 0x00000000u},
+    {0x3c000000u, 0x8000fc00u, 0x00000000u, 0x00000000u},
+    {0x0001c100u, 0x7dff3c00u, 0x00000000u, 0x00000000u},
+    {0xc1007e00u, 0x3c000000u, 0x00000000u, 0x00000000u},
+    {0x7dff3c00u, 0x7c018000u, 0x00000000u, 0x00000000u},
+    {0xfe557bffu, 0x7c000001u, 0x00000000u, 0x00000000u},
+    {0xfc00fc01u, 0x7bff83ffu, 0x00000000u, 0x00000000u},
+    {0x8000fc00u, 0xfe557bffu, 0x00000000u, 0x00000000u},
+    {0x7bff83ffu, 0x0001c100u, 0x00000000u, 0x00000000u}
+};
+constexpr std::uint32_t PackExpected[32][4] = {
+    {0x7dff7c01u, 0xfc01fd23u, 0x7dfffc01u, 0xfc017c01u},
+    {0x7c00fd23u, 0x00007e00u, 0x7c007d23u, 0x7d230000u},
+    {0x00017dffu, 0xfd237c00u, 0x0001fdffu, 0xfdff7d23u},
+    {0xfd23fc01u, 0xfc000000u, 0x7d237c01u, 0x7c017c00u},
+    {0x7fff7e00u, 0xc10083ffu, 0x7ffffe00u, 0xfe004100u},
+    {0x8000fe55u, 0x7fff7c01u, 0x00007e55u, 0x7e557fffu},
+    {0x7c017fffu, 0x83fffc01u, 0x7c01ffffu, 0xffff03ffu},
+    {0xfe557c00u, 0x7e007fffu, 0x7e55fc00u, 0xfc007e00u},
+    {0x0000fc00u, 0x80003c00u, 0x00007c00u, 0x7c000000u},
+    {0xc1003c00u, 0x7dff0001u, 0x4100bc00u, 0xbc007dffu},
+    {0x7e000000u, 0x3c00c100u, 0x7e008000u, 0x80003c00u},
+    {0x3c008000u, 0x7c017dffu, 0x3c000000u, 0x00007c01u},
+    {0x7bff0001u, 0x7c00fe55u, 0x7bff8001u, 0x80017c00u},
+    {0xfc0183ffu, 0x7bfffc00u, 0x7c0103ffu, 0x03ff7bffu},
+    {0xfc007bffu, 0xfe558000u, 0x7c00fbffu, 0xfbff7e55u},
+    {0x83ffc100u, 0x00017bffu, 0x03ff4100u, 0x41000001u},
+    {0x7c017dffu, 0xfc01fd23u, 0x7c01fdffu, 0xfdff7c01u},
+    {0xfd237c00u, 0x00007e00u, 0x7d23fc00u, 0xfc000000u},
+    {0x7dff0001u, 0xfd237c00u, 0x7dff8001u, 0x80017d23u},
+    {0xfc01fd23u, 0xfc000000u, 0x7c017d23u, 0x7d237c00u},
+    {0x7e007fffu, 0xc10083ffu, 0x7e00ffffu, 0xffff4100u},
+    {0xfe558000u, 0x7fff7c01u, 0x7e550000u, 0x00007fffu},
+    {0x7fff7c01u, 0x83fffc01u, 0x7ffffc01u, 0xfc0103ffu},
+    {0x7c00fe55u, 0x7e007fffu, 0x7c007e55u, 0x7e557e00u},
+    {0xfc000000u, 0x80003c00u, 0x7c008000u, 0x80000000u},
+    {0x3c00c100u, 0x7dff0001u, 0x3c004100u, 0x41007dffu},
+    {0x00007e00u, 0x3c00c100u, 0x0000fe00u, 0xfe003c00u},
+    {0x80003c00u, 0x7c017dffu, 0x0000bc00u, 0xbc007c01u},
+    {0x00017bffu, 0x7c00fe55u, 0x0001fbffu, 0xfbff7c00u},
+    {0x83fffc01u, 0x7bfffc00u, 0x03ff7c01u, 0x7c017bffu},
+    {0x7bfffc00u, 0xfe558000u, 0x7bff7c00u, 0x7c007e55u},
+    {0xc10083ffu, 0x00017bffu, 0x410003ffu, 0x03ff0001u}
+};
+constexpr std::uint32_t PackExpectedIeee[32][4] = {
+    {0x7fff7e01u, 0xfe01ff23u, 0x7ffffe01u, 0xfe017e01u},
+    {0x7c00ff23u, 0x00007e00u, 0x7c007f23u, 0x7f230000u},
+    {0x00017fffu, 0xff237c00u, 0x0001ffffu, 0xffff7f23u},
+    {0xff23fe01u, 0xfc000000u, 0x7f237e01u, 0x7e017c00u},
+    {0x7fff7e00u, 0xc10083ffu, 0x7ffffe00u, 0xfe004100u},
+    {0x8000fe55u, 0x7fff7e01u, 0x00007e55u, 0x7e557fffu},
+    {0x7e017fffu, 0x83fffe01u, 0x7e01ffffu, 0xffff03ffu},
+    {0xfe557c00u, 0x7e007fffu, 0x7e55fc00u, 0xfc007e00u},
+    {0x0000fc00u, 0x80003c00u, 0x00007c00u, 0x7c000000u},
+    {0xc1003c00u, 0x7fff0001u, 0x4100bc00u, 0xbc007fffu},
+    {0x7e000000u, 0x3c00c100u, 0x7e008000u, 0x80003c00u},
+    {0x3c008000u, 0x7e017fffu, 0x3c000000u, 0x00007e01u},
+    {0x7bff0001u, 0x7c00fe55u, 0x7bff8001u, 0x80017c00u},
+    {0xfe0183ffu, 0x7bfffc00u, 0x7e0103ffu, 0x03ff7bffu},
+    {0xfc007bffu, 0xfe558000u, 0x7c00fbffu, 0xfbff7e55u},
+    {0x83ffc100u, 0x00017bffu, 0x03ff4100u, 0x41000001u},
+    {0x7e017fffu, 0xfe01ff23u, 0x7e01ffffu, 0xffff7e01u},
+    {0xff237c00u, 0x00007e00u, 0x7f23fc00u, 0xfc000000u},
+    {0x7fff0001u, 0xff237c00u, 0x7fff8001u, 0x80017f23u},
+    {0xfe01ff23u, 0xfc000000u, 0x7e017f23u, 0x7f237c00u},
+    {0x7e007fffu, 0xc10083ffu, 0x7e00ffffu, 0xffff4100u},
+    {0xfe558000u, 0x7fff7e01u, 0x7e550000u, 0x00007fffu},
+    {0x7fff7e01u, 0x83fffe01u, 0x7ffffe01u, 0xfe0103ffu},
+    {0x7c00fe55u, 0x7e007fffu, 0x7c007e55u, 0x7e557e00u},
+    {0xfc000000u, 0x80003c00u, 0x7c008000u, 0x80000000u},
+    {0x3c00c100u, 0x7fff0001u, 0x3c004100u, 0x41007fffu},
+    {0x00007e00u, 0x3c00c100u, 0x0000fe00u, 0xfe003c00u},
+    {0x80003c00u, 0x7e017fffu, 0x0000bc00u, 0xbc007e01u},
+    {0x00017bffu, 0x7c00fe55u, 0x0001fbffu, 0xfbff7c00u},
+    {0x83fffe01u, 0x7bfffc00u, 0x03ff7e01u, 0x7e017bffu},
+    {0x7bfffc00u, 0xfe558000u, 0x7bff7c00u, 0x7c007e55u},
+    {0xc10083ffu, 0x00017bffu, 0x410003ffu, 0x03ff0001u}
+};
+constexpr const char* PackNames[4] = {
+    "v_pack_b32_f16 v10, v4, v5",
+    "v_pack_b32_f16 v11, v4, v5 op_sel:[1,1,0]",
+    "v_pack_b32_f16 v12, -v4, |v5|",
+    "v_pack_b32_f16 v13, |v5|, -v4 op_sel:[1,0,0]"
+};
+
+void Fill(const std::uint32_t (&rows)[32][4]) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(rows[tid]), std::end(rows[tid]), &Input[tid * Inputs]);
 }
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -121,15 +238,14 @@ void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, con
     Require(actual == expected, std::string("vop3 pack ldexp: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint32_t (&rows)[32][4], const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
+    Fill(rows);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -139,6 +255,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -152,14 +269,27 @@ void Check() {
     }
 }
 
+void CheckPack(const std::uint32_t (&expected)[32][4], const char* mode) {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* out = &Output[tid * Results];
+        for (std::uint32_t i = 0; i < 4; ++i) Expect(tid, out[i], expected[tid][i], (std::string(mode) + " " + PackNames[i]).c_str());
+    }
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
+        Run(*device, Code, Rows, std::nullopt);
         Check();
+        Run(*device, PackCode, PackRows, std::nullopt);
+        CheckPack(PackExpected, "no float mode");
+        Run(*device, PackCode, PackRows, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+        CheckPack(PackExpected, "IEEE=0");
+        Run(*device, PackCode, PackRows, ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false});
+        CheckPack(PackExpectedIeee, "IEEE=1");
         std::puts("vop3 pack ldexp tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -2,6 +2,7 @@
 #include <climits>
 #include <cstddef>
 #include <cstdlib>
+#include <initializer_list>
 
 extern "C" {
 const char16_t* APS5_VABI wmemchr_nid_postfix(const char16_t* s, char16_t c, std::size_t n);
@@ -125,6 +126,14 @@ int main() {
     require(wcstoull_nid_postfix(u"18446744073709551615", nullptr, 10) == ULLONG_MAX);
     const char16_t* letters = u"abc";
     require(wcstol_nid_postfix(letters, &end, 10) == 0 && end == letters);
+    const char16_t* binary = u" -0b101";
+    for (const int base : {0, 2}) {
+        require(wcstol_nid_postfix(binary, &end, base) == 0 && end == binary + 3);
+        require(wcstoll_nid_postfix(binary, &end, base) == 0 && end == binary + 3);
+        require(wcstoul_nid_postfix(binary, &end, base) == 0 && end == binary + 3);
+        require(wcstoull_nid_postfix(binary, &end, base) == 0 && end == binary + 3);
+    }
+    require(wcstoll_nid_postfix(binary + 2, &end, 16) == 0xb101 && end == binary + 7);
 
     const char16_t* scientific = u"3.5e2!";
     require(wcstod_nid_postfix(scientific, &end) == 350.0 && end == scientific + 5);

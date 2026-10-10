@@ -154,14 +154,21 @@ int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
         return 0;
     }
     if (*mutex && (*mutex)->_owner.load(std::memory_order_acquire) != std::thread::id{})
-        throw std::runtime_error("Cannot destroy a locked mutex");
+        return SCE_KERNEL_ERROR_EBUSY;
     delete *mutex;
     std::atomic_ref<PthreadMutex>(*mutex).store(destroyedMutex(), std::memory_order_release);
     return 0;
 }
 
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) {
-    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { native.lock(); return true; }, 0, false);
+    return acquireMutex(resolveMutex(mutex, true), [](auto& native) {
+#ifdef _WIN32
+        while (!native.try_lock()) TimedWait::SleepNanos(1000000);
+#else
+        native.lock();
+#endif
+        return true;
+    }, 0, false);
 }
 
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {

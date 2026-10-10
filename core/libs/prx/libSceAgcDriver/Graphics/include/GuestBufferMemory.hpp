@@ -27,11 +27,12 @@ struct HostImport {
     VkDeviceMemory memory;
     VkDeviceAddress address;
     void* alias = nullptr;
-    std::weak_ptr<const GuestAllocations::Range> range {};
+    std::shared_ptr<const GuestAllocations::Range> range {};
     // Identity for the life of this import (see HostImportSerial); 0 until first asked for.
     std::uint64_t serial = 0;
     bool unwatched = false;
     bool dmaBuf = false;
+    std::shared_ptr<void> chunk;
 };
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
@@ -150,6 +151,8 @@ struct MirrorStats {
     std::uint64_t rebuilds = 0;
     std::uint64_t blocksCopied = 0;
     std::uint64_t heapRefills = 0;
+    std::uint64_t sweeps = 0;
+    std::uint64_t heapChecks = 0;
 };
 MirrorStats MirrorCounters();
 void ClearImageMirrors(VkDevice device);
@@ -187,6 +190,7 @@ public:
     // calls RecordCopyBacks (a dispatch), since a staged region's results reach guest memory by
     // that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
+    void AllowAdjustedRegions() { adjustedRegions = true; }
     // Records the copy-in of every staged region anew for another use of this upload (a resource
     // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
@@ -336,12 +340,14 @@ private:
     // and an atomic element or a size within the written-shadow window. Independent of the import,
     // so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
+    bool bindableInPlace(std::uint64_t offset, bool addressable) const;
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void takeHeapReferences();
     Context context;
     bool stagingAllowed = false;
+    bool adjustedRegions = false;
     GuestAllocations::Lease lease;
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).

@@ -48,6 +48,23 @@ private:
     const std::uint32_t* yOffsets = nullptr;
 };
 
+class CmaskLayout {
+public:
+    static constexpr std::size_t Alignment = 4096;
+    CmaskLayout(std::uint32_t width, std::uint32_t height);
+    std::size_t Bytes() const { return bytes; }
+    std::uint32_t BlocksPerRow() const { return blocksPerRow; }
+    std::uint32_t TilesX() const { return (width + 7u) / 8u; }
+    std::uint32_t TilesY() const { return (height + 7u) / 8u; }
+    std::size_t Nibble(std::uint32_t tileX, std::uint32_t tileY) const;
+
+private:
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t blocksPerRow;
+    std::size_t bytes;
+};
+
 }
 
 #endif
