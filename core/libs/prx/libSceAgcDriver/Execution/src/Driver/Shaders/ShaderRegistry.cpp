@@ -29,10 +29,18 @@ namespace AgcDriver::DriverDetail {
 std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnostics(const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::ShaderPreparationContext* preparation) {
     try {
         return ShaderRecompiler::PrepareShader(request, preparation);
-    } catch (...) {
+    } catch (const std::exception& error) {
+        std::string dump;
         try {
-            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) static_cast<void>(Driver::dumpRequest(request.shader.codeAddress, request));
+            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) dump = Driver::dumpRequest(request.shader.codeAddress, request);
         } catch (...) {}
+        std::string reason = error.what();
+        if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
+        char where[128];
+        if (dump.empty()) std::snprintf(where, sizeof(where), "shader 0x%llx stage %u: ", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<unsigned>(request.shader.stage));
+        else std::snprintf(where, sizeof(where), "shader 0x%llx stage %u (%s): ", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<unsigned>(request.shader.stage), dump.c_str());
+        throw std::runtime_error(where + reason);
+    } catch (...) {
         throw;
     }
 }
