@@ -1001,6 +1001,10 @@ bool AdjacentGenerationEnabled() {
 
 }
 
+bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear) {
+    return FillClearColor(format, elementBytes, pattern, clear);
+}
+
 bool ClearKeepsDenormals(const Context& context, VkFormat format) {
     static std::mutex mutex;
     static std::map<std::pair<VkDevice, VkFormat>, bool> known;

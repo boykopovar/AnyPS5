@@ -149,6 +149,7 @@ struct Context {
     std::uint32_t srgbDecodeFormats = 0;
     bool provokingVertexLast = false;
     bool provokingVertexModePerPipeline = false;
+    VkSampleCountFlags sampleLocationSampleCounts = 0;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

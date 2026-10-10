@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <algorithm>
@@ -99,6 +100,14 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
     }
 }
 
+bool ValidateSampleLocations(const Context& context, const State& state) {
+    const bool extensionSupportsSamples = (context.sampleLocationSampleCounts & state.samples) != 0;
+    Require(!state.customSampleLocations || extensionSupportsSamples, "custom sample locations require VK_EXT_sample_locations support for the draw's sample count");
+    const bool enabled = extensionSupportsSamples && (!state.depth || SampleLocationsCompatibleDepth(context, state.depth->format, state.depth->samples));
+    Require(!state.customSampleLocations || enabled, "custom sample locations require a compatible depth format and sample count");
+    return enabled;
+}
+
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(std::isfinite(viewport.minDepth) && std::isfinite(viewport.maxDepth), "non-finite viewport depth range");
     Require(context.depthRangeUnrestricted || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
@@ -110,12 +119,14 @@ void ValidateViewport(const Context& context, const VkViewport& viewport) {
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
+    sampleLocationsEnabled = ValidateSampleLocations(context, state);
     // A cached pipeline may outlive its device's teardown (see ClearCachedPipelines); it must not keep
     // the buffer pool, which is reset with the device, alive past it.
     this->context.bufferPool.reset();
     Require(state.blends.size() == (state.colors.empty() ? 0u : state.colors.back().exportIndex + 1u) && state.colors.size() <= state.blends.size(), "blend states do not match decoded color state");
     Require(state.blends.size() <= context.limits.maxColorAttachments, "color targets exceed device attachment limits");
-    Require(state.hasColorTarget || (context.limits.framebufferNoAttachmentsSampleCounts & VK_SAMPLE_COUNT_1_BIT) != 0, "device does not support single-sample rendering without attachments");
+    Require(state.hasColorTarget || (context.limits.framebufferNoAttachmentsSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support rendering without attachments at the draw's sample count");
+    Require(state.samples == 1 || !state.depth.has_value() || (context.limits.framebufferDepthSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support depth targets with the draw's sample count");
     Require(!depthBounds || context.depthBounds, "device does not support the depth bounds test");
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
     Require(!state.negativeOneToOne || context.depthClipControl, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
@@ -169,7 +180,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         for (std::uint32_t index = 0; index < state.colors.size(); ++index) {
             VkAttachmentDescription color{};
             color.format = state.colors[index].format;
-            color.samples = VK_SAMPLE_COUNT_1_BIT;
+            color.samples = static_cast<VkSampleCountFlagBits>(state.samples);
             color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -187,7 +198,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (state.depth) {
             VkAttachmentDescription depth{};
             depth.format = state.depth->format;
-            depth.samples = VK_SAMPLE_COUNT_1_BIT;
+            depth.samples = static_cast<VkSampleCountFlagBits>(state.samples);
             depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -244,7 +255,12 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             raster.pNext = &provoking;
         }
         VkPipelineMultisampleStateCreateInfo samples{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        samples.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        samples.rasterizationSamples = static_cast<VkSampleCountFlagBits>(state.samples);
+        const auto locations = SampleLocations(state);
+        VkPipelineSampleLocationsStateCreateInfoEXT sampleLocations{VK_STRUCTURE_TYPE_PIPELINE_SAMPLE_LOCATIONS_STATE_CREATE_INFO_EXT};
+        sampleLocations.sampleLocationsEnable = VK_TRUE;
+        sampleLocations.sampleLocationsInfo = {VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, samples.rasterizationSamples, {1, 1}, state.samples, locations.data()};
+        if (sampleLocationsEnabled) samples.pNext = &sampleLocations;
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         depthStencil.depthTestEnable = state.depthTest;
         depthStencil.depthWriteEnable = state.depthWrite;
@@ -330,21 +346,26 @@ VkPipelineLayout Pipeline::Layout() const {
     return layout;
 }
 
-std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent) {
+std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImageView> targets, std::span<const std::shared_ptr<StorageTexture>> owners, VkExtent2D extent, std::span<const std::uint8_t> persistent) {
     Require(targets.size() == attachments && owners.size() == colorAttachments, "render targets do not match the pipeline's attachments");
-    const bool resident = std::all_of(owners.begin(), owners.end(), [](const auto& owner) { return owner != nullptr; });
+    bool resident = true;
+    for (std::size_t i = 0; i < owners.size(); ++i) resident = resident && (owners[i] != nullptr || (i < persistent.size() && persistent[i] != 0));
     if (resident) {
         // Entries whose views are gone can never match again and go as soon as no recorded draw holds
         // them (Kept keeps its framebuffer until the batch completes).
         std::erase_if(framebuffers, [](const CachedFramebuffer& entry) {
-            return entry.framebuffer.use_count() == 1 && std::any_of(entry.owners.begin(), entry.owners.end(), [](const auto& owner) { return owner.expired(); });
+            if (entry.framebuffer.use_count() != 1) return false;
+            for (std::size_t i = 0; i < entry.owners.size(); ++i) {
+                if (entry.owned[i] && entry.owners[i].expired()) return true;
+            }
+            return false;
         });
         for (auto it = framebuffers.begin(); it != framebuffers.end(); ++it) {
             if (it->extent.width != extent.width || it->extent.height != extent.height || !std::equal(it->views.begin(), it->views.end(), targets.begin(), targets.end())) continue;
             // View handles are recycled once a StorageTexture is destroyed, so the owners must be the
             // very objects the views were made for.
             bool same = true;
-            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owners[i].lock().get() == owners[i].get();
+            for (std::size_t i = 0; i < owners.size() && same; ++i) same = it->owned[i] == (owners[i] != nullptr) && it->owners[i].lock().get() == owners[i].get();
             if (!same) continue;
             std::rotate(it, std::next(it), framebuffers.end());
             return framebuffers.back().framebuffer;
@@ -362,6 +383,7 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
     CachedFramebuffer entry;
     entry.views.assign(targets.begin(), targets.end());
     entry.owners.assign(owners.begin(), owners.end());
+    for (const auto& owner : owners) entry.owned.push_back(owner != nullptr);
     entry.extent = extent;
     entry.framebuffer = framebuffer;
     framebuffers.push_back(std::move(entry));
@@ -373,6 +395,16 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     begin.renderPass = renderPass;
     begin.framebuffer = framebuffer.Handle();
     begin.renderArea = {{0, 0}, extent};
+    const auto locations = SampleLocations(state);
+    const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(state.samples), {1, 1}, state.samples, locations.data()};
+    const VkAttachmentSampleLocationsEXT initial{static_cast<std::uint32_t>(state.colors.size()), info};
+    const VkSubpassSampleLocationsEXT post{0, info};
+    VkRenderPassSampleLocationsBeginInfoEXT sampleLocations{VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT};
+    sampleLocations.attachmentInitialSampleLocationsCount = state.depth ? 1 : 0;
+    sampleLocations.pAttachmentInitialSampleLocations = state.depth ? &initial : nullptr;
+    sampleLocations.postSubpassSampleLocationsCount = 1;
+    sampleLocations.pPostSubpassSampleLocations = &post;
+    if (sampleLocationsEnabled) begin.pNext = &sampleLocations;
     context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
     Continue(commands, state);
 }
@@ -460,6 +492,9 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.blends.size());
     for (const auto& blend : state.blends) append(key, blend);
     for (const auto value : state.blendConstants) append(key, value);
+    append(key, state.samples);
+    append(key, state.customSampleLocations);
+    if (state.customSampleLocations) append(key, state.sampleLocations);
     append(key, state.colors.size());
     for (const auto& color : state.colors) append(key, color.format);
     if (state.blends.size() != state.colors.size()) {

@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -789,6 +791,8 @@ void DepthStencilTests() {
     queue.context[0x011] = 0x20000181;
     for (const auto offset : {0x012u, 0x014u}) queue.context[offset] = 0x100;
     for (const auto offset : {0x013u, 0x015u}) queue.context[offset] = 0x200;
+    queue.context[0x005] = 0x300;
+    queue.context[0x01e] = 0x1;
     queue.context[0x10b] = 0x00050050;
     queue.context[0x10c] = 0x01ffff01;
     queue.context[0x10d] = 0x01000001;
@@ -802,10 +806,30 @@ void DepthStencilTests() {
     queue.context[0x1b4] = 2;
     const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
     Require(rejection.empty(), "precheck rejected a stencil draw with a surface: " + rejection);
-    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7, "depth surface decode changed");
+    Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7 && state.depth->htileAddress == 0x10000030000ull && !state.depth->htileStencil, "depth surface decode changed");
+    {
+        queue.context[0x011] &= ~(1u << 29u);
+        const auto stencilTiled = AgcDriver::Graphics::DecodeState(queue);
+        Require(stencilTiled.depth && stencilTiled.depth->htileStencil, "HTILE holds the stencil state without TILE_STENCIL_DISABLE");
+        queue.context[0x011] |= 1u << 29u;
+        queue.context[0x010] &= ~(1u << 29u);
+        const auto untiled = AgcDriver::Graphics::DecodeState(queue);
+        Require(untiled.depth && untiled.depth->htileAddress == 0, "HTILE must be ignored without TILE_SURFACE_ENABLE");
+        queue.context[0x010] |= 1u << 29u;
+        using AgcDriver::Graphics::HtileFillClears;
+        using AgcDriver::Graphics::HtileFillCovers;
+        constexpr VkImageAspectFlags both = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        Require(HtileFillClears(0x0003fff0u, false) == VK_IMAGE_ASPECT_DEPTH_BIT, "a depth-only HTILE fill with ZMask 0 clears the depth");
+        Require(HtileFillClears(0x000000f0u, true) == both, "a depth and stencil fast clear (ZMask 0, SMem 0) clears both aspects");
+        Require(HtileFillClears(0x000003f0u, true) == VK_IMAGE_ASPECT_DEPTH_BIT, "SMem 3 leaves the stencil uncleared");
+        Require(HtileFillClears(0xfffff0ffu, true) == VK_IMAGE_ASPECT_STENCIL_BIT, "ZMask 0xf with SMem 0 clears only the stencil");
+        Require(HtileFillClears(0xffffffffu, true) == 0 && HtileFillClears(0xffffffffu, false) == 0, "an expanded fill clears nothing");
+        const VkExtent2D extent{16, 8};
+        Require(HtileFillCovers(0x1000, extent, 0x1000, 8) && HtileFillCovers(0x1000, extent, 0xff0, 0x20), "a fill over every HTILE word covers the surface");
+        Require(!HtileFillCovers(0x1000, extent, 0x1000, 4) && !HtileFillCovers(0x1000, extent, 0x1004, 8) && !HtileFillCovers(0, extent, 0, 64), "a partial fill, one starting past the HTILE base, or no HTILE covers nothing");
+    }
     Require(state.renderExtent.width == 4 && state.renderExtent.height == 2, "render extent ignores the depth surface");
     Require(!state.depthTest && !state.depthWrite && state.stencilTest, "depth/stencil enables changed");
-    Require(state.depth->htileAddress == 0, "an HTILE surface without DB_HTILE_DATA_BASE decoded an HTILE address");
     queue.context[0x005] = 0x300;
     queue.context[0x01e] = 0x01;
     log.clear();
@@ -1381,6 +1405,203 @@ void uint16ExportTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(blended); }, "blending into an unsigned integer target");
     queue.context[0x1c5] = 8;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "color export format 8");
+}
+
+VkSampleCountFlags depthSampleCounts = VK_SAMPLE_COUNT_4_BIT;
+VkResult depthSampleResult = VK_SUCCESS;
+std::uint32_t depthSampleQueries = 0;
+
+VKAPI_ATTR VkResult VKAPI_CALL sampleLocationDepthProperties(VkPhysicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties) {
+    Require(format == VK_FORMAT_D32_SFLOAT && type == VK_IMAGE_TYPE_2D && tiling == VK_IMAGE_TILING_OPTIMAL, "sample location query changed the depth image format or type");
+    Require(usage == (VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) && flags == VK_IMAGE_CREATE_SAMPLE_LOCATIONS_COMPATIBLE_DEPTH_BIT_EXT, "sample location query differs from depth image creation");
+    ++depthSampleQueries;
+    properties->sampleCounts = depthSampleCounts;
+    return depthSampleResult;
+}
+
+void multisampleTests() {
+    using AgcDriver::Graphics::ColorMetadataPass;
+    using AgcDriver::Graphics::DecodeColorMetadataPass;
+    using AgcDriver::Graphics::DecodeState;
+    const auto multisampled = [] {
+        auto queue = makeState();
+        queue.context[0x2f8] = 0x00100001;
+        queue.context[0x292] = 3;
+        queue.context[0x3b8] = 0x0dc00000u;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+        queue.context[0x31d] = 0x9000;
+        queue.context[0x1b3] = 2;
+        queue.context[0x1b4] = 2;
+        return queue;
+    };
+    const auto cmaskAddress = reinterpret_cast<std::uintptr_t>(cmaskMemory.data());
+    const auto setCmaskAddress = [&](auto& target, std::uint32_t slot = 0u) {
+        const auto stride = slot * 0xfu;
+        target.context[0x31f + stride] = static_cast<std::uint32_t>(cmaskAddress >> 8u);
+        target.context[0x398 + slot] = static_cast<std::uint32_t>(cmaskAddress >> 40u);
+    };
+    auto queue = multisampled();
+    auto state = DecodeState(queue);
+    Require(state.samples == 2 && state.colors.size() == 1 && state.colors[0].samples == 2 && state.colors[0].cmaskAddress == 0, "2x multisampling did not decode");
+    const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+    Require(rejection.empty(), "the precheck refused 2x multisampling: " + rejection);
+    queue.context[0x302] = 0x44cc;
+    expectFailure([&] { DecodeState(queue); }, "nonstandard sample locations");
+    queue = multisampled();
+    queue.context[0x2f8] = 0x00200002;
+    queue.context[0x31d] = 0x12000;
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x22eea66a;
+    state = DecodeState(queue);
+    Require(state.samples == 4 && state.customSampleLocations, "uniform custom sample locations were not decoded");
+    const auto locations = AgcDriver::Graphics::SampleLocations(state);
+    const std::array<VkSampleLocationEXT, 4> expected{{{0.125f, 0.875f}, {0.875f, 0.125f}, {0.375f, 0.375f}, {0.625f, 0.625f}}};
+    for (std::size_t sample = 0; sample < expected.size(); ++sample) Require(locations[sample].x == expected[sample].x && locations[sample].y == expected[sample].y, "custom sample coordinates or indices changed");
+    AgcDriver::Graphics::Context sampleContext{};
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "VK_EXT_sample_locations");
+    sampleContext.sampleLocationSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "sample count");
+    sampleContext.sampleLocationSampleCounts |= VK_SAMPLE_COUNT_4_BIT;
+    AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state);
+    sampleContext.imageFormatProperties = sampleLocationDepthProperties;
+    using AgcDriver::Graphics::SampleLocationsCompatibleDepth;
+    Require(SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4), "supported custom sample depth format was refused");
+    state.depth = AgcDriver::Graphics::DepthTarget{};
+    state.depth->format = VK_FORMAT_D32_SFLOAT;
+    state.depth->samples = 4;
+    Require(AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state), "supported custom depth sample locations were disabled");
+    depthSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+    Require(!SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4), "unsupported custom sample depth count was accepted");
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "compatible depth format and sample count");
+    depthSampleCounts = VK_SAMPLE_COUNT_4_BIT;
+    depthSampleResult = VK_ERROR_FORMAT_NOT_SUPPORTED;
+    Require(!SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4), "unsupported custom sample depth format was accepted");
+    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state); }, "compatible depth format and sample count");
+    state.customSampleLocations = false;
+    Require(!AgcDriver::Graphics::ValidateSampleLocations(sampleContext, state), "standard locations did not fall back for an incompatible depth format");
+    depthSampleResult = VK_ERROR_OUT_OF_HOST_MEMORY;
+    expectFailure([&] { SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 4); }, "Vulkan result");
+    depthSampleResult = VK_SUCCESS;
+    const auto queries = depthSampleQueries;
+    Require(!SampleLocationsCompatibleDepth({}, VK_FORMAT_D32_SFLOAT, 4) && !SampleLocationsCompatibleDepth(sampleContext, VK_FORMAT_D32_SFLOAT, 1), "sample location depth compatibility requires the extension and multisampling");
+    Require(depthSampleQueries == queries, "ineligible sample location depth formats were queried");
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6ae;
+    state = DecodeState(queue);
+    Require(!state.customSampleLocations, "standard sample locations require the extension");
+    const auto standard = AgcDriver::Graphics::SampleLocations(state);
+    const std::array<VkSampleLocationEXT, 4> expectedStandard{{{0.375f, 0.125f}, {0.875f, 0.375f}, {0.125f, 0.625f}, {0.625f, 0.875f}}};
+    for (std::size_t sample = 0; sample < expectedStandard.size(); ++sample) Require(standard[sample].x == expectedStandard[sample].x && standard[sample].y == expectedStandard[sample].y, "standard sample coordinate scale or Y direction changed");
+    AgcDriver::Graphics::ValidateSampleLocations({}, state);
+    for (const auto samples : {2u, 8u}) {
+        queue = multisampled();
+        const auto log2 = samples == 2 ? 1u : 3u;
+        queue.context[0x2f8] = (log2 << 20u) | log2;
+        queue.context[0x31d] = (log2 << 12u) | (log2 << 15u);
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) {
+            queue.context[0x2fe + pixel * 4u] = 0x77887788;
+            queue.context[0x2ff + pixel * 4u] = 0x77887788;
+        }
+        state = DecodeState(queue);
+        Require(state.customSampleLocations && state.samples == samples, "a custom 2x or 8x pattern did not decode");
+        const auto endpoints = AgcDriver::Graphics::SampleLocations(state);
+        for (std::uint32_t sample = 0; sample < samples; ++sample) {
+            const auto expected = sample % 2u == 0 ? 0.0f : 15.0f / 16.0f;
+            Require(endpoints[sample].x == expected && endpoints[sample].y == expected, "signed sample coordinate endpoints changed");
+        }
+    }
+    queue = multisampled();
+    queue.context[0x31d] = 0x1000;
+    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
+    queue.context[0x31d] = 0;
+    expectFailure([&] { DecodeState(queue); }, "sample count differs");
+    queue = multisampled();
+    queue.context[0x292] = 2;
+    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE");
+    queue = multisampled();
+    queue.context[0x2f8] |= 0x10;
+    expectFailure([&] { DecodeState(queue); }, "coverage conversion");
+    queue = multisampled();
+    queue.context[0x31c] |= 0x6000;
+    setCmaskAddress(queue);
+    Require(DecodeState(queue).colors[0].cmaskAddress == cmaskAddress, "the CMASK address of a multisampled target did not decode");
+    queue = makeState();
+    queue.context[0x31c] |= 0x4000;
+    expectFailure([&] { DecodeState(queue); }, "color compression");
+    queue = multisampled();
+    queue.context[0x31c] |= 0x2000;
+    setCmaskAddress(queue);
+    const auto fastCleared = DecodeState(queue).colors[0];
+    Require(fastCleared.cmaskAddress == cmaskAddress && fastCleared.cmaskFastClear && fastCleared.cmaskBytes == 0x1000, "a multisampled FAST_CLEAR target did not decode its CMASK at the metablock size");
+    queue = multisampled();
+    queue.context[0x31c] |= 0x4000;
+    setCmaskAddress(queue);
+    const auto compressed = DecodeState(queue).colors[0];
+    Require(compressed.cmaskAddress == cmaskAddress && !compressed.cmaskFastClear && compressed.cmaskBytes == 0x1000, "a multisampled COMPRESSION target did not decode its CMASK at the metablock size");
+    queue = multisampled();
+    queue.context[0x31c] |= 0x2000;
+    queue.context[0x31f] = 0;
+    expectFailure([&] { DecodeState(queue); }, "without a CMASK address");
+    queue = multisampled();
+    queue.context[0x31c] |= 0x2000;
+    setCmaskAddress(queue);
+    std::vector<AgcDriver::Graphics::RegisterRead> reads;
+    AgcDriver::Graphics::RegisterReadLog() = &reads;
+    static_cast<void>(DecodeState(queue));
+    AgcDriver::Graphics::RegisterReadLog() = nullptr;
+    for (const auto read : reads) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a CMASK register the decoder reads: " + std::to_string(read.offset));
+
+    queue = multisampled();
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0xcc0030;
+    for (const auto offset : {0x318u, 0x31bu, 0x31cu, 0x390u}) queue.context[offset + (offset >= 0x390u ? 1u : 0xfu)] = queue.context[offset];
+    queue.context[0x32c] = 0;
+    queue.context[0x3b1] = queue.context[0x3b0];
+    queue.context[0x3b9] = queue.context[0x3b8];
+    setCmaskAddress(queue);
+    setCmaskAddress(queue, 1);
+    auto pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->mode == ColorMetadataPass::Mode::Resolve && pass->source.has_value() && pass->source->samples == 2 && pass->targets.size() == 1 && pass->targets[0].samples == 1, "a CB resolve of a multisampled target did not decode");
+    queue.context[0x32b] = queue.context[0x31c] ^ (1u << 8u);
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "different formats or extents");
+    queue = multisampled();
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0xcc0030;
+    for (const auto offset : {0x318u, 0x31bu, 0x31cu, 0x390u}) queue.context[offset + (offset >= 0x390u ? 1u : 0xfu)] = queue.context[offset];
+    queue.context[0x32c] = 0;
+    queue.context[0x3b1] = queue.context[0x3b0];
+    queue.context[0x3b9] = queue.context[0x3b8];
+    queue.context[0x32b] = queue.context[0x31c] | 0x2000u;
+    setCmaskAddress(queue, 1);
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "fast-clear color target");
+    queue = multisampled();
+    queue.context[0x2f8] = 0;
+    queue.context[0x0] = 0;
+    queue.context[0x202] = 0xcc0020;
+    expectFailure([&] { DecodeColorMetadataPass(queue); }, "multisampled color target");
+
+    using AgcDriver::Graphics::DccKeys;
+    using AgcDriver::Graphics::MultisampledCmask;
+    MultisampledCmask cmask(0x10000, 0x1000);
+    cmask.NoteFill(0x10000, 0x1000, 0x11111111u);
+    expectFailure([&] { cmask.TakeClear(); }, "leaves its tiles mixed");
+    cmask.NoteFill(0x10800, 0x1000, 0);
+    expectFailure([&] { cmask.TakeClear(); }, "partly covers");
+    cmask.NoteFill(0x10000, 0x1000, 0);
+    Require(cmask.TakeClear() && !cmask.TakeClear(), "a zero fill of the whole CMASK did not clear once");
+    cmask.NoteFill(0x10000, 0x1000, 0xffffffffu);
+    Require(!cmask.TakeClear(), "an expanded CMASK cleared");
+    cmask.NoteFill(0x20000, 0x1000, 0x11111111u);
+    Require(!cmask.TakeClear() && cmask.Keys() == DccKeys::Uncompressed, "a fill of another range changed the CMASK");
+    cmask.CheckAddress(0x10000);
+    expectFailure([&] { cmask.CheckAddress(0x20000); }, "used CMASK 0x20000");
+    MultisampledCmask seeded(0x30000, 0x1000);
+    seeded.SeedKeys(DccKeys::Clear0000);
+    Require(seeded.TakeClear(), "a fast-cleared seed did not clear its first use");
+    MultisampledCmask mixedSeed(0x30000, 0x1000);
+    mixedSeed.SeedKeys(DccKeys::Mixed);
+    expectFailure([&] { mixedSeed.TakeClear(); }, "not modeled");
+    MultisampledCmask unaddressed;
+    unaddressed.NoteFill(0, 0x1000, 0);
+    Require(!unaddressed.TakeClear(), "a target without a CMASK cleared");
 }
 
 void DepthClipTests() {
@@ -3768,6 +3989,8 @@ int main() {
         cmaskTests();
         uint16ExportTests();
         uint8x4TargetTests();
+
+multisampleTests();
         ShaderStageTests();
         TuningFieldTests();
         PixelInputLayoutTests();
