@@ -3427,6 +3427,36 @@ void firstLayerViewTests(const Device& device, Recorder& recorder) {
     Texture storageView(context, image, resource, identity);
     Require(storageView.FirstLayerView() != VK_NULL_HANDLE, "a sampled view of a 2D array storage image has no first-layer view");
     expectRed(program.Red(storageView.FirstLayerView(), storageView.Layout(), 0.0f), 0x40 / 255.0f, "a sampled first-layer view of a storage image does not read the BASE_ARRAY layer");
+    static PFN_vkGetDeviceProcAddr deviceProc;
+    static std::uint32_t checkedViews;
+    deviceProc = context.deviceProc;
+    checkedViews = 0;
+    auto checkedContext = context;
+    checkedContext.deviceProc = [](VkDevice device, const char* name) -> PFN_vkVoidFunction {
+        if (std::strcmp(name, "vkCreateImageView") != 0) return deviceProc(device, name);
+        return reinterpret_cast<PFN_vkVoidFunction>(+[](VkDevice device, const VkImageViewCreateInfo* info, const VkAllocationCallbacks* allocator, VkImageView* view) -> VkResult {
+            Require(info->format == VK_FORMAT_R8G8B8A8_SRGB, "the sampled storage view does not use sRGB");
+            const VkImageViewUsageCreateInfo* usage = nullptr;
+            for (auto* next = static_cast<const VkBaseInStructure*>(info->pNext); next != nullptr; next = next->pNext) {
+                if (next->sType == VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO) usage = reinterpret_cast<const VkImageViewUsageCreateInfo*>(next);
+            }
+            Require(usage != nullptr && (usage->usage & VK_IMAGE_USAGE_STORAGE_BIT) == 0 && (usage->usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0,
+                    "the sRGB sampled view inherits unsupported storage usage");
+            ++checkedViews;
+            return reinterpret_cast<PFN_vkCreateImageView>(deviceProc(device, "vkCreateImageView"))(device, info, allocator, view);
+        });
+    };
+    auto srgb = resource;
+    srgb.format = 130;
+    for (const auto minLod : {0u, 0x100u}) {
+        if (minLod != 0 && !context.imageViewMinLod) continue;
+        srgb.minLod = minLod;
+        Texture srgbView(checkedContext, image, srgb, identity);
+        Require(srgbView.ViewsStorageImage() && srgbView.FirstLayerView() != VK_NULL_HANDLE, "the sRGB array view does not share the storage image");
+        expectRed(program.Red(srgbView.FirstLayerView(), srgbView.Layout(), 0.0f), std::pow((0x40 / 255.0f + 0.055f) / 1.055f, 2.4f),
+                  "the sRGB storage view does not decode the BASE_ARRAY layer");
+    }
+    Require(checkedViews == (context.imageViewMinLod ? 4u : 2u), "not all sRGB storage views were checked");
     auto flat = resource;
     flat.dimension = TextureDimension::k2D;
     flat.depthOrLastArray = 0;

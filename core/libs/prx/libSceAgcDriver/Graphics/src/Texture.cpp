@@ -479,6 +479,9 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
             Require(viewLayerCount % 6u == 0, "guest cube texture view does not contain a multiple of 6 array slices");
         }
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+        viewUsage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        viewInfo.pNext = &viewUsage;
         viewInfo.image = source->Image();
         viewInfo.viewType = ViewTypeFor(descriptor.dimension, viewLayerCount);
         viewInfo.format = vkFormat;
