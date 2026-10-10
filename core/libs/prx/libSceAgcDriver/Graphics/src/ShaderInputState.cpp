@@ -64,9 +64,9 @@ template <typename T> void _readHeaderArray(std::span<const std::byte> header, s
 }
 
 ShaderRecompiler::ShaderComputeStageInfo DecodeComputeStageInfo(const Registers& shader, std::span<const std::byte> header) {
-    const auto numThreadX = read(shader, computeNumThreadX, RegisterBank::Shader);
-    const auto numThreadY = read(shader, computeNumThreadY, RegisterBank::Shader);
-    const auto numThreadZ = read(shader, computeNumThreadZ, RegisterBank::Shader);
+    const auto numThreadX = read(shader, computeNumThreadX, RegisterBank::Shader) & 0xffffu;
+    const auto numThreadY = read(shader, computeNumThreadY, RegisterBank::Shader) & 0xffffu;
+    const auto numThreadZ = read(shader, computeNumThreadZ, RegisterBank::Shader) & 0xffffu;
     if (numThreadX == 0 || numThreadY == 0 || numThreadZ == 0) {
         throw std::runtime_error("AGC graphics: COMPUTE_NUM_THREAD_X/Y/Z must be nonzero");
     }

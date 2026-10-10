@@ -90,6 +90,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             if (threads[axis] % compute.numThreads[axis] != 0) compute.partialThreads = threads;
         }
     }
+    if (indirectArguments == 0 && (packet[4] & 0x2u) != 0) {
+        const auto threads = Pm4::PartialGroupThreads({packet[1], packet[2], packet[3]}, {readRegister(queue.shader, 0x207), readRegister(queue.shader, 0x208), readRegister(queue.shader, 0x209)});
+        if (threads != std::array<std::uint32_t, 3>{}) compute.partialThreads = threads;
+    }
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
         {(packet[4] & 0x8000u) != 0 ? 32u : 64u, 0, userData, compute, std::nullopt, std::nullopt, memory, RegisteredFloatMode(snapshot)},

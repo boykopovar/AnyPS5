@@ -72,7 +72,7 @@ bool IndirectDrawsDisabled() {
 // nowhere) or a user-data register of the vertex-side stage banks (0x8c.. for the vertex / geometry
 // programs, 0x10c.. for the local / hull programs).
 bool drawLocation(std::uint32_t value) {
-    return value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
+    return value == 0 || value == 0x280u || value - 0x8cu < 32u || value - 0x10cu < 32u;
 }
 
 Registers& registersFor(QueueState& queue, std::uint32_t opcode) {
@@ -135,6 +135,15 @@ void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t byt
 
 constexpr std::uint32_t CopyDataGpuClockSource = 18;
 constexpr std::uint32_t CopyDataCachePolicy = (3u << 13u) | (3u << 25u);
+constexpr std::uint32_t ContextRegisterBase = 0xa000;
+
+bool copyDataToRegister(std::span<const std::uint32_t> packet) {
+    return ((packet[1] >> 8u) & 0xfu) == 0;
+}
+
+std::uint32_t copyDataCount(std::span<const std::uint32_t> packet) {
+    return (packet[1] & 0x10000u) != 0 ? 2u : 1u;
+}
 
 std::uint64_t gpuClockCount() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
@@ -267,7 +276,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     switch (opcode) {
         case 0x11:
             size(4);
-            require(packet[1] == 1 && (packet[2] & 7u) == 0 && packet[3] <= 0xffffu, "unsupported indirect base index, alignment or address bits");
+            require(packet[1] == 1 && (packet[2] & 3u) == 0 && packet[3] <= 0xffffu, "unsupported indirect base index, alignment or address bits");
             if ((header & 2u) == 0) graphics();
             break;
         case 0x12: graphics(); size(2); require((packet[1] & ~0xfu) == 0, "unsupported CLEAR_STATE payload bits"); break;
@@ -323,10 +332,10 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[8] & 3u) == 0 && packet[8] >= (opcode == 0x2c ? 16u : 20u), "invalid indirect draw stride");
             require((packet[9] & ~0x20u) == (opcode == 0x2c ? 2u : 0u), "unsupported indirect draw initiator");
             break;
-        case 0x15: size(5); if ((packet[4] & ~0xa024u) != 0x41u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
+        case 0x15: size(5); if ((packet[4] & ~0xa066u) != 0x1u) throw std::runtime_error("dispatch modifiers 0x" + ToHex(packet[4]) + " are not implemented"); break;
         case 0x16:
             require(packet.size() == 3 || packet.size() == 4, "invalid indirect dispatch size");
-            require((packet.back() & ~0xa024u) == 0x41u, "indirect dispatch modifiers are not implemented");
+            require((packet.back() & ~0xa064u) == 0x1u, "indirect dispatch modifiers are not implemented");
             break;
         case 0x22:
             size(5);
@@ -453,7 +462,13 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[1] & ~(0x40110f0fu | CopyDataCachePolicy)) == 0, "COPY_DATA engine or reserved fields are not implemented");
             const auto source = ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u);
             const auto destination = ((packet[1] >> 8u) & 0xfu) << 1u;
-            require(destination == 2 || destination == 4, "COPY_DATA register or GDS destination is not implemented");
+            if (copyDataToRegister(packet)) {
+                require(source == 2 || source == 4, "COPY_DATA to a register from a register, GDS, immediate or clock source is not implemented");
+                require((packet[2] & 3u) == 0, "misaligned COPY_DATA source");
+                require(packet[5] == 0 && packet[4] >= ContextRegisterBase && packet[4] - ContextRegisterBase <= 0x400u - copyDataCount(packet), "COPY_DATA to a register outside the context registers is not implemented");
+                break;
+            }
+            require(destination == 2 || destination == 4 || destination == 10, "COPY_DATA GDS or performance-counter destination is not implemented");
             require(source == 2 || source == 4 || source == 5 || source == 10 || source == 11 || source == CopyDataGpuClockSource, "COPY_DATA register, GDS or reference-clock source is not implemented");
             require(source < 10 || source == CopyDataGpuClockSource || ((packet[1] & 0x10000u) == 0 && packet[3] == 0), "64-bit immediate COPY_DATA is not implemented");
             break;
@@ -579,7 +594,7 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
     const auto fits = [limit](std::uint64_t destination, std::size_t bytes) { return bytes <= limit && destination % 4 == 0 && bytes % 4 == 0; };
     switch ((packet[0] >> 8u) & 0xffu) {
         case 0x40: {
-            if (packet.size() < 6) return std::nullopt;
+            if (packet.size() < 6 || copyDataToRegister(packet)) return std::nullopt;
             const auto source = ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u);
             const std::size_t bytes = (packet[1] & 0x10000u) != 0 ? 8 : 4;
             const auto destination = address(packet[4], packet[5]);
@@ -636,6 +651,20 @@ std::uint64_t DispatchArgumentAddress(std::span<const std::uint32_t> packet, con
     return queue.dispatchIndirectBase + packet[1];
 }
 
+std::array<std::uint32_t, 3> PartialGroupThreads(const std::array<std::uint32_t, 3>& groups, const std::array<std::uint32_t, 3>& numThreads) {
+    std::array<std::uint32_t, 3> threads{};
+    bool partial = false;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        const auto full = numThreads[axis] & 0xffffu;
+        const auto last = numThreads[axis] >> 16u;
+        require(last != 0 && last <= full, "COMPUTE_NUM_THREAD partial group size is zero or exceeds the full group");
+        if (groups[axis] == 0) return {};
+        threads[axis] = (groups[axis] - 1) * full + last;
+        partial |= last != full;
+    }
+    return partial ? threads : std::array<std::uint32_t, 3>{};
+}
+
 std::array<std::uint32_t, 5> ReadDispatchArguments(std::uint64_t arguments, std::uint32_t initiator) {
     std::array<std::uint32_t, 5> result{0xc0031500u, 0, 0, 0, initiator};
     // Named for the [hooksync] attribution (the read goes through the flush hook).
@@ -673,9 +702,10 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
     indirect.count = multi ? packet[5] : 1;
     indirect.countIndirect = multi && (packet[4] & (1u << 30u)) != 0;
     indirect.countAddress = multi ? address(packet[6], packet[7]) : 0;
-    indirect.baseVertexLocation = packet[2];
-    indirect.startInstanceLocation = packet[3];
-    indirect.drawIndexLocation = multi ? packet[4] & 0xffffu : 0x280u;
+    const auto location = [](std::uint32_t value) { return value == 0 ? 0x280u : value; };
+    indirect.baseVertexLocation = location(packet[2]);
+    indirect.startInstanceLocation = location(packet[3]);
+    indirect.drawIndexLocation = multi ? location(packet[4] & 0xffffu) : 0x280u;
     indirect.drawIndexEnabled = multi && (packet[4] >> 31u) != 0;
     indirect.indxOffset = 0;
     require(indirect.count <= (std::numeric_limits<std::uint64_t>::max() - indirect.arguments - indirect.recordBytes) / indirect.stride, "indirect draw record range overflow");
@@ -891,6 +921,14 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             return;
         }
         case 0x40: {
+            if (copyDataToRegister(packet)) {
+                std::array<std::uint32_t, 2> values{};
+                const auto count = copyDataCount(packet);
+                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Registers);
+                GuestMemory::Read(address(packet[2], packet[3]), std::as_writable_bytes(std::span(values).first(count)), 4);
+                for (std::uint32_t i = 0; i < count; ++i) writeRegister(queue, 0x69, packet[4] - ContextRegisterBase + i, values[i]);
+                return;
+            }
             const auto destination = address(packet[4], packet[5]);
             const auto data = copyDataSource(packet, (packet[1] & 0x10000u) != 0 ? 8 : 4);
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), data.size(), 1, true);

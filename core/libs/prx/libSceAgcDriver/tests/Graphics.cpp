@@ -562,6 +562,9 @@ void ComputeScratchTests() {
     expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeComputeStageInfo(shader, header)); }, "zero scratch size");
     shader[0x213] = 0u;
     Require(AgcDriver::Graphics::DecodeComputeStageInfo(shader, {}).scratchDwords == 0u, "a dispatch without SCRATCH_EN got scratch");
+    shader[0x207] = 0x00100040u;
+    Require(AgcDriver::Graphics::DecodeComputeStageInfo(shader, {}).numThreads[0] == 64u, "the partial group size leaked into the group size");
+    shader[0x207] = 64u;
     ShaderRecompiler::RecompileRequest request{};
     const std::array<std::uint32_t, 1> code{0xbf810000u};
     request.shader = {ShaderRecompiler::ShaderStage::Compute, 0x30000u, code, 0, {}};
