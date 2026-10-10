@@ -115,7 +115,7 @@ class Check:
     def duplicates(self, exports):
         if not exports:
             return
-        pattern = r"\bAPS5_VABI\s+(" + "|".join(exports) + r")\s*\("
+        pattern = r"(^|[^[:alnum:]_])APS5_VABI[[:space:]]+(" + "|".join(exports) + r")[[:space:]]*\("
         result = subprocess.run(["git", "grep", "-nE", pattern, self.head, "--", "core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
         for line in result.stdout.splitlines():
             _, path, _, text = line.split(":", 3)
