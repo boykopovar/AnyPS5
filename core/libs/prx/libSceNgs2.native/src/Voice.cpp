@@ -472,6 +472,14 @@ int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_
     return SCE_NGS2_OK;
 }
 
+int APS5_VABI sceNgs2PanInit(Ngs2PanWork* work, const float* speaker_angles, float unit_angle, uint32_t num_speakers) {
+    return Ngs2PanInit(work, speaker_angles, unit_angle, num_speakers);
+}
+
+int APS5_VABI sceNgs2PanGetVolumeMatrix(Ngs2PanWork* work, const Ngs2PanParam* params, uint32_t num_params, uint32_t matrix_format, float* out_volume_matrix) {
+    return Ngs2PanGetVolumeMatrix(work, params, num_params, matrix_format, out_volume_matrix);
+}
+
 }
 
 #pragma GCC visibility pop

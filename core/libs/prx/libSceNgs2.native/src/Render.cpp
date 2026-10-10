@@ -195,7 +195,7 @@ static constexpr Ngs2DefaultRow DEFAULT_MAP[NGS2_MAX_CHANNELS][NGS2_MAX_CHANNELS
     {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, SURROUND_LEFT, SURROUND_RIGHT, BACK_LEFT, BACK_RIGHT},
 };
 
-static float DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
+float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
     const auto& row = DEFAULT_MAP[sourceChannels - 1][source];
     switch (destChannels) {
         case 1: return row.mono;
@@ -211,7 +211,7 @@ static void MixPort(Ngs2Voice& voice, const Ngs2Voice& source, const Ngs2Port& p
     const std::size_t outputs = matrix == nullptr ? voice.channels : std::min<std::size_t>(voice.channels, matrix->size() / source.channels);
     for (std::size_t dst = 0; dst < outputs; dst++) {
         for (std::uint32_t src = 0; src < source.channels; src++) {
-            const float level = port.volume * (matrix == nullptr ? DefaultLevel(source.channels, src, voice.channels, static_cast<std::uint32_t>(dst)) : (*matrix)[dst * source.channels + src]);
+            const float level = port.volume * (matrix == nullptr ? Ngs2DefaultLevel(source.channels, src, voice.channels, static_cast<std::uint32_t>(dst)) : (*matrix)[dst * source.channels + src]);
             if (level == 0.0f) continue;
             for (std::uint32_t i = 0; i < grain; i++) voice.samples[dst * grain + i] += source.samples[src * grain + i] * level;
         }

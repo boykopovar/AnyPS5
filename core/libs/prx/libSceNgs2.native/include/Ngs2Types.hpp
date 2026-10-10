@@ -591,12 +591,19 @@ struct Ngs2WaveformInfo {
 static_assert(sizeof(Ngs2WaveformInfo) == 232);
 
 struct Ngs2PanParam {
-    std::uint32_t reserved[16];
+    float angle;
+    float distance;
+    float fbw_level;
+    float lfe_level;
 };
+static_assert(sizeof(Ngs2PanParam) == 16);
 
 struct Ngs2PanWork {
-    std::uint32_t reserved[64];
+    float speaker_angles[8];
+    float unit_angle;
+    std::uint32_t num_speakers;
 };
+static_assert(sizeof(Ngs2PanWork) == 40);
 
 struct Ngs2GeomListenerParam {
     std::uint32_t reserved[32];
