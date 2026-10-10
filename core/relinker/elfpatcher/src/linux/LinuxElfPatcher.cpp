@@ -4,6 +4,7 @@
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
 #include <span>
@@ -112,6 +113,15 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         buf.push_back(b);
     alignBuf(buf, kDynSymAlignment);
 
+    const auto hashOff = static_cast<std::uint64_t>(buf.size());
+    const auto symbolCount = static_cast<std::uint32_t>(dynSection.DynSymData.size() / kSymEntrySize);
+    Io::AppendU32(buf, 1);
+    Io::AppendU32(buf, symbolCount);
+    Io::AppendU32(buf, symbolCount > 1 ? 1 : 0);
+    for (std::uint32_t index = 0; index < symbolCount; ++index)
+        Io::AppendU32(buf, index != 0 && index + 1 < symbolCount ? index + 1 : 0);
+    alignBuf(buf, kDynSymAlignment);
+
     const auto relaOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.RelaData)
         buf.push_back(b);
@@ -138,6 +148,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     _appendDynEntry(dynSegBuf, DT_STRSZ, dynStrSize);
     _appendDynEntry(dynSegBuf, DT_SYMTAB, vaddrOfExtraBlockOffset(dynSymOff));
     _appendDynEntry(dynSegBuf, DT_SYMENT, kSymEntrySize);
+    _appendDynEntry(dynSegBuf, DT_HASH, vaddrOfExtraBlockOffset(hashOff));
+    _appendDynEntry(dynSegBuf, DT_DEBUG, 0);
     if (!dynSection.RelaData.empty()) {
         _appendDynEntry(dynSegBuf, DT_RELA, vaddrOfExtraBlockOffset(relaOff));
         _appendDynEntry(dynSegBuf, DT_RELASZ, dynSection.RelaData.size());

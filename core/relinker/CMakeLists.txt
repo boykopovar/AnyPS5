@@ -243,6 +243,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_runpath.py $<TARGET_FILE:relinker>)
         add_test(NAME executable_segments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_segments.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_executable_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_executable_exports.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_entry_argv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_entry_argv.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_program_header_order COMMAND ${Python3_EXECUTABLE}

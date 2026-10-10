@@ -294,6 +294,28 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     }
     auto dynSection = _dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
 
+    if (hasTag(DT_OS_SYMTABSZ)) {
+        const auto symbolBytes = getTagValue(DT_OS_SYMTABSZ);
+        if (symbolBytes % symEntSize != 0 || dynSymTabOffset > raw.size() || symbolBytes > raw.size() - dynSymTabOffset)
+            throw RelinkerException("Invalid executable dynamic symbol table size");
+        for (ByteCount off = symEntSize; off < symbolBytes; off += symEntSize) {
+            const auto* symbol = raw.data() + dynSymTabOffset + off;
+            std::uint16_t section = 0;
+            std::memcpy(&section, symbol + 6, sizeof(section));
+            if (section == 0 || (symbol[4] >> 4) == 0 || (symbol[5] & 3) == 1 || (symbol[5] & 3) == 2) continue;
+            std::uint32_t sourceName = 0;
+            std::memcpy(&sourceName, symbol, sizeof(sourceName));
+            auto name = readCStr(sourceName);
+            name.resize(name.find('#') == std::string::npos ? name.size() : name.find('#'));
+            const auto nameOffset = static_cast<std::uint32_t>(dynSection.DynStrData.size());
+            dynSection.DynStrData.insert(dynSection.DynStrData.end(), name.begin(), name.end());
+            dynSection.DynStrData.push_back(0);
+            const auto position = dynSection.DynSymData.size();
+            dynSection.DynSymData.insert(dynSection.DynSymData.end(), symbol, symbol + symEntSize);
+            std::memcpy(dynSection.DynSymData.data() + position, &nameOffset, sizeof(nameOffset));
+        }
+    }
+
     auto appendRela = [&](std::vector<std::uint8_t>& buf, std::uint64_t offset, std::uint64_t info, std::int64_t addend) {
         std::size_t pos = buf.size();
         buf.resize(pos + 24);
