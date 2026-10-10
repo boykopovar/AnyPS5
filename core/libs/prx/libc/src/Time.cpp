@@ -2,7 +2,9 @@
 #include <cstddef>
 #include <ctime>
 #include <cstring>
+#include <cstdio>
 #include <limits>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -96,6 +98,52 @@ const bool timeZoneFixed = [] {
 
 }  // namespace
 #endif
+
+extern "C" int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr);
+
+namespace {
+
+std::string expandFreeBsdConversions(const char* format, const GuestTm& guest) {
+    std::string result;
+    while (*format != '\0') {
+        const char next = *format++;
+        if (next != '%' || *format == '\0') {
+            result += next;
+            continue;
+        }
+        const char specifier = *format++;
+        char text[32];
+        switch (specifier) {
+        case 'k':
+            std::snprintf(text, sizeof(text), "%2d", guest.tm_hour);
+            result += text;
+            break;
+        case 'l':
+            std::snprintf(text, sizeof(text), "%2d", guest.tm_hour % 12 == 0 ? 12 : guest.tm_hour % 12);
+            result += text;
+            break;
+        case 's': {
+            GuestTm copy = guest;
+            std::snprintf(text, sizeof(text), "%lld", static_cast<long long>(libc_mktime_nid_postfix(&copy)));
+            result += text;
+            break;
+        }
+        case 'v':
+            result += "%e-%b-%Y";
+            break;
+        case '+':
+            result += "%a %b %e %H:%M:%S %Z %Y";
+            break;
+        default:
+            result += '%';
+            result += specifier;
+            break;
+        }
+    }
+    return result;
+}
+
+}
 
 extern "C" {
 
@@ -197,7 +245,8 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
 
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
     const std::tm host = toHostTm(*timeptr);
-    return std::strftime(str, count, format, &host);
+    const std::string expanded = expandFreeBsdConversions(format, *timeptr);
+    return std::strftime(str, count, expanded.c_str(), &host);
 }
 
 char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {

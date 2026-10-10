@@ -88,6 +88,35 @@ static void CheckUtc(const UtcCase& expected) {
     Require(utc.tm_zone != nullptr && std::strcmp(utc.tm_zone, "UTC") == 0, "UTC conversion did not set tm_zone");
 }
 
+static void CheckFormat(const GuestTm& time, const char* format, const char* expected) {
+    char buffer[96]{};
+    const std::size_t size = strftime_nid_postfix(buffer, sizeof(buffer), format, &time);
+    if (size != std::strlen(expected) || std::strcmp(buffer, expected) != 0)
+        std::fprintf(stderr, "Format '%s': expected '%s', got '%s' (%zu bytes)\n", format, expected, buffer, size);
+    Require(size == std::strlen(expected) && std::strcmp(buffer, expected) == 0, "strftime did not format a FreeBSD conversion");
+}
+
+static void CheckFreeBsdConversions() {
+    const std::int64_t timer = 1700000000;
+    GuestTm time{};
+    Require(gmtime_s_nid_postfix(&timer, &time) == &time, "UTC conversion failed");
+    CheckFormat(time, "%k|%l", "22|10");
+    CheckFormat(time, "%v", "14-Nov-2023");
+    CheckFormat(time, "%+", "Tue Nov 14 22:13:20 UTC 2023");
+    CheckFormat(time, "%s", "1699992800");
+    CheckFormat(time, "%%k %%l %%s %%v %%+", "%k %l %s %v %+");
+    CheckFormat(time, "[%k][%l]", "[22][10]");
+    time.tm_hour = 0;
+    CheckFormat(time, "%k|%l", " 0|12");
+    time.tm_hour = 5;
+    time.tm_mday = 5;
+    CheckFormat(time, "%k|%l|%v", " 5| 5| 5-Nov-2023");
+    time.tm_hour = 13;
+    CheckFormat(time, "%k|%l", "13| 1");
+    char tooSmall[4]{};
+    Require(strftime_nid_postfix(tooSmall, sizeof(tooSmall), "%k:%l", &time) == 0, "strftime accepted an undersized buffer");
+}
+
 int main() {
 #ifdef _WIN32
     _putenv_s("TZ", "UTC-2");
@@ -132,6 +161,8 @@ int main() {
     char formatted[64]{};
     Require(strftime_nid_postfix(formatted, sizeof(formatted), "%Y-%m-%d %H:%M:%S", &utc) == 19
         && std::strcmp(formatted, "1970-01-01 00:00:00") == 0, "strftime did not read the guest tm");
+
+    CheckFreeBsdConversions();
 
     CheckConcurrent(libc_gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
     CheckConcurrent(gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent gmtime returned another thread's date");
