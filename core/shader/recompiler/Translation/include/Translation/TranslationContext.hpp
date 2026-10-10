@@ -61,7 +61,7 @@ private:
     void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 readU32(const RdnaOperand& operand);
     IrU32 flushF32Denormal(IrU32 bits);
-    IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr);
+    IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr);
