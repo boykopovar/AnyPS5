@@ -724,12 +724,18 @@ bool FixedNoOverwriteConflict(const GuestAllocations::Mutation& mutation, void* 
     return mutation.Overlaps(addr, len) && !Reserved(addr, len);
 }
 
+int PlaceHintInReservation(void* addr, size_t len, int flags) {
+    if (addr == nullptr || (flags & GuestMapFixedFlag) != 0 || !Reserved(addr, len)) return flags;
+    return flags | GuestMapFixedFlag;
+}
+
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     if (physStart < 0 || (static_cast<std::uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)) != 0 || static_cast<std::uint64_t>(physStart) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<std::uint64_t>(physStart)) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    flags = PlaceHintInReservation(*addr, len, flags);
     GuestAllocations::Mutation mutation;
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
     if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags, physStart)) {
@@ -759,6 +765,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    flags = PlaceHintInReservation(*addr, len, flags);
     GuestAllocations::Mutation mutation;
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
     if (RemapFixedIntoRegistered(mutation, *addr, len, prot, flags)) {
