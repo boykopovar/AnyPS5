@@ -196,6 +196,13 @@ void stateTests() {
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(!state.depthTest && !state.stencilTest, "tests on absent depth and stencil planes were kept");
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "tests on absent depth and stencil planes were rejected");
+    queue.context[0x200] = 0x007007bbu;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(!state.depth.has_value() && !state.depthTest && !state.depthBoundsTest && !state.stencilTest, "a depth bounds test on absent depth and stencil planes was kept");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a depth bounds test on absent depth and stencil planes was rejected");
+    queue.context[0x200] = 8u;
+    Require(!AgcDriver::Graphics::DecodeState(queue).depthBoundsTest && AgcDriver::Graphics::DrawRejection(queue, false).empty(), "a depth bounds test alone on absent depth and stencil planes was kept or rejected");
+    queue.context[0x200] = 0x007007b3;
     queue.context[0x011] = 0x20000181;
     queue.context[0x012] = 0x00001000;
     queue.context[0x013] = 0x00002000;
@@ -210,6 +217,8 @@ void stateTests() {
     queue.context[0x10d] = 0x01ffff00;
     state =AgcDriver::Graphics::DecodeState(queue);
     Require(!state.depthTest && state.stencilTest, "a depth test on an absent depth plane was kept beside a stencil plane");
+    queue.context[0x200] = 0x007007bbu;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "depth bounds without a depth plane");
     queue = makeState();
     queue.context[0x10f] = 0x7fc00000;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite");
