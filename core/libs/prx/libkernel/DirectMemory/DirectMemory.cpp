@@ -901,3 +901,28 @@ bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uint
     *memoryType = it->second.memoryType;
     return true;
 }
+
+std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {
+    const auto first = static_cast<std::uint64_t>(start);
+    const auto last = first + len;
+    std::vector<DirectMemoryView> views;
+    std::lock_guard lock(g_directLock);
+    for (const auto& [base, mapping] : g_directMappings) {
+        const auto mappingLast = mapping.phys + (mapping.end - base);
+        if (mapping.phys >= last || mappingLast <= first) continue;
+        const auto viewStart = base + (std::max(first, mapping.phys) - mapping.phys);
+        const auto viewEnd = base + (std::min(last, mappingLast) - mapping.phys);
+        if (!views.empty() && views.back().address + views.back().bytes == viewStart) views.back().bytes += viewEnd - viewStart;
+        else views.push_back({viewStart, viewEnd - viewStart});
+    }
+    return views;
+}
+
+void UnmapDirectMemoryViews(const std::vector<DirectMemoryView>& views) {
+    if (views.empty()) return;
+    GuestAllocations::Mutation mutation;
+    for (const auto& view : views) {
+        Trace("unmap released view %p+0x%zx", reinterpret_cast<void*>(view.address), view.bytes);
+        UnmapRegistered(mutation, reinterpret_cast<void*>(view.address), view.bytes);
+    }
+}

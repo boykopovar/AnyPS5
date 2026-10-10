@@ -217,7 +217,9 @@ int APS5_VABI sceKernelReleaseFlexibleMemory(void* addr, size_t len) {
 
 int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || len == 0) return SCE_KERNEL_ERROR_EINVAL;
+ const auto views = DirectMemoryViews(start, len);
  DirectMemoryFree(start, len);
+ UnmapDirectMemoryViews(views);
  return 0;
 }
 
@@ -312,7 +314,10 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
 int APS5_VABI sceKernelCheckedReleaseDirectMemory(int64_t start, size_t len) {
  if (start < 0 || (static_cast<uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
  if (len == 0) return 0;
- return DirectMemoryCheckedFree(start, len) ? 0 : SCE_KERNEL_ERROR_ENOENT;
+ const auto views = DirectMemoryViews(start, len);
+ if (!DirectMemoryCheckedFree(start, len)) return SCE_KERNEL_ERROR_ENOENT;
+ UnmapDirectMemoryViews(views);
+ return 0;
 }
 
 int APS5_VABI sceKernelMtypeprotect(const void* addr, size_t len, int type, int prot) {

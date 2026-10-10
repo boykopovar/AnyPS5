@@ -279,13 +279,17 @@ static void CheckReleaseDirectMemoryClearsMappings() {
     Require(sceKernelVirtualQuery(mapped, 0, &split, sizeof(split)) == 0);
     Require(split.is_direct && split.offset == static_cast<std::uint64_t>(phys));
     VirtualQueryInfo dropped{};
-    Require(sceKernelVirtualQuery(static_cast<unsigned char*>(mapped) + page, 0, &dropped, sizeof(dropped)) == 0);
-    Require(!dropped.is_direct && dropped.offset == 0);
+    const int droppedResult = sceKernelVirtualQuery(static_cast<unsigned char*>(mapped) + page, 0, &dropped, sizeof(dropped));
+    Require(droppedResult != 0 || !dropped.is_direct);
+    void* alias = nullptr;
+    Require(sceKernelMapDirectMemory(&alias, page, 3, 0, phys, 0) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
-    VirtualQueryInfo cleared{};
-    Require(sceKernelVirtualQuery(mapped, 0, &cleared, sizeof(cleared)) == 0);
-    Require(!cleared.is_direct && cleared.offset == 0);
-    Require(sceKernelMunmap(mapped, page * 2) == 0);
+    for (void* view : {mapped, alias}) {
+        VirtualQueryInfo cleared{};
+        Require(sceKernelVirtualQuery(view, 0, &cleared, sizeof(cleared)) != 0);
+        VirtualQueryInfo next{};
+        if (sceKernelVirtualQuery(view, 1, &next, sizeof(next)) == 0) Require(next.start != reinterpret_cast<std::uintptr_t>(view));
+    }
 }
 
 static void CheckFixedMappingReplacesPartialOverlap() {
