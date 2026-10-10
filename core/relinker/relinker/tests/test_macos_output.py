@@ -18,6 +18,7 @@ from tls_fixture import fixture as tls_fixture
 MH_MAGIC_64 = 0xFEEDFACF
 CPU_TYPE_X86_64 = 0x01000007
 MH_EXECUTE = 2
+MH_PIE = 0x200000
 LC_SEGMENT_64 = 0x19
 LC_LOAD_DYLIB = 0xC
 LC_RPATH = 0x8000001C
@@ -34,8 +35,8 @@ GS_LOAD = bytes.fromhex("65488b04c5" "00000000")
 class MachO:
     def __init__(self, data):
         self.data = data
-        magic, cputype, _, filetype, ncmds, sizeofcmds, _, _ = struct.unpack_from("<IIIIIIII", data, 0)
-        self.magic, self.cputype, self.filetype, self.sizeofcmds = magic, cputype, filetype, sizeofcmds
+        magic, cputype, _, filetype, ncmds, sizeofcmds, flags, _ = struct.unpack_from("<IIIIIIII", data, 0)
+        self.magic, self.cputype, self.filetype, self.sizeofcmds, self.flags = magic, cputype, filetype, sizeofcmds, flags
         self.segments = []
         self.sections = {}
         self.dylibs = []
@@ -91,6 +92,7 @@ def check_structure(name, data):
     check(macho.magic == MH_MAGIC_64, f"{name}: not a 64-bit Mach-O")
     check(macho.cputype == CPU_TYPE_X86_64, f"{name}: not x86-64")
     check(macho.filetype == MH_EXECUTE, f"{name}: not an executable")
+    check(macho.flags & MH_PIE == 0, f"{name}: MH_PIE is set, so dyld slides the fixed-base image")
     check(macho.end == 32 + macho.sizeofcmds, f"{name}: load commands do not add up to sizeofcmds")
     names = [segment["name"] for segment in macho.segments]
     check(names[:2] == ["__PAGEZERO", "__TEXT"] and names[-1] == "__LINKEDIT", f"{name}: unexpected segment order {names}")
