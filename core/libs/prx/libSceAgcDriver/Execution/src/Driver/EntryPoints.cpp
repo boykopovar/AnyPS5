@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include <mutex>
 
@@ -53,6 +54,10 @@ void ReportFailure(std::exception_ptr error) {
     DriverDetail::Driver::Get().ReportFailure(error);
 }
 
+}
+
+extern "C" void AgcDriverRaiseWorkerThreadPriority_nid_postfix(const char* role) {
+    AgcDriver::RaiseWorkerThreadPriority(role);
 }
 
 extern "C" void AgcDriverWaitIdle_nid_postfix() try {

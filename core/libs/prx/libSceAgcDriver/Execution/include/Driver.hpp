@@ -12,6 +12,7 @@ void Submit(const Packet* packet, std::uint32_t queue);
 }
 
 extern "C" void AgcDriverWaitIdle_nid_postfix();
+extern "C" void AgcDriverRaiseWorkerThreadPriority_nid_postfix(const char* role);
 extern "C" void AgcDriverLockVulkanLoader_nid_postfix();
 extern "C" void AgcDriverUnlockVulkanLoader_nid_postfix();
 extern "C" void AgcDriverShutdown_nid_postfix();

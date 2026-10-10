@@ -258,7 +258,15 @@ VideoOutDriver::VideoOutDriver() {
         AgcDriverWaitIdle_nid_postfix();
         std::promise<void> started;
         auto attached = started.get_future();
-        presentThread = std::jthread([this, &started](std::stop_token token) { presentLoop(token, started); });
+        presentThread = std::jthread([this, &started](std::stop_token token) {
+            try {
+                AgcDriverRaiseWorkerThreadPriority_nid_postfix("presenter");
+            } catch (...) {
+                started.set_exception(std::current_exception());
+                return;
+            }
+            presentLoop(token, started);
+        });
         attached.get();
         vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
         LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });

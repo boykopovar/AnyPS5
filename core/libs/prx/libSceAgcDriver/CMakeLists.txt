@@ -150,6 +150,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/WaitMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Synchronization/WaitStatistics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/WorkerSampler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ThreadPriority.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/ShaderMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/BdaFeatures.cpp
@@ -229,6 +230,7 @@ target_link_libraries(libSceAgcDriver PRIVATE
         SDL2-static
         libc
         libkernel
+        ${CMAKE_DL_LIBS}
 )
 
 set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
@@ -316,6 +318,29 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_write_tracking PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_thread_priority_tests EXCLUDE_FROM_ALL
+        tests/ThreadPriority.cpp
+        Execution/src/ThreadPriority.cpp
+)
+target_include_directories(agc_thread_priority_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_thread_priority_tests PRIVATE libc ${CMAKE_DL_LIBS})
+set_target_properties(agc_thread_priority_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_thread_priority_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_thread_priority_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_thread_priority COMMAND agc_thread_priority_tests)
+    if(WIN32)
+        set_tests_properties(agc_thread_priority PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    else()
+        foreach(mode rt high)
+            add_test(NAME agc_thread_priority_refused_${mode} COMMAND agc_thread_priority_tests refused)
+            set_tests_properties(agc_thread_priority_refused_${mode} PROPERTIES ENVIRONMENT
+                "APS5_THREAD_PRIORITY=${mode};DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/aps5-no-rtkit")
+        endforeach()
     endif()
 endif()
 
@@ -811,7 +836,7 @@ target_include_directories(agc_driver_mesh_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
         ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
 )
-target_link_libraries(agc_driver_mesh_tests PRIVATE shader_recompiler_agc_driver SDL2-static libc libkernel)
+target_link_libraries(agc_driver_mesh_tests PRIVATE shader_recompiler_agc_driver SDL2-static libc libkernel ${CMAKE_DL_LIBS})
 set_target_properties(agc_driver_mesh_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_mesh_tests)
 
