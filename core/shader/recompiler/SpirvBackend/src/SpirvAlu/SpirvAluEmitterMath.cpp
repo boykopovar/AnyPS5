@@ -1309,7 +1309,13 @@ std::uint32_t EmitFPTrunc32(SpirvEmitterState& state, std::uint32_t arg0) {
 }
 
 std::uint32_t EmitFPFract32(SpirvEmitterState& state, std::uint32_t arg0) {
-    return EmitGlsl<GLSLstd450Fract, IrType::F32>(state, arg0);
+    const auto magnitude = EmitGlsl<GLSLstd450FAbs, IrType::F32>(state, arg0);
+    const auto fraction = EmitGlsl<GLSLstd450Fract, IrType::F32>(state, magnitude);
+    const auto complement = EmitFPSub32(state, ConstantF32(state, 0x3f800000u), fraction);
+    const auto negative = Binary(state, spv::OpFOrdLessThan, TypeBool(state), arg0, ConstantF32(state, 0u));
+    const auto partial = Binary(state, spv::OpFOrdNotEqual, TypeBool(state), fraction, ConstantF32(state, 0u));
+    const auto below = Binary(state, spv::OpLogicalAnd, TypeBool(state), negative, partial);
+    return Select(state, TypeF32(state), below, complement, fraction);
 }
 
 std::uint32_t EmitBitCastF16U16(SpirvEmitterState& state, std::uint32_t arg0) {
