@@ -196,6 +196,7 @@ struct SpirvDeferredPhiPatch {
 
 struct StructuredFunctionState {
     std::unordered_map<const IrBlock*, std::uint32_t> blockExitLabels;
+    std::unordered_map<const IrBlock*, std::vector<std::size_t>> loopMergeOffsets;
     std::vector<SpirvDeferredPhiPatch> deferredPhis;
 };
 

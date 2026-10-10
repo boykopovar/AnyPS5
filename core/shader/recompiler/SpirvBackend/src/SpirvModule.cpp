@@ -216,6 +216,39 @@ void SpirvModule::appendString(std::vector<std::uint32_t>& words, const std::str
     }
 }
 
+std::size_t SpirvModule::AddLoopMerge(std::uint32_t merge, std::uint32_t continuation) {
+    const auto offset = functionInstructions.size();
+    AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+    return offset;
+}
+
+void SpirvModule::PatchLoopContinue(std::size_t offset, std::uint32_t continuation) {
+    if (offset > functionInstructions.size() || functionInstructions.size() - offset < 4u ||
+        functionInstructions[offset] != ((4u << spv::WordCountShift) | spv::OpLoopMerge) || continuation == 0u) {
+        throw std::runtime_error("SpirvModule::PatchLoopContinue received an invalid loop merge or a zero id");
+    }
+    functionInstructions[offset + 2u] = continuation;
+}
+
+bool SpirvModule::FunctionHasTerminationSince(std::size_t offset) const {
+    if (offset > functionInstructions.size()) throw std::runtime_error("invalid function instruction offset");
+    bool boundary = offset == functionInstructions.size();
+    bool terminates = false;
+    for (std::size_t cursor = 0u; cursor < functionInstructions.size();) {
+        const auto count = functionInstructions[cursor] >> spv::WordCountShift;
+        if (count == 0u || count > functionInstructions.size() - cursor) throw std::runtime_error("invalid function instruction length");
+        boundary |= cursor == offset;
+        const auto opcode = functionInstructions[cursor] & spv::OpCodeMask;
+        if (cursor >= offset) {
+            terminates |= opcode == spv::OpUnreachable || opcode == spv::OpReturn || opcode == spv::OpReturnValue ||
+                opcode == spv::OpKill || opcode == spv::OpTerminateInvocation;
+        }
+        cursor += count;
+    }
+    if (!boundary) throw std::runtime_error("function instruction offset is not an instruction boundary");
+    return terminates;
+}
+
 SpirvDeferredPhi SpirvModule::AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount) {
     std::vector<std::uint32_t> words = {spv::OpPhi, type, result};
     words.resize(words.size() + incomingCount * 2u);

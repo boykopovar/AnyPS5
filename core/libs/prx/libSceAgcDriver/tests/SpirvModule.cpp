@@ -184,6 +184,48 @@ void testEmittedWordsAreStable() {
 
 }
 
+void testLoopContinuePatchingAndEmissionRanges() {
+    SpirvModule module;
+    check(!module.FunctionHasTerminationSince(0u), "an empty emission range contains a termination");
+    const auto merge = module.AllocateId();
+    const auto oldContinue = module.AllocateId();
+    const auto newContinue = module.AllocateId();
+    module.AddFunction(spv::OpNop);
+    const auto loop = module.AddLoopMerge(merge, oldContinue);
+    const auto body = module.FunctionInstructionOffset();
+    module.AddFunction(spv::OpBranch, oldContinue);
+    check(!module.FunctionHasTerminationSince(body), "an ordinary branch was classified as a termination");
+    module.AddFunction(spv::OpUnreachable);
+    check(module.FunctionHasTerminationSince(body), "the emitted unreachable path was not detected");
+    check(!module.FunctionHasTerminationSince(module.FunctionInstructionOffset()), "an empty tail includes an earlier termination");
+    for (std::uint32_t i = 0u; i < 40000u; ++i) module.AddFunction(spv::OpNop);
+    module.Type(spv::OpTypeVoid);
+    module.AddName(newContinue, "patched_continue");
+    module.PatchLoopContinue(loop, newContinue);
+    const auto words = module.Finalize();
+    for (std::size_t offset = 5u; offset < words.size(); offset += words[offset] >> spv::WordCountShift) {
+        if ((words[offset] & spv::OpCodeMask) == spv::OpLoopMerge) {
+            check(words[offset + 1u] == merge && words[offset + 2u] == newContinue, "loop patch moved during function vector growth or declaration insertion");
+        }
+    }
+    const auto refuses = [&](auto&& action, const char* what) {
+        try { action(); check(false, what); } catch (const std::runtime_error&) {}
+    };
+    refuses([&] { module.PatchLoopContinue(0u, newContinue); }, "a non-loop instruction was patched as a loop merge");
+    refuses([&] { module.PatchLoopContinue(loop, 0u); }, "a zero continue id was accepted");
+    refuses([&] { module.PatchLoopContinue(module.FunctionInstructionOffset(), newContinue); }, "a patch beyond the instruction range was accepted");
+    refuses([&] { static_cast<void>(module.FunctionHasTerminationSince(loop + 1u)); }, "a range inside an instruction was accepted");
+    refuses([&] { static_cast<void>(module.FunctionHasTerminationSince(module.FunctionInstructionOffset() + 1u)); }, "a range past the function end was accepted");
+    SpirvModule truncated;
+    truncated.EmitFunctionInstruction({spv::OpLoopMerge});
+    refuses([&] { truncated.PatchLoopContinue(0u, newContinue); }, "a truncated loop merge was patched");
+    for (const auto opcode : {spv::OpReturn, spv::OpReturnValue, spv::OpKill, spv::OpTerminateInvocation}) {
+        SpirvModule terminated;
+        terminated.AddFunction(opcode);
+        check(terminated.FunctionHasTerminationSince(0u), "a terminating opcode was missed");
+    }
+}
+
 int main() {
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();
@@ -195,6 +237,7 @@ int main() {
     testModulesAreIndependent();
     testIdsStayUniqueBeyondCacheCapacity();
     testEmittedWordsAreStable();
+    testLoopContinuePatchingAndEmissionRanges();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

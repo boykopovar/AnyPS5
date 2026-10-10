@@ -178,7 +178,7 @@ std::uint32_t EmitBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& i
     return result;
 }
 
-void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& program, const BlockInfo& info) {
+void EmitStructuredTerminator(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrProgram& program, const BlockInfo& info) {
     auto& state = ctx.state;
     const Terminator& term = info.terminator;
     const auto emitMerge = [&]() {
@@ -186,7 +186,7 @@ void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& progr
             const IrBlock* merge = TargetBlock(program, term.mergeBlock);
             const IrBlock* cont = TargetBlock(program, term.continueBlock);
             if (merge != nullptr && cont != nullptr) {
-                state.module.AddFunction(spv::OpLoopMerge, ctx.Label(merge), ctx.Label(cont), spv::LoopControlMaskNone);
+                functionState.loopMergeOffsets[cont].push_back(state.module.AddLoopMerge(ctx.Label(merge), ctx.Label(cont)));
             }
         } else if (term.kind == TerminatorKind::ConditionalBranch && term.mergeBlock != InvalidControlFlowId) {
             if (const IrBlock* merge = TargetBlock(program, term.mergeBlock); merge != nullptr) {
@@ -813,9 +813,17 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
         }
         const bool stops = state.bdaStopsInvocations;
         state.bdaStopsInvocations = stops && !IsContinueTarget(program, info->id);
+        const auto instructionOffset = state.module.FunctionInstructionOffset();
         EmitStructuredBlock(context, functionState, block);
+        if (const auto merges = functionState.loopMergeOffsets.find(block);
+            merges != functionState.loopMergeOffsets.end() && state.module.FunctionHasTerminationSince(instructionOffset)) {
+            const auto continuation = state.module.AllocateId();
+            for (const auto offset : merges->second) state.module.PatchLoopContinue(offset, continuation);
+            state.module.AddFunction(spv::OpBranch, continuation);
+            EmitLabel(state, continuation);
+        }
         functionState.blockExitLabels.emplace(block, state.currentLabel);
-        EmitStructuredTerminator(context, program, *info);
+        EmitStructuredTerminator(context, functionState, program, *info);
         state.bdaStopsInvocations = stops;
     }
     PatchStructuredPhis(context, functionState);
