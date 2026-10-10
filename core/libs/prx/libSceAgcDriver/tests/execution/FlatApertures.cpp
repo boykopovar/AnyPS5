@@ -352,8 +352,12 @@ void Check(const Row& row, const std::vector<std::uint32_t>& output) {
             const auto left = output[lane * 8u + 1u];
             Require(left == expected, name + ": lane " + std::to_string(lane) + " left " + Hex(left) + ", expected " + Hex(expected));
         } else {
-            const auto expected = row.width == 8u ? (a & 0xffu) : (row.width == 16u ? (a & 0xffffu) : a);
             const auto read = output[lane * 8u];
+            if (row.target == Target::Shared && 8u * lane + row.offset + row.width / 8u > LdsDwords * 4u) {
+                Require(read == 0u, name + ": lane " + std::to_string(lane) + " read " + Hex(read) + " back from an access past the end of LDS, expected 0 (the store is dropped whole)");
+                continue;
+            }
+            const auto expected = row.width == 8u ? (a & 0xffu) : (row.width == 16u ? (a & 0xffffu) : a);
             Require(read == expected, name + ": lane " + std::to_string(lane) + " read " + Hex(read) + " back, expected " + Hex(expected));
             const auto first = output[lane * 8u + 1u];
             Require(first == (a & 0xffu), name + ": lane " + std::to_string(lane) + " has first byte " + Hex(first) + " in memory, expected " + Hex(a & 0xffu));
@@ -445,6 +449,9 @@ std::vector<Row> Rows() {
     }
     rows.push_back(Row{Target::Mixed, false, AtomicOp::Swap, 16u, 3u, 32u});
     rows.push_back(Row{Target::Mixed, false, AtomicOp::Swap, 32u, 2u, 32u});
+    for (const auto [width, offset] : std::array<std::pair<std::uint32_t, std::uint32_t>, 5>{{{32u, 773u}, {32u, 774u}, {32u, 776u}, {16u, 775u}, {8u, 775u}}}) {
+        rows.push_back(Row{Target::Shared, false, AtomicOp::Swap, width, offset, 32u});
+    }
     for (const Target target : single) {
         for (std::uint32_t op = 0; op < Atomic32Ops; ++op) {
             rows.push_back(Row{target, true, static_cast<AtomicOp>(op), 32u, 0u, 32u});

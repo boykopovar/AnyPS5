@@ -336,8 +336,8 @@ const MemoryInfo& SharedMemory(SpirvValueEmitContext& ctx, const IrValue& inst) 
     return mem;
 }
 
-constexpr std::uint32_t SharedApertureTop = 0x8000u;
-constexpr std::uint32_t PrivateApertureTop = 0x7000u;
+constexpr std::uint32_t SharedApertureHigh = 0x80000000u;
+constexpr std::uint32_t PrivateApertureHigh = 0x70000000u;
 
 bool RoutesApertures(const SpirvEmitterState& state, const MemoryInfo& mem) {
     return mem.kind == ResourceKind::Flat && state.program.Resources().stage == IrShaderStage::Compute;
@@ -352,8 +352,7 @@ struct ApertureAddress {
 ApertureAddress SplitAperture(SpirvEmitterState& state, std::uint32_t address) {
     const auto u32 = TypeU32(state);
     const auto high = Unary(state, spv::OpUConvert, u32, Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u)));
-    const auto top = Binary(state, spv::OpShiftRightLogical, u32, high, ConstantU32(state, 16u));
-    return {Unary(state, spv::OpUConvert, u32, address), Binary(state, spv::OpIEqual, TypeBool(state), top, ConstantU32(state, SharedApertureTop)), Binary(state, spv::OpIEqual, TypeBool(state), top, ConstantU32(state, PrivateApertureTop))};
+    return {Unary(state, spv::OpUConvert, u32, address), Binary(state, spv::OpIEqual, TypeBool(state), high, ConstantU32(state, SharedApertureHigh)), Binary(state, spv::OpIEqual, TypeBool(state), high, ConstantU32(state, PrivateApertureHigh))};
 }
 
 std::uint32_t ApertureByteInBounds(SpirvEmitterState& state, const MemoryResourceAccess& resource, std::uint32_t byteOffset, std::uint32_t offset, std::uint32_t index) {
@@ -391,18 +390,32 @@ std::uint32_t LoadApertureByte(SpirvValueEmitContext& ctx, ResourceKind kind, st
     });
 }
 
+std::uint32_t ApertureElementInBounds(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits) {
+    auto& state = ctx.state;
+    MemoryInfo storage{};
+    storage.kind = kind;
+    const auto resource = PrepareMemoryResourceAccess(state, storage);
+    const auto last = bits / 8u - 1u;
+    const auto address = EmitAddU32(state, byteOffset, ConstantU32(state, last));
+    const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), address, ConstantU32(state, 2u));
+    return ApertureByteInBounds(state, resource, byteOffset, last, index);
+}
+
 std::uint32_t LoadApertureElement(SpirvValueEmitContext& ctx, ResourceKind kind, std::uint32_t byteOffset, std::uint32_t bits) {
     auto& state = ctx.state;
     if (bits == 8u) return LoadApertureByte(ctx, kind, byteOffset, 0u);
-    return EmitValueIfElse(state, ApertureContained(state, byteOffset, bits), TypeU32(state), [&] {
-        return LoadApertureDword(ctx, kind, byteOffset, bits);
-    }, [&] {
-        std::uint32_t value = ConstantU32(state, 0u);
-        for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
-            const auto part = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), LoadApertureByte(ctx, kind, byteOffset, byte), ConstantU32(state, byte * 8u));
-            value = Binary(state, spv::OpBitwiseOr, TypeU32(state), value, part);
-        }
-        return value;
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return ConstantU32(state, 0u);
+    return EmitValueOrZeroIfCondition(state, ApertureElementInBounds(ctx, kind, byteOffset, bits), [&] {
+        return EmitValueIfElse(state, ApertureContained(state, byteOffset, bits), TypeU32(state), [&] {
+            return LoadApertureDword(ctx, kind, byteOffset, bits);
+        }, [&] {
+            std::uint32_t value = ConstantU32(state, 0u);
+            for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
+                const auto part = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), LoadApertureByte(ctx, kind, byteOffset, byte), ConstantU32(state, byte * 8u));
+                value = Binary(state, spv::OpBitwiseOr, TypeU32(state), value, part);
+            }
+            return value;
+        });
     });
 }
 
@@ -439,12 +452,15 @@ void StoreApertureElement(SpirvValueEmitContext& ctx, ResourceKind kind, std::ui
         StoreApertureByte(ctx, kind, byteOffset, 0u, data);
         return;
     }
-    const auto contained = ApertureContained(state, byteOffset, bits);
-    EmitIfCondition(state, contained, [&] { StoreApertureDword(ctx, kind, byteOffset, bits, data); });
-    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), contained), [&] {
-        for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
-            StoreApertureByte(ctx, kind, byteOffset, byte, Binary(state, spv::OpShiftRightLogical, TypeU32(state), data, ConstantU32(state, byte * 8u)));
-        }
+    if (kind == ResourceKind::Scratch && state.program.Info().scratchDwords == 0u) return;
+    EmitIfCondition(state, ApertureElementInBounds(ctx, kind, byteOffset, bits), [&] {
+        const auto contained = ApertureContained(state, byteOffset, bits);
+        EmitIfCondition(state, contained, [&] { StoreApertureDword(ctx, kind, byteOffset, bits, data); });
+        EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), contained), [&] {
+            for (std::uint32_t byte = 0; byte < bits / 8u; ++byte) {
+                StoreApertureByte(ctx, kind, byteOffset, byte, Binary(state, spv::OpShiftRightLogical, TypeU32(state), data, ConstantU32(state, byte * 8u)));
+            }
+        });
     });
 }
 
