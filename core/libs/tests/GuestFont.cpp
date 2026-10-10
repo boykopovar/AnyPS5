@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <initializer_list>
 #include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -116,6 +118,14 @@ static bool KerningIs(const FontKerning& kerning, float offsetX) {
     return kerning.offsetX == offsetX && kerning.offsetY == 0.0f && kerning.positionX == 0.0f && kerning.positionY == 0.0f;
 }
 
+static void SetFontDirectory(const std::filesystem::path& directory) {
+#ifdef _WIN32
+    Require(_putenv_s("ANYPS5_SYSTEM_FONTS", directory.string().c_str()) == 0);
+#else
+    Require(::setenv("ANYPS5_SYSTEM_FONTS", directory.string().c_str(), 1) == 0);
+#endif
+}
+
 int main() {
     constexpr std::uint32_t SystemFontSet = 0x18070043u;
     const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
@@ -176,6 +186,11 @@ int main() {
     FontHandle font = reinterpret_cast<FontHandle>(&memory);
     Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FUNCTION && font == nullptr);
     Require(sceFontSupportSystemFonts(library) == SCE_FONT_OK);
+    const std::filesystem::path emptyFontDirectory =
+        std::filesystem::temp_directory_path() / ("anyps5_guest_font-" + std::to_string(std::random_device{}()));
+    std::filesystem::remove_all(emptyFontDirectory);
+    std::filesystem::create_directories(emptyFontDirectory);
+    SetFontDirectory(emptyFontDirectory);
     Require(sceFontOpenFontSet(library, SystemFontSet, 1, nullptr, &font) == SCE_FONT_ERROR_FONT_OPEN_FAILED && font == nullptr);
     Require(sceFontOpenFontSet(library, 0x12345678u, 1, nullptr, &font) == SCE_FONT_ERROR_NO_SUPPORT_FONTSET);
     Require(sceFontOpenFontSet(library, SystemFontSet, 7, nullptr, &font) == SCE_FONT_ERROR_INVALID_PARAMETER);
