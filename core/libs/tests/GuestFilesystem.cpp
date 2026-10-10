@@ -104,6 +104,10 @@ int main() {
     Require(remove_nid_postfix((file / "invalid").string().c_str()) == -1);
     Require(remove_nid_postfix("") == -1 && *__error_nid_postfix() == 2);
     Require(remove_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    const auto readOnly = root / "read-only.txt";
+    { std::ofstream stream(readOnly); stream << "removable"; }
+    Require(sceKernelChmod_nid_postfix(readOnly.string().c_str(), 0400) == 0);
+    Require(remove_nid_postfix(readOnly.string().c_str()) == 0 && !std::filesystem::exists(readOnly));
     const auto renamed = root / "renamed.txt";
     { std::ofstream stream(renamed); stream << "old contents"; }
     Require(rename_nid_postfix(file.string().c_str(), renamed.string().c_str()) == 0);
