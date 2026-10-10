@@ -114,28 +114,28 @@ struct Counters {
     std::uint32_t waits = 0;
 };
 
-class SequenceInterface {
+class ISequence {
 public:
     APS5_VABI virtual int Dispatch(JobEntry entry, void* argument, std::uint32_t count, const char* name) = 0;
     APS5_VABI virtual int SyncPoint() = 0;
     APS5_VABI virtual int Wait() = 0;
-    APS5_VABI virtual ~SequenceInterface() = default;
+    APS5_VABI virtual void CompleteDestructor() {}
+    APS5_VABI virtual void DeletingDestructor() { throw std::runtime_error("libSceJobManager: a sequence was deleted by its caller"); }
     APS5_VABI virtual int DispatchCompute(const void* shader, void* userData, std::int32_t x, std::int32_t y, std::int32_t z, const char* name) = 0;
     APS5_VABI virtual int DispatchComputeIndirect(const void* shader, void* userData, const void* indirectArguments, const char* name) = 0;
-    static void operator delete(void*) { throw std::runtime_error("libSceJobManager: a sequence was deleted by its caller"); }
 };
 
-class SequenceFactoryInterface {
+class ISequenceFactory {
 public:
-    APS5_VABI virtual int Create(SequenceInterface** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) = 0;
-    APS5_VABI virtual int Destroy(SequenceInterface* sequence) = 0;
-    APS5_VABI virtual ~SequenceFactoryInterface() = default;
-    APS5_VABI virtual int CreateCompute(SequenceInterface** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) = 0;
-    APS5_VABI virtual int DestroyCompute(SequenceInterface* sequence) = 0;
-    static void operator delete(void*) { throw std::runtime_error("libSceJobManager: a sequence factory was deleted by its caller"); }
+    APS5_VABI virtual int Create(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) = 0;
+    APS5_VABI virtual int Destroy(ISequence* sequence) = 0;
+    APS5_VABI virtual void CompleteDestructor() {}
+    APS5_VABI virtual void DeletingDestructor() { throw std::runtime_error("libSceJobManager: a sequence factory was deleted by its caller"); }
+    APS5_VABI virtual int CreateCompute(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) = 0;
+    APS5_VABI virtual int DestroyCompute(ISequence* sequence) = 0;
 };
 
-class Sequence final : public SequenceInterface {
+class Sequence final : public ISequence {
 public:
     APS5_VABI int Dispatch(JobEntry entry, void* argument, std::uint32_t count, const char* name) override;
     APS5_VABI int SyncPoint() override;
@@ -150,7 +150,7 @@ public:
     }
 
     bool Open(Manager* owner, const Counters& limit, std::uint32_t runQueue);
-    void Close();
+    int WaitAndClose(std::uint32_t index);
     void Advance();
     void DispatchCompleted(std::uint32_t invocations);
 
@@ -159,6 +159,8 @@ public:
 
 private:
     int Latch(int code);
+    void RequireOpen() const;
+    int WaitLocked(std::unique_lock<std::mutex>& guard);
 
     Counters limits;
     Counters submitted;
@@ -172,12 +174,12 @@ private:
     std::condition_variable passed;
 };
 
-class Factory final : public SequenceFactoryInterface {
+class Factory final : public ISequenceFactory {
 public:
-    APS5_VABI int Create(SequenceInterface** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) override;
-    APS5_VABI int Destroy(SequenceInterface* sequence) override;
-    APS5_VABI int CreateCompute(SequenceInterface** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) override;
-    APS5_VABI int DestroyCompute(SequenceInterface* sequence) override;
+    APS5_VABI int Create(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) override;
+    APS5_VABI int Destroy(ISequence* sequence) override;
+    APS5_VABI int CreateCompute(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char* name) override;
+    APS5_VABI int DestroyCompute(ISequence* sequence) override;
 
     Manager* manager = nullptr;
     std::uint32_t priority = 0;
@@ -234,13 +236,8 @@ bool Sequence::Open(Manager* owner, const Counters& limit, std::uint32_t runQueu
     return true;
 }
 
-void Sequence::Close() {
-    if (!open) return;
-    ReturnNodes(*manager, static_cast<std::uint32_t>(items.size()) + 1);
-    items.clear();
-    cursor = 0;
-    outstanding = 0;
-    open = false;
+void Sequence::RequireOpen() const {
+    if (!open) throw std::runtime_error("libSceJobManager: a destroyed sequence was used");
 }
 
 void Sequence::Advance() {
@@ -287,6 +284,7 @@ int Sequence::Dispatch(JobEntry entry, void* argument, std::uint32_t count, cons
     if (entry == nullptr) return SequenceNullArgument;
     if (count == 0 || count > MaxInvocations) return SequenceOutOfRange;
     const std::lock_guard guard(manager->lock);
+    RequireOpen();
     if (error != 0) return SequenceInvalid;
     const Counters before = submitted;
     submitted.invocations += count;
@@ -300,6 +298,7 @@ int Sequence::Dispatch(JobEntry entry, void* argument, std::uint32_t count, cons
 
 int Sequence::SyncPoint() {
     const std::lock_guard guard(manager->lock);
+    RequireOpen();
     if (error != 0) return SequenceInvalid;
     const std::uint32_t before = submitted.syncPoints++;
     if (before >= limits.syncPoints) return Latch(SequenceLimitExceeded);
@@ -310,8 +309,24 @@ int Sequence::SyncPoint() {
 }
 
 int Sequence::Wait() {
-    const std::lock_guard serial(waiters);
     std::unique_lock guard(manager->lock);
+    return WaitLocked(guard);
+}
+
+int Sequence::WaitAndClose(std::uint32_t index) {
+    std::unique_lock guard(manager->lock);
+    const int result = WaitLocked(guard);
+    ReturnNodes(*manager, static_cast<std::uint32_t>(items.size()) + 1);
+    items.clear();
+    cursor = 0;
+    outstanding = 0;
+    open = false;
+    manager->freeSequences |= std::uint32_t{1} << index;
+    return result;
+}
+
+int Sequence::WaitLocked(std::unique_lock<std::mutex>& guard) {
+    RequireOpen();
     int result = 0;
     if (error != 0) {
         result = SequenceInvalid;
@@ -322,6 +337,9 @@ int Sequence::Wait() {
     ++manager->blockedWaiters;
     manager->nodeFreed.wait(guard, [this] { return manager->freeNodes != 0; });
     --manager->freeNodes;
+    guard.unlock();
+    const std::lock_guard serial(waiters);
+    guard.lock();
     bool done = false;
     items.push_back({ItemType::Wait, this, nullptr, nullptr, 0, 0, 0, &done});
     Advance();
@@ -335,7 +353,7 @@ bool ValidLimits(std::uint32_t invocations, std::uint32_t dispatches, std::uint3
     return invocations != 0 || dispatches != 0 || syncPoints != 0 || waits != 0;
 }
 
-int Factory::Create(SequenceInterface** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
+int Factory::Create(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
     if (out == nullptr) return SequenceNullArgument;
     if (!ValidLimits(invocations, dispatches, syncPoints, waits)) return SequenceOutOfRange;
     const std::lock_guard guard(manager->lock);
@@ -348,7 +366,7 @@ int Factory::Create(SequenceInterface** out, std::uint32_t invocations, std::uin
     return 0;
 }
 
-int Factory::Destroy(SequenceInterface* sequence) {
+int Factory::Destroy(ISequence* sequence) {
     Sequence* found = nullptr;
     std::uint32_t index = 0;
     {
@@ -359,20 +377,17 @@ int Factory::Destroy(SequenceInterface* sequence) {
         if (index == manager->sequences.size() || (manager->freeSequences & (std::uint32_t{1} << index)) != 0) return SequenceInvalid;
         found = &manager->sequences[index];
     }
-    static_cast<void>(found->Wait());
-    const std::lock_guard guard(manager->lock);
-    found->Close();
-    manager->freeSequences |= std::uint32_t{1} << index;
+    static_cast<void>(found->WaitAndClose(index));
     return 0;
 }
 
-int Factory::CreateCompute(SequenceInterface** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
+int Factory::CreateCompute(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
     if (out == nullptr) return SequenceNullArgument;
     if (!ValidLimits(invocations, dispatches, syncPoints, waits)) return SequenceOutOfRange;
     return SequenceNoneFree;
 }
 
-int Factory::DestroyCompute(SequenceInterface*) {
+int Factory::DestroyCompute(ISequence*) {
     return SequenceInvalid;
 }
 
@@ -435,10 +450,10 @@ void StartWorkers(Manager& manager, const ConfigParams& config, std::uint32_t wo
         const KernelSchedParam schedule{static_cast<int>(config.priority)};
         PthreadAttr attributes = nullptr;
         if (scePthreadAttrInit(&attributes) != 0) throw std::runtime_error("libSceJobManager: scePthreadAttrInit failed");
-        scePthreadAttrSetinheritsched(&attributes, 0);
-        scePthreadAttrSetschedparam(&attributes, &schedule);
-        scePthreadAttrSetstacksize(&attributes, config.stackSize);
-        scePthreadAttrSetaffinity(&attributes, affinity);
+        if (scePthreadAttrSetinheritsched(&attributes, 0) != 0 || scePthreadAttrSetschedparam(&attributes, &schedule) != 0 ||
+            scePthreadAttrSetstacksize(&attributes, config.stackSize) != 0 || scePthreadAttrSetaffinity(&attributes, affinity) != 0) {
+            throw std::runtime_error("libSceJobManager: a worker thread attribute was rejected");
+        }
         Pthread thread = nullptr;
         const int created = scePthreadCreate(&thread, &attributes, WorkerEntry, &manager, name.c_str());
         scePthreadAttrDestroy(&attributes);
@@ -486,9 +501,10 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     return 0;
 }
 
-SequenceFactoryInterface* FactoryFor(void* self, std::uint32_t priority, bool unified) {
+ISequenceFactory* FactoryFor(void* self, std::uint32_t priority, bool unified) {
     Manager* manager = Implementation(self);
     if (manager == nullptr) return nullptr;
+    priority &= 0xffff;
     if (priority > 1) throw std::runtime_error("sce::Job::JobManager: sequence factory priority " + std::to_string(priority) + " does not exist");
     return unified ? &manager->unifiedFactories[priority] : &manager->factories[priority];
 }
@@ -558,11 +574,11 @@ int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void* self) {
     return 0;
 }
 
-SequenceFactoryInterface* APS5_VABI _ZN3sce3Job10JobManager27getSequenceFactoryInterfaceENS1_8PriorityE(void* self, std::uint32_t priority) {
+ISequenceFactory* APS5_VABI _ZN3sce3Job10JobManager27getSequenceFactoryInterfaceENS1_8PriorityE(void* self, std::uint32_t priority) {
     return FactoryFor(self, priority, false);
 }
 
-SequenceFactoryInterface* APS5_VABI _ZN3sce3Job10JobManager34getUnifiedSequenceFactoryInterfaceENS1_8PriorityE(void* self, std::uint32_t priority) {
+ISequenceFactory* APS5_VABI _ZN3sce3Job10JobManager34getUnifiedSequenceFactoryInterfaceENS1_8PriorityE(void* self, std::uint32_t priority) {
     return FactoryFor(self, priority, true);
 }
 

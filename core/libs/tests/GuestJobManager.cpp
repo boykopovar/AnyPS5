@@ -39,13 +39,15 @@ struct Sequence {
     APS5_VABI virtual int Dispatch(JobEntry, void*, std::uint32_t, const char*) = 0;
     APS5_VABI virtual int SyncPoint() = 0;
     APS5_VABI virtual int Wait() = 0;
-    APS5_VABI virtual ~Sequence() = default;
+    APS5_VABI virtual void CompleteDestructor() = 0;
+    APS5_VABI virtual void DeletingDestructor() = 0;
 };
 
 struct SequenceFactory {
     APS5_VABI virtual int Create(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
     APS5_VABI virtual int Destroy(Sequence*) = 0;
-    APS5_VABI virtual ~SequenceFactory() = default;
+    APS5_VABI virtual void CompleteDestructor() = 0;
+    APS5_VABI virtual void DeletingDestructor() = 0;
     APS5_VABI virtual int CreateCompute(Sequence**, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, const char*) = 0;
     APS5_VABI virtual int DestroyCompute(Sequence*) = 0;
 };
@@ -269,6 +271,53 @@ static void OrderingCase() {
     Require(Shutdown(manager.storage) == 0);
 }
 
+struct Nested {
+    Sequence* sequence;
+    std::atomic<bool> barrierAppended{false};
+    std::atomic<bool> followerAppended{false};
+    std::atomic<bool> leaderFinished{false};
+    std::atomic<int> followerResult{-1};
+    std::atomic<int> followerSawLeaderFinished{-1};
+};
+
+static void APS5_VABI FollowerJob(void* argument, std::uint32_t) {
+    auto& nested = *static_cast<Nested*>(argument);
+    nested.followerSawLeaderFinished = nested.leaderFinished ? 1 : 0;
+}
+
+static void APS5_VABI LeaderJob(void* argument, std::uint32_t) {
+    auto& nested = *static_cast<Nested*>(argument);
+    while (!nested.barrierAppended) std::this_thread::yield();
+    nested.followerResult = nested.sequence->Dispatch(FollowerJob, &nested, 1, "follower");
+    nested.followerAppended = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    nested.leaderFinished = true;
+}
+
+static void NestedCase() {
+    Block block(SizeFor(2, 1, 4, 2, 2));
+    ManagerObject manager;
+    Require(Initialize(manager.storage, block.memory, block.bytes, 2, 1, nullptr) == 0);
+    SequenceFactory* factory = Factories(manager.storage, 0);
+    Nested nested{};
+    Require(factory->Create(&nested.sequence, 16, 4, 2, 2, "nested") == 0);
+    Require(nested.sequence->Dispatch(LeaderJob, &nested, 1, "leader") == 0);
+    Require(nested.sequence->SyncPoint() == 0);
+    nested.barrierAppended = true;
+    while (!nested.followerAppended) std::this_thread::yield();
+    Require(nested.sequence->Wait() == 0);
+    Require(nested.followerResult == 0 && nested.followerSawLeaderFinished == 1);
+    nested.sequence->CompleteDestructor();
+    Require(nested.sequence->Wait() == 0);
+    Require(factory->Destroy(nested.sequence) == 0);
+    Require(factory->Create(&nested.sequence, 1, 1, 0, 0, "no waits") == 0);
+    Require(nested.sequence->Wait() == LimitExceeded);
+    Require(nested.sequence->Dispatch(Nothing, nullptr, 1, nullptr) == Invalid);
+    Require(factory->Destroy(nested.sequence) == 0);
+    Require(Factories(manager.storage, 0x10000) == factory);
+    Require(Shutdown(manager.storage) == 0);
+}
+
 static void LimitsCase() {
     Block block(SizeFor(2, 2, 2, 1, 1));
     ManagerObject manager;
@@ -302,7 +351,7 @@ static void LimitsCase() {
     int result = 0;
     int accepted = 0;
     while (accepted < 0x3ff && (result = sequence->Dispatch(Nothing, nullptr, 1, nullptr)) == 0) ++accepted;
-    Require(result == NoNodes && accepted > 0);
+    Require(result == NoNodes && accepted == 33);
     Require(sequence->Dispatch(Nothing, nullptr, 1, nullptr) == Invalid);
     Require(Shutdown(manager.storage) == 0);
 }
@@ -377,6 +426,7 @@ int main(int argc, char** argv) {
     else if (name == "dispatch") DispatchCase();
     else if (name == "ordering") OrderingCase();
     else if (name == "limits") LimitsCase();
+    else if (name == "nested") NestedCase();
     else if (name == "priority") PriorityCase();
     else if (name == "shutdown") ShutdownCase();
     else return 2;
