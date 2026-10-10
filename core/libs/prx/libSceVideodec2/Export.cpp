@@ -274,19 +274,17 @@ void EmitDecoded(Decoder& decoder, FrameBuffer* frame, OutputInfo* output) {
     if (frame) frame->isAccepted = false;
     if (decoder.ready.empty()) return;
     if (!frame || !frame->frameBuffer) throw std::runtime_error("Videodec2: missing output buffer");
-    const auto picture = std::move(decoder.ready.front());
-    decoder.ready.pop_front();
+    const auto& picture = decoder.ready.front();
     const auto key = picture->pts;
     const auto found = decoder.inputs.find(key);
     if (found == decoder.inputs.end()) throw std::runtime_error("Videodec2: missing picture timestamps");
     auto timestamps = found->second;
-    decoder.inputs.erase(found);
     timestamps.idr = (picture->flags & AV_FRAME_FLAG_KEY) != 0;
+    if (!WriteNv12(decoder, *picture, static_cast<std::uint8_t*>(frame->frameBuffer), frame->frameBufferSize)) throw std::runtime_error("Videodec2: NV12 conversion failed");
     decoder.width = static_cast<std::uint32_t>(picture->width);
     decoder.height = static_cast<std::uint32_t>(picture->height);
     if (decoder.context->profile > 0) decoder.profile = static_cast<std::uint32_t>(decoder.context->profile) & 0xffu;
     if (decoder.context->level > 0) decoder.level = static_cast<std::uint32_t>(decoder.context->level);
-    if (!WriteNv12(decoder, *picture, static_cast<std::uint8_t*>(frame->frameBuffer), frame->frameBufferSize)) throw std::runtime_error("Videodec2: NV12 conversion failed");
     const auto pitch = AlignUp(decoder.width, PitchAlignment);
     frame->isAccepted = true;
     output->isValid = true;
@@ -302,6 +300,8 @@ void EmitDecoded(Decoder& decoder, FrameBuffer* frame, OutputInfo* output) {
         output->framePitchInBytes = pitch;
     }
     decoder.pictures[frame->frameBuffer] = timestamps;
+    decoder.inputs.erase(found);
+    decoder.ready.pop_front();
 }
 
 }

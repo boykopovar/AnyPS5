@@ -377,6 +377,65 @@ void testClip(std::uint32_t codec, std::uint32_t profile, const std::vector<std:
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
 }
 
+void testConversionRetry(std::uint32_t codec, std::uint32_t profile, const std::vector<std::vector<std::uint8_t>>& units, const std::array<std::uint64_t, 6>& hashes) {
+    const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, codec, profile, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
+    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    std::uint64_t handle = 0;
+    check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
+    std::vector<std::uint8_t> buffer(memory.maxFrameBufferSize, 0x5a);
+    FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), 1, false};
+    OutputInfo output{sizeof(OutputInfo)};
+    std::size_t failures = 0;
+    const auto reject = [&](const auto& action) {
+        try {
+            check(action() == 0, "decoder operation failed");
+        } catch (const std::runtime_error& error) {
+            check(std::string(error.what()) == "Videodec2: NV12 conversion failed", "unexpected retry exception");
+            ++failures;
+        }
+        check(!output.isValid && !frame.isAccepted && output.pictureCount == 0, "failed conversion published a picture");
+        check(std::all_of(buffer.begin(), buffer.end(), [](auto value) { return value == 0x5a; }), "undersized conversion wrote pixels");
+    };
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        reject([&] { return sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
+    }
+    check(failures != 0, "small buffer did not reject conversion");
+    for (int retry = 0; retry < 2; ++retry) {
+        const auto before = failures;
+        reject([&] { return sceVideodec2Flush_nid_postfix(handle, &frame, &output); });
+        check(failures == before + 1, "failed conversion lost queued picture");
+    }
+    frame.frameBufferSize = buffer.size();
+    std::size_t pictures = 0;
+    for (;;) {
+        check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "retry flush failed");
+        check(output.isValid == frame.isAccepted, "retry acceptance mismatch");
+        if (!output.isValid) break;
+        check(pictures < hashes.size() && hashNv12(buffer.data(), output.framePitch) == hashes[pictures], "retry lost or reordered pixels");
+        if (codec == 1) {
+            AvcPictureInfo info{sizeof(AvcPictureInfo)};
+            check(sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &info, nullptr) == 0 && info.isValid, "retry timestamps missing");
+            const auto unit = DisplayOrderUnits[pictures];
+            check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "retry timestamps changed");
+        }
+        ++pictures;
+    }
+    check(pictures == hashes.size(), "retry did not recover all pictures");
+    check(sceVideodec2Reset_nid_postfix(handle) == 0, "retry reset failed");
+    std::fill(buffer.begin(), buffer.end(), 0x5a);
+    frame.frameBufferSize = 1;
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 2000 + unit, unit, 0xb0 + unit};
+        reject([&] { return sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
+    }
+    check(sceVideodec2Reset_nid_postfix(handle) == 0, "blocked retry reset failed");
+    frame.frameBufferSize = buffer.size();
+    check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0 && !output.isValid, "reset retained retry pictures");
+    check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+}
+
 void testTenBit() {
     for (const auto codec : {CodecHevc, CodecVp9}) {
         const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, codec, 2, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
@@ -474,6 +533,9 @@ int main() {
         }
         testClip(CodecHevc, 1, hevcLengthPrefixed, HevcHashes);
         testClip(CodecVp9, 0, ivfFrames(), Vp9Hashes);
+        testConversionRetry(1, 100, accessUnits(false), PictureHashes);
+        testConversionRetry(CodecHevc, 1, hevc, HevcHashes);
+        testConversionRetry(CodecVp9, 0, ivfFrames(), Vp9Hashes);
         testTenBit();
         std::puts("Videodec2 tests passed");
         return 0;
