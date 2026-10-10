@@ -348,7 +348,16 @@ void matcherSubstitutions() {
         require(prefixedClzero && prefixedClzero->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "CLZERO with a 66, F2 or F3 prefix was not reported as unsupported");
     }
     const auto rdpru = match({0x0F, 0x01, 0xFD});
-    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported && rdpru->InstructionName == "RDPRU", "RDPRU was not reported as unsupported");
+    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Trampoline && rdpru->InstructionName == "RDPRU" && rdpru->StubBody.size() == 40 && rdpru->ReturnBranchOffset == 35 && rdpru->Relocations.empty(), "RDPRU was not lowered through a runtime-checked stub");
+    require(Bytes(rdpru->StubBody.begin(), rdpru->StubBody.begin() + 35) == Bytes{0x48, 0x8D, 0xA4, 0x24, 0x70, 0xFF, 0xFF, 0xFF, 0x9C, 0x85, 0xC9, 0x74, 0x0B, 0x83, 0xF9, 0x01, 0x74, 0x06, 0x31, 0xC0, 0x31, 0xD2, 0xEB, 0x02, 0x0F, 0x31, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x90, 0x00, 0x00, 0x00}, "RDPRU stub does not frame the red zone or dispatch ECX to TSC or zero");
+    const auto mcommit = match({0xF3, 0x0F, 0x01, 0xFA});
+    require(mcommit && mcommit->Lowering == Codegen::Amd64OnlyLowering::InPlace && mcommit->InstructionName == "MCOMMIT" && mcommit->ReplacementBytes == Bytes{0xF9, 0x0F, 0x1F, 0x00}, "MCOMMIT was not replaced by STC plus NOP");
+    const auto prefixedMcommit = match({0x2E, 0xF3, 0x0F, 0x01, 0xFA});
+    require(prefixedMcommit && prefixedMcommit->Lowering == Codegen::Amd64OnlyLowering::InPlace && prefixedMcommit->ReplacementBytes == Bytes{0xF9, 0x0F, 0x1F, 0x40, 0x00}, "Prefixed MCOMMIT was not padded to its length");
+    const auto lockedMcommit = match({0xF0, 0xF3, 0x0F, 0x01, 0xFA});
+    require(lockedMcommit && lockedMcommit->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK MCOMMIT was replaced instead of failing");
+    const auto lockedRdpru = match({0xF0, 0x0F, 0x01, 0xFD});
+    require(lockedRdpru && lockedRdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK RDPRU was replaced instead of failing");
     const auto registerForm = match({0x66, 0x0F, 0x79, 0xCA});
     require(registerForm && registerForm->Lowering == Codegen::Amd64OnlyLowering::Trampoline && registerForm->InstructionName == "EXTRQ register form", "EXTRQ register form was not lowered through a stub");
     const auto insertqRegisterForm = match({0xF2, 0x0F, 0x79, 0xCA});
@@ -610,15 +619,16 @@ void converterSha1() {
 void converterMonitorWait() {
     const auto converter = Codegen::MakeAmd64OnlyConverter();
     Bytes file(0x300, 0xCC);
-    const Bytes text = {0x0F, 0x01, 0xFA, 0x0F, 0x01, 0xFB, 0x2E, 0x0F, 0x01, 0xFB, 0xC3};
+    const Bytes text = {0x0F, 0x01, 0xFA, 0x0F, 0x01, 0xFB, 0x2E, 0x0F, 0x01, 0xFB, 0xF3, 0x0F, 0x01, 0xFA, 0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
-    require(result.ReplacedCount == 3 && result.Trampolines.empty() && result.Reports.size() == 3, "MONITORX/MWAITX were not replaced in place");
+    require(result.ReplacedCount == 4 && result.Trampolines.empty() && result.Reports.size() == 4, "MONITORX/MWAITX/MCOMMIT were not replaced in place");
     require(result.Reports[0].InstructionName == "MONITORX" && result.Reports[1].InstructionName == "MWAITX" && result.Reports[2].Offset == 0x206 && result.Reports[2].ReplacementLength == 4 && result.Reports[2].Lowering == Codegen::Amd64OnlyLowering::InPlace, "MONITORX/MWAITX reports are wrong");
+    require(result.Reports[3].InstructionName == "MCOMMIT" && result.Reports[3].Offset == 0x20A && result.Reports[3].ReplacementLength == 4 && result.Reports[3].Lowering == Codegen::Amd64OnlyLowering::InPlace, "MCOMMIT report is wrong");
     auto expected = file;
-    const Bytes replaced = {0x0F, 0x1F, 0x00, 0xF3, 0x90, 0x90, 0xF3, 0x90, 0x66, 0x90, 0xC3};
+    const Bytes replaced = {0x0F, 0x1F, 0x00, 0xF3, 0x90, 0x90, 0xF3, 0x90, 0x66, 0x90, 0xF9, 0x0F, 0x1F, 0x00, 0xC3};
     std::copy(replaced.begin(), replaced.end(), expected.begin() + 0x200);
-    require(result.Bytes == expected, "MONITORX/MWAITX were replaced with the wrong bytes");
+    require(result.Bytes == expected, "MONITORX/MWAITX/MCOMMIT were replaced with the wrong bytes");
 }
 
 void converterClzero() {
@@ -756,10 +766,10 @@ void converterFailureOffsets() {
     auto movntsRegister = file;
     movntsRegister[0x212] = 0xC1;
     require(failureOffset([&] { (void)converter->Convert(movntsRegister, {segmentHeader(20)}); }, "MOVNTSS register form was accepted") == 0x20F, "MOVNTSS failure does not carry the file offset");
-    auto rdpru = file;
-    const Bytes rdpruBytes = {0x0F, 0x01, 0xFD, 0x90};
-    std::copy(rdpruBytes.begin(), rdpruBytes.end(), rdpru.begin() + 0x20F);
-    require(failureOffset([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
+    auto lockedWait = file;
+    const Bytes lockedWaitBytes = {0xF0, 0x0F, 0x01, 0xFB};
+    std::copy(lockedWaitBytes.begin(), lockedWaitBytes.end(), lockedWait.begin() + 0x20F);
+    require(failureOffset([&] { (void)converter->Convert(lockedWait, {segmentHeader(20)}); }, "LOCK MWAITX was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
 }
 
 Bytes elfFixture(const Bytes& text) {
@@ -1295,6 +1305,144 @@ void ripRelativeExecution() {
     require(movedRun.Rax == movedRun.SiteAddress + 4096 + 0x30, "Moved RIP-relative LEA did not compute the original address");
     unchanged(movedRun, (1u << 1) | (1u << 3), "Stub with moved RIP-relative instructions clobbered a register or RFLAGS");
 }
+
+void rdpruExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const Bytes site = {0x0F, 0x01, 0xFD};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDPRU stub was not produced");
+    auto body = match->StubBody;
+    const auto ret = body.size();
+    body.push_back(0xC3);
+    const auto displacement = static_cast<std::int32_t>(ret - (match->ReturnBranchOffset + 5));
+    std::memcpy(body.data() + match->ReturnBranchOffset + 1, &displacement, sizeof(displacement));
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the RDPRU stub");
+    std::memcpy(code, body.data(), body.size());
+    for (const std::uint32_t selector : {0u, 1u, 2u, 0xFFFFFFFFu}) {
+        std::uint64_t raxOut = 0;
+        std::uint64_t rdxOut = 0;
+        std::uint64_t rcxOut = 0;
+        std::uint64_t flagsOut = 0;
+        std::uint64_t canaryOut = 0;
+        asm volatile(
+            "sub $128, %%rsp\n\t"
+            "movabs $0xA5A5A5A5A5A5A5A5, %%rax\n\t"
+            "lea -136(%%rsp), %%rdi\n\t"
+            "mov $16, %%ecx\n\t"
+            "rep stosq\n\t"
+            "movl %[selector], %%ecx\n\t"
+            "pushq $0x8D7\n\t"
+            "popfq\n\t"
+            "call *%[code]\n\t"
+            "mov %%rax, %[rax]\n\t"
+            "mov %%rdx, %[rdx]\n\t"
+            "mov %%rcx, %[rcx]\n\t"
+            "pushfq\n\t"
+            "popq %[flags]\n\t"
+            "xor %%r8, %%r8\n\t"
+            "lea -136(%%rsp), %%rsi\n\t"
+            "mov $16, %%ecx\n\t"
+            "1:\n\t"
+            "xor (%%rsi), %%r8\n\t"
+            "add $8, %%rsi\n\t"
+            "dec %%ecx\n\t"
+            "jnz 1b\n\t"
+            "mov %%r8, %[canary]\n\t"
+            "add $128, %%rsp\n\t"
+            : [rax] "=r"(raxOut), [rdx] "=r"(rdxOut), [rcx] "=r"(rcxOut), [flags] "=r"(flagsOut), [canary] "=r"(canaryOut)
+            : [selector] "r"(selector), [code] "r"(code)
+            : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "memory", "cc");
+        require(canaryOut == 0, "RDPRU stub clobbered the red zone");
+        require(rcxOut == selector, "RDPRU stub changed ecx");
+        require((flagsOut & 0x8D5) == (0x8D7 & 0x8D5), "RDPRU stub changed RFLAGS");
+        if (selector <= 1)
+            require((raxOut | rdxOut) != 0, "RDPRU MPERF/APERF selector did not yield the TSC approximation");
+        else
+            require(raxOut == 0 && rdxOut == 0, "RDPRU with an undefined selector did not yield zero");
+    }
+    munmap(code, 4096);
+}
+
+void mcommitExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const Bytes site = {0xF3, 0x0F, 0x01, 0xFA};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "MCOMMIT lowering was not produced");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the MCOMMIT lowering");
+    std::memcpy(code, body.data(), body.size());
+    for (const std::uint64_t flagsIn : {std::uint64_t{0x8D6}, std::uint64_t{0x8D7}}) {
+        std::uint64_t flagsOut = 0;
+        asm volatile(
+            "mov %[in], %%rax\n\t"
+            "pushq %%rax\n\t"
+            "popfq\n\t"
+            "call *%[code]\n\t"
+            "pushfq\n\t"
+            "popq %[out]\n\t"
+            : [out] "=r"(flagsOut)
+            : [in] "r"(flagsIn), [code] "r"(code)
+            : "rax", "memory", "cc");
+        require((flagsOut & 1) == 1, "MCOMMIT lowering did not report committed");
+        require((flagsOut & 0x8D4) == (flagsIn & 0x8D4), "MCOMMIT lowering changed flags other than CF");
+    }
+    munmap(code, 4096);
+}
+
+std::uint64_t toIntelExpected(const std::uint64_t value, const std::uint64_t destination) {
+    return (destination & ~std::uint64_t{0xFF0000}) | (((value >> 8) & 0xFF) << 16);
+}
+
+void toIntelExecution() {
+    const Bytes text = {
+        0x66, 0x48, 0x0F, 0x6E, 0xCF,
+        0x66, 0x48, 0x0F, 0x6E, 0xD6,
+        0x66, 0x0F, 0x78, 0xC1, 0x08, 0x08,
+        0xF2, 0x0F, 0x78, 0xD1, 0x08, 0x10,
+        0x0F, 0x38, 0xCB, 0xCA,
+        0x0F, 0x38, 0xC8, 0xCA,
+        0x66, 0x48, 0x0F, 0x7E, 0xD0,
+        0xC3};
+    const auto source = elfFixture(text);
+    const auto headers = elfHeaders();
+    const auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(source, {headers[0]});
+    require(converted.Trampolines.size() == 3, "Intel conversion did not lower SSE4a and SHA sites");
+    require(converted.Bytes == source, "Intel conversion changed bytes other than trampoline sites");
+    auto patcher = linuxPatcher();
+    const auto output = patcher.Patch(converted.Bytes, headers, {}, 0, "$ORIGIN/libs", true, false, converted.Trampolines);
+    const auto phOff = static_cast<std::size_t>(read<std::uint64_t>(output, 32));
+    const auto phEnt = read<std::uint16_t>(output, 54);
+    const auto phNum = read<std::uint16_t>(output, 56);
+    std::size_t size = 0;
+    for (std::uint16_t index = 0; index < phNum; ++index) {
+        const auto header = static_cast<std::size_t>(phOff + index * phEnt);
+        if (read<std::uint32_t>(output, header) != 1)
+            continue;
+        const auto end = static_cast<std::size_t>(read<std::uint64_t>(output, header + 16) + read<std::uint64_t>(output, header + 40));
+        if (end > size)
+            size = end;
+    }
+    require(size != 0, "Patched Intel image has no PT_LOAD segment");
+    void* base = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(base != MAP_FAILED, "cannot map the converted Intel image");
+    for (std::uint16_t index = 0; index < phNum; ++index) {
+        const auto header = static_cast<std::size_t>(phOff + index * phEnt);
+        if (read<std::uint32_t>(output, header) != 1)
+            continue;
+        const auto offset = static_cast<std::size_t>(read<std::uint64_t>(output, header + 8));
+        const auto fileSize = static_cast<std::size_t>(read<std::uint64_t>(output, header + 32));
+        const auto vaddr = static_cast<std::size_t>(read<std::uint64_t>(output, header + 16));
+        require(offset <= output.size() && fileSize <= output.size() - offset, "PT_LOAD exceeds the converted image");
+        std::memcpy(static_cast<std::uint8_t*>(base) + vaddr, output.data() + offset, fileSize);
+    }
+    const auto function = reinterpret_cast<std::uint64_t (*)(std::uint64_t, std::uint64_t)>(static_cast<std::uint8_t*>(base) + 0x1000);
+    for (const auto [value, destination] : {std::pair{0x1122334455667788ull, 0x0123456789ABCDEFull}, std::pair{0ull, ~0ull}, std::pair{~0ull, 0ull}, std::pair{0x9E3779B97F4A7C15ull, 0x0F1E2D3C4B5A6978ull}})
+        require(function(value, destination) == toIntelExpected(value, destination), "Converted Intel image computed the wrong value");
+    munmap(base, size);
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -1303,6 +1451,9 @@ void sha256Execution() {}
 void clzeroExecution() {}
 void immediateFormExecution() {}
 void ripRelativeExecution() {}
+void rdpruExecution() {}
+void mcommitExecution() {}
+void toIntelExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -1334,6 +1485,9 @@ int main() {
         clzeroExecution();
         reciprocalExecution();
         ripRelativeExecution();
+        rdpruExecution();
+        mcommitExecution();
+        toIntelExecution();
         converterSegment();
         converterRipRelativeFollower();
         converterSha256();

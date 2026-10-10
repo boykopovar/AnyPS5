@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -124,6 +125,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::map<std::string, std::vector<std::size_t>> exports;
     std::map<std::string, std::set<std::size_t>> sharedExports;
     std::set<std::string> outputNames;
+    std::vector<std::unordered_map<std::string, std::size_t>> exportIndexByImage;
+    exportIndexByImage.reserve(paths.size());
     for (const auto& path : paths) {
         auto image = std::move(discovered.at(path));
         if (image.OutputName.find_first_of("$\r\n") != std::string::npos) throw Domain::RelinkerException("Unsupported guest filename: " + image.OutputName);
@@ -135,10 +138,13 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
         }
         if (!outputNames.insert(folded).second) throw Domain::RelinkerException("Conflicting guest output filename: " + image.OutputName);
-        for (const auto& symbol : image.Symbols) {
+        std::unordered_map<std::string, std::size_t> exportIndex;
+        exportIndex.reserve(image.Symbols.size());
+        for (std::size_t symbolIndex = 0; symbolIndex < image.Symbols.size(); ++symbolIndex) {
+            const auto& symbol = image.Symbols[symbolIndex];
             if (symbol.Section == 0 || symbol.Section == AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
+            const bool repeated = !exportIndex.emplace(symbol.Name, symbolIndex).second;
             auto& providers = exports[symbol.Name];
-            const bool repeated = std::find(providers.begin(), providers.end(), images.size()) != providers.end();
             if (!windows && repeated) throw Domain::RelinkerException("Duplicate guest export after stripping #: " + symbol.Name + " in " + path.string() + " and " + path.string());
             if (!repeated) providers.push_back(images.size());
             if (!windows && providers.size() > 1) sharedExports[symbol.Name].insert(providers.begin(), providers.end());
@@ -155,6 +161,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             syscallScanner.ScanCodeSectionForSyscalls(code, header.MappedAddress, header.FileSize);
         }
         images.push_back(std::move(image));
+        exportIndexByImage.push_back(std::move(exportIndex));
     }
     std::map<std::string, std::size_t> guestNames;
     std::map<std::string, std::size_t> windowsGuestFiles;
@@ -219,10 +226,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     }
     std::vector<std::set<std::size_t>> dependencies(images.size());
     std::vector<std::set<std::size_t>> systemImports(images.size());
-    for (auto& image : images) {
-        image.UsePlatformTlsResolver = !windows ? !exports.contains("vNe1w4diLCs") : std::none_of(image.Symbols.begin(), image.Symbols.end(), [](const auto& symbol) {
-            return symbol.Name == "vNe1w4diLCs" && symbol.Section != 0 && symbol.Section != AbsoluteSection && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
-        });
+    for (std::size_t imageIndex = 0; imageIndex < images.size(); ++imageIndex) {
+        auto& image = images[imageIndex];
+        const auto& exportIndexForTls = exportIndexByImage[imageIndex];
+        image.UsePlatformTlsResolver = !windows ? !exports.contains("vNe1w4diLCs") : exportIndexForTls.find("vNe1w4diLCs") == exportIndexForTls.end();
     }
     for (std::size_t index = 0; index < images.size(); ++index) {
         for (const auto& name : images[index].Dependencies) {
@@ -244,8 +251,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (providers.size() > 1) throw Domain::RelinkerException("Ambiguous guest import after stripping #: " + symbol.Name);
             if (!providers.empty()) {
                 const auto& provider = images[providers.front()];
-                const auto exported = std::find_if(provider.Symbols.begin(), provider.Symbols.end(), [&](const auto& candidate) { return candidate.Section != 0 && candidate.Section != AbsoluteSection && candidate.Name == symbol.Name && (candidate.Info >> 4) != 0 && candidate.Visibility != 1 && candidate.Visibility != 2; });
-                if (exported == provider.Symbols.end() || ((symbol.Info & 15) != 0 && (symbol.Info & 15) != (exported->Info & 15))) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
+                const auto& providerExportIndex = exportIndexByImage[providers.front()];
+                const auto exportedIt = providerExportIndex.find(symbol.Name);
+                const GuestSymbol* exported = exportedIt == providerExportIndex.end() ? nullptr : &provider.Symbols[exportedIt->second];
+                if (exported == nullptr || ((symbol.Info & 15) != 0 && (symbol.Info & 15) != (exported->Info & 15))) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
                 if (providers.front() != index) dependencies[index].insert(providers.front());
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (providers.empty()) systemImports[index].insert(symbolIndex);

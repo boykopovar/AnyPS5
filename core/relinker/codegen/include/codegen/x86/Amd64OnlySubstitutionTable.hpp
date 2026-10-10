@@ -57,6 +57,7 @@ inline constexpr Entry kSha1msg2 = {"SHA1MSG2", nullptr, 0};
 inline constexpr std::uint8_t kMovsStoreOpcode = 0x11;
 inline constexpr std::uint8_t kPshufbZero = 0x80;
 inline constexpr std::uint8_t kTrapFill = 0xCC;
+inline constexpr std::uint8_t kRdpruTrampolineBytes[] = {0x9C, 0x85, 0xC9, 0x74, 0x0B, 0x83, 0xF9, 0x01, 0x74, 0x06, 0x31, 0xC0, 0x31, 0xD2, 0xEB, 0x02, 0x0F, 0x31, 0x9D};
 inline constexpr std::size_t kStubAlignment = 16;
 inline constexpr std::size_t kRedZoneSpillFrame = 0x90;
 
