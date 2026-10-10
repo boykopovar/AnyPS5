@@ -152,7 +152,7 @@ struct DrawKeyRange {
     std::uint32_t first;
     std::uint32_t count;
 };
-inline constexpr std::array<DrawKeyRange, 45> DrawKeyRegisters{{
+inline constexpr std::array<DrawKeyRange, 46> DrawKeyRegisters{{
     {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 4},
     {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 6},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL, SPI_SHADER_POS/Z/COL_FORMAT,
@@ -162,7 +162,7 @@ inline constexpr std::array<DrawKeyRange, 45> DrawKeyRegisters{{
     // PA_SU_VTX_CNTL, the sample masks, PA_SC_CONSERVATIVE_RASTERIZATION_CNTL.
     {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
     // CB_COLOR0..7_BASE .. DCC_BASE (15 words a slot), CB_COLOR0..7_BASE_EXT, DCC_BASE_EXT, ATTRIB2, ATTRIB3.
-    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x3a8, 0x18},
+    {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 8}, {RegisterBank::Context, 0x3a8, 0x18},
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program
     // address; the vertex/geometry-front RSRC1/RSRC2 and user words; the vertex program address;
     // the hull user pointer, program address, RSRC2 and user words; the local program address.

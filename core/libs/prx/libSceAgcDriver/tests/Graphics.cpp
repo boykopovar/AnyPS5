@@ -1171,7 +1171,7 @@ void metadataPassTests() {
     }
 }
 
-alignas(256) std::array<std::uint8_t, 4096> cmaskMemory{};
+alignas(4096) std::array<std::uint8_t, 4096> cmaskMemory{};
 
 void cmaskTests() {
     using AgcDriver::Graphics::DecodeColorBuffer;
@@ -1182,8 +1182,15 @@ void cmaskTests() {
     queue.context[0x398] = static_cast<std::uint32_t>(cmaskAddress >> 40u);
     queue.context[0x323] = 0x11223344;
     queue.context[0x324] = 0;
+    queue.context[0x3b8] = 0x0dc00000u;
     const auto target = DecodeColorBuffer(queue.context, 0);
     Require(target.cmaskAddress == cmaskAddress && target.cmaskBytes == cmaskMemory.size(), "the fast-clear target lost its CMASK");
+    std::vector<AgcDriver::Graphics::RegisterRead> log;
+    AgcDriver::Graphics::RegisterReadLog() = &log;
+    static_cast<void>(DecodeColorBuffer(queue.context, 0));
+    AgcDriver::Graphics::RegisterReadLog() = nullptr;
+    Require(!log.empty(), "the register facade recorded nothing for a fast-clear target");
+    for (const auto read : log) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a register the fast-clear target decode reads: " + std::to_string(read.offset));
     Require(DecodeColorBuffer(makeState().context, 0).cmaskAddress == 0, "a target without FAST_CLEAR got a CMASK");
     using AgcDriver::Graphics::CmaskBytes;
     Require(CmaskBytes(1920, 1080) == 0x6000 && CmaskBytes(960, 544) == 0x2000 && CmaskBytes(800, 450) == 0x1000 && CmaskBytes(1024, 512) == 0x1000 && CmaskBytes(3840, 2160) == 0x14000, "a CMASK does not span whole 1024x512 metablocks");
@@ -1194,6 +1201,16 @@ void cmaskTests() {
     unaddressed.context[0x31f] = 0;
     unaddressed.context[0x398] = 0;
     expectFailure([&] { DecodeColorBuffer(unaddressed.context, 0); }, "without a CMASK address");
+    auto unaligned = queue;
+    unaligned.context[0x3b8] = 0x09c00000u;
+    expectFailure([&] { DecodeColorBuffer(unaligned.context, 0); }, "pipe-aligned SW_64KB_Z_X");
+    unaligned.context[0x3b8] = 0x0d000000u;
+    expectFailure([&] { DecodeColorBuffer(unaligned.context, 0); }, "pipe-aligned SW_64KB_Z_X");
+    unaligned = queue;
+    unaligned.context[0x31f] += 1u;
+    expectFailure([&] { DecodeColorBuffer(unaligned.context, 0); }, "misaligned");
+    using AgcDriver::Graphics::CmaskLayout;
+    Require(CmaskBytes(61, 13) == CmaskLayout(61, 13).Bytes() && CmaskBytes(3840, 2160) == CmaskLayout(3840, 2160).Bytes(), "the CMASK size and layout disagree");
 
     queue.context[0x0] = 0;
     queue.context[0x202] = 0xcc0020;
@@ -1216,9 +1233,42 @@ void cmaskTests() {
     std::memset(colorMemory.data(), 0x5a, colorMemory.size());
     AgcDriver::Graphics::RunColorMetadataPass(context, *pass);
     Require(texels(0x5a5a5a5au) && cmaskIs(0xff), "a pass over an expanded CMASK changed the texels");
+    const CmaskLayout layout(64, 4);
+    const auto setTile = [&](std::uint32_t tileX, std::uint8_t code) {
+        const auto nibble = layout.Nibble(tileX, 0);
+        auto& entry = cmaskMemory[nibble / 2u];
+        const auto shift = (nibble % 2u) * 4u;
+        entry = static_cast<std::uint8_t>((entry & ~(0xfu << shift)) | (code << shift));
+    };
+    const auto tiles = [&](const auto& cleared) {
+        for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
+            std::uint32_t texel = 0;
+            std::memcpy(&texel, colorMemory.data() + offset, 4);
+            if (texel != (cleared((offset / 4u) % 64u / 8u) ? 0x11223344u : 0x5a5a5a5au)) return false;
+        }
+        return true;
+    };
+    std::memset(colorMemory.data(), 0x5a, colorMemory.size());
     cmaskMemory.fill(0);
     cmaskMemory[cmaskMemory.size() - 1] = 0xff;
-    expectFailure([&] { AgcDriver::Graphics::RunColorMetadataPass(context, *pass); }, "not all fast-cleared or all expanded");
+    AgcDriver::Graphics::RunColorMetadataPass(context, *pass);
+    Require(texels(0x11223344) && cmaskIs(0xff), "CMASK nibbles past the target's tiles changed what its tiles hold");
+    std::memset(colorMemory.data(), 0x5a, colorMemory.size());
+    cmaskMemory.fill(0xff);
+    setTile(1, 0);
+    setTile(7, 0);
+    AgcDriver::Graphics::RunColorMetadataPass(context, *pass);
+    Require(tiles([](std::uint32_t tile) { return tile == 1 || tile == 7; }) && cmaskIs(0xff), "a partly fast-cleared CMASK did not clear exactly its cleared tiles");
+    std::memset(colorMemory.data(), 0x5a, colorMemory.size());
+    cmaskMemory.fill(0xff);
+    setTile(4, 0);
+    AgcDriver::Graphics::RunColorMetadataPass(context, {AgcDriver::Graphics::ColorMetadataPass::Mode::DccDecompress, pass->targets});
+    Require(tiles([](std::uint32_t tile) { return tile == 4; }) && cmaskIs(0xff), "a DCC decompress pass did not eliminate the CMASK fast clear");
+    std::memset(colorMemory.data(), 0x5a, colorMemory.size());
+    cmaskMemory.fill(0xff);
+    setTile(2, 0);
+    setTile(3, 3);
+    expectFailure([&] { AgcDriver::Graphics::RunColorMetadataPass(context, *pass); }, "not a single-sample fast-clear code");
     Require(texels(0x5a5a5a5au), "a refused pass changed the texels");
 
     queue.context[0x31c] |= 0x10000000;
@@ -1234,7 +1284,7 @@ void cmaskTests() {
     Require(texels(0x11223344) && cmaskIs(0xff) && std::ranges::all_of(dccKeys, [](std::uint8_t key) { return key == 0xff; }), "a DCC fast clear under an expanded CMASK was not eliminated through its keys");
     std::memset(colorMemory.data(), 0x5a, colorMemory.size());
     cmaskMemory.fill(0);
-    expectFailure([&] { AgcDriver::Graphics::RunColorMetadataPass(context, *pass); }, "DCC color target that is not all expanded");
+    expectFailure([&] { AgcDriver::Graphics::RunColorMetadataPass(context, *pass); }, "DCC color target");
     Require(texels(0x5a5a5a5au), "a refused pass changed the texels of a DCC target");
 }
 

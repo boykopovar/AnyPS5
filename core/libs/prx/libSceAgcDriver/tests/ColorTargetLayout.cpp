@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -77,6 +78,33 @@ void RunColorTargetLayoutTests() {
     }
     Require(DecodeColorTileMode(0x4dc24000) == ColorTileMode::Standard64KB, "64 KiB standard color descriptor was rejected");
     reject([&] { layout.Offset(257, 0); });
+    Require(CmaskLayout(1, 1).Bytes() == 4096 && CmaskLayout(1024, 512).Bytes() == 4096 && CmaskLayout(1025, 513).Bytes() == 16384 && CmaskLayout(1920, 1080).Bytes() == 24576 && CmaskLayout(2432, 1368).Bytes() == 36864 && CmaskLayout(3328, 1872).Bytes() == 65536 && CmaskLayout(3840, 2160).Bytes() == 81920, "CMASK size differs from addrlib's pipe-aligned SW_64KB_Z_X CMASK");
+    struct CmaskReference {
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t tileX;
+        std::uint32_t tileY;
+        std::size_t nibble;
+    };
+    constexpr std::array<CmaskReference, 10> cmaskReferences{{
+        {20, 12, 2, 1, 0x600u}, {61, 13, 7, 1, 0x1401u}, {61, 13, 5, 0, 0x1201u}, {1920, 1080, 239, 134, 0xb347u}, {1920, 1080, 128, 64, 0x6000u},
+        {1920, 1080, 1, 1, 0x1u}, {3840, 2160, 479, 269, 0x2651du}, {3840, 2160, 200, 77, 0xb30cu}, {2432, 1368, 303, 170, 0x10acfu}, {1025, 513, 128, 64, 0x6000u},
+    }};
+    for (const auto& reference : cmaskReferences) Require(CmaskLayout(reference.width, reference.height).Nibble(reference.tileX, reference.tileY) == reference.nibble, "CMASK nibble address differs from addrlib's");
+    for (const auto [width, height] : {std::pair{61u, 13u}, std::pair{1920u, 1080u}}) {
+        const CmaskLayout cmask(width, height);
+        std::vector<bool> seen(cmask.Bytes() * 2u);
+        for (std::uint32_t tileY = 0; tileY < cmask.TilesY(); ++tileY) {
+            for (std::uint32_t tileX = 0; tileX < cmask.TilesX(); ++tileX) {
+                const auto nibble = cmask.Nibble(tileX, tileY);
+                Require(nibble < seen.size() && !seen[nibble], "CMASK tiles alias or leave the CMASK");
+                seen[nibble] = true;
+            }
+        }
+    }
+    reject([] { CmaskLayout(0, 1); });
+    reject([] { CmaskLayout(61, 13).Nibble(8, 0); });
+    reject([] { CmaskLayout(61, 13).Nibble(0, 2); });
     std::vector<std::byte> tiled(layout.Bytes(), std::byte{0x5a});
     std::vector<std::byte> linear(layout.LinearBytes());
     std::vector<std::byte> restored(linear.size());

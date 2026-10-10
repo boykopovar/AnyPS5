@@ -59,6 +59,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcCmaskClearShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/CmaskClear.comp)
+set(agcCmaskClearShaderSpv ${agcTextureDetileGeneratedDir}/CmaskClear.spv)
+set(agcCmaskClearShaderHeader ${agcTextureDetileGeneratedDir}/CmaskClear_spv.h)
+add_custom_command(
+        OUTPUT "${agcCmaskClearShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcCmaskClearShaderSpv}" "${agcCmaskClearShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcCmaskClearShaderSpv} -DOUTPUT=${agcCmaskClearShaderHeader}
+        -DSYMBOL=CMASK_CLEAR_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcCmaskClearShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -171,6 +184,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcTextureDetileShaderHeader}
+        ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
@@ -546,6 +560,27 @@ foreach(agcCoverStage IN ITEMS vert frag)
     list(APPEND agcCoverShaderHeaders ${agcCoverShaderHeader})
 endforeach()
 
+add_test_executable(agc_driver_cmask_fast_clear_tests EXCLUDE_FROM_ALL
+        tests/CmaskFastClear.cpp
+        ${agcCoverShaderHeaders}
+)
+
+target_include_directories(agc_driver_cmask_fast_clear_tests PRIVATE
+        ${LIBS_INCLUDE_DIR}
+        ${agcTestShaderGeneratedRoot}
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+)
+
+target_link_libraries(agc_driver_cmask_fast_clear_tests PRIVATE
+        libSceAgcDriver
+        SDL2-static
+        libc
+)
+
+set_target_properties(agc_driver_cmask_fast_clear_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_driver_cmask_fast_clear_tests)
+
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
         tests/ResidentPresent.cpp
@@ -649,6 +684,7 @@ add_test_executable(agc_driver_graphics_tests EXCLUDE_FROM_ALL
         Graphics/src/Recorder.cpp
         Graphics/src/ShaderInputState.cpp
         ${agcTextureDetileShaderHeader}
+        ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
@@ -745,7 +781,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    foreach(agcTest IN ITEMS agc_shared_write_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests ${agcExecutionTests})
+    foreach(agcTest IN ITEMS agc_shared_write_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests agc_driver_cmask_fast_clear_tests ${agcExecutionTests})
         if(agcTest STREQUAL "agc_driver_constant_store_tests")
             continue()
         endif()

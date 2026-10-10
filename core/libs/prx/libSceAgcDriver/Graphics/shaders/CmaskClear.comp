@@ -1,0 +1,38 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Cmask { uint words[]; } cmask;
+layout(set = 0, binding = 1, std430) buffer Errors { uint codes; } errors;
+layout(set = 0, binding = 2) writeonly uniform uimage2D target;
+
+layout(push_constant) uniform Push {
+    uint base;
+    uint width;
+    uint height;
+    uint blocksPerRow;
+    uint clear0;
+    uint clear1;
+    uint write;
+} push;
+
+const uint xMasks[13] = uint[](0x008u, 0x000u, 0x040u, 0x000u, 0x080u, 0x000u, 0x100u, 0x000u, 0x200u, 0x008u, 0x010u, 0x040u, 0x020u);
+const uint yMasks[13] = uint[](0x000u, 0x010u, 0x000u, 0x040u, 0x000u, 0x080u, 0x000u, 0x100u, 0x000u, 0x008u, 0x010u, 0x020u, 0x040u);
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= push.width || pixel.y >= push.height) return;
+    uint x = pixel.x & ~7u;
+    uint y = pixel.y & ~7u;
+    uint offset = 0u;
+    for (uint bit = 0u; bit < 13u; ++bit) offset |= (uint(bitCount((x & xMasks[bit]) ^ (y & yMasks[bit]))) & 1u) << bit;
+    uint nibble = ((y / 512u) * push.blocksPerRow + x / 1024u) * 8192u + offset;
+    uint byteAddress = push.base + nibble / 2u;
+    uint code = (cmask.words[byteAddress / 4u] >> ((byteAddress % 4u) * 8u + (nibble % 2u) * 4u)) & 0xfu;
+    if (code == 0xfu) return;
+    if (code == 0u && push.write != 0u) {
+        imageStore(target, ivec2(pixel), uvec4(push.clear0, push.clear1, 0u, 0u));
+        return;
+    }
+    if ((pixel.x & 7u) == 0u && (pixel.y & 7u) == 0u) atomicOr(errors.codes, 1u << code);
+}

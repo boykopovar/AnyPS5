@@ -8,6 +8,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -29,6 +31,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <unordered_map>
 #include <utility>
 
 namespace AgcDriver::Graphics {
@@ -134,22 +137,156 @@ void materializeRegisterClear(const Context& context, const ColorTarget& color, 
     resident.Refresh();
 }
 
-bool materializeCmaskClear(const Context& context, const ColorTarget& color, StorageTexture* resident) {
+enum class CmaskState { Expanded, Cleared, Partial };
+
+struct CmaskProof {
+    std::size_t bytes = 0;
+    std::uint64_t generation = 0;
+};
+
+std::mutex& cmaskProofMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<std::uint64_t, CmaskProof>& cmaskProofs() {
+    static std::unordered_map<std::uint64_t, CmaskProof> proofs;
+    return proofs;
+}
+
+bool cmaskProved(std::uint64_t address, std::size_t bytes) {
+    if (GuestMemory::CollectWrites(address, bytes) == 0) return false;
+    std::lock_guard lock(cmaskProofMutex());
+    const auto found = cmaskProofs().find(address);
+    return found != cmaskProofs().end() && found->second.bytes == bytes && !GuestMemory::StoredOver(address, bytes, found->second.generation);
+}
+
+void proveCmask(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    std::lock_guard lock(cmaskProofMutex());
+    if (generation == 0) cmaskProofs().erase(address);
+    else cmaskProofs()[address] = {bytes, generation};
+}
+
+std::string hexAddress(std::uint64_t address) {
+    char text[24];
+    std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(address));
+    return text;
+}
+
+void requireCmaskCodes(std::uint32_t codes) {
+    if (codes == 0) return;
+    Require((codes & 1u) == 0, "a CMASK fast clear of a DCC color target, whose clear belongs in its DCC keys, was recorded");
+    std::string listed;
+    for (std::uint32_t code = 1; code < 15; ++code) {
+        if ((codes >> code) & 1u) listed += (listed.empty() ? "" : ", ") + std::to_string(code);
+    }
+    Require(false, "CMASK codes " + listed + " were recorded, which are not a single-sample fast-clear code (0 cleared, 15 expanded)");
+}
+
+CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::vector<std::uint32_t>& cleared) {
+    const auto address = color.cmaskAddress;
+    const auto bytes = layout.Bytes();
+    const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
+    auto* recorder = Recorder::Active();
+    if (locked && recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
+        Recorder::CountSync(2);
+        recorder->SyncThrough(address, bytes);
+    }
+    if (AnyShadowedOverlaps(address, bytes)) {
+        Require(locked, "a CMASK under a unit shadow must be read under the device lock");
+        PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+        if (recorder != nullptr) {
+            Recorder::CountSync(2);
+            recorder->Sync();
+        }
+    }
+    std::vector<std::byte> mask(bytes);
+    GuestMemory::Read(address, mask, CmaskLayout::Alignment);
+    const auto uniform = [&](std::byte value) { return std::all_of(mask.begin(), mask.end(), [&](std::byte entry) { return entry == value; }); };
+    if (uniform(std::byte{0xff})) return CmaskState::Expanded;
+    if (uniform(std::byte{0})) return CmaskState::Cleared;
+    for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
+        for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
+            const auto nibble = layout.Nibble(tileX, tileY);
+            const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
+            if (code == 0u) cleared.push_back(tileY * layout.TilesX() + tileX);
+            else Require(code == 0xfu, "CMASK code " + std::to_string(code) + " of color target " + hexAddress(color.address) + " is not a single-sample fast-clear code (0 cleared, 15 expanded)");
+        }
+    }
+    if (cleared.empty()) return CmaskState::Expanded;
+    if (cleared.size() == static_cast<std::size_t>(layout.TilesX()) * layout.TilesY()) return CmaskState::Cleared;
+    return CmaskState::Partial;
+}
+
+void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, const std::vector<std::uint32_t>* tiles, const std::array<std::byte, 16>& texel) {
+    StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
+    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    Require(surface.Bytes() == color.bytes, "CMASK fast clear over a color target whose layout differs from its surface");
+    std::vector<std::byte> texels(surface.Bytes());
+    GuestMemory::Read(color.address, texels, surface.Alignment());
+    const auto fill = [&](std::uint32_t tile) {
+        const auto x0 = (tile % layout.TilesX()) * 8u;
+        const auto y0 = (tile / layout.TilesX()) * 8u;
+        for (auto y = y0; y < std::min(y0 + 8u, color.extent.height); ++y) {
+            for (auto x = x0; x < std::min(x0 + 8u, color.extent.width); ++x) std::memcpy(texels.data() + surface.Offset(x, y), texel.data(), color.elementBytes);
+        }
+    };
+    if (tiles != nullptr) {
+        for (const auto tile : *tiles) fill(tile);
+    } else {
+        for (std::uint32_t tile = 0; tile < layout.TilesX() * layout.TilesY(); ++tile) fill(tile);
+    }
+    GuestMemory::Write(color.address, texels, surface.Alignment());
+}
+
+void recordCmaskClear(const Context& context, Recorder& recorder, const HostImport& import, const ColorTarget& color, const CmaskLayout& layout, const std::shared_ptr<StorageTexture>& resident, VkImageView view) {
+    const auto address = color.cmaskAddress;
+    const auto bytes = layout.Bytes();
+    StorageTexture::FlushPending(address, bytes, nullptr, "fast-clear materialization");
+    if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+    recorder.FlushKeyStoresOverlapping(address, bytes);
+    const auto commands = recorder.Commands();
+    recorder.Keep(resident);
+    context.detiler->DispatchCmaskClear(commands, import.buffer, address - import.base, bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0);
+    recorder.NotePendingWrite(address, bytes);
+    proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
+}
+
+bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
     if (color.cmaskAddress == 0) return false;
-    const auto metadataBytes = static_cast<std::uint64_t>(color.cmaskBytes) * 256u;
-    const auto state = CurrentDccKeys(color.cmaskAddress, metadataBytes);
-    if (state == DccKeys::Uncompressed) return false;
-    Require(color.dccAddress == 0, std::string("CMASK of a DCC color target that is not all expanded is not modeled (") + DccKeysName(state) + ")");
-    Require(state == DccKeys::Clear0000, std::string("CMASK whose tiles are not all fast-cleared or all expanded is not modeled (") + DccKeysName(state) + ")");
+    if (context.detiler != nullptr) requireCmaskCodes(context.detiler->CmaskErrors());
+    const CmaskLayout layout(color.extent.width, color.extent.height);
+    const auto bytes = layout.Bytes();
+    Require(color.cmaskBytes == bytes, "CMASK size differs from the color target's CMASK layout");
+    if (cmaskProved(color.cmaskAddress, bytes)) return false;
+    auto* recorder = Recorder::Active();
+    if (resident != nullptr && context.detiler != nullptr && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) {
+        const auto* import = HostImportFor(context, color.cmaskAddress, bytes);
+        const auto view = import != nullptr ? resident->ElementView() : VK_NULL_HANDLE;
+        if (view != VK_NULL_HANDLE) {
+            recordCmaskClear(context, *recorder, *import, color, layout, resident, view);
+            return true;
+        }
+    }
+    const auto collected = GuestMemory::CollectWrites(color.cmaskAddress, bytes);
+    std::vector<std::uint32_t> cleared;
+    const auto state = readCmask(color, layout, cleared);
+    if (state == CmaskState::Expanded) {
+        proveCmask(color.cmaskAddress, bytes, collected);
+        return false;
+    }
+    Require(color.dccAddress == 0, "CMASK fast clear of a DCC color target, whose clear belongs in its DCC keys");
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
     const char* refusal = nullptr;
-    if (resident == nullptr || !clearToTexel(*resident, texel, color.elementBytes, refusal)) {
-        StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
-        writeTexels(color, texel);
+    const bool filled = state == CmaskState::Cleared && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
+    if (!filled) {
+        storeCmaskClearTexels(color, layout, state == CmaskState::Cleared ? nullptr : &cleared, texel);
         if (resident != nullptr) resident->Refresh();
     }
-    MarkDccUncompressed(context, color.cmaskAddress, metadataBytes);
-    return true;
+    const std::vector<std::byte> expanded(bytes, std::byte{0xff});
+    GuestMemory::Write(color.cmaskAddress, expanded, CmaskLayout::Alignment);
+    proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
+    return filled;
 }
 
 void imageBarrier(const Context& context, VkCommandBuffer commands, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
@@ -943,7 +1080,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         std::lock_guard lock(reportMutex);
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
     }
-    if (resident != nullptr) materializeCmaskClear(context, color, resident.get());
+    if (resident != nullptr) materializeCmaskClear(context, color, resident);
     if (profile) {
         const auto lookupUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - lookupStart).count();
         ++outcome.targetLookups;
@@ -2176,7 +2313,7 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
     for (const auto& color : pass.targets) {
         if (color.cmaskAddress != 0) {
             const auto resident = metadataPassResident(context, color);
-            if (materializeCmaskClear(context, color, resident.get()) && resident != nullptr) resident->MarkDirty();
+            if (materializeCmaskClear(context, color, resident) && resident != nullptr) resident->MarkDirty();
         }
         if (color.dccAddress == 0) continue;
         auto keys = CurrentDccKeys(color.dccAddress, color.bytes);

@@ -129,6 +129,7 @@ public:
     VkImageView View(std::uint32_t mip);
     VkImageView FirstLayerView(std::uint32_t mip);
     VkImageView StorageView(std::uint32_t mip, bool firstLayer);
+    VkImageView ElementView();
     VkImageView AtomicView(std::uint32_t mip, bool firstLayer);
     VkImageView Atomic64View(std::uint32_t mip, bool firstLayer);
     // Render targets live in the same images: draws attach mip 0 through a view of the color
@@ -477,6 +478,7 @@ private:
     std::map<std::uint32_t, VkImageView> firstLayerViews;
     std::map<std::pair<std::uint32_t, bool>, VkImageView> atomicViews;
     std::map<std::pair<std::uint32_t, bool>, VkImageView> uintViews;
+    VkImageView elementView = VK_NULL_HANDLE;
     bool attachable = false;
     std::map<std::tuple<VkFormat, std::uint32_t, std::uint32_t>, VkImageView> attachmentViews;
     VkImage proxyImage = VK_NULL_HANDLE;

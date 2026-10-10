@@ -1159,6 +1159,16 @@ VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer) {
     return created;
 }
 
+VkImageView StorageTexture::ElementView() {
+    if (elementView != VK_NULL_HANDLE) return elementView;
+    if (descriptor.dimension != TextureDimension::k2D || geometry.imageLayers != 1) return VK_NULL_HANDLE;
+    const auto bytes = BytesPerElement(descriptor.format);
+    const auto format = bytes == 1 ? VK_FORMAT_R8_UINT : bytes == 2 ? VK_FORMAT_R16_UINT : bytes == 4 ? VK_FORMAT_R32_UINT : bytes == 8 ? VK_FORMAT_R32G32_UINT : VK_FORMAT_UNDEFINED;
+    if (format == VK_FORMAT_UNDEFINED || StorageFormatOrUndefined(context, format) != format) return VK_NULL_HANDLE;
+    elementView = createView(0, false, format);
+    return elementView;
+}
+
 VkImageView StorageTexture::AtomicView(std::uint32_t mip, bool firstLayer) {
     if (storageFormat == VK_FORMAT_R32_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
     Require(storageFormat == VK_FORMAT_R32_SINT || storageFormat == VK_FORMAT_R32_SFLOAT, "storage image atomics need a surface of one 32-bit component");
@@ -3833,6 +3843,8 @@ void StorageTexture::release() noexcept {
     atomicViews.clear();
     for (const auto& [key, uint] : uintViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uint, nullptr);
     uintViews.clear();
+    if (elementView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, elementView, nullptr);
+    elementView = VK_NULL_HANDLE;
     for (const auto& [format, attachment] : attachmentViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, attachment, nullptr);
     attachmentViews.clear();
     if (proxyView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, proxyView, nullptr);

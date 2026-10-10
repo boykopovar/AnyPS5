@@ -734,10 +734,7 @@ std::array<std::uint8_t, 8> ExportMappings(const State& state) {
 }
 
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height) {
-    constexpr std::size_t metablockWidth = 1024;
-    constexpr std::size_t metablockHeight = 512;
-    constexpr std::size_t metablockBytes = 4096;
-    return ((width + metablockWidth - 1) / metablockWidth) * ((height + metablockHeight - 1) / metablockHeight) * metablockBytes;
+    return CmaskLayout(width, height).Bytes();
 }
 
 std::uint32_t ColorWriteMask(const Registers& context) {
@@ -813,10 +810,13 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     }
     if ((info & 0x2000u) != 0) {
         Require(maxMip == 0 && !volume && slice == 0, "CMASK fast clears of a mipmapped, 3D or array color target are unsupported");
+        Require(((attrib3 >> 19u) & 0x1fu) == 0x18u && (attrib3 & 0x4000000u) != 0, "CMASK fast clears need pipe-aligned SW_64KB_Z_X metadata (CB_COLOR_ATTRIB3 FMASK_SW_MODE 24, CMASK_PIPE_ALIGNED)");
+        Require(color.elementBytes <= 8, "CMASK fast clears of texels over 64 bits are unsupported");
         const auto cmaskHigh = find(cx, 0x398 + slot);
         color.cmaskAddress = ((cmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(cmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u);
         Require(color.cmaskAddress != 0, "CMASK fast clears without a CMASK address are unsupported");
         color.cmaskBytes = CmaskBytes(color.extent.width, color.extent.height);
+        GuestMemory::CheckRange(reinterpret_cast<const void*>(color.cmaskAddress), color.cmaskBytes, CmaskLayout::Alignment, true);
     }
     if ((info & 0x10000000u) != 0) {
         if (maxMip == 0) {

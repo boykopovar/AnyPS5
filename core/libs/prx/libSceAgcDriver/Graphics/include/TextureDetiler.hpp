@@ -5,11 +5,15 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
+    class Buffer;
 
     // The part of a mip one Dispatch moves: only elements whose tiled offset (relative to the mip's
     // tiled base; the linear offset of a linear surface) lies in [rangeBegin, rangeEnd), with the
@@ -45,6 +49,8 @@ namespace AgcDriver::Graphics {
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
+        void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
+        std::uint32_t CmaskErrors();
 
     private:
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick);
@@ -58,6 +64,12 @@ namespace AgcDriver::Graphics {
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
         std::vector<VkDescriptorPool> descriptorPools;
         std::size_t allocatedSets = 0;
+        VkDescriptorSetLayout cmaskDescriptorLayout = VK_NULL_HANDLE;
+        VkPipelineLayout cmaskPipelineLayout = VK_NULL_HANDLE;
+        VkPipeline cmaskPipeline = VK_NULL_HANDLE;
+        std::vector<VkDescriptorPool> cmaskDescriptorPools;
+        std::size_t allocatedCmaskSets = 0;
+        std::unique_ptr<Buffer> cmaskErrors;
     };
 
 }

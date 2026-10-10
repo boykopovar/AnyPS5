@@ -13,6 +13,10 @@ void TextureDetiler::BeginBatch() {
         Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool texture detiler");
     }
     allocatedSets = 0;
+    for (const auto pool : cmaskDescriptorPools) {
+        Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), "vkResetDescriptorPool CMASK clear");
+    }
+    allocatedCmaskSets = 0;
 }
 
 VkDescriptorSet TextureDetiler::allocateSet() {
