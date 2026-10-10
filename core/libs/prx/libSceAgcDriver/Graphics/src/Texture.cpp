@@ -241,9 +241,14 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
     PhaseTimer timer;
     try {
         const auto colorFormat = SampledTextureFormat(context, descriptor.format);
-        Require(!depthCompare || colorFormat == VK_FORMAT_R32_SFLOAT || colorFormat == VK_FORMAT_R16_UNORM, "comparison sampling requires an R32 float or R16 unorm depth texture");
+        const auto elementBytes = BytesPerElement(descriptor.format);
+        const bool isDepth32 = (colorFormat == VK_FORMAT_R32_SFLOAT);
+        const bool isDepth16 = (colorFormat == VK_FORMAT_R16_UNORM);
+        constexpr std::uint32_t Format8888UNorm = 56;
+        const bool isDepth56 = (descriptor.format == Format8888UNorm);
+        Require(!depthCompare || isDepth32 || isDepth16 || isDepth56, "comparison sampling requires an R32 float or R16 unorm depth texture");
         Require(!depthCompare || descriptor.dimension != TextureDimension::k3D, "comparison sampling does not support 3D depth textures");
-        const auto vkFormat = depthCompare ? (colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM) : colorFormat;
+        const auto vkFormat = depthCompare ? (isDepth16 ? VK_FORMAT_D16_UNORM : VK_FORMAT_D32_SFLOAT) : colorFormat;
         const VkImageAspectFlags aspect = depthCompare ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         if (IsBlockCompressed(descriptor.format)) {
             Require(context.textureCompressionBC, "device does not support BC compressed textures");
@@ -252,7 +257,6 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         const auto geometry = DescribeSurface(descriptor);
         const auto& mips = geometry.mips;
         const auto arrayLayers = geometry.layers;
-        const auto elementBytes = BytesPerElement(descriptor.format);
         APS5_LOG_OUT("Texture address=0x%llx %ux%u mips=%u layers=%u dim=%d tile=%d format=%u vk=%d element=%u", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, arrayLayers,
                      static_cast<int>(descriptor.dimension), static_cast<int>(descriptor.tileMode), descriptor.format, static_cast<int>(vkFormat), elementBytes);
         for (const auto& mip : mips) APS5_LOG_OUT("  mip %ux%u tiled=0x%llx+0x%llx linear=0x%llx+0x%llx blocksPerRow=%u pitch=%u tail=%d", mip.width, mip.height, static_cast<unsigned long long>(mip.tiledOffset), static_cast<unsigned long long>(mip.tiledSize), static_cast<unsigned long long>(mip.linearOffset), static_cast<unsigned long long>(mip.linearSize), mip.blocksPerRow, mip.pitchBytes, mip.tail ? 1 : 0);
@@ -304,6 +308,24 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             }
             auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(staging->Bytes().data(), snapshot.data(), snapshot.size());
+            if (depthCompare && isDepth56) {
+                auto* bytes = reinterpret_cast<std::uint8_t*>(staging->Bytes().data());
+                const std::size_t texelCount = snapshot.size() / 4u;
+                if (descriptor.dstSelX == 0) {
+                    const float zero = 0.0f;
+                    for (std::size_t i = 0; i < texelCount; ++i) std::memcpy(bytes + i * 4u, &zero, sizeof(float));
+                } else if (descriptor.dstSelX == 1) {
+                    const float one = 1.0f;
+                    for (std::size_t i = 0; i < texelCount; ++i) std::memcpy(bytes + i * 4u, &one, sizeof(float));
+                } else {
+                    const std::size_t channel = (descriptor.dstSelX >= 4 && descriptor.dstSelX <= 7) ? (descriptor.dstSelX - 4) : 0;
+                    for (std::size_t i = 0; i < texelCount; ++i) {
+                        const std::uint8_t value = bytes[i * 4u + channel];
+                        const float depth = static_cast<float>(value) / 255.0f;
+                        std::memcpy(bytes + i * 4u, &depth, sizeof(float));
+                    }
+                }
+            }
             auto tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             if (profile) Profile().allocate += timer.lap();

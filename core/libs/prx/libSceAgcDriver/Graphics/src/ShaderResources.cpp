@@ -852,9 +852,9 @@ std::uint64_t SampledTextureCacheBudget(const Context& context) {
     return sampledBudget(context, cache);
 }
 
-std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words) {
+std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, bool depthCompare) {
     const auto resource = DecodeTextureResource(words);
-    return cachedTexture(context, words, resource, ViewComponents(resource));
+    return cachedTexture(context, words, resource, ViewComponents(resource), 0, depthCompare);
 }
 
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second) {

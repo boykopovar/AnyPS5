@@ -35,6 +35,9 @@ using namespace AgcDriver::Graphics;
 
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t Format8888UNorm = 56;
+constexpr std::uint32_t Format8888UInt = 60;
+constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t TileR64KBX = 0x1b;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
@@ -184,12 +187,12 @@ private:
     void* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side) {
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt, std::uint32_t dstSel = 0xfacu) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
         ((side - 1u) >> 2u) | ((side - 1u) << 14u),
-        0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
+        dstSel | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
         0u,
         0u,
@@ -437,6 +440,38 @@ void collidingKeyTests(const Context& context) {
     Require(kept == capacity && TextureCacheUsage().sampledEntries == capacity, "the first use of a descriptor whose cache key hash equals that of another descriptor first used in the frame left " + std::to_string(kept) + " of the " + std::to_string(capacity) + " textures the last frame used cached");
 }
 
+void depthCompareFormatTests(const Context& context) {
+    Block block(context);
+
+    auto tex56 = CachedSampledTexture(context, Descriptor(block.Surface(0), Side, Format8888UNorm), true);
+    Require(tex56 != nullptr, "failed to sample format 56 with depth compare");
+    Require(tex56->ViewFormat() == VK_FORMAT_D32_SFLOAT, "format 56 depth compare did not produce a D32_SFLOAT view");
+
+    auto tex56Zero = CachedSampledTexture(context, Descriptor(block.Surface(1), Side, Format8888UNorm, 0u), true);
+    Require(tex56Zero != nullptr && tex56Zero->ViewFormat() == VK_FORMAT_D32_SFLOAT, "format 56 dstSelX=0 depth compare failed");
+
+    auto tex56One = CachedSampledTexture(context, Descriptor(block.Surface(2), Side, Format8888UNorm, 1u), true);
+    Require(tex56One != nullptr && tex56One->ViewFormat() == VK_FORMAT_D32_SFLOAT, "format 56 dstSelX=1 depth compare failed");
+
+    auto tex56Color = CachedSampledTexture(context, Descriptor(block.Surface(3), Side, Format8888UNorm), false);
+    Require(tex56Color != nullptr && tex56Color->ViewFormat() == VK_FORMAT_R8G8B8A8_UNORM, "format 56 color sample did not produce R8G8B8A8_UNORM view");
+
+    auto tex32 = CachedSampledTexture(context, Descriptor(block.Surface(4), Side, Format32Float), true);
+    Require(tex32 != nullptr && tex32->ViewFormat() == VK_FORMAT_D32_SFLOAT, "format 22 depth compare did not produce D32_SFLOAT view");
+
+    const auto reject = [&](std::uint32_t format, std::size_t surfaceIndex, const char* name) {
+        try {
+            CachedSampledTexture(context, Descriptor(block.Surface(surfaceIndex), Side, format), true);
+            Require(false, std::string(name) + " was unexpectedly accepted for comparison sampling");
+        } catch (const std::exception& error) {
+            Require(std::string_view(error.what()).find("comparison sampling requires an R32 float or R16 unorm depth texture") != std::string_view::npos,
+                    std::string("unexpected rejection error for ") + name + ": " + error.what());
+        }
+    };
+    reject(Format32UInt, 5, "format 20 (R32_UINT)");
+    reject(Format8888UInt, 6, "format 60 (R8G8B8A8_UINT)");
+}
+
 constexpr std::uint64_t ReportedBudget = 64ull << 30u;
 constexpr std::uint64_t ReportedUsage = 12ull << 30u;
 
@@ -516,6 +551,7 @@ int main(int argc, char** argv) {
             frameTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
+            depthCompareFormatTests(context);
             ClearCachedTextures(context.device);
         }
         std::puts("sampled texture cache budget tests passed");
