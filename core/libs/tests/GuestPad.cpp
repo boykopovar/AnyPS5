@@ -63,6 +63,22 @@ static void CheckTouchContact() {
     Pad::ReadState();
 }
 
+static void CheckReadQueue(int handle) {
+    PadData drained[64]{};
+    scePadRead_nid_postfix(handle, drained, 64);
+    PadInputState pressed;
+    pressed.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    PadPublishInput_nid_postfix(pressed);
+    PadPublishInput_nid_postfix(PadInputState{});
+    PadData data[4]{};
+    Require(scePadRead_nid_postfix(handle, data, 4) == 2);
+    Require((data[0].buttons & pressed.buttons) != 0);
+    Require((data[1].buttons & pressed.buttons) == 0);
+    Require(data[0].timestamp <= data[1].timestamp);
+    Require(scePadRead_nid_postfix(handle, data, 4) == 1);
+    Require(data[0].buttons == 0);
+}
+
 static void CheckReadStateHandle(int handle) {
     PadData data{};
     Require(scePadReadState(0, &data) == PAD_ERROR_INVALID_HANDLE);
@@ -99,6 +115,7 @@ int main() {
     Require(scePadGetHandle(user, 2, 0) == handle);
     CheckTiltCorrection(handle);
     CheckTouchContact();
+    CheckReadQueue(handle);
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
     Require(scePadSetVibrationMode(handle, 1) == 0);

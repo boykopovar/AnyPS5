@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <stdexcept>
 
@@ -12,6 +13,13 @@ namespace {
     PadInputState state;
     PadOutputState output;
     std::uint64_t timestamp = 0;
+
+    struct QueuedInput {
+        PadInputState input;
+        std::uint64_t timestamp = 0;
+    };
+    constexpr std::size_t kQueueCapacity = 64;
+    std::deque<QueuedInput> queue;
     std::exception_ptr failure;
     bool initialized = false;
 
@@ -93,15 +101,13 @@ void Pad::Initialize() {
     if (!initialized) {
         timestamp = sceKernelGetProcessTime();
         lastFuseTime = timestamp;
+        queue.clear();
     }
     initialized = true;
 }
 
-PadData Pad::ReadState() {
-    std::lock_guard lock(stateMutex);
-    if (failure) std::rethrow_exception(failure);
-    if (!initialized) throw std::runtime_error("Pad: read before initialization");
-    const std::uint64_t now = sceKernelGetProcessTime();
+namespace {
+PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uint64_t now) {
     PadData data{};
     data.buttons = state.buttons;
     data.left_stick_x = state.sticks[0];
@@ -138,7 +144,7 @@ PadData Pad::ReadState() {
 
     data.connected = true;
     data.connected_count = 1;
-    data.timestamp = timestamp;
+    data.timestamp = changeTime;
 
     std::uint8_t touchNum = 0;
     for (int i = 0; i < 2; ++i) {
@@ -162,6 +168,33 @@ PadData Pad::ReadState() {
     }
     data.touch_data_touch_num = touchNum;
     return data;
+}
+}
+
+PadData Pad::ReadState() {
+    std::lock_guard lock(stateMutex);
+    if (failure) std::rethrow_exception(failure);
+    if (!initialized) throw std::runtime_error("Pad: read before initialization");
+    return BuildData(state, timestamp, sceKernelGetProcessTime());
+}
+
+int Pad::Read(PadData* data, int num) {
+    if (data == nullptr || num <= 0) throw std::invalid_argument("Pad: invalid read buffer");
+    std::lock_guard lock(stateMutex);
+    if (failure) std::rethrow_exception(failure);
+    if (!initialized) throw std::runtime_error("Pad: read before initialization");
+    const std::uint64_t now = sceKernelGetProcessTime();
+    if (queue.empty()) {
+        data[0] = BuildData(state, timestamp, now);
+        return 1;
+    }
+    int count = 0;
+    while (count < num && !queue.empty()) {
+        const QueuedInput& entry = queue.front();
+        data[count++] = BuildData(entry.input, entry.timestamp, now);
+        queue.pop_front();
+    }
+    return count;
 }
 
 void Pad::SetVibration(std::uint8_t large, std::uint8_t small) {
@@ -280,6 +313,8 @@ extern "C" void PadPublishInput_nid_postfix(const PadInputState& input) {
         state.touch == input.touch && state.deviceKind == input.deviceKind) return;
     state = input;
     timestamp = sceKernelGetProcessTime();
+    if (queue.size() == kQueueCapacity) queue.pop_front();
+    queue.push_back({input, timestamp});
 }
 
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
