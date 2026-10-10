@@ -379,7 +379,8 @@ std::uint32_t RegisterValue(const Registers& registers, std::uint32_t offset) {
     return found->second;
 }
 
-void BuildRegisteredAbiKey(const QueueState& state, const VulkanDevice& device, std::vector<std::uint64_t>& key) {
+template<typename State>
+void BuildRegisteredAbiKey(const State& state, const VulkanDevice& device, std::vector<std::uint64_t>& key) {
     key.clear();
     key.reserve(7u + state.shader.size() + state.context.size() + state.userConfig.size());
     key.insert(key.end(), {device.Serial(), ShaderRecompiler::DebugProbeActive(), ShaderRecompiler::RayTracingStrict(), ShaderRecompiler::RayTracingMiss()});
@@ -399,7 +400,7 @@ struct RegisteredPreparation {
     std::vector<std::uint64_t> abiKey;
 };
 
-std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snapshot, const VulkanDevice& device, const QueueState& state, bool registration, bool* deferred = nullptr) {
+std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snapshot, const VulkanDevice& device, const RegisteredShaderState& state, bool registration, bool* deferred = nullptr) {
     using Stage = ShaderRecompiler::ShaderStage;
     const auto header = ReadHeader(snapshot);
     std::uint32_t programRegister;
@@ -512,7 +513,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
     return entries;
 }
 
-std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snapshot, const VulkanDevice& device, const QueueState& state, bool registration, bool* deferred = nullptr) {
+std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snapshot, const VulkanDevice& device, const RegisteredShaderState& state, bool registration, bool* deferred = nullptr) {
     const auto plan = PlanRegistered(snapshot, device, state, registration, deferred);
     return plan != nullptr ? PrepareRegistered(*plan) : std::vector<PreparedShaders::Entry>{};
 }
@@ -666,7 +667,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     ShaderPreparationTransaction transaction;
     CheckFailure();
     require(!stages.empty(), "graphics ABI has no shader headers");
-    QueueState state{};
+    auto state = std::make_unique<QueueState>();
     std::shared_ptr<const ShaderRegistry> registry;
     std::shared_ptr<const ShaderSnapshot> owner;
     {
@@ -681,32 +682,32 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
             require(SameHeader(snapshot, shader), "graphics ABI refers to a replaced shader header");
             require(snapshot.registeredState != nullptr, "registered shader state is missing");
             const auto& registered = *snapshot.registeredState;
-            for (const auto& [offset, value] : registered.shader) state.shader.insert_or_assign(offset, value);
-            for (const auto& [offset, value] : registered.context) state.context.insert_or_assign(offset, value);
-            for (const auto& [offset, value] : registered.userConfig) state.userConfig.insert_or_assign(offset, value);
+            for (const auto& [offset, value] : registered.shader) state->shader.insert_or_assign(offset, value);
+            for (const auto& [offset, value] : registered.context) state->context.insert_or_assign(offset, value);
+            for (const auto& [offset, value] : registered.userConfig) state->userConfig.insert_or_assign(offset, value);
         }
     }
-    for (const auto reg : context) state.context.insert_or_assign(reg.offset, reg.value);
-    for (const auto reg : primitive) state.userConfig.insert_or_assign(reg.offset, reg.value);
+    for (const auto reg : context) state->context.insert_or_assign(reg.offset, reg.value);
+    for (const auto reg : primitive) state->userConfig.insert_or_assign(reg.offset, reg.value);
     const auto localDevice = device.Load();
     require(localDevice != nullptr, "graphics ABI device is missing");
     struct GraphicsAbiKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, GraphicsAbiKeyStorage>();
-    BuildRegisteredAbiKey(state, *localDevice, key);
-    const auto primitiveType = state.userConfig.find(0x242u);
+    BuildRegisteredAbiKey(*state, *localDevice, key);
+    const auto primitiveType = state->userConfig.find(0x242u);
     for (const auto& abi : transaction.Read(*owner).graphicsAbis) {
         if (abi.key != key || abi.registry.lock() != registry) continue;
         for (const auto& stage : abi.stages) {
             const auto snapshot = stage.lock();
             require(snapshot != nullptr, "prepared graphics ABI lost a registered stage");
-            if (snapshot->type != 1) ResolvePreparedGraphics(*snapshot, {}, primitiveType == state.userConfig.end() ? 0u : primitiveType->second, localDevice->Target());
+            if (snapshot->type != 1) ResolvePreparedGraphics(*snapshot, {}, primitiveType == state->userConfig.end() ? 0u : primitiveType->second, localDevice->Target());
         }
         transaction.Commit();
         return;
     }
     DrawDecode decoded{};
-    decoded.state.stages = Graphics::DecodeShaderStages(state);
-    DecodeGraphicsPrograms(decoded, state, *registry, true, false);
+    decoded.state.stages = Graphics::DecodeShaderStages(*state);
+    DecodeGraphicsPrograms(decoded, *state, *registry, true, false);
     auto prepared = PrepareGraphicsStages(decoded, localDevice->Target());
     for (auto& stage : prepared) {
         const auto& entries = transaction.Read(*stage.snapshot).entries;
@@ -715,7 +716,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
     }
     for (const auto& stage : prepared) {
         if (stage.snapshot->type == 1) continue;
-        ResolvePreparedGraphics(*stage.snapshot, {}, primitiveType == state.userConfig.end() ? 0u : primitiveType->second, localDevice->Target());
+        ResolvePreparedGraphics(*stage.snapshot, {}, primitiveType == state->userConfig.end() ? 0u : primitiveType->second, localDevice->Target());
     }
     PreparedShaderState::GraphicsAbi abi{key, registry, {}};
     for (const auto& stage : prepared) abi.stages.push_back(stage.snapshot);
@@ -746,7 +747,7 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
         require(SameHeader(*snapshot, shader), "static ABI refers to a replaced shader header");
     }
     require(snapshot->registeredState != nullptr, "registered shader state is missing");
-    QueueState state{};
+    RegisteredShaderState state{};
     state.shader = snapshot->registeredState->shader;
     state.context = snapshot->registeredState->context;
     state.userConfig = snapshot->registeredState->userConfig;
@@ -887,10 +888,7 @@ ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device) {
     nullRegisteredState.context.insert_or_assign(0x1b3u, 0x2u);
     nullRegisteredState.context.insert_or_assign(0x1b4u, 0x2u);
     null.registeredState = std::make_shared<const RegisteredShaderState>(std::move(nullRegisteredState));
-    QueueState nullState{};
-    nullState.shader = null.registeredState->shader;
-    nullState.context = null.registeredState->context;
-    nullState.userConfig = null.registeredState->userConfig;
+    RegisteredShaderState nullState = *null.registeredState;
     null.prepared->entries = PrepareRegistered(null, device, nullState, true);
     return null;
 }
@@ -937,10 +935,7 @@ void Driver::RegisterShader(const Shader* shader) {
         localDevice = device;
     }
     snapshot.registeredState = std::make_shared<const RegisteredShaderState>(DecodeRegisteredState(snapshot));
-    QueueState registered{};
-    registered.shader = snapshot.registeredState->shader;
-    registered.context = snapshot.registeredState->context;
-    registered.userConfig = snapshot.registeredState->userConfig;
+    RegisteredShaderState registered = *snapshot.registeredState;
     std::shared_ptr<RegisteredPreparation> preparation;
     if (AsyncRegistrationPrepare()) {
         preparation = PlanRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred);

@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "SceTypes.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -24,6 +25,14 @@
 #include <fstream>
 #include <sstream>
 #include <thread>
+
+extern "C" {
+int APS5_VABI scePthreadCreate(Pthread*, const PthreadAttr*, PthreadEntry, void*, const char*);
+int APS5_VABI scePthreadJoin(Pthread, void**);
+int APS5_VABI scePthreadAttrInit(PthreadAttr*);
+int APS5_VABI scePthreadAttrDestroy(PthreadAttr*);
+int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr*, std::size_t);
+}
 
 namespace {
 
@@ -317,11 +326,11 @@ void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
 }
 
 void UnsupportedTypeRegistration() {
-    alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
+    alignas(256) const std::array<std::uint32_t, 1> code{0xbf810000u};
     struct Header {
         Shader shader{};
         std::array<ShaderRegister, 8> registers{{{0, 0x1218}, {1, 0x40104004}, {2, 0xa0}, {5, 0}, {3, 6}, {4, 0xc}, {6, 0}, {7, 0}}};
-    } header;
+    } header{};
     header.shader.file_header = 0x34333231u;
     header.shader.version = 0x18;
     header.shader.header_size = sizeof(header);
@@ -332,6 +341,32 @@ void UnsupportedTypeRegistration() {
     header.shader.type = 8;
     AgcDriverRegisterShader_nid_postfix(&header.shader);
     AgcDriverRegisterShader_nid_postfix(&header.shader);
+}
+
+void* APS5_VABI RegisterUnsupportedShaderOnSmallStack(void* argument) {
+    auto* failure = static_cast<std::exception_ptr*>(argument);
+    try {
+        UnsupportedTypeRegistration();
+    } catch (...) {
+        *failure = std::current_exception();
+    }
+    return nullptr;
+}
+
+void SmallStackRegistration() {
+    constexpr std::size_t stackSize = 48u * 1024u;
+    // Initialize the driver's device on a host-sized stack so this test isolates registration's stack use.
+    UnsupportedTypeRegistration();
+    PthreadAttr attributes = nullptr;
+    Require(scePthreadAttrInit(&attributes) == 0, "guest pthread attribute initialization failed");
+    Require(scePthreadAttrSetstacksize(&attributes, stackSize) == 0, "guest pthread stack size setup failed");
+    std::exception_ptr failure;
+    Pthread thread = nullptr;
+    const auto createResult = scePthreadCreate(&thread, &attributes, RegisterUnsupportedShaderOnSmallStack, &failure, nullptr);
+    Require(scePthreadAttrDestroy(&attributes) == 0, "guest pthread attribute cleanup failed");
+    Require(createResult == 0, "guest pthread creation failed");
+    Require(scePthreadJoin(thread, nullptr) == 0, "guest pthread join failed");
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 void RegistrationWithoutSpecials() {
@@ -500,7 +535,14 @@ void DeferredUndecodableRegistration() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 1 || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable")), "invalid test arguments");
+        Require(argc == 1 || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--small-stack-registration")), "invalid test arguments");
+        if (argc == 2 && std::string_view(argv[1]) == "--small-stack-registration") {
+            auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            SmallStackRegistration();
+            std::cout << "small guest-stack shader registration test passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--deferred") {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             DeferredRegistration();
