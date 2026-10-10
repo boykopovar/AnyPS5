@@ -24,6 +24,11 @@ int APS5_VABI sceContentDeleteByPath(void) {
  return 0;
 }
 
+int APS5_VABI sceContentDeleteById(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceContentDeleteTerminate(void) {
     bool expected = true;
     if (!g_initialized.compare_exchange_strong(expected, false)) throw std::logic_error(std::string(__func__) + ": not initialized");
