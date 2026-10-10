@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "VulkanTestDevice.hpp"
@@ -229,10 +231,43 @@ void Run(const Context& context) {
     AgcDriver::GuestMemory::BumpCollectEpoch();
     Require(Refused(context, watchedWide), "a CPU write, then depth, then a view of another extent: the live depth surface did not refuse it");
 
+    TextureDetiler detiler(context);
+    auto storageContext = context;
+    storageContext.detiler = &detiler;
+    auto rgba = watchedExact;
+    rgba.format = 56;
+    rgba.tileMode = TextureTileMode::kLinear;
+    auto storage = std::make_shared<StorageTexture>(storageContext, detiler, rgba, 0);
+    bool storageRefused = false;
+    try {
+        SeedStorageFromDepth(storageContext, storage);
+    } catch (const std::runtime_error& error) {
+        storageRefused = std::string(error.what()).find("is not implemented") != std::string::npos;
+    }
+    Require(storageRefused, "a live depth surface accepted incompatible RGBA storage without a later memory write");
+    Require(DepthSurfaceAt(watched), "an unsupported storage view retired unchanged depth memory");
+    memory[32] = 0x3c;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    SeedStorageFromDepth(storageContext, storage);
+    Require(!DepthSurfaceAt(watched), "RGBA storage over overwritten depth memory left the depth surface live");
+    Require(Sample(context, watchedExact) == nullptr, "sampling overwritten memory returned the retired depth surface");
+    DepthSurfaceView(context, Depth(watched));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+
     AgcDriver::GuestMemory::MarkWritten(watched + Block, 4);
     Require(Refused(context, watchedWide), "a driver store past the depth plane retired the depth surface");
     AgcDriver::GuestMemory::MarkWritten(watched + 0x100, 4);
     Require(Sample(context, watchedWide) == nullptr, "depth, then a driver store, then a view of another extent: the view was not left to guest memory");
+
+    DepthSurfaceView(context, Depth(watched));
+    auto floatView = watchedExact;
+    floatView.tileMode = TextureTileMode::kLinear;
+    auto floatStorage = std::make_shared<StorageTexture>(storageContext, detiler, floatView, 0);
+    SeedStorageFromDepth(storageContext, floatStorage);
+    Require(DepthSurfaceAt(watched), "compatible R32 storage retired the live depth surface");
+    DepthSurfaceView(context, Depth(watched));
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+
 }
 
 }
