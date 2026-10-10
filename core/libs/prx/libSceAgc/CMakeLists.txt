@@ -168,6 +168,18 @@ if(BUILD_TESTING)
         set_tests_properties(agc_end_of_shader_action_size_tests PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(agc_rendering_wait_tests EXCLUDE_FROM_ALL tests/RenderingWait.cpp)
+    target_include_directories(agc_rendering_wait_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_rendering_wait_tests PRIVATE libSceAgc libSceAgcDriver libc)
+    configure_windows_unwind(agc_rendering_wait_tests)
+    if(BUILD_TESTING)
+        set_target_properties(agc_rendering_wait_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+        add_test(NAME agc_rendering_wait COMMAND agc_rendering_wait_tests)
+        if(WIN32)
+            set_tests_properties(agc_rendering_wait PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
 endif()
 
 add_test_executable(agc_branch_patch_tests EXCLUDE_FROM_ALL

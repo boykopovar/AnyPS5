@@ -4,6 +4,7 @@
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/DcbState/include/Marker.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -46,11 +47,14 @@ std::uint32_t APS5_VABI sceAgcAcbRewindGetSize() {
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t videoOutHandle, std::uint32_t displayBufferIndex) {
-    (void)buf;
-    (void)videoOutHandle;
-    (void)displayBufferIndex;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    // The driver scans every submitted command buffer for this packet, so a compute queue waits exactly
+    // as the draw queue sceAgcDcbWaitUntilSafeForRendering makes it wait.
+    auto* packet = Agc::Command::Allocate(buf, AgcDriver::RenderingWaitPacketWords, __func__);
+    packet[0] = AgcDriver::RenderingWaitPacketHeader;
+    packet[1] = videoOutHandle;
+    packet[2] = displayBufferIndex;
+    packet[3] = 0;
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t videoOutHandle, std::int32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
