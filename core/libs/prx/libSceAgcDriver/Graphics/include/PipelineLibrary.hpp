@@ -21,7 +21,7 @@ struct PipelineLibraryKeys {
 
 std::span<const VkDynamicState> PipelineLibraryDynamicStates();
 
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkRenderPassCreateInfo& pass, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys);
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys);
 
 void ClearPipelineLibraries(VkDevice device);
 

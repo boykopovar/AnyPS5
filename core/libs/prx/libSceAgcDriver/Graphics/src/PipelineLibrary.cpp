@@ -32,8 +32,6 @@ using Key = std::vector<std::byte>;
 struct DeviceLibraries {
     PFN_vkDestroyPipeline destroyPipeline = nullptr;
     PFN_vkDestroyPipelineLayout destroyLayout = nullptr;
-    PFN_vkDestroyRenderPass destroyRenderPass = nullptr;
-    std::map<Key, VkRenderPass> renderPasses;
     std::map<Key, VkPipelineLayout> layouts;
     std::array<std::map<Key, VkPipeline>, 4> parts;
     PipelineLibraryCounters counters;
@@ -49,7 +47,7 @@ LibraryStore& Libraries() {
     return *store;
 }
 
-Key Combined(const Key& part, const Key& renderPass, const Key& layout) {
+Key Combined(const Key& part, const Key& context) {
     Key key;
     const auto append = [&](const Key& value) {
         const auto size = value.size();
@@ -58,8 +56,7 @@ Key Combined(const Key& part, const Key& renderPass, const Key& layout) {
         key.insert(key.end(), value.begin(), value.end());
     };
     append(part);
-    append(renderPass);
-    append(layout);
+    append(context);
     return key;
 }
 
@@ -69,21 +66,14 @@ std::span<const VkDynamicState> PipelineLibraryDynamicStates() {
     return dynamicStates;
 }
 
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkRenderPassCreateInfo& pass, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys) {
-    Require(info.pNext == nullptr && info.renderPass != VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need the render pass path and the library dynamic states");
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys) {
+    Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     auto& store = Libraries();
     std::lock_guard lock(store.mutex);
     auto& device = store.devices[context.device];
     if (device.destroyPipeline == nullptr) {
         device.destroyPipeline = context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline");
         device.destroyLayout = context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout");
-        device.destroyRenderPass = context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass");
-    }
-    auto renderPass = device.renderPasses.find(keys.renderPass);
-    if (renderPass == device.renderPasses.end()) {
-        VkRenderPass handle = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &pass, nullptr, &handle), "vkCreateRenderPass library");
-        renderPass = device.renderPasses.emplace(keys.renderPass, handle).first;
     }
     auto pipelineLayout = device.layouts.find(keys.layout);
     if (pipelineLayout == device.layouts.end()) {
@@ -108,30 +98,31 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT,
     };
     const std::array<const Key*, 4> partKeys{&keys.vertexInput, &keys.preRasterization, &keys.fragmentShader, &keys.fragmentOutput};
+    const Key none;
+    const std::array<const Key*, 4> contextKeys{&none, &keys.layout, &keys.layout, &keys.renderPass};
+    const VkPipelineRenderingCreateInfoKHR shaderRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
+    VkPipelineDepthStencilStateCreateInfo dynamicDepth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     std::vector<VkPipeline> libraries;
     for (std::size_t part = 0; part < flags.size(); ++part) {
         if (part == 0 && mesh) continue;
-        const auto key = Combined(*partKeys[part], keys.renderPass, keys.layout);
+        const auto key = Combined(*partKeys[part], *contextKeys[part]);
         auto& cache = device.parts[part];
         if (const auto found = cache.find(key); found != cache.end()) {
             libraries.push_back(found->second);
             continue;
         }
         PerformanceTimer timing("Vulkan.GraphicsPipelineLibrary");
-        VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT};
+        VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, flags[part] == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT ? &rendering : &shaderRendering};
         library.flags = flags[part];
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
         create.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
         create.pDynamicState = info.pDynamicState;
         create.layout = pipelineLayout->second;
-        create.renderPass = renderPass->second;
-        create.subpass = info.subpass;
         switch (flags[part]) {
         case VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT:
             create.pVertexInputState = info.pVertexInputState;
             create.pInputAssemblyState = info.pInputAssemblyState;
             create.layout = VK_NULL_HANDLE;
-            create.renderPass = VK_NULL_HANDLE;
             break;
         case VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT:
             create.stageCount = static_cast<std::uint32_t>(preRasterization.size());
@@ -144,11 +135,12 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             create.stageCount = 1;
             create.pStages = fragment;
             create.pMultisampleState = info.pMultisampleState;
-            create.pDepthStencilState = info.pDepthStencilState;
+            create.pDepthStencilState = info.pDepthStencilState != nullptr ? info.pDepthStencilState : &dynamicDepth;
             break;
         default:
             create.pMultisampleState = info.pMultisampleState;
             create.pColorBlendState = info.pColorBlendState;
+            create.layout = VK_NULL_HANDLE;
             break;
         }
         VkPipeline handle = VK_NULL_HANDLE;
@@ -179,7 +171,6 @@ void ClearPipelineLibraries(VkDevice device) {
         for (const auto& [key, handle] : part) libraries.destroyPipeline(device, handle, nullptr);
     }
     for (const auto& [key, handle] : libraries.layouts) libraries.destroyLayout(device, handle, nullptr);
-    for (const auto& [key, handle] : libraries.renderPasses) libraries.destroyRenderPass(device, handle, nullptr);
     store.devices.erase(found);
 }
 

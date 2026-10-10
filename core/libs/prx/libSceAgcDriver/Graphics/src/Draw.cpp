@@ -2151,7 +2151,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     auto checkRecords = indirectRecordCheck(args != nullptr ? &indirect : nullptr);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
     if (recorded) recorder->EndPassSamples();
-    context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
+    EndRenderPass(context, commands);
     APS5_LOG_CHARS_OUT_DEBUG("Render pass ended");
     for (auto& binding : targets) {
         if (binding.proxied) {

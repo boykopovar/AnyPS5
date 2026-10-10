@@ -19,12 +19,14 @@ public:
     Framebuffer(const Framebuffer&) = delete;
     Framebuffer& operator=(const Framebuffer&) = delete;
     VkFramebuffer Handle() const { return framebuffer; }
+    std::span<const VkImageView> Views() const { return views; }
     // Forgets the handle without destroying it (the device it belongs to is already gone).
     void Abandon() noexcept;
 
 private:
     Context context;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    std::vector<VkImageView> views;
 };
 
 // The shader modules, layout, render pass and VkPipeline of one draw configuration. Viewport,
@@ -74,6 +76,10 @@ private:
     bool depthBounds = false;
     bool depthBias = false;
     bool libraries = false;
+    bool dynamicRendering = false;
+    VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+    VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    std::vector<std::uint32_t> colorSlots;
     std::vector<CachedFramebuffer> framebuffers;
 };
 
@@ -88,6 +94,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
 // entries of a gone device are recognised by their buffer pool (made and reset with the device, so
 // it tells device instances apart when the loader reuses a VkDevice handle) and forgotten unused.
 void ClearCachedPipelines(VkDevice device);
+bool HasStencil(VkFormat format);
 // Device limit checks of the viewport, which is dynamic state and so no longer checked by Pipeline.
 void ValidateViewport(const Context& context, const VkViewport& viewport);
 void ValidateDepthBounds(const Context& context, const State& state);
