@@ -274,11 +274,29 @@ private:
         return memory.kind == ResourceKind::ScalarBuffer && memory.dataBits == 32u && memory.dataDwords == 1u ? &memory : nullptr;
     }
 
-    bool MemoryIndexBelongsTo(std::uint32_t index, const IrValue& owner) const {
+    static bool AccessesMemory(IrOpcode op) {
+        return BufferAccessOf(op) != BufferAccess::None || AddressOpcodeInfoOf(op).access != AddressAccess::None || ImageOpcodeInfoOf(op).access != ImageAccess::None;
+    }
+
+    void IndexMemoryUsers() {
         for (const auto& block : m_program.Blocks()) {
             for (const IrValue* inst : block->Instructions()) {
-                const auto op = inst->Opcode();
-                if ((BufferAccessOf(op) == BufferAccess::None && AddressOpcodeInfoOf(op).access == AddressAccess::None && ImageOpcodeInfoOf(op).access == ImageAccess::None) || inst == &owner) {
+                if (AccessesMemory(inst->Opcode())) {
+                    m_memoryUsers[inst->Flags<MemoryFlags>().index].push_back(inst);
+                }
+            }
+        }
+        m_memoryUsersIndexed = true;
+    }
+
+    bool MemoryIndexBelongsTo(std::uint32_t index, const IrValue& owner) const {
+        if (m_memoryUsersIndexed) {
+            const auto users = m_memoryUsers.find(index);
+            return users == m_memoryUsers.end() || std::ranges::all_of(users->second, [&](const IrValue* user) { return user == &owner; });
+        }
+        for (const auto& block : m_program.Blocks()) {
+            for (const IrValue* inst : block->Instructions()) {
+                if (!AccessesMemory(inst->Opcode()) || inst == &owner) {
                     continue;
                 }
                 if (inst->Flags<MemoryFlags>().index == index) {
@@ -898,6 +916,7 @@ private:
         if (!enabled) {
             return;
         }
+        IndexMemoryUsers();
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
                 const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
@@ -920,6 +939,8 @@ private:
                 }
             }
         }
+        m_memoryUsersIndexed = false;
+        m_memoryUsers.clear();
     }
 
     void GetHandle(IrValue* value, IrOpcode expected, std::uint32_t width, IrValue*& handle, std::uint32_t& source, bool sampler = false, bool sampleAdjust = false) {
@@ -1263,6 +1284,8 @@ private:
     // APS5_TRACE_BDA: address accesses seen by Collect (the first bdaTraceLimit are printed).
     unsigned m_bdaTraces = 0;
     std::vector<IndirectImagePlan> m_indirectImages;
+    std::unordered_map<std::uint32_t, std::vector<const IrValue*>> m_memoryUsers;
+    bool m_memoryUsersIndexed = false;
     struct EdgeSelectorEntry {
         IrBlock* block = nullptr;
         std::vector<bool> edges;
