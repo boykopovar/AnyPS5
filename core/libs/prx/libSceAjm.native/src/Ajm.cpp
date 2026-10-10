@@ -193,6 +193,7 @@ static_assert(sizeof(PackedJob) == 32);
 int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs, const AjmBuffer* outputs) {
     if (!info || !info->p_buffer) return SCE_AJM_ERROR_INVALID_PARAMETER;
     if (header.inputCount > 0xffu || header.outputCount > 0xffu || header.parameterSize > sizeof(header.parameters) || header.sidebandSize > 0xffffffffu) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if ((header.inputCount && !inputs) || (header.outputCount && !outputs)) NotImplemented_nid_no_patch("AJM batch job with a null buffer list and a nonzero buffer count");
     const std::size_t parameterBytes = (header.parameterSize + 7u) & ~std::size_t{7};
     const std::size_t bytes = sizeof(PackedJob) + (header.inputCount + header.outputCount) * sizeof(AjmBuffer) + parameterBytes;
     if (info->offset > info->size || bytes > info->size - info->offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
@@ -200,9 +201,9 @@ int Append(AjmBatchInfo* info, const JobHeader& header, const AjmBuffer* inputs,
     const PackedJob record{static_cast<std::uint8_t>(header.kind), static_cast<std::uint8_t>(header.inputCount), static_cast<std::uint8_t>(header.outputCount), static_cast<std::uint8_t>(header.parameterSize), header.instance, header.flags, header.sideband, static_cast<std::uint32_t>(header.sidebandSize), static_cast<std::uint32_t>(bytes)};
     std::memcpy(cursor, &record, sizeof(record));
     cursor += sizeof(record);
-    if (header.inputCount) std::memcpy(cursor, inputs, header.inputCount * sizeof(AjmBuffer));
+    if (inputs) std::memcpy(cursor, inputs, header.inputCount * sizeof(AjmBuffer));
     cursor += header.inputCount * sizeof(AjmBuffer);
-    if (header.outputCount) std::memcpy(cursor, outputs, header.outputCount * sizeof(AjmBuffer));
+    if (outputs) std::memcpy(cursor, outputs, header.outputCount * sizeof(AjmBuffer));
     cursor += header.outputCount * sizeof(AjmBuffer);
     if (header.parameterSize) std::memcpy(cursor, header.parameters, header.parameterSize);
     info->offset += bytes;

@@ -79,7 +79,7 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
     if (!filename || !mode) throw std::runtime_error(std::string(__func__) + ": " + FOPEN_MSG_NULL_ARG);
     const std::filesystem::path fpath = ResolvePath_nid_no_patch(filename);
     const auto abs_path = fpath.string();
-    std::unique_ptr<std::FILE, decltype(&std::fclose)> handle(std::fopen(abs_path.c_str(), NativeFileMode(mode).c_str()), std::fclose);
+    std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(std::fopen(abs_path.c_str(), NativeFileMode(mode).c_str()), std::fclose);
     if (!handle) {
         const int error = errno;
         if (error == ENOENT) {

@@ -20,6 +20,7 @@ int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo*, std::uint32_t, const void*
 int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*, std::size_t);
+int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo*, std::uint32_t, std::uint64_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*, std::size_t);
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo*, std::uint32_t, const void*, int, void*);
 int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t);
 int APS5_VABI sceAjmBatchJobGetGaplessDecode(AjmBatchInfo*, std::uint32_t, void*);
@@ -971,6 +972,16 @@ int main() {
     const std::uint8_t badHeader[4] = {0xFD, 0x72, 0x1F, 0xF0};
     Require(sceAjmDecAt9ParseConfigData(badHeader, &info) == invalidParameter);
     Require(sceAjmDecAt9ParseConfigData(nullptr, &info) == invalidParameter);
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo batchInfo{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &batchInfo) == 0);
+    bool nullBuffersThrow = false;
+    try {
+        sceAjmBatchJobRunSplit(&batchInfo, 0, 0, nullptr, 1, nullptr, 0, nullptr, 0);
+    } catch (const std::runtime_error&) {
+        nullBuffersThrow = true;
+    }
+    Require(nullBuffersThrow && batchInfo.offset == 0);
     TestMp3ParseFrame();
     TestMp3ParseOfl();
     TestMp3(context);

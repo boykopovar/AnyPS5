@@ -57,6 +57,8 @@ public:
         return true;
     }
 
+    void Print(const char* text) { Print("%s", text); }
+
     template<typename... TArgs>
     void Print(const char* format, TArgs... args) {
         std::array<char, 2048> local{};

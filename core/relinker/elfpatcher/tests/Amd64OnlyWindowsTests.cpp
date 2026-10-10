@@ -557,7 +557,7 @@ void cpuExecution() {
             for (std::uint8_t src = 0; src < 16; ++src)
                 executeSha256(harness, *matcher, {{opcode, dst, src}}, random, 2);
     for (int sequence = 0; sequence < 256; ++sequence) {
-        std::vector<Sha256Step> steps(2 + random() % 2);
+        std::vector<Sha256Step> steps(2 + random() % 2, Sha256Step{});
         for (auto& step : steps) step = {static_cast<std::uint8_t>(0xCB + random() % 3), static_cast<std::uint8_t>(random() % 16), static_cast<std::uint8_t>(random() % 16)};
         executeSha256(harness, *matcher, steps, random, 2);
     }
