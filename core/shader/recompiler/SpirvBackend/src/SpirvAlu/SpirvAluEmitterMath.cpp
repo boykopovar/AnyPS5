@@ -300,7 +300,10 @@ public:
     bool ZeroBit(const IrValue* bit) {
         bit = Resolved(bit);
         if (bit == nullptr || !Spend()) return false;
+        if (bit->HasImmediate()) return bit->Type() == IrType::Bool && !bit->ImmediateBool();
         if (Is(bit, IrOpcode::LogicalAnd)) return ZeroBit(bit->Argument(0)) || ZeroBit(bit->Argument(1));
+        if (Is(bit, IrOpcode::SelectU1)) return ZeroBit(bit->Argument(1)) && ZeroBit(bit->Argument(2));
+        if (Is(bit, IrOpcode::Phi)) return Incoming(bit, [this](const IrValue* incoming) { return ZeroBit(incoming); });
         const auto words = LaneBitWords(bit);
         return words && Word((*words)[0], 0u) && Word((*words)[1], 1u);
     }
