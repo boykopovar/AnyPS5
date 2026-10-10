@@ -25,7 +25,7 @@ void reject(TAction action) {
 void RunColorTargetLayoutTests() {
     Require(DecodeColorTileMode(0x4dc6c000) == ColorTileMode::RenderTarget, "logged color descriptor was rejected");
     Require(DecodeColorTileMode(0x09000000) == ColorTileMode::Linear, "linear descriptor changed");
-    reject([] { DecodeColorTileMode(0x4dc6c001); });
+    Require(DecodeColorTileMode(0x4dc6c001) == ColorTileMode::RenderTarget, "2D array color descriptor with MIP0_DEPTH 1 was rejected");
     reject([] { DecodeColorTileMode(0x4dc6e000); });
     reject([] { DecodeColorTileMode(0xcdc6c000); });
     reject([] { DecodeColorTileMode(0x09004000); });
