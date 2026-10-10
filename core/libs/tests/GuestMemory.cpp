@@ -37,6 +37,7 @@ extern "C" {
 void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
 int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
 int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
+int APS5_VABI madvise_nid_postfix(void*, std::size_t, int);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI sceKernelMapNamedFlexibleMemory(void**, std::size_t, int, int, const char*);
 int APS5_VABI sceKernelMapNamedFlexibleMemoryInternal(void**, std::size_t, int, int, const char*);
@@ -1155,6 +1156,19 @@ int main() {
         GuestAllocations::Mutation mutation;
         Require(mutation.Find(memory).writable);
     }
+    for (int advice = 0; advice <= 9; ++advice) Require(madvise_nid_postfix(memory, page * 3, advice) == 0);
+    Require(memory[0] == 42 && memory[page * 2] == 73);
+    Require(madvise_nid_postfix(memory + 1, 0, 4) == 0);
+    Require(madvise_nid_postfix(memory, page, 11) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(memory, page, -1) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(memory, 0, 11) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(memory, std::numeric_limits<std::size_t>::max(), 0) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x800000000000), 1, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(madvise_nid_postfix(reinterpret_cast<void*>(0x7fffffffc000), 0x4000, 4) == 0);
     Require(munmap_nid_postfix(memory + 1, page) == -1 && *__error_nid_postfix() == 22);
     Require(munmap_nid_postfix(memory, 0) == -1 && *__error_nid_postfix() == 22);
     Require(memory[0] == 42);
@@ -1164,6 +1178,7 @@ int main() {
     Require(memory[page * 2] == 73);
     Require(munmap_nid_postfix(memory + page * 2, page) == 0);
     Require(munmap_nid_postfix(memory, page) == -1);
+    Require(madvise_nid_postfix(memory, page, 4) == 0);
     *__error_nid_postfix() = 0;
     Require(mprotect_nid_postfix(memory, page, 1) == -1 && *__error_nid_postfix() == 22);
     *__error_nid_postfix() = 0;
