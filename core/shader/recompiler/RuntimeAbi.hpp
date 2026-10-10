@@ -9,7 +9,7 @@
 
 namespace ShaderRecompiler::RuntimeAbi {
 
-inline constexpr std::uint32_t Version = 11u;
+inline constexpr std::uint32_t Version = 12u;
 inline constexpr std::uint32_t DescriptorSet = 0u;
 inline constexpr std::uint32_t StageCount = 4u;
 inline constexpr std::uint32_t PushConstantDwords = 32u;
@@ -26,7 +26,10 @@ enum class Binding : std::uint32_t {
     FaultBuffer = 60u,
     FlattenedSrt = 61u,
     ShaderData = 62u,
-    Count = 63u
+    SamplerTable = 63u,
+    ImageTableMap = 64u,
+    Count = 65u,
+    ImageTable = 256u
 };
 
 enum class Stage : std::uint32_t { Main, Fragment, TessellationControl, TessellationEvaluation };
@@ -85,7 +88,10 @@ inline void RequireVersion(std::uint32_t version) {
     if (version != Version) throw std::runtime_error("Shader runtime ABI: incompatible version");
 }
 
+inline constexpr std::uint32_t ImageTableBinding = StageCount * static_cast<std::uint32_t>(Binding::Count);
+
 inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
+    if (binding == Binding::ImageTable) return ImageTableBinding;
     const auto group = static_cast<std::uint32_t>(stage);
     const auto index = static_cast<std::uint32_t>(binding);
     const auto count = static_cast<std::uint32_t>(Binding::Count);
@@ -94,6 +100,7 @@ inline std::uint32_t BindingNumber(Stage stage, Binding binding) {
 }
 
 static_assert(FirstImageBinding + ImageBindingCount == static_cast<std::uint32_t>(Binding::Samplers));
+static_assert(static_cast<std::uint32_t>(Binding::ImageTable) > static_cast<std::uint32_t>(Binding::Count) && ImageTableBinding == 260u);
 
 }
 

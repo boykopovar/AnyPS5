@@ -105,7 +105,7 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
 
 void ValidateShaderPair(const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment);
 // Returns the color attachment locations the pixel shader writes.
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false);
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool runtimeDescriptorArray = false);
 
 }
 

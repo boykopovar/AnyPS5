@@ -1171,6 +1171,14 @@ void BumpCollectEpoch() {
     collectEpochBumps.fetch_add(1, std::memory_order_relaxed);
 }
 
+std::uint64_t ThreadCollectEpoch() {
+    return collectMemoEnabled() ? threadCollectEpoch : 0;
+}
+
+std::uint64_t UnwatchSerial() {
+    return unwatchSerial.load(std::memory_order_acquire);
+}
+
 std::uint64_t CollectEpochBumps() {
     return collectEpochBumps.load(std::memory_order_relaxed);
 }

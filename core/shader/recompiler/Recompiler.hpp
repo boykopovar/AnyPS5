@@ -332,7 +332,10 @@ enum class DescriptorRole {
     BdaPagetable,
     FaultBuffer,
     FlattenedSrt,
-    ShaderData
+    ShaderData,
+    ImageTable,
+    SamplerTable,
+    ImageTableMap
 };
 
 struct DescriptorBinding {
@@ -350,6 +353,7 @@ struct DescriptorBinding {
     std::vector<bool> imageDepthCompare;
     std::vector<bool> imageAtomic;
     std::vector<bool> imageAtomic64;
+    std::vector<DescriptorImageShape> imageShapes;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip
     // (~0.4-0.5 us each on NVIDIA), so a driver may keep these elements in device-local memory.
@@ -364,6 +368,13 @@ struct DescriptorBinding {
     std::vector<bool> imageUnnormalized;
     std::vector<std::uint32_t> imageSamplers;
     std::vector<bool> bufferRead;
+};
+
+struct ImageTableEntryPoison {
+    std::array<std::uint32_t, 8> words{};
+    std::uint32_t dwordCount = 0;
+    std::uint32_t resource = 0;
+    std::uint32_t reason = 0;
 };
 
 struct VertexAttribute {
@@ -490,6 +501,10 @@ struct ShaderInvocation {
     std::vector<std::byte> pushConstants;
     std::vector<VertexAttribute> vertexAttributes;
     std::uint32_t poisonedSrtReads = 0;
+    std::vector<ImageTableEntryPoison> imageTablePoison;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
+    std::uint64_t imageTableShader = 0;
+    std::uint32_t imageTableFaults = 0;
 };
 
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {

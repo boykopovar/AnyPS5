@@ -404,9 +404,6 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
-    for (std::uint32_t index = 0; index < program.Info().images.size(); ++index) {
-        if (program.Info().images[index].indirectRoot != ImageResource::NoIndirectImage) result.runtimeImageResources.push_back(index);
-    }
     result.hostSubgroupSize = HostSubgroupSize(request);
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
@@ -764,12 +761,20 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     } else {
         result.spirv = artifact.spirv;
     }
+    const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
     BindingAllocationResult bindings;
-    DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request));
+    DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
     result.bindings = std::move(bindings.bindings);
     result.pushConstants = std::move(bindings.pushConstants);
     result.poisonedSrtReads = static_cast<std::uint32_t>(snapshot.srtPoison.size());
+    if (!tables.map.empty()) {
+        result.imageTablePoison.reserve(tables.poison.size());
+        for (const auto& poison : tables.poison) result.imageTablePoison.push_back({poison.words, poison.dwordCount, poison.resource, static_cast<std::uint32_t>(poison.reason)});
+        result.imageTableRanges = snapshot.tables.ranges;
+        result.imageTableShader = snapshot.tables.shader;
+        result.imageTableFaults = tables.faults;
+    }
     return result;
 }
 
@@ -913,6 +918,24 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
     mix(snapshot.uniformFill.words);
     mix(snapshot.uniformFill.value);
+    const auto& tables = snapshot.tables;
+    mix(tables.shader);
+    mix(tables.tables.size());
+    for (const auto& table : tables.tables) {
+        mix(table.base);
+        mix(table.size);
+        mix(table.records);
+        mix(table.keys);
+        mix(table.fault);
+        mix(table.outside ? 1u : 0u);
+        mixWords(table.codes);
+    }
+    mixDescriptors(tables.words);
+    mix(tables.ranges.size());
+    for (const auto& [base, size] : tables.ranges) {
+        mix(base);
+        mix(size);
+    }
     for (const auto threads : partialThreads(request)) mix(threads);
     mix(request.layout.pushConstantOffsetBytes);
     if (request.context.pixel) {

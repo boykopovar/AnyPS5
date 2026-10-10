@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -34,6 +35,27 @@ struct UniformFill {
     bool operator==(const UniformFill& other) const = default;
 };
 
+struct ImageTableColumnSnapshot {
+    std::uint64_t base = 0;
+    std::uint64_t size = 0;
+    std::uint32_t records = 0;
+    std::uint32_t keys = 0;
+    std::uint32_t fault = 0;
+    bool outside = false;
+    std::vector<std::uint32_t> codes;
+
+    bool operator==(const ImageTableColumnSnapshot& other) const = default;
+};
+
+struct ImageTableSnapshot {
+    std::vector<ImageTableColumnSnapshot> tables;
+    std::vector<DescriptorValue> words;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    std::uint64_t shader = 0;
+
+    bool operator==(const ImageTableSnapshot& other) const = default;
+};
+
 struct ResourceSnapshot {
     std::vector<DescriptorValue> buffers;
     std::vector<DescriptorValue> images;
@@ -42,6 +64,7 @@ struct ResourceSnapshot {
     std::vector<std::uint32_t> userData;
     UniformFill uniformFill;
     std::vector<SrtReadPoison> srtPoison;
+    ImageTableSnapshot tables;
 };
 
 struct UniformFillPlan {

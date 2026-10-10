@@ -223,6 +223,13 @@ bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_
     return true;
 }
 
+bool ShaderMemory::pending(void* context, std::uint64_t address, std::uint64_t bytes) {
+    const auto& self = *static_cast<const ShaderMemory*>(context);
+    if (self.pendingWrite == nullptr || bytes == 0) return false;
+    const auto policy = self.pendingWrite(address, static_cast<std::size_t>(bytes), {});
+    return policy == PendingWrite::Sync || policy == PendingWrite::VerifyRaw || policy == PendingWrite::VerifyKnownValue;
+}
+
 ShaderMemory::KnownValueCounts ShaderMemory::KnownValues() {
     auto& totals = CaptureTotals();
     return {totals.wordsKnown.load(std::memory_order_relaxed), totals.wordsKnownVerified.load(std::memory_order_relaxed), totals.wordsKnownMismatches.load(std::memory_order_relaxed)};
@@ -256,6 +263,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::capture(c
     runtime.readMemory = &read;
     runtime.readSpecializationMemory = &read;
     runtime.accessible = &accessible;
+    runtime.pendingWrite = &pending;
     auto capture = invocation != nullptr ? invocation->Capture(runtime) : handle != nullptr ? ShaderRecompiler::CaptureResources(request, runtime, *handle) : ShaderRecompiler::CaptureResources(request, runtime);
     if (profile) {
         totals.captureNanoseconds += NanosecondsSince(started);
