@@ -217,6 +217,10 @@ RdnaOperand DecodeRdnaScalarSource(std::uint32_t code, std::uint32_t programCoun
         case 125u: operand.kind = RdnaOperandKind::Null; return operand;
         case 126u: operand.kind = RdnaOperandKind::ExecLo; return operand;
         case 127u: operand.kind = RdnaOperandKind::ExecHi; return operand;
+        case 235u: operand.kind = RdnaOperandKind::SrcSharedBase; return operand;
+        case 236u: operand.kind = RdnaOperandKind::SrcSharedLimit; return operand;
+        case 237u: operand.kind = RdnaOperandKind::SrcPrivateBase; return operand;
+        case 238u: operand.kind = RdnaOperandKind::SrcPrivateLimit; return operand;
         case 239u: operand.kind = RdnaOperandKind::PopsExitingWaveId; return operand;
         case 248u:
             operand.kind = RdnaOperandKind::FloatInlineConstant;
@@ -315,6 +319,10 @@ std::string RdnaOperandToString(const RdnaOperand& operand) {
         case RdnaOperandKind::ExecZ: return "execz";
         case RdnaOperandKind::M0: return "m0";
         case RdnaOperandKind::PopsExitingWaveId: return "pops_exiting_wave_id";
+        case RdnaOperandKind::SrcSharedBase: return "src_shared_base";
+        case RdnaOperandKind::SrcSharedLimit: return "src_shared_limit";
+        case RdnaOperandKind::SrcPrivateBase: return "src_private_base";
+        case RdnaOperandKind::SrcPrivateLimit: return "src_private_limit";
     }
 
     throw std::invalid_argument("unsupported operand kind for string conversion");

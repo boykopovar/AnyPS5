@@ -1,7 +1,9 @@
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <string>
 
 namespace ShaderRecompiler {
 
@@ -418,6 +420,11 @@ IrU32 TranslationContext::readScalarCode(std::uint32_t code) {
             const std::array<IrU32, 2> mask = ballotMask(IrU1(ir.GetExec()));
             return mask[code - 126u];
         }
+        case 235u:
+        case 236u:
+        case 237u:
+        case 238u:
+            throw std::runtime_error("TranslationContext::readScalarCode: the scalar aperture source " + RdnaOperandToString(DecodeRdnaScalarSource(code, 0u)) + " is not modelled");
         default: return IrU32(ir.Constant(0u));
     }
 }
@@ -447,6 +454,11 @@ IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
             const IrU32 zero(ir.Constant(0u));
             return IrU32(ir.Select(ir.IEqual(mask.Value(), zero.Value()), ir.Constant(1u), zero.Value()));
         }
+        case RdnaOperandKind::SrcSharedBase:
+        case RdnaOperandKind::SrcSharedLimit:
+        case RdnaOperandKind::SrcPrivateBase:
+        case RdnaOperandKind::SrcPrivateLimit:
+            throw std::runtime_error("TranslationContext::readRawU32: the scalar aperture source " + RdnaOperandToString(operand) + " is not modelled");
         default: throw std::runtime_error("TranslationContext::readRawU32 invalid decoded operand used as a raw U32 source");
     }
 }

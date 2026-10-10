@@ -436,6 +436,10 @@ RdnaOperand scalarSource(std::uint32_t code) {
         case 125u: operand.kind = RdnaOperandKind::Null; return operand;
         case 126u: operand.kind = RdnaOperandKind::ExecLo; return operand;
         case 127u: operand.kind = RdnaOperandKind::ExecHi; return operand;
+        case 235u: operand.kind = RdnaOperandKind::SrcSharedBase; return operand;
+        case 236u: operand.kind = RdnaOperandKind::SrcSharedLimit; return operand;
+        case 237u: operand.kind = RdnaOperandKind::SrcPrivateBase; return operand;
+        case 238u: operand.kind = RdnaOperandKind::SrcPrivateLimit; return operand;
         case 239u: operand.kind = RdnaOperandKind::PopsExitingWaveId; return operand;
         case 248u: operand.kind = RdnaOperandKind::FloatInlineConstant; operand.value = floatBits(0.15915494309189535f); return operand;
         case 251u: operand.kind = RdnaOperandKind::VccZ; return operand;
