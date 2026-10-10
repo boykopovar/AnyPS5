@@ -28,6 +28,8 @@ enum class MutexType : std::uint32_t {
 
 struct PthreadMutexattrPrivate {
     MutexType type;
+    int protocol = 0;
+    int ceiling = 0;
 };
 
 struct PthreadMutexPrivate {
