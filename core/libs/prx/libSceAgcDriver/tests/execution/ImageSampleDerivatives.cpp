@@ -80,7 +80,7 @@ alignas(256) constexpr std::array<std::uint32_t, Threads * Inputs> Input{
 alignas(256) std::array<std::uint32_t, Wave64Threads * Inputs + Wave64Threads * Results> Buffer{};
 alignas(256) std::array<float, Width * Height * Depth> Texels{};
 
-alignas(256) constexpr std::array<std::uint32_t, 168> Code2D{
+alignas(256) constexpr std::array<std::uint32_t, 118> Code2D{
     0x160200b0, 0x34060086, 0xe0381000, 0x80000401, 0xe0381010, 0x80002801, 0xe0381020, 0x80003201,
     0xbe900404, 0xbe920406, 0xbe940408, 0xbe96040a, 0xbe98040c, 0xbe9a040e, 0x7e140280, 0x7e160280,
     0x7e180280, 0x7e1a0280, 0x7e1c0280, 0x7e1e0280, 0x7e200280, 0x7e220280, 0x7e240280, 0x7e260280,
@@ -93,15 +93,25 @@ alignas(256) constexpr std::array<std::uint32_t, 168> Code2D{
     0xbe9e037e, 0xbefe03ff, 0xaeeeffff, 0xf1a00108, 0x00c40c40, 0xbefe031e, 0x7e80032c, 0x7e82032e,
     0x7e840304, 0x7e860305, 0xf0880109, 0x00c40d40, 0x7e80032c, 0x7e82032e, 0x7e840304, 0x7e860305,
     0xf1a00109, 0x00c40e40, 0x7e800328, 0x7e820329, 0x7e840332, 0x7e860333, 0x7e880330, 0xf0880108,
-    0x40c40f40, 0x7e80032c, 0x7e82032e, 0x7e840330, 0xf0880109, 0x40c41040, 0x7e80033c, 0x7e820328,
-    0x7e840329, 0x7e860332, 0x7e880333, 0x7e8a0304, 0x7e8c0305, 0xf1b00108, 0x00c41140, 0x7e80033e,
-    0x7e82032c, 0x7e84032e, 0x7e860304, 0x7e880305, 0xf0c80109, 0x00c41240, 0x7e80033c, 0x7e82032c,
-    0x7e84032e, 0x7e860304, 0x7e880305, 0xf1b00109, 0x00c41340, 0x7e80033c, 0x7e82032c, 0x7e84032e,
-    0x7e860330, 0xf0c80109, 0x40c41440, 0x7e80033c, 0x7e82032c, 0x7e84032e, 0x7e860304, 0x7e880305,
-    0xbe9e037e, 0xbefe03ff, 0xaeeeffff, 0xf1b00109, 0x00c41540, 0xbefe031e, 0xbf8c3f70, 0xe0701600,
+    0x40c40f40, 0x7e80032c, 0x7e82032e, 0x7e840330, 0xf0880109, 0x40c41040, 0xbf8c3f70, 0xe0701600,
     0x80000a03, 0xe0701604, 0x80000b03, 0xe0701608, 0x80000c03, 0xe070160c, 0x80000d03, 0xe0701610,
-    0x80000e03, 0xe0701614, 0x80000f03, 0xe0701618, 0x80001003, 0xe070161c, 0x80001103, 0xe0701620,
-    0x80001203, 0xe0701624, 0x80001303, 0xe0701628, 0x80001403, 0xe070162c, 0x80001503, 0xbf810000,
+    0x80000e03, 0xe0701614, 0x80000f03, 0xe0701618, 0x80001003, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 102> Code2DOffsets{
+    0x160200b0, 0x34060086, 0xe0381000, 0x80000401, 0xe0381010, 0x80002801, 0xe0381020, 0x80003201,
+    0xbe900404, 0xbe920406, 0xbe940408, 0xbe96040a, 0xbe98040c, 0xbe9a040e, 0x7e140280, 0x7e160280,
+    0x7e180280, 0x7e1a0280, 0x7e1c0280, 0x7e1e0280, 0x7e200280, 0x7e220280, 0x7e240280, 0x7e260280,
+    0x7e280280, 0x7e2a0280, 0x7e2c0280, 0x7e2e0280, 0x7e300280, 0x7e320280, 0xbf8c3f70, 0x5e585328,
+    0xd52f002d, 0x0201012a, 0x5e5c6732, 0xd52f002f, 0x02010134, 0x5e600b04, 0xd52f0031, 0x02010106,
+    0xd52f0036, 0x02010128, 0xd52f0037, 0x02010132, 0xd52f003b, 0x02010104, 0x7e780281, 0x7e7a02f6,
+    0x7e7c02ff, 0x00000101, 0x7e80033c, 0x7e820328, 0x7e840329, 0x7e860332, 0x7e880333, 0x7e8a0304,
+    0x7e8c0305, 0xf1b00108, 0x00c41140, 0x7e80033e, 0x7e82032c, 0x7e84032e, 0x7e860304, 0x7e880305,
+    0xf0c80109, 0x00c41240, 0x7e80033c, 0x7e82032c, 0x7e84032e, 0x7e860304, 0x7e880305, 0xf1b00109,
+    0x00c41340, 0x7e80033c, 0x7e82032c, 0x7e84032e, 0x7e860330, 0xf0c80109, 0x40c41440, 0x7e80033c,
+    0x7e82032c, 0x7e84032e, 0x7e860304, 0x7e880305, 0xbe9e037e, 0xbefe03ff, 0xaeeeffff, 0xf1b00109,
+    0x00c41540, 0xbefe031e, 0xbf8c3f70, 0xe070161c, 0x80001103, 0xe0701620, 0x80001203, 0xe0701624,
+    0x80001303, 0xe0701628, 0x80001403, 0xe070162c, 0x80001503, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 122> Code3D{
@@ -274,7 +284,7 @@ std::array<std::uint32_t, CodeWords> MovedStores(const std::array<std::uint32_t,
 
 template <std::size_t CodeWords, std::size_t Cases>
 void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& source, std::uint32_t threads, std::uint32_t type, std::uint32_t height, std::uint32_t depth,
-         const std::array<const char*, Cases>& names, const std::array<bool, Cases>& masked, const std::array<std::uint32_t, Threads * Cases>& expected) {
+         const std::array<const char*, Cases>& names, const std::array<bool, Cases>& masked, const std::array<std::uint32_t, Threads * Cases>& expected, std::uint32_t firstCase = 0u, std::uint32_t lastCase = Cases) {
     alignas(256) static std::array<std::uint32_t, CodeWords> code;
     code = MovedStores(source, threads);
     for (std::uint32_t tid = 0; tid < threads; ++tid) {
@@ -310,7 +320,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWo
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(span.data()));
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < threads; ++tid) {
-        for (std::uint32_t k = 0; k < Cases; ++k) {
+        for (std::uint32_t k = firstCase; k < lastCase; ++k) {
             if (masked[k] && (device.Target().subgroupSize < Threads || tid >= Threads)) continue;
             const auto actual = Buffer[threads * Inputs + tid * Results + k];
             const auto wanted = expected[SourceRow(tid) * Cases + k];
@@ -330,11 +340,12 @@ int main() {
             std::printf("EXEC-masked cases skipped, subgroup size %u cannot hold a wave32\n", device->Target().subgroupSize);
         }
         const bool computedOffsets = device->Target().nonConstantImageOffsets;
-        if (!computedOffsets) std::puts("2D cases skipped, their computed texel offsets need VK_KHR_maintenance8");
+        if (!computedOffsets) std::puts("2D computed-offset cases skipped, their texel offsets need VK_KHR_maintenance8");
         std::vector<std::uint32_t> waves{Threads};
         if (device->Target().subgroupSize >= Threads) waves.push_back(Wave64Threads);
         for (const auto threads : waves) {
-            if (computedOffsets) Run(*device, Code2D, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D);
+            Run(*device, Code2D, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D, 0u, 7u);
+            if (computedOffsets) Run(*device, Code2DOffsets, threads, 9u, Height, 1u, Names2D, Masked2D, Expected2D, 7u, 12u);
             Run(*device, Code3D, threads, 10u, Height, Depth, Names3D, Masked3D, Expected3D);
             Run(*device, Code1D, threads, 8u, 1u, 1u, Names1D, Masked1D, Expected1D);
         }
