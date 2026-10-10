@@ -289,7 +289,7 @@ RegisteredShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot) {
     if (header.specials != nullptr) {
         const auto special = ReadHeaderArray(snapshot, header.specials, 1).front();
         state.context[special.vgt_shader_stages_en.offset] = special.vgt_shader_stages_en.value;
-        state.context[special.vgt_gs_out_prim_type.offset] = special.vgt_gs_out_prim_type.value;
+        if (special.vgt_gs_out_prim_type.offset != 0) state.context[special.vgt_gs_out_prim_type.offset] = special.vgt_gs_out_prim_type.value;
         state.userConfig[special.ge_cntl.offset] = special.ge_cntl.value;
         state.userConfig[special.ge_user_vgpr_en.offset] = special.ge_user_vgpr_en.value;
     }

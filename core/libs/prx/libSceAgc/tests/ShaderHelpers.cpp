@@ -26,6 +26,25 @@ const Shader* mappedPixel = nullptr;
 void Require(bool condition) {
     if (!condition) throw std::runtime_error("shader helper preparation mismatch");
 }
+
+void OptionalGeometryOutputRegister(ShaderSpecialRegs& special, const Shader& vertex, const Shader& hull) {
+    using namespace ShaderRegs;
+    special.vgt_gs_out_prim_type = {};
+    std::array<ShaderRegister, 2> noGeometryContext{};
+    Require(sceAgcCreatePrimState(noGeometryContext.data(), nullptr, nullptr, &vertex, 7) == 0);
+    Require(noGeometryContext[0].offset == VGT_SHADER_STAGES_EN && noGeometryContext[1].offset == VGT_GS_OUT_PRIM_TYPE && noGeometryContext[1].value == static_cast<std::uint32_t>(GsOutputPrimitiveType::Rectangle2D));
+    bool rejectedMissingHullOutput = false;
+    try { static_cast<void>(sceAgcCreatePrimState(noGeometryContext.data(), nullptr, &hull, &vertex, 7)); }
+    catch (const std::runtime_error&) { rejectedMissingHullOutput = true; }
+    Require(rejectedMissingHullOutput);
+    special.vgt_shader_stages_en.value = VGT_SHADER_STAGES_GS_BIT;
+    bool rejectedMissingGeometryOutput = false;
+    try { static_cast<void>(sceAgcCreatePrimState(noGeometryContext.data(), nullptr, nullptr, &vertex, 7)); }
+    catch (const std::runtime_error&) { rejectedMissingGeometryOutput = true; }
+    Require(rejectedMissingGeometryOutput);
+    special.vgt_shader_stages_en.value = 0;
+    special.vgt_gs_out_prim_type = {VGT_GS_OUT_PRIM_TYPE, 2};
+}
 }
 
 extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Shader* const> stages, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
@@ -121,6 +140,7 @@ int main() {
         Require(sceAgcCreatePrimState(nullptr, nullptr, nullptr, nullptr, 7) == 0);
         Require(sceAgcCreateInterpolantMapping_0100(interpolants.data(), &vertex, nullptr) == 0);
         Require(preparations == 0 && mappings == 0 && links == 0);
+        OptionalGeometryOutputRegister(special, vertex, hull);
         std::cout << "shader helper preparation tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
