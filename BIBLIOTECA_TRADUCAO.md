@@ -40,3 +40,12 @@ Este repositório interno descreve as instruções, opcodes e convenções de fu
   ```
 
 *Aviso: Este arquivo é progressivo e deverá ser populado com NIDs (Network IDs - Hashes de Funções) validados à medida que o parsing de executáveis do sistema (`core/libs/prx`) progredir na Fase 4.*
+### [NID_UNMAPPED] - sceKernelReserveVirtualRange
+- **Funcionamento Técnico:** Reserva intervalos virtuais gigantes no Address Space do jogo (podem passar de centenas de GiB) para mapeamentos futuros (Virtual Allocations).
+- **Mapeamento Equivalente:** Comportamento conhecido em SharpEmu - Requer thresholds para lidar com esses blocos grandes (ex: `SparseReservationThreshold` em ~64 GiB). No Windows é difícil achar chunks contíguos dessa magnitude sem o flag correto (`MEM_RESERVE` puro). No Linux, requer atenção a overcommits.
+
+### Módulo: Sincronização Posix do PS5 (libSceLibcInternal)
+As chamadas de sistema abaixo usam a ABI SystemV (estilo POSIX) e foram mapeadas por projetos C/C# (Kyty/SharpEmu):
+- **pthread_create_name_np**: Criação de thread com extensão de nomeamento.
+- **PthreadAttrSetsolosched**: Atribuição de afinidade e agendamento solitário em threads.
+- **KernelSyncOnAddress**: Primitiva fundamental de mutex baseada em Futex, usada para concorrência de GPU e CPU do PS5.

@@ -9,9 +9,9 @@ Esta lista será mantida atualizada com o progresso do desenvolvimento.
 - [x] **Inicializar Lista de Controle (`CHECKLIST.md`):** (Este arquivo) Criado para acompanhamento de tarefas.
 
 ## Fase 2: Pesquisa Avançada e Geração da Biblioteca de Consulta Autônoma
-- [ ] **Gerar Guia do Sistema (`REF_SISTEMA_GPU.md`):** Mapear as bibliotecas do sistema e syscalls nativas com equivalentes.
-- [ ] **Construir a Base Local (`BIBLIOTECA_TRADUCAO.md`):** Repositório interno com opcodes, lógicas e exemplos.
-- [ ] **Criar Assinaturas de Assembly (`REF_ASSEMBLY.md`):** Dicionário de trechos de código traduzidos para x86_64 otimizado (Zen 2).
+- [x] **Gerar Guia do Sistema (`REF_SISTEMA_GPU.md`):** Mapear as bibliotecas do sistema e syscalls nativas com equivalentes. (Expandido via SharpEmu)
+- [x] **Construir a Base Local (`BIBLIOTECA_TRADUCAO.md`):** Repositório interno com opcodes, lógicas e exemplos. (Expandido via KytyPS5)
+- [x] **Criar Assinaturas de Assembly (`REF_ASSEMBLY.md`):** Dicionário de trechos de código traduzidos para x86_64 otimizado (Zen 2).
 
 ## Fase 3: Sincronização Periódica e Upstream Tracking (Contínuo)
 - [ ] **Monitoramento Base:** Verificações no AnyPS5 original.

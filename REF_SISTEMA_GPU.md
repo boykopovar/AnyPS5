@@ -38,3 +38,9 @@ O sistema do console expõe várias syscalls, muitas baseadas em FreeBSD mas alt
 * O tradutor converte pacotes de buffer de comando do console (PM4 / comandos AGC) em estruturas de Vulkan que podem ser enviadas à GPU do PC nativamente.
 
 *Nota: Esta referência será atualizada continuamente conforme a Engenharia Reversa do projeto AnyPS5 (e derivados) avançar.*
+## 4. Gestão de Memória Virtual Adicional (Baseado em SharpEmu/KytyPS5)
+
+- **Endereçamento Virtual de Títulos:**
+  - Jogos baseados na API de PS5 frequentemente realizam pré-alocação (Reservation) de pools massivos (centenas de Gigabytes) de endereços virtuais, mesmo que mapem apenas pequenas partes sob demanda.
+  - **Limitações:** O limite de User Address Space documentado (via engenharia reversa) atinge `0xFC_0000_0000UL`. No Windows, falhas de `VirtualAlloc` para `MEM_RESERVE` desse tamanho ocorrem devido à fragmentação de heap.
+  - **Mitigação:** Estruturas de "FlexibleBackingPool" são utilizadas em emuladores C# e podem inspirar a lógica nativa de "sparse memory" no Relinker/C++.
