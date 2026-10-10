@@ -110,6 +110,20 @@ def main():
             assert result.returncode == 2 and "not a directory" in result.stderr, result.stderr
             assert not output.exists(), output
 
+            for magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee"):
+                case = work / f"{windows}-self-{magic.hex()}"
+                for name in ("sce_module", "prx"):
+                    (case / name).mkdir(parents=True)
+                (case / "sce_module" / "libc.prx").write_bytes(magic + bytes(0x1000))
+                (case / "prx" / "provider.prx").write_bytes(module_with_symbol(True))
+                result, output = convert(case, windows)
+                assert result.returncode == 2 and "Guest module is a SELF container, not an ELF" in result.stderr, result.stderr
+                assert str(case / "sce_module" / "libc.prx") in result.stderr, result.stderr
+                assert not output.exists() and not (case / "app0").exists(), output
+                result, output = convert(case, windows, ["--exclude-sce-module", "libc.prx"])
+                assert result.returncode == 0 and output.exists(), result.stderr
+                assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"provider.prx.guest.prx"}
+
             case = work / f"{windows}-ambiguous"
             for name in ("sce_module", "sce_modules", "prx"):
                 (case / name).mkdir(parents=True)
