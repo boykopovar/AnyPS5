@@ -78,7 +78,7 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int) 
     const int accessMode = flags & SCE_KERNEL_O_ACCMODE;
     if (accessMode != SCE_KERNEL_O_RDONLY && accessMode != SCE_KERNEL_O_RDWR) return Fail(GuestInvalid);
     if ((flags & ~AcceptedFlags) != 0) return Fail(GuestInvalid);
-    if (path != anonymousObject) NotImplemented_nid_no_patch("shm_open of a named object");
+    if (path != anonymousObject) throw std::runtime_error("shm_open of a named object is not supported");
     if (accessMode == SCE_KERNEL_O_RDONLY) return Fail(GuestInvalid);
     const int descriptor = CreateAnonymousFile();
     if (descriptor >= 0) return descriptor;

@@ -18,7 +18,6 @@ extern "C" {
 
 int APS5_VABI sceVideoRecordingClose(int discard) {
  (void)discard;
- NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -33,8 +32,7 @@ int APS5_VABI sceVideoRecordingGetInfo(int32_t info, void* data, size_t size) {
 }
 
 int APS5_VABI sceVideoRecordingGetStatus(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    throw std::runtime_error("sceVideoRecordingGetStatus: unknown signature");
 }
 
 int APS5_VABI sceVideoRecordingOpen(const char* path, const void* param, void* heap, int heapSize) {
@@ -42,13 +40,11 @@ int APS5_VABI sceVideoRecordingOpen(const char* path, const void* param, void* h
  (void)param;
  (void)heap;
  (void)heapSize;
- NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize(const void* param) {
  (void)param;
- NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
@@ -61,19 +57,16 @@ int APS5_VABI sceVideoRecordingSetInfo(int32_t info, const void* data, size_t si
 }
 
 int APS5_VABI sceVideoRecordingStart(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    throw std::runtime_error("sceVideoRecordingStart: unknown signature");
 }
 
 int APS5_VABI sceVideoRecordingStop(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    throw std::runtime_error("sceVideoRecordingStop: unknown signature");
 }
 
 APS5_EXPORT("iQS6DUtLybE", videoRecordingUnknown_iQS6DUtLybE);
 int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void) {
- NotImplemented_nid_no_patch("iQS6DUtLybE");
- return 0;
+    throw std::runtime_error("videoRecordingUnknown_iQS6DUtLybE: unknown signature");
 }
 
 }

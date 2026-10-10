@@ -69,18 +69,18 @@ int APS5_VABI sceSslTerm_nid_postfix(int ssl_ctx_id) {
 }
 
 int APS5_VABI sceSslClose() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetSerialNumber() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslLoadCert() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetMemoryPoolStats(int ssl_ctx_id, SslMemoryPoolStats* stats) {
@@ -93,33 +93,34 @@ int APS5_VABI sceSslGetMemoryPoolStats(int ssl_ctx_id, SslMemoryPoolStats* stats
 }
 
 int APS5_VABI sceSslFreeSslCertName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetIssuerName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetNameEntryCount(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetNameEntryInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetPem(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 int APS5_VABI sceSslGetSubjectName(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error(std::string(__func__) + ": unknown signature");
+
 }
 
 }
+

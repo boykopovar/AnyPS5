@@ -47,8 +47,7 @@ int APS5_VABI sceRudpInit_nid_postfix(void* mem_pool, int mem_pool_size) {
 }
 
 int APS5_VABI sceRudpActivate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceRudpActivate: unknown signature");
 }
 
 int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {

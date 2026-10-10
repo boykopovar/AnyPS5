@@ -3,13 +3,11 @@
 extern "C" {
 
 int APS5_VABI sceNpEAAccessInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpEAAccessInitialize: unknown signature");
 }
 
 int APS5_VABI sceNpEAAccessTerminate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpEAAccessTerminate: unknown signature");
 }
 
 }

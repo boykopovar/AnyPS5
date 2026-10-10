@@ -13,7 +13,7 @@ extern "C" {
 int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
     if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
     if (std::strcmp(path, "exit") != 0) {
-        NotImplemented_nid_no_patch("sceSystemServiceLoadExec: executable replacement");
+        throw std::runtime_error("sceSystemServiceLoadExec: executable replacement is not supported");
     }
     (void)arguments;
     LibcRunShutdown_nid_postfix();

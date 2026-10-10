@@ -37,7 +37,7 @@ static int DoFstat(int fd, NativeStat* st) {
 }
 static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     std::error_code error;
-    if (std::filesystem::is_symlink(std::filesystem::symlink_status(p, error))) NotImplemented_nid_no_patch("lstat of a Windows symbolic link");
+    if (std::filesystem::is_symlink(std::filesystem::symlink_status(p, error))) throw std::runtime_error("lstat of a Windows symbolic link is not supported");
     return DoStat(p, st);
 }
 #else

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstring>
+#include <stdexcept>
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -178,7 +179,7 @@ int Player::PostInit(const AvPlayerPostInitData& data) {
 int Player::AddSource(std::string_view path, std::uint32_t sourceType) {
     if (path.empty()) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     if (sourceType == SourceTypeUnknown) sourceType = DetectSourceType(path);
-    if (sourceType == SourceTypeHls) NotImplemented_nid_no_patch("sceAvPlayerAddSource (HLS)");
+    if (sourceType == SourceTypeHls) throw std::runtime_error("sceAvPlayerAddSource: HLS streaming is not supported");
     std::lock_guard lock(mutex);
     if (source) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
     auto opened = OpenSource({memory, file, videoBuffers}, std::string(path), *this);

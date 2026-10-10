@@ -63,8 +63,7 @@ int32_t APS5_VABI sceNpSessionSignalingGetConnectionStatus(int32_t context_id, i
  (void)status;
  (void)peer_address;
  (void)peer_port;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SCE_NP_SESSION_SIGNALING_ERROR_UNAVAILABLE;
 }
 
 int32_t APS5_VABI sceNpSessionSignalingGetLocalNetInfo(int32_t context_id, void* info) {
@@ -80,17 +79,14 @@ int APS5_VABI sceNpSessionSignalingRequestPrepare(uint32_t contextId, uint32_t* 
 }
 
 int APS5_VABI sceNpSessionSignalingGetMemoryInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpSessionSignalingGetMemoryInfo: unknown signature");
 }
 
 int APS5_VABI sceNpSessionSignalingGetConnectionStatistics(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpSessionSignalingGetConnectionStatistics: unknown signature");
 }
 
 int APS5_VABI sceNpSessionSignalingGetConnectionFromPeerAddress(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpSessionSignalingGetConnectionFromPeerAddress: unknown signature");
 }
 }

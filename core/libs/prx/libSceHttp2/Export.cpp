@@ -28,8 +28,8 @@ static std::mutex g_completionsMutex;
 static std::unordered_map<int, std::deque<Http2AsyncResult>> g_completions;
 
 static void CompleteAsync(const char* function, int req_id, const Http2AsyncOption* kqueue_option, const void* option) {
-    if (kqueue_option == nullptr) NotImplemented_nid_no_patch(function);
-    if (option != nullptr) NotImplemented_nid_no_patch(function);
+    if (kqueue_option == nullptr) throw std::runtime_error(std::string(function) + ": null kqueue_option");
+    if (option != nullptr) throw std::runtime_error(std::string(function) + ": unexpected option");
     {
         std::lock_guard lock(g_completionsMutex);
         Http2AsyncResult completion{};
@@ -40,7 +40,7 @@ static void CompleteAsync(const char* function, int req_id, const Http2AsyncOpti
     if (EqueueTriggerEvent_nid_postfix(kqueue_option->equeue, static_cast<uintptr_t>(kqueue_option->user_event_id), EVFILT_USER, kqueue_option->user_data) != 0) {
         std::lock_guard lock(g_completionsMutex);
         g_completions[req_id].pop_back();
-        NotImplemented_nid_no_patch(function);
+        throw std::runtime_error(std::string(function) + ": failed to trigger equeue event");
     }
 }
 
@@ -241,10 +241,11 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
     (void)timeout;
-    if (result == nullptr || option != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (result == nullptr) throw std::runtime_error("sceHttp2WaitAsync: null result");
+    if (option != nullptr) throw std::runtime_error("sceHttp2WaitAsync: unexpected option");
     std::lock_guard lock(g_completionsMutex);
     const auto pending = g_completions.find(req_id);
-    if (pending == g_completions.end() || pending->second.empty()) NotImplemented_nid_no_patch("sceHttp2WaitAsync: waiting for an operation that has not completed");
+    if (pending == g_completions.end() || pending->second.empty()) throw std::runtime_error("sceHttp2WaitAsync: waiting for an operation that has not completed");
     *result = pending->second.front();
     pending->second.pop_front();
     return 0;
@@ -293,23 +294,19 @@ int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
 }
 
 int APS5_VABI sceHttp2WebSocketCreateRequest() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceHttp2WebSocketCreateRequest: unknown signature");
 }
 
 int APS5_VABI sceHttp2WebSocketCloseAsync() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceHttp2WebSocketCloseAsync: unknown signature");
 }
 
 int APS5_VABI sceHttp2WebSocketSendTextMessageAsync() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceHttp2WebSocketSendTextMessageAsync: unknown signature");
 }
 
 int APS5_VABI sceHttp2WebSocketSendDataMessageAsync() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceHttp2WebSocketSendDataMessageAsync: unknown signature");
 }
 
 }

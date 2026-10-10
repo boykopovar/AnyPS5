@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -76,7 +77,7 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
         }
         if (!entries.empty()) {
             const auto poller = g_socketPoller.load();
-            if (poller == nullptr) NotImplemented_nid_no_patch("select on descriptors that are not libSceNet sockets");
+            if (poller == nullptr) throw std::runtime_error("select on descriptors that are not libSceNet sockets");
             for (auto& entry : entries) entry.revents = 0;
             const int result = poller(entries.data(), static_cast<int>(entries.size()), waitMilliseconds);
             if (result < 0) {
@@ -85,7 +86,7 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
             }
             int ready = 0;
             for (const auto& entry : entries) {
-                if ((entry.revents & KernelSocketPoll::Unknown) != 0) NotImplemented_nid_no_patch("select on descriptors that are not libSceNet sockets");
+                if ((entry.revents & KernelSocketPoll::Unknown) != 0) throw std::runtime_error("select on descriptors that are not libSceNet sockets");
                 const bool readable = (entry.events & KernelSocketPoll::Readable) != 0 && (entry.revents & (KernelSocketPoll::Readable | KernelSocketPoll::HangUp | KernelSocketPoll::Error)) != 0;
                 const bool writable = (entry.events & KernelSocketPoll::Writable) != 0 && (entry.revents & (KernelSocketPoll::Writable | KernelSocketPoll::Error)) != 0;
                 const bool urgent = (entry.events & KernelSocketPoll::Urgent) != 0 && (entry.revents & KernelSocketPoll::Urgent) != 0;

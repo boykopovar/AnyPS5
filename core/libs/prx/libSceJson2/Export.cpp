@@ -777,8 +777,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
 
 
 int APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sce::Json::InitParameterRtti: unknown signature");
 }
 
 struct InitParameter2 {
@@ -813,8 +812,7 @@ void APS5_VABI _ZN3sce4Json5Value5clearEv(Value* self) {
 }
 
 int APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sce::Json::MemAllocator::notifyError: unknown signature");
 }
 
 }
