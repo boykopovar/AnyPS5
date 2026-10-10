@@ -915,11 +915,20 @@ std::uint32_t EmitTrigCycleF32(SpirvEmitterState& state, std::uint32_t src, bool
 }
 
 std::uint32_t EmitF16BitsToF32(SpirvEmitterState& state, std::uint32_t bits) {
-    const auto unpacked = state.module.AllocateId();
-    const auto result = state.module.AllocateId();
-    state.module.AddFunction(spv::OpExtInst, TypeF32Vector(state, 2), unpacked, GlslStd450(state), GLSLstd450UnpackHalf2x16, bits);
-    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), result, unpacked, 0u);
-    return result;
+    const auto u32 = TypeU32(state);
+    const auto f32 = TypeF32(state);
+    const auto op = [&](spv::Op opcode, std::uint32_t lhs, std::uint32_t rhs) { return Binary(state, opcode, u32, lhs, rhs); };
+    const auto sign = op(spv::OpShiftLeftLogical, op(spv::OpBitwiseAnd, bits, ConstantU32(state, 0x8000u)), ConstantU32(state, 16u));
+    const auto exponent = op(spv::OpBitwiseAnd, op(spv::OpShiftRightLogical, bits, ConstantU32(state, 10u)), ConstantU32(state, 0x1fu));
+    const auto mantissa = op(spv::OpBitwiseAnd, bits, ConstantU32(state, 0x3ffu));
+    const auto mantissa32 = op(spv::OpShiftLeftLogical, mantissa, ConstantU32(state, 13u));
+    const auto normal = op(spv::OpBitwiseOr, op(spv::OpShiftLeftLogical, op(spv::OpIAdd, exponent, ConstantU32(state, 127u - 15u)), ConstantU32(state, 23u)), mantissa32);
+    const auto special = op(spv::OpBitwiseOr, ConstantU32(state, 0x7f800000u), mantissa32);
+    const auto subnormal = Unary(state, spv::OpBitcast, u32, Binary(state, spv::OpFMul, f32, Unary(state, spv::OpConvertUToF, f32, mantissa), ConstantF32Value(state, 0x1p-24f)));
+    const auto boolean = TypeBool(state);
+    const auto finite = Select(state, u32, Binary(state, spv::OpIEqual, boolean, exponent, ConstantU32(state, 0u)), subnormal, normal);
+    const auto magnitude = Select(state, u32, Binary(state, spv::OpIEqual, boolean, exponent, ConstantU32(state, 0x1fu)), special, finite);
+    return Unary(state, spv::OpBitcast, f32, op(spv::OpBitwiseOr, sign, magnitude));
 }
 
 void EmitProgram(SpirvEmitterState& state) {
