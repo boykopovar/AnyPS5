@@ -202,8 +202,8 @@ static void CheckFloatClassification() {
     Require(_FDtest_nid_postfix(reinterpret_cast<const float*>(&_FNan_nid_postfix)) == 2);
 }
 
-void CheckNoConversionIsPositiveZero() {
-    for (const char* text : {"-.", "-", "-x", "-.e1", "-e5", "- 1"}) {
+static void CheckNoConversionIsPositiveZero() {
+    for (const char* text : {"", " ", "-", "+", "-.", "+.", "-x", "-.e1", "-e5", "- 1", "  -."}) {
         char* end = nullptr;
         const double parsed = strtod_nid_postfix(text, &end);
         Require(parsed == 0. && !std::signbit(parsed) && end == text);
@@ -217,8 +217,23 @@ void CheckNoConversionIsPositiveZero() {
     const char negativeZero[] = "-0.0x";
     const double parsed = strtod_nid_postfix(negativeZero, &end);
     Require(parsed == 0. && std::signbit(parsed) && end == negativeZero + 4);
+    for (const char* text : {"-0", "-.0", "-0e5", "-0x0p0", "-0x"}) {
+        const double keptDouble = strtod_nid_postfix(text, &end);
+        Require(keptDouble == 0. && std::signbit(keptDouble) && end != text);
+        const float keptFloat = strtof_nid_postfix(text, &end);
+        Require(keptFloat == 0.f && std::signbit(keptFloat) && end != text);
+        const long double keptLong = strtold_nid_postfix(text, nullptr);
+        Require(keptLong == 0.L && std::signbit(keptLong));
+    }
+    Require(strtod_nid_postfix("-inf", nullptr) == -std::numeric_limits<double>::infinity());
+    Require(std::isnan(atof_nid_postfix("nan")));
+    const double noEndPointer = strtod_nid_postfix("-.", nullptr);
+    Require(noEndPointer == 0. && !std::signbit(noEndPointer));
     const char16_t wide[] = u"-.";
     char16_t* wideEnd = nullptr;
+    const char16_t wideKept[] = u" -0.0x";
+    const double keptWide = wcstod_nid_postfix(wideKept, &wideEnd);
+    Require(keptWide == 0. && std::signbit(keptWide) && wideEnd == wideKept + 5);
     const double parsedWide = wcstod_nid_postfix(wide, &wideEnd);
     Require(parsedWide == 0. && !std::signbit(parsedWide) && wideEnd == wide);
     const float parsedWideFloat = wcstof_nid_postfix(wide, &wideEnd);
