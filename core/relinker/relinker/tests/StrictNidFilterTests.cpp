@@ -3,6 +3,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
+#include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <algorithm>
 #include <cstring>
@@ -326,6 +327,105 @@ void filterAndPltCompaction() {
     requireFailure([&] { Relinker::MakeStrictUnusedNidFilter()->Filter(references, exceptional, input.Text, input.TextVaddr); }, "Exception metadata was ignored");
 }
 
+void relativeRelocationTableBounds() {
+    std::vector<std::uint8_t> bytes(0x400, 0);
+    bytes[0] = 0x7F;
+    bytes[1] = 'E';
+    bytes[2] = 'L';
+    bytes[3] = 'F';
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write<std::uint16_t>(bytes, 16, 3);
+    write<std::uint16_t>(bytes, 18, 62);
+    write<std::uint64_t>(bytes, 32, 64);
+    write<std::uint16_t>(bytes, 54, 56);
+    write<std::uint16_t>(bytes, 56, 2);
+
+    write<std::uint32_t>(bytes, 64, 1);
+    write<std::uint32_t>(bytes, 68, 7);
+    write<std::uint64_t>(bytes, 72, 0x200);
+    write<std::uint64_t>(bytes, 80, 0x1000);
+    write<std::uint64_t>(bytes, 96, 0x100);
+    write<std::uint64_t>(bytes, 104, 0x100);
+
+    write<std::uint32_t>(bytes, 120, 2);
+    write<std::uint32_t>(bytes, 124, 6);
+    write<std::uint64_t>(bytes, 128, 0x100);
+    write<std::uint64_t>(bytes, 136, 0x2000);
+    write<std::uint64_t>(bytes, 152, 0x80);
+    write<std::uint64_t>(bytes, 160, 0x80);
+
+    write<std::int64_t>(bytes, 0x100, 7);
+    write<std::uint64_t>(bytes, 0x108, 0x10E8);
+    write<std::int64_t>(bytes, 0x110, 8);
+    write<std::uint64_t>(bytes, 0x118, 24);
+    write<std::int64_t>(bytes, 0x120, 0);
+    write<std::uint64_t>(bytes, 0x128, 0);
+
+    write<std::uint64_t>(bytes, 0x2E8, 0x5000);
+    write<std::uint64_t>(bytes, 0x2F0, 8);
+    write<std::int64_t>(bytes, 0x2F8, 0x6000);
+
+    write<std::uint64_t>(bytes, 0x300, 0x7000);
+    write<std::uint64_t>(bytes, 0x308, 8);
+    write<std::int64_t>(bytes, 0x310, 0x8000);
+
+    auto valid = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(bytes);
+    require(valid->TargetOfSlot(0x5000) == 0x6000, "Valid relative relocation was not indexed");
+    require(!valid->TargetOfSlot(0x7000).has_value(), "Out of segment relocation was indexed in valid table");
+
+    auto emptyRelocationTable = bytes;
+    write<std::uint64_t>(emptyRelocationTable, 0x108, ~std::uint64_t{0});
+    write<std::uint64_t>(emptyRelocationTable, 0x118, 0);
+    auto emptyIndex = Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(emptyRelocationTable);
+    require(!emptyIndex->TargetOfSlot(0x5000).has_value(),
+            "Empty relocation table was unexpectedly parsed");
+
+    auto overextended = bytes;
+    write<std::uint64_t>(overextended, 0x118, 48);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overextended); }, "Relocation table extending beyond PT_LOAD was accepted");
+
+    auto badSize = bytes;
+    write<std::uint64_t>(badSize, 0x118, 25);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(badSize); }, "Unaligned relocation table size was accepted");
+
+    auto pltOverextended = bytes;
+    write<std::int64_t>(pltOverextended, 0x100, 23);
+    write<std::uint64_t>(pltOverextended, 0x108, 0x10E8);
+    write<std::int64_t>(pltOverextended, 0x110, 2);
+    write<std::uint64_t>(pltOverextended, 0x118, 48);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(pltOverextended); }, "PLT relocation table extending beyond PT_LOAD was accepted");
+
+    auto pltBadSize = bytes;
+    write<std::int64_t>(pltBadSize, 0x100, 23);
+    write<std::uint64_t>(pltBadSize, 0x108, 0x10E8);
+    write<std::int64_t>(pltBadSize, 0x110, 2);
+    write<std::uint64_t>(pltBadSize, 0x118, 1);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(pltBadSize); }, "Unaligned PLT relocation table size was accepted");
+
+    auto overflowSize = bytes;
+    write<std::uint64_t>(overflowSize, 0x118, (~std::uint64_t{0} / 24) * 24);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowSize); }, "Relocation table size near UINT64_MAX was accepted");
+
+    auto overflowRelaVa = bytes;
+    write<std::uint64_t>(overflowRelaVa, 0x108, ~std::uint64_t{0} - 15);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowRelaVa); }, "Relocation table vaddr near UINT64_MAX was accepted");
+
+    auto overflowLoadOffset = bytes;
+    write<std::uint64_t>(overflowLoadOffset, 72, ~std::uint64_t{0} - 16);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowLoadOffset); }, "PT_LOAD file offset near UINT64_MAX was accepted");
+
+    auto overflowLoadSize = bytes;
+    write<std::uint64_t>(overflowLoadSize, 96, ~std::uint64_t{0} - 16);
+    write<std::uint64_t>(overflowLoadSize, 0x118, 0x300);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowLoadSize); }, "Relocation table beyond file with fileSize near UINT64_MAX was accepted");
+
+    auto overflowDynamicOffset = bytes;
+    write<std::uint64_t>(overflowDynamicOffset, 128, ~std::uint64_t{0} - 16);
+    requireFailure([&] { Relinker::UnusedNidFilter::BuildRelativeRelocationIndex(overflowDynamicOffset); }, "PT_DYNAMIC offset near UINT64_MAX was accepted");
+}
+
 }
 
 int main() {
@@ -345,6 +445,7 @@ int main() {
         exceptionDataWithoutPersonality();
         filterCallbackDataImports();
         filterAndPltCompaction();
+        relativeRelocationTableBounds();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
