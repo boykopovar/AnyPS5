@@ -167,8 +167,7 @@ int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
- (void)restriction;
- NotImplemented_nid_no_patch(__func__);
+ if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
  return 0;
 }
 
