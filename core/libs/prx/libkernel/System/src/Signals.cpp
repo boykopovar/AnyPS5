@@ -1,11 +1,17 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <thread>
 
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" int APS5_VABI getpid_nid_postfix(void);
@@ -72,6 +78,63 @@ bool Install(int guest, const GuestSigaction& action) {
     }
     return true;
 }
+}
+
+namespace {
+constexpr int GuestSigalrm = 14;
+std::mutex alarmLock;
+std::condition_variable alarmChanged;
+std::optional<std::chrono::steady_clock::time_point> alarmDeadline;
+bool alarmThreadStarted = false;
+
+void ExpireAlarm() {
+    std::uintptr_t handler = 0;
+    {
+        std::lock_guard lock(registration);
+        handler = dispositions[GuestSigalrm].handler;
+    }
+    if (handler == 1) return;
+    if (handler == 0) {
+        std::fprintf(stderr, "SIGALRM: the alarm expired with the default disposition; the process terminates\n");
+        std::fflush(stderr);
+        std::_Exit(128 + GuestSigalrm);
+    }
+    throw std::runtime_error("alarm: delivering SIGALRM to a guest handler is not implemented");
+}
+
+void RunAlarms() {
+    std::unique_lock lock(alarmLock);
+    for (;;) {
+        if (!alarmDeadline) {
+            alarmChanged.wait(lock);
+            continue;
+        }
+        const auto deadline = *alarmDeadline;
+        if (alarmChanged.wait_until(lock, deadline) != std::cv_status::timeout || alarmDeadline != deadline) continue;
+        alarmDeadline.reset();
+        lock.unlock();
+        ExpireAlarm();
+        lock.lock();
+    }
+}
+}
+
+extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int seconds) {
+    std::lock_guard lock(alarmLock);
+    const auto now = std::chrono::steady_clock::now();
+    unsigned int remaining = 0;
+    if (alarmDeadline && *alarmDeadline > now) {
+        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(*alarmDeadline - now).count();
+        remaining = static_cast<unsigned int>((micros + 999999) / 1000000);
+    }
+    if (seconds == 0) alarmDeadline.reset();
+    else alarmDeadline = now + std::chrono::seconds(seconds);
+    if (!alarmThreadStarted) {
+        std::thread(RunAlarms).detach();
+        alarmThreadStarted = true;
+    }
+    alarmChanged.notify_all();
+    return remaining;
 }
 
 struct GuestStack {
