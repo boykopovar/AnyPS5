@@ -319,8 +319,7 @@ int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Sh
     (void)regs;
     (void)vs;
     (void)ps;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceAgcUpdateInterpolantMapping_0100: not implemented");
 }
 
 }

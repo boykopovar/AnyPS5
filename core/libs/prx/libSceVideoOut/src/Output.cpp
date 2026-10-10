@@ -302,15 +302,13 @@ int APS5_VABI sceVideoOutAdjustColor(int handle, const VideoOutColorSettings* se
 }
 
 int APS5_VABI sceVideoOutVrrUnpegFromFixedRate() try {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceVideoOutVrrUnpegFromFixedRate: unknown signature");
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }
 
 int APS5_VABI sceVideoOutVrrPegToFixedRate() try {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceVideoOutVrrPegToFixedRate: unknown signature");
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
 }

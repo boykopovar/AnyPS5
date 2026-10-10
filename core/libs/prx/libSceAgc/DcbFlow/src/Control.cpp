@@ -48,11 +48,9 @@ std::vector<std::uint32_t> resetQueueGroup(std::uint32_t bit, std::uint32_t stat
 
 extern "C" {
 
-// unknown signature
 APS5_EXPORT("zARR5aCmkoY", sceAgcDcbA_zARR5aCmkoY);
 void* APS5_VABI sceAgcDcbA_zARR5aCmkoY(void) {
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    throw std::runtime_error("sceAgcDcbA_zARR5aCmkoY: unknown signature");
 }
 
 

@@ -9,10 +9,9 @@
 extern "C" {
 
 uint32_t* APS5_VABI sceAgcDcbContextStateOp(CommandBuffer* buf, uint32_t operation) {
- (void)buf;
- (void)operation;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+    (void)buf;
+    (void)operation;
+    throw std::runtime_error("sceAgcDcbContextStateOp: not implemented");
 }
 
 uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(uint32_t operation) {

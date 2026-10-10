@@ -741,12 +741,10 @@ int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond,
 }
 
 int APS5_VABI sceSaveDataConvert() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceSaveDataConvert: unknown signature");
 }
 
 int APS5_VABI sceSaveDataGetConvertProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceSaveDataGetConvertProgress: unknown signature");
 }
 }

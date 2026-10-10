@@ -11,10 +11,8 @@
 
 extern "C" {
 
-// unknown signature
 void* APS5_VABI sceAgcAcbAtomicGds_0900(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    throw std::runtime_error("sceAgcAcbAtomicGds_0900: unknown signature");
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbJump(CommandBuffer* buf, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords) {
@@ -49,8 +47,7 @@ std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, 
     (void)buf;
     (void)videoOutHandle;
     (void)displayBufferIndex;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    throw std::runtime_error("sceAgcAcbWaitUntilSafeForRendering: not implemented");
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t videoOutHandle, std::int32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
@@ -59,8 +56,7 @@ std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t vide
     (void)displayBufferIndex;
     (void)flipMode;
     (void)flipArg;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    throw std::runtime_error("sceAgcAcbSetFlip: not implemented");
 }
 
 uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {

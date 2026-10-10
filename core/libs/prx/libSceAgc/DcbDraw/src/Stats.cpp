@@ -22,13 +22,11 @@ std::uint32_t* APS5_VABI sceAgcDcbGetLodStats(CommandBuffer* buf, std::uint8_t c
 }
 
 std::uint32_t APS5_VABI sceAgcDcbBeginOcclusionQueryGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceAgcDcbBeginOcclusionQueryGetSize: not implemented");
 }
 
 std::uint32_t APS5_VABI sceAgcDcbEndOcclusionQueryGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceAgcDcbEndOcclusionQueryGetSize: not implemented");
 }
 
 }

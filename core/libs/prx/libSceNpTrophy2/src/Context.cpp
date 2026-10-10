@@ -36,13 +36,11 @@ int APS5_VABI sceNpTrophy2UnregisterUnlockCallback() {
 
 
 int APS5_VABI sceNpTrophy2GetRewardIcon(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpTrophy2GetRewardIcon: unknown signature");
 }
 
 int APS5_VABI sceNpTrophy2ShowTrophyList(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpTrophy2ShowTrophyList: unknown signature");
 }
 
 }

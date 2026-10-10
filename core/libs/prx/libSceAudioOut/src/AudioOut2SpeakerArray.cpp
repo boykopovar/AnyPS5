@@ -107,8 +107,7 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandl
     (void)num_coefficients;
     (void)height_aware;
     (void)downmix_spread_radius;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceAudioOut2GetSpeakerArrayCoefficients: not implemented");
 }
 
 size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, uint8_t is_3d, uint8_t is_ambisonics) {

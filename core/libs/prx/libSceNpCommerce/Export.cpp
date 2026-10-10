@@ -80,8 +80,7 @@ int APS5_VABI sceNpCommerceSetPsStoreIconLayout(int layout) {
 }
 
 int APS5_VABI sceNpCommerceDialogOpen2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceNpCommerceDialogOpen2: unknown signature");
 }
 
 }

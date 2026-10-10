@@ -87,10 +87,9 @@ int APS5_VABI sceImeKeyboardSetMode(int32_t user_id, uint32_t mode) {
 }
 
 int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
- (void)param;
- (void)extended;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    (void)param;
+    (void)extended;
+    return ErrorNotOpened;
 }
 
 void APS5_VABI sceImeParamInit(Param* param) {

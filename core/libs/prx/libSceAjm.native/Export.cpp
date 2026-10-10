@@ -8,8 +8,7 @@
 // Entry points this library does not implement: reported before the unimplemented-call exception so an
 // APS5_TRACE_AJM run shows which one a title reached.
 static void AjmStub(const char* name) {
-    std::fprintf(stderr, "[ajm] unimplemented %s called\n", name);
-    NotImplemented_nid_no_patch(name);
+    throw std::runtime_error(std::string("[ajm] unimplemented: ") + name);
 }
 
 extern "C" {
@@ -56,13 +55,11 @@ const char* APS5_VABI sceAjmStrError(int error) {
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceAjmDecWVorbisCreateHeaderPacket: unknown signature");
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateSetupPacket(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceAjmDecWVorbisCreateSetupPacket: unknown signature");
 }
 
 }
