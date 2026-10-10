@@ -18,7 +18,7 @@ public:
     ) const = 0;
 };
 
-std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter();
+std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter(Amd64OnlyTarget target = Amd64OnlyTarget::Intel);
 
 }
 

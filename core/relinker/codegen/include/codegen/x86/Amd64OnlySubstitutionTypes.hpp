@@ -8,6 +8,11 @@
 
 namespace Codegen {
 
+enum class Amd64OnlyTarget : std::uint8_t {
+    Intel,
+    Rosetta
+};
+
 enum class Amd64OnlyLowering : std::uint8_t {
     InPlace,
     Trampoline,

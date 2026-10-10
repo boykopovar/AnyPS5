@@ -7,7 +7,7 @@
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--skip-syscall-check] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
            "Example: relinker input.elf output.elf";
 }
 
@@ -34,6 +34,9 @@ Args ParseArgs(int argc, char* argv[]) {
                 throw std::runtime_error("--exclude-sce-module requires a file name");
             args.excludedSceModules.insert(argv[++i]);
         } else if (arg == "--to-intel") {
+            args.toIntel = true;
+        } else if (arg == "--to-rosetta") {
+            args.toRosetta = true;
             args.toIntel = true;
         } else if (arg.rfind("unused-filter=", 0) == 0) {
             const std::string value = arg.substr(14);
@@ -77,6 +80,8 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.toWindows && args.toMacos)
         throw std::runtime_error("--windows conflicts with --macos");
+    if (args.toRosetta && args.toWindows)
+        throw std::runtime_error("--to-rosetta conflicts with --windows");
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
 

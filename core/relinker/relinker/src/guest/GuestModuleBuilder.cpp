@@ -49,7 +49,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath) const {
     const auto root = std::filesystem::absolute(sceModulePath).lexically_normal();
     if (!std::filesystem::exists(root)) throw Domain::RelinkerException("Guest module parent directory does not exist: " + root.string());
     if (!std::filesystem::is_directory(root)) throw Domain::RelinkerException("Guest module parent path is not a directory: " + root.string());
@@ -146,7 +146,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(std::move(image.Bytes), codeHeaders);
+            auto converted = Codegen::MakeAmd64OnlyConverter(toRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel)->Convert(std::move(image.Bytes), codeHeaders);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
         }
