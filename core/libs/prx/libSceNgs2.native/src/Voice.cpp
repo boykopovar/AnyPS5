@@ -199,7 +199,7 @@ static void AppendStreamData(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlo
 }
 
 static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBlocksParam& param) {
-    constexpr std::uint32_t knownFlags = SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET;
+    constexpr std::uint32_t knownFlags = SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET | SCE_NGS2_WAVEFORM_BLOCKS_FLAG_SILENCE;
     if ((param.flags & ~knownFlags) != 0) throw std::runtime_error("NGS2: waveform block flags " + Ngs2Hex(param.flags) + " are not implemented");
     if (voice.channels == 0 || (param.num_blocks != 0 && (param.blocks == nullptr || param.data == nullptr))) APS5_INVALID_ARG_EX;
     const bool reset = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET) != 0;
@@ -218,9 +218,14 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         return;
     }
     voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
+    const bool allowsSilence = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_SILENCE) != 0;
     for (std::uint32_t i = 0; i < param.num_blocks; i++) {
         const auto& block = param.blocks[i];
         if (block.num_samples == 0 && block.data_size == 0) continue;
+        if (allowsSilence && block.data_size == 0) {
+            voice.blocks.push_back({nullptr, block});
+            continue;
+        }
         const std::uint64_t bytes = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 ? Ngs2Atrac9BlockBytes(voice, block)
                                   : (static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples) * frameBytes;
         const bool streaming = block.num_samples != 0 && bytes > block.data_size && voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L &&

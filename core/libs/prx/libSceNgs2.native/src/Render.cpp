@@ -16,6 +16,7 @@ static constexpr std::uint64_t PHASE_FRACTION = 0xffffffff;
 
 static const std::uint8_t* FrameAt(const Ngs2Voice& voice, const Ngs2Block& block, std::uint32_t frame) {
     const std::size_t frameBytes = voice.channels * sizeof(std::int16_t);
+    if (block.data == nullptr) return nullptr;
     if (block.streaming) {
         for (const auto& piece : block.pieces) {
             if (frame >= piece.firstFrame && frame - piece.firstFrame < piece.frames) return piece.data + (frame - piece.firstFrame) * frameBytes;
