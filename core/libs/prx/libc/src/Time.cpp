@@ -99,9 +99,38 @@ const bool timeZoneFixed = [] {
 }  // namespace
 #endif
 
-extern "C" int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr);
-
 namespace {
+
+bool isFreeBsdConversion(char specifier) {
+    return specifier == 'k' || specifier == 'l' || specifier == 's' || specifier == 'v' || specifier == '+';
+}
+
+std::size_t freeBsdConversionLength(const char* afterPercent, char& conversion) {
+    const char* cursor = afterPercent;
+    if ((*cursor == 'E' || *cursor == 'O') && isFreeBsdConversion(cursor[1])) ++cursor;
+    if (!isFreeBsdConversion(*cursor)) return 0;
+    conversion = *cursor;
+    return static_cast<std::size_t>(cursor - afterPercent) + 1;
+}
+
+bool hasFreeBsdConversion(const char* format) {
+    while (*format != '\0') {
+        if (*format++ != '%' || *format == '\0') continue;
+        char conversion = 0;
+        if (freeBsdConversionLength(format, conversion) != 0) return true;
+        ++format;
+    }
+    return false;
+}
+
+const char* guestZoneName(const GuestTm& guest) {
+    if (guest.tm_zone != nullptr) return guest.tm_zone;
+#ifdef _WIN32
+    return _tzname[guest.tm_isdst != 0 ? 1 : 0];
+#else
+    return tzname[guest.tm_isdst != 0 ? 1 : 0];
+#endif
+}
 
 std::string expandFreeBsdConversions(const char* format, const GuestTm& guest) {
     std::string result;
@@ -111,9 +140,16 @@ std::string expandFreeBsdConversions(const char* format, const GuestTm& guest) {
             result += next;
             continue;
         }
-        const char specifier = *format++;
+        char conversion = 0;
+        const std::size_t length = freeBsdConversionLength(format, conversion);
+        if (length == 0) {
+            result += '%';
+            result += *format++;
+            continue;
+        }
+        format += length;
         char text[32];
-        switch (specifier) {
+        switch (conversion) {
         case 'k':
             std::snprintf(text, sizeof(text), "%2d", guest.tm_hour);
             result += text;
@@ -123,20 +159,21 @@ std::string expandFreeBsdConversions(const char* format, const GuestTm& guest) {
             result += text;
             break;
         case 's': {
-            GuestTm copy = guest;
-            std::snprintf(text, sizeof(text), "%lld", static_cast<long long>(libc_mktime_nid_postfix(&copy)));
+            std::tm host = toHostTm(guest);
+            std::snprintf(text, sizeof(text), "%lld", static_cast<long long>(std::mktime(&host)));
             result += text;
             break;
         }
         case 'v':
             result += "%e-%b-%Y";
             break;
-        case '+':
-            result += "%a %b %e %H:%M:%S %Z %Y";
-            break;
         default:
-            result += '%';
-            result += specifier;
+            result += "%a %b %e %H:%M:%S ";
+            for (const char* zone = guestZoneName(guest); *zone != '\0'; ++zone) {
+                if (*zone == '%') result += '%';
+                result += *zone;
+            }
+            result += " %Y";
             break;
         }
     }
@@ -245,6 +282,7 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
 
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
     const std::tm host = toHostTm(*timeptr);
+    if (!hasFreeBsdConversion(format)) return std::strftime(str, count, format, &host);
     const std::string expanded = expandFreeBsdConversions(format, *timeptr);
     return std::strftime(str, count, expanded.c_str(), &host);
 }
