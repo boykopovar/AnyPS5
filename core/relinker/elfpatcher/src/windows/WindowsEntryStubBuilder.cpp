@@ -108,7 +108,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             if (import.Library == "libSceLibcInternal.prx") {
                 for (std::size_t index = 0; index < guestModules.size(); ++index) {
                     const auto& names = guestModules[index].Names;
-                    if (std::find(names.begin(), names.end(), "libc.prx") != names.end())
+                    if (std::find(names.begin(), names.end(), "libc.prx") != names.end() && !guestModules[index].ZeroReturnExports.contains(import.Name))
                         order.push_back(CheckedRva(index));
                 }
             }

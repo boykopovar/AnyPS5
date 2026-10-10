@@ -17,10 +17,10 @@ def dynamic(image, offset, phoff, tags):
     struct.pack_into('<QQ', image, phoff + 32, (len(tags) + 1) * 16, (len(tags) + 1) * 16)
 
 
-def provider(value, soname=None):
+def provider(value, soname=None, code=None):
     image = module_with_symbol(True)
-    code = b'\xb8' + struct.pack('<I', value) + b'\xc3'
-    image[0x400:0x406] = code
+    code = code or b'\xb8' + struct.pack('<I', value) + b'\xc3'
+    image[0x400:0x400 + len(code)] = code
     struct.pack_into('<Q', image, 0x898 + 16, len(code))
     if soname:
         strings = b'\0shared#A#B\0' + soname.encode() + b'\0'
@@ -38,14 +38,19 @@ def check_internal_guest_libc(convert, work, relinker):
     assert result.returncode == 0, result.stderr
     empty_provider = dummy.parent / 'app0' / 'prx' / 'c.prx.guest.prx'
     shared_provider = shared.parent / 'app0' / 'prx' / 'a.prx.guest.prx'
-    for name, native_owner, symbol, expected in (
-            ('guest-only', None, 'shared#A#B', 22),
-            ('internal-first', 'libSceLibcInternal.prx', 'shared#A#B', 11),
-            ('native-libc-first', 'libc.prx', 'shared#A#B', 11),
-            ('unresolved', None, 'absent#A#B', None)):
+    zero = b'\x31\xc0\xc3'
+    zero_xmm = b'\x66\x0f\xef\xc0\x31\xc0\xc3'
+    for name, native_owner, symbol, code, expected in (
+            ('guest-only', None, 'shared#A#B', None, 22),
+            ('internal-first', 'libSceLibcInternal.prx', 'shared#A#B', None, 11),
+            ('native-libc-first', 'libc.prx', 'shared#A#B', None, 11),
+            ('unresolved', None, 'absent#A#B', None, None),
+            ('guest-zero-return', None, 'shared#A#B', zero, None),
+            ('guest-zero-return-xmm', None, 'shared#A#B', zero_xmm, None),
+            ('internal-first-zero-return', 'libSceLibcInternal.prx', 'shared#A#B', zero, 11)):
         case = work / ('internal-guest-libc-' + name)
         (case / 'sce_module').mkdir(parents=True)
-        (case / 'sce_module' / 'libc.prx').write_bytes(provider(22))
+        (case / 'sce_module' / 'libc.prx').write_bytes(provider(22, code=code))
         source = case / 'input.elf'
         source.write_bytes(executable('libSceLibcInternal.prx', symbol, extra_dependencies=('libc.prx',)))
         output = case / 'output.exe'
@@ -58,7 +63,7 @@ def check_internal_guest_libc(convert, work, relinker):
         if os.name == 'nt':
             run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
             if expected is None:
-                assert run.returncode != 0 and 'unresolved ELF import absent' in run.stderr, (run.returncode, run.stdout, run.stderr)
+                assert run.returncode != 0 and 'unresolved ELF import ' + symbol.split('#')[0] in run.stderr, (run.returncode, run.stdout, run.stderr)
             else:
                 assert run.returncode == expected, (run.returncode, run.stdout, run.stderr)
 
