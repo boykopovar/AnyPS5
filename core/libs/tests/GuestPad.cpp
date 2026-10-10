@@ -3,7 +3,9 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 extern "C" {
@@ -20,6 +22,8 @@ int APS5_VABI scePadSetTiltCorrectionState(int, bool);
 int APS5_VABI scePadResetOrientation(int);
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int, bool);
 int APS5_VABI scePadIsRemoteController(int, bool*);
+int APS5_VABI scePadGetControllerInformation(int, PadControllerInformation*);
+int APS5_VABI scePadGetExtControllerInformation(int, void*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -79,6 +83,39 @@ static void CheckRemoteController(int handle) {
     Require(!remote);
 }
 
+static void RequireLocalController(const PadControllerInformation& info) {
+    Require(info.touchPadInfo.pixelDensity == 44.86f);
+    Require(info.touchPadInfo.resolution.x == 1920);
+    Require(info.touchPadInfo.resolution.y == 943);
+    Require(info.stickInfo.deadZoneLeft == 2);
+    Require(info.stickInfo.deadZoneRight == 2);
+    Require(info.connectionType == PAD_CONNECTION_TYPE_LOCAL);
+    Require(info.connectedCount == 1);
+    Require(info.connected);
+    Require(info.deviceClass == PAD_DEVICE_CLASS_STANDARD);
+    for (const auto byte : info.reserve) Require(byte == 0);
+}
+
+static void CheckControllerInformation(int handle) {
+    PadControllerInformation info;
+    std::memset(&info, 0xff, sizeof(info));
+    Require(scePadGetControllerInformation(handle + 1, &info) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetControllerInformation(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(info.connectionType == 0xff);
+    Require(scePadGetControllerInformation(handle, &info) == PAD_OK);
+    RequireLocalController(info);
+
+    alignas(PadControllerInformation) unsigned char ext[0x2c];
+    std::memset(ext, 0xff, sizeof(ext));
+    Require(scePadGetExtControllerInformation(handle + 1, ext) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetExtControllerInformation(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetExtControllerInformation(handle, ext) == PAD_OK);
+    PadControllerInformation base;
+    std::memcpy(&base, ext, sizeof(base));
+    RequireLocalController(base);
+    for (std::size_t i = sizeof(base); i < sizeof(ext); ++i) Require(ext[i] == 0);
+}
+
 int main() {
     constexpr int noHandle = static_cast<int>(0x80920008);
     constexpr int user = 0x10000000;
@@ -100,6 +137,7 @@ int main() {
     CheckTouchContact();
     CheckReadStateHandle(handle);
     CheckRemoteController(handle);
+    CheckControllerInformation(handle);
     Require(scePadSetVibrationMode(handle, 1) == 0);
     Require(scePadSetVibrationMode(handle, 2) == 0);
     Require(scePadSetVibrationMode(handle, 3) == PAD_ERROR_INVALID_ARG);
