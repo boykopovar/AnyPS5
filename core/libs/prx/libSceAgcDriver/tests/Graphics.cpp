@@ -123,9 +123,26 @@ void stateTests() {
     queue.context[0x293] = 0x06020000u;
     (void)AgcDriver::Graphics::DecodeState(queue);
     Require(AgcDriver::Graphics::DrawRejection(queue, false).find("sample iteration") == std::string::npos, "per-engine primitive discard was rejected");
+    queue.context[0x293] = 0x760201bcu;
+    (void)AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("sample iteration") == std::string::npos, "an out-of-order watermark without out-of-order rasterization was rejected");
+    queue.context[0x293] = 0x7e0201bcu;
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("sample iteration") != std::string::npos, "out-of-order rasterization was accepted");
     queue.context[0x293] = 0x06030000u;
     Require(AgcDriver::Graphics::DrawRejection(queue, false).find("sample iteration") != std::string::npos, "per-sample shading was accepted");
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "sample iteration");
+    queue.context[0x293] = 0;
+    for (const auto disabled : {0x6000u, 0x00100000u, 0u}) {
+        queue.context[0x313] = disabled;
+        Require(AgcDriver::Graphics::DecodeState(queue).conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT, "disabled conservative rasterization decoded as enabled");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_SC_CONSERVATIVE") == std::string::npos, "disabled conservative rasterization was rejected");
+    }
+    for (const auto enabled : {0x00e00001u, 0x01e00022u}) {
+        queue.context[0x313] = enabled;
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).find("PA_SC_CONSERVATIVE") != std::string::npos, "conservative rasterization was accepted");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_SC_CONSERVATIVE");
+    }
+    queue.context[0x313] = 0x6000u;
     queue = makeState();
     queue.userConfig.erase(0x24b);
     queue.context[0x2a5] = 0;
@@ -930,6 +947,13 @@ void DepthBoundsBiasTests() {
     queue.context[0x205] = 0x00001a4au;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depthBias && state.depthBiasConstant == 4.0f, "culled back faces must not constrain the front depth bias");
+    queue.context[0x205] = 0x00003a46u;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthBias && state.depthBiasConstant == 4.0f && state.cullMode == VK_CULL_MODE_BACK_BIT, "a triangle draw with the point and line offset enable lost its depth bias");
+    queue.userConfig[0x242] = 2;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "polygon mode, depth bias, provoking vertex");
+    queue.userConfig[0x242] = 4;
+    queue.context[0x205] = 0x00001a4au;
     queue.context[0x2de] = 0x1f0u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "units other than the depth format");
     queue.context[0x2de] = 0x1e9u;

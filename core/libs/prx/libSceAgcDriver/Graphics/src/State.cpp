@@ -58,7 +58,7 @@ std::string vteMessage(std::uint32_t viewportControl) {
 
 std::string conservativeMessage(std::uint32_t control) {
     std::ostringstream message;
-    message << "AGC graphics: PA_SC_CONSERVATIVE_RASTERIZATION_CNTL=0x" << std::hex << control << ": only 0x6000 (off) and 0x6001 (overestimation) are supported";
+    message << "AGC graphics: PA_SC_CONSERVATIVE_RASTERIZATION_CNTL=0x" << std::hex << control << ": only off (0x6000, or RADV's 0x100000) and 0x6001 (overestimation) are supported";
     return message.str();
 }
 
@@ -72,7 +72,7 @@ void requireConservativeTriangles(bool triangles, const char* primitive, const c
 VkConservativeRasterizationModeEXT decodeConservativeRasterization(const QueueState& queue) {
     const auto& cx = queue.context;
     const auto control = read(cx, 0x313);
-    if (control == 0x6000u) return VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
+    if ((control & ~0x00106000u) == 0) return VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     if (control != 0x6001u) throw std::runtime_error(conservativeMessage(control));
     const auto stages = read(cx, 0x2d5);
     if ((stages & 0x20u) != 0) {
@@ -105,7 +105,7 @@ constexpr std::uint32_t ShaderControlMask = ~(0x0000f870u | 0x00020600u | 0x0001
 constexpr std::uint32_t PixelStageRunsMask = 0x00020747u;
 constexpr std::uint32_t AlphaToCoverageMask = ~0x0001ff00u;
 constexpr std::uint32_t ScanModeMask = ~0x22u;
-constexpr std::uint32_t ScanControlMask = ~0x06023fffu;
+constexpr std::uint32_t ScanControlMask = ~0x76023fffu;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space.
 constexpr std::uint32_t ClipControlMask = ~(0x80000u | 0x01000000u | 0x0c000000u);
@@ -586,7 +586,9 @@ State DecodeState(const QueueState& queue) {
     const auto raster = read(cx, 0x205);
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on
     // explicitly; KEEP_TOGETHER_ENABLE (bit 24) only affects primitive distribution across the chip.
-    const auto rasterMode = raster & ~0x7u & ~(1u << 24u) & ~0x1800u;
+    const bool pointsOrLines = result.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || result.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    const auto lineOffset = (raster & 0x1800u) != 0 && !pointsOrLines ? 0x2000u : 0u;
+    const auto rasterMode = raster & ~0x7u & ~(1u << 24u) & ~0x1800u & ~lineOffset;
     if (rasterMode != 0 && rasterMode != 0x240u && rasterMode != 0x248u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x205, raster, "polygon mode, depth bias, provoking vertex or nonstandard rasterization"));
     result.cullMode = ((raster & 1u) != 0 ? VK_CULL_MODE_FRONT_BIT : 0u) | ((raster & 2u) != 0 ? VK_CULL_MODE_BACK_BIT : 0u);
     if (result.rectList) result.cullMode = VK_CULL_MODE_NONE;
@@ -911,7 +913,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (value(cx, 0x83, word) && word != 0xffffu) return require(false, "clip rectangles are unsupported");
     if (value(cx, 0x8c, word) && (word & 0xfu) != 0xau) return require(false, "nonstandard triangle edge rules are unsupported");
     if (value(cx, 0x2f9, word) && word != 0x2du) return require(false, "nonstandard pixel center or vertex quantization is unsupported");
-    if (value(cx, 0x313, word) && word != 0x6000u && word != 0x6001u) return conservativeMessage(word);
+    if (value(cx, 0x313, word) && (word & ~0x00106000u) != 0 && word != 0x6001u) return conservativeMessage(word);
     std::uint32_t other = 0;
     if (value(cx, 0x30e, word) && value(cx, 0x30f, other) && (word != 0xffffffffu || other != 0xffffffffu)) return require(false, "sample masks are unsupported");
     if (value(cx, 0x206, word) && word != 0x43fu) return vteMessage(word);
