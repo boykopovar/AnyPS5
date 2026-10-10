@@ -778,6 +778,12 @@ struct DrawInputs {
     std::uint32_t meshGroups = 0;
 };
 
+std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, const ShaderRecompiler::VertexAttribute& attribute) {
+    auto zero = std::make_shared<Buffer>(context, DecodeVertexFormat(attribute).bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    std::fill(zero->Bytes().begin(), zero->Bytes().end(), std::byte{0});
+    return zero;
+}
+
 // Draw's validation, index and vertex phases. With `recipe` the fragment outputs, the pipeline
 // stages and the vertex input layout are the recipe's (derived from the same compiled stages)
 // instead of computed.
@@ -883,12 +889,20 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     std::vector<VertexFetch> fetches;
     fetches.reserve(attributes.size());
-    for (const auto& attribute : attributes) {
+    std::vector<std::size_t> fetchOf(attributes.size(), 0);
+    std::vector<std::shared_ptr<Buffer>> zeroed(attributes.size());
+    for (std::size_t i = 0; i < attributes.size(); ++i) {
+        const auto& attribute = attributes[i];
+        if (VertexFetchOutOfRange(attribute)) {
+            zeroed[i] = zeroVertexBuffer(context, attribute);
+            continue;
+        }
         // An indirect draw's counts are unknown here: the descriptor's whole range is copied.
         const auto bytes = args != nullptr ? VertexBufferExtent(attribute) : VertexBufferReadSize(attribute, inputs.maxIndex, draw.instanceCount, draw.firstInstance);
         const auto& fields = attribute.resource.fields;
         const auto address = fields[0] | (static_cast<std::uint64_t>(fields[1] & 0xffffu) << 32u);
         Require(!state.hasColorTarget || address + bytes <= state.color.address || state.color.address + state.color.bytes <= address, "vertex buffer aliases the render target");
+        fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, (fields[1] >> 16u) & 0x3fffu, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
     }
     const auto plan = PlanVertexCopies(fetches);
@@ -900,8 +914,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.vertexBuffers.push_back(std::move(copy.buffer));
     }
     for (std::size_t i = 0; i < attributes.size(); ++i) {
-        inputs.vertexHandles.push_back(inputs.vertexBuffers[plan.copyOf[i]]->Handle());
-        inputs.vertexOffsets[i] = plan.offsets[i];
+        if (zeroed[i] != nullptr) {
+            inputs.vertexHandles.push_back(zeroed[i]->Handle());
+            inputs.vertexOffsets[i] = 0;
+            inputs.vertexBuffers.push_back(std::move(zeroed[i]));
+            continue;
+        }
+        inputs.vertexHandles.push_back(inputs.vertexBuffers[plan.copyOf[fetchOf[i]]]->Handle());
+        inputs.vertexOffsets[i] = plan.offsets[fetchOf[i]];
     }
     timer.phase(PhaseVertex);
     return inputs;
