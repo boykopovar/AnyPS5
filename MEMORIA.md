@@ -24,3 +24,7 @@ Este arquivo é um registro contínuo e persistente de longo prazo para as opera
 ## Atualização de Fluxo (Fase 4 - Shaders RDNA2)
 - **Descoberta:** O recompilador de shaders converte os opcodes nativos baseados na arquitetura RDNA da AMD (`core/shader/recompiler/RdnaDecoder`). Opcodes escalares controlam fluxo de execução e VGPRs processam os dados locais da thread.
 - **Protocolo de Commit:** Todo novo avanço substancial deve ser enviado em uma nova branch (ex: `feature/mapeamento-shaders-rdna2`) para gerar Pull Requests distintos e limpos, permitindo melhor rastreabilidade de código.
+
+## Expansão Documental Gráfica (Fase 2.5 - Otimização de Host)
+- **Novas Bases de Referência:** Adicionados `REF_VENDORS_GPU.md` (NVIDIA/AMD) e `REF_API_GRAFICA.md` (Vulkan/DX12). Estes documentos não são apenas guias de uso, mas regras arquiteturais vitais.
+- **Lição Crítica (NVIDIA):** A tradução de opcodes que assumem wavefronts de 64 (PS5/AMD) em hardware restrito a warps de 32 (NVIDIA) pode causar falhas em opcodes de cruzamento de lane (subgroup ops). No SPIR-V, priorizar emissão segura ou prever branches/shared memory de fallback.
