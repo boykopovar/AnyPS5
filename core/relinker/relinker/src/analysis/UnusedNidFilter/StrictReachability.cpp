@@ -201,16 +201,7 @@ private:
 
     void collectRelativeTables() {
         for (const auto base : tableBases) {
-            for (const auto& data : input.Data) {
-                if (base < data.Address || base - data.Address >= data.Bytes.size()) continue;
-                for (auto offset = static_cast<std::size_t>(base - data.Address); offset + 4 <= data.Bytes.size(); offset += 4) {
-                    std::int32_t displacement;
-                    std::memcpy(&displacement, data.Bytes.data() + offset, sizeof(displacement));
-                    const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
-                    if (!isCode(target)) break;
-                    addAddressTaken(target);
-                }
-            }
+            for (const auto target : ReadRelativeTableTargets(input.Data, base, input.TextVaddr, input.Text.size())) addAddressTaken(target);
         }
     }
 };
@@ -219,6 +210,21 @@ private:
 
 StrictReachabilityResult AnalyzeStrictReachability(const StrictReachabilityInput& input) {
     return Analyzer(input).Run();
+}
+
+std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDataRegion>& data, VirtualAddress base, VirtualAddress textVaddr, std::size_t textSize) {
+    std::vector<VirtualAddress> targets;
+    for (const auto& region : data) {
+        if (base < region.Address || base - region.Address >= region.Bytes.size()) continue;
+        for (auto offset = static_cast<std::size_t>(base - region.Address); offset + 4 <= region.Bytes.size(); offset += 4) {
+            std::int32_t displacement;
+            std::memcpy(&displacement, region.Bytes.data() + offset, sizeof(displacement));
+            const auto target = base + static_cast<std::uint64_t>(static_cast<std::int64_t>(displacement));
+            if (target < textVaddr || target - textVaddr >= textSize) break;
+            targets.push_back(target);
+        }
+    }
+    return targets;
 }
 
 }

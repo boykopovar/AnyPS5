@@ -102,6 +102,13 @@ public:
         return it->second;
     }
 
+    std::vector<VirtualAddress> Targets() const override {
+        std::vector<VirtualAddress> result;
+        result.reserve(_targets.size());
+        for (const auto& entry : _targets) result.push_back(entry.second);
+        return result;
+    }
+
 private:
     std::unordered_map<VirtualAddress, VirtualAddress> _targets;
 };
