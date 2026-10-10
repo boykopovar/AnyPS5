@@ -935,6 +935,62 @@ static bool Written(const void* base, std::size_t bytes, PageRuns expected) {
     return false;
 }
 
+static bool CollectArmedRuns(const void* base, std::size_t offset, std::size_t bytes, PageRuns& runs) {
+    runs.clear();
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    std::pair<std::uintptr_t, PageRuns*> context{address, &runs};
+    return GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix(address + offset, bytes, [](void* context, std::uintptr_t begin, std::uintptr_t end) {
+        auto& [origin, into] = *static_cast<std::pair<std::uintptr_t, PageRuns*>*>(context);
+        if (!into->empty() && into->back().second == (begin - origin) / 4096) into->back().second = (end - origin) / 4096;
+        else into->emplace_back((begin - origin) / 4096, (end - origin) / 4096);
+    }, &context);
+}
+
+static void CheckWriteWatchArmedCollect() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t length = 0x100000;
+    constexpr std::size_t small = 4096;
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, length, 3, 0) == 0);
+    auto* bytes = static_cast<volatile unsigned char*>(mapping);
+    PageRuns runs;
+    Require(CollectRuns(mapping, 0, length / 2, runs) && runs == PageRuns{{0, length / small / 2}});
+    bytes[5 * small] = 1;
+    bytes[200 * small] = 1;
+    Require(CollectArmedRuns(mapping, 0, length, runs) && runs == PageRuns{{5, 6}});
+    Require(Written(mapping, length, {{length / small / 2, length / small}}));
+    Require(Written(mapping, length, {}));
+    Require(sceKernelMunmap(mapping, length) == 0);
+}
+
+static bool CollectFreshRuns(const void* base, std::size_t offset, std::size_t bytes, PageRuns& runs) {
+    runs.clear();
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    std::pair<std::uintptr_t, PageRuns*> context{address, &runs};
+    return GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix(address + offset, bytes, [](void* context, std::uintptr_t begin, std::uintptr_t end) {
+        auto& [origin, into] = *static_cast<std::pair<std::uintptr_t, PageRuns*>*>(context);
+        if (!into->empty() && into->back().second == (begin - origin) / 4096) into->back().second = (end - origin) / 4096;
+        else into->emplace_back((begin - origin) / 4096, (end - origin) / 4096);
+    }, &context);
+}
+
+static void CheckWriteWatchFreshCollect() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t length = 0x100000;
+    constexpr std::size_t small = 4096;
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, length, 3, 0) == 0);
+    auto* bytes = static_cast<volatile unsigned char*>(mapping);
+    PageRuns runs;
+    Require(CollectRuns(mapping, 0, length / 2, runs) && runs == PageRuns{{0, length / small / 2}});
+    bytes[5 * small] = 1;
+    Require(CollectFreshRuns(mapping, 0, length, runs) && runs == PageRuns{{length / small / 2, length / small}});
+    Require(CollectFreshRuns(mapping, 0, length, runs) && runs.empty());
+    bytes[200 * small] = 1;
+    Require(Written(mapping, length, {{5, 6}, {200, 201}}));
+    Require(sceKernelMunmap(mapping, length) == 0);
+}
+
 static void CheckWriteWatch() {
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
         std::puts("write watch unavailable: not tested");
@@ -1274,6 +1330,8 @@ int main() {
     CheckFailedCollectKeepsWrites();
 #if defined(__linux__)
     CheckWriteWatch();
+    CheckWriteWatchArmedCollect();
+    CheckWriteWatchFreshCollect();
     CheckDirectMemoryWriteWatch();
     CheckDirectMemoryBackingNeedsNoFilesystem();
     CheckDirectMemorySharedBacking();
