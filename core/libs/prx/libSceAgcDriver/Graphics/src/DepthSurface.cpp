@@ -17,6 +17,11 @@
 namespace AgcDriver::Graphics {
 namespace {
 
+Recorder* RecorderFor(const Context& context) {
+    auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->Device() == context.device ? recorder : nullptr;
+}
+
 class DepthSurface {
 public:
     DepthSurface(const Context& context, const DepthTarget& target) : context(context), target(target) {
@@ -53,7 +58,7 @@ public:
             viewInfo.format = target.format;
             viewInfo.subresourceRange = {aspects, 0, 1, 0, 1};
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView depth");
-            auto* recorder = Recorder::Active();
+            auto* recorder = RecorderFor(context);
             std::unique_ptr<CommandBatch> batch;
             if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
             const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
@@ -86,7 +91,7 @@ public:
         const auto aspects = pendingClear & (VK_IMAGE_ASPECT_DEPTH_BIT | (target.stencilAddress != 0 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u));
         pendingClear = 0;
         if (aspects == 0) return;
-        auto* recorder = Recorder::Active();
+        auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
