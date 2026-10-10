@@ -11,7 +11,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/Keyboard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/KeyboardInput.cpp
     )
-    target_include_directories(keyboard_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+    target_include_directories(keyboard_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(keyboard_tests PRIVATE libSceKeyboard libkernel libc)
     configure_windows_unwind(keyboard_tests)
     add_test(NAME keyboard_input COMMAND keyboard_tests)
