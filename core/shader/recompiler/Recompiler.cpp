@@ -34,6 +34,7 @@
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
+#include "Optimization/include/Optimization/TessellationLowering.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -89,6 +90,14 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code) {
+    if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
+    auto program = DecodeRdnaFrontProgram(code);
+    static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
+    program.instructions.back() = DecodeRdnaInstruction(program.instructions.back().programCounter, EndProgram, 0u);
+    return program;
+}
+
 ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
     const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
     const auto* tessellation = request.graphics && request.graphics->tessellation ? &*request.graphics->tessellation : nullptr;
@@ -101,8 +110,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     const auto stageKind = toShaderStageKind(request.shader.stage);
     const auto inputInfo = RequestInputInfo(request);
 
-    constexpr RdnaInstructionDecoder decoder;
-    const auto decoded = decoder.Decode(request.shader.code);
+    const auto decoded = DecodeStageProgram(stageKind, request.shader.code);
 
     constexpr GraphBuilder graphBuilder;
     SwappcInfo swappcInfo;
@@ -169,6 +177,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
     constexpr MaskedSelectEliminator maskedSelectEliminator;
     if (maskedSelectEliminator.Eliminate(program).removedSelects != 0u) {
         deadCodeEliminator.Eliminate(program);
+    }
+
+    if (inputInfo.vertex != nullptr) {
+        constexpr TessellationLowering tessellationLowering;
+        tessellationLowering.Lower(program, inputInfo.vertex->tess);
     }
 
     constexpr SrtWalker srtWalker;

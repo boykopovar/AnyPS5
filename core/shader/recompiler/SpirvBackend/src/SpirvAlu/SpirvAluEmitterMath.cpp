@@ -744,7 +744,14 @@ std::uint32_t EmitWqmU64(SpirvEmitterState& state, std::uint32_t value) {
 }
 
 std::uint32_t EmitLaneId(SpirvEmitterState& state) {
-    return state.program.Resources().stage == IrShaderStage::TessellationControl ? EmitInputComponentU32(state, StageInputKind::InvocationId, 0) : EmitSubgroupLocalInvocationId(state);
+    if (state.program.Resources().stage != IrShaderStage::TessellationControl) return EmitSubgroupLocalInvocationId(state);
+    const auto variable = InputVariableForKind(state, StageInputKind::InvocationId);
+    if (variable == 0) FailEmit("stage input InvocationId was not declared");
+    const auto value = state.module.AllocateId();
+    const auto bits = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeI32(state), value, variable);
+    state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+    return bits;
 }
 
 std::uint32_t EmitBallot(SpirvValueEmitContext& ctx, const IrValue* predicate) {

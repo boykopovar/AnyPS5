@@ -425,13 +425,39 @@ void ShaderStageTests() {
     queue.context[0x2d5] = 0x200d;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "Patch topology and HS_EN disagree");
     queue.userConfig[0x242] = 9;
-    queue.context[0x2d6] = (3u << 8u) | (3u << 14u);
-    queue.context[0x2db] = 1u | (2u << 2u) | (2u << 5u);
-    stages = AgcDriver::Graphics::DecodeState(queue).stages;
-    Require(stages.path == AgcDriver::Graphics::ShaderPath::Tessellation && stages.tessellation && stages.tessellation->inputControlPoints == 3, "tessellation routing changed");
+    queue.context[0x2d6] = 0xc355;
+    queue.context[0x2db] = 0x40049;
+    queue.context[0x286] = 0x42800000;
+    queue.context[0x287] = 0x3f800000;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation routing");
+    queue.context[0x2d5] = 0x0200010d;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation routing");
+    queue.context[0x2d5] = 0x0200210d;
+    {
+        std::vector<AgcDriver::Graphics::RegisterRead> tessellationLog;
+        AgcDriver::Graphics::RegisterReadLog() = &tessellationLog;
+        stages = AgcDriver::Graphics::DecodeState(queue).stages;
+        AgcDriver::Graphics::RegisterReadLog() = nullptr;
+        for (const auto read : tessellationLog) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a tessellation register the decoder reads: " + std::to_string(read.offset));
+    }
+    Require(stages.path == AgcDriver::Graphics::ShaderPath::Tessellation && stages.tessellation, "tessellation routing changed");
+    const auto& tessellation = *stages.tessellation;
+    Require(tessellation.inputControlPoints == 3 && tessellation.outputControlPoints == 3 && tessellation.domain == 1 && tessellation.partitioning == 2 && tessellation.outputTopology == 2, "the passthrough triangle-patch configuration decoded differently");
+    for (const auto [parameters, reason] : {std::pair{0x44049u, "VGT_TF_PARAM"}, std::pair{0x140049u, "VGT_TF_PARAM"}, std::pair{0x2040049u, "VGT_TF_PARAM"}, std::pair{0x40059u, "only triangular"}, std::pair{0x40069u, "only triangular"}, std::pair{0x4006au, "only triangular"}}) {
+        queue.context[0x2db] = parameters;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, reason);
+    }
+    queue.context[0x2db] = 0x40049;
+    for (const auto [maximum, minimum] : {std::pair{0x41100000u, 0x3f800000u}, std::pair{0x42800000u, 0x40000000u}}) {
+        queue.context[0x286] = maximum;
+        queue.context[0x287] = minimum;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "tessellation level clamps");
+    }
+    queue.context[0x286] = 0x42800000;
+    queue.context[0x287] = 0x3f800000;
     queue.context[0x2d5] = 0x202d;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "combined tessellation and geometry");
-    queue.context[0x2d5] = 0x200d;
+    queue.context[0x2d5] = 0x0200210d;
     queue.context[0x2d6] = 0;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "control-point counts");
     queue = makeState();
@@ -2616,10 +2642,12 @@ void ConservativeRasterizationTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(geometry); }, rejected);
     }
     auto tessellation = queue;
-    tessellation.context[0x2d5] = 0x200d;
+    tessellation.context[0x2d5] = 0x0200210d;
     tessellation.userConfig[0x242] = 9;
-    tessellation.context[0x2d6] = (3u << 8u) | (3u << 14u);
+    tessellation.context[0x2d6] = 0xc355;
     tessellation.context[0x2db] = 1u | (2u << 2u) | (2u << 5u);
+    tessellation.context[0x286] = 0x42800000;
+    tessellation.context[0x287] = 0x3f800000;
     const auto tessellated = AgcDriver::Graphics::DecodeState(tessellation);
     Require(tessellated.stages.path == AgcDriver::Graphics::ShaderPath::Tessellation && tessellated.conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT, "OVER_RAST_ENABLE did not overestimate clockwise tessellated triangles");
     for (const auto& [parameters, rejected] : std::array<std::pair<std::uint32_t, std::string_view>, 3>{{{1u | (2u << 2u), "conservative rasterization of points is unsupported (VGT_TF_PARAM=0x9)"}, {1u | (2u << 2u) | (1u << 5u), "conservative rasterization of lines is unsupported (VGT_TF_PARAM=0x29)"}, {(2u << 2u) | (1u << 5u), "conservative rasterization of lines is unsupported (VGT_TF_PARAM=0x28)"}}}) {

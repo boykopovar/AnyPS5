@@ -23,6 +23,8 @@ struct IrProgramMetadata {
     bool shaderInfoComplete = false;
     IrBindingLayout bindings;
     bool bindingLayoutComplete = false;
+    std::uint32_t tessellationLocalStride = 0;
+    std::uint32_t tessellationControlStride = 0;
 };
 
 }

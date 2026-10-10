@@ -83,7 +83,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         };
         const auto& graphics = product->state;
         if (graphics.stages.path == Graphics::ShaderPath::Tessellation) {
-            append(0x148, 5, Stage::Local, 0x10b, 0x10c, Role::Local);
+            if (!staticAbi || programAddress(0x148) != 0) append(0x148, 5, Stage::Local, 0x10b, 0x10c, Role::Local);
             append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
             initializeMerged(programs.back(), 0x102, true);
             append(0x0c8, 2, Stage::TessellationEvaluation, 0x08b, 0x08c, Role::Domain);

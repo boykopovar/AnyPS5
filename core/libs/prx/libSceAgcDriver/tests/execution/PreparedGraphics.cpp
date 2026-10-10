@@ -42,7 +42,7 @@ struct Fixture {
         header.shader.type = type;
         header.shader.user_data = &header.users;
         code.fill(0xffffffffu);
-        code.back() = 0xbf810000u;
+        code.back() = type == 5u ? 0xbefd2106u : 0xbf810000u;
         const auto address = reinterpret_cast<std::uintptr_t>(code.data());
         const auto headerAddress = reinterpret_cast<std::uintptr_t>(&header);
         snapshot = std::make_shared<AgcDriver::DriverDetail::ShaderSnapshot>();
@@ -113,7 +113,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     for (std::size_t index = 0; index < prepared.programs.size(); ++index) {
         const auto& expected = prepared.programs[index];
         const auto& actual = draw.programs[index];
-        Require(expected.codeOffset == 64u && expected.binary.code.size() == (prepared.roles[index] == ProgramRole::Fragment ? pixelCode.size() : 1u) && expected.binary.code[0] == (prepared.roles[index] == ProgramRole::Fragment ? pixelCode[0] : 0xbf810000u), "graphics entry point did not trim the code prefix");
+        Require(expected.codeOffset == 64u && expected.binary.code.size() == (prepared.roles[index] == ProgramRole::Fragment ? pixelCode.size() : 1u) && expected.binary.code[0] == (prepared.roles[index] == ProgramRole::Fragment ? pixelCode[0] : prepared.roles[index] == ProgramRole::Local ? 0xbefd2106u : 0xbf810000u), "graphics entry point did not trim the code prefix");
         Require(expected.binary.stage == actual.binary.stage && expected.firstUserSgpr == actual.firstUserSgpr && expected.userData.size() == actual.userData.size(), "graphics preparation changed the user SGPR ABI");
     }
     auto target = device.Target();
@@ -224,6 +224,36 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         else if (mesh) ++request.graphics->mesh->maxVertices;
         else ++request.context.userDataBaseRegister;
         Reject([&] { static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request)); }, "artifact is missing");
+    }
+    if (tessellation) {
+        Fixture late;
+        late.Initialize(5u);
+        registry.emplace(late.snapshot->codeAddress, late.snapshot);
+        auto unbound = queue;
+        unbound.shader[0x148u] = 0u;
+        unbound.shader[0x149u] = 0u;
+        DrawDecode resolved{};
+        resolved.state = prepared.state;
+        resolved.pixel = prepared.pixel;
+        DecodeGraphicsPrograms(resolved, unbound, registry, true, true);
+        Require(resolved.programs.size() == 3u && resolved.roles.front() == ProgramRole::Hull, "an unbound local program was not left to the draw");
+        Require(PrepareGraphicsStages(resolved, target).size() == 3u, "graphics preparation without the local program compiled the wrong stages");
+        auto bound = queue;
+        late.Bind(bound, 0x148u, 0x10bu);
+        DrawDecode lateDraw{};
+        lateDraw.state = prepared.state;
+        lateDraw.pixel = prepared.pixel;
+        DecodeGraphicsPrograms(lateDraw, bound, registry, false, true);
+        const auto& program = lateDraw.programs.front();
+        Require(program.snapshot == late.snapshot && late.snapshot->prepared->entries.empty(), "the late local program was decoded from another shader");
+        const auto vertex = AgcDriver::Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true);
+        RecompileRequest request{program.binary, {prepared.state.stages.vertexWaveSize, program.firstUserSgpr, program.userData, {}, std::nullopt, vertex, memory}, target, {0, 0, 0, 128u}, GraphicsCompileContext{program.firstUserSgpr, linked, std::nullopt, prepared.state.stages.tessellation, {0, 3, 4, 1}}};
+        static_cast<void>(InvocationFor(*late.snapshot, program.codeOffset, request));
+        static_cast<void>(InvocationFor(*late.snapshot, program.codeOffset, request));
+        Require(late.snapshot->prepared->entries.size() == 1u, "the local program was not prepared once at its first draw");
+        ++request.graphics->tessellation->outputControlPoints;
+        Reject([&] { static_cast<void>(InvocationFor(*late.snapshot, program.codeOffset, request)); }, "artifact is missing");
+        registry.erase(late.snapshot->codeAddress);
     }
     ShaderRegistry invalidRegistry;
     DrawDecode invalid{};

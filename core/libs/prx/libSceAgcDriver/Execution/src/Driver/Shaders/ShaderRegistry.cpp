@@ -232,6 +232,15 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
         return std::move(*invocation);
     }
+    if (snapshot.type == 5 && request.shader.stage == ShaderRecompiler::ShaderStage::Local && std::ranges::none_of(snapshot.prepared->entries, [&](const auto& entry) { return entry.codeOffset == codeOffset; })) {
+        auto handle = ShaderRecompiler::PrepareShader(request);
+        invocationRequest = request;
+        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+        auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+        if (!invocation.has_value()) throw std::runtime_error("AGC driver: local program artifact does not match its invocation");
+        snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
+        return std::move(*invocation);
+    }
     std::string layouts;
     for (const auto& entry : snapshot.prepared->entries) {
         if (entry.codeOffset != codeOffset || entry.handle == nullptr || entry.handle->artifact == nullptr) continue;
@@ -277,9 +286,8 @@ Shader ReadHeader(const ShaderSnapshot& snapshot) {
     return header;
 }
 
-RegisteredShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot) {
+RegisteredShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot, RegisteredShaderState state = {{}, InitialContextRegisters(), {{0x24a, 0}, {0x24b, 0}}}) {
     const auto header = ReadHeader(snapshot);
-    RegisteredShaderState state{{}, InitialContextRegisters(), {{0x24a, 0}, {0x24b, 0}}};
     for (const auto reg : ReadHeaderArray(snapshot, header.sh_registers, header.num_sh_registers)) {
         state.shader.insert_or_assign(reg.offset, reg.value);
     }
@@ -324,7 +332,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     case 1: stage = Stage::Fragment; programRegister = 0x008; resourceRegister = 0x00b; break;
     case 2: stage = Stage::Vertex; programRegister = 0x0c8; resourceRegister = 0x08b; firstUser = 8; break;
     case 4: stage = Stage::Mesh; programRegister = 0x0c8; resourceRegister = 0x08b; break;
-    case 5: stage = Stage::Local; programRegister = 0x148; resourceRegister = 0x10b; firstUser = 8; break;
+    case 5: return {};
     case 6: stage = Stage::Mesh; programRegister = 0x088; resourceRegister = 0x08b; break;
     case 7: stage = Stage::TessellationControl; programRegister = 0x108; resourceRegister = 0x10b; break;
     default:
@@ -368,7 +376,7 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(const ShaderSnapshot& snap
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
         wave = (routing & 0x00400000u) != 0 ? 32u : 64u;
-        if ((routing & 0x20u) != 0 || stage == Stage::Mesh || (routing & 4u) != 0) {
+        if ((routing & 0x20u) != 0 || stage == Stage::Mesh || (routing & 4u) != 0 || ((routing >> 3u) & 3u) == 1u) {
             if (registration) return {};
             auto stageState = state;
             stageState.context[0x1b6] = 0;
@@ -417,8 +425,10 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     require(decoded.programs.size() == decoded.roles.size(), "graphics ABI program roles are incomplete");
     for (const auto& program : decoded.programs) require(program.snapshot != nullptr, "graphics ABI has no registered shader snapshot");
     std::vector<ShaderRecompiler::ProgramRole> expected;
-    if (decoded.state.stages.path == Graphics::ShaderPath::Tessellation) expected = {ShaderRecompiler::ProgramRole::Local, ShaderRecompiler::ProgramRole::Hull, ShaderRecompiler::ProgramRole::Domain};
-    else {
+    if (decoded.state.stages.path == Graphics::ShaderPath::Tessellation) {
+        if (!decoded.roles.empty() && decoded.roles.front() == ShaderRecompiler::ProgramRole::Local) expected.push_back(ShaderRecompiler::ProgramRole::Local);
+        expected.insert(expected.end(), {ShaderRecompiler::ProgramRole::Hull, ShaderRecompiler::ProgramRole::Domain});
+    } else {
         expected.push_back(ShaderRecompiler::ProgramRole::Main);
         if (decoded.state.stages.path == Graphics::ShaderPath::Geometry && !decoded.programs.empty() && decoded.programs.front().snapshot->type == 4) expected.push_back(ShaderRecompiler::ProgramRole::GeometryBack);
     }
@@ -487,7 +497,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
             const auto& snapshot = *registry->at(address);
             require(snapshot.headerAddress == reinterpret_cast<std::uintptr_t>(shader), "graphics ABI refers to a replaced shader header");
             require(snapshot.registeredState != nullptr, "registered shader state is missing");
-            const auto& registered = *snapshot.registeredState;
+            const auto registered = DecodeRegisteredState(snapshot, {});
             for (const auto& [offset, value] : registered.shader) state.shader.insert_or_assign(offset, value);
             for (const auto& [offset, value] : registered.context) state.context.insert_or_assign(offset, value);
             for (const auto& [offset, value] : registered.userConfig) state.userConfig.insert_or_assign(offset, value);
