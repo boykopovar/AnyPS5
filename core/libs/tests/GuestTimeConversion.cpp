@@ -20,6 +20,7 @@ GuestTm* APS5_VABI gmtime_s_nid_postfix(const std::int64_t*, GuestTm*);
 GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t*, GuestTm*);
 std::int64_t APS5_VABI mktime_nid_postfix(GuestTm*);
 std::size_t APS5_VABI strftime_nid_postfix(char*, std::size_t, const char*, const GuestTm*);
+std::size_t APS5_VABI libc_strftime_nid_postfix(char*, std::size_t, const char*, const GuestTm*);
 }
 
 using Converter = GuestTm* (APS5_VABI *)(const std::int64_t*);
@@ -88,6 +89,63 @@ static void CheckUtc(const UtcCase& expected) {
     Require(utc.tm_zone != nullptr && std::strcmp(utc.tm_zone, "UTC") == 0, "UTC conversion did not set tm_zone");
 }
 
+static void CheckFormat(const GuestTm& time, const char* format, const char* expected) {
+    const std::size_t length = std::strlen(expected);
+    for (const auto formatter : {strftime_nid_postfix, libc_strftime_nid_postfix}) {
+        for (std::size_t capacity = 0; capacity <= length + 2; ++capacity) {
+            std::array<char, 128> buffer;
+            buffer.fill('@');
+            const auto size = formatter(buffer.data() + 1, capacity, format, &time);
+            Require(buffer.front() == '@' && buffer[capacity + 1] == '@', "strftime wrote outside the output buffer");
+            if (capacity <= length) {
+                if (size != 0)
+                    std::fprintf(stderr, "Format '%s': expected '%s', got '%.*s' with capacity %zu\n",
+                        format, expected, static_cast<int>(capacity), buffer.data() + 1, capacity);
+                Require(size == 0, "strftime accepted an undersized buffer");
+            } else {
+                if (size != length || std::strcmp(buffer.data() + 1, expected) != 0)
+                    std::fprintf(stderr, "Format '%s': expected '%s', got '%.*s' (%zu bytes)\n",
+                        format, expected, static_cast<int>(capacity), buffer.data() + 1, size);
+                Require(size == length && std::strcmp(buffer.data() + 1, expected) == 0,
+                    "strftime did not preserve the guest timezone or format");
+            }
+        }
+    }
+}
+
+static void CheckTimeZoneFormats(const GuestTm& utc, const GuestTm& local) {
+    CheckFormat(utc, "%Y-%m-%d %H:%M:%S %z %Z", "1970-01-01 00:00:00 +0000 UTC");
+    CheckFormat(local, "%H:%M %z", "02:00 +0200");
+    CheckFormat(utc, "%%z %%Z %%%z %%%Z", "%z %Z %+0000 %UTC");
+    CheckFormat(utc, "%Z/%z/%Z/%z", "UTC/+0000/UTC/+0000");
+    GuestTm custom = utc;
+    custom.tm_gmtoff = 20700;
+    custom.tm_zone = "NPT";
+    CheckFormat(custom, "%z %Z", "+0545 NPT");
+    custom.tm_gmtoff = -12600;
+    custom.tm_zone = "NST";
+    custom.tm_isdst = 1;
+    CheckFormat(custom, "%z %Z", "-0330 NST");
+    custom.tm_gmtoff = -30;
+    CheckFormat(custom, "%z", "-0000");
+    custom.tm_zone = "zone%Y%%z";
+    CheckFormat(custom, "%Z %Y", "zone%Y%%z 1970");
+#ifdef _WIN32
+    CheckFormat(utc, "%#z %#Z %#%z", "+0000 UTC %z");
+    custom.tm_zone = "";
+    CheckFormat(custom, "[%Z]", "[]");
+#endif
+    custom.tm_zone = "UTC";
+    custom.tm_isdst = -1;
+    CheckFormat(custom, "[%z][%Z]", "[][UTC]");
+    custom.tm_zone = nullptr;
+    CheckFormat(custom, "[%z][%Z]", "[][]");
+    custom = local;
+    custom.tm_zone = nullptr;
+    CheckFormat(custom, "%Z", local.tm_zone);
+    CheckFormat(utc, "", "");
+}
+
 int main() {
 #ifdef _WIN32
     _putenv_s("TZ", "UTC-2");
@@ -132,6 +190,7 @@ int main() {
     char formatted[64]{};
     Require(strftime_nid_postfix(formatted, sizeof(formatted), "%Y-%m-%d %H:%M:%S", &utc) == 19
         && std::strcmp(formatted, "1970-01-01 00:00:00") == 0, "strftime did not read the guest tm");
+    CheckTimeZoneFormats(utc, local);
 
     CheckConcurrent(libc_gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
     CheckConcurrent(gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent gmtime returned another thread's date");

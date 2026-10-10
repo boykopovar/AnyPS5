@@ -5,6 +5,8 @@
 #include <limits>
 
 #ifdef _WIN32
+#include <cstdio>
+#include <string>
 #include <windows.h>
 #endif
 
@@ -45,6 +47,40 @@ std::tm toHostTm(const GuestTm& guest) {
 #endif
     return host;
 }
+
+#ifdef _WIN32
+std::string windowsTimeFormat(const char* format, const GuestTm& guest) {
+    std::string result;
+    while (*format != '\0') {
+        const char next = *format++;
+        if (next != '%' || *format == '\0') {
+            result += next;
+            continue;
+        }
+        const char* directive = format;
+        if (*format == '#' && format[1] != '\0') ++format;
+        const char specifier = *format++;
+        if (specifier == 'z') {
+            if (guest.tm_isdst < 0) continue;
+            const std::int64_t minutes = guest.tm_gmtoff / 60;
+            const auto magnitude = static_cast<unsigned long long>(minutes < 0 ? -minutes : minutes);
+            char offset[32];
+            std::snprintf(offset, sizeof(offset), "%c%02llu%02llu", guest.tm_gmtoff < 0 ? '-' : '+',
+                magnitude / 60, magnitude % 60);
+            result += offset;
+        } else if (specifier == 'Z' && guest.tm_zone != nullptr) {
+            for (const char* zone = guest.tm_zone; *zone != '\0'; ++zone) {
+                if (*zone == '%') result += '%';
+                result += *zone;
+            }
+        } else if (specifier != 'Z' || guest.tm_isdst >= 0) {
+            result += '%';
+            result.append(directive, format);
+        }
+    }
+    return result;
+}
+#endif
 
 bool isLeapYear(std::int64_t year) {
     return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
@@ -197,7 +233,12 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
 
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
     const std::tm host = toHostTm(*timeptr);
+#ifdef _WIN32
+    const std::string hostFormat = windowsTimeFormat(format, *timeptr);
+    return std::strftime(str, count, hostFormat.c_str(), &host);
+#else
     return std::strftime(str, count, format, &host);
+#endif
 }
 
 char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
