@@ -187,7 +187,11 @@ void FailureCapture(AgcDriver::VulkanDevice& device) {
 #else
     Require(unsetenv("APS5_DUMP_SHADERS") == 0, "cannot disable shader capture");
 #endif
-    Require(failure([&] { static_cast<void>(AgcDriver::DriverDetail::PrepareShaderWithDiagnostics(request)); }) == expected, "disabled shader capture changed the preparation failure");
+    std::ostringstream prefix;
+    prefix << "shader 0x" << std::hex << request.shader.codeAddress << " stage " << static_cast<unsigned>(request.shader.stage) << ": ";
+    const auto diagnosed = failure([&] { static_cast<void>(AgcDriver::DriverDetail::PrepareShaderWithDiagnostics(request)); });
+    Require(diagnosed.rfind(prefix.str(), 0) == 0, "diagnosed failure names no shader address and stage");
+    Require(diagnosed.substr(prefix.str().size()) == expected.substr(0, expected.find('\n')), "diagnosed failure changed the reason");
     Require(!std::ifstream(path, std::ios::binary).is_open(), "disabled shader capture created a request");
 #ifdef _WIN32
     Require(_putenv_s("APS5_DUMP_SHADERS", "1") == 0, "cannot enable shader capture");
@@ -195,12 +199,14 @@ void FailureCapture(AgcDriver::VulkanDevice& device) {
     Require(setenv("APS5_DUMP_SHADERS", "1", 1) == 0, "cannot enable shader capture");
 #endif
     const auto actual = failure([&] { static_cast<void>(AgcDriver::DriverDetail::PrepareShaderWithDiagnostics(request)); });
+    std::ostringstream dumpedPrefix;
+    dumpedPrefix << "shader 0x" << std::hex << request.shader.codeAddress << " stage " << static_cast<unsigned>(request.shader.stage) << " (" << path << "): ";
+    Require(actual == dumpedPrefix.str() + expected.substr(0, expected.find('\n')), "enabled shader capture changed the diagnosed failure");
 #ifdef _WIN32
     Require(_putenv_s("APS5_DUMP_SHADERS", saved.c_str()) == 0, "cannot restore shader capture");
 #else
     Require((previous != nullptr ? setenv("APS5_DUMP_SHADERS", saved.c_str(), 1) : unsetenv("APS5_DUMP_SHADERS")) == 0, "cannot restore shader capture");
 #endif
-    Require(actual == expected, "shader capture changed the preparation failure");
     std::ifstream file(path, std::ios::binary);
     std::ostringstream text;
     text << file.rdbuf();
