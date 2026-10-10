@@ -532,7 +532,13 @@ void testEventWrite() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1004, 0x2}), 0); }, "misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0, 0}), 0); }, "null or misaligned occlusion counter");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x139, 0x1000}), 0); }, "packet size");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x1000, 0x2}), 0); }, "event type 56");
+    AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00, 0}), 0);
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00, 0}), 0x20); }, "compute queue");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x038, 0x07fffc00, 0}), 0); }, "statistics control event index");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, 0x07fffc00}), 0); }, "packet size");
+    for (const auto& [control, high] : {std::pair{0x07fffc01u, 0u}, std::pair{0x07fffc08u, 0u}, std::pair{0x07fffa00u, 0u}, std::pair{0x07fffe00u, 0u}, std::pair{0x03fffc00u, 0u}, std::pair{0x0ffffc00u, 0u}, std::pair{0x07fffc00u, 1u}}) {
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x138, control, high}), 0); }, "pixel pipe statistics control other than");
+    }
     for (const auto bit : {0x40u, 0x80u, 0x800u, 0x80000000u}) {
         expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x410u | bit}), 0); }, "reserved bits");
     }
@@ -572,12 +578,14 @@ void testAcquireMem() {
     invalidWord(0, captured[0] | 2u, "header flags");
     invalidWord(1, 4, "control flags");
     invalidWord(1, 0x00800000, "control flags");
-    invalidWord(3, 1, "above 40 bits");
-    invalidWord(5, 1, "above 40 bits");
+    invalidWord(3, 0x100, "range high bits");
+    invalidWord(5, 0x100, "range high bits");
+    AgcDriver::Pm4::Validate(makePacket(0x58, {0x86007fc0, 0xfffffffe, 0xff, 1, 0, 0x19, 0xc3e1}), 0);
     invalidWord(6, 0x10000, "poll interval");
     invalidWord(7, 0x40000, "GCR flags");
     invalidWord(7, 0x2000, "cache discard");
-    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 2, 0, 0xffffffff, 0, 0, 0}), 0); }, "range exceeds");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 2, 0, 0xffffffff, 0xff, 0, 0}), 0); }, "range exceeds");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0xffffffff, 0xff, 2, 0, 0, 0}), 0); }, "range exceeds");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0, 0, 0, 0}), 0); }, "packet size");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x58, {0, 0, 0, 0, 0, 0, 0, 0}), 0); }, "packet size");
 }
@@ -672,6 +680,19 @@ void testDriverSubmission() {
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); }, "DRAW_INDEX_AUTO at DWORD");
     AgcDriverWaitIdle_nid_postfix();
     check(destination[0] == 0, "rejected submission executed a prefix");
+}
+
+void testResetQueueSequence() {
+    check(AgcDriver::Pm4::FillerPacket(0xffff1000u) && AgcDriver::Pm4::PacketWords(0xffff1000u) == 1, "a NOP with count 0x3FFF is one dword");
+    check(!AgcDriver::Pm4::FillerPacket(0xffff1001u) && !AgcDriver::Pm4::FillerPacket(0xfffe1000u), "only the one-dword NOP header is filler");
+    AgcDriver::Pm4::Validate(std::vector<std::uint32_t>{0xffff1000u}, 0);
+    std::array<std::uint32_t, 1> destination{};
+    std::vector<std::uint32_t> commands{0xffff1000u, 0xc0027904u, 0x00000342u, 0xce2003ffu, 0x00000000u, 0xc0039f00u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0xc0036300u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0xc0036400u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0xc0002f00u, 0x00000001u, 0xc0017a00u, 0x20000243u, 0x00000480u, 0xc0012600u, 0x00000000u, 0x00000000u, 0xc0001300u, 0xffffffffu, 0xc0021102u, 0x00000001u, 0x00000000u, 0x00000000u, 0xc0021100u, 0x00000001u, 0x00000000u, 0x00000000u, 0xc0065800u, 0x86007fc0u, 0xfffffffeu, 0x000000ffu, 0x00000001u, 0x00000000u, 0x00000019u, 0x0000c3e1u, 0xc0004600u, 0x0000002eu, 0xc0004600u, 0x0000002cu, 0xc0004600u, 0x00000407u, 0xc0004600u, 0x00000410u, 0xc0024600u, 0x00000138u, 0x07fffc00u, 0x00000000u, 0xc0017904u, 0x00000342u, 0xcea00000u};
+    for (const auto& packet : {makePacket(0x81, {0, 83}), makePacket(0x83, {0, 1, low(destination.data()), high(destination.data())})}) commands.insert(commands.end(), packet.begin(), packet.end());
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "sceAgcDcbResetQueue sequence submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(destination[0] == 83, "worker did not execute past the sceAgcDcbResetQueue sequence");
 }
 
 std::vector<std::uint32_t> joinPackets(std::initializer_list<std::vector<std::uint32_t>> packets) {
@@ -995,6 +1016,7 @@ int main(int argc, char** argv) {
         testPredication();
         testUnwrittenUserData();
         testDriverSubmission();
+        testResetQueueSequence();
         testRegisterListsReadAtSubmission();
         testPredicatedSubmission();
         testConditionalSubmission();

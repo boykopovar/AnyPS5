@@ -114,11 +114,28 @@ void testPackets() {
     check(std::equal(upperExpected.begin(), upperExpected.end(), upper.words.begin()), "op=0x800 group mismatch");
     check(upper.buffer.cursor_up == upper.words.data() + upperExpected.size(), "op=0x800 cursor advance mismatch");
 
+    Storage cache;
+    sceAgcDcbResetQueue(&cache.buffer, 0x040u, 0);
+    const std::array<std::uint32_t, 20> cacheExpected{0xffff1000u, 0xc0027904u, 0x00000342u, 0xce200040u, 0x00000000u, 0xc0065800u, 0x86007fc0u, 0xfffffffeu, 0x000000ffu, 0x00000001u, 0x00000000u, 0x00000019u, 0x0000c3e1u, 0xc0004600u, 0x0000002eu, 0xc0004600u, 0x0000002cu, 0xc0017904u, 0x00000342u, 0xcea00000u};
+    check(std::equal(cacheExpected.begin(), cacheExpected.end(), cache.words.begin()), "op=0x040 group mismatch");
+    check(cache.buffer.cursor_up == cache.words.data() + cacheExpected.size(), "op=0x040 cursor advance mismatch");
+
+    Storage pixelStat;
+    sceAgcDcbResetQueue(&pixelStat.buffer, 0x200u, 0);
+    const std::array<std::uint32_t, 12> pixelStatExpected{0xffff1000u, 0xc0027904u, 0x00000342u, 0xce200200u, 0x00000000u, 0xc0024600u, 0x00000138u, 0x07fffc00u, 0x00000000u, 0xc0017904u, 0x00000342u, 0xcea00000u};
+    check(std::equal(pixelStatExpected.begin(), pixelStatExpected.end(), pixelStat.words.begin()), "op=0x200 group mismatch");
+    check(pixelStat.buffer.cursor_up == pixelStat.words.data() + pixelStatExpected.size(), "op=0x200 cursor advance mismatch");
+
+    Storage full;
+    const auto* fullReset = sceAgcDcbResetQueue(&full.buffer, 0x3ffu, 0);
+    const std::array<std::uint32_t, 61> fullExpected{0xffff1000u, 0xc0027904u, 0x00000342u, 0xce2003ffu, 0x00000000u, 0xc0039f00u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0xc0036300u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0xc0036400u, 0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u, 0xc0002f00u, 0x00000001u, 0xc0017a00u, 0x20000243u, 0x00000480u, 0xc0012600u, 0x00000000u, 0x00000000u, 0xc0001300u, 0xffffffffu, 0xc0021102u, 0x00000001u, 0x00000000u, 0x00000000u, 0xc0021100u, 0x00000001u, 0x00000000u, 0x00000000u, 0xc0065800u, 0x86007fc0u, 0xfffffffeu, 0x000000ffu, 0x00000001u, 0x00000000u, 0x00000019u, 0x0000c3e1u, 0xc0004600u, 0x0000002eu, 0xc0004600u, 0x0000002cu, 0xc0004600u, 0x00000407u, 0xc0004600u, 0x00000410u, 0xc0024600u, 0x00000138u, 0x07fffc00u, 0x00000000u, 0xc0017904u, 0x00000342u, 0xcea00000u};
+    check(fullReset == full.words.data() && std::equal(fullExpected.begin(), fullExpected.end(), full.words.begin()), "op=0x3FF sequence mismatch");
+    check(full.buffer.cursor_up == full.words.data() + fullExpected.size(), "op=0x3FF cursor advance mismatch");
+
     const auto before = storage.words;
     expectFailure([&] { sceAgcDcbResetQueue(&storage.buffer, 0, 16); });
-    expectFailure([&] { sceAgcDcbResetQueue(&storage.buffer, 0x040u, 0); });
-    expectFailure([&] { sceAgcDcbResetQueue(&storage.buffer, 0x200u, 0); });
     expectFailure([&] { sceAgcDcbResetQueue(&storage.buffer, 0x400u, 0); });
+    expectFailure([&] { sceAgcDcbResetQueue(&storage.buffer, 0x7ffu, 0); });
     expectFailure([&] { sceAgcDcbResetQueue(&storage.buffer, 0x1000u, 0); });
     check(storage.words == before && storage.buffer.cursor_up == storage.words.data() + expected.size(), "invalid reset modified packet memory");
     Storage destination;

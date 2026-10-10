@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <algorithm>
 #include <array>
-#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -32,10 +31,14 @@ std::vector<std::uint32_t> resetQueueGroup(std::uint32_t bit, std::uint32_t stat
             return {0xc0017a00u, 0x20000243u, 0x00000480u, 0xc0012600u, 0x00000000u, 0x00000000u, 0xc0001300u, 0xffffffffu};
         case 0x020u:
             return {0xc0021102u, 0x00000001u, 0x00000000u, 0x00000000u, 0xc0021100u, 0x00000001u, 0x00000000u, 0x00000000u};
+        case 0x040u:
+            return {0xc0065800u, 0x86007fc0u, 0xfffffffeu, 0x000000ffu, 0x00000001u, 0x00000000u, 0x00000019u, 0x0000c3e1u, 0xc0004600u, 0x0000002eu, 0xc0004600u, 0x0000002cu};
         case 0x080u:
             return {0xc0004600u, 0x00000407u};
         case 0x100u:
             return {0xc0004600u, 0x00000410u};
+        case 0x200u:
+            return {0xc0024600u, 0x00000138u, 0x07fffc00u, 0x00000000u};
         case 0x800u:
             return {0xc0036400u, 0x00000000u, stateThree, 0x80000000u, 0x00000000u};
         default:
@@ -68,21 +71,14 @@ std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t o
     Agc::Command::CheckBits(op, 0xfffu, __func__);
     Agc::Command::CheckBits(state, 0xfu, __func__);
 
-    constexpr std::array<std::uint32_t, 3> unsupported{0x040u, 0x200u, 0x400u};
-    for (const auto bit : unsupported) {
-        if ((op & bit) != 0u) {
-            char message[64];
-            std::snprintf(message, sizeof(message), "unsupported op bit 0x%x", bit);
-            Agc::Command::Require(false, __func__, message);
-        }
-    }
+    Agc::Command::Require((op & 0x400u) == 0u, __func__, "unsupported op bit 0x400");
 
     const std::uint32_t envelopeFlag = state == 2u ? 0x00000008u : 0x00000000u;
     std::vector<std::uint32_t> words{
         0xffff1000u,
         0xc0027904u, 0x00000342u, 0xce200000u | (op & 0xffffu), envelopeFlag};
 
-    constexpr std::array<std::uint32_t, 9> order{0x001u, 0x002u, 0x004u, 0x008u, 0x010u, 0x020u, 0x080u, 0x100u, 0x800u};
+    constexpr std::array<std::uint32_t, 11> order{0x001u, 0x002u, 0x004u, 0x008u, 0x010u, 0x020u, 0x040u, 0x080u, 0x100u, 0x200u, 0x800u};
     for (const auto bit : order) {
         if ((op & bit) != 0u) {
             const auto group = resetQueueGroup(bit, state);
