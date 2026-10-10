@@ -24,7 +24,7 @@ DT_OS_PLTRELSZ = 0x6100002D
 DT_OS_SYMTABSZ = 0x6100003F
 
 
-def fixture(jmprel=0x700, pltrelsz=24, os_tags=True):
+def fixture(jmprel=0x700, pltrelsz=24, os_tags=True, target=0x300):
     image = bytearray(0x1000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
@@ -54,7 +54,7 @@ def fixture(jmprel=0x700, pltrelsz=24, os_tags=True):
                      0x61000000, 0, 0, 0, 0, len(image), len(image), 1)
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
-    struct.pack_into("<QQq", image, 0x700, 0x300, (1 << 32) | 7, 0)
+    struct.pack_into("<QQq", image, 0x700, target, (1 << 32) | 7, 0)
     struct.pack_into("<I", image, 0x620 + 24, 8)
     image[0x600:0x610] = b"\x00lib.so\x00symbol\x00\x00"[:16]
     return image
@@ -91,6 +91,9 @@ def main():
         run(relinker, work, "offset-wrap", fixture(jmprel=0xFFFFFFFFFFFFFFF0), error)
         run(relinker, work, "size-past-eof", fixture(jmprel=0xFF0), error)
         run(relinker, work, "size-max", fixture(pltrelsz=0xFFFFFFFFFFFFFFF0), error)
+        for target in (0xFFFFFFFFFFFFFFF8, 0xFFFFFFFFFFFFFFFC, 0xFFFFFFFFFFFFFFFF):
+            run(relinker, work, f"target-wrap-{target:x}", fixture(target=target),
+                "Relocation target range exceeds the address space")
     print("Jump relocation table bounds tests passed")
 
 
