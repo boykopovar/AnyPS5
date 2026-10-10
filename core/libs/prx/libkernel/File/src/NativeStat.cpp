@@ -22,8 +22,7 @@ static int ReadHandleInfo(HANDLE handle, NativeStat* st) {
     if (!GetFileInformationByHandleEx(handle, FileBasicInfo, &st->times, sizeof(st->times)))
         return File::WindowsFileTime::Failure(GetLastError());
     st->hasTimes = true;
-    if (!GetFileInformationByHandle(handle, &st->identity)) return File::WindowsFileTime::Failure(GetLastError());
-    st->hasIdentity = true;
+    st->hasIdentity = GetFileInformationByHandle(handle, &st->identity) != 0;
     return 0;
 }
 static std::uint32_t FoldFileIndex(const BY_HANDLE_FILE_INFORMATION& identity) {
