@@ -58,6 +58,7 @@ constexpr std::uint64_t RUN_GET_CODEC_INFO = 1ull << 11;
 constexpr std::uint64_t RUN_MULTIPLE_FRAMES = 1ull << 12;
 constexpr std::uint64_t CONTROL_RESET = 1ull << 13;
 constexpr std::uint64_t CONTROL_INITIALIZE = 1ull << 14;
+constexpr std::uint64_t CONTROL_RESAMPLE = 1ull << 15;
 constexpr std::uint64_t SIDEBAND_GAPLESS_DECODE = 1ull << 45;
 constexpr std::uint64_t SIDEBAND_FORMAT = 1ull << 46;
 constexpr std::uint64_t SIDEBAND_STREAM = 1ull << 47;
@@ -104,6 +105,11 @@ struct SidebandResampleInfo {
     float ratio;
     std::int32_t samples;
     std::uint32_t reserved[8];
+};
+
+struct SidebandResampleParameters {
+    float ratio;
+    std::uint32_t flags;
 };
 
 struct Resampler {
@@ -1088,11 +1094,18 @@ void Control(Instance& instance, const JobHeader& job, const AjmBuffer* inputs) 
     const auto* input = job.inputCount ? static_cast<const std::uint8_t*>(inputs[0].ptr) : nullptr;
     const std::size_t inputSize = job.inputCount ? inputs[0].size : 0;
     const std::size_t gaplessSize = (job.flags & SIDEBAND_GAPLESS_DECODE) ? sizeof(SidebandGaplessDecode) : 0;
+    const std::size_t resampleSize = (job.flags & CONTROL_RESAMPLE) ? sizeof(SidebandResampleParameters) : 0;
     const std::size_t initializeSize = (job.flags & CONTROL_INITIALIZE) ? ControlInitializeSize(instance.codec) : 0;
-    if (inputSize != gaplessSize + initializeSize) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband input size other than the gapless decode and the codec's initialize parameters)");
+    if (inputSize != gaplessSize + resampleSize + initializeSize) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband input size other than the gapless decode, the resample parameters and the codec's initialize parameters)");
+    SidebandResampleParameters resample{};
+    if (resampleSize) {
+        std::memcpy(&resample, input + gaplessSize, sizeof(resample));
+        if (!std::isfinite(resample.ratio) || resample.ratio <= 0.0f) throw std::runtime_error("AJM: control job resample ratio " + std::to_string(resample.ratio) + " is not a positive finite number");
+    }
     std::int32_t result = 0;
     if (job.flags & CONTROL_RESET) ClearContext(instance);
-    if (job.flags & CONTROL_INITIALIZE) result = InitializeInstance(instance, input + gaplessSize, initializeSize);
+    if (job.flags & CONTROL_INITIALIZE) result = InitializeInstance(instance, input + gaplessSize + resampleSize, initializeSize);
+    if (resampleSize) instance.resampler.ratio = resample.ratio;
     if (gaplessSize) {
         SidebandGaplessDecode gapless{};
         std::memcpy(&gapless, input, sizeof(gapless));
@@ -1305,8 +1318,8 @@ int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instan
 }
 
 int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const void* sideband_input, size_t sideband_input_size, void* sideband_output, size_t sideband_output_size) {
-    constexpr std::uint64_t supported = CONTROL_RESET | CONTROL_INITIALIZE | SIDEBAND_GAPLESS_DECODE;
-    if (flags == 0 || (flags & ~supported) != 0) NotImplemented_nid_no_patch("sceAjmBatchJobControl (flags other than a combination of RESET, INITIALIZE and SIDEBAND_GAPLESS_DECODE)");
+    constexpr std::uint64_t supported = CONTROL_RESET | CONTROL_INITIALIZE | CONTROL_RESAMPLE | SIDEBAND_GAPLESS_DECODE;
+    if (flags == 0 || (flags & ~supported) != 0) NotImplemented_nid_no_patch("sceAjmBatchJobControl (flags other than a combination of RESET, INITIALIZE, RESAMPLE and SIDEBAND_GAPLESS_DECODE)");
     if ((flags & SIDEBAND_GAPLESS_DECODE) != 0 && (flags & CONTROL_RESET) == 0) NotImplemented_nid_no_patch("sceAjmBatchJobControl (SIDEBAND_GAPLESS_DECODE without RESET)");
     if (sideband_output_size != sizeof(SidebandResult)) NotImplemented_nid_no_patch("sceAjmBatchJobControl (sideband output other than the 8-byte result)");
     if (sideband_input_size != 0 && !sideband_input) NotImplemented_nid_no_patch("sceAjmBatchJobControl (null sideband input)");
@@ -1340,6 +1353,12 @@ int APS5_VABI sceAjmBatchJobSetResampleParameters(AjmBatchInfo* info, uint32_t i
     return Append(info, header, nullptr, nullptr);
 }
 
+int APS5_VABI sceAjmBatchJobSetResampleParametersEx(AjmBatchInfo* info, uint32_t instance, float ratio_start, float ratio_change_per_sample, uint32_t flags, void* result) {
+    if (!std::isfinite(ratio_start) || ratio_start <= 0.0f) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (ratio_change_per_sample != 0.0f) throw std::runtime_error(std::string(__func__) + ": the effect of a nonzero ratio change per sample is unknown");
+    return sceAjmBatchJobSetResampleParameters(info, instance, ratio_start, flags, result);
+}
+
 int APS5_VABI sceAjmBatchJobGetResampleInfo(AjmBatchInfo* info, uint32_t instance, void* result) {
     return Append(info, MakeHeader(JobKind::GetResampleInfo, instance, result, sizeof(SidebandResult) + sizeof(SidebandResampleInfo)), nullptr, nullptr);
 }
@@ -1350,6 +1369,10 @@ int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo* info, uint32_t instance, const 
 
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo* info, uint32_t instance, const void* bitstream_input, size_t bitstream_input_size, void* pcm_output, size_t pcm_output_size, void* result) {
     return sceAjmBatchJobRun(info, instance, SIDEBAND_STREAM, bitstream_input, bitstream_input_size, pcm_output, pcm_output_size, result, sizeof(SidebandResult) + sizeof(SidebandStream));
+}
+
+int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo* info, uint32_t instance, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* result) {
+    return sceAjmBatchJobRunSplit(info, instance, SIDEBAND_STREAM | RUN_MULTIPLE_FRAMES, input_buffers, input_buffers_num, output_buffers, output_buffers_num, result, sizeof(SidebandResult) + sizeof(SidebandStream) + sizeof(SidebandMultipleFrames));
 }
 
 int APS5_VABI sceAjmBatchJobGetGaplessDecode(AjmBatchInfo* info, uint32_t instance, void* result) {
