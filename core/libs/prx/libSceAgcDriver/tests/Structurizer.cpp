@@ -276,6 +276,37 @@ int main() {
         auto reordered = makeGraph({{1}, {}, {2}, {0, 4}, {1}});
         reordered.entryBlock = 3;
         requireOriginalDominanceSets(std::move(reordered), "a nonzero entry with permuted block IDs");
+        requireOriginalDominanceSets(makeGraph({{1, 2}, {}, {}}), "disjoint exits with an empty post-dominator intersection");
+        requireOriginalDominanceSets(makeGraph({{2}, {2}, {}}), "separate roots with an empty dominator intersection");
+        requireOriginalDominanceSets(makeGraph({{1}, {1, 2}, {}}), "a self-loop with an exit");
+        std::uint32_t randomState = 0x7b19a5c3u;
+        const auto randomWord = [&] { randomState = randomState * 1664525u + 1013904223u; return randomState; };
+        for (std::uint32_t trial = 0; trial < 24u; ++trial) {
+            const auto count = 8u + trial % 9u;
+            std::vector<std::uint32_t> ids(count);
+            for (std::uint32_t id = 0; id < count; ++id) ids[id] = id;
+            for (auto size = count; size > 1u; --size) std::swap(ids[size - 1u], ids[randomWord() % size]);
+            if (ids.front() == 0u) std::swap(ids.front(), ids.back());
+            std::vector<std::vector<std::uint32_t>> successors(count);
+            for (std::uint32_t position = 0; position + 1u < count; ++position) {
+                const auto remaining = count - position - 1u;
+                const auto degree = position == 0u ? 2u : position == 1u ? 1u : std::min(randomWord() % 3u, remaining);
+                if (degree == 0u) continue;
+                auto& edges = successors[ids[position]];
+                const auto first = position + 1u + randomWord() % remaining;
+                edges.push_back(ids[first]);
+                if (degree == 2u) {
+                    auto second = position + 1u + randomWord() % (remaining - 1u);
+                    if (second >= first) ++second;
+                    edges.push_back(ids[second]);
+                }
+                std::sort(edges.begin(), edges.end());
+            }
+            auto dag = makeGraph(successors);
+            dag.entryBlock = ids.front();
+            const auto name = "deterministic DAG " + std::to_string(trial);
+            requireOriginalDominanceSets(std::move(dag), name.c_str());
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

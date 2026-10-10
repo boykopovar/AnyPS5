@@ -1,6 +1,7 @@
 #include "ControlFlow/Structurizer.hpp"
 #include "ControlFlow/ControlFlowHelpers.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -18,6 +19,39 @@ std::vector<std::uint32_t> allBlockIds(std::uint32_t count) {
         ids.push_back(i);
     }
     return ids;
+}
+
+bool inPlaceIntersections() {
+    static const bool enabled = std::getenv("APS5_NO_PERF_DOM_INTERSECTION") == nullptr;
+    return enabled;
+}
+
+void intersectAnalysisSet(std::vector<std::uint32_t>& values, const std::vector<std::uint32_t>& other) {
+    if (!inPlaceIntersections()) {
+        values = intersectSorted(values, other);
+        return;
+    }
+    std::size_t left = 0;
+    std::size_t right = 0;
+    std::size_t count = 0;
+    while (left < values.size() && right < other.size()) {
+        if (values[left] < other[right]) {
+            ++left;
+        } else if (other[right] < values[left]) {
+            ++right;
+        } else {
+            values[count++] = values[left++];
+            ++right;
+        }
+    }
+    values.resize(count);
+}
+
+void replaceAnalysisSet(std::vector<std::uint32_t>& destination, std::vector<std::uint32_t>&& values) {
+    if (inPlaceIntersections() && values.capacity() - values.size() > values.size()) {
+        std::vector<std::uint32_t>(values).swap(values);
+    }
+    destination = std::move(values);
 }
 
 void addSortedUnique(std::vector<std::uint32_t>& values, std::uint32_t value) {
@@ -351,12 +385,12 @@ std::uint32_t mergeBesideReturns(const ControlFlowGraph& graph, const BasicBlock
             }
             auto next = postDominators[kept[block.id].front()];
             for (std::size_t i = 1; i < kept[block.id].size(); ++i) {
-                next = intersectSorted(next, postDominators[kept[block.id][i]]);
+                intersectAnalysisSet(next, postDominators[kept[block.id][i]]);
             }
             addUnique(next, block.id);
             sortUnique(next);
             if (next != postDominators[block.id]) {
-                postDominators[block.id] = std::move(next);
+                replaceAnalysisSet(postDominators[block.id], std::move(next));
                 changed = true;
             }
         }
@@ -1340,13 +1374,13 @@ void Structurizer::computeDominatorTree(ControlFlowGraph& graph) const {
             } else {
                 next = graph.blocks[block.predecessors.front()].dominators;
                 for (std::size_t i = 1; i < block.predecessors.size(); ++i) {
-                    next = intersectSorted(next, graph.blocks[block.predecessors[i]].dominators);
+                    intersectAnalysisSet(next, graph.blocks[block.predecessors[i]].dominators);
                 }
                 addSortedUnique(next, block.id);
             }
 
             if (next != block.dominators) {
-                block.dominators = std::move(next);
+                replaceAnalysisSet(block.dominators, std::move(next));
                 changed = true;
             }
         }
@@ -1421,13 +1455,13 @@ void Structurizer::computePostDominators(ControlFlowGraph& graph) const {
             } else {
                 next = graph.blocks[block.successors.front()].postDominators;
                 for (std::size_t i = 1; i < block.successors.size(); ++i) {
-                    next = intersectSorted(next, graph.blocks[block.successors[i]].postDominators);
+                    intersectAnalysisSet(next, graph.blocks[block.successors[i]].postDominators);
                 }
                 addSortedUnique(next, block.id);
             }
 
             if (next != block.postDominators) {
-                block.postDominators = std::move(next);
+                replaceAnalysisSet(block.postDominators, std::move(next));
                 changed = true;
             }
         }
