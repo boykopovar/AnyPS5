@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
 #include <chrono>
+#include <limits>
 #include <list>
 #include <map>
 #include <memory>
@@ -69,12 +70,12 @@ public:
 
     // The layout for `key` (binding, type, count, stage flags per binding, as ShaderResources builds
     // it from `bindings`), created on first use.
-    VkDescriptorSetLayout Layout(std::span<const std::uint32_t> key, std::span<const VkDescriptorSetLayoutBinding> bindings, bool updateAfterBind = false);
+    VkDescriptorSetLayout Layout(std::span<const std::uint32_t> key, std::span<const VkDescriptorSetLayoutBinding> bindings, bool updateAfterBind = false, std::span<const VkDescriptorBindingFlags> flags = {});
     struct SetAllocation {
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkDescriptorPool pool = VK_NULL_HANDLE;
     };
-    SetAllocation Allocate(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, bool updateAfterBind = false);
+    SetAllocation Allocate(VkDescriptorSetLayout layout, std::span<const VkDescriptorPoolSize> sizes, bool updateAfterBind = false, std::optional<std::uint32_t> variableCount = std::nullopt);
     void Free(const SetAllocation& allocation) noexcept;
     // APS5_PROFILE_DRAW counters: layouts served from the map / created, sets allocated, pools opened.
     struct Stats {
@@ -98,6 +99,12 @@ private:
     std::vector<VkDescriptorPool> dedicated;
     Stats stats;
 };
+
+struct ImageTableReuseCounts {
+    std::uint64_t reused = 0;
+    std::uint64_t resolved = 0;
+};
+ImageTableReuseCounts ImageTableReuses();
 
 class ShaderResources {
 public:
@@ -145,7 +152,7 @@ public:
     void MarkGpuWrites(Recorder& recorder);
     void WriteBackBuffers();
     // Whether WriteBackBuffers has anything the CPU must see (copied written buffers, BDA faults).
-    bool NeedsCompletion() const { return bda != nullptr || guestMemory.HasCopiedWrites(); }
+    bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
@@ -279,7 +286,32 @@ private:
         VkDescriptorSetLayoutBinding layout;
         std::vector<std::size_t> allocations;
         std::vector<std::size_t> imageAllocations;
+        VkDescriptorBindingFlags flags = 0;
     };
+
+    struct TableStage {
+        ShaderRecompiler::ShaderStage stage = ShaderRecompiler::ShaderStage::Compute;
+        const ShaderRecompiler::RecompileResult* program = nullptr;
+        const ShaderRecompiler::DescriptorBinding* images = nullptr;
+        std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
+        std::vector<std::uint32_t> map;
+        std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
+        std::vector<std::string> messages;
+        std::uint32_t elementBase = 0;
+        std::size_t firstSampler = 0;
+        std::size_t samplerCount = 0;
+        std::vector<std::size_t> elementTextures;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> samplerRejections;
+    };
+    std::vector<TableStage> tableStages;
+    std::size_t tableBinding = std::numeric_limits<std::size_t>::max();
+    std::uint32_t tableElements = 0;
+    TableStage& tableStage(const CompiledShader& shader);
+    static const ShaderRecompiler::DescriptorBinding* tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage);
+    std::uint32_t rejectTableElement(TableStage& table, std::span<const std::uint32_t> words, const std::string& message);
+    void addSamplerTable(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags, TableStage& table);
+    void resolveImageTables();
+    void finishImageTables();
 
     // A host-imported buffer region the set reads in place, with its import's identity at build time.
     struct DirectRegion {
@@ -413,6 +445,7 @@ private:
     std::unique_ptr<BdaResources> bda;
     bool usesBda = false;
     bool usesFaultBuffer = false;
+    bool faultChecks = false;
     VkDescriptorSetLayout _layout = VK_NULL_HANDLE;
     // Whether the layout is this object's own (no cache) and destroyed with it.
     bool ownsLayout = false;

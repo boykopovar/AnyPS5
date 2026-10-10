@@ -102,7 +102,6 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
     next.dispatchThreadLimit = info.dispatchThreadLimit;
     if (info.buffers.size() > RuntimeAbi::BufferCapacity || info.images.size() > RuntimeAbi::ImageCapacity || info.samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader binding layout exceeds runtime metadata capacity");
     if (std::ranges::any_of(next.userDataRegisters, [](auto reg) { return reg >= RuntimeAbi::UserDataCapacity; })) fail("shader user data exceeds runtime ABI capacity");
-    if (std::ranges::any_of(info.images, [](const auto& image) { return image.indirectRoot != ImageResource::NoIndirectImage; })) next.runtimeImageCount = static_cast<std::uint32_t>(info.images.size());
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
     next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
 
@@ -126,22 +125,9 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
             imageGroups[group].insert(imageGroups[group].end(), count, i);
         }
     };
-    // A bindless table's slots follow their root as consecutive elements: the SPIR-V indexes the
-    // binding with element(root) + slot.
     for (std::uint32_t i = 0; i < info.images.size(); i++) {
-        const auto root = info.images[i].indirectRoot;
-        if (root != ImageResource::NoIndirectImage && root != i) {
-            continue;
-        }
-        place(i);
-        if (root != i) {
-            continue;
-        }
-        for (const auto slot : info.images[i].indirectResources) {
-            if (slot >= info.images.size() || info.images[slot].indirectRoot != i) {
-                fail("shader binding layout failed: image " + std::to_string(i) + " has an inconsistent table slot");
-            }
-            if (slot != i) place(slot);
+        if (info.images[i].table == NoTable) {
+            place(i);
         }
     }
     for (std::uint32_t i = 0; i < imageGroups.size(); i++) {
@@ -151,13 +137,15 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
 
-    if (!info.samplers.empty()) {
-        if (info.samplers.size() > RuntimeAbi::SamplerHeapCapacity / 2u) fail("shader sampler pairs exceed runtime heap capacity");
-        std::vector<std::uint32_t> resources(info.samplers.size() * 2u);
-        for (std::uint32_t i = 0; i < resources.size(); i++) {
-            resources[i] = i / 2u;
+    std::vector<std::uint32_t> samplers;
+    for (std::uint32_t i = 0; i < info.samplers.size(); i++) {
+        if (info.samplers[i].table == NoTable) {
+            samplers.insert(samplers.end(), 2u, i);
         }
-        addBinding(next, DescriptorBindingKind::Samplers, std::move(resources));
+    }
+    if (!samplers.empty()) {
+        if (samplers.size() > RuntimeAbi::SamplerHeapCapacity) fail("shader sampler pairs exceed runtime heap capacity");
+        addBinding(next, DescriptorBindingKind::Samplers, std::move(samplers));
     }
     if (usesGds(program)) {
         addBinding(next, DescriptorBindingKind::Gds);
@@ -169,12 +157,19 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         addBinding(next, DescriptorBindingKind::FaultBuffer);
     }
 
-    const bool usesFlattenedRuntime = !program.Resources().srtReads.empty() ||
-        std::ranges::any_of(info.images, [](const ImageResource& image) {
-            return image.indirectSearchIterations != 0u;
-        });
-    if (usesFlattenedRuntime) {
+    if (!program.Resources().srtReads.empty()) {
         addBinding(next, DescriptorBindingKind::FlattenedSrt);
+    }
+    const bool imageTables = std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; });
+    const bool samplerTables = std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
+    if (samplerTables) {
+        addBinding(next, DescriptorBindingKind::SamplerTable);
+    }
+    if (imageTables || samplerTables) {
+        addBinding(next, DescriptorBindingKind::ImageTableMap);
+    }
+    if (imageTables) {
+        addBinding(next, DescriptorBindingKind::ImageTable);
     }
 
     if (next.ShaderDataDwords() != 0u && !next.UsesPushData()) {

@@ -56,9 +56,11 @@ inline constexpr std::uint32_t ReferenceSnorm = 2u;
 [[nodiscard]] inline std::uint32_t Reference(std::uint32_t state) { return (state >> ReferenceShift) & 0x3u; }
 }
 
-struct ImageResource {
-    static constexpr std::uint32_t NoIndirectImage = std::numeric_limits<std::uint32_t>::max();
+inline constexpr std::uint32_t NoTable = std::numeric_limits<std::uint32_t>::max();
 
+enum class TableOperation : std::uint8_t { Supported, Unsupported };
+
+struct ImageResource {
     std::uint32_t source = 0;
     std::uint32_t firstUsePc = 0;
     ImageResourceClass resourceClass = ImageResourceClass::None;
@@ -91,10 +93,8 @@ struct ImageResource {
     std::uint32_t byComponents = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     std::uint32_t emulatedCompare = 0;
-    std::uint32_t indirectRoot = NoIndirectImage;
-    std::uint32_t indirectMappingOffset = 0;
-    std::uint32_t indirectSearchIterations = 0;
-    std::vector<std::uint32_t> indirectResources;
+    std::uint32_t table = NoTable;
+    TableOperation tableOperation = TableOperation::Supported;
 
     bool operator==(const ImageResource& other) const = default;
 };
@@ -123,6 +123,7 @@ struct SamplerResource {
     bool forcePointFiltering = false;
     bool depthCompare = false;
     std::uint8_t uses = 0;
+    std::uint32_t table = NoTable;
 
     bool operator==(const SamplerResource& other) const = default;
 };

@@ -19,26 +19,32 @@ struct BlockInfo {
     IrValue* indirectTarget = nullptr;
 };
 
+struct KeyDomain {
+    std::uint32_t source = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t stride = 4;
+
+    bool operator==(const KeyDomain& other) const = default;
+};
+
+struct TableColumn {
+    std::uint32_t heapSource = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t addend = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t dwordCount = 0;
+    std::uint32_t maxKey = 0xffffffffu;
+    bool sampler = false;
+    bool address = false;
+    std::optional<KeyDomain> keyDomain;
+
+    bool operator==(const TableColumn& other) const = default;
+};
+
 struct DescriptorSource {
-    // A T# loaded from a table buffer (`heapSource`) at `entryOffset + key * 32`, the key a
-    // wave-uniform runtime value (handle argument `keyArg`). With `hasMaterial` the key is itself
-    // `M[readfirstlane(i) * selectorStride + selectorOffset]` over `materialSource`, so the key
-    // set can be enumerated from the material records (see ResourceMaterializer).
-    struct IndirectImage {
-        std::uint32_t materialSource = 0;
-        std::uint32_t heapSource = 0;
-        std::uint32_t selectorStride = 0;
-        std::uint32_t selectorOffset = 0;
-        std::uint32_t keyArg = 0;
-        std::uint32_t entryOffset = 0;
-        bool hasMaterial = false;
-
-        bool operator==(const IndirectImage& other) const = default;
-    };
-
     std::array<IrValue*, 8> dwords {};
     std::uint32_t dwordCount = 0;
-    std::optional<IndirectImage> indirectImage;
+    std::optional<TableColumn> tableColumn;
 
     bool operator==(const DescriptorSource& other) const = default;
 };

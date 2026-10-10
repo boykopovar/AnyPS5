@@ -1,10 +1,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 
 namespace AgcDriver::Graphics {
 
 void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots) {
+    static const bool loopGuarded = std::getenv("APS5_LOOP_GUARD") != nullptr;
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         std::uint32_t tables = 0;
@@ -21,6 +23,8 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         // Rect-list validation needs a fault buffer, but never accesses guest addresses.
         usesBda = usesBda || tables != 0;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
+        const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
+        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));
     }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");

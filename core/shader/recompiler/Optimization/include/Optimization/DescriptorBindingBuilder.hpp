@@ -3,6 +3,7 @@
 
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/BindingAllocator.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include "Recompiler.hpp"
 #include <cstdint>
 
@@ -14,6 +15,7 @@ struct PreparedDescriptorBinding {
     std::vector<std::uint32_t> resources;
     std::vector<bool> identityImageSwizzle;
     std::vector<std::uint32_t> samplerFilterElements;
+    std::vector<std::uint32_t> tableSamplerMasks;
     std::size_t writtenBuffers = 0;
     std::size_t readOnlyBuffers = 0;
 };
@@ -35,7 +37,7 @@ class DescriptorBindingBuilder {
 public:
     DescriptorBindingPlan Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings = {}) const;
     DescriptorBindingPlan Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const;
-    void Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads) const;
+    void Populate(BindingAllocationResult& allocation, const CompiledBindingLayout& compiled, const DescriptorBindingPlan& plan, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, const ResolvedImageTables* tables = nullptr) const;
     void Populate(BindingAllocationResult& allocation, const IrProgram& program, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, std::span<const std::uint8_t> exportMappings = {}) const;
     void Populate(BindingAllocationResult& allocation, const ShaderInfo& info, IrShaderStage stage, std::uint32_t userDataBase, const ResourceSnapshot& snapshot, const std::array<std::uint32_t, 3>& partialThreads, std::span<const std::uint8_t> exportMappings = {}) const;
 };

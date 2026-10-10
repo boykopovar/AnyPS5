@@ -123,7 +123,7 @@ bool TranslationContext::imageGetResinfo(const RdnaInstruction& inst) {
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
     IrValue* resource = getImageResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageQueryDimensions, IrOpcodeType(IrOpcode::ImageQueryDimensions), {resource, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageQueryDimensions, IrOpcodeType(IrOpcode::ImageQueryDimensions), {resource, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
     writeImageComponents(inst.destination, &result, memory, 4u);
     return true;
 }
@@ -133,7 +133,7 @@ bool TranslationContext::imageGetLod(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageQueryLod, IrOpcodeType(IrOpcode::ImageQueryLod), {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageQueryLod, IrOpcodeType(IrOpcode::ImageQueryLod), {resource, sampler, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
     writeImageComponents(inst.destination, &result, memory, 2u);
     return true;
 }
@@ -203,7 +203,7 @@ bool TranslationContext::imageSample(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageSampleRaw, IrOpcodeType(IrOpcode::ImageSampleRaw), {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageSampleRaw, IrOpcodeType(IrOpcode::ImageSampleRaw), {resource, sampler, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
     const bool dref = (memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u;
     if (dref && memory.dataBits != 16u) {
         IrValue& component = ir.CompositeExtract(result, 0u);
@@ -224,7 +224,7 @@ bool TranslationContext::imageGather(const RdnaInstruction& inst) {
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
-    IrValue& result = ir.Emit(IrOpcode::ImageGatherRaw, IrOpcodeType(IrOpcode::ImageGatherRaw), {resource, sampler, address}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(IrOpcode::ImageGatherRaw, IrOpcodeType(IrOpcode::ImageGatherRaw), {resource, sampler, address, &ir.GetExec()}, addMemoryInfo(memory, inst.programCounter));
     for (std::uint32_t index = 0; index < memory.dataDwords; ++index) {
         writeOperand(offsetOperand(inst.destination, index), &ir.CompositeExtract(result, index));
     }

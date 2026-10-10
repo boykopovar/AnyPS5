@@ -59,6 +59,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilitySampledImageArrayNonUniformIndexing, sampledNonUniform, "shaderSampledImageArrayNonUniformIndexing");
     checkFeature(spv::CapabilityStorageImageArrayNonUniformIndexing, storageNonUniform, "shaderStorageImageArrayNonUniformIndexing");
     checkFeature(spv::CapabilityShaderNonUniform, sampledNonUniform || storageNonUniform, "descriptor indexing");
+    checkFeature(spv::CapabilityRuntimeDescriptorArray, indexing != nullptr && indexing->runtimeDescriptorArray == VK_TRUE, "runtimeDescriptorArray");
     const bool barycentricEnabled = barycentric != nullptr && barycentric->fragmentShaderBarycentric == VK_TRUE;
     const bool meshEnabled = mesh != nullptr && mesh->meshShader == VK_TRUE;
     checkFeature(spv::CapabilityFragmentBarycentricKHR, barycentricEnabled, "fragmentShaderBarycentric");

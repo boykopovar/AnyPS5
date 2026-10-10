@@ -35,8 +35,7 @@ namespace AgcDriver::Graphics {
         info.minLod = descriptor.minLod;
         info.maxLod = descriptor.maxLod;
         info.borderColor = descriptor.borderColor;
-        const bool clampsToBorder = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        opaqueBlackBorder = clampsToBorder && (descriptor.borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK || descriptor.borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
+        opaqueBlackBorder = ReadsOpaqueBlackBorder(descriptor);
         info.unnormalizedCoordinates = descriptor.unnormalizedCoordinates ? VK_TRUE : VK_FALSE;
         if (descriptor.nonSeamlessCube) {
             if (context.nonSeamlessCubeMap) info.flags |= VK_SAMPLER_CREATE_NON_SEAMLESS_CUBE_MAP_BIT_EXT;
@@ -63,6 +62,11 @@ namespace AgcDriver::Graphics {
 
     bool Sampler::ReadsOpaqueBlackBorder() const {
         return opaqueBlackBorder;
+    }
+
+    bool Sampler::ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor) {
+        const bool clampsToBorder = descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER || descriptor.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        return clampsToBorder && (descriptor.borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK || descriptor.borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK);
     }
 
     SamplerCache::SamplerCache(std::size_t capacity) : capacity(std::max<std::size_t>(capacity, 1)) {}
