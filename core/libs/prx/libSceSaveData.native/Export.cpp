@@ -71,7 +71,7 @@ namespace {
 // with a small .param sidecar holding the last SaveDataParam the title wrote. Keying by user as well as slot
 // keeps two users' in-memory saves from colliding on the same console.
 constexpr char MEM_DIR[] = "_sd_mem";
-constexpr std::size_t MEM_MAX_SIZE = 32u * 1024u * 1024u;
+constexpr std::size_t MEM_MAX_SIZE = 0x1000000;  // 16 MiB
 std::mutex g_mem_mutex;
 
 std::string mem_path(std::int32_t user_id, std::uint32_t slot, const char* ext) {
@@ -140,7 +140,7 @@ SaveDataParam load_param(const std::string& real_path) {
         std::error_code ec;
         const auto written = std::filesystem::last_write_time(real_path, ec);
         if (!ec) {
-            const auto system = std::filesystem::file_time_type::clock::to_sys(written);
+            const auto system = std::chrono::clock_cast<std::chrono::system_clock>(written);
             param.mtime = std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
         }
     }
@@ -482,7 +482,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
     mount_result->required_blocks = 0;
-    mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
+    mount_result->mount_status = (create || create2) ? 1u : 0u;
     return SAVE_DATA_OK;
 }
 
@@ -625,22 +625,40 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
     if (!have) {
         existed = 0;
     }
+    const bool needParam = (setup_param->init_param != nullptr && (setup_param->option & 1u) != 0);
+    const std::string paramPath = mem_path(setup_param->user_id, setup_param->slot_id, "param");
+    std::size_t paramSize = 0;
+    const bool haveParam = file_size_of(paramPath, &paramSize);
     // First run: create a zero-filled blob and report existed size 0 so the title treats it as a new save.
-    if (!have || existed < setup_param->memory_size) {
+    if (!have || existed < setup_param->memory_size || (needParam && !haveParam)) {
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+        std::vector<char> originalParam;
+        if (haveParam && !read_file_all(paramPath, originalParam)) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
         std::vector<char> data;
         if (have && !read_file_all(path, data)) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
-        data.resize(setup_param->memory_size, 0);
-        if (!write_file_replace(path, data)) {
-            return SAVE_DATA_ERROR_INTERNAL;
-        }
-        if (setup_param->init_param != nullptr && (setup_param->option & 1u) != 0) {
+        if (needParam) {
             std::vector<char> pd(sizeof(SaveDataParam));
             std::memcpy(pd.data(), setup_param->init_param, sizeof(SaveDataParam));
-            write_file_replace(mem_path(setup_param->user_id, setup_param->slot_id, "param"), pd);
+            if (!write_file_replace(paramPath, pd)) {
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+        }
+        data.resize(setup_param->memory_size, 0);
+        if (!write_file_replace(path, data)) {
+            if (needParam) {
+                if (!haveParam) {
+                    std::error_code removeError;
+                    std::filesystem::remove(paramPath, removeError);
+                } else {
+                    write_file_replace(paramPath, originalParam);
+                }
+            }
+            return SAVE_DATA_ERROR_INTERNAL;
         }
     }
     if (result != nullptr) {
@@ -746,11 +764,6 @@ int APS5_VABI sceSaveDataConvert() {
 }
 
 int APS5_VABI sceSaveDataGetConvertProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSaveDataCancel() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
