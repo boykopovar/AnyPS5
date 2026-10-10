@@ -117,7 +117,7 @@ struct PhysicalMemoryPool {
         if (!_isCovered(start, end)) return false;
 
         const bool splitStart = _splitAt(start);
-        // ISSUE: Ensure exceptions from Retype() are handled at the public API boundary.
+
         try {
             _splitAt(end);
         } catch (...) {
@@ -173,7 +173,7 @@ private:
             _allocs.erase(ar.first);
             return SCE_KERNEL_ERROR_EFAULT;
         }
-        // ISSUE: Verify partial backing-memory changes are rolled back on failure.
+
         try {
             CreateDirectMemoryBacking(static_cast<int64_t>(start), len, type);
         } catch (...) {
@@ -197,7 +197,7 @@ private:
         AllocMap::iterator ait = _allocs.find(start);
         if (ait == _allocs.end() || ait->second != start + alignedLen) return false;
 
-        // ISSUE: Verify backing-memory consistency if ForgetDirectMemory() throws.
+
         ForgetDirectMemory(static_cast<int64_t>(start), alignedLen);
 
         const uint64_t end = start + alignedLen;
