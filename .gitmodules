@@ -31,3 +31,6 @@
 [submodule "3rdparty/libjpeg-turbo"]
 	path = 3rdparty/libjpeg-turbo
 	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+[submodule "3rdparty/libusb-cmake"]
+	path = 3rdparty/libusb-cmake
+	url = https://github.com/libusb/libusb-cmake.git

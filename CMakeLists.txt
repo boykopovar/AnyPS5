@@ -106,6 +106,13 @@ if(WIN32)
     set_target_properties(freetype PROPERTIES SOURCES "${freetypeSources}")
 endif()
 
+set(LIBUSB_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
+set(LIBUSB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(LIBUSB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(3rdparty/libusb-cmake EXCLUDE_FROM_ALL)
+set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_subdirectory(core/shader/recompiler)
 add_subdirectory(core/Decoder/Jpeg)
 add_subdirectory(core/Decoder/Png)
