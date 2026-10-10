@@ -318,6 +318,23 @@ VkBlendFactor blendFactor(std::uint32_t value) {
     }
 }
 
+VkBlendFactor colorFactorWithOpaqueDestination(VkBlendFactor factor) {
+    switch (factor) {
+        case VK_BLEND_FACTOR_DST_ALPHA: return VK_BLEND_FACTOR_ONE;
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ZERO;
+        case VK_BLEND_FACTOR_SRC_ALPHA_SATURATE: return VK_BLEND_FACTOR_ZERO;
+        default: return factor;
+    }
+}
+
+VkBlendFactor alphaFactorWithOpaqueDestination(VkBlendFactor factor) {
+    switch (factor) {
+        case VK_BLEND_FACTOR_DST_ALPHA: case VK_BLEND_FACTOR_DST_COLOR: return VK_BLEND_FACTOR_ONE;
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA: case VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR: return VK_BLEND_FACTOR_ZERO;
+        default: return factor;
+    }
+}
+
 VkBlendOp blendOp(std::uint32_t value) {
     switch (value) {
         case 0: return VK_BLEND_OP_ADD;
@@ -684,6 +701,12 @@ State DecodeState(const QueueState& queue) {
                 state.dstColorBlendFactor = state.dstAlphaBlendFactor;
                 state.colorBlendOp = state.alphaBlendOp;
             }
+            if ((read(cx, 0x31d + slot * 0xfu) & 0x20000u) != 0) {
+                state.srcColorBlendFactor = colorFactorWithOpaqueDestination(state.srcColorBlendFactor);
+                state.dstColorBlendFactor = colorFactorWithOpaqueDestination(state.dstColorBlendFactor);
+                state.srcAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.srcAlphaBlendFactor);
+                state.dstAlphaBlendFactor = alphaFactorWithOpaqueDestination(state.dstAlphaBlendFactor);
+            }
             for (std::uint32_t i = 0; i < 4; ++i) result.blendConstants[i] = readFloat(cx, 0x105 + i);
         }
         result.blends[color.exportIndex] = state;
@@ -738,7 +761,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto slice = view & 0x1fffu;
     Require(slice == ((view >> 13u) & 0x1fffu), "color views of several array slices are unsupported");
     const auto viewMip = (view >> 26u) & 0xfu;
-    zero(cx, 0x31d + stride, ~0u, "color samples, fragments or destination alpha override");
+    zero(cx, 0x31d + stride, ~0x20000u, "color samples, fragments or destination alpha override");
     const auto attrib2 = read(cx, 0x3b0 + slot);
     const auto maxMip = attrib2 >> 28u;
     Require(viewMip <= maxMip, "color view mip exceeds the surface");

@@ -572,6 +572,25 @@ void PixelInputLayoutTests() {
     Require(!readsBuiltin(read, spv::BuiltInFragCoord) && !readsBuiltin(read, spv::BuiltInBaryCoordKHR), "an ADDR-only centroid pair was loaded");
 }
 
+void OpaqueDestinationAlphaTests() {
+    auto queue = makeState();
+    for (std::uint32_t constant = 0x105; constant < 0x109; ++constant) queue.context[constant] = 0;
+    queue.context[0x1e0] = (1u << 30u) | (1u << 29u) | 6u | (7u << 8u) | (8u << 16u) | (10u << 24u);
+    auto blend = AgcDriver::Graphics::DecodeState(queue).blend;
+    Require(blend.srcColorBlendFactor == VK_BLEND_FACTOR_DST_ALPHA && blend.dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA, "color blend factors changed");
+    Require(blend.srcAlphaBlendFactor == VK_BLEND_FACTOR_DST_COLOR && blend.dstAlphaBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE, "alpha blend factors changed");
+    queue.context[0x31d] = 0x20000u;
+    blend = AgcDriver::Graphics::DecodeState(queue).blend;
+    Require(blend.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && blend.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO, "an opaque destination left a destination-alpha color factor");
+    Require(blend.srcAlphaBlendFactor == VK_BLEND_FACTOR_ONE && blend.dstAlphaBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA_SATURATE, "an opaque destination left a destination alpha factor");
+    queue.context[0x1e0] = (1u << 30u) | 10u | (9u << 8u);
+    blend = AgcDriver::Graphics::DecodeState(queue).blend;
+    Require(blend.srcColorBlendFactor == VK_BLEND_FACTOR_ZERO && blend.dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR, "alpha saturation with an opaque destination");
+    Require(blend.dstAlphaBlendFactor == VK_BLEND_FACTOR_ZERO, "an opaque destination left a destination-color alpha factor");
+    queue.context[0x31d] = 0x40000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "destination alpha override");
+}
+
 void DisabledColorTests() {
     auto queue = makeState();
     queue.context[0x8e] = 0;
@@ -2982,6 +3001,7 @@ int main() {
         orderedPixelShaderTests();
         ConservativeRasterizationTests();
         DisabledColorTests();
+        OpaqueDestinationAlphaTests();
         CompactedExportTests();
         ReversedComponentOrderTests();
         metadataPassTests();
