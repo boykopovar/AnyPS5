@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 
-from test_guest_intel_trampolines import main_fixture
+from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
 from test_guest_module_directories import module_with_symbol, needed_libraries
 
 
@@ -30,10 +30,67 @@ def executable_with_needed(needed=NEEDED, repeats=1):
     return image
 
 
+def module_with_needed(names, entries):
+    image = guest_fixture(PLAIN_SITE)
+    strings = bytearray(b"\0")
+    offsets = []
+    for name in names:
+        offsets.append(len(strings))
+        strings += name + b"\0"
+    assert len(strings) <= 0x100
+    image[0x900:0x900 + len(strings)] = strings
+    tags = [(5, 0x2300), (10, len(strings)), (6, 0x2220), (11, 24),
+            (4, 0x2240), (7, 0x2300), (8, 0), (9, 24)]
+    tags += [(1, offsets[index]) for index in entries] + [(0, 0)]
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", image, 0x600 + index * 16, *tag)
+    struct.pack_into("<QQ", image, 176 + 32, len(tags) * 16, len(tags) * 16)
+    return image
+
+
+def check_guest_needed(relinker, work):
+    first, second = b"libkernel.prx", b"libSceVideoOut.prx"
+    cases = (("single", (first,), (0,), [first.decode()]),
+             ("adjacent", (first,), (0, 0), [first.decode()]),
+             ("separated", (first, second), (0, 1, 0), [first.decode(), second.decode()]),
+             ("distinct-offsets", (first, second, first), (0, 1, 2), [first.decode(), second.decode()]))
+    for windows in (False, True):
+        for label, names, entries, expected in cases:
+            case = work / f"guest-{windows}-{label}"
+            (case / "prx").mkdir(parents=True)
+            source = case / "input.elf"
+            source.write_bytes(main_fixture())
+            (case / "prx" / "consumer.prx").write_bytes(module_with_needed(names, entries))
+            output = case / ("output.exe" if windows else "output.elf")
+            result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (label, windows, result.stdout, result.stderr)
+            artifact = case / "app0" / "prx" / "consumer.prx.guest.prx"
+            assert artifact.read_bytes().startswith(b"MZ" if windows else b"\x7fELF"), artifact
+            if not windows:
+                needed = needed_libraries(artifact.read_bytes())
+                assert needed == expected, (label, needed)
+                needed = needed_libraries(output.read_bytes())
+                assert needed == ["$ORIGIN/app0/prx/consumer.prx.guest.prx", *expected], (label, needed)
+        for label, invalid in (("empty", b""), ("dollar", b"bad$name.prx")):
+            case = work / f"guest-{windows}-{label}"
+            (case / "prx").mkdir(parents=True)
+            source = case / "input.elf"
+            source.write_bytes(main_fixture())
+            module = case / "prx" / "consumer.prx"
+            module.write_bytes(module_with_needed((first, invalid), (0, 0, 1)))
+            output = case / ("output.exe" if windows else "output.elf")
+            result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 2 and f"{module}: Invalid dependency: {invalid.decode()}\n" in result.stderr, result.stderr
+            assert not output.exists() and not (case / "app0").exists(), output
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
+        check_guest_needed(relinker, work)
 
         def convert(case, windows, needed=NEEDED, repeats=1):
             if not (case / "sce_modules").exists():
