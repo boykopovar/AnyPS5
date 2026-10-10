@@ -228,7 +228,9 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 namespace {
 
 bool PreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler::RecompileRequest& request) {
-    if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
+    // Registration prepares the null pixel program for one pixel state; a depth-only draw may need it in another
+    // (wave64, other inputs or exports).
+    if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return true;
     }

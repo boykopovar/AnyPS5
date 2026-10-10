@@ -12,14 +12,17 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -514,9 +517,10 @@ void _readResolved(Apr::Opcode opcode, Apr::ReadFileCommand command, ReadCursor&
     read = {true, command.fileId, command.destination + command.size, command.offset + command.size};
 }
 
-void _execute(const Apr::CommandBufferObject& buffer) {
-    std::uint32_t cursor = 0;
-    ReadCursor read;
+// Runs the commands from start to the end of the buffer. With block false, a wait whose condition does not
+// hold yet stops the run and returns its position, so the caller can finish the buffer later.
+std::optional<std::uint32_t> _run(const Apr::CommandBufferObject& buffer, std::uint32_t start, ReadCursor& read, bool block) {
+    std::uint32_t cursor = start;
     while (cursor < buffer.offset) {
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
@@ -586,7 +590,9 @@ void _execute(const Apr::CommandBufferObject& buffer) {
                 return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(command.address)).load(std::memory_order_acquire);
             };
             const std::uint64_t reference = (command.reference & command.mask) << unused;
-            while (!_waitSatisfied(command.compare, (current() & command.mask) << unused, reference)) PreciseSleepUs(50);
+            const auto satisfied = [&] { return _waitSatisfied(command.compare, (current() & command.mask) << unused, reference); };
+            if (!block && !satisfied()) return cursor;
+            while (!satisfied()) PreciseSleepUs(50);
             break;
         }
         case Apr::Opcode::WriteKernelEventQueue: {
@@ -612,6 +618,76 @@ void _execute(const Apr::CommandBufferObject& buffer) {
         }
         cursor += header.bytes;
     }
+    return std::nullopt;
+}
+
+void _execute(const Apr::CommandBufferObject& buffer) {
+    ReadCursor read;
+    _run(buffer, 0, read, true);
+}
+
+// The APR runs submitted buffers in order without blocking the submitter. A buffer runs inline until a wait
+// that does not hold yet; its remaining commands, and every buffer submitted after it, then wait in this
+// queue for a worker thread. Titles queue a wait on an address and set the address after the submit returns.
+struct PendingBuffer {
+    std::vector<std::uint8_t> bytes;
+    ReadCursor read;
+    std::uint32_t id;
+};
+
+std::mutex g_queueLock;
+std::condition_variable g_queueChanged;
+std::deque<PendingBuffer> g_queue;
+std::uint32_t g_lastSubmitted = 0;
+std::uint32_t g_lastCompleted = 0;
+bool g_workerStarted = false;
+
+void _complete(std::uint32_t id) {
+    g_lastCompleted = id;
+    g_queueChanged.notify_all();
+}
+
+void _worker() {
+    std::unique_lock lock(g_queueLock);
+    while (true) {
+        g_queueChanged.wait(lock, [] { return !g_queue.empty(); });
+        auto& pending = g_queue.front();
+        lock.unlock();
+        const Apr::CommandBufferObject buffer{pending.bytes.data(), static_cast<std::uint32_t>(pending.bytes.size()), static_cast<std::uint32_t>(pending.bytes.size()), 0, Apr::BufferType::Apr, 0};
+        _run(buffer, 0, pending.read, true);
+        lock.lock();
+        const auto id = pending.id;
+        g_queue.pop_front();
+        _complete(id);
+    }
+}
+
+void _defer(const Apr::CommandBufferObject& buffer, std::uint32_t start, const ReadCursor& read, std::uint32_t id) {
+    g_queue.push_back({std::vector<std::uint8_t>(buffer.base + start, buffer.base + buffer.offset), read, id});
+    if (!g_workerStarted) {
+        std::thread(_worker).detach();
+        g_workerStarted = true;
+    }
+    g_queueChanged.notify_all();
+}
+
+std::uint32_t _submit(const Apr::CommandBufferObject& buffer) {
+    std::lock_guard lock(g_queueLock);
+    std::uint32_t id = ++g_lastSubmitted;
+    if (id == 0) id = ++g_lastSubmitted;
+    if (!g_queue.empty()) {
+        _defer(buffer, 0, {}, id);
+        return id;
+    }
+    ReadCursor read;
+    if (const auto blocked = _run(buffer, 0, read, false)) _defer(buffer, *blocked, read, id);
+    else _complete(id);
+    return id;
+}
+
+void _waitCompleted(std::uint32_t id) {
+    std::unique_lock lock(g_queueLock);
+    g_queueChanged.wait(lock, [id] { return g_lastCompleted >= id; });
 }
 
 }
@@ -706,16 +782,14 @@ int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject* buffer, uint32_t priority) {
     (void)priority;
     if (!buffer) return _fail(GUEST_EINVAL);
-    _execute(*buffer);
+    _submit(*buffer);
     return 0;
 }
 
 int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject* buffer, uint32_t priority, uint32_t* id) {
-    if (!id) return _fail(GUEST_EINVAL);
-    const int result = sceKernelAprSubmitCommandBuffer(buffer, priority);
-    if (result != 0) return result;
-    static std::atomic<uint32_t> nextId{1};
-    *id = nextId.fetch_add(1);
+    (void)priority;
+    if (!id || !buffer) return _fail(GUEST_EINVAL);
+    *id = _submit(*buffer);
     return 0;
 }
 
@@ -728,7 +802,7 @@ int APS5_VABI sceKernelAprSubmitCommandBufferAndGetResult(const Apr::CommandBuff
 }
 
 int APS5_VABI sceKernelAprWaitCommandBuffer(uint32_t id) {
-    (void)id;
+    _waitCompleted(id);
     return 0;
 }
 

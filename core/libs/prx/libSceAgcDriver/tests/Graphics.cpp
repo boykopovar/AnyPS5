@@ -774,7 +774,8 @@ void ReversedComponentOrderTests() {
     }
     auto queue = makeState();
     queue.context[0x31c] = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (12u << 2u) | (7u << 8u) | (1u << 11u);
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "component swap 1");
+    const auto alternate = AgcDriver::Graphics::DecodeState(queue);
+    Require(alternate.colors.size() == 1 && alternate.colors[0].format == VK_FORMAT_R16G16B16A16_SFLOAT && alternate.colors[0].componentMapping == 0xc6u, "a 16_16_16_16 float target with SWAP_ALT did not store shader B, G, R, A");
 }
 
 void CompactedExportTests() {

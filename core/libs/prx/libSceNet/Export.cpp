@@ -74,6 +74,17 @@ constexpr int NET_SOL_SOCKET = 0xFFFF;
 constexpr int NET_SO_SNDTIMEO = 0x1005;
 constexpr int NET_SO_RCVTIMEO = 0x1006;
 constexpr int NET_SO_NBIO = 0x1200;
+constexpr int NET_SO_REUSEADDR = 0x0004;
+constexpr int NET_SO_KEEPALIVE = 0x0008;
+constexpr int NET_SO_BROADCAST = 0x0020;
+constexpr int NET_SO_REUSEPORT = 0x0200;
+constexpr int NET_SO_ONESBCAST = 0x10000;
+constexpr int NET_SO_SNDBUF = 0x1001;
+constexpr int NET_SO_RCVBUF = 0x1002;
+constexpr int NET_SO_ERROR = 0x1007;
+constexpr int NET_SO_TYPE = 0x1008;
+// A system-software socket option without a host counterpart; titles set it on UDP game sockets (10000).
+constexpr int NET_SO_SYSTEM_1105 = 0x1105;
 constexpr int NET_MSG_PEEK = 0x2;
 constexpr int NET_MSG_TRUNC = 0x10;
 constexpr int NET_UIO_MAXIOV = 1024;
@@ -167,7 +178,8 @@ bool guest_to_native_address(const void* address, std::uint32_t length,
                              sockaddr_storage& native, NativeLength& native_length) {
     if (!address || length < 2) return false;
     const auto* bytes = static_cast<const std::uint8_t*>(address);
-    if (bytes[1] == NET_AF_INET && bytes[0] == 16 && length >= 16) {
+    // The kernel overwrites sa_len with the length argument (FreeBSD getsockaddr): titles leave it 0.
+    if (bytes[1] == NET_AF_INET && length >= 16) {
         auto& v4 = reinterpret_cast<sockaddr_in&>(native);
         v4.sin_family = AF_INET;
         std::memcpy(&v4.sin_port, bytes + 2, 2);
@@ -175,7 +187,7 @@ bool guest_to_native_address(const void* address, std::uint32_t length,
         native_length = sizeof(v4);
         return true;
     }
-    if (bytes[1] == NET_AF_INET6 && bytes[0] == 28 && length >= 28) {
+    if (bytes[1] == NET_AF_INET6 && length >= 28) {
         auto& v6 = reinterpret_cast<sockaddr_in6&>(native);
         v6.sin6_family = AF_INET6;
         std::memcpy(&v6.sin6_port, bytes + 2, 2);
@@ -819,6 +831,14 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, &timeout, sizeof(timeout)) != 0)
             return fail(native_error());
 #endif
+    } else if (optname == NET_SO_SNDBUF || optname == NET_SO_RCVBUF || optname == NET_SO_REUSEADDR || optname == NET_SO_BROADCAST || optname == NET_SO_KEEPALIVE) {
+        const int native_option = optname == NET_SO_SNDBUF ? SO_SNDBUF : optname == NET_SO_RCVBUF ? SO_RCVBUF : optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_BROADCAST ? SO_BROADCAST : SO_KEEPALIVE;
+        if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
+            return fail(native_error());
+    } else if (optname == NET_SO_ONESBCAST || optname == NET_SO_REUSEPORT || optname == NET_SO_SYSTEM_1105) {
+        // No host counterpart that changes what a title observes on one machine: accepted.
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true)) std::fprintf(stderr, "[net] socket option 0x%x accepted without a host effect\n", optname);
     } else {
         return fail(NET_EOPNOTSUPP);
     }
@@ -849,6 +869,23 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         case NET_SO_NBIO: value = socket.nonblock ? 1 : 0; break;
         case NET_SO_RCVTIMEO: value = socket.rcv_timeout_us; break;
         case NET_SO_SNDTIMEO: value = socket.snd_timeout_us; break;
+        case NET_SO_SNDBUF:
+        case NET_SO_RCVBUF:
+        case NET_SO_ERROR:
+        case NET_SO_TYPE: {
+            const int native_option = optname == NET_SO_SNDBUF ? SO_SNDBUF : optname == NET_SO_RCVBUF ? SO_RCVBUF : optname == NET_SO_ERROR ? SO_ERROR : SO_TYPE;
+            NativeLength native_length = sizeof(value);
+            if (::getsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<char*>(&value), &native_length) != 0) return fail(native_error());
+            if (optname == NET_SO_ERROR && value != 0) {
+#ifdef _WIN32
+                WSASetLastError(value);
+#else
+                errno = value;
+#endif
+                value = native_error();
+            }
+            break;
+        }
         default: return fail(NET_EOPNOTSUPP);
     }
     std::memcpy(optval, &value, sizeof(value));

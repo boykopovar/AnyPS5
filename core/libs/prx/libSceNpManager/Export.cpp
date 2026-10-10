@@ -2,10 +2,13 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <atomic>
+#include <cstring>
 #include <mutex>
 
-// PSN is not emulated: the user is reported as signed out and online queries fail.
+// PSN is not emulated: the user is reported as signed out and online queries fail. The console keeps the
+// account ID and online ID of a user it ever linked to PSN while signed out, so those two still answer.
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
@@ -14,6 +17,7 @@ static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x8
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
+static constexpr uint64_t LOCAL_ACCOUNT_ID = 0x1d2a3b4c5d6e7f01ull;
 
 static std::atomic<int> g_nextRequest{1};
 
@@ -81,9 +85,10 @@ int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
 }
 
 int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
-    (void)user_id;
-    (void)account_id;
-    return SCE_NP_ERROR_SIGNED_OUT;
+    if (!account_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id != USER_SERVICE_INITIAL_USER_ID) return SCE_NP_ERROR_USER_NOT_FOUND;
+    *account_id = LOCAL_ACCOUNT_ID;
+    return 0;
 }
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
@@ -100,9 +105,11 @@ int APS5_VABI sceNpGetNpReachabilityState(int user_id, uint32_t* state) {
 }
 
 int APS5_VABI sceNpGetOnlineId(int user_id, NpOnlineId* online_id) {
-    (void)user_id;
-    (void)online_id;
-    return SCE_NP_ERROR_SIGNED_OUT;
+    if (!online_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id != USER_SERVICE_INITIAL_USER_ID) return SCE_NP_ERROR_USER_NOT_FOUND;
+    std::memset(online_id, 0, sizeof(*online_id));
+    std::strncpy(online_id->data, USER_SERVICE_INITIAL_USER_NAME, sizeof(online_id->data) - 1);
+    return 0;
 }
 
 int APS5_VABI sceNpGetState(int user_id, uint32_t* state) {
@@ -209,8 +216,10 @@ int APS5_VABI sceNpUnregisterPremiumEventCallback(void) {
     return 0;
 }
 
-int APS5_VABI sceNpGetUserIdByAccountId() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpGetUserIdByAccountId(uint64_t account_id, int* user_id) {
+    if (!user_id) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (account_id != LOCAL_ACCOUNT_ID) return SCE_NP_ERROR_USER_NOT_FOUND;
+    *user_id = USER_SERVICE_INITIAL_USER_ID;
     return 0;
 }
 

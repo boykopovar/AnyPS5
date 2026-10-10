@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <fstream>
 #include "CacheKey.hpp"
 #include "CompiledVariant.hpp"
 #include "VertexInputSpecialization.hpp"
@@ -1015,7 +1016,10 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
         return impl();
     } catch (const std::exception& e) {
         constexpr auto requestSerializer = RequestSerializer{};
-        const auto inputInfo = "\nRecompileRequest:\n" + requestSerializer.Serialize(request);
+        const auto serialized = requestSerializer.Serialize(request);
+        // The abort message truncates long requests; APS5_DUMP_FAILED_REQUEST names a file that receives it whole.
+        if (const char* dumpPath = std::getenv("APS5_DUMP_FAILED_REQUEST")) std::ofstream(dumpPath, std::ios::binary) << serialized;
+        const auto inputInfo = "\nRecompileRequest:\n" + serialized;
         throw std::runtime_error(std::string("ShaderRecompiler::Recompile: ") + e.what() + inputInfo);
     } catch (...) {
         throw std::runtime_error("ShaderRecompiler::Recompile: unknown exception");

@@ -516,12 +516,14 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
                             dst.loadPcs.push_back(inst.programCounter);
                         }
                     } else if (isScalarOperand(inst.source1) && scalarSlot(inst.source1) < sgprs.size() && sgprs[scalarSlot(inst.source1)].kind == SgprValueKind::Attribute && (inst.memoryOffset & 0x3u) == 0u) {
+                        // Copied first: the descriptor commonly loads over its own offset register (s_load_dwordx4 s[0:3], s[12:13], s0).
+                        const SgprValue attribute = sgprs[scalarSlot(inst.source1)];
                         for (std::uint32_t i = 0u; i < decodedDstSize(inst) && slot + i < sgprs.size(); i++) {
                             auto& dst = sgprs[slot + i];
                             dst = SgprValue{};
                             dst.kind = SgprValueKind::Buffer;
-                            dst.attributeId = sgprs[scalarSlot(inst.source1)].attributeId;
-                            dst.loadPcs = sgprs[scalarSlot(inst.source1)].loadPcs;
+                            dst.attributeId = attribute.attributeId;
+                            dst.loadPcs = attribute.loadPcs;
                             dst.loadPcs.push_back(inst.programCounter);
                         }
                     } else {

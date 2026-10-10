@@ -462,7 +462,11 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                     const auto& vertex = *options.inputInfo.vertex;
                     std::uint32_t attribute = 0;
                     while (attribute < static_cast<std::uint32_t>(vertex.resourcesNum) && vertex.resourcesDst[attribute].attrId != load->attributeId) ++attribute;
-                    if (attribute == static_cast<std::uint32_t>(vertex.resourcesNum)) throw std::runtime_error("prepared vertex fetch has no matching semantic");
+                    if (attribute == static_cast<std::uint32_t>(vertex.resourcesNum)) {
+                        std::string declared;
+                        for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(vertex.resourcesNum); ++i) declared += (i ? "," : "") + std::to_string(vertex.resourcesDst[i].attrId);
+                        throw std::runtime_error("prepared vertex fetch has no matching semantic (pc " + std::to_string(instruction.programCounter) + " attribute " + std::to_string(load->attributeId) + ", declared " + (declared.empty() ? "none" : declared) + ")");
+                    }
                     context.TranslateEmbeddedFetch(instruction, attribute, load->componentCount);
                     continue;
                 }

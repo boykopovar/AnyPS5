@@ -84,6 +84,29 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1252(void) {
     return &CP1252_PROFILE;
 }
 
+const void* APS5_VABI sceCesRefersUcsProfileCp1250(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+const void* APS5_VABI sceCesRefersUcsProfileCp1251(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+const void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* buffer) {
+    (void)buffer;
+    NotImplemented_nid_no_patch(__func__);
+    return nullptr;
+}
+
+int APS5_VABI sceCesMbcsUcsContextInit(void* context, const void* profile) {
+    (void)context;
+    (void)profile;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len) {
     if (profile != &CP1252_PROFILE) return CES_ERROR_INVALID_PARAMETER;
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;

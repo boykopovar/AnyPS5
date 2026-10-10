@@ -306,6 +306,23 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         Report("    [rsp+0x%llx] %s\n", static_cast<unsigned long long>(slot - context->Rsp), line);
         ++printed;
     }
+    // A fault inside a driver without frame pointers (a GPU driver's shader compiler) leaves only its own
+    // addresses near rsp; the callers outside the faulting module sit deeper.
+    MEMORY_BASIC_INFORMATION faulting{};
+    if (VirtualQuery(reinterpret_cast<const void*>(context->Rip), &faulting, sizeof(faulting)) != 0 && faulting.AllocationBase != nullptr) {
+        Report("  callers outside the faulting module:\n");
+        int outside = 0;
+        for (std::uint64_t slot = context->Rsp; outside < 24 && slot < context->Rsp + 0x10000; slot += 8) {
+            if (!IsReadable(slot)) break;
+            const auto value = *reinterpret_cast<const std::uint64_t*>(slot);
+            if (!IsExecutable(value)) continue;
+            MEMORY_BASIC_INFORMATION region{};
+            if (VirtualQuery(reinterpret_cast<const void*>(value), &region, sizeof(region)) == 0 || region.AllocationBase == faulting.AllocationBase) continue;
+            DescribeAddress(value, line, sizeof(line));
+            Report("    [rsp+0x%llx] %s\n", static_cast<unsigned long long>(slot - context->Rsp), line);
+            ++outside;
+        }
+    }
     if (context->Rip == 0 || !IsExecutable(context->Rip)) {
         // A jump into nothing usually follows a return through a clobbered frame; the frames that just
         // returned are still below rsp.

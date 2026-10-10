@@ -23,6 +23,16 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         localDevice->ColorMetadataPass(*pass);
         return DrawVerdict::Drawn;
     }
+    // DB_RENDER_CONTROL DEPTH_COPY / STENCIL_COPY (bits 2, 3; COPY_CENTROID and COPY_SAMPLE pick the sample) copy
+    // the depth surface into the color target. The copy is not modeled: the target keeps its earlier content.
+    if (const auto control = queue.context.find(0x000); control != queue.context.end() && (control->second & 0xcu) != 0 && (control->second & ~0xfacu) == 0) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            std::fprintf(stderr, "[gpu] depth/stencil copy draws are skipped (DB_RENDER_CONTROL=0x%08x)\n", control->second);
+        }
+        return DrawVerdict::Nothing;
+    }
     rejected = Graphics::DepthMaintenanceRejection(queue);
     if (!rejected.empty()) return DrawVerdict::Rejected;
     static const bool traceIndirectEnabled = std::getenv("APS5_TRACE_INDIRECT_DRAWS") != nullptr;

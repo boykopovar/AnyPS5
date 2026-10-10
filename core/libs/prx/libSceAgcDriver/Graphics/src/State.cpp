@@ -438,8 +438,8 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
             if (number == uint) return {VK_FORMAT_R32G32_UINT, 8};
             return fail();
         case 12: {
-            if (swap == 1) return fail();
-            const auto reversed = static_cast<std::uint8_t>(swap == 2 ? 0x1bu : swap == 3 ? 0x93u : 0xe4u);
+            // No Vulkan format stores 16-bit channels as BGRA: SWAP_ALT maps memory channels 0..3 to shader B, G, R, A.
+            const auto reversed = static_cast<std::uint8_t>(swap == 1 ? 0xc6u : swap == 2 ? 0x1bu : swap == 3 ? 0x93u : 0xe4u);
             if (number == floating) return {VK_FORMAT_R16G16B16A16_SFLOAT, 8, reversed};
             if (number == unorm) return {VK_FORMAT_R16G16B16A16_UNORM, 8, reversed};
             if (number == snorm) return {VK_FORMAT_R16G16B16A16_SNORM, 8, reversed};
