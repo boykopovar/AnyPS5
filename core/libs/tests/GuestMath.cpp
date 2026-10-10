@@ -41,6 +41,7 @@ double APS5_VABI scalbn_nid_postfix(double, int);
 float APS5_VABI scalbnf_nid_postfix(float, int);
 double APS5_VABI frexp_nid_postfix(double, int*);
 float APS5_VABI frexpf_nid_postfix(float, int*);
+float APS5_VABI ldexpf_nid_postfix(float, int);
 std::int64_t APS5_VABI lround_nid_postfix(double);
 std::div_t APS5_VABI div_nid_postfix(int, int);
 std::int64_t APS5_VABI lroundf_nid_postfix(float);
@@ -198,8 +199,124 @@ static void CheckFloatClassification() {
     Require(_FDtest_nid_postfix(reinterpret_cast<const float*>(&_FNan_nid_postfix)) == 2);
 }
 
+static void ReferenceFrexp(double x, double& fraction, int& exponent) {
+    std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::int32_t lx = static_cast<std::int32_t>(bits);
+    std::int32_t ix = 0x7fffffff & hx;
+    exponent = 0;
+    if (ix >= 0x7ff00000 || ((ix | lx) == 0)) {
+        fraction = x;
+        return;
+    }
+    if (ix < 0x00100000) {
+        x *= 18014398509481984.0;
+        bits = std::bit_cast<std::uint64_t>(x);
+        hx = static_cast<std::int32_t>(bits >> 32);
+        ix = hx & 0x7fffffff;
+        exponent = -54;
+    }
+    exponent += (ix >> 20) - 1022;
+    hx = (hx & 0x800fffff) | 0x3fe00000;
+    bits = (bits & 0xffffffffull) | (static_cast<std::uint64_t>(static_cast<std::uint32_t>(hx)) << 32);
+    fraction = std::bit_cast<double>(bits);
+}
+
+static void ReferenceFrexpf(float x, float& fraction, int& exponent) {
+    std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(x));
+    std::int32_t ix = 0x7fffffff & hx;
+    exponent = 0;
+    if (ix >= 0x7f800000 || ix == 0) {
+        fraction = x;
+        return;
+    }
+    if (ix < 0x00800000) {
+        x *= 33554432.0f;
+        hx = static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(x));
+        ix = hx & 0x7fffffff;
+        exponent = -25;
+    }
+    exponent += (ix >> 23) - 126;
+    hx = (hx & 0x807fffff) | 0x3f000000;
+    fraction = std::bit_cast<float>(static_cast<std::uint32_t>(hx));
+}
+
+static void CheckFrexpDouble(std::uint64_t bits) {
+    const double x = std::bit_cast<double>(bits);
+    double expected;
+    int expectedExponent;
+    ReferenceFrexp(x, expected, expectedExponent);
+    int exponent = 0x5a5a5a5a;
+    const double actual = frexp_nid_postfix(x, &exponent);
+    if (std::bit_cast<std::uint64_t>(actual) != std::bit_cast<std::uint64_t>(expected) || exponent != expectedExponent) {
+        std::fprintf(stderr, "Guest frexp failed for %016llx\n", static_cast<unsigned long long>(bits));
+        std::abort();
+    }
+    if (std::isfinite(x)) Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(actual, exponent)) == bits);
+}
+
+static void CheckFrexpFloat(std::uint32_t bits) {
+    const float x = std::bit_cast<float>(bits);
+    float expected;
+    int expectedExponent;
+    ReferenceFrexpf(x, expected, expectedExponent);
+    int exponent = 0x5a5a5a5a;
+    const float actual = frexpf_nid_postfix(x, &exponent);
+    if (std::bit_cast<std::uint32_t>(actual) != std::bit_cast<std::uint32_t>(expected) || exponent != expectedExponent) {
+        std::fprintf(stderr, "Guest frexpf failed for %08x\n", bits);
+        std::abort();
+    }
+    if (std::isfinite(x)) Require(std::bit_cast<std::uint32_t>(ldexpf_nid_postfix(actual, exponent)) == bits);
+}
+
+static void CheckFrexpSpecialValues() {
+    int exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::numeric_limits<double>::infinity(), &exponent)) == UINT64_C(0x7ff0000000000000) && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(-std::numeric_limits<double>::infinity(), &exponent)) == UINT64_C(0xfff0000000000000) && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::bit_cast<double>(UINT64_C(0x7ff0000000000001)), &exponent)) == UINT64_C(0x7ff0000000000001) && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::bit_cast<double>(UINT64_C(0xfff8000000012345)), &exponent)) == UINT64_C(0xfff8000000012345) && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint64_t>(frexp_nid_postfix(-0., &exponent)) == UINT64_C(0x8000000000000000) && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(std::numeric_limits<float>::infinity(), &exponent)) == 0x7f800000u && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(-std::numeric_limits<float>::infinity(), &exponent)) == 0xff800000u && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(std::bit_cast<float>(0x7f800001u), &exponent)) == 0x7f800001u && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(std::bit_cast<float>(0xffc12345u), &exponent)) == 0xffc12345u && exponent == 0);
+    exponent = 0x5a5a5a5a;
+    Require(std::bit_cast<std::uint32_t>(frexpf_nid_postfix(-0.f, &exponent)) == 0x80000000u && exponent == 0);
+    exponent = 0;
+    Require(frexp_nid_postfix(std::numeric_limits<double>::denorm_min(), &exponent) == 0.5 && exponent == -1073);
+    Require(frexpf_nid_postfix(std::numeric_limits<float>::denorm_min(), &exponent) == 0.5f && exponent == -148);
+    Require(frexp_nid_postfix(std::numeric_limits<double>::max(), &exponent) == std::nextafter(1., 0.) && exponent == 1024);
+    Require(frexpf_nid_postfix(std::numeric_limits<float>::max(), &exponent) == std::nextafter(1.f, 0.f) && exponent == 128);
+    for (int biased = 0; biased < 2048; ++biased) {
+        for (const std::uint64_t fraction : {UINT64_C(0), UINT64_C(1), UINT64_C(2), UINT64_C(0x8000000000000), UINT64_C(0xffffffffffffe), UINT64_C(0xfffffffffffff)}) {
+            for (const std::uint64_t sign : {UINT64_C(0), UINT64_C(1) << 63}) CheckFrexpDouble(sign | (static_cast<std::uint64_t>(biased) << 52) | fraction);
+        }
+    }
+    for (int biased = 0; biased < 256; ++biased) {
+        for (const std::uint32_t fraction : {0u, 1u, 2u, 0x400000u, 0x7ffffeu, 0x7fffffu}) {
+            for (const std::uint32_t sign : {0u, 0x80000000u}) CheckFrexpFloat(sign | (static_cast<std::uint32_t>(biased) << 23) | fraction);
+        }
+    }
+    std::uint64_t state = UINT64_C(0x9e3779b97f4a7c15);
+    for (int i = 0; i < 1000000; ++i) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        CheckFrexpDouble(state);
+        CheckFrexpFloat(static_cast<std::uint32_t>(state >> 32));
+    }
+}
 int main() {
     CheckFloatClassification();
+    CheckFrexpSpecialValues();
     CheckIntegerConversions();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
