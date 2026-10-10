@@ -166,6 +166,7 @@ int main() {
     Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &deadline) == 0);
     Require(scePthreadJoin(writer.thread, nullptr) == SCE_OK);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == GUEST_EPERM);
 
     bool rejected = false;
     try { pthread_rwlock_timedrdlock_nid_postfix(&rwlock, nullptr); }
