@@ -64,17 +64,24 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (hasPrx) directories.push_back(prx);
     std::vector<std::filesystem::path> paths;
     std::set<std::string> unmatchedExclusions = excludedModules;
-    const auto isElf = [](const std::filesystem::path& path) {
+    std::map<std::filesystem::path, bool> elfCache;
+    const auto isElf = [&](const std::filesystem::path& path) {
+        if (const auto it = elfCache.find(path); it != elfCache.end()) return it->second;
         std::ifstream stream(path, std::ios::binary);
         if (!stream) throw Domain::RelinkerException("Cannot read guest candidate: " + path.string());
         char magic[4]{};
         stream.read(magic, 4);
         if (stream.bad()) throw Domain::RelinkerException("Cannot read guest candidate magic: " + path.string());
-        if (stream.gcount() != 4) return false;
+        if (stream.gcount() != 4) {
+            elfCache.emplace(path, false);
+            return false;
+        }
         const auto byte = [&](const std::size_t index) { return static_cast<unsigned char>(magic[index]); };
         const bool self = (byte(0) == 0x4f && byte(1) == 0x15 && byte(2) == 0x3d && byte(3) == 0x1d) || (byte(0) == 0x54 && byte(1) == 0x14 && byte(2) == 0xf5 && byte(3) == 0xee);
         if (self) throw Domain::RelinkerException("Guest module is a SELF container, not an ELF: " + path.string());
-        return byte(0) == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        const bool elf = byte(0) == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        elfCache.emplace(path, elf);
+        return elf;
     };
     for (const auto& directory : directories) {
         if (!std::filesystem::is_directory(directory)) throw Domain::RelinkerException("Guest module path is not a directory: " + directory.string());
@@ -99,6 +106,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         if (alias != paths.end()) neededAliases.emplace(name, *alias);
         else missingNeeded.insert(name);
     }
+    std::vector<std::filesystem::path> prxCandidates;
     if (!missingNeeded.empty() || !unmatchedExclusions.empty()) {
         std::map<std::string, std::filesystem::path> found;
         std::map<std::string, std::filesystem::path> foundByStem;
@@ -115,12 +123,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 }
                 continue;
             }
+            const bool elf = isElf(it->path());
+            if (elf) prxCandidates.push_back(it->path());
             const auto stem = ModuleStem(name, windows);
             std::vector<std::string> stemMatches;
             if (!stem.empty()) {
                 for (const auto& needed : missingNeeded) if (needed != name && ModuleStem(needed, windows) == stem) stemMatches.push_back(needed);
             }
-            if ((!missingNeeded.contains(name) && stemMatches.empty()) || !isElf(it->path())) continue;
+            if ((!missingNeeded.contains(name) && stemMatches.empty()) || !elf) continue;
             if (missingNeeded.contains(name)) record(found, name, it->path());
             for (const auto& needed : stemMatches) record(foundByStem, needed, it->path());
         }
@@ -155,20 +165,25 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     }
     if (!unresolved.empty()) {
         std::map<std::string, std::filesystem::path> identities;
-        for (auto it = std::filesystem::recursive_directory_iterator(root); it != std::filesystem::recursive_directory_iterator(); ++it) {
-            const auto& path = it->path();
-            const auto extension = path.extension().string();
-            if (!it->is_regular_file() || (extension != ".prx" && extension != ".sprx" && extension != ".suprx") ||
-                path.filename().string().ends_with(GuestModuleSuffix) || excludedModules.contains(path.filename().string()) || discovered.contains(path) || !isElf(path)) continue;
-            const auto names = GuestImageReader().ReadModuleNames(reader.Read(path.string()));
+        std::map<std::filesystem::path, std::vector<std::uint8_t>> identityBytes;
+        const auto checkCandidate = [&](const std::filesystem::path& path) {
+            if (discovered.contains(path) || !isElf(path)) return;
+            auto bytes = reader.Read(path.string());
+            const auto names = GuestImageReader().ReadModuleNames(bytes);
+            bool matched = false;
             for (const auto& name : unresolved) {
                 if (!matchesIdentity(name, names)) continue;
                 if (!identities.emplace(name, path).second) throw Domain::RelinkerException("Ambiguous needed module identity: " + name);
+                matched = true;
             }
-        }
+            if (matched) identityBytes.emplace(path, std::move(bytes));
+        };
+        for (const auto& path : prxCandidates) checkCandidate(path);
         for (const auto& [name, path] : identities) {
             if (discovered.contains(path)) continue;
-            discovered.emplace(path, GuestImageReader().Read(path, reader.Read(path.string())));
+            auto it = identityBytes.find(path);
+            auto bytes = it != identityBytes.end() ? std::move(it->second) : reader.Read(path.string());
+            discovered.emplace(path, GuestImageReader().Read(path, std::move(bytes)));
             paths.push_back(path);
         }
     }

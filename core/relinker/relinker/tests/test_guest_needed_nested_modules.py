@@ -139,6 +139,62 @@ def main():
                 result, output = convert(f'case-identity-{windows}-{filename}', windows, identity + '.prx',
                     {relative: declared_provider(22, (identity, 'libGuest'))})
                 success(result, output, relative, windows)
+
+        for suffix in ('.prx', '.sprx', '.suprx'):
+            relative = 'sce_module/libGuest' + suffix
+            result, output = convert('normal-exact' + suffix, False, 'libGuest' + suffix,
+                                     {relative: declared_provider(22, ('libGuest',))})
+            success(result, output, relative, False)
+
+        result, output = convert('missing-dependency', False, 'missing.prx',
+                                 {'sce_module/present.prx': declared_provider(22, ('present',))})
+        assert result.returncode == 0, result.stderr
+        artifacts = list((output.parent / 'app0').rglob('*.guest.prx'))
+        assert artifacts == [output.parent / 'app0/sce_module/present.prx.guest.prx'], artifacts
+        assert 'missing.prx' in needed_libraries(output.read_bytes())
+
+        result, output = convert('duplicate-candidate-paths', False, 'libGuest.prx',
+                                 {'sce_module/libGuest.prx': declared_provider(22, ('libGuest',)),
+                                  'sce_module/duplicate/libGuest.prx': declared_provider(22, ('libGuest',))})
+        success(result, output, 'sce_module/libGuest.prx', False)
+
+        relative = 'prx/shipping/custom.debug_prx'
+        result, output = convert('identity-debug-prx', False, 'libGuest.prx',
+                                 {relative: declared_provider(22, ('libGuest',))})
+        success(result, output, relative, False)
+
+        for windows in (True, False):
+            relative = 'prx/shipping/RENAMED.PRX'
+            result, output = convert(f'identity-uppercase-{windows}', windows, 'libGuest.prx',
+                                     {relative: declared_provider(22, ('libGuest',))})
+            success(result, output, relative, windows)
+
+        for windows in (True, False):
+            relative = 'prx/shipping/module_blob.bin'
+            result, output = convert(f'identity-nonstandard-ext-{windows}', windows, 'libGuest.prx',
+                                     {relative: declared_provider(22, ('libGuest',))})
+            success(result, output, relative, windows)
+
+        bench_case = work / 'benchmark'
+        bench_case.mkdir(parents=True)
+        (bench_case / 'sce_module').mkdir()
+        bench_assets = bench_case / 'assets'
+        bench_assets.mkdir()
+        for i in range(40):
+            bench_sub = bench_assets / f'dir_{i // 10}'
+            bench_sub.mkdir(exist_ok=True)
+            (bench_sub / f'asset_{i}.dat').write_bytes(b'DATA')
+            (bench_sub / f'extra_{i}.prx').write_bytes(declared_provider(100 + i, (f'libExtra_{i}',)))
+        bench_target = bench_assets / 'dir_0' / 'renamed_target.prx'
+        bench_target.write_bytes(declared_provider(200, ('libTarget',)))
+        bench_source = bench_case / 'input.elf'
+        bench_source.write_bytes(executable('libTarget.prx', module_name='libTarget'))
+        bench_output = bench_case / 'output.elf'
+        result = subprocess.run([str(relinker), str(bench_source), str(bench_output)], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        expected_guest = bench_case / 'app0' / 'assets' / 'dir_0' / 'renamed_target.prx.guest.prx'
+        assert list((bench_case / 'app0').rglob('*.guest.prx')) == [expected_guest]
+        assert needed_libraries(bench_output.read_bytes()) == ['$ORIGIN/app0/assets/dir_0/renamed_target.prx.guest.prx']
     print('Nested required guest module tests passed')
 
 
