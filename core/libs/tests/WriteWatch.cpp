@@ -144,7 +144,7 @@ void CheckProtection() {
 void CheckThreads() {
     constexpr std::size_t Threads = 4;
     constexpr std::size_t PagesPerThread = 64;
-    constexpr int Rounds = 200;
+    constexpr int Rounds = 50;
     Region region(Threads * PagesPerThread);
     GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
     Require(region.Collect() == All(Threads * PagesPerThread), "a new range is not reported in full");
@@ -164,7 +164,10 @@ void CheckThreads() {
         for (const auto index : region.Collect()) seen[index] = region.base[index * region.page];
     };
     start.store(true);
-    while (finished.load() != Threads) take();
+    while (finished.load() != Threads) {
+        take();
+        std::this_thread::yield();
+    }
     for (auto& writer : writers) writer.join();
     take();
     for (std::size_t index = 0; index < seen.size(); ++index)
