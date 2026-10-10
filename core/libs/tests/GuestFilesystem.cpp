@@ -306,6 +306,17 @@ int main() {
     Require(unlink_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(unlink_nid_postfix(rootName.c_str()) == -1 && *__error_nid_postfix() == 1 && std::filesystem::is_directory(root));
     Require(sceKernelUnlink(rootName.c_str()) == static_cast<int>(0x80020001u));
+
+    const auto readOnly = root / "readonly.txt";
+    std::ofstream(readOnly) << "test";
+    std::filesystem::permissions(readOnly, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
+    Require(sceKernelUnlink(readOnly.string().c_str()) == 0 && !std::filesystem::exists(readOnly));
+
+    const auto readOnly2 = root / "readonly2.txt";
+    std::ofstream(readOnly2) << "test";
+    std::filesystem::permissions(readOnly2, std::filesystem::perms::owner_write, std::filesystem::perm_options::remove);
+    Require(unlink_nid_postfix(readOnly2.string().c_str()) == 0 && !std::filesystem::exists(readOnly2));
+
     const int closable = sceKernelOpen(presentName.c_str(), 0, 0);
     Require(closable >= 0 && sceKernelClose(closable) == 0);
     Require(sceKernelClose(closable) == static_cast<int>(0x80020009u));

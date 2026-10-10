@@ -46,7 +46,20 @@ static int NativeClose(int fd) {
     return result;
 }
 static int NativeUnlink(const std::filesystem::path& p) {
-    return ::_wunlink(p.wstring().c_str());
+    if (::_wunlink(p.wstring().c_str()) == 0) {
+        return 0;
+    }
+    if (errno == EACCES) {
+        std::error_code ec;
+        std::filesystem::permissions(p, std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+        if (!ec) {
+            if (::_wunlink(p.wstring().c_str()) == 0) {
+                return 0;
+            }
+        }
+        errno = EACCES;
+    }
+    return -1;
 }
 static int MapFlags(int sceFlags) {
     int f = 0;
