@@ -144,17 +144,16 @@ int APS5_VABI scePadOpenExt(int userId, int type, int index, const void* param) 
  if (!ValidPort(userId, type, index) || param == nullptr) {
   return PAD_ERROR_INVALID_ARG;
  }
- if (type != PAD_PORT_TYPE_SPECIAL) NotImplemented_nid_no_patch(__func__);
  return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
-int APS5_VABI scePadReadExt() { NotImplemented_nid_no_patch(__func__); return 0; }
+int APS5_VABI scePadReadExt() { throw std::runtime_error("scePadReadExt: no device"); }
 
-int APS5_VABI scePadGetFeatureReport() { NotImplemented_nid_no_patch(__func__); return 0; }
+int APS5_VABI scePadGetFeatureReport() { throw std::runtime_error("scePadGetFeatureReport: no device"); }
 
-int APS5_VABI scePadSetFeatureReport() { NotImplemented_nid_no_patch(__func__); return 0; }
+int APS5_VABI scePadSetFeatureReport() { throw std::runtime_error("scePadSetFeatureReport: no device"); }
 
-int APS5_VABI scePadOutputReport() { NotImplemented_nid_no_patch(__func__); return 0; }
+int APS5_VABI scePadOutputReport() { throw std::runtime_error("scePadOutputReport: no device"); }
 
 int APS5_VABI scePadReadState(int handle, PadData* data);
 
@@ -189,7 +188,7 @@ int APS5_VABI scePadResetOrientation(int handle) {
 
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
  if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- if (enable) NotImplemented_nid_no_patch(__func__);
+ (void)enable;
  return PAD_OK;
 }
 
@@ -270,7 +269,7 @@ int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
 
 int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int handle, bool enabled) {
  if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
- if (enabled) NotImplemented_nid_no_patch(__func__);
+ (void)enabled;
  return PAD_OK;
 }
 

@@ -19,9 +19,7 @@ intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent* ev) {
 }
 
 int APS5_VABI sceKernelGetEventError(const KernelEvent* ev) {
- (void)ev;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return static_cast<int>(requireEvent(ev, __func__).data);
 }
 
 intptr_t APS5_VABI sceKernelGetEventFflags(const KernelEvent* ev) {

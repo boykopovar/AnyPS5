@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -10,6 +11,7 @@
 namespace {
 
 constexpr std::int32_t SCE_USBD_ERROR_INVALID_ARG = static_cast<std::int32_t>(0x80240002);
+constexpr std::int32_t SCE_USBD_ERROR_NO_DEVICE = static_cast<std::int32_t>(0x80240006);
 
 struct UsbdTimeval {
     std::int64_t seconds;
@@ -47,128 +49,103 @@ std::int32_t APS5_VABI sceUsbdHandleEventsTimeout(const UsbdTimeval* timeout) {
 }
 
 int APS5_VABI sceUsbdAllocTransfer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdAllocTransfer: no device");
 }
 
 int APS5_VABI sceUsbdAttachKernelDriver() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdAttachKernelDriver: no device");
 }
 
 int APS5_VABI sceUsbdCancelTransfer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdCancelTransfer: no device");
 }
 
 int APS5_VABI sceUsbdCheckConnected() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_USBD_ERROR_NO_DEVICE;
 }
 
 int APS5_VABI sceUsbdClaimInterface() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdClaimInterface: no device");
 }
 
 int APS5_VABI sceUsbdClose() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdClose: no device");
 }
 
 int APS5_VABI sceUsbdControlTransfer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdControlTransfer: no device");
 }
 
 int APS5_VABI sceUsbdEventHandlingOk() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceUsbdFillInterruptTransfer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdFillInterruptTransfer: no device");
 }
 
 int APS5_VABI sceUsbdFreeConfigDescriptor() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdFreeConfigDescriptor: no device");
 }
 
 int APS5_VABI sceUsbdFreeTransfer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdFreeTransfer: no device");
 }
 
 int APS5_VABI sceUsbdGetActiveConfigDescriptor() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdGetActiveConfigDescriptor: no device");
 }
 
 int APS5_VABI sceUsbdGetBusNumber() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdGetBusNumber: no device");
 }
 
 int APS5_VABI sceUsbdGetConfigDescriptor() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdGetConfigDescriptor: no device");
 }
 
 int APS5_VABI sceUsbdGetDeviceAddress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdGetDeviceAddress: no device");
 }
 
 int APS5_VABI sceUsbdGetDeviceDescriptor() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdGetDeviceDescriptor: no device");
 }
 
 int APS5_VABI sceUsbdGetStringDescriptor() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdGetStringDescriptor: no device");
 }
 
 int APS5_VABI sceUsbdKernelDriverActive() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_USBD_ERROR_NO_DEVICE;
 }
 
 int APS5_VABI sceUsbdOpen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdOpen: no device");
 }
 
 int APS5_VABI sceUsbdRefDevice() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdRefDevice: no device");
 }
 
 int APS5_VABI sceUsbdReleaseInterface() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdReleaseInterface: no device");
 }
 
 int APS5_VABI sceUsbdResetDevice() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdResetDevice: no device");
 }
 
 int APS5_VABI sceUsbdSetConfiguration() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdSetConfiguration: no device");
 }
 
 int APS5_VABI sceUsbdSubmitTransfer() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdSubmitTransfer: no device");
 }
 
 int APS5_VABI sceUsbdUnrefDevice() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("sceUsbdUnrefDevice: no device");
 }
 
 }

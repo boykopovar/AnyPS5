@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
@@ -21,84 +22,64 @@ extern "C" {
 // Dead import of Cyberpunk 2077 (PPSA04029): no call sites, but the
 // Windows loader resolves imports strictly, so it must be present.
 int APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    throw std::runtime_error("_ZSt14_Atomic_assert: unknown signature");
 }
 
-// Live Cyberpunk 2077 import used in an fopen/fseek/ftell-like file-size
-// idiom as (handle, 0, 2); returning 0 reports success.
 int APS5_VABI vsnprintf_s_nid_postfix() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    throw std::runtime_error("vsnprintf_s: unknown signature");
 }
 
-// Live Cyberpunk 2077 import used as (handle, 0, 0) in the same file-size
-// idiom; returning 0 reports success.
 int APS5_VABI vsscanf_s_nid_postfix() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    throw std::runtime_error("vsscanf_s: unknown signature");
 }
-
 
 APS5_EXPORT("Ye20uNnlglA", libcCyberUnknown02);
 std::uint64_t APS5_VABI libcCyberUnknown02(void) {
-    NotImplemented_nid_no_patch("Ye20uNnlglA");
-    return 0;
+    throw std::runtime_error("libcCyberUnknown02 (Ye20uNnlglA): unknown signature");
 }
 
 std::uint64_t APS5_VABI _Mtx_destroy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Mtx_destroy: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Cnd_destroy_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Cnd_destroy: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Iswctype_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Iswctype: unknown signature");
 }
 
 APS5_EXPORT("H+8UBOwfScI", libcCyberUnknown08);
 std::uint64_t APS5_VABI libcCyberUnknown08(void) {
-    NotImplemented_nid_no_patch("H+8UBOwfScI");
-    return 0;
+    throw std::runtime_error("libcCyberUnknown08 (H+8UBOwfScI): unknown signature");
 }
 
 std::uint64_t APS5_VABI _WStoul_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_WStoul: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Cnd_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Cnd_init: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Cnd_broadcast_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Cnd_broadcast: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Mtx_init_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Mtx_init: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Mtx_unlock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Mtx_unlock: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Mtx_lock_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Mtx_lock: unknown signature");
 }
 
 std::uint64_t APS5_VABI _Cnd_wait_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::runtime_error("_Cnd_wait: unknown signature");
 }
 }
