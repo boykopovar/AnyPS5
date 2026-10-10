@@ -25,8 +25,8 @@ std::vector<std::string> ReadNeededLibraries(const Domain::SysVDynamicSection& d
         const auto nameOffset = Io::ReadU64(bytes, offset + 8);
         if (nameOffset >= dynamicSection.DynStrData.size()) throw Domain::RelinkerException("DT_NEEDED string offset is out of bounds", nameOffset);
         auto name = Windows::ReadString(dynamicSection.DynStrData, static_cast<std::size_t>(nameOffset));
-        if (name.empty() || !unique.insert(name).second) throw Domain::RelinkerException("Invalid or duplicate DT_NEEDED library: " + name);
-        result.push_back(std::move(name));
+        if (name.empty()) throw Domain::RelinkerException("Invalid DT_NEEDED library: " + name);
+        if (unique.insert(name).second) result.push_back(std::move(name));
     }
     if (unique.contains("libSceLibcInternal.prx") && !unique.contains("libc.prx")) result.push_back("libc.prx");
     return result;

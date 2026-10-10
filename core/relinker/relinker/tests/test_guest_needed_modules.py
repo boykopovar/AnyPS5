@@ -12,7 +12,7 @@ from test_guest_module_directories import module_with_symbol, needed_libraries
 NEEDED = b"needed.prx"
 
 
-def executable_with_needed(needed=NEEDED):
+def executable_with_needed(needed=NEEDED, repeats=1):
     image = main_fixture()
     strings = b"\0" + needed + b"\0"
     image[0x4800:0x4800 + len(strings)] = strings
@@ -23,7 +23,7 @@ def executable_with_needed(needed=NEEDED):
             break
         tags.append((tag, value))
     tags = [(5, 0x4800) if tag == 5 else (10, len(strings)) if tag == 10 else (tag, value) for tag, value in tags]
-    tags += [(1, 1), (0, 0)]
+    tags += [(1, 1)] * repeats + [(0, 0)]
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x4600 + index * 16, *tag)
     struct.pack_into("<QQ", image, 120 + 32, len(tags) * 16, len(tags) * 16)
@@ -35,11 +35,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
 
-        def convert(case, windows, needed=NEEDED):
+        def convert(case, windows, needed=NEEDED, repeats=1):
             if not (case / "sce_modules").exists():
                 (case / "sce_module").mkdir(parents=True, exist_ok=True)
             source = case / "input.elf"
-            source.write_bytes(executable_with_needed(needed))
+            source.write_bytes(executable_with_needed(needed, repeats))
             output = case / ("output.exe" if windows else "output.elf")
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(source), str(output)],
                                     capture_output=True, text=True, timeout=30)
@@ -63,6 +63,11 @@ def main():
             if not windows:
                 needed = needed_libraries(output.read_bytes())
                 assert needed == ["$ORIGIN/app0/Media/Modules/needed.prx.guest.prx"], needed
+
+            case = work / f"{windows}-repeated-system"
+            result, output = convert(case, windows, b"libSceVideoOut.prx", repeats=2)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert output.exists(), output
 
             for directory in ("Media/Modules", "sce_module", "sce_module/nested", "sce_modules/nested", "prx/shipping"):
                 case = work / f"{windows}-debug-name-{directory.replace('/', '-')}"
@@ -106,6 +111,13 @@ def main():
             result, output = convert(case, windows)
             assert result.returncode == 2 and "Ambiguous needed module" in result.stderr, result.stderr
             assert not output.exists(), output
+        case = work / "macos-repeated-system"
+        (case / "sce_module").mkdir(parents=True)
+        source = case / "input.elf"
+        source.write_bytes(executable_with_needed(b"libSceVideoOut.prx", 2))
+        result = subprocess.run([str(relinker), "--macos", str(source), str(case / "output")],
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, (result.stdout, result.stderr)
     print("Guest needed module tests passed")
 
 
