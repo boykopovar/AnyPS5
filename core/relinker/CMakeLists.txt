@@ -4,6 +4,8 @@ add_executable(relinker
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/Autorun.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxGuestModuleWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxDesktopEntryWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestModuleWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestStartup.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestImageReader.cpp
@@ -75,6 +77,7 @@ target_include_directories(relinker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/io/include
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libs
 )
 
 if(WIN32)
@@ -159,6 +162,18 @@ if(BUILD_TESTING)
         )
         add_test(NAME file_writer_binary COMMAND file_writer_tests binary)
         add_test(NAME file_writer_text COMMAND file_writer_tests text)
+
+        add_test_executable(linux_desktop_entry_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/LinuxDesktopEntryTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxDesktopEntryWriter.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libkernel/AppMetadata/src/ParamJsonParser.cpp
+        )
+        target_include_directories(linux_desktop_entry_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../libs
+        )
+        add_test(NAME linux_desktop_entry COMMAND linux_desktop_entry_tests)
     endif()
 
     add_test_executable(amd64_only_converter_tests

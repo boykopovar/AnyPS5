@@ -3,6 +3,7 @@
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
+#include <elfpatcher/linux/LinuxDesktopEntryWriter.hpp>
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
@@ -102,6 +103,9 @@ int main(const int argc, char* argv[]) {
             guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toMacos, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath, args.excludedSceModules);
         }
 
+        const Elfpatcher::Linux::LinuxDesktopEntryWriter desktopEntryWriter;
+        const auto desktopEntry = args.toWindows ? std::nullopt : desktopEntryWriter.Prepare(std::filesystem::path(args.inputPath).parent_path() / "sce_sys", absPath);
+
         if (args.writeRegistry) {
             const std::filesystem::path outFsPath(absPath);
             const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
@@ -145,6 +149,7 @@ int main(const int argc, char* argv[]) {
             std::cout << "Guest module: " << artifact.Path.string() << '\n';
         }
         fileWriter.Write(absPath, executableBytes);
+        if (desktopEntry) std::cout << "Desktop entry: " << desktopEntryWriter.Write(*desktopEntry).string() << '\n';
         std::cout << "External prx references: " << result.RegistryEntries.size() << "\nOutput file: " << absPath << '\n';
         std::cout << "Expected runtime layout (relative to the output executable):\n"
                   << std::filesystem::path(absPath).filename().string() << "\n"
