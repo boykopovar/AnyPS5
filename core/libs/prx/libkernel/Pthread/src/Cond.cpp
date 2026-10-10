@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <atomic>
@@ -22,6 +23,14 @@ PthreadCond destroyedCond() {
     return reinterpret_cast<PthreadCond>(std::uintptr_t{2});
 }
 
+PthreadMutex destroyedMutex() {
+    return reinterpret_cast<PthreadMutex>(std::uintptr_t{2});
+}
+
+PthreadMutex adaptiveInitializer() {
+    return reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+}
+
 PthreadCond resolveCond(PthreadCond* cond) {
     if (!cond)
         throw std::invalid_argument("Condition variable pointer is null");
@@ -39,18 +48,23 @@ PthreadCond resolveCond(PthreadCond* cond) {
     return created;
 }
 
-PthreadMutex lockedMutex(PthreadMutex* mutex) {
-    if (!mutex || !*mutex)
+int mutexOwnership(PthreadMutex* mutex, PthreadMutex* owned) {
+    if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
-    auto* current = *mutex;
-    if (current->_owner.load(std::memory_order_acquire) != std::this_thread::get_id())
-        throw std::runtime_error("Condition wait mutex is not owned by the current thread");
-    return current;
+    const auto current = std::atomic_ref<PthreadMutex>(*mutex).load(std::memory_order_acquire);
+    if (current == destroyedMutex())
+        return SCE_KERNEL_ERROR_EINVAL;
+    if (!current || current == adaptiveInitializer() || current->_owner.load(std::memory_order_acquire) != std::this_thread::get_id())
+        return SCE_KERNEL_ERROR_EPERM;
+    *owned = current;
+    return 0;
 }
 
 int waitUntil(PthreadCond* cond, PthreadMutex* mutex, std::optional<std::uint64_t> deadlineNanos, const void* caller) {
     auto* c = resolveCond(cond);
-    auto* m = lockedMutex(mutex);
+    PthreadMutex m = nullptr;
+    if (const int error = mutexOwnership(mutex, &m))
+        return error;
     bool timedOut = false;
     const auto waitStart = std::chrono::steady_clock::now();
     struct Trace {
