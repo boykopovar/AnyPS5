@@ -23,6 +23,7 @@ static constexpr std::uint64_t ATTRIBUTE_TRACE_EVERY = 2000;
 // 8 and 9 (a u32, a u32 and a byte on object and voice ports) are not understood and ignored.
 static constexpr std::uint32_t ATTRIBUTE_DATA = 0;
 static constexpr std::uint32_t ATTRIBUTE_VOLUME = 1;
+static constexpr std::size_t QUEUED_DATA_MAX = 16;
 
 static constexpr std::uint32_t FORMAT_CHANNELS_SHIFT = 8;
 static constexpr std::uint32_t FORMAT_CHANNELS_MASK = 0xFu;
@@ -102,8 +103,14 @@ AudioOut2Grain AudioOut2CaptureGrain(const AudioOut2Context& context) {
     std::lock_guard lock(g_portsLock);
     AudioOut2Grain grain;
     for (std::size_t index = 0; index < g_ports.size(); index++) {
-        const auto& port = g_ports[index];
-        if (port.used && port.context == &context && port.data != nullptr && port.channels != 0) grain.push_back({index, port.generation, port.data});
+        auto& port = g_ports[index];
+        if (!port.used || port.context != &context || port.channels == 0) continue;
+        const void* data = port.repeatedData;
+        if (!port.queuedData.empty()) {
+            data = port.queuedData.front();
+            port.queuedData.pop_front();
+        }
+        if (data != nullptr) grain.push_back({index, port.generation, data});
     }
     return grain;
 }
@@ -238,6 +245,10 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             verdict = "null value";
         } else if (attribute.attribute_id == ATTRIBUTE_DATA && attribute.value_size == sizeof(entry->data)) {
             std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
+            entry->queuedData.push_back(entry->data);
+            if (entry->queuedData.size() > QUEUED_DATA_MAX) entry->queuedData.pop_front();
+            entry->repeatedData = entry->data != nullptr && (entry->lastBuffer == nullptr || entry->lastBuffer == entry->data) ? entry->data : nullptr;
+            if (entry->data != nullptr) entry->lastBuffer = entry->data;
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {

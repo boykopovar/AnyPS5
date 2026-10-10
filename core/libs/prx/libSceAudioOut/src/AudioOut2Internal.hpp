@@ -63,6 +63,9 @@ struct AudioOut2Port {
     bool int16 = false;
     const AudioOut2StereoFold* fold = nullptr;
     const void* data = nullptr;
+    std::deque<const void*> queuedData;
+    const void* lastBuffer = nullptr;
+    const void* repeatedData = nullptr;
     float volume[AUDIO_OUT2_PORT_CHANNELS_MAX] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::uint64_t dataSets = 0;
     std::uint64_t attributeTraces = 0;
