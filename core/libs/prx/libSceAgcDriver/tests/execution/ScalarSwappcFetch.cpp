@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -35,9 +36,11 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.25f, 1.0f}, {-1.0f, 3.0f, 0.75f, 1.0f}
 }};
 
-std::array<std::uint32_t, 4> VertexBufferDescriptor(std::uint32_t select) {
+alignas(256) constexpr std::array<std::uint16_t, 6> RestartIndices{0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff};
+
+std::array<std::uint32_t, 4> VertexBufferDescriptor(std::uint32_t select, std::uint32_t records) {
     const auto address = reinterpret_cast<std::uintptr_t>(Triangle.data());
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>(Triangle.size()), 0x0104d000u | select};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), records, 0x0104d000u | select};
 }
 
 std::array<std::uint32_t, 4> OutputDescriptor() {
@@ -56,10 +59,10 @@ ShaderRecompiler::RecompileRequest VertexRequest(const AgcDriver::VulkanDevice& 
     return request;
 }
 
-ShaderRecompiler::ShaderVertexStageInfo VertexInfo(std::uint32_t select, std::int32_t registers) {
+ShaderRecompiler::ShaderVertexStageInfo VertexInfo(std::uint32_t select, std::int32_t registers, std::uint32_t records = static_cast<std::uint32_t>(Triangle.size())) {
     ShaderRecompiler::ShaderVertexStageInfo info{};
     info.resourcesNum = 1;
-    info.resources[0].fields = VertexBufferDescriptor(select);
+    info.resources[0].fields = VertexBufferDescriptor(select, records);
     info.resourcesDst[0] = {8, registers, 0, 0};
     info.fetchAttribReg = 8;
     info.fetchBufferReg = 10;
@@ -76,12 +79,12 @@ std::vector<std::uint32_t> UserData() {
     return userData;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, std::uint32_t select) {
+void Draw(AgcDriver::VulkanDevice& device, std::uint32_t select, bool onlyRestart = false) {
     Pixels.fill(std::byte{0x40});
     Output.fill(0xdeadbeefu);
     const auto userData = UserData();
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
-    const auto vertexResult = ShaderRecompiler::Recompile(VertexRequest(device, userData, VertexInfo(select, 4), vertexMemory));
+    const auto vertexResult = ShaderRecompiler::Recompile(VertexRequest(device, userData, VertexInfo(select, 4, onlyRestart ? 0u : static_cast<std::uint32_t>(Triangle.size())), vertexMemory));
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
@@ -111,7 +114,8 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t select) {
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
-    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.topology = onlyRestart ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.primitiveRestart = onlyRestart;
     state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
     state.negativeOneToOne = false;
     state.scissor = {{0, 0}, {Width, Height}};
@@ -120,7 +124,7 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t select) {
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
-    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+    const auto draw = onlyRestart ? AgcDriver::Pm4::DrawParameters{reinterpret_cast<std::uintptr_t>(RestartIndices.data()), static_cast<std::uint32_t>(RestartIndices.size()), 2, 1, 0, true} : AgcDriver::Pm4::DrawParameters{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
 }
@@ -159,6 +163,8 @@ int main() {
         Draw(*device, ReverseSelect);
         Check(ReverseSelect, "fetch-shader call, reversed dst_sel");
         CheckRegisterLimit(*device);
+        Draw(*device, IdentitySelect, true);
+        Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0xdeadbeefu; }) && std::all_of(Pixels.begin(), Pixels.end(), [](std::byte value) { return value == std::byte{0x40}; }), "an indexed draw of only restart indices ran its vertices or wrote pixels");
         std::puts("scalar swappc fetch tests passed");
         return 0;
     } catch (const std::exception& error) {
