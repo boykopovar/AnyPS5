@@ -1,11 +1,12 @@
 add_library(libSceJobManager SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceJobManager PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceJobManager PRIVATE libSceAgc libSceAgcDriver)
 configure_windows_unwind(libSceJobManager)
 
 if(BUILD_TESTING)
     add_test_executable(guest_job_manager_tests ${LIBS_INCLUDE_DIR}/tests/GuestJobManager.cpp)
     target_include_directories(guest_job_manager_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_job_manager_tests PRIVATE libSceJobManager libc)
+    target_link_libraries(guest_job_manager_tests PRIVATE libSceJobManager libSceAgc libSceAgcDriver libkernel libc)
     configure_windows_unwind(guest_job_manager_tests)
     foreach(testCase IN ITEMS memory validation dispatch ordering nested limits priority shutdown)
         add_test(NAME guest_job_manager_${testCase} COMMAND guest_job_manager_tests ${testCase})

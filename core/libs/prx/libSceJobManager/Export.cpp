@@ -22,6 +22,24 @@ int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stackSiz
 int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
 int APS5_VABI scePthreadJoin(Pthread thread, void** result);
+int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
+int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
+int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
+int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
+int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
+int APS5_VABI sceKernelGetEventFilter(const KernelEvent* ev);
+std::uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* ev);
+int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue eq, int id, void* udata);
+int APS5_VABI sceAgcDriverDeleteEqEvent(KernelEqueue eq, int id);
+int APS5_VABI sceAgcDriverSubmitAcb(std::uint32_t queue, const Packet* packet);
+std::uint32_t* APS5_VABI sceAgcAcbAcquireMem(CommandBuffer* buf, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles);
+std::uint32_t* APS5_VABI sceAgcCbSetShRegistersDirect(CommandBuffer* buf, const volatile ShaderRegister* regs, std::uint32_t numRegs);
+std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
+std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
+std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
+std::uint32_t* APS5_VABI sceAgcCbDispatch(CommandBuffer* buf, std::uint32_t threadGroupX, std::uint32_t threadGroupY, std::uint32_t threadGroupZ, std::uint32_t modifier);
+std::uint32_t* APS5_VABI sceAgcAcbDispatchIndirect(CommandBuffer* buf, const volatile void* indirectArguments, std::uint32_t modifier);
+std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t action, std::uint16_t gcrControl, std::uint8_t dst, std::uint8_t cachePolicy, const volatile Label* address, std::uint8_t dataSelect, std::uint64_t data, std::uint16_t gdsOffset, std::uint16_t gdsSize, std::uint8_t interrupt, std::uint32_t interruptContextId);
 }
 
 namespace {
@@ -50,6 +68,11 @@ constexpr std::uint64_t StateEnd = 0x2d8;
 constexpr std::uint64_t ThreadRecordBytes = 0x48;
 constexpr std::uint64_t SequenceBytes = 0x240;
 constexpr std::uint64_t NodeBytes = 72;
+constexpr std::uint64_t ComputeContextBytes = 0x168;
+constexpr std::uint64_t ComputeCommandBytes = 0x3ff * 104 + 0xff * 148 + 0x3f * 32;
+constexpr std::uint32_t FirstComputeQueue = 0x20;
+constexpr std::uint32_t UserDataRegister = 0x240;
+constexpr int UserEventFilter = -11;
 
 struct MemorySizeQueryParams {
     std::uint32_t version;
@@ -94,7 +117,7 @@ std::uint64_t AlignUp(std::uint64_t value, std::uint64_t alignment) {
 struct Manager;
 class Sequence;
 
-enum class ItemType { Dispatch, SyncPoint, Wait };
+enum class ItemType { Dispatch, SyncPoint, Wait, Compute, ComputeIndirect };
 
 struct Item {
     ItemType type;
@@ -105,6 +128,11 @@ struct Item {
     std::uint32_t handedOut;
     std::uint32_t completed;
     bool* passed;
+    const void* shader = nullptr;
+    std::array<std::uint32_t, 3> groups{};
+    const void* indirectArguments = nullptr;
+    std::string name;
+    bool named = false;
 };
 
 struct Counters {
@@ -140,27 +168,26 @@ public:
     APS5_VABI int Dispatch(JobEntry entry, void* argument, std::uint32_t count, const char* name) override;
     APS5_VABI int SyncPoint() override;
     APS5_VABI int Wait() override;
-    APS5_VABI int DispatchCompute(const void*, void*, std::int32_t, std::int32_t, std::int32_t, const char*) override {
-        NotImplemented_nid_no_patch("sce::Job compute dispatch");
-        return 0;
-    }
-    APS5_VABI int DispatchComputeIndirect(const void*, void*, const void*, const char*) override {
-        NotImplemented_nid_no_patch("sce::Job indirect compute dispatch");
-        return 0;
-    }
+    APS5_VABI int DispatchCompute(const void* shader, void* userData, std::int32_t x, std::int32_t y, std::int32_t z, const char* name) override;
+    APS5_VABI int DispatchComputeIndirect(const void* shader, void* userData, const void* indirectArguments, const char* name) override;
 
     bool Open(Manager* owner, const Counters& limit, std::uint32_t runQueue);
     int WaitAndClose(std::uint32_t index);
     void Advance();
     void DispatchCompleted(std::uint32_t invocations);
+    void CollectCompute();
 
     Manager* manager = nullptr;
     bool open = false;
+    bool compute = false;
+    std::uint32_t queue = 0;
 
 private:
     int Latch(int code);
     void RequireOpen() const;
     int WaitLocked(std::unique_lock<std::mutex>& guard);
+    int AppendCompute(Item item);
+    void SubmitCompute(const Item& item);
 
     Counters limits;
     Counters submitted;
@@ -172,6 +199,11 @@ private:
     std::deque<Item> items;
     std::mutex waiters;
     std::condition_variable passed;
+    Label label{};
+    std::uint64_t labelSeen = 0;
+    std::uint64_t labelTotal = 0;
+    bool batchStarted = false;
+    std::deque<std::vector<std::uint32_t>> commands;
 };
 
 class Factory final : public ISequenceFactory {
@@ -196,6 +228,11 @@ struct Manager {
     std::uint32_t persistentThreads = 0;
     std::array<std::deque<Item*>, 2> runQueues;
     std::vector<Sequence> sequences;
+    std::deque<Sequence> computeSequences;
+    std::uint32_t freeComputeSequences = 0;
+    std::vector<std::uint32_t> computeQueues;
+    KernelEqueue computeEvents = 0;
+    Pthread computeHandler = nullptr;
     std::array<Factory, 2> factories;
     std::array<Factory, 2> unifiedFactories;
     std::vector<Pthread> workers;
@@ -231,6 +268,8 @@ bool Sequence::Open(Manager* owner, const Counters& limit, std::uint32_t runQueu
     outstanding = 0;
     cursor = 0;
     items.clear();
+    commands.clear();
+    batchStarted = false;
     if (!TakeNode(*owner)) return false;
     open = true;
     return true;
@@ -250,6 +289,12 @@ void Sequence::Advance() {
             manager->work.notify_all();
             continue;
         }
+        if (item.type == ItemType::Compute || item.type == ItemType::ComputeIndirect) {
+            ++outstanding;
+            ++cursor;
+            SubmitCompute(item);
+            continue;
+        }
         if (outstanding != 0) return;
         if (item.type == ItemType::SyncPoint) {
             ++completed.syncPoints;
@@ -260,6 +305,8 @@ void Sequence::Advance() {
         const auto retired = static_cast<std::uint32_t>(cursor) + 1;
         items.erase(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(retired));
         cursor = 0;
+        commands.clear();
+        batchStarted = false;
         if (error == 0) {
             submitted.invocations -= completed.invocations;
             submitted.dispatches -= completed.dispatches;
@@ -296,6 +343,81 @@ int Sequence::Dispatch(JobEntry entry, void* argument, std::uint32_t count, cons
     return 0;
 }
 
+void Sequence::SubmitCompute(const Item& item) {
+    const auto* bytes = static_cast<const std::uint8_t*>(item.shader);
+    const ShaderRegister* registers = nullptr;
+    const std::uint8_t* specials = nullptr;
+    std::memcpy(&registers, bytes + 0x20, sizeof(registers));
+    std::memcpy(&specials, bytes + 0x28, sizeof(specials));
+    const std::uint32_t registerCount = bytes[0x5c];
+    std::uint32_t modifier = 0;
+    std::memcpy(&modifier, specials + 0x10, sizeof(modifier));
+    const auto userData = reinterpret_cast<std::uint64_t>(item.argument);
+    const std::array<std::uint32_t, 2> userDataWords{static_cast<std::uint32_t>(userData), static_cast<std::uint32_t>(userData >> 32)};
+    auto& words = commands.emplace_back(64 + 3 * registerCount + item.name.size() / 4);
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    bool encoded = sceAgcAcbAcquireMem(&buffer, 0x20380u | (batchStarted ? 0u : 1u), nullptr, 0, 0x190) != nullptr;
+    encoded = encoded && sceAgcCbSetShRegistersDirect(&buffer, registers, registerCount) != nullptr;
+    encoded = encoded && sceAgcCbSetShRegisterRangeDirect(&buffer, UserDataRegister, userDataWords.data(), 2) != nullptr;
+    if (item.named) encoded = encoded && sceAgcAcbPushMarker(&buffer, item.name.c_str(), 0) != nullptr;
+    if ((modifier & 1) != 0) {
+        if (item.type == ItemType::Compute) {
+            encoded = encoded && sceAgcCbDispatch(&buffer, item.groups[0], item.groups[1], item.groups[2], modifier) != nullptr;
+        } else {
+            encoded = encoded && sceAgcAcbDispatchIndirect(&buffer, item.indirectArguments, modifier) != nullptr;
+        }
+    }
+    if (item.named) encoded = encoded && sceAgcAcbPopMarker(&buffer) != nullptr;
+    encoded = encoded && sceAgcCbReleaseMem(&buffer, 0x2f, 0x620, 0, 0, &label, 1, ++labelTotal, 0, 0, 2, 0) != nullptr;
+    if (!encoded) throw std::runtime_error("libSceJobManager: a compute dispatch did not fit its command buffer");
+    batchStarted = true;
+    const Packet packet{words.data(), static_cast<std::uint32_t>(buffer.cursor_up - words.data()), 0, {}};
+    if (sceAgcDriverSubmitAcb(queue, &packet) != 0) throw std::runtime_error("libSceJobManager: sceAgcDriverSubmitAcb failed");
+}
+
+void Sequence::CollectCompute() {
+    const std::uint64_t value = label.value;
+    const auto finished = static_cast<std::uint32_t>(value - labelSeen);
+    labelSeen = value;
+    if (finished == 0) return;
+    completed.dispatches += finished;
+    outstanding -= finished;
+    if (outstanding == 0) Advance();
+}
+
+int Sequence::AppendCompute(Item item) {
+    const std::lock_guard guard(manager->lock);
+    RequireOpen();
+    if (!compute) throw std::runtime_error("libSceJobManager: a compute dispatch was made on a CPU sequence");
+    if (error != 0) return SequenceInvalid;
+    if (submitted.dispatches++ >= limits.dispatches) return Latch(SequenceLimitExceeded);
+    if (!TakeNode(*manager)) return Latch(SequenceNoNodes);
+    items.push_back(std::move(item));
+    Advance();
+    return 0;
+}
+
+int Sequence::DispatchCompute(const void* shader, void* userData, std::int32_t x, std::int32_t y, std::int32_t z, const char* name) {
+    if (shader == nullptr) return SequenceNullArgument;
+    if (x <= 0 || y <= 0 || z <= 0) return SequenceOutOfRange;
+    Item item{ItemType::Compute, this, nullptr, userData, 0, 0, 0, nullptr};
+    item.shader = shader;
+    item.groups = {static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y), static_cast<std::uint32_t>(z)};
+    item.named = name != nullptr;
+    if (item.named) item.name = name;
+    return AppendCompute(std::move(item));
+}
+
+int Sequence::DispatchComputeIndirect(const void* shader, void* userData, const void* indirectArguments, const char* name) {
+    if (shader == nullptr || indirectArguments == nullptr || (reinterpret_cast<std::uint64_t>(indirectArguments) & 0x1f) != 0) return SequenceNullArgument;
+    Item item{ItemType::ComputeIndirect, this, nullptr, userData, 0, 0, 0, nullptr};
+    item.shader = shader;
+    item.indirectArguments = indirectArguments;
+    item.named = name != nullptr;
+    if (item.named) item.name = name;
+    return AppendCompute(std::move(item));
+}
+
 int Sequence::SyncPoint() {
     const std::lock_guard guard(manager->lock);
     RequireOpen();
@@ -318,10 +440,11 @@ int Sequence::WaitAndClose(std::uint32_t index) {
     const int result = WaitLocked(guard);
     ReturnNodes(*manager, static_cast<std::uint32_t>(items.size()) + 1);
     items.clear();
+    commands.clear();
     cursor = 0;
     outstanding = 0;
     open = false;
-    manager->freeSequences |= std::uint32_t{1} << index;
+    (compute ? manager->freeComputeSequences : manager->freeSequences) |= std::uint32_t{1} << index;
     return result;
 }
 
@@ -353,42 +476,63 @@ bool ValidLimits(std::uint32_t invocations, std::uint32_t dispatches, std::uint3
     return invocations != 0 || dispatches != 0 || syncPoints != 0 || waits != 0;
 }
 
-int Factory::Create(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
+template <typename TSequences>
+int CreateIn(Manager* manager, TSequences& sequences, std::uint32_t& free, std::uint32_t priority, ISequence** out, const Counters& limits) {
     if (out == nullptr) return SequenceNullArgument;
-    if (!ValidLimits(invocations, dispatches, syncPoints, waits)) return SequenceOutOfRange;
+    if (!ValidLimits(limits.invocations, limits.dispatches, limits.syncPoints, limits.waits)) return SequenceOutOfRange;
     const std::lock_guard guard(manager->lock);
-    if (manager->freeSequences == 0) return SequenceNoneFree;
-    const int index = std::countr_zero(manager->freeSequences);
-    manager->freeSequences &= ~(std::uint32_t{1} << index);
-    Sequence& sequence = manager->sequences[static_cast<std::size_t>(index)];
-    if (!sequence.Open(manager, {invocations, dispatches, syncPoints, waits}, priority)) return SequenceNoNodes;
+    if (free == 0) return SequenceNoneFree;
+    const int index = std::countr_zero(free);
+    free &= ~(std::uint32_t{1} << index);
+    Sequence& sequence = sequences[static_cast<std::size_t>(index)];
+    if (!sequence.Open(manager, limits, priority)) return SequenceNoNodes;
     *out = &sequence;
     return 0;
 }
 
-int Factory::Destroy(ISequence* sequence) {
+template <typename TSequences>
+int DestroyIn(Manager* manager, TSequences& sequences, const std::uint32_t& free, ISequence* sequence) {
     Sequence* found = nullptr;
     std::uint32_t index = 0;
     {
         const std::lock_guard guard(manager->lock);
-        for (; index < manager->sequences.size(); ++index) {
-            if (&manager->sequences[index] == sequence) break;
+        for (; index < sequences.size(); ++index) {
+            if (&sequences[index] == sequence) break;
         }
-        if (index == manager->sequences.size() || (manager->freeSequences & (std::uint32_t{1} << index)) != 0) return SequenceInvalid;
-        found = &manager->sequences[index];
+        if (index == sequences.size() || (free & (std::uint32_t{1} << index)) != 0) return SequenceInvalid;
+        found = &sequences[index];
     }
     static_cast<void>(found->WaitAndClose(index));
     return 0;
 }
 
-int Factory::CreateCompute(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
-    if (out == nullptr) return SequenceNullArgument;
-    if (!ValidLimits(invocations, dispatches, syncPoints, waits)) return SequenceOutOfRange;
-    return SequenceNoneFree;
+int Factory::Create(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
+    return CreateIn(manager, manager->sequences, manager->freeSequences, priority, out, {invocations, dispatches, syncPoints, waits});
 }
 
-int Factory::DestroyCompute(ISequence*) {
-    return SequenceInvalid;
+int Factory::Destroy(ISequence* sequence) {
+    return DestroyIn(manager, manager->sequences, manager->freeSequences, sequence);
+}
+
+int Factory::CreateCompute(ISequence** out, std::uint32_t invocations, std::uint32_t dispatches, std::uint32_t syncPoints, std::uint32_t waits, const char*) {
+    return CreateIn(manager, manager->computeSequences, manager->freeComputeSequences, priority, out, {invocations, dispatches, syncPoints, waits});
+}
+
+int Factory::DestroyCompute(ISequence* sequence) {
+    return DestroyIn(manager, manager->computeSequences, manager->freeComputeSequences, sequence);
+}
+
+void* APS5_VABI ComputeHandlerEntry(void* argument) {
+    Manager& manager = *static_cast<Manager*>(argument);
+    for (;;) {
+        KernelEvent event{};
+        int count = 0;
+        static_cast<void>(sceKernelWaitEqueue(manager.computeEvents, &event, 1, &count, nullptr));
+        if (count <= 0) continue;
+        if (sceKernelGetEventFilter(&event) == UserEventFilter && sceKernelGetEventId(&event) == 0) return nullptr;
+        const std::lock_guard guard(manager.lock);
+        for (Sequence& sequence : manager.computeSequences) sequence.CollectCompute();
+    }
 }
 
 bool RunOne(Manager& manager, std::unique_lock<std::mutex>& guard) {
@@ -421,11 +565,16 @@ void* APS5_VABI WorkerEntry(void* argument) {
     return nullptr;
 }
 
-std::uint32_t NodeCount(std::uint64_t memory, std::uint64_t size, std::uint32_t workers, std::uint32_t sequences, bool* fits) {
+std::uint32_t NodeCount(std::uint64_t memory, std::uint64_t size, std::uint32_t workers, std::uint32_t sequences, std::uint32_t computeQueues, bool* fits) {
     const std::uint64_t end = memory + size;
     std::uint64_t address = AlignUp(memory + StateEnd, 8) + workers * ThreadRecordBytes;
     for (const std::uint64_t bytes : {std::uint64_t{0x100}, std::uint64_t{0x80}, std::uint64_t{0x80}, std::uint64_t{0x80}}) address = AlignUp(address, 64) + bytes;
-    address = AlignUp(AlignUp(address, 64) + sequences * SequenceBytes, 64);
+    address = AlignUp(address, 64) + (sequences + computeQueues) * SequenceBytes;
+    if (computeQueues != 0) {
+        address = AlignUp(address + ComputeContextBytes, 0x100) + AlignUp(ComputeCommandBytes * computeQueues, 8);
+        address += AlignUp(4 * std::uint64_t{computeQueues}, 8) + 8 * std::uint64_t{computeQueues};
+    }
+    address = AlignUp(address, 64);
     *fits = address <= end;
     return *fits ? static_cast<std::uint32_t>(((end - address) / NodeBytes) & 0xffff) : 0;
 }
@@ -462,6 +611,30 @@ void StartWorkers(Manager& manager, const ConfigParams& config, std::uint32_t wo
     }
 }
 
+void StartCompute(Manager& manager, std::uint32_t computeSequences, std::uint64_t computeQueueMask, std::uint32_t priority, std::uint32_t affinity) {
+    if (sceKernelCreateEqueue(&manager.computeEvents, "SceJobManagerComputeEventQueue") != 0) throw std::runtime_error("libSceJobManager: sceKernelCreateEqueue failed");
+    for (std::uint64_t mask = computeQueueMask; mask != 0; mask &= mask - 1) {
+        const std::uint32_t queue = FirstComputeQueue + static_cast<std::uint32_t>(std::countr_zero(mask));
+        if (sceAgcDriverAddEqEvent(manager.computeEvents, static_cast<int>(queue), nullptr) != 0) throw std::runtime_error("libSceJobManager: sceAgcDriverAddEqEvent failed");
+        manager.computeQueues.push_back(queue);
+    }
+    manager.computeSequences.resize(computeSequences);
+    for (std::uint32_t index = 0; index < computeSequences; ++index) {
+        manager.computeSequences[index].compute = true;
+        manager.computeSequences[index].queue = manager.computeQueues[index];
+    }
+    manager.freeComputeSequences = computeSequences == MaxSequences ? ~std::uint32_t{0} : (std::uint32_t{1} << computeSequences) - 1;
+    const KernelSchedParam schedule{static_cast<int>(priority)};
+    PthreadAttr attributes = nullptr;
+    if (scePthreadAttrInit(&attributes) != 0 || scePthreadAttrSetinheritsched(&attributes, 0) != 0 || scePthreadAttrSetschedparam(&attributes, &schedule) != 0 ||
+        scePthreadAttrSetstacksize(&attributes, 0x4000) != 0 || scePthreadAttrSetaffinity(&attributes, affinity) != 0) {
+        throw std::runtime_error("libSceJobManager: a compute handler thread attribute was rejected");
+    }
+    const int created = scePthreadCreate(&manager.computeHandler, &attributes, ComputeHandlerEntry, &manager, "SceJobManagerComputeEventHdlr");
+    scePthreadAttrDestroy(&attributes);
+    if (created != 0) throw std::runtime_error("libSceJobManager: scePthreadCreate failed for the compute handler");
+}
+
 int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t workers, std::uint32_t sequences, std::uint32_t computeSequences, std::uint64_t computeQueueMask, const ConfigParams* config, bool unified) {
     if (Implementation(self) != nullptr) return ManagerAlreadyInitialized;
     if (memory == nullptr) return ManagerNullMemory;
@@ -479,12 +652,16 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     const BlockHeader header{0x4d4a, static_cast<std::uint16_t>(StateOffset), 0x05000001, static_cast<std::uint32_t>(size), 0};
     std::memcpy(memory, &header, sizeof(header));
     if (config != nullptr && config->version > 1) return ManagerInvalidArgument;
-    if (computeSequences != 0) NotImplemented_nid_no_patch("sce::Job::JobManager::initialize with compute sequences");
     const ConfigParams& settings = config != nullptr ? *config : DefaultConfig;
+    const auto computeQueues = computeSequences != 0 ? static_cast<std::uint32_t>(std::popcount(computeQueueMask)) : 0;
     bool fits = false;
-    const std::uint32_t nodes = NodeCount(base, size, workers, sequences, &fits);
+    const std::uint32_t nodes = NodeCount(base, size, workers, sequences, computeQueues, &fits);
     if (!fits || nodes == 0) return ManagerMemoryTooSmall;
     if (const int invalid = ValidateWorkers(settings, workers); invalid != 0) return invalid;
+    const bool ownHandlerSettings = (settings.version & 1) != 0;
+    const std::uint32_t handlerPriority = ownHandlerSettings ? settings.computePriority : 0x100;
+    const std::uint32_t handlerAffinity = ownHandlerSettings ? settings.computeAffinity : 0x1fff;
+    if (computeSequences != 0 && (handlerPriority < 0x100 || handlerPriority > 0x2ff || handlerAffinity == 0 || handlerAffinity > 0x1fff)) return ManagerInvalidArgument;
     auto* manager = new Manager;
     manager->running = true;
     manager->freeNodes = nodes - 1;
@@ -496,6 +673,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
         manager->unifiedFactories[priority].manager = manager;
         manager->unifiedFactories[priority].priority = priority;
     }
+    if (computeSequences != 0) StartCompute(*manager, computeSequences, computeQueueMask, handlerPriority, handlerAffinity);
     Implementation(self) = manager;
     StartWorkers(*manager, settings, workers);
     return 0;
@@ -539,12 +717,19 @@ std::uint64_t APS5_VABI _ZN3sce3Job10JobManager27calculateRequiredMemorySizeEPKN
     }
     const std::uint64_t total = params->sequences + computeSequences;
     if (params->invocations > total * MaxInvocations || params->dispatches > total * MaxDispatches || params->syncPoints > total * MaxSyncPoints || params->waits > total * MaxWaits) return 0;
-    if (computeSequences != 0) NotImplemented_nid_no_patch("sce::Job::JobManager::calculateRequiredMemorySize with compute sequences");
     std::uint64_t bytes = (NodeBytes * params->workers + 0x317) & 0xfc0;
     bytes = (bytes + 0x13f) & ~std::uint64_t{0x3f};
     bytes = (bytes + 0x0bf) & ~std::uint64_t{0x3f};
     bytes = (bytes + 0x13f) & ~std::uint64_t{0x3f};
-    bytes += params->sequences * SequenceBytes;
+    if (computeSequences != 0) {
+        const auto queues = static_cast<std::uint64_t>(std::popcount(params->computeQueueMask));
+        bytes = (bytes + (params->sequences + queues) * SequenceBytes + 0x267) & ~std::uint64_t{0xff};
+        bytes = (bytes + ComputeCommandBytes * queues + 3) & ~std::uint64_t{3};
+        bytes = (bytes + 4 * queues + 7) & ~std::uint64_t{7};
+        bytes += 8 * queues;
+    } else {
+        bytes += params->sequences * SequenceBytes;
+    }
     const std::uint32_t nodes = params->dispatches + params->syncPoints + params->waits + static_cast<std::uint32_t>(total) + 1;
     return AlignUp(bytes, 64) + std::uint64_t{nodes} * NodeBytes + 0x800;
 }
@@ -568,6 +753,14 @@ int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void* self) {
     }
     for (const Pthread worker : manager->workers) {
         if (scePthreadJoin(worker, nullptr) != 0) throw std::runtime_error("sce::Job::JobManager::shutdown: scePthreadJoin failed");
+    }
+    if (manager->computeHandler != nullptr) {
+        if (sceKernelAddUserEventEdge(manager->computeEvents, 0) != 0 || sceKernelTriggerUserEvent(manager->computeEvents, 0, nullptr) != 0) {
+            throw std::runtime_error("sce::Job::JobManager::shutdown: the compute handler could not be signalled");
+        }
+        if (scePthreadJoin(manager->computeHandler, nullptr) != 0) throw std::runtime_error("sce::Job::JobManager::shutdown: scePthreadJoin failed");
+        for (const std::uint32_t queue : manager->computeQueues) static_cast<void>(sceAgcDriverDeleteEqEvent(manager->computeEvents, static_cast<int>(queue)));
+        if (sceKernelDeleteEqueue(manager->computeEvents) != 0) throw std::runtime_error("sce::Job::JobManager::shutdown: sceKernelDeleteEqueue failed");
     }
     Implementation(self) = nullptr;
     delete manager;
