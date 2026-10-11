@@ -173,6 +173,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
 
+    add_test_executable(guest_system_gesture_tests tests/GuestSystemGesture.cpp)
+    target_include_directories(guest_system_gesture_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_system_gesture_tests PRIVATE libSceSystemGesture libc)
+    configure_windows_unwind(guest_system_gesture_tests)
+    add_test(NAME guest_system_gesture COMMAND guest_system_gesture_tests)
+    if(WIN32)
+        set_tests_properties(guest_system_gesture PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
+    endif()
+
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
         add_subdirectory(tests/register_context)
     endif()

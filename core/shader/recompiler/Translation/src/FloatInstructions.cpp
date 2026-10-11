@@ -211,9 +211,21 @@ bool TranslationContext::vDivFixupF16(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::float16Binary(const RdnaInstruction& inst, IrOpcode opcode, bool reverse) {
-    const IrF32 lhs = readF16AsF32(sourceAt(inst, reverse ? 1u : 0u));
-    const IrF32 rhs = readF16AsF32(sourceAt(inst, reverse ? 0u : 1u));
-    writeF16(inst.destination, IrF32(ir.Emit(opcode, IrType::F32, {&lhs.Value(), &rhs.Value()})), {&lhs.Value(), &rhs.Value()});
+    const bool measured = (opcode == IrOpcode::FPAdd32 || opcode == IrOpcode::FPSub32 || opcode == IrOpcode::FPMul32) && floatMode.has_value() && (floatMode->floatMode & 0x0cu) == 0u;
+    const auto flush = [&](IrF32 value, std::uint32_t threshold) {
+        const IrU32 bits(ir.BitCastU32(value.Value()));
+        const IrU1 tiny(ir.ULessThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)), ir.Constant(threshold)));
+        return IrF32(ir.BitCastF32(ir.Select(tiny.Value(), ir.BitwiseAnd(bits.Value(), ir.Constant(0x80000000u)), bits.Value())));
+    };
+    const auto read = [&](const RdnaOperand& operand) {
+        const IrF32 value = readF16AsF32(operand);
+        return measured && (floatMode->floatMode & 0x40u) == 0u ? flush(value, 0x38800000u) : value;
+    };
+    const IrF32 lhs = read(sourceAt(inst, reverse ? 1u : 0u));
+    const IrF32 rhs = read(sourceAt(inst, reverse ? 0u : 1u));
+    IrF32 result(ir.Emit(opcode, IrType::F32, {&lhs.Value(), &rhs.Value()}));
+    if (measured && (floatMode->floatMode & 0x80u) == 0u) result = flush(result, opcode == IrOpcode::FPMul32 ? 0x387ff000u : 0x38800000u);
+    writeF16(inst.destination, result, {&lhs.Value(), &rhs.Value()});
     return true;
 }
 

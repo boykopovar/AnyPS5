@@ -292,6 +292,145 @@ constexpr Vector Vectors[] = {
     {0x498f4a8bu, 0x6749af47u, 0xc69e8021u, {0xabcd7c00u, 0xabcdaf47u, 0xabcd0004u}},
 };
 
+constexpr Vector DenormalVectors[4][32] = {
+    {
+        {0u, 0x00000401u, 0x000003ffu, {0u, 0xabcd0401u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00008001u, {0u, 0xabcd0400u, 0xabcd8000u}},
+        {0u, 0x00000001u, 0x00000001u, {0u, 0xabcd0000u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00000001u, {0u, 0xabcd0000u, 0xabcd0000u}},
+        {0u, 0x00008001u, 0x00008001u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00008001u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00000400u, 0x00008400u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008400u, 0x00000001u, {0u, 0xabcd8400u, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00000001u, {0u, 0xabcd3c00u, 0xabcd0000u}},
+        {0u, 0x0000bc00u, 0x00000001u, {0u, 0xabcdbc00u, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00008001u, {0u, 0xabcd3c00u, 0xabcd8000u}},
+        {0u, 0x00003bffu, 0x00000400u, {0u, 0xabcd3bffu, 0xabcd0000u}},
+        {0u, 0x00003c01u, 0x000003ffu, {0u, 0xabcd3c01u, 0xabcd0000u}},
+        {0u, 0x0000bc01u, 0x000003ffu, {0u, 0xabcdbc01u, 0xabcd8000u}},
+        {0u, 0x00003bffu, 0x00008400u, {0u, 0xabcd3bffu, 0xabcd8000u}},
+        {0u, 0x00003800u, 0x00000400u, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x0000b800u, 0x00000400u, {0u, 0xabcdb800u, 0xabcd8000u}},
+        {0u, 0x00003800u, 0x00000401u, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x00003800u, 0x000003ffu, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00000400u, {0u, 0xabcd0800u, 0xabcd0000u}},
+        {0u, 0x00003c00u, 0x00000400u, {0u, 0xabcd3c00u, 0xabcd0400u}},
+        {0u, 0x00007c00u, 0x00000001u, {0u, 0xabcd7c00u, 0xabcdfe00u}},
+        {0u, 0x0000fc00u, 0x00008001u, {0u, 0xabcdfc00u, 0xabcdfe00u}},
+        {0u, 0x00000001u, 0x00007c00u, {0u, 0xabcd7c00u, 0xabcdfe00u}},
+        {0u, 0x00000000u, 0x00008000u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008000u, 0x00008000u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x00003c01u, 0x0000bc00u, {0u, 0xabcd1400u, 0xabcdbc01u}},
+        {0u, 0x00007bffu, 0x00003c01u, {0u, 0xabcd7bffu, 0xabcd7c00u}},
+        {0u, 0x00007e55u, 0x00000001u, {0u, 0xabcd7e55u, 0xabcd7e55u}},
+        {0u, 0x00000001u, 0x0000fe01u, {0u, 0xabcdfe01u, 0xabcdfe01u}},
+        {0u, 0x00007c01u, 0x000003ffu, {0u, 0xabcd7e01u, 0xabcd7e01u}},
+        {0u, 0x000003ffu, 0x0000fd23u, {0u, 0xabcdff23u, 0xabcdff23u}},
+    },
+    {
+        {0u, 0x00000401u, 0x000003ffu, {0u, 0xabcd0800u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00008001u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00000001u, 0x00000001u, {0u, 0xabcd0000u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00000001u, {0u, 0xabcd0400u, 0xabcd0000u}},
+        {0u, 0x00008001u, 0x00008001u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00008001u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00000400u, 0x00008400u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008400u, 0x00000001u, {0u, 0xabcd8000u, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00000001u, {0u, 0xabcd3c00u, 0xabcd0000u}},
+        {0u, 0x0000bc00u, 0x00000001u, {0u, 0xabcdbc00u, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00008001u, {0u, 0xabcd3c00u, 0xabcd8000u}},
+        {0u, 0x00003bffu, 0x00000400u, {0u, 0xabcd3bffu, 0xabcd0000u}},
+        {0u, 0x00003c01u, 0x000003ffu, {0u, 0xabcd3c01u, 0xabcd0400u}},
+        {0u, 0x0000bc01u, 0x000003ffu, {0u, 0xabcdbc01u, 0xabcd8400u}},
+        {0u, 0x00003bffu, 0x00008400u, {0u, 0xabcd3bffu, 0xabcd8000u}},
+        {0u, 0x00003800u, 0x00000400u, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x0000b800u, 0x00000400u, {0u, 0xabcdb800u, 0xabcd8000u}},
+        {0u, 0x00003800u, 0x00000401u, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x00003800u, 0x000003ffu, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00000400u, {0u, 0xabcd0800u, 0xabcd0000u}},
+        {0u, 0x00003c00u, 0x00000400u, {0u, 0xabcd3c00u, 0xabcd0400u}},
+        {0u, 0x00007c00u, 0x00000001u, {0u, 0xabcd7c00u, 0xabcd7c00u}},
+        {0u, 0x0000fc00u, 0x00008001u, {0u, 0xabcdfc00u, 0xabcd7c00u}},
+        {0u, 0x00000001u, 0x00007c00u, {0u, 0xabcd7c00u, 0xabcd7c00u}},
+        {0u, 0x00000000u, 0x00008000u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008000u, 0x00008000u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x00003c01u, 0x0000bc00u, {0u, 0xabcd1400u, 0xabcdbc01u}},
+        {0u, 0x00007bffu, 0x00003c01u, {0u, 0xabcd7bffu, 0xabcd7c00u}},
+        {0u, 0x00007e55u, 0x00000001u, {0u, 0xabcd7e55u, 0xabcd7e55u}},
+        {0u, 0x00000001u, 0x0000fe01u, {0u, 0xabcdfe01u, 0xabcdfe01u}},
+        {0u, 0x00007c01u, 0x000003ffu, {0u, 0xabcd7e01u, 0xabcd7e01u}},
+        {0u, 0x000003ffu, 0x0000fd23u, {0u, 0xabcdff23u, 0xabcdff23u}},
+    },
+    {
+        {0u, 0x00000401u, 0x000003ffu, {0u, 0xabcd0401u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00008001u, {0u, 0xabcd0400u, 0xabcd8000u}},
+        {0u, 0x00000001u, 0x00000001u, {0u, 0xabcd0000u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00000001u, {0u, 0xabcd0000u, 0xabcd0000u}},
+        {0u, 0x00008001u, 0x00008001u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00008001u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00000400u, 0x00008400u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008400u, 0x00000001u, {0u, 0xabcd8400u, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00000001u, {0u, 0xabcd3c00u, 0xabcd0000u}},
+        {0u, 0x0000bc00u, 0x00000001u, {0u, 0xabcdbc00u, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00008001u, {0u, 0xabcd3c00u, 0xabcd8000u}},
+        {0u, 0x00003bffu, 0x00000400u, {0u, 0xabcd3bffu, 0xabcd0400u}},
+        {0u, 0x00003c01u, 0x000003ffu, {0u, 0xabcd3c01u, 0xabcd0000u}},
+        {0u, 0x0000bc01u, 0x000003ffu, {0u, 0xabcdbc01u, 0xabcd8000u}},
+        {0u, 0x00003bffu, 0x00008400u, {0u, 0xabcd3bffu, 0xabcd8400u}},
+        {0u, 0x00003800u, 0x00000400u, {0u, 0xabcd3800u, 0xabcd0200u}},
+        {0u, 0x0000b800u, 0x00000400u, {0u, 0xabcdb800u, 0xabcd8200u}},
+        {0u, 0x00003800u, 0x00000401u, {0u, 0xabcd3800u, 0xabcd0200u}},
+        {0u, 0x00003800u, 0x000003ffu, {0u, 0xabcd3800u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00000400u, {0u, 0xabcd0800u, 0xabcd0000u}},
+        {0u, 0x00003c00u, 0x00000400u, {0u, 0xabcd3c00u, 0xabcd0400u}},
+        {0u, 0x00007c00u, 0x00000001u, {0u, 0xabcd7c00u, 0xabcdfe00u}},
+        {0u, 0x0000fc00u, 0x00008001u, {0u, 0xabcdfc00u, 0xabcdfe00u}},
+        {0u, 0x00000001u, 0x00007c00u, {0u, 0xabcd7c00u, 0xabcdfe00u}},
+        {0u, 0x00000000u, 0x00008000u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008000u, 0x00008000u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x00003c01u, 0x0000bc00u, {0u, 0xabcd1400u, 0xabcdbc01u}},
+        {0u, 0x00007bffu, 0x00003c01u, {0u, 0xabcd7bffu, 0xabcd7c00u}},
+        {0u, 0x00007e55u, 0x00000001u, {0u, 0xabcd7e55u, 0xabcd7e55u}},
+        {0u, 0x00000001u, 0x0000fe01u, {0u, 0xabcdfe01u, 0xabcdfe01u}},
+        {0u, 0x00007c01u, 0x000003ffu, {0u, 0xabcd7e01u, 0xabcd7e01u}},
+        {0u, 0x000003ffu, 0x0000fd23u, {0u, 0xabcdff23u, 0xabcdff23u}},
+    },
+    {
+        {0u, 0x00000401u, 0x000003ffu, {0u, 0xabcd0800u, 0xabcd0000u}},
+        {0u, 0x00000400u, 0x00008001u, {0u, 0xabcd03ffu, 0xabcd8000u}},
+        {0u, 0x00000001u, 0x00000001u, {0u, 0xabcd0002u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00000001u, {0u, 0xabcd0400u, 0xabcd0000u}},
+        {0u, 0x00008001u, 0x00008001u, {0u, 0xabcd8002u, 0xabcd0000u}},
+        {0u, 0x000003ffu, 0x00008001u, {0u, 0xabcd03feu, 0xabcd8000u}},
+        {0u, 0x00000400u, 0x00008400u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008400u, 0x00000001u, {0u, 0xabcd83ffu, 0xabcd8000u}},
+        {0u, 0x00003c00u, 0x00000001u, {0u, 0xabcd3c00u, 0xabcd0001u}},
+        {0u, 0x0000bc00u, 0x00000001u, {0u, 0xabcdbc00u, 0xabcd8001u}},
+        {0u, 0x00003c00u, 0x00008001u, {0u, 0xabcd3c00u, 0xabcd8001u}},
+        {0u, 0x00003bffu, 0x00000400u, {0u, 0xabcd3bffu, 0xabcd0400u}},
+        {0u, 0x00003c01u, 0x000003ffu, {0u, 0xabcd3c01u, 0xabcd0400u}},
+        {0u, 0x0000bc01u, 0x000003ffu, {0u, 0xabcdbc01u, 0xabcd8400u}},
+        {0u, 0x00003bffu, 0x00008400u, {0u, 0xabcd3bffu, 0xabcd8400u}},
+        {0u, 0x00003800u, 0x00000400u, {0u, 0xabcd3800u, 0xabcd0200u}},
+        {0u, 0x0000b800u, 0x00000400u, {0u, 0xabcdb800u, 0xabcd8200u}},
+        {0u, 0x00003800u, 0x00000401u, {0u, 0xabcd3800u, 0xabcd0200u}},
+        {0u, 0x00003800u, 0x000003ffu, {0u, 0xabcd3800u, 0xabcd0200u}},
+        {0u, 0x00000400u, 0x00000400u, {0u, 0xabcd0800u, 0xabcd0000u}},
+        {0u, 0x00003c00u, 0x00000400u, {0u, 0xabcd3c00u, 0xabcd0400u}},
+        {0u, 0x00007c00u, 0x00000001u, {0u, 0xabcd7c00u, 0xabcd7c00u}},
+        {0u, 0x0000fc00u, 0x00008001u, {0u, 0xabcdfc00u, 0xabcd7c00u}},
+        {0u, 0x00000001u, 0x00007c00u, {0u, 0xabcd7c00u, 0xabcd7c00u}},
+        {0u, 0x00000000u, 0x00008000u, {0u, 0xabcd0000u, 0xabcd8000u}},
+        {0u, 0x00008000u, 0x00008000u, {0u, 0xabcd8000u, 0xabcd0000u}},
+        {0u, 0x00003c01u, 0x0000bc00u, {0u, 0xabcd1400u, 0xabcdbc01u}},
+        {0u, 0x00007bffu, 0x00003c01u, {0u, 0xabcd7bffu, 0xabcd7c00u}},
+        {0u, 0x00007e55u, 0x00000001u, {0u, 0xabcd7e55u, 0xabcd7e55u}},
+        {0u, 0x00000001u, 0x0000fe01u, {0u, 0xabcdfe01u, 0xabcdfe01u}},
+        {0u, 0x00007c01u, 0x000003ffu, {0u, 0xabcd7e01u, 0xabcd7e01u}},
+        {0u, 0x000003ffu, 0x0000fd23u, {0u, 0xabcdff23u, 0xabcdff23u}},
+    }
+};
+
 constexpr std::array<const char*, 3> Names{"v_cvt_f16_f32", "v_add_f16", "v_mul_f16"};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t count) {
@@ -313,10 +452,10 @@ bool Matches(std::uint32_t actual, std::uint32_t expected) {
     return actual == expected || ((actual >> 16u) == (expected >> 16u) && IsNan16(actual) && IsNan16(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t count) {
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t count, std::span<const Vector> vectors = Vectors, std::uint32_t denorm16 = 4u, bool ieee = true, bool overflow = false) {
     Input.fill(0u);
     for (std::uint32_t lane = 0; lane < count; ++lane) {
-        const auto& vector = Vectors[first + lane];
+        const auto& vector = vectors[first + lane];
         Input[lane * Inputs] = vector.a;
         Input[lane * Inputs + 1] = vector.b;
         Input[lane * Inputs + 2] = vector.c;
@@ -336,16 +475,17 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t cou
         device.Target(),
         {0, 0, 0, 128}
     };
+    if (denorm16 < 4u) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{denorm16 << 6u, true, ieee, overflow};
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
 }
 
-void Check(std::uint32_t first, std::uint32_t count) {
+void Check(std::uint32_t first, std::uint32_t count, std::span<const Vector> vectors = Vectors, std::uint32_t firstColumn = 0u) {
     for (std::uint32_t lane = 0; lane < count; ++lane) {
-        const auto& vector = Vectors[first + lane];
-        for (std::uint32_t column = 0; column < Names.size(); ++column) {
+        const auto& vector = vectors[first + lane];
+        for (std::uint32_t column = firstColumn; column < Names.size(); ++column) {
             const auto expected = vector.expected[column];
             const auto actual = Output[lane * Results + column];
             Require(Matches(actual, expected), std::string("f16 rounding: vector ") + std::to_string(first + lane) + " (" + Hex(vector.a) + ", " + Hex(vector.b) + ", " + Hex(vector.c) + ") " + Names[column] + " is " + Hex(actual) + ", expected " + Hex(expected));
@@ -364,6 +504,16 @@ int main() {
             const auto count = std::min(Threads, total - first);
             Run(*device, first, count);
             Check(first, count);
+        }
+        for (bool ieee : {false, true}) {
+            for (bool overflow : {false, true}) {
+                for (std::uint32_t denorm16 = 0u; denorm16 < 4u; ++denorm16) {
+                    auto vectors = std::to_array(DenormalVectors[denorm16]);
+                    if (overflow) vectors[27].expected[2] = 0xabcd7bffu;
+                    Run(*device, 0u, 32u, vectors, denorm16, ieee, overflow);
+                    Check(0u, 32u, vectors, 1u);
+                }
+            }
         }
         std::puts("f16 rounding tests passed");
         return 0;

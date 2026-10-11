@@ -5,6 +5,8 @@
 #else
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <fcntl.h>
+#include <time.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <unistd.h>
@@ -13,6 +15,8 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
 #include <chrono>
 #include <climits>
@@ -109,6 +113,43 @@ struct Socket {
 #endif
     }
 };
+struct Waker {
+    NativeSocket value = Invalid;
+    Waker() {
+        value = ::socket(AF_INET, SOCK_DGRAM, 0);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t size = sizeof(address);
+#ifdef _WIN32
+        u_long nonblocking = 1;
+        const bool configured = value != Invalid && ioctlsocket(value, FIONBIO, &nonblocking) == 0;
+#else
+        const bool configured = value != Invalid && ::fcntl(value, F_SETFL, ::fcntl(value, F_GETFL) | O_NONBLOCK) == 0;
+#endif
+        if (!configured || bind(value, reinterpret_cast<sockaddr*>(&address), size) != 0 ||
+            getsockname(value, reinterpret_cast<sockaddr*>(&address), &size) != 0 ||
+            connect(value, reinterpret_cast<sockaddr*>(&address), size) != 0) {
+            const int error = NativeError();
+            Close();
+            throw std::runtime_error("equeue waker: loopback socket setup failed, guest errno " + std::to_string(error));
+        }
+    }
+    ~Waker() { Close(); }
+    void Close() {
+        if (value == Invalid) return;
+#ifdef _WIN32
+        closesocket(value);
+#else
+        ::close(value);
+#endif
+        value = Invalid;
+    }
+};
+Waker& ThreadWaker() {
+    thread_local Waker waker;
+    return waker;
+}
 std::mutex socketsMutex;
 std::map<int, std::shared_ptr<Socket>> sockets;
 int nextDescriptor = GuestSockets::FirstDescriptor;
@@ -173,8 +214,68 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
 }
 
 int GuestSockets::Close(int descriptor) {
-    std::lock_guard lock(socketsMutex);
-    return sockets.erase(descriptor) ? 0 : Fail(9);
+    {
+        std::lock_guard lock(socketsMutex);
+        if (!sockets.erase(descriptor)) return Fail(9);
+    }
+    EqueueDescriptorClosed(descriptor);
+    return 0;
+}
+
+std::uintptr_t GuestSockets::CurrentWaker() {
+    return static_cast<std::uintptr_t>(ThreadWaker().value);
+}
+
+void GuestSockets::Wake(std::uintptr_t waker) {
+    const char signal = 0;
+    if (send(static_cast<NativeSocket>(waker), &signal, 1, 0) < 0 && NativeError() != 35)
+        throw std::runtime_error("equeue waker: send failed, guest errno " + std::to_string(NativeError()));
+}
+
+bool GuestSockets::WaitAny(const std::vector<Interest>& interests, std::uint64_t deadlineNanos) {
+    const NativeSocket waker = ThreadWaker().value;
+    std::vector<std::shared_ptr<Socket>> held;
+#ifdef _WIN32
+    std::vector<WSAPOLLFD> entries;
+    constexpr SHORT ReadMask = POLLRDNORM;
+    constexpr SHORT WriteMask = POLLWRNORM;
+#else
+    std::vector<pollfd> entries;
+    constexpr short ReadMask = POLLIN;
+    constexpr short WriteMask = POLLOUT;
+#endif
+    {
+        std::lock_guard lock(socketsMutex);
+        for (const auto& interest : interests) {
+            const auto found = sockets.find(interest.descriptor);
+            if (found == sockets.end()) continue;
+            held.push_back(found->second);
+            entries.push_back({found->second->value, interest.write ? WriteMask : ReadMask, 0});
+        }
+    }
+    entries.push_back({waker, ReadMask, 0});
+    std::uint64_t remaining = 0;
+    if (deadlineNanos != 0) {
+        const std::uint64_t now = TimedWait::NowNanos();
+        if (now >= deadlineNanos) return true;
+        remaining = deadlineNanos - now;
+    }
+#ifdef _WIN32
+    INT timeout = -1;
+    if (deadlineNanos != 0) {
+        if (remaining < 1000000) return false;
+        timeout = static_cast<INT>(std::min<std::uint64_t>(remaining / 1000000, INT_MAX));
+    }
+    if (WSAPoll(entries.data(), static_cast<ULONG>(entries.size()), timeout) == SOCKET_ERROR)
+        throw std::runtime_error("equeue wait: WSAPoll failed, guest errno " + std::to_string(NativeError()));
+#else
+    timespec timeout{static_cast<time_t>(remaining / 1000000000), static_cast<long>(remaining % 1000000000)};
+    if (::ppoll(entries.data(), entries.size(), deadlineNanos != 0 ? &timeout : nullptr, nullptr) < 0 && errno != EINTR)
+        throw std::runtime_error("equeue wait: ppoll failed, guest errno " + std::to_string(NativeError()));
+#endif
+    char drained[16];
+    while (recv(waker, drained, sizeof(drained), 0) > 0) {}
+    return true;
 }
 
 bool GuestSockets::IsOpen(int descriptor) {
@@ -347,6 +448,40 @@ int UnnamedAddress(void* address, std::uint32_t* length) {
     std::memcpy(address, bytes, *length);
     return 0;
 }
+}
+
+bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* eof) {
+    std::shared_ptr<Socket> socket;
+    {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end()) return false;
+        socket = found->second;
+    }
+#ifdef _WIN32
+    WSAPOLLFD entry{socket->value, static_cast<SHORT>(write ? POLLWRNORM : POLLRDNORM), 0};
+    if (WSAPoll(&entry, 1, 0) <= 0) return false;
+#else
+    pollfd entry{socket->value, static_cast<short>(write ? POLLOUT : (POLLIN | POLLRDHUP)), 0};
+    if (::poll(&entry, 1, 0) <= 0) return false;
+    if (!write && (entry.revents & POLLRDHUP)) entry.revents |= POLLHUP;
+#endif
+    *eof = (entry.revents & (POLLHUP | POLLERR)) != 0;
+    *data = 0;
+    if (write) {
+        int size = 0;
+        socklen_t length = sizeof(size);
+        if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&size), &length) == 0) *data = size;
+    } else {
+#ifdef _WIN32
+        unsigned long available = 0;
+        if (ioctlsocket(socket->value, FIONREAD, &available) == 0) *data = static_cast<std::int64_t>(available);
+#else
+        int available = 0;
+        if (::ioctl(socket->value, FIONREAD, &available) == 0) *data = available;
+#endif
+    }
+    return true;
 }
 
 extern "C" {
