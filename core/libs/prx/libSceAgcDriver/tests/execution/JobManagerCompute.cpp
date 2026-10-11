@@ -151,14 +151,19 @@ void SizeCase() {
 }
 
 void RunCase() {
-    const std::uint64_t size = SizeFor(1, 1, true);
+    const std::uint64_t size = SizeFor(1, 2, true);
     void* memory = std::aligned_alloc(256, (size + 255) & ~std::uint64_t{255});
     Require(memory != nullptr, "allocation failed");
     alignas(64) static unsigned char manager[0x100];
     Construct(manager);
     const ConfigParams badHandler{1, 0x00021fff, 0x00010000, 0x2bc, nullptr, 0, 0x1fff, 0x50, 0};
-    Require(Initialize(manager, memory, size, 2, 1, 1, 1, &badHandler) == InvalidArgument, "a handler priority below 0x100 was accepted");
-    Require(Initialize(manager, memory, size, 2, 1, 1, 1, nullptr) == 0, "initialize with one compute sequence failed");
+    const ConfigParams noAffinity{1, 0x00021fff, 0x00010000, 0x2bc, nullptr, 0, 0, 0x100, 0};
+    const ConfigParams wideAffinity{1, 0x00021fff, 0x00010000, 0x2bc, nullptr, 0, 0x2000, 0x100, 0};
+    Require(Initialize(manager, memory, size, 2, 1, 1, 2, &badHandler) == InvalidArgument, "a handler priority below 0x100 was accepted");
+    Require(Initialize(manager, memory, size, 2, 1, 1, 2, &noAffinity) == InvalidArgument, "an empty handler affinity was accepted");
+    Require(Initialize(manager, memory, size, 2, 1, 1, 2, &wideAffinity) == InvalidArgument, "a handler affinity beyond 13 cores was accepted");
+    Require(Initialize(manager, memory, size, 2, 1, 0xffffffffu, 2, nullptr) == InvalidArgument, "a sequence count that wraps was accepted");
+    Require(Initialize(manager, memory, size, 2, 1, 1, 2, nullptr) == 0, "initialize with one compute sequence failed");
     SequenceFactory* factory = Factories(manager, 0);
     Sequence* sequence = nullptr;
     Sequence* other = nullptr;
@@ -201,6 +206,13 @@ void RunCase() {
     Require(sequence->Wait() == 0, "the wait after the ordered dispatches failed");
     Require(Output[0] == 0x33330003u, "the compute dispatch behind a sync point did not run");
     Require(SeenByJob == 0x33330003u, "a CPU job behind a sync point ran before the compute dispatch ahead of it finished");
+
+    Value[0] = 0x44440004u;
+    Require(sequence->DispatchCompute(ShaderWithoutDispatch.data(), Table.data(), 1, 1, 1, nullptr) == 0, "the leading dispatch failed");
+    Require(sequence->SyncPoint() == 0, "the sync point between compute dispatches failed");
+    Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, "behind") == 0, "the compute dispatch behind a compute dispatch failed");
+    Require(sequence->Wait() == 0, "the wait after chained compute dispatches failed");
+    Require(Output[0] == 0x44440004u, "a compute dispatch behind a sync point and a compute dispatch did not run");
 
     for (int index = 0; index < 4; ++index) Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == 0, "a compute dispatch within the limit failed");
     Require(sequence->DispatchCompute(Shader.data(), Table.data(), 1, 1, 1, nullptr) == LimitExceeded, "a compute dispatch past the dispatch limit was accepted");

@@ -176,6 +176,7 @@ public:
     void Advance();
     void DispatchCompleted(std::uint32_t invocations);
     void CollectCompute();
+    bool Busy() const { return outstanding != 0; }
 
     Manager* manager = nullptr;
     bool open = false;
@@ -527,7 +528,7 @@ void* APS5_VABI ComputeHandlerEntry(void* argument) {
     for (;;) {
         KernelEvent event{};
         int count = 0;
-        static_cast<void>(sceKernelWaitEqueue(manager.computeEvents, &event, 1, &count, nullptr));
+        if (sceKernelWaitEqueue(manager.computeEvents, &event, 1, &count, nullptr) != 0) throw std::runtime_error("libSceJobManager: sceKernelWaitEqueue failed in the compute handler");
         if (count <= 0) continue;
         if (sceKernelGetEventFilter(&event) == UserEventFilter && sceKernelGetEventId(&event) == 0) return nullptr;
         const std::lock_guard guard(manager.lock);
@@ -642,7 +643,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     if ((base & 0xff) != 0) return ManagerMisalignedMemory;
     if (size == 0 || workers == 0 || workers > MaxWorkers) return ManagerInvalidArgument;
     if (unified) {
-        if ((sequences == 0 && computeSequences == 0) || sequences + computeSequences > MaxSequences || (computeQueueMask >> 56) != 0 || static_cast<std::uint32_t>(std::popcount(computeQueueMask)) < computeSequences) return ManagerInvalidArgument;
+        if ((sequences == 0 && computeSequences == 0) || std::uint64_t{sequences} + computeSequences > MaxSequences || (computeQueueMask >> 56) != 0 || static_cast<std::uint32_t>(std::popcount(computeQueueMask)) < computeSequences) return ManagerInvalidArgument;
     } else if (sequences == 0 || sequences > MaxSequences) {
         return ManagerInvalidArgument;
     }
@@ -748,6 +749,9 @@ int APS5_VABI _ZN3sce3Job10JobManager8shutdownEv(void* self) {
     {
         const std::lock_guard guard(manager->lock);
         if (manager->blockedWaiters != 0) throw std::runtime_error("sce::Job::JobManager::shutdown: a thread is still blocked in a sequence wait");
+        for (const Sequence& sequence : manager->computeSequences) {
+            if (sequence.open && sequence.Busy()) throw std::runtime_error("sce::Job::JobManager::shutdown: a compute sequence still has work in flight");
+        }
         manager->running = false;
         manager->work.notify_all();
     }
