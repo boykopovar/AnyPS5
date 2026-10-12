@@ -12,7 +12,7 @@ add_custom_command(
 
 foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test)
     if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/BufferPool.cpp)
+        target_sources(${agcTarget} PRIVATE Graphics/src/BufferPool.cpp Graphics/src/VramBudget.cpp)
     endif()
 endforeach()
 
