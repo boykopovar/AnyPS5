@@ -31,6 +31,13 @@ jobs:
           if [ -n "$body" ]; then
             printf '### Progress report (%s → %s)\n\n%s\n' "$(git rev-parse --short HEAD^1)" "${HEAD_SHA::7}" "$body" > "$report/report.md"
             cat "$report/report.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No library/shader progress changes in this diff."
+            {
+              echo "### Progress report"
+              echo ""
+              echo "No library/shader progress changes in this diff."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v7
         with:

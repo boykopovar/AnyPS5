@@ -24,16 +24,26 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
+          set -e
           pr=$(cat pr)
           [[ $pr =~ ^[0-9]+$ ]] || exit 1
-          [ "$(gh pr view "$pr" --json headRefOid --jq .headRefOid)" = "$RUN_SHA" ] || exit 0
+          head_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+          if [ "$head_sha" != "$RUN_SHA" ]; then
+            echo "progress comment sync: skipped stale run on PR #$pr (head ${head_sha:0:7}, workflow ${RUN_SHA:0:7})"
+            exit 0
+          fi
           marker='<!-- progress-report -->'
-          id=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)
+          comment=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1 || true)
+          id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
           if [ -f report.md ]; then
             printf '%s\n%s' "$marker" "$(cat report.md)" > body.md
             if [ -n "$id" ]; then
-              gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@body.md > /dev/null
+              if [ "$(jq -r '.[1]' <<< "${comment:-null}")" = "$(cat body.md)" ]; then
+                echo "progress comment sync: unchanged comment on PR #$pr"
+              else
+                gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@body.md > /dev/null
+              fi
             else
               gh pr comment "$pr" --body-file body.md
             fi

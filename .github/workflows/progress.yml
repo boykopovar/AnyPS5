@@ -22,7 +22,17 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - run: python3 tools/progress.py out
+      - run: |
+          set -e
+          set -o pipefail
+          log=$RUNNER_TEMP/progress.log
+          python3 tools/progress.py out | tee "$log"
+          {
+            echo "## Progress"
+            echo ""
+            grep -E '^libraries |^shaders ' "$log"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: out
