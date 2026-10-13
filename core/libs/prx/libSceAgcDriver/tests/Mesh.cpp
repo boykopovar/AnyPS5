@@ -373,6 +373,14 @@ int main() {
         }
         Require(fastLaunchIndexedRefused, "an indexed fast-launch draw was drawn");
 
+        for (const bool indexed : {true, false}) {
+            ClearPixels();
+            DrawMesh(device, {SmallSubgroup, {indexed ? reinterpret_cast<std::uintptr_t>(Indices.data()) : 0u, 2u, indexed ? 2u : 0u, 1, 0, indexed}, VertexBufferDescriptor(indexed ? Scrambled.data() : Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
+            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+                Require(PixelIs(CellPixel(triangle), Background), std::string(indexed ? "indexed" : "non-indexed") + " triangle-list draw of two vertices drew triangle " + std::to_string(triangle) + ", pixel " + PixelText(CellPixel(triangle)));
+            }
+        }
+
         constexpr std::size_t recordBlockBytes = 65536;
         auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));
         {
