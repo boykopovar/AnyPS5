@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
@@ -9,12 +10,105 @@
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <exception>
+#include <mutex>
+#include <set>
+#include <string>
+#include <string_view>
+#include <typeinfo>
 
 namespace AgcDriver::DriverDetail {
 
-DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::string& rejected) {
+namespace {
+
+bool TraceShaderCorrelation() {
+    static const bool enabled = std::getenv("APS5_TRACE_SHADER_CORRELATION") != nullptr;
+    return enabled && AgcDriver::CaptureTrace::Enabled();
+}
+
+std::atomic<std::uint64_t>& NextDrawTraceToken() {
+    static std::atomic<std::uint64_t> next{0};
+    return next;
+}
+
+std::string ExceptionReason(const std::exception_ptr& failure) {
+    try {
+        if (failure != nullptr) std::rethrow_exception(failure);
+    } catch (const std::exception& error) {
+        return error.what();
+    } catch (...) {
+    }
+    return "unknown exception";
+}
+
+const char* ExceptionType(const std::exception_ptr& failure) {
+    try {
+        if (failure != nullptr) std::rethrow_exception(failure);
+    } catch (const std::exception& error) {
+        return typeid(error).name();
+    } catch (...) {
+    }
+    return "unknown";
+}
+
+void TraceMaterializationFailure(std::uint64_t token, const Submission& submission, std::size_t packetOffset, const char* phase, std::size_t completedSubdraws, const std::exception_ptr& failure) {
+    if (token == 0) return;
+    try {
+        const auto reason = ExceptionReason(failure);
+        AgcDriver::CaptureTrace::Log("draw-materialization-failed token=%llu submission=%llu queue=%x offset=%zu phase=%s exception=%s reason=%.256s completedSubdraws=%zu",
+                static_cast<unsigned long long>(token), static_cast<unsigned long long>(submission.serial), submission.queue, packetOffset, phase, ExceptionType(failure), reason.c_str(), completedSubdraws);
+    } catch (...) {
+        // A diagnostic record must never mask the failure it reports.
+    }
+}
+
+void TraceSubmissionFailure(std::uint64_t token, const Submission& submission, std::size_t packetOffset, std::size_t completedSubdraws, const std::exception_ptr& failure) {
+    if (token == 0) return;
+    try {
+        const auto reason = ExceptionReason(failure);
+        AgcDriver::CaptureTrace::Log("draw-submission-failed token=%llu submission=%llu queue=%x offset=%zu exception=%s reason=%.256s completedSubdraws=%zu",
+                static_cast<unsigned long long>(token), static_cast<unsigned long long>(submission.serial), submission.queue, packetOffset, ExceptionType(failure), reason.c_str(), completedSubdraws);
+    } catch (...) {
+        // A diagnostic record must never mask the failure it reports.
+    }
+}
+
+void TraceDrawAttemptFailure(std::uint64_t token, const char* phase, const char* outcome, std::uint64_t submission, std::uint32_t queue, std::size_t packetOffset, std::string_view reason, std::string_view exceptionType = "none") {
+    if (token == 0) return;
+        AgcDriver::CaptureTrace::LogBestEffort("draw-attempt-failed token=%llu phase=%s outcome=%s submission=%llu queue=%x offset=%zu exception=%s reason=%.256s",
+            static_cast<unsigned long long>(token), phase, outcome, static_cast<unsigned long long>(submission), queue, packetOffset, exceptionType.data(), reason.data());
+}
+
+void TraceDrawAttemptException(std::uint64_t token, const char* phase, std::uint64_t submission, std::uint32_t queue, std::size_t packetOffset, const std::exception_ptr& failure) noexcept {
+    try {
+        TraceDrawAttemptFailure(token, phase, "exception", submission, queue, packetOffset, ExceptionReason(failure), ExceptionType(failure));
+    } catch (...) {
+        // Extracting exception details is diagnostic-only and must not mask the original failure.
+    }
+}
+
+const char* DrawVerdictName(DrawVerdict verdict) {
+    switch (verdict) {
+        case DrawVerdict::Drawn: return "Drawn";
+        case DrawVerdict::Nothing: return "Nothing";
+        case DrawVerdict::Rejected: return "Rejected";
+    }
+    return "Unknown";
+}
+
+std::string_view TrimmedReason(std::string_view reason) {
+    if (reason.size() > 200) reason = reason.substr(0, 200);
+    return reason;
+}
+
+}
+
+DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected) {
     PerformanceTimer timing("Driver.Draw");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     std::array<double, DrawDriverPhaseCount> phaseMs{};
@@ -33,11 +127,25 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         pending.tailAt = phaseLap;
         return DrawVerdict::Drawn;
     };
-    auto drawParameters = Pm4::ResolveDraw(packet, queue);
+    const std::uint64_t traceToken = TraceShaderCorrelation() ? NextDrawTraceToken().fetch_add(1, std::memory_order_relaxed) + 1 : 0;
+    if (traceToken != 0) {
+        AgcDriver::CaptureTrace::LogBestEffort("draw-attempt token=%llu submission=%llu queue=%x offset=%zu",
+                static_cast<unsigned long long>(traceToken), static_cast<unsigned long long>(submission.serial), submission.queue, packetOffset);
+    }
+    Pm4::DrawParameters drawParameters;
+    try {
+        drawParameters = Pm4::ResolveDraw(packet, queue);
+    } catch (...) {
+        TraceDrawAttemptException(traceToken, "resolve-draw", submission.serial, submission.queue, packetOffset, std::current_exception());
+        throw;
+    }
     const bool pipelined = DrawPipeline::Active();
     if (pipelined && drawParameters.indirect) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
     bool traceIndirect = false;
-    if (const auto verdict = precheckDraw(queue, submission, packet, drawParameters, rejected, traceIndirect)) return *verdict;
+    if (const auto verdict = precheckDraw(queue, submission, packet, drawParameters, rejected, traceIndirect)) {
+        TraceDrawAttemptFailure(traceToken, "precheck", "rejected", submission.serial, submission.queue, packetOffset, rejected);
+        return *verdict;
+    }
     phaseTiming.Phase(DrawRowPrecheck);
     using Stage = ShaderRecompiler::ShaderStage;
     using Role = ShaderRecompiler::ProgramRole;
@@ -140,7 +248,12 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
         decode = std::move(refreshed);
     }
-    resolveDrawDecode(queue, submission, decode, registerKey, drawKey, profile);
+    try {
+        resolveDrawDecode(queue, submission, decode, registerKey, drawKey, profile);
+    } catch (...) {
+        TraceDrawAttemptFailure(traceToken, "decode", "exception", submission.serial, submission.queue, packetOffset, ExceptionReason(std::current_exception()));
+        throw;
+    }
     const auto& graphics = decode->state;
     auto pixel = decode->pixel;
     std::vector<DrawProgram> programs = decode->programs;
@@ -237,9 +350,26 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     bool drawHit = false;
     bool verifyHit = false;
     const bool stageEntries = useDrawEntries && !(graphics.stages.tessellation && !drawParameters.indirect && drawParameters.instanceCount > 1u);
-    lookupDraw(submission, localDevice, graphics, pixel, programs, roles, vertexInfos, stageEntries, registerKey, profile, drawKey, entry, matched, matchedRegions, drawHit, verifyHit, phaseTiming, phaseMs, dataEntry, dataCandidates, stageData);
+    try {
+        lookupDraw(submission, localDevice, graphics, pixel, programs, roles, vertexInfos, stageEntries, registerKey, profile, drawKey, entry, matched, matchedRegions, drawHit, verifyHit, phaseTiming, phaseMs, dataEntry, dataCandidates, stageData);
+    } catch (...) {
+        TraceDrawAttemptException(traceToken, "lookup", submission.serial, submission.queue, packetOffset, std::current_exception());
+        throw;
+    }
     const bool patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; });
     std::uint64_t stageDataVerified = 0;
+    const auto target = graphics.hasColorTarget ? graphics.color.address : 0;
+    const VulkanDevice::DrawTraceContext trace{traceToken, submission.serial, submission.queue, packetOffset, target};
+    if (trace.token != 0) {
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            const auto& program = programs[i];
+            AgcDriver::CaptureTrace::LogBestEffort("draw-selected token=%llu submission=%llu queue=%x offset=%zu snapshot=0x%llx code=%llx entryOffset=%zu entry=%llx stage=%u role=%u drawCacheHit=%u variantHit=%u target=%llx",
+                    static_cast<unsigned long long>(trace.token), static_cast<unsigned long long>(submission.serial), submission.queue, packetOffset,
+                    static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(program.snapshot.get())), static_cast<unsigned long long>(program.snapshot->codeAddress), program.codeOffset,
+                    static_cast<unsigned long long>(program.snapshot->codeAddress + program.codeOffset), static_cast<unsigned>(program.binary.stage), static_cast<unsigned>(roles[i]),
+                    drawHit ? 1u : 0u, matched[i] != nullptr ? 1u : 0u, static_cast<unsigned long long>(target));
+        }
+    }
 
     if (registerKey) {
 
@@ -307,6 +437,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         throw std::runtime_error(message);
     };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
+    std::size_t completedSubdraws = 0;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
     std::vector<std::size_t> resultIndex(programs.size(), 0);
     for (std::size_t i = 0; i < programs.size(); ++i) {
@@ -350,10 +481,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         } else if (i == 0) {
             fold(result, drawParameters);
         }
-        const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
-        require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
-        stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes});
-        pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
+        try {
+            const auto slotEnd = (pushCursorBytes / Graphics::PipelinePushSlotBytes + 1u) * Graphics::PipelinePushSlotBytes;
+            require(result.pushConstants.size() <= slotEnd - pushCursorBytes, "stage push constants exceed the pipeline push constant block");
+            stages.push_back({program.binary.stage, &result, result.pushConstants.empty() ? 0u : pushCursorBytes});
+            pushCursorBytes += static_cast<std::uint32_t>(result.pushConstants.size());
+        } catch (...) {
+            TraceMaterializationFailure(trace.token, submission, packetOffset, "push-constant-validation", completedSubdraws, std::current_exception());
+            throw;
+        }
     }
 
     if (stageDataVerified != 0) {
@@ -374,28 +510,33 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
 
     if (pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
-    if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(queue, packet, submission, rejected);
+    if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(queue, packet, submission, packetOffset, rejected);
 
     bool rectListBuilt = false;
 
     std::size_t rectIndex = 0;
     const auto buildRectList = [&] {
-        phaseTiming.Phase(DrawRowVectors);
-        require(programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr, "rect-list requires vertex and fragment programs");
-        auto rectangle = DrawRectangle(*programs[0].snapshot, programs[1].snapshot, programResults[0]->variantId, programResults[1]->variantId, localDevice->Target());
-        if (rectListBuilt) {
-            results[rectIndex] = std::move(rectangle.control);
-            results[rectIndex + 1] = std::move(rectangle.evaluation);
+        try {
+            phaseTiming.Phase(DrawRowVectors);
+            require(programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr, "rect-list requires vertex and fragment programs");
+            auto rectangle = DrawRectangle(*programs[0].snapshot, programs[1].snapshot, programResults[0]->variantId, programResults[1]->variantId, localDevice->Target());
+            if (rectListBuilt) {
+                results[rectIndex] = std::move(rectangle.control);
+                results[rectIndex + 1] = std::move(rectangle.evaluation);
+                phaseTiming.Phase(DrawRowRectList);
+                return;
+            }
+            require(stages.size() == 2, "rect-list requires vertex and fragment programs");
+            rectIndex = results.size();
+            results.push_back(std::move(rectangle.control));
+            results.push_back(std::move(rectangle.evaluation));
+            stages.insert(stages.begin() + 1, {{Stage::TessellationControl, &results[rectIndex], 0}, {Stage::TessellationEvaluation, &results[rectIndex + 1], 0}});
+            rectListBuilt = true;
             phaseTiming.Phase(DrawRowRectList);
-            return;
+        } catch (...) {
+            TraceMaterializationFailure(trace.token, submission, packetOffset, "rect-list", completedSubdraws, std::current_exception());
+            throw;
         }
-        require(stages.size() == 2, "rect-list requires vertex and fragment programs");
-        rectIndex = results.size();
-        results.push_back(std::move(rectangle.control));
-        results.push_back(std::move(rectangle.evaluation));
-        stages.insert(stages.begin() + 1, {{Stage::TessellationControl, &results[rectIndex], 0}, {Stage::TessellationEvaluation, &results[rectIndex + 1], 0}});
-        rectListBuilt = true;
-        phaseTiming.Phase(DrawRowRectList);
     };
     if (graphics.rectList) buildRectList();
     if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active) {
@@ -484,7 +625,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
                 decodeVertexInfo(programIndex);
-                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
+                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }

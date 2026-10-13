@@ -13,6 +13,17 @@
 
 namespace AgcDriver {
 
+// Capture-trace destination: APS5_CAPTURE_TRACE_PATH when it holds a
+// non-empty value, otherwise the historical relative capture-trace.log.
+// An absolute custom path redirects the trace without a
+// working-directory change, which the runtime's guest path
+// resolution depends on.
+inline const char* CaptureTracePath() {
+    const char* configuredPath = std::getenv("APS5_CAPTURE_TRACE_PATH");
+    if (configuredPath != nullptr && configuredPath[0] != '\0') return configuredPath;
+    return "capture-trace.log";
+}
+
 class CaptureTrace {
 public:
     static bool Enabled() {
@@ -30,6 +41,17 @@ public:
         trace.append(std::string(line.data(), static_cast<std::size_t>(size)));
     }
 
+    // Optional diagnostics must never change the behavior of the operation they observe.
+    // Keep the throwing Log API for tests and callers that need delivery errors, and use this
+    // wrapper only for best-effort tracing at driver control-flow boundaries.
+    template<typename... TArgs>
+    static void LogBestEffort(const char* format, TArgs... args) noexcept {
+        try {
+            Log(format, args...);
+        } catch (...) {
+        }
+    }
+
 private:
     static CaptureTrace& instance() {
         static CaptureTrace trace;
@@ -37,8 +59,17 @@ private:
     }
 
     CaptureTrace() {
+        const char* path = CaptureTracePath();
+        output.open(path, std::ios::binary);
+        if (!output.is_open()) {
+            // A configured destination that cannot be opened must
+            // not fall back to capture-trace.log: report the
+            // failure and leave tracing unavailable instead of
+            // throwing into the driver call path.
+            std::fprintf(stderr, "Capture trace open failed for %s\n", path);
+            return;
+        }
         output.exceptions(std::ios::badbit | std::ios::failbit);
-        output.open("capture-trace.log", std::ios::binary);
         worker = std::thread([this] { run(); });
     }
 
@@ -48,10 +79,11 @@ private:
             stopping = true;
         }
         changed.notify_one();
-        worker.join();
+        if (worker.joinable()) worker.join();
     }
 
     void append(std::string line) {
+        if (!output.is_open()) return;
         const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
         std::lock_guard lock(mutex);
         if (pending.size() + line.size() + 64 > 16 * 1024 * 1024) throw std::runtime_error("Capture trace queue exceeded 16 MiB");

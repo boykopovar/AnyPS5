@@ -188,6 +188,9 @@ public:
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
+    // Returns the serial the open batch will receive at its next Submit (1 when none is open).
+    std::uint64_t OpenBatchSerial();
+    // Discards a batch without submitting it (its recorded work is lost).
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
@@ -203,6 +206,7 @@ public:
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
+    void NoteDrawTraceToken(std::uint64_t token) noexcept;
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
@@ -653,6 +657,8 @@ private:
             std::uint64_t end;
         };
         std::vector<KeyStore> keyStores;
+        // Draw trace tokens noted into this batch (see NoteDrawTraceToken).
+        std::vector<std::uint64_t> drawTraceTokens;
     };
     struct LabelEntry {
         std::uint32_t value;
@@ -752,7 +758,8 @@ private:
     bool syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int source, const void* site);
     // `source` is the CountSync source the wait is attributed to.
     void finish(std::unique_ptr<Batch> batch, bool wait, int source, bool releaseNow = false);
-    void release(Batch& batch) noexcept;
+    void discardUnsubmitted(std::unique_ptr<Batch> batch, bool reusable) noexcept;
+    void release(Batch& batch, bool reusable = true) noexcept;
     static bool overlaps(const Batch& batch, std::uint64_t address, std::uint64_t end);
     static std::optional<ReadKind> readOverlap(const Batch& batch, std::uint64_t address, std::uint64_t end);
     static std::vector<std::pair<std::uint64_t, std::uint64_t>> notedReads(const Batch& batch);
