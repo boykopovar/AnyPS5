@@ -33,6 +33,7 @@ struct HostImport {
     std::uint64_t serial = 0;
     bool unwatched = false;
     bool dmaBuf = false;
+    mutable std::uint64_t lastUseFrame = 0;
     std::shared_ptr<void> chunk;
 };
 
@@ -57,6 +58,10 @@ void SetImportWatch(const Context& context, ImportWatch watch);
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
 // the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+const HostImport* ExistingHostImport(const Context& context, std::uint64_t address, std::size_t bytes);
+bool HostImportsUnwatch(const Context& context);
+const HostImport* StorageImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+std::size_t RetireIdleImports(const Context& context);
 void SetHostImportWindow(std::uint64_t bytes);
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice);
 // Whether an existing import covers [address, address + bytes), without reconciling the imports

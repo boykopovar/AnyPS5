@@ -170,7 +170,18 @@ struct HostImports {
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatchedNotes;
+    bool unwatchProbed = false;
 };
+
+void drainUnwatchedNotes(HostImports& state) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> notes;
+    {
+        std::lock_guard lock(state.mutex);
+        notes.swap(state.unwatchedNotes);
+    }
+    for (const auto& [base, bytes] : notes) StorageTexture::NoteRangeUnwatched(base, static_cast<std::size_t>(bytes));
+}
 
 HostImports& Imports() {
     static HostImports imports;
@@ -530,6 +541,14 @@ ImportWatchRequest importWatchRequest() {
 }
 #endif
 
+std::atomic<std::uint64_t> importWindow{0};
+
+void shrinkImportWindow() {
+    constexpr std::uint64_t allocation = 65536;
+    const auto current = importWindow.load(std::memory_order_relaxed);
+    if (current == 0 || current > allocation) importWindow.store(allocation, std::memory_order_relaxed);
+}
+
 void decideImportWatch(const Context& context, HostImports& state) {
     if (state.watchDevice == context.device) return;
 #ifdef _WIN32
@@ -559,6 +578,8 @@ void decideImportWatch(const Context& context, HostImports& state) {
         std::fprintf(stderr, "[write-watch] host imports resolve write protection: unknown (probe failed at %s, %d); imported ranges are compared\n", probe.failure, static_cast<int>(probe.result));
     } else {
         state.unwatchImports = probe.writtenAfterSubmit != 0 || probe.writtenAfterFill != 0;
+        state.unwatchProbed = state.unwatchImports;
+        if (state.unwatchImports) shrinkImportWindow();
         std::fprintf(stderr, "[write-watch] host imports resolve write protection: %s (%u of %u scratch pages written after a GPU read, %u after a GPU write, %u after the import); imported ranges %s\n", state.unwatchImports ? "yes" : "no", probe.writtenAfterSubmit, probe.pages, probe.writtenAfterFill, probe.writtenAtImport, state.unwatchImports ? "are compared" : "stay watched");
     }
     state.unwatchDmaBufImports = state.unwatchImports;
@@ -597,7 +618,6 @@ std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uin
     return range.readable && address < range.address + range.bytes ? index : lease.size();
 }
 
-std::atomic<std::uint64_t> importWindow{0};
 
 ImportRun importRun(const GuestAllocations::Lease& lease, std::uint64_t address) {
     const auto index = leasedIndexContaining(lease, address);
@@ -662,6 +682,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     if (!importsStale(context, state)) {
         if (const auto* current = findImport(state, address, address + 1)) return current;
     }
+    decideImportWatch(context, state);
     auto run = importRun(lease, address);
     if (run.ranges.empty()) return nullptr;
     const auto base = run.base;
@@ -748,7 +769,6 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
         return nullptr;
     }
 #endif
-    decideImportWatch(context, state);
     VkResult result = VK_SUCCESS;
     const char* step = nullptr;
 #ifdef _WIN32
@@ -771,6 +791,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
 #endif
     entry.unwatched = step == nullptr && !(entry.dmaBuf ? watchedDmaBuf : watchedHostPointer);
+    if (entry.unwatched) state.unwatchedNotes.emplace_back(base, bytes);
     if (step != nullptr) {
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
@@ -853,7 +874,10 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
     for (auto it = state.imports.begin(); it != state.imports.end();) {
         const auto* range = leasedRangeAt(lease, it->first);
         if (range != nullptr && sameRange(it->second, lease)) {
-            if (it->second.unwatched) GuestMemory::Unwatch(it->first, it->second.bytes);
+            if (it->second.unwatched && GuestMemory::Watched(it->first, static_cast<std::size_t>(it->second.bytes))) {
+                GuestMemory::Unwatch(it->first, it->second.bytes);
+                state.unwatchedNotes.emplace_back(it->first, it->second.bytes);
+            }
             ++it;
             continue;
         }
@@ -1993,7 +2017,9 @@ void SetImportWatch(const Context& context, ImportWatch watch) {
     std::lock_guard lock(state.mutex);
     state.watchDevice = context.device;
     state.unwatchImports = watch == ImportWatch::Unwatch;
+    state.unwatchProbed = state.unwatchImports;
     state.unwatchDmaBufImports = state.unwatchImports;
+    if (state.unwatchImports) shrinkImportWindow();
 }
 
 void SetHostImportWindow(std::uint64_t bytes) {
@@ -2004,16 +2030,86 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     ensurePinWaiter();
     auto& state = Imports();
-    std::lock_guard lock(state.mutex);
-    // A hit is only valid while the registry has not changed since the imports were reconciled.
-    if (!importsStale(context, state)) {
-        if (const auto* entry = findImport(state, address, address + bytes)) return entry;
+    const HostImport* result = nullptr;
+    bool notes = false;
+    {
+        std::lock_guard lock(state.mutex);
+        const auto frame = GuestMemory::FrameSerial();
+        const HostImport* hit = nullptr;
+        if (!importsStale(context, state)) hit = findImport(state, address, address + bytes);
+        if (hit != nullptr) {
+            hit->lastUseFrame = frame;
+            result = hit;
+        } else {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            refreshImports(context, state, lease);
+            if (runCovers(lease, address, address + bytes)) {
+                const auto* entry = importAllocation(context, state, address, lease);
+                if (entry != nullptr) entry->lastUseFrame = frame;
+                result = entry != nullptr && findImport(state, address, address + bytes) == entry ? entry : nullptr;
+            }
+        }
+        notes = !state.unwatchedNotes.empty();
     }
+    if (notes) drainUnwatchedNotes(state);
+    return result;
+}
+
+constexpr std::uint64_t IdleImportFrames = 60;
+
+std::size_t RetireIdleImports(const Context& context) {
+    if (context.hostImportAlignment == 0) return 0;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device || !state.unwatchProbed) return 0;
+    const auto frame = GuestMemory::FrameSerial();
+    const auto* recorder = Recorder::Active();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> rewatch;
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    refreshImports(context, state, lease);
-    if (!runCovers(lease, address, address + bytes)) return nullptr;
-    const auto* entry = importAllocation(context, state, address, lease);
-    return entry != nullptr && findImport(state, address, address + bytes) == entry ? entry : nullptr;
+    for (auto it = state.imports.begin(); it != state.imports.end();) {
+        const auto& entry = it->second;
+        if (!entry.unwatched || entry.lastUseFrame + IdleImportFrames > frame || (recorder != nullptr && !recorder->PendingWriteSettled(entry.base, static_cast<std::size_t>(entry.bytes)))) {
+            ++it;
+            continue;
+        }
+        if (leasedRangeAt(lease, entry.base) != nullptr) rewatch.emplace_back(entry.base, entry.bytes);
+        const auto next = std::next(it);
+        retireImport(context.device, state, it, lease);
+        it = next;
+    }
+    for (const auto& [base, bytes] : rewatch) GuestMemory::Rewatch(base, static_cast<std::size_t>(bytes));
+    return rewatch.size();
+}
+
+const HostImport* ExistingHostImport(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
+    auto& state = Imports();
+    const HostImport* result = nullptr;
+    bool notes = false;
+    {
+        std::lock_guard lock(state.mutex);
+        if (importsStale(context, state)) {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            refreshImports(context, state, lease);
+        }
+        result = findImport(state, address, address + bytes);
+        notes = !state.unwatchedNotes.empty();
+    }
+    if (notes) drainUnwatchedNotes(state);
+    return result;
+}
+
+bool HostImportsUnwatch(const Context& context) {
+    if (context.hostImportAlignment == 0) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    decideImportWatch(context, state);
+    return state.unwatchProbed;
+}
+
+const HostImport* StorageImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (HostImportsUnwatch(context) && GuestMemory::Watched(address, bytes)) return ExistingHostImport(context, address, bytes);
+    return HostImportFor(context, address, bytes);
 }
 
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
