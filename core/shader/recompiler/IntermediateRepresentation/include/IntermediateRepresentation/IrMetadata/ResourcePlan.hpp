@@ -15,6 +15,8 @@
 
 namespace ShaderRecompiler {
 
+namespace Detail { struct SrtExecutionPlan; }
+
 struct DescriptorValue {
     std::array<std::uint32_t, 8> dwords = {};
     std::uint32_t dwordCount = 0;
@@ -72,6 +74,7 @@ struct IrResourcePlan {
     // One byte per srtReads slot, 1 when the CPU walk never consumes the slot's value (see
     // Detail::ComputePureFlatSlots): a driver may reuse a capture whose words differ only there.
     std::vector<std::uint8_t> pureFlatSlots;
+    std::shared_ptr<const Detail::SrtExecutionPlan> executionPlan;
     bool requiresSpecializationMemory = false;
     bool srtPlanComplete = false;
     bool resourceTrackingComplete = false;

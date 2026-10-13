@@ -1,5 +1,6 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
+#include "Optimization/SrtWalker/SrtExecutionPlan.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
@@ -1005,6 +1006,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     for (const auto& sampler : plan.info.samplers) addSource(sampler.source);
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
+    plan.executionPlan = Detail::CompileSrtExecutionPlan(plan);
     return plan;
 }
 

@@ -380,6 +380,11 @@ target_link_libraries(agc_shared_write_tests PRIVATE libSceAgcDriver libkernel l
 set_target_properties(agc_shared_write_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_shared_write_tests)
 
+add_test_executable(agc_srt_execution_tests EXCLUDE_FROM_ALL tests/SrtExecution.cpp)
+target_link_libraries(agc_srt_execution_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_srt_execution_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_srt_execution_tests)
+
 add_test_executable(agc_write_tracking_tests EXCLUDE_FROM_ALL
         tests/WriteTracking.cpp
         Execution/src/GuestMemory.cpp
@@ -1141,7 +1146,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_shader_bindless agc_shader_srt_read_patching agc_shader_frontend_pair agc_shader_frontend_pair_off PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    foreach(agcTest IN ITEMS agc_shared_write_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vector_window_tests agc_constant_bit_test_tests agc_scalar_select_mask_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_pass_hazards_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_placeholder_images_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests agc_driver_cmask_fast_clear_tests agc_formatted_buffer_once_tests ${agcExecutionTests})
+    foreach(agcTest IN ITEMS agc_shared_write_tests agc_driver_tests agc_shader_memory_tests agc_structurizer_tests agc_spirv_module_tests agc_dpp_write_tests agc_masked_select_tests agc_vector_window_tests agc_constant_bit_test_tests agc_scalar_select_mask_tests agc_vop1_control_decode_tests agc_validate_program_tests agc_pass_hazards_tests agc_shader_disk_cache_tests agc_shader_device_profile_tests agc_placeholder_images_tests agc_shader_control_flow_tests agc_driver_flip_tests agc_driver_pm4_tests agc_driver_graphics_tests agc_driver_bda_device_tests agc_driver_mesh_tests agc_driver_cmask_fast_clear_tests agc_formatted_buffer_once_tests ${agcExecutionTests} agc_srt_execution_tests)
         if(agcTest STREQUAL "agc_driver_constant_store_tests" OR agcTest STREQUAL "agc_driver_flat_apertures_tests" OR agcTest STREQUAL "agc_driver_pipeline_optimized_readback_tests")
             continue()
         endif()
@@ -1154,6 +1159,7 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    set_tests_properties(agc_srt_execution PROPERTIES TIMEOUT 30)
     add_test(NAME agc_driver_emulated_color_compare_srgb_decode COMMAND agc_driver_emulated_color_compare_tests)
     set_tests_properties(agc_driver_emulated_color_compare_srgb_decode PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_SRGB_SHADER_DECODE=1"
