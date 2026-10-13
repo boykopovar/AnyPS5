@@ -265,6 +265,40 @@ static void CheckFreebsdConversions() {
         buffer == std::u16string(u"  \xd83d|"), "swprintf lone surrogate prints as itself");
 }
 
+
+static void CheckGroupingFlag() {
+    char16_t buffer[48];
+    Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g", 1234567, 42u, 1234.5, 12, 1e6) == 34 &&
+        buffer == std::u16string(u"1234567|42    |1234.50|+0012|1e+06"), "swprintf ' flag");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%'lld %ls", 9876543210ll, u"x") == 12 && buffer == std::u16string(u"9876543210 x"),
+        "snwprintf_s ' flag");
+}
+
+
+static void CheckSwprintf() {
+    char16_t buffer[8];
+    for (auto& unit : buffer) unit = u'x';
+    Require(swprintf_nid_postfix(buffer, 8, u"%d-%ls", 42, u"ab") == 5, "swprintf length");
+    Require(buffer == std::u16string(u"42-ab") && buffer[6] == u'x', "swprintf output");
+    Require(swprintf_nid_postfix(buffer, 8, u"中%ls%s", u"文", "\xc3\xa9") == 3, "swprintf non-ASCII length");
+    Require(buffer == std::u16string(u"中文é"), "swprintf non-ASCII output");
+    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xf0\x9f\x98\x80") == 2, "swprintf surrogate pair length");
+    Require(buffer == std::u16string(u"\U0001f600"), "swprintf surrogate pair output");
+    Require(swprintf_nid_postfix(buffer, 8, u"") == 0 && buffer[0] == 0, "swprintf empty format");
+    for (auto& unit : buffer) unit = u'x';
+    Require(swprintf_nid_postfix(buffer, 3, u"%ls", u"abcd") < 0, "swprintf truncation result");
+    Require(buffer == std::u16string(u"ab") && buffer[3] == u'x', "swprintf truncation output");
+    Require(swprintf_nid_postfix(buffer, 3, u"abc") < 0, "swprintf terminator does not fit");
+    buffer[0] = u'x';
+    Require(swprintf_nid_postfix(buffer, 0, u"a") < 0 && buffer[0] == u'x', "swprintf zero size");
+    Require(swprintf_nid_postfix(nullptr, 8, u"a") < 0, "swprintf null buffer");
+    Require(swprintf_nid_postfix(buffer, 5, u"%ls", u"abcd") == 4 && buffer == std::u16string(u"abcd"), "swprintf exact fit");
+    char16_t wide[16];
+    Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
+    Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
+    Require(swprintf_nid_postfix(wide, 16, u"%lp") < 0 && wide[0] == 0, "swprintf invalid conversion");
+}
+
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
     try {
         wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(buffer), 16, reinterpret_cast<const std::uint16_t*>(format), time);
@@ -378,6 +412,7 @@ int main() {
     CheckFloat();
     CheckSecureWideBoundary();
     CheckFreebsdConversions();
+    CheckSwprintf();
     CheckWcsftime();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
     Check(u"%.1s", "\xc3\xa9\xc3\xa8", u"\u00e9");
