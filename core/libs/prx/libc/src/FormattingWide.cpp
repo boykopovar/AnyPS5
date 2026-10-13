@@ -170,7 +170,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             }
         }
         std::string length;
-        if (In(*format, "hljztLq")) {
+        if (In(*format, secure ? "hljztL" : "hljztLq")) {
             length += static_cast<char>(*format++);
             if ((length == "h" && *format == u'h') || (length == "l" && *format == u'l')) length += static_cast<char>(*format++);
         }
@@ -275,6 +275,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         } else if (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) {
             std::u16string text = u"%";
             if (conversion != u'%') text.push_back(conversion);
+            if (conversion >= 0xd800 && conversion < 0xdc00 && *format >= 0xdc00 && *format < 0xe000) text.push_back(*format++);
             AppendPadded(out, text, left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
