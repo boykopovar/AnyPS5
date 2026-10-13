@@ -28,9 +28,13 @@ void Require(bool value, const std::string& message) {
     if (!value) throw std::runtime_error("vop2 multiply-add: " + message);
 }
 
-Term Leaf(const IrValue* value, const std::string& name) {
+Term Leaf(const IrValue* value, const std::string& name, bool flushed = false) {
     Require(value->Opcode() == IrOpcode::BitCastF32U32, name + " operand is not a plain f32 read");
     const IrValue* bits = value->Argument(0);
+    if (flushed && !bits->HasImmediate()) {
+        Require(bits->Opcode() == IrOpcode::Select || bits->Opcode() == IrOpcode::SelectU32, name + " operand is not flushed");
+        bits = bits->Argument(2);
+    }
     if (bits->HasImmediate()) {
         return {true, bits->ImmediateU32()};
     }
@@ -66,6 +70,37 @@ void Check(const std::string& name, std::uint32_t encoding, std::uint32_t wordCo
     Require(result != nullptr, name + " emits no multiply-add");
     for (std::uint32_t index = 0u; index < terms.size(); ++index) {
         const Term term = Leaf(result->Argument(index), name);
+        Require(term.literal == terms[index].literal && term.value == terms[index].value, name + " reads the wrong operand " + std::to_string(index));
+    }
+}
+
+void CheckSeparate(const std::string& name, std::uint32_t encoding, std::uint32_t wordCount, RdnaOpcode opcode, const std::array<Term, 3>& terms) {
+    const std::array<std::uint32_t, 2> words{(encoding << 25u) | (Destination << 17u) | (Source1 << 9u) | (256u + Source0), Literal};
+    const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words).first(wordCount), 0u);
+    Require(instruction.op == opcode, name + " decodes to another opcode");
+
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.SetFloatMode(ShaderFloatMode{0xf0u, false, false, false});
+    context.TranslateInstruction(instruction);
+
+    const IrValue* sum = nullptr;
+    for (const auto* value : block.Instructions()) {
+        Require(value->Opcode() != IrOpcode::FPFma32 && value->Opcode() != IrOpcode::FPMad32, name + " is not rounded separately");
+        if (value->Opcode() == IrOpcode::FPAdd32) {
+            Require(sum == nullptr, name + " emits more than one add");
+            sum = value;
+        }
+    }
+    Require(sum != nullptr, name + " emits no separate add");
+    const IrValue* product = sum->Argument(0);
+    if (product->Opcode() == IrOpcode::SelectF32) product = product->Argument(2);
+    Require(product->Opcode() == IrOpcode::FPMul32, name + " does not add a rounded product");
+    for (std::uint32_t index = 0u; index < terms.size(); ++index) {
+        const IrValue* operand = index < 2u ? product->Argument(index) : sum->Argument(1);
+        const Term term = Leaf(operand, name, true);
         Require(term.literal == terms[index].literal && term.value == terms[index].value, name + " reads the wrong operand " + std::to_string(index));
     }
 }
@@ -136,9 +171,9 @@ int main() {
         const std::array<Term, 3> accumulate{Register(Source0), Register(Source1), Register(Destination)};
         const std::array<Term, 3> multiplyLiteral{Register(Source0), Constant(), Register(Source1)};
         const std::array<Term, 3> addLiteral{Register(Source0), Register(Source1), Constant()};
-        Check("v_mac_f32", 0x1fu, 1u, RdnaOpcode::VMacF32, IrOpcode::FPMad32, accumulate);
-        Check("v_madmk_f32", 0x20u, 2u, RdnaOpcode::VMadmkF32, IrOpcode::FPMad32, multiplyLiteral);
-        Check("v_madak_f32", 0x21u, 2u, RdnaOpcode::VMadakF32, IrOpcode::FPMad32, addLiteral);
+        CheckSeparate("v_mac_f32", 0x1fu, 1u, RdnaOpcode::VMacF32, accumulate);
+        CheckSeparate("v_madmk_f32", 0x20u, 2u, RdnaOpcode::VMadmkF32, multiplyLiteral);
+        CheckSeparate("v_madak_f32", 0x21u, 2u, RdnaOpcode::VMadakF32, addLiteral);
         Check("v_fmac_f32", 0x2bu, 1u, RdnaOpcode::VMacF32, IrOpcode::FPFma32, accumulate);
         Check("v_fmamk_f32", 0x2cu, 2u, RdnaOpcode::VMadmkF32, IrOpcode::FPFma32, multiplyLiteral);
         Check("v_fmaak_f32", 0x2du, 2u, RdnaOpcode::VMadakF32, IrOpcode::FPFma32, addLiteral);

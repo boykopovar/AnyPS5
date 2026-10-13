@@ -634,10 +634,19 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
         const IrType type = IrOpcodeArgumentType(opcode, index);
         args[index] = type == IrType::F32 && mix ? &readMixF32(operand).Value() : readOperand(operand, type);
     }
-    IrValue* result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
+    IrValue* result = nullptr;
+    if (opcode == IrOpcode::FPMad32) {
+        IrValue* product = &flushTinyProduct(args[0], args[1], &ir.Emit(IrOpcode::FPMul32, IrType::F32, {args[0], args[1]})).Value();
+        const auto isZero = [&](IrValue* value) -> IrValue& { return ir.IEqual(ir.BitwiseAnd(ir.BitCastU32(*value), ir.Constant(0x7fffffffu)), ir.Constant(0u)); };
+        IrValue& zeroSum = ir.LogicalAnd(isZero(product), isZero(args[2]));
+        IrValue& zeroSumBits = ir.BitwiseAnd(ir.BitwiseAnd(ir.BitCastU32(*product), ir.BitCastU32(*args[2])), ir.Constant(0x80000000u));
+        result = &ir.Emit(IrOpcode::SelectF32, IrType::F32, {&zeroSum, &ir.BitCastF32(zeroSumBits), &ir.Emit(IrOpcode::FPAdd32, IrType::F32, {product, args[2]})});
+    } else {
+        result = &ir.Emit(opcode, IrOpcodeType(opcode), {args[0], args[1], args[2]});
+    }
     if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
-    if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
+    if ((opcode == IrOpcode::FPFma32 || opcode == IrOpcode::FPMad32) && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
     writeOperand(inst.destination, result);
     return true;
 }

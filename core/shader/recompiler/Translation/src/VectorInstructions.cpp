@@ -48,8 +48,10 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VMacF32:
     case RdnaOpcode::VMadmkF32:
     case RdnaOpcode::VMadakF32:
+    case RdnaOpcode::VMadF32:
     case RdnaOpcode::VFmaF32:
-        flush = roundsProductSeparately(inst) ? 0u : 3u;
+        if (roundsProductSeparately(inst)) return 3u;
+        flush = 3u;
         break;
     case RdnaOpcode::VCmpEqF32:
     case RdnaOpcode::VCmpGeF32:
