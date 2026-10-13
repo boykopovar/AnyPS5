@@ -163,13 +163,21 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             }
         }
         std::string length;
-        if (In(*format, "hljztL")) {
+        if (In(*format, "hljztLq")) {
             length += static_cast<char>(*format++);
             if ((length == "h" && *format == u'h') || (length == "l" && *format == u'l')) length += static_cast<char>(*format++);
         }
-        const char16_t conversion = *format;
-        if (!conversion) throw std::invalid_argument("Incomplete format conversion");
+        if (length == "q") length = "ll";
+        char16_t conversion = *format;
+        if (!conversion) {
+            if (secure) throw std::invalid_argument("Incomplete format conversion");
+            break;
+        }
         ++format;
+        if (!secure && (conversion == u'D' || conversion == u'O' || conversion == u'U')) {
+            if (length.empty() || length == "h" || length == "hh") length = "l";
+            conversion = conversion == u'D' ? u'd' : conversion == u'O' ? u'o' : u'u';
+        }
         if (!secure && conversion < 0x80) length = LibcDetail::ApplicableLength(length, static_cast<char>(conversion));
         const bool integerLength = length.empty() || length == "h" || length == "hh" || length == "l" || length == "ll" ||
             length == "j" || length == "z" || length == "t";
@@ -251,6 +259,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (!secure && !In(conversion, "cCdDiaAeEfFgGnoOpsSuUxX #*-+'.0123456789Lhjlqtz$m")) {
+            AppendPadded(out, std::u16string(1, conversion), left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }

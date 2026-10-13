@@ -222,7 +222,7 @@ static void CheckSwprintf() {
     char16_t wide[16];
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
-    Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    Require(swprintf_nid_postfix(wide, 16, u"%lp") < 0 && wide[0] == 0, "swprintf invalid conversion");
     for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
         wide[0] = u'x';
         Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
@@ -230,6 +230,28 @@ static void CheckSwprintf() {
     wide[0] = u'x';
     Require(swprintf_nid_postfix(wide, 16, u"%*d", INT_MIN, 7) < 0 && wide[0] == 0, "swprintf INT_MIN width");
     Require(swprintf_nid_postfix(wide, 16, u"%*d", -5, 7) == 5 && wide == std::u16string(u"7    "), "swprintf negative width");
+}
+
+static void CheckFreebsdConversions() {
+    char16_t buffer[48];
+    Require(swprintf_nid_postfix(buffer, 48, u"%qd|%qu|%qx|%5qd", -5ll, 7ull, 255ull, 9ll) == 13 &&
+        buffer == std::u16string(u"-5|7|ff|    9"), "swprintf q length");
+    Require(swprintf_nid_postfix(buffer, 48, u"%D|%O|%U", 5000000000ll, 8ll, 18446744073709551615ull) == 34 &&
+        buffer == std::u16string(u"5000000000|10|18446744073709551615"), "swprintf %D %O %U are long conversions");
+    Require(swprintf_nid_postfix(buffer, 48, u"%hD|%hhU|%5D|%-4O|", 70000ll, 70000ll, -3ll, 8ll) == 23 &&
+        buffer == std::u16string(u"70000|70000|   -3|10  |"), "swprintf %D %O %U ignore h and keep width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%y|[%5%]|[%-5y]|%€") == 19 &&
+        buffer == std::u16string(u"y|[    %]|[y    ]|€"), "swprintf unknown conversion prints itself");
+    Require(swprintf_nid_postfix(buffer, 48, u"100%") == 3 && buffer == std::u16string(u"100"), "swprintf trailing percent");
+    Require(swprintf_nid_postfix(buffer, 48, u"ab%5") == 2 && buffer == std::u16string(u"ab"), "swprintf trailing width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%d%l", 7) == 1 && buffer == std::u16string(u"7"), "swprintf trailing length");
+    Require(swprintf_nid_postfix(buffer, 48, u"%") == 0 && buffer[0] == 0, "swprintf lone percent");
+    Require(Format(buffer, 48, u"%d%", 7) == 1 && buffer == std::u16string(u"7"), "vswprintf trailing percent");
+    Require(swprintf_nid_postfix(buffer, 48, u"%m") < 0 && buffer[0] == 0, "swprintf %m still fails");
+    Require(swprintf_nid_postfix(buffer, 48, u"%lqd", 1ll) < 0, "swprintf odd modifier order still fails");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%y") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"100%") < 0 && buffer[0] == 0, "snwprintf_s trailing percent");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%D", 1ll) < 0 && buffer[0] == 0, "snwprintf_s %D");
 }
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
@@ -344,6 +366,7 @@ int main() {
     CheckSwprintf();
     CheckFloat();
     CheckSecureWideBoundary();
+    CheckFreebsdConversions();
     CheckWcsftime();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
     Check(u"%.1s", "\xc3\xa9\xc3\xa8", u"\u00e9");
