@@ -252,6 +252,17 @@ static void CheckFreebsdConversions() {
     Require(snwprintf_s_nid_postfix(buffer, 48, u"%y") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion");
     Require(snwprintf_s_nid_postfix(buffer, 48, u"100%") < 0 && buffer[0] == 0, "snwprintf_s trailing percent");
     Require(snwprintf_s_nid_postfix(buffer, 48, u"%D", 1ll) < 0 && buffer[0] == 0, "snwprintf_s %D");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%qd", 5ll) < 0 && buffer[0] == 0, "snwprintf_s %qd");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%qX", -5ll) < 0 && buffer[0] == 0, "snwprintf_s %qX");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%O", 8ll) < 0 && buffer[0] == 0, "snwprintf_s %O");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%U", 8ll) < 0 && buffer[0] == 0, "snwprintf_s %U");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%5%") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion with a width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%-5😀|") == 7 &&
+        buffer == std::u16string(u"😀    |"), "swprintf surrogate pair as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%5😀|") == 7 &&
+        buffer == std::u16string(u"    😀|"), "swprintf right-aligned surrogate pair");
+    Require(swprintf_nid_postfix(buffer, 48, u"%3\xd83d|") == 4 &&
+        buffer == std::u16string(u"  \xd83d|"), "swprintf lone surrogate prints as itself");
 }
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
