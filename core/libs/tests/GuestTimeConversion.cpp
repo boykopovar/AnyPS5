@@ -324,31 +324,43 @@ static void CheckGuestZone() {
     tzset_nid_postfix();
 }
 
+static bool ZoneFieldsConsistent(const GuestTm& time, std::int64_t instant, int hour) {
+    const std::int64_t localSeconds = ((instant + time.tm_gmtoff) % 86400 + 86400) % 86400;
+    if (time.tm_hour * 3600 + time.tm_min * 60 + time.tm_sec != localSeconds || time.tm_hour != hour) return false;
+    char expected[16];
+    const std::int64_t offset = time.tm_gmtoff < 0 ? -time.tm_gmtoff : time.tm_gmtoff;
+    std::snprintf(expected, sizeof(expected), "%02d %c%04d", hour, time.tm_gmtoff < 0 ? '-' : '+', static_cast<int>(offset / 3600 * 100));
+    char formatted[16]{};
+    return strftime_nid_postfix(formatted, sizeof(formatted), "%H %z", &time) == 8 && std::strcmp(formatted, expected) == 0;
+}
+
 static void CheckZoneRace() {
     const std::int64_t moment = 172800;
     std::atomic<bool> stop{false};
     std::atomic<int> torn{0};
     std::thread flipper([&] {
-        for (bool west = false; !stop.load(); west = !west) {
-            setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC-2", 1);
-            std::this_thread::yield();
-        }
+        for (bool west = false; !stop.load(); west = !west) setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC+3", 1);
     });
-    std::array<std::thread, 3> readers;
+    std::array<std::thread, 6> readers;
     for (auto& reader : readers) {
         reader = std::thread([&] {
-            for (int iteration = 0; iteration < 10000; ++iteration) {
+            for (int iteration = 0; iteration < 2500; ++iteration) {
                 GuestTm result{};
-                if (localtime_s_nid_postfix(&moment, &result) != &result || result.tm_mday != 3 || result.tm_hour * 3600 != result.tm_gmtoff) {
-                    ++torn;
-                }
+                if (localtime_s_nid_postfix(&moment, &result) != &result || !ZoneFieldsConsistent(result, moment, result.tm_hour)) ++torn;
+                GuestTm calendar{};
+                calendar.tm_year = 70;
+                calendar.tm_mday = 3;
+                calendar.tm_hour = 12;
+                calendar.tm_isdst = -1;
+                const std::int64_t instant = mktime_nid_postfix(&calendar);
+                if (instant == -1 || calendar.tm_mday != 3 || !ZoneFieldsConsistent(calendar, instant, 12)) ++torn;
             }
         });
     }
     for (auto& reader : readers) reader.join();
     stop = true;
     flipper.join();
-    Require(torn == 0, "localtime mixed the fields of two time zones while TZ changed");
+    Require(torn == 0, "A time conversion mixed the fields of two time zones while TZ changed");
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
     tzset_nid_postfix();
 }

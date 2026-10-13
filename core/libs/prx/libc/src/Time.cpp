@@ -177,9 +177,22 @@ void applyGuestZone() {
 #endif
 }
 
+int& zoneDepth() {
+    static thread_local int depth = 0;
+    return depth;
+}
+
 class ZoneScope {
 public:
-    ZoneScope() : lock(zoneMutex()) { applyGuestZone(); }
+    ZoneScope() : lock(zoneMutex()) {
+        if (zoneDepth() == 0) applyGuestZone();
+        ++zoneDepth();
+    }
+
+    ~ZoneScope() { --zoneDepth(); }
+
+    ZoneScope(const ZoneScope&) = delete;
+    ZoneScope& operator=(const ZoneScope&) = delete;
 
 private:
     std::lock_guard<std::recursive_mutex> lock;
