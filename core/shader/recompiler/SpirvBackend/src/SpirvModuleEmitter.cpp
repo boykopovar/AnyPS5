@@ -458,6 +458,53 @@ std::uint32_t ConvertClipCoordinate(SpirvEmitterState& state, std::uint32_t coor
     return ndc;
 }
 
+std::uint32_t RemapPositionDepth(SpirvEmitterState& state, std::uint32_t position) {
+    const auto& remap = state.inputInfo.vertex->depthRemap;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    std::array<std::uint32_t, 4> components{};
+    for (std::uint32_t i = 0; i < 4u; i++) {
+        components.at(i) = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, f32, components.at(i), position, i);
+    }
+    const auto mode = state.module.SpecializationConstant(u32, PipelineSpecialization::DepthRemapBase, remap.mode);
+    const auto scaleBits = state.module.SpecializationConstant(u32, PipelineSpecialization::DepthRemapBase + 1u, remap.scaleBits);
+    const auto offsetBits = state.module.SpecializationConstant(u32, PipelineSpecialization::DepthRemapBase + 2u, remap.offsetBits);
+    const auto scale = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBitcast, f32, scale, scaleBits);
+    const auto offset = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBitcast, f32, offset, offsetBits);
+    const auto scaled = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFMul, f32, scaled, components[2], scale);
+    const auto shifted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFMul, f32, shifted, components[3], offset);
+    const auto remapped = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFAdd, f32, remapped, scaled, shifted);
+    const auto active = state.module.AllocateId();
+    state.module.AddFunction(spv::OpINotEqual, boolean, active, mode, ConstantU32(state, 0u));
+    const auto z = Select(state, f32, active, remapped, components[2]);
+    const auto symmetric = state.module.AllocateId();
+    state.module.AddFunction(spv::OpIEqual, boolean, symmetric, mode, ConstantU32(state, 2u));
+    const auto nearSymmetric = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFAdd, f32, nearSymmetric, components[3], components[2]);
+    const auto near = Select(state, f32, symmetric, nearSymmetric, components[2]);
+    const auto far = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFSub, f32, far, components[3], components[2]);
+    const auto inside = ConstantF32Value(state, 1.0f);
+    const auto storeDistance = [&](std::uint32_t index, std::uint32_t distance) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, f32), pointer, state.clipDistanceVariable, ConstantU32(state, index));
+        state.module.AddFunction(spv::OpStore, pointer, Select(state, f32, active, distance, inside));
+    };
+    if (state.clipDistanceVariable == 0u) throw std::runtime_error("depth remap clip distances were not declared");
+    storeDistance(state.depthRemapClipIndex, near);
+    storeDistance(state.depthRemapClipIndex + 1u, far);
+    const auto converted = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 4u), converted, components[0], components[1], z, components[3]);
+    return converted;
+}
+
 std::uint32_t ConvertPositionToClipSpace(SpirvEmitterState& state, std::uint32_t position) {
     if (state.inputInfo.vertex == nullptr) {
         throw std::runtime_error("vertex input info is missing for clip-space conversion");
@@ -1401,6 +1448,9 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             }
             if (state.inputInfo.vertex->clipSpace.enabled) {
                 value = ConvertPositionToClipSpace(state, value);
+            }
+            if (state.depthRangeRemap && state.program.Resources().stage == IrShaderStage::Vertex) {
+                value = RemapPositionDepth(state, value);
             }
         }
         if (exp.kind == ExportTargetKind::Position && state.zeroPositionClipIndex) {

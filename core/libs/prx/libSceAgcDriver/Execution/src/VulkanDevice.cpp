@@ -3035,6 +3035,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
     target.float16DenormPreserve = state->float16DenormPreserve;
+    target.depthRangeRemap = !state->depthRangeUnrestricted;
     target.fixedPushSlots = state->graphicsPipelineLibrary;
     target.registrationModules = state->graphicsPipelineLibrary;
     target.srgbDecodeFormats = state->srgbDecodeFormats;

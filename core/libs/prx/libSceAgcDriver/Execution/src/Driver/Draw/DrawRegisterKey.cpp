@@ -92,6 +92,8 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
 
 bool Driver::sameVertexInfo(const ShaderRecompiler::ShaderVertexStageInfo& a, const ShaderRecompiler::ShaderVertexStageInfo& b) {
     if (a.resourcesNum != b.resourcesNum || a.fetchAttribReg != b.fetchAttribReg || a.fetchBufferReg != b.fetchBufferReg || a.fetchEmbedded != b.fetchEmbedded || a.paClVsOutCntl != b.paClVsOutCntl) return false;
+    if (a.resourcesNum != b.resourcesNum || a.fetchAttribReg != b.fetchAttribReg || a.fetchBufferReg != b.fetchBufferReg || a.fetchEmbedded != b.fetchEmbedded) return false;
+    if (a.depthRemapMode != b.depthRemapMode || a.depthRemapScale != b.depthRemapScale || a.depthRemapOffset != b.depthRemapOffset) return false;
     for (std::uint32_t i = 0; i < a.resourcesNum && i < a.resources.size(); ++i) {
         if (a.resources[i].fields != b.resources[i].fields) return false;
         const auto& x = a.resourcesDst[i];

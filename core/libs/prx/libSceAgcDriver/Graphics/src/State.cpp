@@ -668,6 +668,29 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
+void ApplyDepthRemap(const Context& context, State& state) {
+    const auto& viewport = state.viewport;
+    const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
+    if (context.depthRangeUnrestricted || inRange) return;
+    Require(state.stages.path == ShaderPath::Vertex && !state.stages.mesh && !state.stages.tessellation, "viewport depth outside [0, 1] is remapped on the vertex path only");
+    Require(context.depthClamp, "viewport depth outside [0, 1] needs depth clamping to stand in for the console's clamp");
+    const float clampMin = std::clamp(state.depthClampMin, 0.0f, 1.0f);
+    const float clampMax = std::clamp(state.depthClampMax, 0.0f, 1.0f);
+    const bool floatDepth = state.depth.has_value() && (state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT);
+    if ((clampMin != state.depthClampMin || clampMax != state.depthClampMax) && floatDepth && (state.depthWrite || state.depthTest)) {
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            std::fprintf(stderr, "[gpu] viewport depth clamp bounds [%g, %g] on a float depth target are clipped to [0, 1]: the device has no VK_EXT_depth_range_unrestricted\n", state.depthClampMin, state.depthClampMax);
+        }
+    }
+    state.depthRemap = {state.negativeOneToOne ? 2u : 1u, state.depthScale, state.depthOffset};
+    state.viewport.minDepth = clampMin;
+    state.viewport.maxDepth = clampMax;
+    state.negativeOneToOne = false;
+    state.depthClamp = true;
+}
+
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     const auto& cx = queue.context;
@@ -851,6 +874,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         throw std::runtime_error(message.str());
     }
     Require(readFloat(cx, 0xb4) <= readFloat(cx, 0xb5), "inverted viewport depth clamp bounds");
+    result.depthScale = zs;
+    result.depthOffset = zo;
+    result.depthClampMin = readFloat(cx, 0xb4);
+    result.depthClampMax = readFloat(cx, 0xb5);
     result.viewport = collapsed ? VkViewport{xo, yo, 1, 1, minDepth, maxDepth} : VkViewport{xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
     if (const auto renderControl = find(cx, 0x000); result.depth && renderControl != cx.end() && (renderControl->second & 1u) != 0) {
         result.viewport.minDepth = result.depth->clearDepth;

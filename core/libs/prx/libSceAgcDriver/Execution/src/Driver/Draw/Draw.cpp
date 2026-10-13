@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include <bit>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -90,7 +91,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     phaseTiming.Phase(DrawRowKeyLookupValidate);
 
-    resolveDrawDecode(queue, submission, decode, registerKey, drawKey, profile);
+    resolveDrawDecode(queue, submission, localDevice->graphicsContext(), decode, registerKey, drawKey, profile);
     const auto& graphics = decode->state;
     auto pixel = decode->pixel;
     std::vector<DrawProgram> programs = decode->programs;
@@ -146,6 +147,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         decodeReads[i].clear();
         vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
         if (vertexInfos[i]) vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207)) | graphics.layerExports;
+        if (vertexInfos[i]) {
+            vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
+            vertexInfos[i]->depthRemapScale = std::bit_cast<std::uint32_t>(graphics.depthRemap.scale);
+            vertexInfos[i]->depthRemapOffset = std::bit_cast<std::uint32_t>(graphics.depthRemap.offset);
+        }
     };
     if (!registerKey) {
         for (std::size_t i = 0; i < programs.size(); ++i) decodeVertexInfo(i);

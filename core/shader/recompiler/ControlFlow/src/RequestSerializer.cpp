@@ -413,6 +413,9 @@ void writeVertexInfo(Writer& writer, const ShaderVertexStageInfo& info) {
     writer.WriteU32(info.fetchBufferReg);
     writer.WriteBool(info.fetchEmbedded);
     writer.WriteU32(info.paClVsOutCntl);
+    writer.WriteU32(info.depthRemapMode);
+    writer.WriteU32(info.depthRemapScale);
+    writer.WriteU32(info.depthRemapOffset);
 }
 
 ShaderVertexStageInfo readVertexInfo(Reader& reader, std::uint32_t version) {
@@ -433,6 +436,11 @@ ShaderVertexStageInfo readVertexInfo(Reader& reader, std::uint32_t version) {
     info.fetchBufferReg = reader.ReadU32();
     info.fetchEmbedded = reader.ReadBool();
     if (version >= 20u) info.paClVsOutCntl = reader.ReadU32();
+    if (version >= 23u) {
+        info.depthRemapMode = reader.ReadU32();
+        info.depthRemapScale = reader.ReadU32();
+        info.depthRemapOffset = reader.ReadU32();
+    }
     return info;
 }
 
@@ -748,7 +756,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(21u);
+    writer.WriteU32(23u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -772,6 +780,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.registrationWordLimit);
     writer.WriteBool(request.target.vertexSubgroups);
     writer.WriteBool(request.target.float16DenormPreserve);
+    writer.WriteBool(request.target.depthRangeRemap);
     return base64Encode(buffer);
 }
 
@@ -780,7 +789,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 21u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 23u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -805,6 +814,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 17u) result.request.target.registrationWordLimit = reader.ReadU32();
     if (version >= 18u) result.request.target.vertexSubgroups = reader.ReadBool();
     if (version >= 21u) result.request.target.float16DenormPreserve = reader.ReadBool();
+    if (version >= 23u) result.request.target.depthRangeRemap = reader.ReadBool();
     return result;
 }
 

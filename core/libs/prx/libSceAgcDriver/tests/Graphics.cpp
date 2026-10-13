@@ -2301,6 +2301,56 @@ void framebufferLayerTests() {
     }
 }
 
+void DepthRemapTests() {
+    auto queue = makeState();
+    queue.context[0x204] = 0;
+    queue.context[0x113] = std::bit_cast<std::uint32_t>(1.0f);
+    queue.context[0x114] = 0;
+    AgcDriver::Graphics::Context remapping{};
+    remapping.depthClamp = true;
+    auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.negativeOneToOne && state.viewport.minDepth == -1 && state.viewport.maxDepth == 1 && state.depthRemap.mode == 0, "a negative-one-to-one depth transform decoded with a remap");
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, state);
+    Require(state.depthRemap.mode == 2 && state.depthRemap.scale == 1.0f && state.depthRemap.offset == 0.0f, "the remap did not take the viewport's depth scale and offset");
+    Require(state.viewport.minDepth == 0 && state.viewport.maxDepth == 1 && !state.negativeOneToOne && state.depthClamp, "the remapped viewport does not clamp at the console's bounds in zero-to-one clip space");
+    AgcDriver::Graphics::Context unrestricted{};
+    unrestricted.depthRangeUnrestricted = true;
+    auto kept = AgcDriver::Graphics::DecodeState(queue);
+    AgcDriver::Graphics::ApplyDepthRemap(unrestricted, kept);
+    Require(kept.depthRemap.mode == 0 && kept.viewport.minDepth == -1 && kept.negativeOneToOne && !kept.depthClamp, "an unrestricted device remapped the depth range");
+    AgcDriver::Graphics::Context noClamp{};
+    auto refused = AgcDriver::Graphics::DecodeState(queue);
+    expectFailure([&] { AgcDriver::Graphics::ApplyDepthRemap(noClamp, refused); }, "depth clamping");
+    queue.context[0x113] = std::bit_cast<std::uint32_t>(0.5f);
+    queue.context[0x114] = std::bit_cast<std::uint32_t>(0.5f);
+    auto inRange = AgcDriver::Graphics::DecodeState(queue);
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, inRange);
+    Require(inRange.depthRemap.mode == 0 && inRange.negativeOneToOne && !inRange.depthClamp, "an in-range depth transform was remapped");
+    queue.context[0x204] = 0x80000u;
+    queue.context[0x113] = std::bit_cast<std::uint32_t>(2.0f);
+    queue.context[0x114] = std::bit_cast<std::uint32_t>(-0.5f);
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.25f);
+    queue.context[0xb5] = std::bit_cast<std::uint32_t>(0.75f);
+    auto bounded = AgcDriver::Graphics::DecodeState(queue);
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, bounded);
+    Require(bounded.depthRemap.mode == 1 && bounded.depthRemap.scale == 2.0f && bounded.depthRemap.offset == -0.5f && bounded.viewport.minDepth == 0.25f && bounded.viewport.maxDepth == 0.75f, "a zero-to-one remap did not take the clamp bounds");
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(-1.0f);
+    queue.context[0xb5] = std::bit_cast<std::uint32_t>(2.0f);
+    auto clipped = AgcDriver::Graphics::DecodeState(queue);
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, clipped);
+    Require(clipped.depthRemap.mode == 1 && clipped.viewport.minDepth == 0 && clipped.viewport.maxDepth == 1, "clamp bounds beyond [0, 1] were not clipped to the representable depth range");
+    auto unorm = AgcDriver::Graphics::DecodeState(queue);
+    unorm.depth = AgcDriver::Graphics::DepthTarget{0x10000, 0, {64, 64}, VK_FORMAT_D16_UNORM, 0.0f, 0};
+    unorm.depthTest = unorm.depthWrite = true;
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, unorm);
+    Require(unorm.viewport.minDepth == 0 && unorm.viewport.maxDepth == 1, "a normalized depth target refused clipped clamp bounds");
+    auto floating = AgcDriver::Graphics::DecodeState(queue);
+    floating.depth = AgcDriver::Graphics::DepthTarget{0x10000, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 0.0f, 0};
+    floating.depthWrite = true;
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, floating);
+    Require(floating.depthRemap.mode == 1 && floating.viewport.minDepth == 0 && floating.viewport.maxDepth == 1 && floating.depthClamp, "a written float depth target refused clipped clamp bounds");
+}
+
 void DepthClipTests() {
     auto queue = makeState();
     const auto direct = AgcDriver::Graphics::DecodeState(queue);
@@ -5502,6 +5552,7 @@ int main(int argc, char** argv) {
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();
+        DepthRemapTests();
         DepthStencilTests();
         OneDimensionalColorTests();
         htileDepthClearTests();
