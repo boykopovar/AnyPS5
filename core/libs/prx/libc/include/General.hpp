@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_HPP
 
 #include <stdexcept>
+#include <string>
 #include <filesystem>
 #include <vector>
 
@@ -16,6 +17,8 @@ extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, 
 extern "C" int KeepHostStandardError_nid_no_patch();
 extern "C" int HostStandardError_nid_no_patch();
 #endif
+
+extern "C" bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);

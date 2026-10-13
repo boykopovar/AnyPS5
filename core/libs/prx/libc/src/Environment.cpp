@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #ifndef _WIN32
@@ -49,6 +50,17 @@ int EnvironmentError(int error) { errno = error; return -1; }
 }
 
 extern "C" {
+bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value) {
+    if (!ValidEnvironmentName(name)) return false;
+    std::lock_guard lock(environmentMutex);
+    for (auto& entry : Environment())
+        if (entry.Matches(name)) {
+            value = entry.Data() + std::strlen(name) + 1;
+            return true;
+        }
+    return false;
+}
+
 char* APS5_VABI getenv_nid_postfix(const char* name) {
     if (!ValidEnvironmentName(name)) { errno = 22; return nullptr; }
     try {
