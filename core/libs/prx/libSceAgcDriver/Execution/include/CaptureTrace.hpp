@@ -13,11 +13,6 @@
 
 namespace AgcDriver {
 
-// Capture-trace destination: APS5_CAPTURE_TRACE_PATH when it holds a
-// non-empty value, otherwise the historical relative capture-trace.log.
-// An absolute custom path redirects the trace without a
-// working-directory change, which the runtime's guest path
-// resolution depends on.
 inline const char* CaptureTracePath() {
     const char* configuredPath = std::getenv("APS5_CAPTURE_TRACE_PATH");
     if (configuredPath != nullptr && configuredPath[0] != '\0') return configuredPath;
@@ -41,9 +36,6 @@ public:
         trace.append(std::string(line.data(), static_cast<std::size_t>(size)));
     }
 
-    // Optional diagnostics must never change the behavior of the operation they observe.
-    // Keep the throwing Log API for tests and callers that need delivery errors, and use this
-    // wrapper only for best-effort tracing at driver control-flow boundaries.
     template<typename... TArgs>
     static void LogBestEffort(const char* format, TArgs... args) noexcept {
         try {
@@ -62,10 +54,6 @@ private:
         const char* path = CaptureTracePath();
         output.open(path, std::ios::binary);
         if (!output.is_open()) {
-            // A configured destination that cannot be opened must
-            // not fall back to capture-trace.log: report the
-            // failure and leave tracing unavailable instead of
-            // throwing into the driver call path.
             std::fprintf(stderr, "Capture trace open failed for %s\n", path);
             return;
         }

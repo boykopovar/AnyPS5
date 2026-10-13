@@ -22,9 +22,6 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 
-// A vertex shader whose only real instruction is a SOP1 with opcode 0x02. The
-// RDNA decoder rejects that opcode with "unsupported SOP1 opcode 2", so the
-// draw-time shader request throws inside InvocationFor.
 alignas(256) constexpr std::array<std::uint32_t, 2> FailingVertexCode{0xbe800200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> ValidVertexCode{0x7e000208u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u, 0xbf810000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> PixelCode{0x7e000200u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
@@ -92,8 +89,6 @@ std::vector<std::uint32_t> DrawPacket(const std::uint32_t* vertex, const std::ui
     return commands;
 }
 
-// The capture-trace worker drains its queue on a 100 ms timer, so a written
-// record reaches the destination asynchronously.
 std::string ReadTraceFile(const char* path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream.is_open()) return {};
@@ -251,11 +246,6 @@ int main(int argc, char** argv) {
             Require(expectFailure, "driver shutdown failed unexpectedly");
         }
         std::cout << "draw shader failure tests passed\n";
-        // The driver is shut down explicitly above. Terminate directly
-        // instead of running process-wide static destruction: shutting down
-        // a live driver while capture tracing is active deadlocks that path
-        // (a pre-existing driver issue unrelated to this diagnostic), and
-        // every record this case verifies is already flushed to its trace.
         std::_Exit(0);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

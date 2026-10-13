@@ -22,9 +22,6 @@ void Check(bool condition, const char* message) {
 
 void RemoveEnvironmentVariable(const char* name) {
 #ifdef _WIN32
-    // msvcrt treats a variable assigned an empty value through
-    // _putenv_s as absent, which is the state the capture-trace
-    // gate checks for an unset variable.
     _putenv_s(name, "");
 #else
     unsetenv(name);
@@ -44,8 +41,6 @@ std::string ReadFile(const char* path) {
     return buffer.str();
 }
 
-// The capture-trace worker drains its queue on a 100 ms timer, so a
-// written record reaches the destination asynchronously.
 bool WaitForRecord(const char* path, const std::string& record) {
     for (int attempt = 0; attempt < 100; ++attempt) {
         if (FileExists(path) && ReadFile(path).find(record) != std::string::npos) return true;

@@ -188,9 +188,7 @@ public:
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
-    // Returns the serial the open batch will receive at its next Submit (1 when none is open).
     std::uint64_t OpenBatchSerial();
-    // Discards a batch without submitting it (its recorded work is lost).
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
@@ -657,7 +655,6 @@ private:
             std::uint64_t end;
         };
         std::vector<KeyStore> keyStores;
-        // Draw trace tokens noted into this batch (see NoteDrawTraceToken).
         std::vector<std::uint64_t> drawTraceTokens;
     };
     struct LabelEntry {
