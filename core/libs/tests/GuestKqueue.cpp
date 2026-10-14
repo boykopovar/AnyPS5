@@ -1,14 +1,17 @@
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 #ifdef _WIN32
 #include <aclapi.h>
 #include <windows.h>
@@ -608,6 +611,84 @@ static void DeniedParentWatch() {
     Require(std::filesystem::remove_all(path) == 2);
 }
 #endif
+
+#ifndef _WIN32
+static std::size_t InotifyWatchCount() {
+    std::size_t count = 0;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd", error)) {
+        std::error_code linkError;
+        const auto target = std::filesystem::read_symlink(entry.path(), linkError);
+        if (!linkError && target.string().find("inotify") != std::string::npos) ++count;
+    }
+    return count;
+}
+#endif
+
+static void VnodeOneshotWatchStops() {
+    const auto path = TemporaryName("oneshot");
+    const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(file >= 0);
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    const auto ident = static_cast<std::uintptr_t>(file);
+#ifndef _WIN32
+    const auto watchesBefore = InotifyWatchCount();
+#endif
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvOneshot, NoteDelete | NoteWrite, 0, &marker)) == 0);
+    Require(write_nid_postfix(file, "abc", 3) == 3);
+    Require(Wait(kq, events, 4) == 1);
+    Require(events[0].ident == ident && events[0].filter == EvfiltVnode && (events[0].flags & EvOneshot) != 0 && events[0].udata == &marker);
+    // The retired note stopped its watch: further writes produce nothing and the note is gone.
+    Require(write_nid_postfix(file, "def", 3) == 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(ident, EvfiltVnode, EvDelete)), GuestEnoent);
+#ifndef _WIN32
+    // The retired oneshot releases its host watch rather than leaving it running: the inotify
+    // descriptor count returns to what it was before the watch (each retired oneshot used to
+    // leak its detached watch thread).
+    for (int attempt = 0; attempt < 100 && InotifyWatchCount() != watchesBefore; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    Require(InotifyWatchCount() == watchesBefore);
+#endif
+    Require(close_nid_postfix(file) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    Require(std::filesystem::remove(path));
+}
+
+static void PeriodicTimerFiresTwice() {
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(1, EvfiltTimer, EvAdd, NoteUseconds, 50000)) == 0);
+    Require(Wait(kq, events, 4) == 1);
+    Require(Wait(kq, events, 4) == 1);
+    Require(Apply(kq, Change(1, EvfiltTimer, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+#ifdef _WIN32
+static void RecycleBinDeleteWatchedFile() {
+    // Windows deletes surface as a rename into the POSIX recycle bin; a path under
+    // \\$Extend\\$Deleted\\ is a delete for the watch.
+    const auto directory = TemporaryName("deleted");
+    std::filesystem::create_directories(directory + "\\$Extend\\$Deleted");
+    const auto path = directory + "\\watched";
+    const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(file >= 0);
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+    const auto ident = static_cast<std::uintptr_t>(file);
+    Require(Apply(kq, Change(ident, EvfiltVnode, EvAdd | EvClear, NoteDelete | NoteRename)) == 0);
+    Require(sceKernelRename(path.c_str(), (directory + "\\$Extend\\$Deleted\\moved").c_str()) == SceOk);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == ident && (events[0].fflags & NoteDelete) != 0);
+    Require(close_nid_postfix(file) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    std::filesystem::remove_all(directory);
+}
+#endif
+
 static void Timeout() {
     const int kq = kqueue_nid_postfix();
     KernelEvent event{};
@@ -619,6 +700,162 @@ static void Timeout() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void DisableAndEnable() {
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+
+    Require(Apply(kq, Change(10, EvfiltUser, EvAdd | EvDisable)) == 0);
+    Require(Apply(kq, Change(10, EvfiltUser, 0, NoteTrigger, 42)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(10, EvfiltUser, EvEnable, 0, 42)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 10 && events[0].data == 42);
+    Require(Apply(kq, Change(10, EvfiltUser, EvDelete)) == 0);
+
+    Require(Apply(kq, Change(11, EvfiltUser, EvAdd)) == 0);
+    Require(Apply(kq, Change(11, EvfiltUser, 0, NoteTrigger, 99)) == 0);
+    Require(Apply(kq, Change(11, EvfiltUser, EvDisable, 0, 99)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(11, EvfiltUser, EvEnable, 0, 99)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 11 && events[0].data == 99);
+    Require(Apply(kq, Change(11, EvfiltUser, EvDelete)) == 0);
+
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltRead, EvAdd | EvDisable)) == 0);
+    Require(send_nid_postfix(pair[1], "test", 4, 0) == 4);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltRead, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == static_cast<std::uintptr_t>(pair[0]) && events[0].data == 4);
+    char buffer[8]{};
+    Require(recv_nid_postfix(pair[0], buffer, sizeof(buffer), 0) == 4);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void Dispatch() {
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+
+    Require(Apply(kq, Change(20, EvfiltUser, EvAdd | EvDispatch)) == 0);
+    Require(Apply(kq, Change(20, EvfiltUser, 0, NoteTrigger, 55)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 20 && events[0].data == 55 && events[0].flags == EvDispatch);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(20, EvfiltUser, 0, NoteTrigger, 56)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(20, EvfiltUser, EvEnable, 0, 56)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 20 && events[0].data == 56 && events[0].flags == EvDispatch);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(20, EvfiltUser, EvDelete)) == 0);
+
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltRead, EvAdd | EvDispatch)) == 0);
+    Require(send_nid_postfix(pair[1], "msg", 3, 0) == 3);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == static_cast<std::uintptr_t>(pair[0]) && events[0].data == 3);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltRead, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    char buffer[8]{};
+    Require(recv_nid_postfix(pair[0], buffer, sizeof(buffer), 0) == 3);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void ForceOneshot() {
+    const int kq = kqueue_nid_postfix();
+    KernelEvent events[4]{};
+
+    Require(Apply(kq, Change(30, EvfiltUser, EvAdd | EvForceoneshot)) == 0);
+    Require(Apply(kq, Change(30, EvfiltUser, 0, NoteTrigger, 77)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 30 && events[0].data == 77 && events[0].flags == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 30 && events[0].data == 77);
+    Require(Apply(kq, Change(30, EvfiltUser, EvDelete)) == 0);
+
+    Require(Apply(kq, Change(31, EvfiltUser, EvAdd)) == 0);
+    Require(Apply(kq, Change(31, EvfiltUser, EvForceoneshot)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == 31 && events[0].flags == EvOneshot);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(31, EvfiltUser, EvDelete)), GuestEnoent);
+
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvAdd)) == 0);
+    Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvForceoneshot)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].filter == EvfiltWrite && events[0].flags == EvOneshot);
+    RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pair[1]), EvfiltWrite, EvDelete)), GuestEnoent);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+
+static void StressTest() {
+    const int kq = kqueue_nid_postfix();
+    int pair[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const auto readFd = static_cast<std::uintptr_t>(pair[0]);
+
+    Require(Apply(kq, Change(readFd, EvfiltRead, EvAdd | EvDispatch)) == 0);
+
+    constexpr int TotalMessages = 30;
+    std::atomic<int> receivedCount{0};
+    std::atomic<int> activeWorkers{0};
+    std::atomic<bool> overlapDetected{false};
+    std::vector<int> receivedValues;
+    std::mutex valuesMutex;
+
+    constexpr int NumWorkers = 4;
+    std::vector<std::thread> workers;
+    workers.reserve(NumWorkers);
+
+    for (int w = 0; w < NumWorkers; ++w) {
+        workers.emplace_back([&, kq, readFd] {
+            while (receivedCount.load(std::memory_order_relaxed) < TotalMessages) {
+                KernelEvent event{};
+                const KernelTimespec timeout{0, 50000000};
+                const int count = kevent_nid_postfix(kq, nullptr, 0, &event, 1, &timeout);
+                if (count <= 0) {
+                    continue;
+                }
+                const int active = ++activeWorkers;
+                if (active > 1) {
+                    overlapDetected.store(true, std::memory_order_relaxed);
+                }
+                Require(event.ident == readFd && event.filter == EvfiltRead);
+                int val = 0;
+                const auto readBytes = recv_nid_postfix(static_cast<int>(readFd), &val, sizeof(val), 0);
+                Require(readBytes == sizeof(val));
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                {
+                    std::lock_guard lock(valuesMutex);
+                    receivedValues.push_back(val);
+                }
+                --activeWorkers;
+                ++receivedCount;
+                Require(Apply(kq, Change(readFd, EvfiltRead, EvEnable)) == 0);
+            }
+        });
+    }
+
+    for (int i = 1; i <= TotalMessages; ++i) {
+        Require(send_nid_postfix(pair[1], &i, sizeof(i), 0) == sizeof(i));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+
+    Require(!overlapDetected.load());
+    Require(static_cast<int>(receivedValues.size()) == TotalMessages);
+    for (int i = 0; i < TotalMessages; ++i) {
+        Require(receivedValues[static_cast<std::size_t>(i)] == i + 1);
+    }
+
+    Require(Apply(kq, Change(readFd, EvfiltRead, EvDelete)) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 int main() {
     CreateAndClose();
     Timers();
@@ -627,9 +864,18 @@ int main() {
     SocketPair();
     DisableAndDispatch();
     Errors();
+    DisableAndEnable();
+    Dispatch();
+    ForceOneshot();
+    StressTest();
     FileWatch();
 #ifndef _WIN32
     RenameAndDeleteWatchedFile();
+    VnodeOneshotWatchStops();
+    PeriodicTimerFiresTwice();
+#ifdef _WIN32
+    RecycleBinDeleteWatchedFile();
+#endif
 #endif
 #if !defined(_WIN32) && !defined(__APPLE__)
     MoveDirectoryEntries();
