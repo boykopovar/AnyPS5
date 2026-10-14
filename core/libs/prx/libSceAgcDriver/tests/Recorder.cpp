@@ -7623,6 +7623,60 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress) {
+        std::cout << "host imports or buffer device addresses unavailable: guarded key stores not tested\n";
+        return;
+    }
+    constexpr std::size_t surfaceBytes = 65536 * 4;
+    constexpr std::size_t keyCount = surfaceBytes / 256;
+    constexpr std::size_t bytes = surfaceBytes + 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the key store block");
+    auto* keys = static_cast<std::uint8_t*>(block) + surfaceBytes;
+    std::memset(block, 0x00, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto keysAddress = address + surfaceBytes;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{context, block, address};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of the key store block refused: guarded key stores not tested\n";
+        return;
+    }
+    recorder.Sync();
+    MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
+    Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "the key store was not recorded on the GPU");
+    auto* late = static_cast<volatile std::uint32_t*>(static_cast<void*>(keys + 400));
+    *late = 0x12345678u;
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(keys[0] == 0xff && keys[396] == 0xff && keys[404] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys");
+    const bool guarded = std::getenv("APS5_NO_GUARDED_KEY_STORE") == nullptr;
+    Require(*late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
+    const auto stores = Recorder::StoreCounts();
+    Require(!guarded || stores.keyStoresGuarded >= 1, "the key store was not counted as guarded");
+}
+
 void integerClearTests(const Device& device) {
     const auto& context = device.GetContext();
     std::size_t tested = 0;
@@ -8170,6 +8224,10 @@ int main(int argc, char** argv) {
             changedCopyTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--guarded-key-store-only") {
+            guardedKeyStoreTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
             if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, unit shadows or host imports are unavailable\n";
@@ -8312,6 +8370,7 @@ int main(int argc, char** argv) {
         movedMetadataTests(device, recorder);
         viewPastLastMipTests(device, recorder);
         keysFillTests(device, recorder);
+        guardedKeyStoreTests(device, recorder);
         integerClearTests(device);
         denormalClearTests(device, recorder);
         unitShadowTests(device, recorder);

@@ -75,7 +75,7 @@ public:
     // that know their ranges). `seed` (kept) supplies an
     // unaligned head or tail; [begin, end) is the guest range. Debug aid: APS5_DCC_KEYS_EACH=1
     // records every store at once, as before (QueueKeyStore then records and returns).
-    void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end);
+    void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end, VkDeviceAddress target = 0);
     bool HasQueuedKeyStores() const { return open != nullptr && !open->keyStores.empty(); }
     bool QueuedKeyStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether `overlaps(begin, end)` holds for a queued store's range.
@@ -439,7 +439,7 @@ public:
         std::uint64_t stores, runs, joined, replaced, wawBarriers, joinsRefused, queuedNoted, queuedOverRecorded, queuedHits, queuedHookRecords, queuedHookInCompletion;
         // DCC key stores queued, the runs that recorded them (at Submit, or before a writer of a
         // queued range), and the queued stores a duplicate range joined.
-        std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined;
+        std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined, keyStoresGuarded;
         // Store runs recorded at Submit, and in place before a later writer or reader of a queued
         // store's bytes (FlushStores).
         std::uint64_t runsAtSubmit, runsForced;
@@ -652,6 +652,8 @@ private:
             std::shared_ptr<void> seed;
             std::uint64_t begin;
             std::uint64_t end;
+            std::shared_ptr<Buffer> snapshot;
+            VkDeviceAddress target = 0;
         };
         std::vector<KeyStore> keyStores;
     };
@@ -697,6 +699,7 @@ private:
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
     VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
     int changedCopyState = 0;
+    std::shared_ptr<Buffer> onesBuffer;
     VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
     VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
     int sampleCounterState = 0;

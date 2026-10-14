@@ -561,7 +561,14 @@ bool LateTrustEnabled() {
 }
 // Store-run and queued-label counters (Recorder::StoreCounts), relaxed: they are only reported.
 std::atomic<std::uint64_t> storeCount{0}, storeRuns{0}, storesJoined{0}, storesReplaced{0}, storeWawBarriers{0}, storeJoinsRefused{0};
-std::atomic<std::uint64_t> keyStoreCount{0}, keyStoreRuns{0}, keyStoreRunsForWriter{0}, keyStoresJoined{0};
+std::atomic<std::uint64_t> keyStoreCount{0}, keyStoreRuns{0}, keyStoreRunsForWriter{0}, keyStoresJoined{0}, keyStoresGuarded{0};
+
+bool GuardedKeyStores(const Context& context) {
+    static const bool disabled = std::getenv("APS5_NO_GUARDED_KEY_STORE") != nullptr;
+    return !disabled && context.bufferDeviceAddress;
+}
+
+constexpr std::size_t OnesBufferBytes = std::size_t{1} << 20;
 
 // Debug aid: APS5_DCC_KEYS_EACH=1 records every DCC key store at once (see Recorder::QueueKeyStore).
 bool KeyStoresEach() {
@@ -1323,7 +1330,7 @@ void Recorder::SetQueuedLabelRecorder(void (*recorder)()) {
 }
 
 Recorder::StoreStatistics Recorder::StoreCounts() {
-    return StoreStatistics{storeCount.load(std::memory_order_relaxed), storeRuns.load(std::memory_order_relaxed), storesJoined.load(std::memory_order_relaxed), storesReplaced.load(std::memory_order_relaxed), storeWawBarriers.load(std::memory_order_relaxed), storeJoinsRefused.load(std::memory_order_relaxed), queuedLabelsNoted.load(std::memory_order_relaxed), queuedLabelsOverRecorded.load(std::memory_order_relaxed), queuedLabelHits.load(std::memory_order_relaxed), queuedLabelHookRecords.load(std::memory_order_relaxed), queuedLabelHookInCompletion.load(std::memory_order_relaxed), keyStoreCount.load(std::memory_order_relaxed), keyStoreRuns.load(std::memory_order_relaxed), keyStoreRunsForWriter.load(std::memory_order_relaxed), keyStoresJoined.load(std::memory_order_relaxed), storeRunsAtSubmit.load(std::memory_order_relaxed), storeRunsForced.load(std::memory_order_relaxed)};
+    return StoreStatistics{storeCount.load(std::memory_order_relaxed), storeRuns.load(std::memory_order_relaxed), storesJoined.load(std::memory_order_relaxed), storesReplaced.load(std::memory_order_relaxed), storeWawBarriers.load(std::memory_order_relaxed), storeJoinsRefused.load(std::memory_order_relaxed), queuedLabelsNoted.load(std::memory_order_relaxed), queuedLabelsOverRecorded.load(std::memory_order_relaxed), queuedLabelHits.load(std::memory_order_relaxed), queuedLabelHookRecords.load(std::memory_order_relaxed), queuedLabelHookInCompletion.load(std::memory_order_relaxed), keyStoreCount.load(std::memory_order_relaxed), keyStoreRuns.load(std::memory_order_relaxed), keyStoreRunsForWriter.load(std::memory_order_relaxed), keyStoresJoined.load(std::memory_order_relaxed), keyStoresGuarded.load(std::memory_order_relaxed), storeRunsAtSubmit.load(std::memory_order_relaxed), storeRunsForced.load(std::memory_order_relaxed)};
 }
 
 std::uint64_t Recorder::ThreadHookWaits() {
@@ -1427,7 +1434,7 @@ void Recorder::endOpenRenderPass(bool barrier) {
     pass = {};
 }
 
-void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end) {
+void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end, VkDeviceAddress target) {
     ensureOpen();
     // A queued label store over the keys lands first (program order: the key store is later).
     FlushStoresOverlapping(begin, static_cast<std::size_t>(end - begin));
@@ -1441,7 +1448,29 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
             return;
         }
     }
-    open->keyStores.push_back({buffer, first, last, std::move(seed), begin, end});
+    std::shared_ptr<Buffer> snapshot;
+    const VkDeviceSize fillBegin = std::min((first + 3) & ~VkDeviceSize{3}, last);
+    const VkDeviceSize fillEnd = std::max(last & ~VkDeviceSize{3}, fillBegin);
+    const auto guestFill = begin + (fillBegin - first);
+    const auto fillBytes = static_cast<std::size_t>(fillEnd - fillBegin);
+    bool eligible = target != 0 && fillBytes != 0 && GuardedKeyStores(context) && GuestMemory::Accessible(reinterpret_cast<const void*>(guestFill), fillBytes);
+    if (eligible && !PendingWriteSettled(begin, static_cast<std::size_t>(end - begin))) {
+        const auto pending = PendingWritesOver(begin, static_cast<std::size_t>(end - begin));
+        eligible = std::all_of(pending.begin(), pending.end(), [](const PendingWrite& write) { return write.value == 0xff; });
+    }
+    if (eligible) {
+        try {
+            snapshot = std::make_shared<Buffer>(context, fillBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        } catch (const std::exception&) {
+            snapshot = nullptr;
+        }
+        if (snapshot != nullptr && (!snapshot->Mapped() || snapshot->DeviceAddress() == 0)) snapshot = nullptr;
+        if (snapshot != nullptr) {
+            std::memcpy(snapshot->Bytes().data(), reinterpret_cast<const void*>(guestFill), fillBytes);
+            keyStoresGuarded.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    open->keyStores.push_back({buffer, first, last, std::move(seed), begin, end, std::move(snapshot), target});
     if (KeyStoresEach()) recordKeyStores(false);
 }
 
@@ -1469,14 +1498,34 @@ void Recorder::recordKeyStores(bool forWriter) {
     const auto timing = beginTiming(ClassKey(CommandClass::DccKeyStore));
     // Ordered behind every earlier recorded read or write of the ranges (the title's DCC clear or
     // decompress kernel storing keys through a V#), and visible to the work after and to the host.
-    recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+    recordBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     const auto fill = context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer");
     const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
     std::uint64_t bytes = 0;
+    const bool anyGuarded = std::any_of(stores.begin(), stores.end(), [](const Batch::KeyStore& store) { return store.snapshot != nullptr; });
+    if (anyGuarded && onesBuffer == nullptr) {
+        try {
+            onesBuffer = std::make_shared<Buffer>(context, OnesBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            std::memset(onesBuffer->Bytes().data(), 0xff, OnesBufferBytes);
+        } catch (const std::exception&) {
+            onesBuffer = nullptr;
+        }
+    }
+    const bool kernel = anyGuarded && onesBuffer != nullptr && onesBuffer->Mapped() && onesBuffer->DeviceAddress() != 0;
+    if (kernel) open->kept.push_back(onesBuffer);
     for (const auto& store : stores) {
         const VkDeviceSize fillBegin = std::min((store.first + 3) & ~VkDeviceSize{3}, store.last);
         const VkDeviceSize fillEnd = std::max(store.last & ~VkDeviceSize{3}, fillBegin);
-        if (fillEnd > fillBegin) fill(commands, store.buffer, fillBegin, fillEnd - fillBegin, 0xffffffffu);
+        bool filled = false;
+        if (fillEnd > fillBegin && kernel && store.snapshot != nullptr) {
+            filled = true;
+            for (VkDeviceSize done = 0; done < fillEnd - fillBegin && filled; done += OnesBufferBytes) {
+                const auto chunk = static_cast<std::uint32_t>(std::min<VkDeviceSize>(OnesBufferBytes, fillEnd - fillBegin - done) / 4u);
+                filled = RecordChangedCopy(commands, onesBuffer->DeviceAddress(), store.snapshot->DeviceAddress() + done, store.target + (fillBegin - store.first) + done, chunk);
+            }
+            open->kept.push_back(store.snapshot);
+        }
+        if (fillEnd > fillBegin && !filled) fill(commands, store.buffer, fillBegin, fillEnd - fillBegin, 0xffffffffu);
         if (store.seed != nullptr) {
             VkBufferCopy copies[2];
             std::uint32_t copyCount = 0;
@@ -1486,7 +1535,7 @@ void Recorder::recordKeyStores(bool forWriter) {
         }
         bytes += store.last - store.first;
     }
-    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
     CountBarriers(CommandClass::DccKeyStore, 2);
     EndGpuTiming(timing, bytes);
     open->coveredAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
