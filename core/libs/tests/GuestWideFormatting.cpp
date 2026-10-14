@@ -140,6 +140,40 @@ static void CheckCount() {
     Require(Format(buffer, 16, u"a%n", nullCount) < 0, "vswprintf null %n argument");
 }
 
+static void CheckFreebsdConversions() {
+    char16_t buffer[48];
+    Require(swprintf_nid_postfix(buffer, 48, u"%qd|%qu|%qx|%5qd", -5ll, 7ull, 255ull, 9ll) == 13 &&
+        buffer == std::u16string(u"-5|7|ff|    9"), "swprintf q length");
+    Require(swprintf_nid_postfix(buffer, 48, u"%D|%O|%U", 5000000000ll, 8ll, 18446744073709551615ull) == 34 &&
+        buffer == std::u16string(u"5000000000|10|18446744073709551615"), "swprintf %D %O %U are long conversions");
+    Require(swprintf_nid_postfix(buffer, 48, u"%hD|%hhU|%5D|%-4O|", 70000ll, 70000ll, -3ll, 8ll) == 23 &&
+        buffer == std::u16string(u"70000|70000|   -3|10  |"), "swprintf %D %O %U ignore h and keep width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%y|[%5%]|[%-5y]|%€") == 19 &&
+        buffer == std::u16string(u"y|[    %]|[y    ]|€"), "swprintf unknown conversion prints itself");
+    Require(swprintf_nid_postfix(buffer, 48, u"100%") == 3 && buffer == std::u16string(u"100"), "swprintf trailing percent");
+    Require(swprintf_nid_postfix(buffer, 48, u"ab%5") == 2 && buffer == std::u16string(u"ab"), "swprintf trailing width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%d%l", 7) == 1 && buffer == std::u16string(u"7"), "swprintf trailing length");
+    Require(swprintf_nid_postfix(buffer, 48, u"%") == 0 && buffer[0] == 0, "swprintf lone percent");
+    Require(Format(buffer, 48, u"%d%", 7) == 1 && buffer == std::u16string(u"7"), "vswprintf trailing percent");
+    Require(swprintf_nid_postfix(buffer, 48, u"%m") < 0 && buffer[0] == 0, "swprintf %m still fails");
+    Require(swprintf_nid_postfix(buffer, 48, u"%lqd", 1ll) < 0, "swprintf odd modifier order still fails");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%y") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"100%") < 0 && buffer[0] == 0, "snwprintf_s trailing percent");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%D", 1ll) < 0 && buffer[0] == 0, "snwprintf_s %D");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%qd", 5ll) < 0 && buffer[0] == 0, "snwprintf_s %qd");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%qX", -5ll) < 0 && buffer[0] == 0, "snwprintf_s %qX");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%O", 8ll) < 0 && buffer[0] == 0, "snwprintf_s %O");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%U", 8ll) < 0 && buffer[0] == 0, "snwprintf_s %U");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%5%") < 0 && buffer[0] == 0, "snwprintf_s unknown conversion with a width");
+    Require(swprintf_nid_postfix(buffer, 48, u"%-5😀|") == 7 &&
+        buffer == std::u16string(u"😀    |"), "swprintf surrogate pair as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"%5😀|") == 7 &&
+        buffer == std::u16string(u"    😀|"), "swprintf right-aligned surrogate pair");
+    Require(swprintf_nid_postfix(buffer, 48, u"%3\xd83d|") == 4 &&
+        buffer == std::u16string(u"  \xd83d|"), "swprintf lone surrogate prints as itself");
+}
+
+
 static void CheckGroupingFlag() {
     char16_t buffer[48];
     Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g", 1234567, 42u, 1234.5, 12, 1e6) == 34 &&
@@ -147,6 +181,7 @@ static void CheckGroupingFlag() {
     Require(snwprintf_s_nid_postfix(buffer, 48, u"%'lld %ls", 9876543210ll, u"x") == 12 && buffer == std::u16string(u"9876543210 x"),
         "snwprintf_s ' flag");
 }
+
 
 static void CheckSwprintf() {
     char16_t buffer[8];
@@ -169,7 +204,7 @@ static void CheckSwprintf() {
     char16_t wide[16];
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
-    Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    Require(swprintf_nid_postfix(wide, 16, u"%lp") < 0 && wide[0] == 0, "swprintf invalid conversion");
 }
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
@@ -243,6 +278,7 @@ int main() {
     CheckPositional();
     CheckPointer();
     CheckCount();
+    CheckFreebsdConversions();
     CheckSwprintf();
     CheckWcsftime();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
