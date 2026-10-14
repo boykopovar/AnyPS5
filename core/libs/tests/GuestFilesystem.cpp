@@ -74,6 +74,16 @@ int APS5_VABI chdir_nid_postfix(const char*);
 void* APS5_VABI opendir_nid_postfix(const char*);
 FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
 FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
+std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
+int APS5_VABI fclose_nid_postfix(FileStream*);
+int APS5_VABI fgetc_nid_postfix(FileStream*);
+int APS5_VABI feof_nid_postfix(FileStream*);
+int APS5_VABI ferror_nid_postfix(FileStream*);
+int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
+int APS5_VABI fflush_nid_postfix(FileStream*);
+void APS5_VABI flockfile_nid_postfix(FileStream*);
+void APS5_VABI funlockfile_nid_postfix(FileStream*);
+int APS5_VABI ftrylockfile_nid_postfix(FileStream*);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI dup2_nid_postfix(int, int);
@@ -979,6 +989,38 @@ int main() {
         Require(read_nid_postfix(random, second, 3) == 3);
         Require(std::memcmp(first, second, sizeof(first)) != 0 && second[3] == 0);
         Require(close_nid_postfix(random) == 0);
+        auto* stream = fopen_nid_postfix(device, "rb");
+        Require(stream != nullptr);
+        Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0);
+        std::memset(first, 0, sizeof(first));
+        std::memset(second, 0, sizeof(second));
+        Require(fread_nid_postfix(first, 1, sizeof(first), stream) == sizeof(first));
+        Require(fread_nid_postfix(second, 8, 8, stream) == 8);
+        Require(std::memcmp(first, second, sizeof(first)) != 0);
+        Require(feof_nid_postfix(stream) == 0 && ferror_nid_postfix(stream) == 0);
+        flockfile_nid_postfix(stream);
+        Require(fread_nid_postfix(first, 1, 4, stream) == 4);
+        funlockfile_nid_postfix(stream);
+        Require(ftrylockfile_nid_postfix(stream) == 0);
+        funlockfile_nid_postfix(stream);
+        Require(fflush_nid_postfix(stream) == 0);
+        bool unsupported = false;
+        try {
+            fgetc_nid_postfix(stream);
+        } catch (const std::runtime_error&) {
+            unsupported = true;
+        }
+        Require(unsupported);
+        Require(fclose_nid_postfix(stream) == 0);
+        for (const char* mode : {"wb", "ab", "r+b"}) {
+            bool rejected = false;
+            try {
+                fopen_nid_postfix(device, mode);
+            } catch (const std::runtime_error&) {
+                rejected = true;
+            }
+            Require(rejected);
+        }
     }
     Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
     const auto empty = root / "empty";

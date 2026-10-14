@@ -9,6 +9,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <cerrno>
 #include <cstring>
@@ -27,6 +28,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
 
 #ifdef __linux__
 #include <stdio_ext.h>
@@ -297,6 +299,19 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
         errno = EINVAL;
         return nullptr;
     }
+    if (const std::string_view path(filename); path == "/dev/random" || path == "/dev/urandom") {
+        if (parsed->writes) throw std::runtime_error(std::string(__func__) + ": writing to " + filename + " is not implemented");
+#ifdef _WIN32
+        std::unique_ptr<std::FILE, int (*)(std::FILE*)> device(std::fopen("NUL", "rb"), std::fclose);
+#else
+        std::unique_ptr<std::FILE, int (*)(std::FILE*)> device(std::fopen("/dev/null", "rb"), std::fclose);
+#endif
+        if (!device) return nullptr;
+        auto stream = std::make_unique<FileStream>(device.get(), true);
+        device.release();
+        stream->MarkRandomDevice();
+        return stream.release();
+    }
     std::filesystem::path fpath;
     if (const int error = ResolvePathError_nid_no_patch(filename, fpath)) { errno = error; return nullptr; }
     std::unique_ptr<std::FILE, int (*)(std::FILE*)> handle(OpenNative(fpath, parsed->native), std::fclose);
@@ -329,7 +344,7 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
         errno = 9;
         return -1;
     }
-    GetNativeStream(stream);
+    GetStreamHandle(stream);
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
     return stream->Close();
 }
@@ -363,7 +378,7 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
-    auto* handle = GetNativeStream(stream);
+    auto* handle = GetStreamHandle(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fread: null buffer");
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fread: buffer size overflow");
@@ -371,6 +386,11 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fread: buffer address overflow");
     const GuestArena::HostWrite destination(buffer, bytes);
     if (!destination.Open()) throw std::runtime_error("fread: buffer is not writable");
+    if (stream->IsRandomDevice()) {
+        HostEntropy_nid_no_patch(buffer, bytes);
+        stream->SyncStatus();
+        return count;
+    }
     const auto result = std::fread(buffer, size, count, handle);
     stream->SyncStatus();
     return result;
@@ -452,7 +472,8 @@ int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
 
 int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    std::FILE* native = stream ? GetNativeStream(stream) : nullptr;
+    std::FILE* native = stream ? GetStreamHandle(stream) : nullptr;
+    if (stream && stream->IsRandomDevice()) return 0;
 #ifdef __linux__
     if (native && !__fwriting(native)) return 0;
 #endif

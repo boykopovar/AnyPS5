@@ -50,6 +50,7 @@ class FileStream {
     std::FILE* _handle;
     bool _dynamic;
     bool guestError = false;
+    bool randomDevice = false;
 
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
@@ -80,10 +81,21 @@ public:
     }
 
     GuestFilePrefix& GuestState() { return _guest; }
+
+    void MarkRandomDevice() {
+        randomDevice = true;
+        _guest.descriptor = -1;
+    }
+
+    bool IsRandomDevice() const {
+        return randomDevice;
+    }
+
     bool Reopen(const std::filesystem::path& filename, const char* mode) {
         auto* previous = GetHandle();
         _guest = {};
         guestError = false;
+        randomDevice = false;
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
@@ -154,9 +166,15 @@ public:
 };
 static_assert(std::is_standard_layout_v<FileStream>);
 
-inline std::FILE* GetNativeStream(FileStream* stream) {
+inline std::FILE* GetStreamHandle(FileStream* stream) {
     if (!stream) throw std::runtime_error("FileStream: null stream");
     return stream->GetHandle();
+}
+
+inline std::FILE* GetNativeStream(FileStream* stream) {
+    auto* handle = GetStreamHandle(stream);
+    if (stream->IsRandomDevice()) throw std::runtime_error("FileStream: this function is not implemented on a /dev/random or /dev/urandom stream");
+    return handle;
 }
 
 extern "C" {
