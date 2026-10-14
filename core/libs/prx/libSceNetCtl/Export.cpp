@@ -38,6 +38,8 @@ static constexpr int SCE_NET_CTL_ERROR_INVALID_ADDR = static_cast<int>(0x8041210
 static constexpr int SCE_NET_CTL_ERROR_NOT_CONNECTED = static_cast<int>(0x80412108);
 static constexpr int NET_CTL_STATE_DISCONNECTED = 0;
 static constexpr int NET_CTL_STATE_IPOBTAINED = 3;
+static constexpr int NET_CTL_EVENT_DISCONNECTED = 1;
+static constexpr int NET_CTL_EVENT_IPOBTAINED = 3;
 static constexpr int NET_CTL_INFO_DEVICE = 1;
 static constexpr int NET_CTL_INFO_ETHER_ADDR = 2;
 static constexpr int NET_CTL_INFO_MTU = 3;
@@ -58,16 +60,22 @@ static constexpr std::uint8_t NET_CTL_ETHER_ADDR[6] = {0x02, 0x50, 0x53, 0x35, 0
 static constexpr std::size_t NET_CTL_IPV4_ADDR_STR_LEN = 16;
 static constexpr int MAX_CALLBACKS = 8;
 
-static std::mutex g_callbackLock;
-static NetCtlCallback g_callbacks[MAX_CALLBACKS] = {};
-static NetCtlCallback g_callbacksV6[MAX_CALLBACKS] = {};
+struct CallbackSlot {
+    NetCtlCallback func = nullptr;
+    void* arg = nullptr;
+    int lastEvent = 0;
+};
 
-static int RegisterCallback(NetCtlCallback (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, int* cid) {
+static std::mutex g_callbackLock;
+static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
+
+static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
     if (!func || !cid) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     std::lock_guard lock(g_callbackLock);
     for (int index = 0; index < MAX_CALLBACKS; ++index) {
-        if (!callbacks[index]) {
-            callbacks[index] = func;
+        if (!callbacks[index].func) {
+            callbacks[index] = {func, arg, 0};
             *cid = index;
             return 0;
         }
@@ -75,11 +83,19 @@ static int RegisterCallback(NetCtlCallback (&callbacks)[MAX_CALLBACKS], NetCtlCa
     return SCE_NET_CTL_ERROR_CALLBACK_MAX;
 }
 
-static int UnregisterCallback(NetCtlCallback (&callbacks)[MAX_CALLBACKS], int cid) {
+static int UnregisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], int cid) {
     if (cid < 0 || cid >= MAX_CALLBACKS) return SCE_NET_CTL_ERROR_INVALID_ID;
     std::lock_guard lock(g_callbackLock);
-    callbacks[cid] = nullptr;
+    callbacks[cid] = {};
     return 0;
+}
+
+static bool HasIpv4Callback() {
+    std::lock_guard lock(g_callbackLock);
+    for (const auto& slot : g_callbacks) {
+        if (slot.func) return true;
+    }
+    return false;
 }
 
 static bool HostHasAddress(int family) {
@@ -321,6 +337,19 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
 extern "C" {
 
 int APS5_VABI sceNetCtlCheckCallback(void) {
+    if (!HasIpv4Callback()) return 0;
+    const int event = HostHasAddress(AF_UNSPEC) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED;
+    CallbackSlot due[MAX_CALLBACKS];
+    int count = 0;
+    {
+        std::lock_guard lock(g_callbackLock);
+        for (auto& slot : g_callbacks) {
+            if (!slot.func || slot.lastEvent == event) continue;
+            slot.lastEvent = event;
+            due[count++] = slot;
+        }
+    }
+    for (int index = 0; index < count; ++index) due[index].func(event, due[index].arg);
     return 0;
 }
 
@@ -383,14 +412,17 @@ int APS5_VABI sceNetCtlInit(void) {
 }
 
 int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback func, void* arg, int* cid) {
-    return RegisterCallback(g_callbacks, func, cid);
+    return RegisterCallback(g_callbacks, func, arg, cid);
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback func, void* arg, int* cid) {
-    return RegisterCallback(g_callbacksV6, func, cid);
+    return RegisterCallback(g_callbacksV6, func, arg, cid);
 }
 
 void APS5_VABI sceNetCtlTerm(void) {
+    std::lock_guard lock(g_callbackLock);
+    for (auto& slot : g_callbacks) slot = {};
+    for (auto& slot : g_callbacksV6) slot = {};
 }
 
 int APS5_VABI sceNetCtlUnregisterCallback(int cid) {

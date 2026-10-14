@@ -19,8 +19,14 @@
 #include <stdexcept>
 
 extern "C" {
+int APS5_VABI sceNetCtlCheckCallback(void);
 int APS5_VABI sceNetCtlGetInfo(int, NetCtlInfo*);
 int APS5_VABI sceNetCtlGetState(int*);
+int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback, void*, int*);
+int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback, void*, int*);
+void APS5_VABI sceNetCtlTerm(void);
+int APS5_VABI sceNetCtlUnregisterCallback(int);
+int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
 }
 
 namespace {
@@ -31,8 +37,99 @@ constexpr int kErrInvalidCode = static_cast<int>(0x80412106);
 constexpr int kErrInvalidAddr = static_cast<int>(0x80412107);
 constexpr int kErrNotConnected = static_cast<int>(0x80412108);
 constexpr int kStateIpObtained = 3;
+constexpr int kEventDisconnected = 1;
+constexpr int kEventIpObtained = 3;
 constexpr std::uint8_t kFill = 0xa5;
 constexpr std::size_t kAddressLength = 16;
+
+struct Delivery {
+    int calls = 0;
+    int event = 0;
+    void* arg = nullptr;
+};
+
+Delivery g_first;
+Delivery g_second;
+Delivery g_v6;
+Delivery g_self;
+int g_selfUnregister = -1;
+
+void APS5_VABI RecordFirst(int event, void* arg) {
+    ++g_first.calls;
+    g_first.event = event;
+    g_first.arg = arg;
+}
+
+void APS5_VABI RecordSecond(int event, void* arg) {
+    ++g_second.calls;
+    g_second.event = event;
+    g_second.arg = arg;
+}
+
+void APS5_VABI RecordV6(int event, void* arg) {
+    ++g_v6.calls;
+    g_v6.event = event;
+    g_v6.arg = arg;
+}
+
+void APS5_VABI UnregisterSelf(int event, void* arg) {
+    ++g_self.calls;
+    g_self.event = event;
+    g_self.arg = arg;
+    g_selfUnregister = sceNetCtlUnregisterCallback(*static_cast<int*>(arg));
+}
+
+void CheckCallbacks() {
+    int state = -1;
+    Require(sceNetCtlGetState(&state) == 0);
+    const int event = state == kStateIpObtained ? kEventIpObtained : kEventDisconnected;
+    int firstProbe = 0;
+    int secondProbe = 0;
+    int v6Probe = 0;
+
+    int v6 = -1;
+    Require(sceNetCtlRegisterCallbackV6(RecordV6, &v6Probe, &v6) == 0 && v6 == 0);
+
+    int first = -1;
+    Require(sceNetCtlRegisterCallback(RecordFirst, &firstProbe, &first) == 0 && first == 0);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_first.calls == 1 && g_first.event == event && g_first.arg == &firstProbe);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_first.calls == 1);
+
+    int second = -1;
+    Require(sceNetCtlRegisterCallback(RecordSecond, &secondProbe, &second) == 0 && second == 1);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_first.calls == 1);
+    Require(g_second.calls == 1 && g_second.event == event && g_second.arg == &secondProbe);
+
+    Require(sceNetCtlUnregisterCallback(second) == 0);
+    Require(sceNetCtlRegisterCallback(RecordSecond, &secondProbe, &second) == 0 && second == 1);
+    Require(sceNetCtlUnregisterCallback(second) == 0);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_first.calls == 1 && g_second.calls == 1);
+
+    int self = -1;
+    Require(sceNetCtlRegisterCallback(UnregisterSelf, &self, &self) == 0 && self == 1);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_self.calls == 1 && g_self.event == event && g_self.arg == &self && g_selfUnregister == 0);
+    Require(g_first.calls == 1 && g_second.calls == 1);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_self.calls == 1);
+
+    Require(sceNetCtlRegisterCallback(RecordSecond, &secondProbe, &second) == 0 && second == 1);
+    sceNetCtlTerm();
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_first.calls == 1 && g_second.calls == 1);
+
+    Require(sceNetCtlRegisterCallbackV6(RecordV6, &v6Probe, &v6) == 0 && v6 == 0);
+    Require(sceNetCtlRegisterCallback(RecordFirst, &secondProbe, &first) == 0 && first == 0);
+    Require(sceNetCtlCheckCallback() == 0);
+    Require(g_first.calls == 2 && g_first.event == event && g_first.arg == &secondProbe);
+    Require(g_second.calls == 1 && g_self.calls == 1 && g_v6.calls == 0);
+    Require(sceNetCtlUnregisterCallback(first) == 0);
+    Require(sceNetCtlUnregisterCallbackV6(v6) == 0);
+}
 
 NetCtlInfo Query(int code) {
     NetCtlInfo info;
@@ -89,6 +186,8 @@ int main() {
     WSADATA data{};
     Require(WSAStartup(MAKEWORD(2, 2), &data) == 0);
 #endif
+    CheckCallbacks();
+
     NetCtlInfo info{};
     Require(sceNetCtlGetInfo(0, &info) == kErrInvalidCode);
     Require(sceNetCtlGetInfo(22, &info) == kErrInvalidCode);
