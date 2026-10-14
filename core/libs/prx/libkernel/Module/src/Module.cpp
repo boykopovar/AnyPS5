@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -15,9 +16,11 @@
 #include <psapi.h>
 #elif defined(__APPLE__)
 #include <dlfcn.h>
+#include <pthread.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #else
+#include <pthread.h>
 #include <string_view>
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
@@ -185,6 +188,43 @@ namespace {
 
 thread_local PendingModuleArgs pendingModuleArgs;
 thread_local int pendingModuleInitResult = 0;
+std::mutex processModuleArgsLock;
+PendingModuleArgs processModuleArgs;
+
+bool IsOnCurrentThreadStack(const void* address) {
+ std::uintptr_t low = 0;
+ std::uintptr_t high = 0;
+#ifdef _WIN32
+ ULONG_PTR lowLimit = 0;
+ ULONG_PTR highLimit = 0;
+ GetCurrentThreadStackLimits(&lowLimit, &highLimit);
+ low = lowLimit;
+ high = highLimit;
+#elif defined(__APPLE__)
+ high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
+ low = high - pthread_get_stacksize_np(pthread_self());
+#else
+ pthread_attr_t attr;
+ if (pthread_getattr_np(pthread_self(), &attr) != 0) return false;
+ void* stackAddress = nullptr;
+ std::size_t stackSize = 0;
+ const bool queried = pthread_attr_getstack(&attr, &stackAddress, &stackSize) == 0;
+ pthread_attr_destroy(&attr);
+ if (!queried) return false;
+ low = reinterpret_cast<std::uintptr_t>(stackAddress);
+ high = low + stackSize;
+#endif
+ const auto value = reinterpret_cast<std::uintptr_t>(address);
+ return value >= low && value < high;
+}
+
+PendingModuleArgs ResolveModuleArgs(std::size_t args, const void* argp) {
+ const bool recordable = args != 0 && argp != nullptr && !IsOnCurrentThreadStack(argp);
+ std::lock_guard lock(processModuleArgsLock);
+ if (recordable && processModuleArgs.argp == nullptr) processModuleArgs = {args, argp};
+ if (args != 0 || argp != nullptr) return {args, argp};
+ return processModuleArgs;
+}
 
 }
 
@@ -205,7 +245,7 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  (void)opt;
  if (res) *res = 0;
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
- pendingModuleArgs = {args, argp};
+ pendingModuleArgs = ResolveModuleArgs(args, argp);
  pendingModuleInitResult = 0;
  void* handle = dlopen_nid_postfix(module_file_name, kRtldNow);
  const int started = pendingModuleInitResult;
