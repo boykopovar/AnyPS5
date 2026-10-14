@@ -11,6 +11,7 @@
 #include <memory>
 #include <new>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -171,8 +172,7 @@ VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDev
     reported->heapUsage[0] = reportedUsage;
 }
 
-void HostPlacement() {
-    mock = MockDevice{};
+Context budgetContext() {
     auto context = mockContext();
     context.physical = reinterpret_cast<VkPhysicalDevice>(std::uintptr_t{1});
     context.memoryProperties2 = mockMemoryProperties2;
@@ -181,6 +181,12 @@ void HostPlacement() {
     context.memory.memoryHeaps[1] = {16384 * MiB, 0};
     context.memory.memoryTypes[0].heapIndex = 0;
     context.memory.memoryTypes[1].heapIndex = 1;
+    return context;
+}
+
+void HostPlacement() {
+    mock = MockDevice{};
+    auto context = budgetContext();
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     reportedBudget = 1620 * MiB;
     reportedUsage = 1600 * MiB;
@@ -201,6 +207,32 @@ void HostPlacement() {
     Expect(mock.memoryBytes.contains(device), "a device-local buffer was not kept in the device pool after its release");
     DeviceBuffer again(context, 176 * MiB, usage);
     Expect(MemoryOf(again.Handle()) == device, "a retained device-local buffer was not reused");
+}
+
+void RefusedDevicePlacement() {
+    mock = MockDevice{};
+    auto context = budgetContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 200 * MiB;
+    mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    VkDeviceMemory placed = VK_NULL_HANDLE;
+    {
+        DeviceBuffer refused(context, 9 * MiB, usage);
+        placed = MemoryOf(refused.Handle());
+        Expect(mock.memoryTypes.at(placed) == 1, "a device buffer whose device-local allocation ran out of device memory within the reported budget was not placed in the host memory type");
+    }
+    Expect(!mock.memoryBytes.contains(placed) && mock.liveBuffers.empty(), "a device buffer placed in host memory after a refused device-local allocation was kept in the device pool after its release");
+    mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
+    context.memory.memoryHeaps[1].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    bool threw = false;
+    try {
+        DeviceBuffer refused(context, 9 * MiB, usage);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Expect(threw, "a refused device-local allocation without a host memory type did not fail");
+    Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
 }
 
 void SizeClassesAndDirections() {
@@ -657,6 +689,7 @@ int main(int argc, char** argv) {
         SuccessfulAllocationKeepsPool();
         PartialSlabDoesNotRetry();
         HostPlacement();
+        RefusedDevicePlacement();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
