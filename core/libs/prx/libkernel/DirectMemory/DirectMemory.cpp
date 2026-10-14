@@ -32,6 +32,7 @@
 #include <vector>
 #else
 #include <windows.h>
+#include "prx/libc/include/WindowsDescriptor.hpp"
 
 static constexpr int PROT_NONE = 0;
 static constexpr int PROT_READ = 1;
@@ -997,11 +998,46 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     Trace("map file %p+0x%zx offset=0x%llx prot=0x%x flags=0x%x", mapped, len, static_cast<unsigned long long>(offset), prot, flags);
     return 0;
 #else
-    static_cast<void>(prot);
-    static_cast<void>(flags);
-    static_cast<void>(descriptor);
-    static_cast<void>(offset);
-    throw std::system_error(ENOTSUP, std::generic_category(), "file-backed guest mmap is not supported on this host");
+    if ((flags & 3) != 1) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a private file mapping is not mapped from the file on Windows");
+    if ((prot & PROT_EXEC) != 0) throw std::system_error(ENOTSUP, std::generic_category(), "map file: an executable shared file mapping is not implemented on Windows");
+    const HANDLE file = WindowsDescriptorHandle_nid_no_patch(descriptor);
+    LARGE_INTEGER fileBytes{};
+    if (!GetFileSizeEx(file, &fileBytes)) throw std::system_error(EBADF, std::generic_category(), "map file: read the file size");
+    if (offset + len > static_cast<std::uint64_t>(fileBytes.QuadPart)) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping past the end of the file is not implemented on Windows");
+    const int access = WindowsDescriptorAccess_nid_no_patch(file, descriptor, "mmap");
+    if (access == 1) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a write-only descriptor is not implemented on Windows");
+    const DWORD viewProtection = access == 2 ? PAGE_READWRITE : PAGE_READONLY;
+    const HANDLE section = CreateFileMappingW(file, nullptr, viewProtection, 0, 0, nullptr);
+    if (section == nullptr) {
+        const DWORD error = GetLastError();
+        throw std::system_error(error == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: create the file section");
+    }
+    GuestAllocations::Mutation mutation;
+    const int placementFlags = flags & (GuestMapFixedFlag | 0x80 | 0x400000);
+    flags = PlaceHintInReservation(*addr, len, placementFlags);
+    void* mapped = nullptr;
+    try {
+        if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) {
+            CloseHandle(section);
+            return SCE_KERNEL_ERROR_ENOMEM;
+        }
+        ReplaceFixedOverlap(mutation, *addr, len, flags);
+        mapped = MapPlaced(*addr, len, PROT_NONE, flags, alignment);
+        GuestArena::GuestArenaMapFile_nid_postfix(mapped, len, section, offset, WinProtFromPosix(LinuxProtFromSce(prot)), viewProtection);
+        mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, false);
+    } catch (...) {
+        if (mapped != nullptr) Unmap(mapped, len);
+        GuestArena::GuestArenaForgetSection_nid_postfix(section);
+        CloseHandle(section);
+        throw;
+    }
+    GuestArena::GuestArenaForgetSection_nid_postfix(section);
+    CloseHandle(section);
+    *addr = mapped;
+    EraseReservations(mapped, len);
+    RecordProtection(mapped, len, prot);
+    Trace("map file %p+0x%zx offset=0x%llx prot=0x%x flags=0x%x", mapped, len, static_cast<unsigned long long>(offset), prot, flags);
+    return 0;
 #endif
 }
 
@@ -1029,6 +1065,20 @@ int DoMapShared(void** addr, size_t len, int prot, HostSharedMemory object) {
 }
 
 #ifdef _WIN32
+static int PosixRightsFromWin(DWORD protection) {
+    switch (protection & 0xff) {
+    case PAGE_NOACCESS: return PROT_NONE;
+    case PAGE_READONLY: return PROT_READ;
+    case PAGE_READWRITE:
+    case PAGE_WRITECOPY: return PROT_READ | PROT_WRITE;
+    case PAGE_EXECUTE: return PROT_EXEC;
+    case PAGE_EXECUTE_READ: return PROT_READ | PROT_EXEC;
+    case PAGE_EXECUTE_READWRITE:
+    case PAGE_EXECUTE_WRITECOPY: return PROT_READ | PROT_WRITE | PROT_EXEC;
+    default: throw std::runtime_error("Unknown Windows page protection of a mapped view");
+    }
+}
+
 static bool IsGuestModuleImage(const void* base) {
     const auto address = reinterpret_cast<std::uintptr_t>(base);
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(address);
@@ -1111,6 +1161,13 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         if (memory.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
         else if (IsGuestModuleImage(memory.AllocationBase)) mutation.RegisterImage(memory.AllocationBase);
         else throw std::invalid_argument("Memory protection of a foreign image is not supported");
+    }
+    for (auto cursor = first; cursor < end;) {
+        MEMORY_BASIC_INFORMATION view{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &view, sizeof(view)) != sizeof(view)) throw std::runtime_error("Cannot query guest memory protection range");
+        if (view.Type == MEM_MAPPED && (nativeProtection & ~PosixRightsFromWin(view.AllocationProtect)) != 0)
+            throw std::system_error(EACCES, std::generic_category(), "mprotect above the maximum protection of a mapped view");
+        cursor = reinterpret_cast<std::uintptr_t>(view.BaseAddress) + view.RegionSize;
     }
 #else
     mutation.RegisterMainImage();

@@ -76,7 +76,7 @@ public:
         reset(reinterpret_cast<std::uintptr_t>(address), bytes);
     }
 
-    void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false) {
+    void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false, DWORD viewProtection = PAGE_EXECUTE_READWRITE) {
         std::lock_guard lock(mutex);
         collectableRanges.clear();
         auto cursor = reinterpret_cast<std::uintptr_t>(address);
@@ -135,7 +135,7 @@ public:
                 if (views.at(alias).resident) demote(alias);
             }
             split(base, pageBytes);
-            mapShared(base, section, offset + done, protection);
+            mapShared(base, section, offset + done, protection, viewProtection);
             slot->stored = true;
             shared->aliases.push_back(base);
             views.emplace(base, View{shared, protection, {}, 0, owned, offset + done, 0, 0, false, slot});
@@ -603,9 +603,9 @@ private:
         if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(base), bytes, flags, PAGE_READWRITE, nullptr, 0)) fail("replace guest placeholder with resident direct memory");
     }
 
-    void mapShared(std::uintptr_t base, HANDLE section, std::uint64_t offset, DWORD protection) {
+    void mapShared(std::uintptr_t base, HANDLE section, std::uint64_t offset, DWORD protection, DWORD viewProtection = PAGE_EXECUTE_READWRITE) {
         void* page = reinterpret_cast<void*>(base);
-        if (!map(section, GetCurrentProcess(), page, offset, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_EXECUTE_READWRITE, nullptr, 0)) fail("map shared guest page");
+        if (!map(section, GetCurrentProcess(), page, offset, pageBytes, MEM_REPLACE_PLACEHOLDER, viewProtection, nullptr, 0)) fail("map shared guest page");
         if (query(base).State == MEM_RESERVE && !VirtualAlloc(page, pageBytes, MEM_COMMIT, PAGE_EXECUTE_READWRITE)) fail("commit shared guest page");
         DWORD previous;
         if (!VirtualProtect(page, pageBytes, protection, &previous)) fail("protect shared guest page");
