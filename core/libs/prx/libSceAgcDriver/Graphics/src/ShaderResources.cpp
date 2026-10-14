@@ -1630,7 +1630,14 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                         const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
                         const bool read = element < binding.bufferRead.size() && binding.bufferRead[element];
-                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read);
+                        Require(binding.bufferDescriptorStatus.empty() || binding.bufferDescriptorStatus.size() == binding.count, "buffer descriptor status count differs from its binding");
+                        const auto status = binding.bufferDescriptorStatus.empty() ? ShaderRecompiler::StaticBufferDescriptorStatus::Valid : binding.bufferDescriptorStatus[element];
+                        if (status != ShaderRecompiler::StaticBufferDescriptorStatus::Valid) {
+                            Require(shader.stage == ShaderRecompiler::ShaderStage::Compute && shader.program->bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && std::ranges::any_of(shader.program->bindings, [](const ShaderRecompiler::DescriptorBinding& descriptor) { return descriptor.role == ShaderRecompiler::DescriptorRole::FaultBuffer; }), "deferred buffer descriptor has no compute fault contract");
+                            deferredDescriptorFault = true;
+                            faultChecks = true;
+                        }
+                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read, status);
                         const auto& push = shader.program->pushConstants;
                         if (!push.empty()) {
                             const auto position = shader.program->memoryOffsetDword * 4u + element;
@@ -2078,7 +2085,7 @@ void ShaderResources::noteReusable() {
     captureValidation();
     reusable = false;
     directRegions.clear();
-    if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
+    if (guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || deferredDescriptorFault || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
     const auto regions = guestMemory.DirectRegions();
@@ -2106,7 +2113,7 @@ void ShaderResources::noteReusable() {
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
-        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
+        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer) || std::ranges::any_of(binding.bufferDescriptorStatus, [](ShaderRecompiler::StaticBufferDescriptorStatus status) { return status != ShaderRecompiler::StaticBufferDescriptorStatus::Valid; }); });
     });
 }
 
@@ -2168,6 +2175,8 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
         // Read-only elements are bound without a write set: an object built for one written set
         // must not serve a build with another (the variant implies it, this makes it explicit).
         packBits(binding.bufferWritten);
+        visit(static_cast<std::uint32_t>(binding.bufferDescriptorStatus.size()));
+        for (const auto status : binding.bufferDescriptorStatus) visit(static_cast<std::uint32_t>(status));
         visit(static_cast<std::uint32_t>(binding.imageSamplers.size()));
         for (const auto sampler : binding.imageSamplers) visit(sampler);
         visit(static_cast<std::uint32_t>(binding.imageShapes.size()));
@@ -2184,7 +2193,8 @@ std::vector<std::uint32_t> ShaderResources::ContentKey(const CompiledShader& sha
         words += count;
     };
     for (const auto& binding : shader.program->bindings) {
-        addWords(19);
+        addWords(20);
+        addWords(binding.bufferDescriptorStatus.size());
         addWords(binding.imageSamplers.size());
         addWords(binding.imageShapes.size());
         if ((dataWords && !movableBuffers) || !DataRole(binding.role)) addWords(binding.guestDescriptor.size());
@@ -3535,10 +3545,16 @@ DescriptorCache::Stats DescriptorCache::Counters() const {
     return stats;
 }
 
-std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read) {
+std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, ShaderRecompiler::StaticBufferDescriptorStatus status) {
     Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
-    Require((words[1] & 0x40000000u) == 0, "buffer descriptor has reserved bits set");
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+    if (status == ShaderRecompiler::StaticBufferDescriptorStatus::UnsupportedType) {
+        Require(descriptor.Type() != 0u && read && !written && !atomic, "deferred buffer descriptor status is inconsistent with its binding");
+        allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
+        return allocations.size() - 1;
+    }
+    Require(status == ShaderRecompiler::StaticBufferDescriptorStatus::Valid, "unknown buffer descriptor status");
+    Require((words[1] & 0x40000000u) == 0, "buffer descriptor has reserved bits set");
     Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
     auto byteSize = descriptor.GetSize();
@@ -4466,6 +4482,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 continue;
             }
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+            if (std::ranges::any_of(binding.bufferDescriptorStatus, [](ShaderRecompiler::StaticBufferDescriptorStatus status) { return status != ShaderRecompiler::StaticBufferDescriptorStatus::Valid; })) return std::nullopt;
             const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
             if (kept == bindings.end() || kept->allocations.size() != binding.count || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) return std::nullopt;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
