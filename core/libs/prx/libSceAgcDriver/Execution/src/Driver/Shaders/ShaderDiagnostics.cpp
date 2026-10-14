@@ -49,16 +49,17 @@ void Driver::reportSkip(const char* kind, const std::string& what) {
     if (!line.empty()) std::fwrite(line.data(), 1, line.size(), stderr);
 }
 
-std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request) {
+std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix) {
     static std::mutex dumpMutex;
-    static std::set<std::uint64_t> dumped;
-    char name[64];
-    std::snprintf(name, sizeof(name), "shader_%llx.req", static_cast<unsigned long long>(address));
+    static std::set<std::string> dumped;
+    char hex[32];
+    std::snprintf(hex, sizeof(hex), "%llx", static_cast<unsigned long long>(address));
+    const std::string name = "shader_" + std::string(hex) + std::string(suffix) + ".req";
     std::lock_guard lock(dumpMutex);
-    if (!dumped.insert(address).second) return name;
+    if (!dumped.insert(name).second) return name;
     try {
         const auto text = ShaderRecompiler::RequestSerializer{}.Serialize(request);
-        if (std::FILE* file = std::fopen(name, "wb")) {
+        if (std::FILE* file = std::fopen(name.c_str(), "wb")) {
             std::fwrite(text.data(), 1, text.size(), file);
             std::fclose(file);
         }

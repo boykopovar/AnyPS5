@@ -48,7 +48,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnosti
     } catch (...) {
         failure = std::current_exception();
         try {
-            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) dump = Driver::dumpRequest(request.shader.codeAddress, request);
+            if (std::getenv("APS5_DUMP_SHADERS") != nullptr) dump = Driver::dumpRequest(request.shader.codeAddress, request, ".prepare");
         } catch (...) {}
     }
     try {

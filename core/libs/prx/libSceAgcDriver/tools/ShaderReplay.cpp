@@ -163,7 +163,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--code] [--maintenance8] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--code] [--maintenance8] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set; shader_<address>.prepare.req holds a request whose preparation failed before any resource capture, so replay it with --prepare\n");
         return 2;
     }
     int failures = 0;
