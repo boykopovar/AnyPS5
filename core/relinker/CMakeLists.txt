@@ -648,14 +648,8 @@ if(BUILD_TESTING)
     )
     add_test(NAME windows_icon_resource COMMAND windows_icon_resource_tests)
 
-    add_test_executable(entry_stub_tests
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/EntryStubTests.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
-    )
-    target_include_directories(entry_stub_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
-    )
+    add_test_executable(entry_stub_tests ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/EntryStubTests.cpp)
+    target_link_libraries(entry_stub_tests PRIVATE relinker_core)
     add_test(NAME entry_stub COMMAND entry_stub_tests)
 
     add_test_executable(control_flow_graph_tests
