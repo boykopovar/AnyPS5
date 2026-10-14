@@ -292,6 +292,23 @@ bool DecodedInstruction::IsRdpid() const {
            ((modrm >> ModRmModShift) & ModRmModMask) == ModRmModRegister && ((modrm >> ModRmRegShift) & ModRmRegMask) == 7;
 }
 
+bool DecodedInstruction::IsRdtscp() const {
+    bool operandSizeOverride = false;
+    bool repnePrefix = false;
+    bool repPrefix = false;
+    const std::size_t pos = _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix);
+
+    if (operandSizeOverride || repnePrefix || repPrefix) {
+        return false;
+    }
+
+    if (pos + 2 >= Length) {
+        return false;
+    }
+
+    return Data[pos] == TwoByteOpcodeEscape && Data[pos + 1] == TwoByteGrp7 && Data[pos + 2] == 0xF9;
+}
+
 bool DecodedInstruction::IsClwb() const {
     bool operandSizeOverride = false;
     bool repnePrefix = false;
