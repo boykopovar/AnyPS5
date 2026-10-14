@@ -656,6 +656,7 @@ private:
         };
         std::vector<KeyStore> keyStores;
         std::vector<std::uint64_t> drawTraceTokens;
+        std::unordered_set<std::uint64_t> drawTraceTokenSet;
     };
     struct LabelEntry {
         std::uint32_t value;

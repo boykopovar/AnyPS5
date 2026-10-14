@@ -1983,10 +1983,16 @@ void Recorder::NoteSampledDraw(VkCommandBuffer commands) {
 void Recorder::NoteDrawTraceToken(std::uint64_t token) noexcept {
     if (token == 0 || open == nullptr) return;
     try {
-        if (std::find(open->drawTraceTokens.begin(), open->drawTraceTokens.end(), token) == open->drawTraceTokens.end()) {
+        auto inserted = open->drawTraceTokenSet.insert(token);
+        if (!inserted.second) return;
+        try {
             open->drawTraceTokens.push_back(token);
+        } catch (...) {
+            open->drawTraceTokenSet.erase(inserted.first);
+            throw;
         }
     } catch (...) {
+        AgcDriver::CaptureTrace::Log("draw-token-note-failed token=%llu", static_cast<unsigned long long>(token));
     }
 }
 
