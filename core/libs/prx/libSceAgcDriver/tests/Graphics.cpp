@@ -6492,6 +6492,20 @@ void ResourceContentKeyTests(bool benchmark) {
     }
 }
 
+void pixelLayerBaseTests() {
+    AgcDriver::Graphics::State state{};
+    state.hasColorTarget = true;
+    state.color.depth = 1;
+    state.color.arraySlice = 5;
+    AgcDriver::Graphics::Require(AgcDriver::Graphics::PixelLayerBase(state, false) == 5u, "a 2D array view did not report its slice as the pixel layer base");
+    AgcDriver::Graphics::Require(AgcDriver::Graphics::PixelLayerBase(state, true) == 0u, "an exported layer kept the color view slice as the pixel layer base");
+    state.color.depth = 32;
+    state.color.depthSlice = 7;
+    AgcDriver::Graphics::Require(AgcDriver::Graphics::PixelLayerBase(state, false) == 7u, "a 3D color view did not report its depth slice as the pixel layer base");
+    state.hasColorTarget = false;
+    AgcDriver::Graphics::Require(AgcDriver::Graphics::PixelLayerBase(state, false) == 0u, "a draw without a color target reported a pixel layer base");
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "200");
@@ -6501,6 +6515,7 @@ int main(int argc, char** argv) {
     setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
+        pixelLayerBaseTests();
         if (argc == 2 && std::string_view(argv[1]) == "--sparse-buffer-holes") {
             bool passed = false;
             {

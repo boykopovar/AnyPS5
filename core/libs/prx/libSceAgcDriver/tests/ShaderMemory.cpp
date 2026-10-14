@@ -2969,8 +2969,9 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->rasterPrimitive = RasterPrimitive::Rectangle;
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
+    minimal.context.pixel->layerBase = 7u;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQRsAAAA=", "new requests did not use serialization version 27");
+    require(requestPrefix(encoded, 8u) == "NVNQQRwAAAA=", "new requests did not use serialization version 28");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -2979,6 +2980,7 @@ void verifyPixelRequestSerialization() {
     require(serializer.Deserialize(encoded).request.context.linkedCallFallbacks.empty(), "a request without linked call fallbacks gained some");
     require(serializer.Deserialize(encoded).request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && serializer.Deserialize(encoded).request.context.pixel->ditheredAlphaToCoverage, "the pixel primitive class or dither mode did not round-trip");
     require(serializer.Deserialize(encoded).request.context.pixel->layerExported, "the pixel layer export did not round-trip");
+    require(serializer.Deserialize(encoded).request.context.pixel->layerBase == 7u, "the pixel layer base did not round-trip");
     const auto legacy16 = serializer.Deserialize(
         "NVNQQRAAAAAFAAADAAAAAAABAAAAAAAAAAAAgb8AAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAA"
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -3088,7 +3090,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 24u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQRwAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQR0AAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -3214,18 +3216,19 @@ void verifyVertexInfoVersion19() {
     while (allBitsOffset < version26Pixel.size() && version26Pixel[allBitsOffset] == allBitsBytes[allBitsOffset]) ++allBitsOffset;
     require(allBitsOffset == flagOffset + 2u, "the front-face all-bits flag does not follow the dithered coverage flag");
     version26Pixel.erase(version26Pixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset));
+    version26Pixel.erase(version26Pixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset), version26Pixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset + 4u));
     version26Pixel[4] = 26u;
     const auto replay26 = serializer.Deserialize(encodeBase64(version26Pixel));
-    require(replay26.request.context.pixel.has_value() && replay26.request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && !replay26.request.context.pixel->frontFaceAllBits, "a version 26 request lost its pixel primitive class or read a front-face all-bits flag");
+    require(replay26.request.context.pixel.has_value() && replay26.request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && !replay26.request.context.pixel->frontFaceAllBits && replay26.request.context.pixel->layerBase == 0u, "a version 26 request lost its pixel primitive class or read a front-face all-bits flag or a layer base");
     require(serializer.Serialize(replay26.request) == encodedPixel, "a version 26 request misread the fields after its dithered coverage flag");
-    legacyPixel.erase(legacyPixel.begin() + static_cast<std::ptrdiff_t>(flagOffset), legacyPixel.begin() + static_cast<std::ptrdiff_t>(flagOffset + 3u));
+    legacyPixel.erase(legacyPixel.begin() + static_cast<std::ptrdiff_t>(flagOffset), legacyPixel.begin() + static_cast<std::ptrdiff_t>(flagOffset + 7u));
     legacyPixel.resize(legacyPixel.size() - sizeof(std::uint64_t));
     for (const auto version : {19u, 20u, 21u, 22u}) {
         auto versionPixel = legacyPixel;
         versionPixel[4] = static_cast<std::uint8_t>(version);
         if (version < 22u) versionPixel.pop_back();
         const auto replayPixel = serializer.Deserialize(encodeBase64(versionPixel));
-        require(replayPixel.request.context.pixel.has_value() && replayPixel.request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && !replayPixel.request.context.pixel->layerExported && !replayPixel.request.context.pixel->ditheredAlphaToCoverage, "a main version 19 to 22 request lost its pixel primitive class or read a layer export or dither flag");
+        require(replayPixel.request.context.pixel.has_value() && replayPixel.request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && !replayPixel.request.context.pixel->layerExported && !replayPixel.request.context.pixel->ditheredAlphaToCoverage && replayPixel.request.context.pixel->layerBase == 0u, "a main version 19 to 22 request lost its pixel primitive class or read a layer export, dither flag or layer base");
         require(serializer.Serialize(replayPixel.request) == encodedPixel, "a main version 19 to 22 request misread the fields after its pixel primitive class");
     }
 }

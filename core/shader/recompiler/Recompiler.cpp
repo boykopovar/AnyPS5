@@ -886,6 +886,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         moduleKey.push_back(request.context.pixel->dualSourceBlend ? 1u : 0u);
         if (variant.info.info.rasterPrimitive) moduleKey.push_back(static_cast<std::uint32_t>(request.context.pixel->rasterPrimitive));
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
+        if (variant.info.info.layerBase) moduleKey.push_back(request.context.pixel->layerBase);
     }
     result.vertexAttributes.reserve(result.vertexInputs.size());
     std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> vertexClasses{};
@@ -935,6 +936,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                 constants.push_back({PipelineSpecialization::DualSourceBlend, moduleKey[index++]});
                 if (variant.info.info.rasterPrimitive) constants.push_back({PipelineSpecialization::RasterPrimitive, moduleKey[index++]});
                 if (variant.info.info.layerExported) constants.push_back({PipelineSpecialization::LayerExported, moduleKey[index++]});
+                if (variant.info.info.layerBase) constants.push_back({PipelineSpecialization::LayerBase, moduleKey[index++]});
             }
             if (!artifact.vertexInputPatches.empty()) {
                 for (const auto& input : result.vertexInputs) {
@@ -1205,6 +1207,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(request.context.pixel->dualSourceBlend);
         mix(static_cast<std::uint64_t>(request.context.pixel->rasterPrimitive));
         mix(request.context.pixel->layerExported);
+        mix(static_cast<std::uint64_t>(request.context.pixel->layerBase));
     }
     if (request.context.vertex) {
         const auto& vertex = *request.context.vertex;

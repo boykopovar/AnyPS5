@@ -384,7 +384,10 @@ void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancil
     }
     std::array<IrValue*, 2> fields {};
     const auto field = [&](std::size_t index) -> IrValue& {
-        if (fields[index] == nullptr && index == 1u) fields[index] = &insertBefore(program, ancillary, IrOpcode::IMul32, insertBuiltin(program, builder, ancillary, StageInputKind::Layer), insertBuiltin(program, builder, ancillary, StageInputKind::LayerExported));
+        if (fields[index] == nullptr && index == 1u) {
+            IrValue& exportedLayer = insertBefore(program, ancillary, IrOpcode::IMul32, insertBuiltin(program, builder, ancillary, StageInputKind::Layer), insertBuiltin(program, builder, ancillary, StageInputKind::LayerExported));
+            fields[index] = &insertBefore(program, ancillary, IrOpcode::IAdd32, exportedLayer, insertBuiltin(program, builder, ancillary, StageInputKind::LayerBase));
+        }
         if (fields[index] == nullptr) {
             fields[index] = &insertBuiltin(program, builder, ancillary, StageInputKind::SampleId);
         }
@@ -860,7 +863,8 @@ bool ConstantFolder::ComposePackedAncillary(IrProgram& program) const {
         IrValue& primitive = insertBuiltin(program, builder, *word, StageInputKind::RasterPrimitive);
         IrValue& sample = insertBefore(program, *word, IrOpcode::ShiftLeftLogical32, insertBuiltin(program, builder, *word, StageInputKind::SampleId), builder.Constant(8u));
         IrValue& exportedLayer = insertBefore(program, *word, IrOpcode::IMul32, insertBuiltin(program, builder, *word, StageInputKind::Layer), insertBuiltin(program, builder, *word, StageInputKind::LayerExported));
-        IrValue& layer = insertBefore(program, *word, IrOpcode::ShiftLeftLogical32, exportedLayer, builder.Constant(16u));
+        IrValue& totalLayer = insertBefore(program, *word, IrOpcode::IAdd32, exportedLayer, insertBuiltin(program, builder, *word, StageInputKind::LayerBase));
+        IrValue& layer = insertBefore(program, *word, IrOpcode::ShiftLeftLogical32, totalLayer, builder.Constant(16u));
         IrValue& fields = insertBefore(program, *word, IrOpcode::BitwiseOr32, sample, layer);
         word->ReplaceAllUsesWith(&insertBefore(program, *word, IrOpcode::BitwiseOr32, primitive, fields));
     }

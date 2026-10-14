@@ -142,6 +142,7 @@ VkExtent2D SampleLocationGrid(const State& state);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
+std::uint32_t PixelLayerBase(const State& state, bool layerExported);
 ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot, bool allowMultisampleDcc = false);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
