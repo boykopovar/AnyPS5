@@ -53,6 +53,11 @@ struct ResourceCapture {
 // the target); the vertex stages' input validation is repeated per capture because it reads V#
 // fields the key does not cover. Null for a request that bypasses the cache (useCache false).
 struct CompiledVariant;
+struct OfflineCompileTimings {
+    double frontendSeconds = 0;
+    double backendSeconds = 0;
+};
+[[nodiscard]] std::shared_ptr<const CompiledVariant> CompileShaderUncached(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, OfflineCompileTimings* timings = nullptr);
 struct SourceHandle {
     std::shared_ptr<SourceEntry> source;
     std::shared_ptr<const CompiledVariant> artifact;
