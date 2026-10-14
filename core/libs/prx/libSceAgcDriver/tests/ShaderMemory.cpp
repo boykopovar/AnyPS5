@@ -954,6 +954,91 @@ void verifyGuardedDescriptorSources() {
     expectFailure([&] { static_cast<void>(compileStore(0u)); }, "incompatible with the static runtime image interface", "guarded images: a store of the wrong dimension behind a taken branch was accepted");
 }
 
+void verifyDeferredStaticBufferTypes() {
+    using namespace ShaderRecompiler;
+    alignas(256) static std::array<std::uint32_t, 32> input{};
+    alignas(256) static std::array<std::uint32_t, 32> output{};
+    alignas(256) static std::array<std::uint32_t, 16> root{};
+    const auto descriptor = [](const void* base, std::uint32_t bytes, std::uint32_t type) {
+        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(base));
+        return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x30027facu | (type << 30u)};
+    };
+    const std::vector<std::uint32_t> guarded{
+        0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xbf8cc07fu, 0x7e0202ffu, 0x11111111u,
+        0x34040082u, 0x7da80008u, 0xbf880003u, 0xe0301000u, 0x80030102u, 0xbf8c3f70u, 0xbefe04c1u, 0xe0701000u, 0x80010102u, 0xbf810000u};
+    auto unguarded = guarded;
+    unguarded[10] = 0x7e000000u;
+    unguarded[11] = 0xbf800000u;
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    const auto rootAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
+    const auto makeRequest = [&](const std::vector<std::uint32_t>& code, std::uint64_t codeAddress) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, codeAddress, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        return request;
+    };
+    const auto fill = [&](std::uint32_t type) {
+        root = {};
+        const auto out = descriptor(output.data(), sizeof(output), 0u);
+        const auto in = descriptor(input.data(), sizeof(input), type);
+        std::copy(out.begin(), out.end(), root.begin());
+        root[4] = 1u;
+        std::copy(in.begin(), in.end(), root.begin() + 8);
+    };
+    const auto request = makeRequest(guarded, 0x26000u);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.buffers.size() == 2u, "deferred V# type: the input and output V#s were not planned as two buffers");
+    const auto read = plan->info.buffers[0].written ? 1u : 0u;
+    require(!plan->info.buffers[read].written && plan->info.buffers[read].deferredTypeValidation, "deferred V# type: the guarded read-only buffer was not eligible for a deferred TYPE check");
+    for (const std::uint32_t type : {1u, 2u, 3u}) {
+        fill(type);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        const auto& status = capture->snapshot.bufferDescriptorStatus;
+        require(status.size() == 2u && status[read] == StaticBufferDescriptorStatus::UnsupportedType && status[1u - read] == StaticBufferDescriptorStatus::Valid, "deferred V# type: a guarded read through a V# of nonzero TYPE was not captured as UnsupportedType");
+        auto compiled = request;
+        compiled.context.memory = memory.Regions();
+        const auto result = Recompile(compiled, *capture);
+        const bool fault = std::ranges::any_of(result->bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::FaultBuffer; });
+        const bool deferred = std::ranges::any_of(result->bindings, [](const DescriptorBinding& binding) { return std::ranges::find(binding.bufferDescriptorStatus, StaticBufferDescriptorStatus::UnsupportedType) != binding.bufferDescriptorStatus.end(); });
+        require(fault && deferred && result->bdaAbiVersion == BdaAbi::Version, "deferred V# type: the compiled result has no fault buffer or no deferred binding status");
+        require(result->deferredTypeFaultsOnly, "deferred V# type: a fault buffer kept only for the deferred TYPE check is not marked as such");
+    }
+    fill(0u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(std::ranges::all_of(capture->snapshot.bufferDescriptorStatus, [](StaticBufferDescriptorStatus status) { return status == StaticBufferDescriptorStatus::Valid; }), "deferred V# type: a TYPE 0 V# was not captured as valid");
+        auto compiled = request;
+        compiled.context.memory = memory.Regions();
+        const auto result = Recompile(compiled, *capture);
+        require(std::ranges::all_of(result->bindings, [](const DescriptorBinding& binding) { return binding.bufferDescriptorStatus.empty(); }), "deferred V# type: a TYPE 0 capture carries a binding status");
+        require(result->deferredTypeFaultsOnly, "deferred V# type: the variant of a TYPE 0 capture does not mark its fault buffer as deferred-only");
+    }
+    const auto immediate = makeRequest(unguarded, 0x27000u);
+    auto withoutAbi = request;
+    withoutAbi.target.bdaAbiVersion = 0u;
+    withoutAbi.shader.codeAddress = 0x28000u;
+    for (const auto* refused : std::array<const RecompileRequest*, 2>{&immediate, &withoutAbi}) {
+        fill(2u);
+        AgcDriver::ShaderMemory memory({});
+        expectFailure([&] { static_cast<void>(memory.Capture(*refused)); }, "buffer descriptor uses an unsupported type", "deferred V# type: a TYPE 2 read under the entry EXEC or without the BDA fault ABI was accepted");
+    }
+}
+
 struct alignas(256) TableTexture {
     std::array<std::uint8_t, 256> bytes{};
 };
@@ -4789,6 +4874,62 @@ void verifySrtReadPatching() {
     require(remainingUses.size() == 1u && remainingUses.front().user->Opcode() == IrOpcode::ReferenceU32, "SRT read patching: the original read retains non-planning uses");
 }
 
+void verifyDeferredStaticBuffersSkipPlanningReads() {
+    using namespace ShaderRecompiler;
+    const auto make = [](IrProgram& program, std::uint32_t quad) {
+        auto& resources = program.Resources();
+        resources.stage = IrShaderStage::Compute;
+        resources.resourceTrackingComplete = true;
+        resources.srtPlanComplete = true;
+        resources.descriptorSources.emplace_back();
+        BufferResource buffer;
+        buffer.read = true;
+        resources.info.buffers.push_back(buffer);
+        MemoryInfo load;
+        load.kind = ResourceKind::Buffer;
+        load.dataBits = 32u;
+        load.dataDwords = 1u;
+        load.componentCount = 1u;
+        resources.memoryInfo.push_back(load);
+        MemoryInfo planning;
+        planning.kind = ResourceKind::ScalarBuffer;
+        planning.resource = quad;
+        planning.dataBits = 32u;
+        planning.dataDwords = 1u;
+        planning.componentCount = 1u;
+        planning.planningOnly = true;
+        resources.memoryInfo.push_back(planning);
+
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        program.Metadata().blockInfo.push_back(BlockInfo{block.Id()});
+        IrBuilder builder(program);
+        builder.SetInsertionPoint(block);
+        const auto descriptor = [&] { return &builder.Emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&builder.Constant(0u), &builder.Constant(0u), &builder.Constant(0u), &builder.Constant(0u)}); };
+        auto& active = builder.Emit(IrOpcode::ULessThan32, IrType::U1, {&builder.Constant(0u), &builder.Constant(1u)});
+        static_cast<void>(builder.Emit(IrOpcode::LoadBufferU32, IrType::U32, {descriptor(), &builder.Constant(0u), &builder.Constant(0u), &builder.Constant(0u), &active}, MemoryFlags{0u, 0u}));
+        auto& read = builder.Emit(IrOpcode::ReadConstBuffer, IrType::U32, {descriptor(), &builder.Constant(0u)}, MemoryFlags{1u, 0u});
+        static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&read}));
+    };
+    for (const std::uint32_t quad : {3u, 0u}) {
+        const auto name = "deferred static buffers with a planning read of quad " + std::to_string(quad) + ": ";
+        try {
+            IrProgram applied;
+            make(applied, quad);
+            ResourceMaterializer{}.ApplyStaticInterface(applied, true, true);
+            const auto& info = applied.Resources().info;
+            require(info.buffers.size() == 1u && info.buffers[0].deferredTypeValidation && info.usesFaultBuffer, (name + "the static interface did not defer the read-only buffer").c_str());
+            IrProgram extracted;
+            make(extracted, quad);
+            const auto plan = ResourceMaterializer{}.ExtractPlan(extracted, true);
+            require(plan.info.buffers.size() == 1u && plan.info.buffers[0].deferredTypeValidation && plan.info.usesFaultBuffer, (name + "the extracted plan did not defer the read-only buffer").c_str());
+        } catch (const std::out_of_range& error) {
+            require(false, (name + "indexed past the static buffers (" + error.what() + ")").c_str());
+        }
+    }
+}
+
 struct NestedRequest {
     std::vector<std::uint32_t> code;
     std::array<std::uint32_t, 2> userData{};
@@ -5184,6 +5325,11 @@ int main(int argc, char** argv) {
             std::cout << "TYPE=0 image descriptor materialization passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--deferred-static-planning-reads") {
+            verifyDeferredStaticBuffersSkipPlanningReads();
+            std::cout << "Deferred static buffer checks skip planning-only scalar reads\n";
+            return 0;
+        }
         require(argc == 1, "unknown shader memory test arguments");
         verifyRegisterSources();
         verifyEvaluatedValues();
@@ -5196,6 +5342,7 @@ int main(int argc, char** argv) {
         verifyMayEvaluate();
         verifyPureFlatSlots();
         verifyGuardedDescriptorSources();
+        verifyDeferredStaticBufferTypes();
         verifyImageTableKeys();
         verifyImageTables();
         verifyImageTableRegistration();
@@ -5233,6 +5380,7 @@ int main(int argc, char** argv) {
         verifyFunctionLdsBound();
         verifyFunctionLdsUpdates();
         verifySrtReadPatching();
+        verifyDeferredStaticBuffersSkipPlanningReads();
         verifyGuardedNullPointers();
         verifyCubeDepthCompareMode();
         verifyVolumeArrayLoadMode();

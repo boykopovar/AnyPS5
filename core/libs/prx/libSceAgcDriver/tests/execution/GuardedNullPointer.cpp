@@ -70,6 +70,12 @@ alignas(256) constexpr std::array<std::uint32_t, 21> DescriptorCode{
     0xbf8c3f70u, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 19> StaticDescriptorCode{
+    0xf4080100u, 0xfa000000u, 0xf4000200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xbf8cc07fu, 0x7e0202ffu,
+    0x11111111u, 0x34040082u, 0x7da80008u, 0xbf880003u, 0xe0301000u, 0x80030102u, 0xbf8c3f70u, 0xbefe04c1u,
+    0xe0701000u, 0x80010102u, 0xbf810000u,
+};
+
 class StderrCapture {
 public:
     StderrCapture() {
@@ -117,7 +123,7 @@ struct Outcome {
 };
 
 template <std::size_t CodeWords>
-Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint64_t pointer, std::uint32_t guard) {
+Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, CodeWords>& code, std::uint64_t pointer, std::uint32_t guard, const std::array<std::uint32_t, 4>& descriptor = {}) {
     const auto output = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Output.data()));
     Root = {};
     Root[0] = static_cast<std::uint32_t>(output);
@@ -127,6 +133,7 @@ Outcome Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Cod
     Root[4] = guard;
     Root[6] = static_cast<std::uint32_t>(pointer);
     Root[7] = static_cast<std::uint32_t>(pointer >> 32u);
+    std::copy(descriptor.begin(), descriptor.end(), Root.begin() + 8);
     std::fill(Output.begin(), Output.end(), 0xdeadbeefu);
     const auto root = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Root.data()));
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(root), static_cast<std::uint32_t>(root >> 32u)};
@@ -244,6 +251,22 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto descriptorZero = Run(device, DescriptorCode, table, 1u);
     Require(!Faulted(descriptorZero) && descriptorZero.poisoned == 0u && descriptorZero.cacheable && descriptorZero.pipelineVariantId == descriptorNull.pipelineVariantId, "guarded pointer: a zero V# read from mapped memory faulted, or its pipeline variant differs from a V# zeroed by poison:\n" + descriptorZero.log);
     RequireWords(descriptorZero, Lanes, 0u, "guarded pointer: a buffer read through a zero V#");
+
+    const auto staticDescriptor = [&](std::uint32_t type) {
+        return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(valid), static_cast<std::uint32_t>((valid >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(Data)), 0x30027facu | (type << 30u)};
+    };
+    const auto staticRead = Run(device, StaticDescriptorCode, 0u, 1u, staticDescriptor(0u));
+    Require(!Faulted(staticRead), "deferred V# type: a guarded read through a TYPE 0 V# faulted:\n" + staticRead.log);
+    RequireWords(staticRead, 1u, Payload, "deferred V# type: a guarded read through a TYPE 0 V#");
+    char deferredFault[96];
+    std::snprintf(deferredFault, sizeof(deferredFault), "address=0x%llx instruction=0x30 bytes=0", static_cast<unsigned long long>(valid));
+    for (const std::uint32_t type : {2u, 3u}) {
+        const auto skipped = Run(device, StaticDescriptorCode, 0u, 0u, staticDescriptor(type));
+        Require(!Faulted(skipped), "deferred V# type: a read through a V# of nonzero TYPE that no lane runs faulted:\n" + skipped.log);
+        RequireWords(skipped, 0u, 0u, "deferred V# type: a read through a V# of nonzero TYPE that no lane runs");
+        const auto taken = Run(device, StaticDescriptorCode, 0u, 1u, staticDescriptor(type));
+        Require(Faulted(taken) && taken.log.find(deferredFault) != std::string::npos && taken.log.find("reason=8") != std::string::npos, "deferred V# type: a read through a V# of nonzero TYPE that one lane runs did not fault at its pc:\n" + taken.log);
+    }
 
 #ifdef _WIN32
     VirtualFree(reserved, 0, MEM_RELEASE);
