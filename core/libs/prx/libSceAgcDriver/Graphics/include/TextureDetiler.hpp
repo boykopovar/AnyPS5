@@ -54,6 +54,7 @@ namespace AgcDriver::Graphics {
         void BeginBatch();
         void DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask, std::uint64_t cmaskOffset, std::size_t cmaskBytes, VkImageView view, std::uint32_t width, std::uint32_t height, std::uint32_t elementBytes, const std::array<std::uint32_t, 2>& clearWords, bool write);
         std::uint32_t CmaskErrors();
+        void DispatchDepthSample(VkCommandBuffer commands, VkImageView depth, VkImageView target, std::uint32_t width, std::uint32_t height, std::uint32_t sample);
 
     private:
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
@@ -73,6 +74,12 @@ namespace AgcDriver::Graphics {
         VkPipeline cmaskPipeline = VK_NULL_HANDLE;
         std::vector<VkDescriptorPool> cmaskDescriptorPools;
         std::size_t allocatedCmaskSets = 0;
+        VkDescriptorSetLayout depthSampleLayout = VK_NULL_HANDLE;
+        VkPipelineLayout depthSamplePipelineLayout = VK_NULL_HANDLE;
+        VkPipeline depthSamplePipeline = VK_NULL_HANDLE;
+        VkSampler depthSampler = VK_NULL_HANDLE;
+        std::vector<VkDescriptorPool> depthSamplePools;
+        std::size_t allocatedDepthSampleSets = 0;
         std::unique_ptr<Buffer> cmaskErrors;
         VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;

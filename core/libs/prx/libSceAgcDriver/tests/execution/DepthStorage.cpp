@@ -1,6 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -29,6 +32,7 @@ using namespace AgcDriver::Graphics;
 constexpr std::uint32_t Side = 64;
 constexpr std::size_t BlockBytes = 65536;
 alignas(4096) std::array<std::uint8_t, BlockBytes * 2> Storage{};
+alignas(4096) std::array<std::uint8_t, BlockBytes * 2> CopyStorage{};
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Format8Uint = 5;
 
@@ -249,6 +253,53 @@ void Run(Context context, std::uint8_t* block) {
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "through a 2D array view of slices 1-0", "a 2D array view of layer 1 of the depth plane was accepted");
 }
 
+void DepthCopyCase(Context context, std::uint8_t* block) {
+    const auto colorAddress = reinterpret_cast<std::uint64_t>(block);
+    const auto depthAddress = colorAddress + BlockBytes / 4;
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto submit = [&] {
+        recorder.Submit();
+        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    };
+    ColorTarget color{};
+    color.address = colorAddress;
+    color.surfaceAddress = colorAddress;
+    color.extent = {Side, Side};
+    color.surfaceExtent = color.extent;
+    color.format = VK_FORMAT_R32_SFLOAT;
+    color.elementBytes = 4;
+    color.tileMode = ColorTileMode::RenderTarget;
+    color.bytes = ColorTargetLayout(Side, Side, ColorTileMode::RenderTarget, 4).Bytes();
+    const auto copy = [&](std::uint32_t samples, std::uint32_t sample, VkExtent2D extent) {
+        RunDepthCopyPass(context, DepthCopyPass{depthAddress, extent, samples, sample, color});
+        submit();
+        const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
+        resident->MarkDirty();
+        resident->WriteBack();
+        submit();
+    };
+    const auto countBlock = [&](float value) {
+        std::size_t count = 0;
+        for (std::size_t offset = 0; offset < BlockBytes; offset += sizeof(float)) {
+            float texel = 0;
+            std::memcpy(&texel, block + offset, sizeof(texel));
+            if (texel == value) ++count;
+        }
+        return count;
+    };
+    std::fill(block, block + BlockBytes, std::uint8_t{0});
+    ExpectFailure([&] { copy(2, 0, {Side, Side}); }, "no draw rendered", "a DB depth copy from memory without a depth surface was accepted");
+    Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, 2}) != VK_NULL_HANDLE, "the two-sample depth surface was not created");
+    copy(2, 0, {Side, Side});
+    Require(countBlock(0.375f) == Side * Side, "the DB depth copy of sample 0 did not store the cleared depth in every texel of the R32 float target");
+    std::fill(block, block + BlockBytes, std::uint8_t{0});
+    copy(2, 1, {Side, Side});
+    Require(countBlock(0.375f) == Side * Side, "the DB depth copy of sample 1 did not store the cleared depth in every texel of the R32 float target");
+    ExpectFailure([&] { copy(2, 2, {Side, Side}); }, "does not have", "a DB depth copy of a third sample of a two-sample surface was accepted");
+    ExpectFailure([&] { copy(2, 0, {Side / 2, Side / 2}); }, "of another size", "a DB depth copy of another extent than the depth surface was accepted");
+}
+
 }
 
 int main() {
@@ -269,6 +320,11 @@ int main() {
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             Run(context, block);
+            auto* copyBlock = CopyStorage.data() + (BlockBytes - reinterpret_cast<std::uintptr_t>(CopyStorage.data()) % BlockBytes) % BlockBytes;
+            GuestAllocations::Mutation().Add(copyBlock, BlockBytes, true, true, true);
+            DepthCopyCase(context, copyBlock);
+            ClearCachedTextures(context.device);
+            GuestAllocations::Mutation().Remove(copyBlock);
             ClearDepthSurfaces(context.device);
         }
         GuestAllocations::Mutation().Remove(block);

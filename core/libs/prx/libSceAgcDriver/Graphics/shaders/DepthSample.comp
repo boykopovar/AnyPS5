@@ -1,0 +1,18 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2DMS depth;
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D target;
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+    int sampleIndex;
+} push;
+
+void main() {
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= push.width || pixel.y >= push.height) return;
+    imageStore(target, ivec2(pixel), vec4(texelFetch(depth, ivec2(pixel), push.sampleIndex).r, 0.0, 0.0, 0.0));
+}

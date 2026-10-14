@@ -1838,6 +1838,49 @@ void DepthBoundsBiasTests() {
 
 alignas(256) std::array<std::uint8_t, 4> dccKeys{};
 
+void depthCopyPassTests() {
+    using AgcDriver::Graphics::DecodeDepthCopyPass;
+    auto queue = makeState();
+    queue.context[0x0] = 0;
+    Require(!DecodeDepthCopyPass(queue).has_value(), "a draw without DEPTH_COPY decoded as a DB depth copy");
+    queue.context[0x000] = 0x84;
+    queue.context[0x010] = 0x80000187;
+    queue.context[0x011] = 0x20000180;
+    queue.context[0x012] = 0x00001000;
+    queue.context[0x007] = 0x0003003f;
+    queue.context[0x31c] = 0x40710;
+    queue.context[0x8e] = 1;
+    auto pass = DecodeDepthCopyPass(queue);
+    Require(pass.has_value() && pass->depthAddress == 0x100000 && pass->samples == 2 && pass->sample == 0 && pass->extent.width == 64 && pass->extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    Require(pass->color.format == VK_FORMAT_R32_SFLOAT && pass->color.samples == 1 && pass->color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()), "the DB depth copy target decoded differently");
+    queue.context[0x000] = 0x104;
+    Require(DecodeDepthCopyPass(queue)->sample == 1, "COPY_SAMPLE without COPY_CENTROID did not select the sample");
+    queue.context[0x000] = 0x204;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "a sample the depth plane does not have");
+    queue.context[0x000] = 0x8c;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "stencil copy");
+    queue.context[0x000] = 0x84;
+    queue.context[0x30e] = 0xfffffffe;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "sample mask");
+    queue.context[0x30e] = 0xffffffff;
+    queue.context[0x200] = 2;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "depth or stencil tests");
+    queue.context[0x200] = 0;
+    queue.context[0x010] = 0x80000185;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "Z_32_FLOAT");
+    queue.context[0x010] = 0x80000187;
+    queue.context[0x8e] = 0xf;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "red channel");
+    queue.context[0x8e] = 1;
+    queue.context[0x31c] = 0x28028;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "single-sample R32 float");
+    queue.context[0x31c] = 0x40710;
+    queue.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "over part of the depth surface");
+    queue.context[0x10f] = std::bit_cast<std::uint32_t>(32.0f);
+    Require(DecodeDepthCopyPass(queue).has_value(), "the restored DB depth copy was refused");
+}
+
 void metadataPassTests() {
     using AgcDriver::Graphics::ColorMetadataPass;
     using AgcDriver::Graphics::DecodeColorMetadataPass;
@@ -5881,6 +5924,7 @@ int main(int argc, char** argv) {
         ShadersWriteMemoryTests();
         DualSourceBlendTests();
         metadataPassTests();
+        depthCopyPassTests();
         cmaskTests();
         uint16ExportTests();
         uint8x4TargetTests();

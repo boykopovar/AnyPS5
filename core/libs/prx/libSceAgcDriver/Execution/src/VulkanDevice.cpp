@@ -3241,6 +3241,10 @@ std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::Stat
     return Graphics::KnownValidationFailure(graphicsContext(), shaders, graphics);
 }
 
+void VulkanDevice::DepthCopyPass(const Graphics::DepthCopyPass& pass) {
+    Graphics::RunDepthCopyPass(graphicsContext(), pass);
+}
+
 void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
 }

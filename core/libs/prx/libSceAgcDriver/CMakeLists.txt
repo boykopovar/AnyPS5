@@ -83,6 +83,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcDepthSampleShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/DepthSample.comp)
+set(agcDepthSampleShaderSpv ${agcTextureDetileGeneratedDir}/DepthSample.spv)
+set(agcDepthSampleShaderHeader ${agcTextureDetileGeneratedDir}/DepthSample_spv.h)
+add_custom_command(
+        OUTPUT "${agcDepthSampleShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcDepthSampleShaderSpv}" "${agcDepthSampleShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcDepthSampleShaderSpv} -DOUTPUT=${agcDepthSampleShaderHeader}
+        -DSYMBOL=DEPTH_SAMPLE_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcDepthSampleShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -224,6 +237,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcTextureDetileShaderHeader}
         ${agcCmaskClearShaderHeader}
+        ${agcDepthSampleShaderHeader}
         ${agcMeshArgumentsShaderHeader}
         ${agcTextureDetileImageShaderHeader}
         ${agcSampleCounterShaderHeader}

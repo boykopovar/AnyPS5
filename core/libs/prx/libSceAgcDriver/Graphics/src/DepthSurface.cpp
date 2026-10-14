@@ -50,7 +50,10 @@ public:
             info.arrayLayers = 1;
             info.samples = static_cast<VkSampleCountFlagBits>(target.samples);
             info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (target.samples == 1 ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u);
+            info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            VkImageFormatProperties sampledProperties{};
+            sampleable = target.samples == 1 || (context.imageFormatProperties(context.physical, hostFormat, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, info.usage | VK_IMAGE_USAGE_SAMPLED_BIT, info.flags, &sampledProperties) == VK_SUCCESS && (sampledProperties.sampleCounts & info.samples) != 0);
+            if (sampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage depth");
@@ -143,6 +146,25 @@ public:
         return texture;
     }
 
+    void CopySample(std::uint32_t sample, StorageTexture& destination, VkImageView destinationView) {
+        auto* recorder = Recorder::Active();
+        Require(recorder != nullptr, "depth sample copies need an active recorder");
+        Require(sampleable, "DB depth copy from a depth surface the device cannot sample at its sample count");
+        ApplyFastClear();
+        if (depthView == VK_NULL_HANDLE) {
+            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = hostFormat;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &depthView), "vkCreateImageView depth sample copy");
+        }
+        Require(context.detiler != nullptr, "depth sample copies need the texture detiler");
+        context.detiler->DispatchDepthSample(recorder->Commands(), depthView, destinationView, target.extent.width, target.extent.height, sample);
+        Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
+        destination.MarkDirty();
+    }
+
     bool Holds(const Texture* texture) const {
         return std::any_of(textures.begin(), textures.end(), [&](const auto& entry) { return entry.second.get() == texture; });
     }
@@ -219,7 +241,9 @@ public:
     const VkFormat hostFormat;
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    VkImageView depthView = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    bool sampleable = false;
 
 private:
     struct PlaneStorage {
@@ -258,6 +282,7 @@ private:
         depthPlane = {};
         stencilPlane = {};
         textures.clear();
+        if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
         if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
         if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
@@ -823,6 +848,16 @@ std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std:
     if (stencil || resource.dimension != TextureDimension::k2DArray || (resource.baseArray == 0 && resource.depthOrLastArray == 0)) return surface.Storage(words, resource, mip);
     if (!surface.StorageViewMatches(words, resource)) return nullptr;
     return layeredDepthStorage(context, surface, resource, mip);
+}
+
+void CopyDepthSample(const Context& context, std::uint64_t depthAddress, std::uint32_t sample, StorageTexture& destination, VkImageView destinationView, VkExtent2D extent) {
+    std::lock_guard lock(surfacesMutex());
+    const auto& list = surfaces();
+    const auto found = std::find_if(list.rbegin(), list.rend(), [&](const auto& surface) { return surface->context.device == context.device && surface->target.address == depthAddress; });
+    Require(found != list.rend(), "DB depth copy from a depth plane no draw rendered");
+    Require((*found)->target.extent.width == extent.width && (*found)->target.extent.height == extent.height, "DB depth copy from a depth surface of another size");
+    Require(sample < (*found)->target.samples, "DB depth copy of a sample the depth surface does not have");
+    (*found)->CopySample(sample, destination, destinationView);
 }
 
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage) {

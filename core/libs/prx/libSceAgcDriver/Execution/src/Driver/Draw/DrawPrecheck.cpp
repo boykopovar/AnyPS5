@@ -23,6 +23,16 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         localDevice->ColorMetadataPass(*pass);
         return DrawVerdict::Drawn;
     }
+    if (const auto copy = Graphics::DecodeDepthCopyPass(queue)) {
+        require(!drawParameters.indirect, "indirect DB depth copies are unsupported");
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (device == nullptr) device = std::make_shared<VulkanDevice>();
+        const std::shared_ptr<VulkanDevice> localDevice = device;
+        recordLabelsForPacket(localDevice.get(), submission.queue);
+        localDevice->DepthCopyPass(*copy);
+        return DrawVerdict::Drawn;
+    }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);
     if (!rejected.empty()) return DrawVerdict::Rejected;

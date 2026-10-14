@@ -2553,6 +2553,12 @@ std::shared_ptr<StorageTexture> metadataPassResident(const Context& context, con
 
 }
 
+void RunDepthCopyPass(const Context& context, const DepthCopyPass& pass) {
+    Require(pass.color.tileMode != ColorTileMode::Linear && context.detiler != nullptr, "DB depth copy into a target without a resident image is not implemented");
+    const auto resident = CachedStorageSurface(context, SurfaceForTarget(pass.color));
+    CopyDepthSample(context, pass.depthAddress, pass.sample, *resident, resident->StorageView(0, false), pass.extent);
+}
+
 void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass) {
     if (pass.mode == ColorMetadataPass::Mode::Resolve) {
         Require(pass.source.has_value() && pass.targets.size() == 1, "CB resolve without its source and destination");
