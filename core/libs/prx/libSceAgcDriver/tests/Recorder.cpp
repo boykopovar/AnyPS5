@@ -7663,18 +7663,36 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
         return;
     }
     recorder.Sync();
+    const auto* import = HostImportFor(context, address, bytes);
+    Require(import != nullptr, "the key store block lost its import");
+    const bool guarded = std::getenv("APS5_NO_GUARDED_KEY_STORE") == nullptr;
+    {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, keysAddress - import->base, keyCount, 0x11111111u);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        recorder.NotePendingFill(keysAddress, keyCount, 0x11);
+    }
     MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
     Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "the key store was not recorded on the GPU");
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(keys[0] == 0xff && keys[400] == 0xff && keys[keyCount - 1] == 0xff, "a key store behind a pending key fill did not store the keys");
+    const auto guardedAfterFill = Recorder::StoreCounts().keyStoresGuarded;
+    Require(!guarded || guardedAfterFill >= 1, "the key store behind a pending fill was not guarded");
+    std::memset(keys, 0x00, keyCount);
+    static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(keysAddress, keyCount));
+    MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
+    Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "the second key store was not recorded on the GPU");
     auto* late = static_cast<volatile std::uint32_t*>(static_cast<void*>(keys + 400));
     *late = 0x12345678u;
     recorder.Submit();
     device.WaitQueue();
     recorder.Sync();
     Require(keys[0] == 0xff && keys[396] == 0xff && keys[404] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys");
-    const bool guarded = std::getenv("APS5_NO_GUARDED_KEY_STORE") == nullptr;
     Require(*late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
-    const auto stores = Recorder::StoreCounts();
-    Require(!guarded || stores.keyStoresGuarded >= 1, "the key store was not counted as guarded");
+    Require(!guarded || Recorder::StoreCounts().keyStoresGuarded > guardedAfterFill, "the second key store was not counted as guarded");
 }
 
 void integerClearTests(const Device& device) {

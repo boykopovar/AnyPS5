@@ -1454,9 +1454,26 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
     const auto guestFill = begin + (fillBegin - first);
     const auto fillBytes = static_cast<std::size_t>(fillEnd - fillBegin);
     bool eligible = target != 0 && fillBytes != 0 && GuardedKeyStores(context) && GuestMemory::Accessible(reinterpret_cast<const void*>(guestFill), fillBytes);
+    std::vector<PendingWrite> pendingFills;
     if (eligible && !PendingWriteSettled(begin, static_cast<std::size_t>(end - begin))) {
-        const auto pending = PendingWritesOver(begin, static_cast<std::size_t>(end - begin));
-        eligible = std::all_of(pending.begin(), pending.end(), [](const PendingWrite& write) { return write.value == 0xff || write.value == ShadowPublishWrite; });
+        auto pending = PendingWritesOver(begin, static_cast<std::size_t>(end - begin));
+        eligible = std::all_of(pending.begin(), pending.end(), [](const PendingWrite& write) { return write.value >= 0 || write.value == ShadowPublishWrite; });
+        static const bool trace = std::getenv("APS5_TRACE_KEY_GUARD") != nullptr;
+        static std::atomic<int> traced{0};
+        if (!eligible && trace && traced.fetch_add(1, std::memory_order_relaxed) < 40) {
+            std::string text;
+            for (const auto& write : pending) {
+                char item[96];
+                std::snprintf(item, sizeof(item), " 0x%llx+0x%llx:%d", static_cast<unsigned long long>(write.begin), static_cast<unsigned long long>(write.end - write.begin), write.value);
+                text += item;
+            }
+            std::fprintf(stderr, "[key-guard] unguarded 0x%llx+0x%zx: pending%s\n", static_cast<unsigned long long>(begin), static_cast<std::size_t>(end - begin), text.c_str());
+        }
+        if (eligible) {
+            std::erase_if(pending, [](const PendingWrite& write) { return write.value < 0; });
+            std::sort(pending.begin(), pending.end(), [](const PendingWrite& a, const PendingWrite& b) { return a.note < b.note; });
+            pendingFills = std::move(pending);
+        }
     }
     if (eligible) {
         try {
@@ -1467,6 +1484,11 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
         if (snapshot != nullptr && (!snapshot->Mapped() || snapshot->DeviceAddress() == 0)) snapshot = nullptr;
         if (snapshot != nullptr) {
             std::memcpy(snapshot->Bytes().data(), reinterpret_cast<const void*>(guestFill), fillBytes);
+            for (const auto& fill : pendingFills) {
+                const auto from = std::max<std::uint64_t>(fill.begin, guestFill);
+                const auto to = std::min<std::uint64_t>(fill.end, guestFill + fillBytes);
+                if (from < to) std::memset(snapshot->Bytes().data() + (from - guestFill), fill.value, static_cast<std::size_t>(to - from));
+            }
             keyStoresGuarded.fetch_add(1, std::memory_order_relaxed);
         }
     }
