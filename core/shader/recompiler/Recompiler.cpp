@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "BdaAbi.hpp"
 #include "StencilReplay.hpp"
 #include <algorithm>
 #include <cstring>
@@ -361,7 +362,7 @@ struct ResourceProgram {
         clearRegisterState(program->Blocks());
         clearRegisterState(program->Resources().blockStorage);
         if (reclaim) program->ReclaimUnusedValues();
-        plan = std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program));
+        plan = std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program, request.target.bdaAbiVersion == BdaAbi::Version));
     }
 
     std::unique_ptr<IrProgram> program;
@@ -492,7 +493,7 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ResourceMaterializer resourceMaterializer;
     const bool nativeSampleOffsets = request.target.nonConstantImageOffsets && std::find(request.target.supportedCapabilities.begin(), request.target.supportedCapabilities.end(), spv::CapabilityImageGatherExtended) != request.target.supportedCapabilities.end();
-    resourceMaterializer.ApplyStaticInterface(program, nativeSampleOffsets);
+    resourceMaterializer.ApplyStaticInterface(program, nativeSampleOffsets, request.target.bdaAbiVersion == BdaAbi::Version);
 
     constexpr ConstantFolder constantFolder;
     if (request.shader.stage == ShaderStage::Vertex && constantFolder.FoldVertexLaneBounds(program, HostSubgroupSize(request), request.target.spirvVersion)) {
@@ -550,6 +551,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
+    result.deferredTypeFaultsOnly = program.Info().deferredTypeFaultsOnly;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
@@ -777,11 +779,13 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
     key.clear();
     key.push_back(variant.artifact.variantId);
+    if (!snapshot.bufferDescriptorStatus.empty() && snapshot.bufferDescriptorStatus.size() != snapshot.buffers.size()) throw std::runtime_error("buffer descriptor status differs from captured buffers");
     for (std::size_t index = 0; index < variant.info.info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
         key.push_back(descriptor.dwordCount);
         key.push_back(descriptor.dwords[1] & 0xffff0000u);
         key.push_back(descriptor.dwords[3]);
+        key.push_back(static_cast<std::uint64_t>(snapshot.bufferDescriptorStatus.empty() ? StaticBufferDescriptorStatus::Valid : snapshot.bufferDescriptorStatus[index]));
         const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
         key.push_back(present ? 4u | (descriptor.dwords[0] & 3u) : 0u);
     }
@@ -876,6 +880,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .barycentricEmulation = artifact.barycentricEmulation,
         .stencilReferences = artifact.stencilReferences,
         .stencilReplaySafe = artifact.stencilReplaySafe,
+        .deferredTypeFaultsOnly = artifact.deferredTypeFaultsOnly,
         .stencilReferenceDword = artifact.stencilReferenceDword,
         .variantId = artifact.variantId
     };
@@ -1107,7 +1112,7 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
     constexpr ResourceMaterializer materializer;
     if (!request.useCache) {
         auto program = PrepareResourceProgram(request);
-        const auto plan = materializer.ExtractPlan(program);
+        const auto plan = materializer.ExtractPlan(program, request.target.bdaAbiVersion == BdaAbi::Version);
         materializer.Materialize(plan, runtime, snapshot);
         const auto variant = compileVariant(request, std::move(program));
         return materializeResult(variant, request, snapshot);
@@ -1175,6 +1180,8 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         }
     };
     mixDescriptors(snapshot.buffers);
+    mix(snapshot.bufferDescriptorStatus.size());
+    for (const auto status : snapshot.bufferDescriptorStatus) mix(static_cast<std::uint64_t>(status));
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
     mixWords(snapshot.flattenedSrt);
