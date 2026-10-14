@@ -84,9 +84,15 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
         }
     }
     if (memory.gpuDescriptor) faultIf(context, instruction, invalid, base, 0u, BdaAbi::FaultReason::InvalidDescriptor);
+    const bool deferred = !memory.gpuDescriptor && state.program.Info().buffers.at(memory.resource).deferredTypeValidation;
+    if (deferred) {
+        if (state.program.Resources().stage != IrShaderStage::Compute || memory.kind != ResourceKind::Buffer || memory.formatted || BufferAccessOf(instruction.Opcode()) != BufferAccess::Read || !state.bdaStopsInvocations) context.Fail(instruction, "deferred static descriptor validation reached an unsupported access");
+        EmitIfCondition(state, invalid, [&] { RecordBdaFaultWords(state, context.Arg(*handle, 0u), field(state, context.Arg(*handle, 1u), 0u, 16u), ConstantU32(state, 0u), BdaInstructionPc(state, instruction), BdaAbi::FaultReason::InvalidDescriptor); });
+        StopBdaInvocationIf(state, invalid);
+    }
     const auto stride = field(state, word1, 16u, 14u);
     const auto present = runtime ? both(state, nonzero(state, context.Arg(*handle, 2u)), Binary(state, spv::OpLogicalOr, TypeBool(state), nonzero(state, context.Arg(*handle, 0u)), nonzero(state, field(state, word1, 0u, 16u)))) : nonzero(state, state.module.SpecializationConstant(u32, first + 2u, 0u));
-    const auto valid = memory.gpuDescriptor ? both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), invalid), Binary(state, spv::OpINotEqual, TypeBool(state), base, BdaConstant(state, 0u))) : present;
+    const auto valid = memory.gpuDescriptor ? both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), invalid), Binary(state, spv::OpINotEqual, TypeBool(state), base, BdaConstant(state, 0u))) : deferred ? both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), invalid), present) : present;
     return {base, context.Arg(*handle, 2u), stride, word3, both(state, nonzero(state, stride), nonzero(state, field(state, word1, 31u, 1u))), index, valid};
 }
 

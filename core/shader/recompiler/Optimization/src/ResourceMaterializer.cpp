@@ -959,6 +959,7 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
 }
 
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
+    snapshot.bufferDescriptorStatus.assign(plan.info.buffers.size(), StaticBufferDescriptorStatus::Valid);
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
         const bool scalarOnly = buffer.scalar && !buffer.written && !buffer.atomic && !buffer.formatted && buffer.imageAlias == BufferResource::NoImageAlias
@@ -969,10 +970,13 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
         }
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
         if (decoded.Type() != 0u) {
-            const auto& words = snapshot.buffers.at(i).dwords;
-            char detail[64];
-            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x)", i, words[0], words[1], words[2], words[3]);
-            throw std::runtime_error(std::string("buffer descriptor uses an unsupported type") + detail);
+            if (!plan.info.buffers.at(i).deferredTypeValidation) {
+                const auto& words = snapshot.buffers.at(i).dwords;
+                char detail[64];
+                std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x)", i, words[0], words[1], words[2], words[3]);
+                throw std::runtime_error(std::string("buffer descriptor uses an unsupported type") + detail);
+            }
+            snapshot.bufferDescriptorStatus[i] = StaticBufferDescriptorStatus::UnsupportedType;
         }
         if (plan.stage != IrShaderStage::Compute && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
     }
@@ -1472,9 +1476,57 @@ std::uint32_t ResourceMaterializer::EmulatedCompareState(const ShaderInfo& info,
     return emulatedCompareState(info, snapshot, index);
 }
 
-void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets) const {
-    auto& resources = program.Resources();
+namespace {
+
+void prepareDeferredStaticBuffers(const IrProgram& program, ShaderInfo& info, bool deferredStaticBufferFaults) {
+    const auto& resources = program.Resources();
     if (!resources.resourceTrackingComplete || !resources.srtPlanComplete) throw std::runtime_error("static resource interface requires a completed resource plan");
+    bool mayDefer = deferredStaticBufferFaults && resources.stage == IrShaderStage::Compute && info.sharedMemoryBytes == 0u;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* inst : block->Instructions()) {
+            if (inst->Opcode() == IrOpcode::Barrier || SharedAccessOf(inst->Opcode()) != SharedAccess::None) mayDefer = false;
+        }
+    }
+    for (auto& buffer : info.buffers) {
+        buffer.deferredTypeValidation = mayDefer && buffer.read && !buffer.written && !buffer.atomic && !buffer.scalar && !buffer.formatted && !buffer.descriptorFormatted && buffer.imageAlias == BufferResource::NoImageAlias;
+    }
+    if (!mayDefer) return;
+    std::vector<bool> used(info.buffers.size(), false);
+    for (const auto& block : program.Blocks()) {
+        const auto position = std::ranges::find(program.BlockOrder(), block.get());
+        const auto index = static_cast<std::size_t>(std::distance(program.BlockOrder().begin(), position));
+        const auto& blockInfo = program.Metadata().blockInfo;
+        const bool continueTarget = index >= blockInfo.size() || std::ranges::any_of(blockInfo, [&](const BlockInfo& info) { return info.terminator.loopHeader && info.terminator.continueBlock == blockInfo[index].id; });
+        for (const auto* inst : block->Instructions()) {
+            const auto access = BufferAccessOf(inst->Opcode());
+            if (access == BufferAccess::None) continue;
+            const auto& memory = resources.memoryInfo.at(inst->Flags<MemoryFlags>().index);
+            if (memory.kind != ResourceKind::Buffer && memory.kind != ResourceKind::ScalarBuffer) continue;
+            if (memory.gpuDescriptor || memory.planningOnly) continue;
+            if (memory.resource >= info.buffers.size()) throw std::runtime_error("buffer access names no static buffer");
+            auto& buffer = info.buffers[memory.resource];
+            used[memory.resource] = true;
+            const auto opcode = inst->Opcode();
+            const bool plain = opcode == IrOpcode::LoadBufferU32 || opcode == IrOpcode::LoadBufferU32x2 || opcode == IrOpcode::LoadBufferU32x3 || opcode == IrOpcode::LoadBufferU32x4;
+            const auto* handle = inst->ArgumentCount() != 0u && inst->Argument(0) != nullptr ? inst->Argument(0)->Resolve() : nullptr;
+            const auto* active = inst->ArgumentCount() != 0u && inst->Argument(inst->ArgumentCount() - 1u) != nullptr ? inst->Argument(inst->ArgumentCount() - 1u)->Resolve() : nullptr;
+            buffer.deferredTypeValidation = buffer.deferredTypeValidation && !continueTarget && plain && access == BufferAccess::Read && memory.kind == ResourceKind::Buffer && !memory.formatted && !memory.typed && memory.dataBits == 32u && inst->ArgumentCount() == 5u && handle != nullptr && handle->Opcode() == IrOpcode::GetBufferResource && handle->ArgumentCount() == 4u && active != nullptr && active->Type() == IrType::Bool && !active->HasImmediate();
+        }
+    }
+    for (std::size_t i = 0u; i < info.buffers.size(); ++i) {
+        auto& buffer = info.buffers[i];
+        buffer.deferredTypeValidation = buffer.deferredTypeValidation && used[i];
+        info.usesFaultBuffer = info.usesFaultBuffer || buffer.deferredTypeValidation;
+    }
+}
+
+}
+
+void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets, bool deferredStaticBufferFaults) const {
+    auto& resources = program.Resources();
+    const bool trackedFaults = resources.info.usesFaultBuffer;
+    prepareDeferredStaticBuffers(program, resources.info, deferredStaticBufferFaults);
+    const bool deferredFaults = resources.info.usesFaultBuffer && !trackedFaults;
     auto images = resources.info.images;
     if (!nativeSampleOffsets) {
         for (const auto& block : program.Blocks()) {
@@ -1515,6 +1567,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
     resources.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(resources);
     resources.srtGuardOffset = static_cast<std::uint32_t>(resources.srtReads.size());
     if (tables || !resources.guardedSrtSlots.empty()) resources.info.usesFaultBuffer = true;
+    resources.info.deferredTypeFaultsOnly = deferredFaults && !tables && resources.guardedSrtSlots.empty() && !resources.info.usesDma;
     PrepareImageModes(resources.info);
 }
 
@@ -1639,7 +1692,7 @@ void buildCompactPlan(IrResourcePlan& plan) {
 
 }
 
-IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const {
+IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program, bool deferredStaticBufferFaults) const {
     const IrResourcePlan& source = program.Resources();
     if (!source.resourceTrackingComplete || !source.srtPlanComplete) {
         throw std::runtime_error("ResourceMaterializer::ExtractPlan requires a completed resource and SRT plan");
@@ -1659,6 +1712,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.srtPlanComplete = source.srtPlanComplete;
     plan.resourceTrackingComplete = source.resourceTrackingComplete;
     plan.info = source.info;
+    prepareDeferredStaticBuffers(program, plan.info, deferredStaticBufferFaults);
     PrepareImageModes(plan.info);
     plan.uniformFill = source.uniformFill;
     for (auto& block : plan.controlFlow) {

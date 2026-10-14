@@ -87,7 +87,7 @@ namespace ShaderRecompiler::ShaderDiskCache {
 static_assert(sizeof(CompiledShaderArtifact) == 264, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 200, "ShaderInvocation changed: update the invocation encoder");
 static_assert(sizeof(RecompileResult) == 472, "RecompileResult changed: update EncodeResult and DecodeResult");
-static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 616, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -138,8 +138,8 @@ constexpr std::size_t fieldCount() {
     }
 }
 
-static_assert(fieldCount<ShaderInfo>() == 23, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
+static_assert(fieldCount<BufferResource>() == 13, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 38, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -429,6 +429,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.samplerIntegerBorder);
     writer.Values(std::span<const std::uint32_t>(binding.imageSamplers));
     writer.Flags(binding.bufferRead);
+    writer.List(binding.bufferDescriptorStatus, [](Writer& out, StaticBufferDescriptorStatus status) { out.Value(status); });
 }
 
 void decodeBinding(Reader& reader, DescriptorBinding& binding) {
@@ -456,6 +457,11 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.samplerIntegerBorder);
     reader.Values(binding.imageSamplers);
     reader.Flags(binding.bufferRead);
+    reader.List(binding.bufferDescriptorStatus, 1, [](Reader& in, StaticBufferDescriptorStatus& status) {
+        in.Value(status);
+        if (status != StaticBufferDescriptorStatus::Valid && status != StaticBufferDescriptorStatus::UnsupportedType) throw std::runtime_error("unknown static buffer descriptor status");
+    });
+    if (!binding.bufferDescriptorStatus.empty() && (binding.role != DescriptorRole::GuestBuffers || binding.bufferDescriptorStatus.size() != binding.count)) throw std::runtime_error("static buffer descriptor status does not match its binding");
 }
 
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
@@ -501,6 +507,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.barycentricEmulation.linear);
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
+    writer.Value(result.deferredTypeFaultsOnly);
     writer.Value(result.stencilReferenceDword);
 }
 
@@ -547,6 +554,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.barycentricEmulation.linear);
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
+    reader.Value(result.deferredTypeFaultsOnly);
     reader.Value(result.stencilReferenceDword);
     result.variantId = 0;
 }
@@ -672,6 +680,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(buffer.formattedReadMask);
         out.Value(buffer.scalar);
         out.Value(buffer.typedAlignment);
+        out.Value(buffer.deferredTypeValidation);
     });
     writer.List(info.images, [](Writer& out, const ImageResource& image) {
         out.Value(image.source);
@@ -753,6 +762,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
     writer.Value(info.usesDma);
     writer.Value(info.bdaWrites);
     writer.Value(info.usesFaultBuffer);
+    writer.Value(info.deferredTypeFaultsOnly);
     writer.Value(info.dispatchThreadLimit);
     writer.Value(info.rasterPrimitive);
     writer.Value(info.layerExported);
@@ -774,6 +784,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.formattedReadMask);
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
+        in.Value(buffer.deferredTypeValidation);
     });
     reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
@@ -857,6 +868,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
     reader.Value(info.usesDma);
     reader.Value(info.bdaWrites);
     reader.Value(info.usesFaultBuffer);
+    reader.Value(info.deferredTypeFaultsOnly);
     reader.Value(info.dispatchThreadLimit);
     reader.Value(info.rasterPrimitive);
     reader.Value(info.layerExported);
