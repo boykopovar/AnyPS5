@@ -1078,10 +1078,11 @@ SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& a
     if (dref && access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "uses depth comparison with a packed integer image");
     }
-    if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Unorm) {
+    const bool filtered = !dref && access.inst.Opcode() == IrOpcode::ImageSampleRaw;
+    if (!filtered && ImageConversionFormat(access.image).type == SpirvFormatComponentType::Unorm) {
         ctx.Fail(access.inst, "samples or gathers a converted unorm image, which needs filtering in the shader and is not implemented");
     }
-    if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Float) {
+    if (!filtered && ImageConversionFormat(access.image).type == SpirvFormatComponentType::Float) {
         ctx.Fail(access.inst, "samples or gathers a converted float image, which needs filtering in the shader and is not implemented");
     }
     const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
@@ -1240,7 +1241,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, gathered), resultNumericClass, false, true));
 }
 
-void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup, bool converted) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto& image = access.image;
@@ -1251,9 +1252,9 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
         return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, TypeU32(state), compare, ConstantU32(state, fields.at(word).first)), fields.at(word).second);
     };
     const auto equal = [&](std::uint32_t value, std::uint32_t literal) { return Binary(state, spv::OpIEqual, TypeBool(state), value, ConstantU32(state, literal)); };
-    if (HasFlag(mem, RdnaImageSampleFlagDerivative) || HasFlag(mem, RdnaImageSampleFlagLod)) ctx.Fail(access.inst, "compares against a color texture with gradients or an explicit LOD, which is not implemented");
+    if (!converted && (HasFlag(mem, RdnaImageSampleFlagDerivative) || HasFlag(mem, RdnaImageSampleFlagLod))) ctx.Fail(access.inst, "compares against a color texture with gradients or an explicit LOD, which is not implemented");
     const bool arrayed = image.dimension == RdnaImageDimension::Dim2DArray;
-    if (image.dimension != RdnaImageDimension::Dim2D && !arrayed) ctx.Fail(access.inst, "compares against a color texture that is not a 2D or 2D array view, which is not implemented");
+    if (image.dimension != RdnaImageDimension::Dim2D && !arrayed) ctx.Fail(access.inst, converted ? "samples a converted image that is not a 2D or 2D array view, which is not implemented" : "compares against a color texture that is not a 2D or 2D array view, which is not implemented");
     const auto f32 = TypeF32(state);
     const auto i32 = TypeI32(state);
     const auto u32 = TypeU32(state);
@@ -1282,9 +1283,11 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
         const auto rounded = Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {Binary(state, spv::OpFAdd, f32, extract(f32, setup.coord, 2u), f32Constant(0.5f))}));
         layer = Unary(state, spv::OpBitcast, u32, ext(i32, GLSLstd450SClamp, {rounded, ConstantI32(state, 0), Binary(state, spv::OpISub, i32, layers, ConstantI32(state, 1))}));
     }
-    auto reference = DrefValueF32(ctx, access, setup.layout);
-    reference = Select(state, f32, equal(parameter(4u), EmulatedCompare::ReferenceUnorm), ext(f32, GLSLstd450FClamp, {reference, f32Constant(0.0f), f32Constant(1.0f)}), reference);
-    reference = Select(state, f32, equal(parameter(4u), EmulatedCompare::ReferenceSnorm), ext(f32, GLSLstd450FClamp, {reference, f32Constant(-1.0f), f32Constant(1.0f)}), reference);
+    auto reference = converted ? 0u : DrefValueF32(ctx, access, setup.layout);
+    if (!converted) {
+        reference = Select(state, f32, equal(parameter(4u), EmulatedCompare::ReferenceUnorm), ext(f32, GLSLstd450FClamp, {reference, f32Constant(0.0f), f32Constant(1.0f)}), reference);
+        reference = Select(state, f32, equal(parameter(4u), EmulatedCompare::ReferenceSnorm), ext(f32, GLSLstd450FClamp, {reference, f32Constant(-1.0f), f32Constant(1.0f)}), reference);
+    }
     const auto address = [&](std::uint32_t index, std::uint32_t extent, std::uint32_t mode) {
         const auto remainder = Binary(state, spv::OpSRem, i32, index, extent);
         const auto negative = Binary(state, spv::OpSLessThan, TypeBool(state), remainder, ConstantI32(state, 0));
@@ -1301,7 +1304,7 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
     const auto one = f32Constant(1.0f);
     const auto zero = f32Constant(0.0f);
     const auto borderRed = Select(state, f32, equal(parameter(5u), 1u), one, zero);
-    const auto compareTexel = [&](std::uint32_t x, std::uint32_t y) {
+    const auto compareTexel = [&](std::uint32_t x, std::uint32_t y) -> std::array<std::uint32_t, 4> {
         const auto modeX = parameter(2u);
         const auto modeY = parameter(3u);
         const auto ux = Unary(state, spv::OpBitcast, u32, address(x, width, modeX));
@@ -1309,6 +1312,14 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
         const auto coord = state.module.AllocateId();
         if (arrayed) state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 3), coord, ux, uy, layer);
         else state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 2), coord, ux, uy);
+        if (converted) {
+            const auto raw = state.module.AllocateId();
+            state.module.AddFunction(spv::OpImageFetch, ImageVectorType(state, IrTextureNumericClass::Uint, 4), raw, descriptor, coord, spv::ImageOperandsLodMask, ConstantU32(state, 0u));
+            const auto unpacked = UnpackImageTexel(ctx, access, raw);
+            std::array<std::uint32_t, 4> channels{};
+            for (std::uint32_t channel = 0; channel < 4u; ++channel) channels[channel] = Unary(state, spv::OpBitcast, f32, extract(u32, unpacked, channel));
+            return channels;
+        }
         const auto texel = state.module.AllocateId();
         state.module.AddFunction(spv::OpImageFetch, ImageVectorType(state, IrTextureNumericClass::Float, 4), texel, descriptor, coord, spv::ImageOperandsLodMask, ConstantU32(state, 0u));
         auto red = extract(f32, texel, 3u);
@@ -1322,7 +1333,7 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
             result = Select(state, f32, equal(parameter(0u), index + 1u), compared, result);
         }
         result = Select(state, f32, equal(parameter(4u), EmulatedCompare::ReferenceZero), zero, result);
-        return result;
+        return {result, result, result, result};
     };
     const auto scaledU = Binary(state, spv::OpFMul, f32, extract(f32, setup.coord, 0u), Unary(state, spv::OpConvertSToF, f32, width));
     const auto scaledV = Binary(state, spv::OpFMul, f32, extract(f32, setup.coord, 1u), Unary(state, spv::OpConvertSToF, f32, height));
@@ -1336,8 +1347,17 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
     const auto texelIndex = [&](std::uint32_t coordinate, std::uint32_t offset) {
         return Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {coordinate})), offset);
     };
-    const auto result = EmitValueIfElse(state, equal(parameter(1u), 0u), f32, [&] {
-        return compareTexel(texelIndex(scaledU, offsetX), texelIndex(scaledV, offsetY));
+    const auto f32x4 = TypeF32Vector(state, 4);
+    const auto vector = [&](const std::array<std::uint32_t, 4>& channels) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, f32x4, value, channels[0], channels[1], channels[2], channels[3]);
+        return value;
+    };
+    const auto mix = [&](std::uint32_t first, std::uint32_t second, std::uint32_t weight) {
+        return ext(f32x4, GLSLstd450FMix, {first, second, vector({weight, weight, weight, weight})});
+    };
+    const auto filtered = EmitValueIfElse(state, equal(parameter(1u), 0u), f32x4, [&] {
+        return vector(compareTexel(texelIndex(scaledU, offsetX), texelIndex(scaledV, offsetY)));
     }, [&] {
         const auto half = f32Constant(0.5f);
         const auto centreU = Binary(state, spv::OpFSub, f32, scaledU, half);
@@ -1350,10 +1370,15 @@ void EmitEmulatedCompareSample(SpirvValueEmitContext& ctx, const ImageEmitAccess
         const auto y0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, floorV), offsetY);
         const auto x1 = Binary(state, spv::OpIAdd, i32, x0, ConstantI32(state, 1));
         const auto y1 = Binary(state, spv::OpIAdd, i32, y0, ConstantI32(state, 1));
-        const auto top = ext(f32, GLSLstd450FMix, {compareTexel(x0, y0), compareTexel(x1, y0), weightU});
-        const auto bottom = ext(f32, GLSLstd450FMix, {compareTexel(x0, y1), compareTexel(x1, y1), weightU});
-        return ext(f32, GLSLstd450FMix, {top, bottom, weightV});
+        const auto top = mix(vector(compareTexel(x0, y0)), vector(compareTexel(x1, y0)), weightU);
+        const auto bottom = mix(vector(compareTexel(x0, y1)), vector(compareTexel(x1, y1)), weightU);
+        return mix(top, bottom, weightV);
     });
+    if (converted) {
+        ctx.Define(access.inst, ResultVector(ctx, access, filtered, IrTextureNumericClass::Float, false, false));
+        return;
+    }
+    const auto result = extract(f32, filtered, 0u);
     const auto channelResult = [&](std::uint32_t channel) {
         const auto selector = RuntimeImageSwizzle(state, mem.resource, channel);
         return Select(state, f32, equal(selector, 0u), zero, Select(state, f32, equal(selector, 1u), one, result));
@@ -1370,7 +1395,11 @@ void EmitSampleOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
     const auto& mem = access.mem;
     const auto& image = access.image;
     if (setup.dref && (image.emulatedCompare & EmulatedCompare::Enabled) != 0u) {
-        EmitEmulatedCompareSample(ctx, access, setup);
+        EmitEmulatedSample(ctx, access, setup, false);
+        return;
+    }
+    if (!setup.dref && (image.conversionFormat == IrBufferFormat::Format11_11_10UNorm || image.conversionFormat == IrBufferFormat::Format10_11_11Float)) {
+        EmitEmulatedSample(ctx, access, setup, true);
         return;
     }
     const bool explicitLod = ImageSampleExplicitLod(mem.imageSampleFlags, state.program.Resources().stage);
