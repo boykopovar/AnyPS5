@@ -114,7 +114,8 @@ public:
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
-    void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static constexpr int ShadowPublishWrite = -2;
+    void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, int value = -1);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether no unfinished batch writes the range any more: no open-batch overlap, and every
     // overlapping in-flight batch's fence has signaled (its in-place GPU stores are final in host

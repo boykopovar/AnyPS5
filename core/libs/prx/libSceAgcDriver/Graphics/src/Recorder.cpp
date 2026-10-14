@@ -1456,7 +1456,7 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
     bool eligible = target != 0 && fillBytes != 0 && GuardedKeyStores(context) && GuestMemory::Accessible(reinterpret_cast<const void*>(guestFill), fillBytes);
     if (eligible && !PendingWriteSettled(begin, static_cast<std::size_t>(end - begin))) {
         const auto pending = PendingWritesOver(begin, static_cast<std::size_t>(end - begin));
-        eligible = std::all_of(pending.begin(), pending.end(), [](const PendingWrite& write) { return write.value == 0xff; });
+        eligible = std::all_of(pending.begin(), pending.end(), [](const PendingWrite& write) { return write.value == 0xff || write.value == ShadowPublishWrite; });
     }
     if (eligible) {
         try {
@@ -2863,10 +2863,10 @@ void Recorder::NotePendingFill(std::uint64_t address, std::size_t bytes, std::ui
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
-void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, int value) {
     bool publish = false;
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin))) publish = true;
+        if (end > begin && noteWrite(begin, static_cast<std::size_t>(end - begin), false, value)) publish = true;
     }
     if (!publish) return;
     publishPendingWrites(ranges);
