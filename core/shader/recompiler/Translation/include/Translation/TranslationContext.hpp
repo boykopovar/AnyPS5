@@ -75,7 +75,7 @@ private:
     IrU32 convertF32ToF16Bits(IrF32 value, std::initializer_list<IrValue*> sources);
     void writeF16Conversion(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 readU32(const RdnaOperand& operand);
-    IrU32 flushF32Denormal(IrU32 bits);
+    IrU32 flushF32Denormal(IrU32 bits, std::uint32_t flushBit = 1u);
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
