@@ -561,7 +561,7 @@ bool LateTrustEnabled() {
 }
 // Store-run and queued-label counters (Recorder::StoreCounts), relaxed: they are only reported.
 std::atomic<std::uint64_t> storeCount{0}, storeRuns{0}, storesJoined{0}, storesReplaced{0}, storeWawBarriers{0}, storeJoinsRefused{0};
-std::atomic<std::uint64_t> keyStoreCount{0}, keyStoreRuns{0}, keyStoreRunsForWriter{0}, keyStoresJoined{0}, keyStoresGuarded{0};
+std::atomic<std::uint64_t> keyStoreCount{0}, keyStoreRuns{0}, keyStoreRunsForWriter{0}, keyStoresJoined{0}, keyStoresGuarded{0}, keyBlocksLeftToCpu{0};
 
 bool GuardedKeyStores(const Context& context) {
     static const bool disabled = std::getenv("APS5_NO_GUARDED_KEY_STORE") != nullptr;
@@ -569,6 +569,18 @@ bool GuardedKeyStores(const Context& context) {
 }
 
 constexpr std::size_t OnesBufferBytes = std::size_t{1} << 20;
+constexpr std::uint64_t KeyGuardBlockBytes = 65536;
+
+std::vector<std::uint8_t> CpuWrittenBlocks(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    if (generation == 0 || bytes == 0) return {};
+    static_cast<void>(GuestMemory::CollectWritesUncached(address, bytes));
+    const auto count = static_cast<std::size_t>((address + bytes - 1) / KeyGuardBlockBytes - address / KeyGuardBlockBytes + 1);
+    std::vector<std::uint64_t> generations(count, generation);
+    std::vector<std::uint8_t> changed(count);
+    std::vector<std::uint8_t> cpu(count);
+    if (!GuestMemory::ChangedBlocks(address, bytes, generations, changed, cpu)) return {};
+    return cpu;
+}
 
 // Debug aid: APS5_DCC_KEYS_EACH=1 records every DCC key store at once (see Recorder::QueueKeyStore).
 bool KeyStoresEach() {
@@ -1330,7 +1342,7 @@ void Recorder::SetQueuedLabelRecorder(void (*recorder)()) {
 }
 
 Recorder::StoreStatistics Recorder::StoreCounts() {
-    return StoreStatistics{storeCount.load(std::memory_order_relaxed), storeRuns.load(std::memory_order_relaxed), storesJoined.load(std::memory_order_relaxed), storesReplaced.load(std::memory_order_relaxed), storeWawBarriers.load(std::memory_order_relaxed), storeJoinsRefused.load(std::memory_order_relaxed), queuedLabelsNoted.load(std::memory_order_relaxed), queuedLabelsOverRecorded.load(std::memory_order_relaxed), queuedLabelHits.load(std::memory_order_relaxed), queuedLabelHookRecords.load(std::memory_order_relaxed), queuedLabelHookInCompletion.load(std::memory_order_relaxed), keyStoreCount.load(std::memory_order_relaxed), keyStoreRuns.load(std::memory_order_relaxed), keyStoreRunsForWriter.load(std::memory_order_relaxed), keyStoresJoined.load(std::memory_order_relaxed), keyStoresGuarded.load(std::memory_order_relaxed), storeRunsAtSubmit.load(std::memory_order_relaxed), storeRunsForced.load(std::memory_order_relaxed)};
+    return StoreStatistics{storeCount.load(std::memory_order_relaxed), storeRuns.load(std::memory_order_relaxed), storesJoined.load(std::memory_order_relaxed), storesReplaced.load(std::memory_order_relaxed), storeWawBarriers.load(std::memory_order_relaxed), storeJoinsRefused.load(std::memory_order_relaxed), queuedLabelsNoted.load(std::memory_order_relaxed), queuedLabelsOverRecorded.load(std::memory_order_relaxed), queuedLabelHits.load(std::memory_order_relaxed), queuedLabelHookRecords.load(std::memory_order_relaxed), queuedLabelHookInCompletion.load(std::memory_order_relaxed), keyStoreCount.load(std::memory_order_relaxed), keyStoreRuns.load(std::memory_order_relaxed), keyStoreRunsForWriter.load(std::memory_order_relaxed), keyStoresJoined.load(std::memory_order_relaxed), keyStoresGuarded.load(std::memory_order_relaxed), keyBlocksLeftToCpu.load(std::memory_order_relaxed), storeRunsAtSubmit.load(std::memory_order_relaxed), storeRunsForced.load(std::memory_order_relaxed)};
 }
 
 std::uint64_t Recorder::ThreadHookWaits() {
@@ -1449,6 +1461,7 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
         }
     }
     std::shared_ptr<Buffer> snapshot;
+    std::uint64_t cpuGeneration = 0;
     const VkDeviceSize fillBegin = std::min((first + 3) & ~VkDeviceSize{3}, last);
     const VkDeviceSize fillEnd = std::max(last & ~VkDeviceSize{3}, fillBegin);
     const auto guestFill = begin + (fillBegin - first);
@@ -1483,6 +1496,7 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
         }
         if (snapshot != nullptr && (!snapshot->Mapped() || snapshot->DeviceAddress() == 0)) snapshot = nullptr;
         if (snapshot != nullptr) {
+            cpuGeneration = GuestMemory::CollectWritesUncached(guestFill, fillBytes);
             std::memcpy(snapshot->Bytes().data(), reinterpret_cast<const void*>(guestFill), fillBytes);
             for (const auto& fill : pendingFills) {
                 const auto from = std::max<std::uint64_t>(fill.begin, guestFill);
@@ -1492,7 +1506,7 @@ void Recorder::QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize l
             keyStoresGuarded.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    open->keyStores.push_back({buffer, first, last, std::move(seed), begin, end, std::move(snapshot), target});
+    open->keyStores.push_back({buffer, first, last, std::move(seed), begin, end, std::move(snapshot), target, cpuGeneration});
     if (KeyStoresEach()) recordKeyStores(false);
 }
 
@@ -1538,16 +1552,34 @@ void Recorder::recordKeyStores(bool forWriter) {
     for (const auto& store : stores) {
         const VkDeviceSize fillBegin = std::min((store.first + 3) & ~VkDeviceSize{3}, store.last);
         const VkDeviceSize fillEnd = std::max(store.last & ~VkDeviceSize{3}, fillBegin);
+        const auto guestFill = store.begin + (fillBegin - store.first);
+        const auto cpuWritten = store.snapshot != nullptr ? CpuWrittenBlocks(guestFill, static_cast<std::size_t>(fillEnd - fillBegin), store.cpuGeneration) : std::vector<std::uint8_t>{};
+        const auto leftToCpu = [&](VkDeviceSize offset) {
+            const auto block = static_cast<std::size_t>((guestFill + offset) / KeyGuardBlockBytes - guestFill / KeyGuardBlockBytes);
+            return block < cpuWritten.size() && cpuWritten[block] != 0;
+        };
+        std::vector<std::pair<VkDeviceSize, VkDeviceSize>> runs;
+        for (VkDeviceSize done = 0; done < fillEnd - fillBegin;) {
+            const auto next = std::min<VkDeviceSize>(fillEnd - fillBegin, cpuWritten.empty() ? fillEnd - fillBegin : (guestFill + done) / KeyGuardBlockBytes * KeyGuardBlockBytes + KeyGuardBlockBytes - guestFill);
+            if (leftToCpu(done)) keyBlocksLeftToCpu.fetch_add(1, std::memory_order_relaxed);
+            else if (!runs.empty() && runs.back().second == done) runs.back().second = next;
+            else runs.emplace_back(done, next);
+            done = next;
+        }
         bool filled = false;
         if (fillEnd > fillBegin && kernel && store.snapshot != nullptr) {
             filled = true;
-            for (VkDeviceSize done = 0; done < fillEnd - fillBegin && filled; done += OnesBufferBytes) {
-                const auto chunk = static_cast<std::uint32_t>(std::min<VkDeviceSize>(OnesBufferBytes, fillEnd - fillBegin - done) / 4u);
-                filled = RecordChangedCopy(commands, onesBuffer->DeviceAddress(), store.snapshot->DeviceAddress() + done, store.target + (fillBegin - store.first) + done, chunk);
+            for (const auto& [from, to] : runs) {
+                for (VkDeviceSize done = from; done < to && filled; done += OnesBufferBytes) {
+                    const auto chunk = static_cast<std::uint32_t>(std::min<VkDeviceSize>(OnesBufferBytes, to - done) / 4u);
+                    filled = RecordChangedCopy(commands, onesBuffer->DeviceAddress(), store.snapshot->DeviceAddress() + done, store.target + (fillBegin - store.first) + done, chunk);
+                }
             }
             open->kept.push_back(store.snapshot);
         }
-        if (fillEnd > fillBegin && !filled) fill(commands, store.buffer, fillBegin, fillEnd - fillBegin, 0xffffffffu);
+        if (!filled) {
+            for (const auto& [from, to] : runs) fill(commands, store.buffer, fillBegin + from, to - from, 0xffffffffu);
+        }
         if (store.seed != nullptr) {
             VkBufferCopy copies[2];
             std::uint32_t copyCount = 0;

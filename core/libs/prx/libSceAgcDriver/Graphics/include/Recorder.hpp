@@ -440,7 +440,7 @@ public:
         std::uint64_t stores, runs, joined, replaced, wawBarriers, joinsRefused, queuedNoted, queuedOverRecorded, queuedHits, queuedHookRecords, queuedHookInCompletion;
         // DCC key stores queued, the runs that recorded them (at Submit, or before a writer of a
         // queued range), and the queued stores a duplicate range joined.
-        std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined, keyStoresGuarded;
+        std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined, keyStoresGuarded, keyBlocksLeftToCpu;
         // Store runs recorded at Submit, and in place before a later writer or reader of a queued
         // store's bytes (FlushStores).
         std::uint64_t runsAtSubmit, runsForced;
@@ -655,6 +655,7 @@ private:
             std::uint64_t end;
             std::shared_ptr<Buffer> snapshot;
             VkDeviceAddress target = 0;
+            std::uint64_t cpuGeneration = 0;
         };
         std::vector<KeyStore> keyStores;
     };

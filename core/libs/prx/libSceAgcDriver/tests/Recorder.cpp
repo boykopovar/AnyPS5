@@ -7631,33 +7631,45 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     }
     constexpr std::size_t surfaceBytes = 65536 * 4;
     constexpr std::size_t keyCount = surfaceBytes / 256;
-    constexpr std::size_t bytes = surfaceBytes + 65536;
+    constexpr std::size_t bytes = surfaceBytes + 2 * 65536;
+    constexpr std::size_t keysOffset = surfaceBytes + 65536 - keyCount / 2;
+    const bool watched = AgcDriver::GuestMemory::WriteWatched();
+    void* block = nullptr;
+    if (watched) {
+        block = AllocateWatched(bytes, 65536);
+    } else {
 #ifdef _WIN32
-    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
-    void* block = std::aligned_alloc(65536, bytes);
+        block = std::aligned_alloc(65536, bytes);
 #endif
+    }
     Require(block != nullptr, "cannot allocate the key store block");
-    auto* keys = static_cast<std::uint8_t*>(block) + surfaceBytes;
+    auto* keys = static_cast<std::uint8_t*>(block) + keysOffset;
     std::memset(block, 0x00, bytes);
     const auto address = reinterpret_cast<std::uint64_t>(block);
-    const auto keysAddress = address + surfaceBytes;
+    const auto keysAddress = address + keysOffset;
     {
         GuestAllocations::Mutation mutation;
         mutation.Add(block, bytes, true, true, true);
     }
     struct Unregister {
         const Context& context;
+        Recorder& recorder;
         void* block;
         std::uint64_t address;
+        bool watched;
         ~Unregister() {
             {
                 GuestAllocations::Mutation mutation;
                 mutation.Remove(block);
             }
             HostImportFor(context, address, bytes);
+            if (!watched) return;
+            recorder.Sync();
+            ReleaseWatched(block, bytes);
         }
-    } unregister{context, block, address};
+    } unregister{context, recorder, block, address, watched};
     if (HostImportFor(context, address, bytes) == nullptr) {
         std::cout << "host import of the key store block refused: guarded key stores not tested\n";
         return;
@@ -7681,18 +7693,33 @@ void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
     Require(keys[0] == 0xff && keys[400] == 0xff && keys[keyCount - 1] == 0xff, "a key store behind a pending key fill did not store the keys");
     const auto guardedAfterFill = Recorder::StoreCounts().keyStoresGuarded;
     Require(!guarded || guardedAfterFill >= 1, "the key store behind a pending fill was not guarded");
-    std::memset(keys, 0x00, keyCount);
-    static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(keysAddress, keyCount));
-    MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
-    Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "the second key store was not recorded on the GPU");
-    auto* late = static_cast<volatile std::uint32_t*>(static_cast<void*>(keys + 400));
-    *late = 0x12345678u;
-    recorder.Submit();
-    device.WaitQueue();
-    recorder.Sync();
-    Require(keys[0] == 0xff && keys[396] == 0xff && keys[404] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys");
-    Require(*late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
+    const auto lateStore = [&](std::uint32_t value) {
+        std::memset(keys, 0x00, keyCount);
+        static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(keysAddress, keyCount));
+        MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
+        Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "a later key store was not recorded on the GPU");
+        auto* late = static_cast<volatile std::uint32_t*>(static_cast<void*>(keys + 400));
+        *late = value;
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        return static_cast<std::uint32_t>(*late);
+    };
+    const auto leftBefore = Recorder::StoreCounts().keyBlocksLeftToCpu;
+    const auto late = lateStore(0x12345678u);
+    const std::uint8_t lateBlock = guarded && watched ? 0x00 : 0xff;
+    Require(keys[0] == lateBlock && keys[396] == lateBlock && keys[404] == lateBlock, guarded && watched ? "a guarded key store wrote into a block the CPU wrote after it was recorded" : "the key store did not store the keys");
+    Require(keys[keyCount / 2] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys of a block the CPU left alone");
+    Require(late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
     Require(!guarded || Recorder::StoreCounts().keyStoresGuarded > guardedAfterFill, "the second key store was not counted as guarded");
+    Require(!guarded || !watched || Recorder::StoreCounts().keyBlocksLeftToCpu > leftBefore, "the block the CPU wrote was not counted as left to it");
+    if (!guarded) return;
+    if (!watched) {
+        std::cout << "write watching unavailable: a late CPU store of the value the keys held not tested\n";
+        return;
+    }
+    Require(lateStore(0u) == 0u, "a guarded key store overwrote a late CPU store of the value the keys held");
+    Require(keys[keyCount / 2] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys of a block the CPU left alone after a same-value store");
 }
 
 void integerClearTests(const Device& device) {
