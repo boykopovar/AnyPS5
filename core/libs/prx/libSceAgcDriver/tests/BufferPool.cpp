@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdio>
 #include <deque>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <new>
@@ -233,6 +234,31 @@ void RefusedDevicePlacement() {
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
     Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+}
+
+void AttachmentReclaim() {
+    mock = MockDevice{};
+    auto context = budgetContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 200 * MiB;
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = 8 * MiB;
+    allocation.memoryTypeIndex = 0;
+    const auto refuse = [&](std::initializer_list<VkResult> results) {
+        { DeviceBuffer idle(context, 4 * MiB, usage); }
+        Expect(mock.memoryBytes.size() == 1, "a released device buffer was not kept in the device pool");
+        const auto pooled = mock.memoryBytes.begin()->first;
+        mock.results = results;
+        const auto memory = AllocateAttachmentMemory(context, allocation, 3, "vkAllocateMemory attachment");
+        Expect(!mock.memoryBytes.contains(pooled), "an attachment refused device memory did not reclaim the pool before retrying");
+        const auto type = mock.memoryTypes.at(memory);
+        mockFreeMemory(VK_NULL_HANDLE, memory, nullptr);
+        return type;
+    };
+    Expect(refuse({VK_ERROR_OUT_OF_DEVICE_MEMORY}) == 0, "an attachment was placed in host memory although reclaiming the pool made room in device memory");
+    Expect(refuse({VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}) == 1, "an attachment still refused device memory after reclaiming the pool was not placed in host memory");
+    Expect(mock.liveBytes == 0, "an attachment allocation leaked memory");
 }
 
 void SizeClassesAndDirections() {
@@ -690,6 +716,7 @@ int main(int argc, char** argv) {
         PartialSlabDoesNotRetry();
         HostPlacement();
         RefusedDevicePlacement();
+        AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

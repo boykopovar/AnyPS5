@@ -153,6 +153,7 @@ private:
 };
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context);
+VkDeviceMemory AllocateAttachmentMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation);
 
 }
 

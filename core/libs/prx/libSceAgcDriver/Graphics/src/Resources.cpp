@@ -289,7 +289,7 @@ RenderTarget::RenderTarget(const Context& context, const ColorTarget& target, bo
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(context.AllocateDeviceMemory(allocation, requirements.memoryTypeBits, memory, "render target"), "vkAllocateMemory render target");
+        memory = AllocateAttachmentMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory render target");
         Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory");
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = image;
