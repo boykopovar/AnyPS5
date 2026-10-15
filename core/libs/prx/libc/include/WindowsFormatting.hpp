@@ -21,6 +21,11 @@ namespace LibcDetail {
 
 enum class ArgumentClass : unsigned char { Integer, Double, LongDouble };
 
+class FormatConstraintViolation : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
+};
+
 class FormatArguments {
     VaList args;
     std::vector<std::array<unsigned char, 16>> numbered;
@@ -251,7 +256,7 @@ inline std::vector<ArgumentClass> NumberedArgumentClasses(const char* format) {
     return classes;
 }
 
-inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr) {
+inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr, bool secure = false) {
     if (!format || !source) throw std::invalid_argument("Null formatting argument");
     const int savedError = errno;
     const char* const formatStart = format;
@@ -363,10 +368,12 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             else output.Value(spec + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
+            if (!value && secure) throw FormatConstraintViolation("Null string argument");
             if (!value) value = "(null)";
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();
+            if (!value && secure) throw FormatConstraintViolation("Null string argument");
             if (!value) value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
@@ -387,6 +394,8 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             char message[128];
             strerror_r_nid_postfix(savedError, message, sizeof(message));
             output.Value(spec + 's', static_cast<const char*>(message));
+        } else if (conversion == 'n' && secure) {
+            throw FormatConstraintViolation("Format count conversion");
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");
