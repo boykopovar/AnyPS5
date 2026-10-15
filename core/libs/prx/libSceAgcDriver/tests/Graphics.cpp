@@ -3437,6 +3437,14 @@ struct MockDescriptorWrite {
 struct MockVulkan {
     std::uint64_t next = 1;
     std::int64_t live = 0;
+    bool deferFences = false;
+    std::map<VkFence, bool> signaled;
+    std::uint64_t fenceWaits = 0;
+    struct BufferCopy { VkBuffer source; VkBuffer destination; VkBufferCopy region; };
+    std::vector<BufferCopy> bufferCopies;
+    struct ImageBufferCopy { VkImage image; VkBuffer buffer; VkBufferImageCopy region; bool fromImage; };
+    std::vector<ImageBufferCopy> imageBufferCopies;
+    std::set<VkImage> destroyedImages;
     std::map<VkBuffer, VkDeviceSize> bufferSizes;
     std::map<VkBuffer, VkBufferUsageFlags> bufferUsage;
     std::map<VkDeviceMemory, VkMemoryAllocateFlags> allocationFlags;
@@ -3555,6 +3563,23 @@ VKAPI_ATTR void VKAPI_CALL mockFreeMemory(VkDevice, VkDeviceMemory memory, const
         mock.allocationSizes.erase(found);
     }
     --mock.live;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo*, const VkAllocationCallbacks*, VkImage* image) { *image = makeHandle<VkImage>(); ++mock.live; return VK_SUCCESS; }
+VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) { *requirements = {4096, 1, 1}; }
+VKAPI_ATTR VkResult VKAPI_CALL mockBindImageMemory(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) { return VK_SUCCESS; }
+VKAPI_ATTR void VKAPI_CALL mockDestroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) { mock.destroyedImages.insert(image); --mock.live; }
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) { *view = makeHandle<VkImageView>(); ++mock.live; return VK_SUCCESS; }
+VKAPI_ATTR void VKAPI_CALL mockDestroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*) { --mock.live; }
+VKAPI_ATTR void VKAPI_CALL mockFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+}
+VKAPI_ATTR void VKAPI_CALL mockCmdCopyImageToBuffer(VkCommandBuffer, VkImage image, VkImageLayout, VkBuffer buffer, std::uint32_t count, const VkBufferImageCopy* regions) {
+    for (std::uint32_t index = 0; index < count; ++index) mock.imageBufferCopies.push_back({image, buffer, regions[index], true});
+}
+VKAPI_ATTR void VKAPI_CALL mockCmdCopyBufferToImage(VkCommandBuffer, VkBuffer buffer, VkImage image, VkImageLayout, std::uint32_t count, const VkBufferImageCopy* regions) {
+    for (std::uint32_t index = 0; index < count; ++index) mock.imageBufferCopies.push_back({image, buffer, regions[index], false});
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateDescriptorSetLayout(VkDevice, const VkDescriptorSetLayoutCreateInfo* info, const VkAllocationCallbacks*, VkDescriptorSetLayout* layout) {
@@ -3748,14 +3773,17 @@ VKAPI_ATTR VkResult VKAPI_CALL mockAllocateCommandBuffers(VkDevice, const VkComm
 }
 
 VKAPI_ATTR void VKAPI_CALL mockFreeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t count, const VkCommandBuffer*) { mock.live -= count; }
-VKAPI_ATTR VkResult VKAPI_CALL mockCreateFence(VkDevice, const VkFenceCreateInfo*, const VkAllocationCallbacks*, VkFence* fence) { *fence = makeHandle<VkFence>(); ++mock.live; return VK_SUCCESS; }
-VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence, const VkAllocationCallbacks*) { --mock.live; }
-VKAPI_ATTR VkResult VKAPI_CALL mockGetFenceStatus(VkDevice, VkFence) { return VK_SUCCESS; }
-VKAPI_ATTR VkResult VKAPI_CALL mockResetFences(VkDevice, std::uint32_t, const VkFence*) { return VK_SUCCESS; }
-VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t, const VkFence*, VkBool32, std::uint64_t) { return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateFence(VkDevice, const VkFenceCreateInfo*, const VkAllocationCallbacks*, VkFence* fence) { *fence = makeHandle<VkFence>(); mock.signaled[*fence] = !mock.deferFences; ++mock.live; return VK_SUCCESS; }
+VKAPI_ATTR void VKAPI_CALL mockDestroyFence(VkDevice, VkFence fence, const VkAllocationCallbacks*) { mock.signaled.erase(fence); --mock.live; }
+VKAPI_ATTR VkResult VKAPI_CALL mockGetFenceStatus(VkDevice, VkFence fence) { return mock.signaled.at(fence) ? VK_SUCCESS : VK_NOT_READY; }
+VKAPI_ATTR VkResult VKAPI_CALL mockResetFences(VkDevice, std::uint32_t count, const VkFence* fences) { for (std::uint32_t index = 0; index < count; ++index) mock.signaled.at(fences[index]) = !mock.deferFences; return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL mockWaitForFences(VkDevice, std::uint32_t count, const VkFence* fences, VkBool32, std::uint64_t) { for (std::uint32_t index = 0; index < count; ++index) mock.signaled.at(fences[index]) = true; ++mock.fenceWaits; return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL mockBeginCommandBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL mockEndCommandBuffer(VkCommandBuffer) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL mockQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) { return VK_SUCCESS; }
+VKAPI_ATTR void VKAPI_CALL mockCmdCopyBuffer(VkCommandBuffer, VkBuffer source, VkBuffer destination, std::uint32_t count, const VkBufferCopy* regions) {
+    for (std::uint32_t index = 0; index < count; ++index) mock.bufferCopies.push_back({source, destination, regions[index]});
+}
 VKAPI_ATTR void VKAPI_CALL mockCmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdBeginQuery(VkCommandBuffer, VkQueryPool, std::uint32_t, VkQueryControlFlags) {}
 VKAPI_ATTR void VKAPI_CALL mockCmdEndQuery(VkCommandBuffer, VkQueryPool, std::uint32_t) {}
@@ -3774,6 +3802,7 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkBeginCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockBeginCommandBuffer)},
         {"vkEndCommandBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockEndCommandBuffer)},
         {"vkQueueSubmit", reinterpret_cast<PFN_vkVoidFunction>(mockQueueSubmit)},
+        {"vkCmdCopyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyBuffer)},
         {"vkCmdPipelineBarrier", reinterpret_cast<PFN_vkVoidFunction>(mockCmdPipelineBarrier)},
         {"vkCmdBeginQuery", reinterpret_cast<PFN_vkVoidFunction>(mockCmdBeginQuery)},
         {"vkCmdEndQuery", reinterpret_cast<PFN_vkVoidFunction>(mockCmdEndQuery)},
@@ -3814,6 +3843,21 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
+}
+
+PFN_vkVoidFunction VKAPI_CALL mockDepthCopyProc(VkDevice device, const char* name) {
+    static const std::map<std::string_view, PFN_vkVoidFunction> table{
+        {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImage)},
+        {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetImageMemoryRequirements)},
+        {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(mockBindImageMemory)},
+        {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImage)},
+        {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImageView)},
+        {"vkDestroyImageView", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImageView)},
+        {"vkCmdCopyImageToBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyImageToBuffer)},
+        {"vkCmdCopyBufferToImage", reinterpret_cast<PFN_vkVoidFunction>(mockCmdCopyBufferToImage)},
+    };
+    const auto found = table.find(name);
+    return found != table.end() ? found->second : mockProc(device, name);
 }
 
 AgcDriver::Graphics::Context mockContext() {
@@ -3896,6 +3940,168 @@ void bufferBudgetPlacementTests() {
             Require(mock.live == 0, "a budget-selected buffer leaked Vulkan objects");
         }
     }
+}
+
+void copyInputKeptBytesTests() {
+    using namespace AgcDriver::Graphics;
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t bytes = 32;
+    constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    auto block = std::unique_ptr<std::byte[], void(*)(std::byte*)>(static_cast<std::byte*>(::operator new(piece, std::align_val_t{piece})), [](std::byte* value) { ::operator delete(value, std::align_val_t{piece}); });
+    std::fill_n(block.get(), piece, std::byte{0});
+    const auto base = reinterpret_cast<std::uint64_t>(block.get());
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block.get(), piece, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block.get());
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    mock = MockVulkan{};
+    mock.deferFences = true;
+    {
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.bufferDeviceAddress = true;
+        context.hostImportAlignment = piece;
+        context.limits.minStorageBufferOffsetAlignment = 256;
+        context.limits.maxMemoryAllocationCount = 4096;
+        SetImportWatch(context, ImportWatch::Unwatch);
+        const auto pool = GetBufferPool(context);
+        registry(true);
+        const auto unregister = [&](std::byte*) { registry(false); };
+        std::unique_ptr<std::byte, decltype(unregister)> registered(block.get(), unregister);
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(context);
+            recorder.Activate();
+            {
+                GuestBufferMemory aligned(context);
+                aligned.AddReadable(base + 256, bytes);
+                aligned.Upload(false);
+                Require(mock.bufferCopies.empty() && recorder.OpenKeptBytes() == 0, "an aligned imported view made or charged an input snapshot");
+                aligned.WriteBack();
+            }
+            std::vector<VkBuffer> snapshots;
+            for (unsigned batch = 0; batch < 3; ++batch) {
+                recorder.Keep(std::make_shared<int>(0), Recorder::KeptBytesBudget - bytes);
+                block[4] = static_cast<std::byte>(batch + 1);
+                {
+                    GuestBufferMemory memory(context);
+                    memory.AddReadable(base + 4, bytes);
+                    memory.Upload(false);
+                    Require(mock.bufferCopies.size() == batch + 1, "a misaligned imported view did not record exactly one GPU copy");
+                    const auto& copy = mock.bufferCopies.back();
+                    const auto* imported = HostImportFor(context, base + 4, bytes);
+                    Require(imported != nullptr && copy.source != imported->buffer && copy.region.srcOffset == 0 && copy.region.size == bytes, "the read-only GPU copy did not use its own exact input snapshot");
+                    snapshots.push_back(copy.source);
+                    Require(mockBufferMemory(copy.source).front() == static_cast<std::byte>(batch + 1), "the input snapshot missed the guest bytes at record time");
+                    block[4] = std::byte{0x7f};
+                    Require(mockBufferMemory(copy.source).front() == static_cast<std::byte>(batch + 1), "a later CPU store changed the recorded input snapshot");
+                    memory.WriteBack();
+                }
+                Require(recorder.OpenKeptBytes() == Recorder::KeptBytesBudget, "the actual GPU-copy input snapshot did not complete the kept-byte budget");
+                Require(!pool->Take(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, properties), "an input snapshot became reusable before its GPU fence");
+                recorder.BoundKeptBytes();
+                Require(recorder.Submissions() == batch + 1 && !recorder.Recording(), "the copy input charge did not submit a full budget batch");
+                if (batch < 2) {
+                    Require(!recorder.Reap() && mock.fenceWaits == 0, "a pending copy batch was reaped or waited before exceeding two budgets");
+                    Require(recorder.InFlightKeptBytes() == (batch + 1) * Recorder::KeptBytesBudget, "submitted copy input bytes were lost from the in-flight count");
+                }
+            }
+            Require(mock.fenceWaits == 1 && recorder.InFlightBatches() == 2 && recorder.InFlightKeptBytes() == 2 * Recorder::KeptBytesBudget, "three copy input batches did not retire just the oldest budget");
+            const auto released = pool->Take(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, properties);
+            Require(released.has_value() && released->buffer == snapshots.front(), "the completed batch did not release its input snapshot for reuse");
+            Require(!pool->Take(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, properties), "an unfinished copy batch released its input snapshot");
+            pool->Put(*released);
+            recorder.Sync();
+            Require(recorder.InFlightKeptBytes() == 0, "completed copy inputs still count as in flight");
+        }
+        registered.reset();
+        ClearHostImports(context.device);
+    }
+    Require(mock.live == 0, "copy input accounting tests leaked Vulkan objects");
+}
+
+void depthCopyKeptBytesTests() {
+    using namespace AgcDriver::Graphics;
+    constexpr std::size_t bytes = (8 * 8 + 4 * 4) * sizeof(float);
+    constexpr auto properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    const auto usage = BufferPool::Usage(VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, properties);
+    alignas(256) std::array<std::byte, 16384> guest{};
+    mock = MockVulkan{};
+    {
+        auto sourceContext = mockContext();
+        sourceContext.device = makeHandle<VkDevice>();
+        sourceContext.deviceProc = mockDepthCopyProc;
+        sourceContext.formatProperties = mockFormatProperties;
+        sourceContext.memory.memoryTypes[0].propertyFlags |= properties;
+        sourceContext.memory.memoryHeapCount = 1;
+        sourceContext.memory.memoryHeaps[0] = {std::uint64_t{4} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        sourceContext.limits.maxMemoryAllocationCount = 4096;
+        GetBufferPool(sourceContext);
+        TextureDetiler detiler(sourceContext);
+        GuestTextureResource resource{};
+        resource.baseAddress = reinterpret_cast<std::uint64_t>(guest.data());
+        resource.width = 8;
+        resource.height = 8;
+        resource.mipCount = 2;
+        resource.lastLevel = 1;
+        resource.tileMode = TextureTileMode::kLinear;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32Float);
+        auto source = StorageTexture::Create(sourceContext, detiler, resource, 0);
+        const auto sourceImage = source->Image();
+        std::weak_ptr<StorageTexture> sourceLifetime = source;
+        auto context = sourceContext;
+        context.bufferPool = std::make_shared<BufferPool>(context);
+        const auto pool = context.bufferPool;
+        mock.bufferCopies.clear();
+        mock.imageBufferCopies.clear();
+        mock.fenceWaits = 0;
+        mock.deferFences = true;
+        std::vector<VkBuffer> linears;
+        std::vector<VkImage> depths;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(context);
+            recorder.Activate();
+            for (unsigned batch = 0; batch < 3; ++batch) {
+                recorder.Keep(std::make_shared<int>(0), Recorder::KeptBytesBudget - bytes);
+                {
+                    Texture depth(context, source, resource, {}, Texture::DepthCopyTag{});
+                    Require(depth.RefreshDepthCopy(), "a fresh depth copy did not record its linear transfer");
+                    const auto begin = batch * 4;
+                    Require(mock.imageBufferCopies.size() == begin + 4, "a depth refresh did not copy both mips through its linear buffer");
+                    const auto& first = mock.imageBufferCopies[begin];
+                    linears.push_back(first.buffer);
+                    depths.push_back(mock.imageBufferCopies[begin + 2].image);
+                    for (unsigned mip = 0; mip < 2; ++mip) {
+                        const auto& from = mock.imageBufferCopies[begin + mip];
+                        const auto& to = mock.imageBufferCopies[begin + 2 + mip];
+                        Require(from.fromImage && !to.fromImage && from.image == sourceImage && to.image == depths.back() && from.buffer == linears.back() && to.buffer == linears.back(), "the depth refresh did not retain one linear buffer between its image transfers");
+                        Require(from.region.imageSubresource.mipLevel == mip && to.region.imageSubresource.mipLevel == mip && from.region.imageSubresource.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT && to.region.imageSubresource.aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT && from.region.bufferOffset == (mip == 0 ? 0 : 8 * 8 * sizeof(float)) && to.region.bufferOffset == from.region.bufferOffset, "the depth refresh's mip offsets or aspects changed");
+                    }
+                    Require(!depth.RefreshDepthCopy() && mock.imageBufferCopies.size() == begin + 4, "an unchanged storage version made another linear depth copy");
+                }
+                Require(recorder.OpenKeptBytes() == Recorder::KeptBytesBudget, "the real depth-copy linear buffer did not complete the kept-byte budget");
+                Require(!pool->Take(bytes, usage, properties) && !mock.destroyedImages.contains(depths.back()), "a recorded depth transfer released its linear buffer or destination before its fence");
+                recorder.BoundKeptBytes();
+                Require(recorder.Submissions() == batch + 1 && !recorder.Recording(), "the depth-copy charge did not submit a full budget batch");
+                if (batch < 2) Require(!recorder.Reap() && mock.fenceWaits == 0, "a pending depth-copy batch was reaped or waited too soon");
+            }
+            source.reset();
+            Require(!sourceLifetime.expired() && !mock.destroyedImages.contains(sourceImage), "a pending depth copy released its storage source");
+            Require(mock.fenceWaits == 1 && recorder.InFlightBatches() == 2 && recorder.InFlightKeptBytes() == 2 * Recorder::KeptBytesBudget, "three depth-copy budgets did not retire just the oldest batch");
+            const auto released = pool->Take(bytes, usage, properties);
+            Require(released.has_value() && released->buffer == linears.front() && mock.destroyedImages.contains(depths.front()), "the completed depth-copy batch did not release its linear buffer and destination");
+            Require(!pool->Take(bytes, usage, properties) && !mock.destroyedImages.contains(depths[1]) && !mock.destroyedImages.contains(depths[2]), "an unfinished depth-copy batch released its resources");
+            pool->Put(*released);
+            recorder.Sync();
+            Require(recorder.InFlightKeptBytes() == 0, "completed depth-copy buffers still count as in flight");
+        }
+        Require(sourceLifetime.expired() && mock.destroyedImages.contains(sourceImage) && mock.destroyedImages.contains(depths[1]) && mock.destroyedImages.contains(depths[2]), "the completed depth-copy batches kept their source or destinations after teardown");
+    }
+    Require(mock.live == 0, "depth copy accounting tests leaked Vulkan objects");
 }
 using Kind = ShaderRecompiler::DescriptorKind;
 
@@ -7693,6 +7899,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-journal") {
             pipelineJournalTests();
             std::cout << "pipeline journal recipe, record and replay tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--copy-input-kept-bytes") {
+            copyInputKeptBytesTests();
+            std::cout << "GPU-copy input snapshot accounting and retention passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-copy-kept-bytes") {
+            depthCopyKeptBytesTests();
+            std::cout << "Depth-copy linear buffer accounting and retention passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--sparse-buffer-holes") {
