@@ -375,6 +375,12 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
         NotImplemented_nid_no_patch("symlink: absolute targets");
         return -1;
     }
+    for (const auto& part : std::filesystem::path(target)) {
+        if (part == "..") {
+            NotImplemented_nid_no_patch("symlink: parent-directory targets");
+            return -1;
+        }
+    }
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
     std::error_code error;
