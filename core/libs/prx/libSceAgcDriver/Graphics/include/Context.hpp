@@ -65,9 +65,14 @@ inline void ReportDeviceLost() {
     if (DeviceLostHook() && !reported.exchange(true)) DeviceLostHook()();
 }
 
+struct VulkanError : std::runtime_error {
+    VulkanError(VkResult result, const std::string& message) : std::runtime_error(message), result(result) {}
+    VkResult result;
+};
+
 inline void Check(VkResult result, const char* operation) {
     if (result == VK_ERROR_DEVICE_LOST) ReportDeviceLost();
-    if (result != VK_SUCCESS) throw std::runtime_error(std::string("AGC graphics: ") + operation + ": Vulkan result " + std::to_string(result));
+    if (result != VK_SUCCESS) throw VulkanError(result, std::string("AGC graphics: ") + operation + ": Vulkan result " + std::to_string(result));
 }
 
 inline void Require(bool condition, const char* reason) {

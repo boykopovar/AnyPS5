@@ -2620,6 +2620,18 @@ bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes, std::vec
     return true;
 }
 
+bool RegisteredReadableOverlaps(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    const auto end = address + bytes;
+    const auto next = std::upper_bound(lease.begin(), lease.end(), address, [](std::uint64_t value, const auto& range) { return value < range->address; });
+    if (next != lease.begin()) {
+        const auto& previous = *std::prev(next);
+        if (address - previous->address < previous->bytes) return true;
+    }
+    return next != lease.end() && (*next)->address < end;
+}
+
 std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
     if (address == std::numeric_limits<std::uint64_t>::max()) return 0;
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();

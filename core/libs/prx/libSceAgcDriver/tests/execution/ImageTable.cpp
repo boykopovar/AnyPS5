@@ -257,6 +257,21 @@ constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u,
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr std::array<std::uint32_t, 4> PointWrap{0u, (4u * 256u) << 12u, 1u << 24u, 0u};
 
+struct GuestRegistration {
+    void* data;
+    GuestRegistration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, false); }
+    GuestRegistration(const GuestRegistration&) = delete;
+    GuestRegistration& operator=(const GuestRegistration&) = delete;
+    ~GuestRegistration() { GuestAllocations::Mutation().Remove(data); }
+};
+
+struct TexelRegistrations {
+    GuestRegistration floatTexels{FloatTexels.data(), sizeof(FloatTexels)};
+    GuestRegistration uintTexels{UintTexels.data(), sizeof(UintTexels)};
+    GuestRegistration sintTexels{SintTexels.data(), sizeof(SintTexels)};
+    GuestRegistration depthStorage{DepthStorage.data(), sizeof(DepthStorage)};
+};
+
 std::array<std::uint32_t, 4> Image(const void* texels, std::uint32_t format, std::uint32_t type = Type2D, std::uint32_t swizzleMode = 0u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
     return {static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Width - 1u) & 3u) << 30u), ((Width - 1u) >> 2u) | ((Height - 1u) << 14u) | (1u << 31u), 0xfacu | (swizzleMode << 20u) | (type << 28u)};
@@ -796,6 +811,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
 
     Keys[0] = 0;
     const auto before = Run(device, TableCode, 1, Lanes, 64);
+    const GuestRegistration otherTexels(OtherFloatTexels.data(), sizeof(OtherFloatTexels));
     SetRecord(0, PointClamp, Image(OtherFloatTexels.data(), Format32Float));
     const auto after = Run(device, TableCode, 1, Lanes, 64);
     Require(after.variantId == before.variantId && after.artifactId == before.artifactId, "image table: other table contents specialized another module");
@@ -1137,7 +1153,7 @@ void RunPointerStorageWriteTests(AgcDriver::VulkanDevice& device) {
         void* data;
         Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
         ~Registration() { GuestAllocations::Mutation().Remove(data); }
-    } registeredRecords(records.data(), sizeof(records)), registeredOtherTexels(OtherFloatTexels.data(), sizeof(OtherFloatTexels));
+    } registeredRecords(records.data(), sizeof(records)), registeredOtherTexels(OtherFloatTexels.data(), sizeof(OtherFloatTexels)), registeredIsolatedTexels(isolatedTexels.data(), sizeof(isolatedTexels));
     for (std::uint32_t x = 0; x < isolatedTexels.size(); ++x) isolatedTexels[x] = 1024.0f + static_cast<float>(x);
     const auto run = [&](std::span<const std::uint32_t> code, bool alias, std::uint32_t waveSize = 64u, std::uint32_t selectedLanes = 0u) {
         records.fill(0u);
@@ -1319,19 +1335,25 @@ int main() {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        RunTests(*device);
-        RunBorderSwizzleTests(*device);
-        RunAnisoOverrideTests(*device);
-        RunReadTests(*device);
-        RunLoopKeyTests(*device);
-        RunGuardedTableTests(*device);
-        RunModeTests(*device);
+        {
+            const TexelRegistrations texels;
+            RunTests(*device);
+            RunBorderSwizzleTests(*device);
+            RunAnisoOverrideTests(*device);
+            RunReadTests(*device);
+            RunLoopKeyTests(*device);
+            RunGuardedTableTests(*device);
+            RunModeTests(*device);
+        }
         RunStoreTests(*device);
-        RunPointerTests(*device);
-        RunPointerRecordTests(*device);
-        RunSplitRecordTests(*device);
-        RunPointerStorageWriteTests(*device);
-        RunGraphicsTests(*device);
+        {
+            const TexelRegistrations texels;
+            RunPointerTests(*device);
+            RunPointerRecordTests(*device);
+            RunSplitRecordTests(*device);
+            RunPointerStorageWriteTests(*device);
+            RunGraphicsTests(*device);
+        }
         std::puts("image table tests passed");
         return 0;
     } catch (const std::exception& error) {

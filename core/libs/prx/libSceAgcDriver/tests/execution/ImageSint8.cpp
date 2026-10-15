@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -187,6 +188,12 @@ alignas(256) const std::array<std::uint32_t, 20> TableCode{
 };
 
 void CheckTable(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        Registration() { GuestAllocations::Mutation().Add(TableTextures, sizeof(TableTextures), true, true, false); }
+        Registration(const Registration&) = delete;
+        Registration& operator=(const Registration&) = delete;
+        ~Registration() { GuestAllocations::Mutation().Remove(TableTextures); }
+    } registered;
     TableTextures[0].bytes.fill(0x80u);
     TableTextures[1].bytes.fill(0xffu);
     for (std::uint32_t entry = 0; entry < 2u; ++entry) Tables.heap[entry] = TextureDescriptor(TableTextures[entry].bytes.data(), Sint8, 4u, 4u, IdentitySwizzle);
