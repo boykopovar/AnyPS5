@@ -102,7 +102,6 @@ int HostPoll(KernelSocketPoll::Entry* descriptors, int count, int timeoutMillise
 bool HostFileReady(int descriptor, short events, short& revents) {
     const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
     if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) != FILE_TYPE_DISK) return false;
-    // FreeBSD reports regular files and directories always ready for the requested read/write bits.
     revents = static_cast<short>(events & (KernelSocketPoll::Readable | KernelSocketPoll::Writable));
     return true;
 }

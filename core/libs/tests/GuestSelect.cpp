@@ -6,6 +6,8 @@
 #if defined(_WIN32)
 #include <filesystem>
 #include <fstream>
+#include <process.h>
+#include <string>
 #endif
 
 struct GuestTimeval {
@@ -167,10 +169,11 @@ int main() {
     }
 
 #if defined(_WIN32)
-    // RetroArch (PPSA99169) selects on regular-file FDs during startup. FreeBSD reports disk
-    // files always ready; without HostFileReady, Windows select throws "neither a socket nor a pipe".
     {
-        const auto path = std::filesystem::temp_directory_path() / "aps5_select_disk_ready.txt";
+        const auto path = std::filesystem::temp_directory_path() /
+            ("aps5_select_disk_ready_" + std::to_string(::_getpid()) + ".txt");
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
         {
             std::ofstream out(path, std::ios::binary);
             out << "ready";
@@ -185,9 +188,8 @@ int main() {
         GuestTimeval limit{0, 200000};
         const int ready = select_nid_postfix(file + 1, read.words.data(), write.words.data(), nullptr, &limit);
         Require(ready >= 1);
-        Require(read.Has(file) || write.Has(file));
+        Require(read.Has(file) && write.Has(file));
         Require(close_nid_postfix(file) == 0);
-        std::error_code ec;
         std::filesystem::remove(path, ec);
     }
 #endif
