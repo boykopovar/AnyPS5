@@ -794,15 +794,15 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
     return aligned;
 }
 
-void EraseProtections(std::uintptr_t start, std::uintptr_t end) {
-    auto it = g_protections.lower_bound(start);
-    if (it != g_protections.begin() && std::prev(it)->second.end > start) --it;
-    while (it != g_protections.end() && it->first < end) {
+void EraseProtections(std::uintptr_t start, std::uintptr_t end, std::map<std::uintptr_t, ProtectedRange>& protections = g_protections) {
+    auto it = protections.lower_bound(start);
+    if (it != protections.begin() && std::prev(it)->second.end > start) --it;
+    while (it != protections.end() && it->first < end) {
         const auto rangeStart = it->first;
         const auto range = it->second;
-        it = g_protections.erase(it);
-        if (rangeStart < start) g_protections.emplace(rangeStart, ProtectedRange{start, range.prot});
-        if (range.end > end) it = g_protections.emplace(end, ProtectedRange{range.end, range.prot}).first;
+        it = protections.erase(it);
+        if (rangeStart < start) protections.emplace(rangeStart, ProtectedRange{start, range.prot});
+        if (range.end > end) it = protections.emplace(end, ProtectedRange{range.end, range.prot}).first;
     }
 }
 
@@ -937,9 +937,56 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     return 0;
 }
 
-int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive) {
+int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, [[maybe_unused]] bool allowStackReplacement) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+#ifdef _WIN32
+    if (allowStackReplacement && (flags & GuestMapFixedFlag) != 0 && !KernelArena::Get().Owns(*addr, len)) {
+        constexpr int GuestMapNoOverwrite = 0x80;
+        if ((prot & ~7) != 0 || (flags & ~(GuestMapFixedFlag | GuestMapNoOverwrite)) != 0)
+            return SCE_KERNEL_ERROR_EINVAL;
+        ValidateRange(*addr, len, ValidateAlignment(alignment));
+        const auto start = reinterpret_cast<std::uintptr_t>(*addr);
+        int result = SCE_KERNEL_ERROR_EINVAL;
+        ReplaceGuestThreadStack(start, len, (prot & 3) == 3, [&] {
+            if (exclusive || (flags & GuestMapNoOverwrite) != 0) {
+                result = SCE_KERNEL_ERROR_ENOMEM;
+                return false;
+            }
+            void* allocation = nullptr;
+            for (auto cursor = start; cursor < start + len;) {
+                MEMORY_BASIC_INFORMATION memory{};
+                if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory) ||
+                    (memory.State != MEM_COMMIT && memory.State != MEM_RESERVE) || memory.Type != MEM_PRIVATE ||
+                    (memory.Protect & PAGE_GUARD) != 0 ||
+                    memory.RegionSize == 0 || reinterpret_cast<std::uintptr_t>(memory.BaseAddress) > cursor ||
+                    memory.RegionSize > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(memory.BaseAddress))
+                    return false;
+                if (allocation == nullptr) allocation = memory.AllocationBase;
+                if (memory.AllocationBase != allocation) return false;
+                const auto next = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+                if (next <= cursor) return false;
+                cursor = std::min(start + len, next);
+            }
+            std::lock_guard lock(g_protectionLock);
+            auto replacement = g_protections;
+            EraseProtections(start, start + len, replacement);
+            const auto recorded = replacement.emplace(start, ProtectedRange{start + len, prot}).first;
+            result = SCE_KERNEL_ERROR_ENOMEM;
+            if (!VirtualFree(*addr, len, MEM_DECOMMIT)) return false;
+            if (VirtualAlloc(*addr, len, MEM_COMMIT, WinProtFromPosix(LinuxProtFromSce(prot))) != *addr) {
+                const auto error = GetLastError();
+                recorded->second.prot = 0;
+                g_protections.swap(replacement);
+                throw std::system_error(static_cast<int>(error), std::system_category(), "Guest stack replacement commit failed");
+            }
+            g_protections.swap(replacement);
+            result = 0;
+            return true;
+        });
+        return result;
+    }
+#endif
     GuestAllocations::Mutation mutation;
     if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
     flags = PlaceHintInReservation(*addr, len, flags);

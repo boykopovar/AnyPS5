@@ -109,15 +109,17 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         if (descriptor != -1 || offset != 0) return failed(GuestInvalid);
         const auto start = reinterpret_cast<std::uintptr_t>(address);
         if (fixedAnonymous && ((start & (PS5_PAGE_SIZE - 1)) != 0 ||
-            rounded > std::numeric_limits<std::uintptr_t>::max() - start ||
-            !GuestArena::GuestArenaContains_nid_postfix(address, rounded))) return failed(GuestInvalid);
+            rounded > std::numeric_limits<std::uintptr_t>::max() - start)) return failed(GuestInvalid);
+#ifndef _WIN32
+        if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
+#endif
         const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
         const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
         void* mapped = fixedAnonymous ? address : nullptr;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
-            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive);
-            if (result != 0) return failed(GuestNoMemory);
+            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
+            if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
             return mapped;
         } catch (const std::invalid_argument&) {
             return failed(fixedAnonymous ? GuestInvalid : GuestNoMemory);
