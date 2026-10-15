@@ -238,6 +238,11 @@ RelinkResult RelinkerPipeline::Relink() {
     if (dynRelaOffset > raw.size() || dynRelaSize > raw.size() - dynRelaOffset)
         throw RelinkerException("Relocation table is out of bounds", dynRelaOffset);
 
+    if (dynRelaSize != 0 && dynJmpRelSize != 0
+        && dynRelaOffset < dynJmpRelOffset + dynJmpRelSize && dynJmpRelOffset < dynRelaOffset + dynRelaSize
+        && dynRelaOffset % relaEntSize != dynJmpRelOffset % relaEntSize)
+        throw RelinkerException("Unaligned overlapping relocation tables", dynJmpRelOffset);
+
     auto readCStr = [&](FileByteOffset strOff) -> std::string {
         if (strOff >= dynStrTabSize)
             throw RelinkerException("Dynamic string offset is outside DT_STRSZ", strOff);
@@ -308,9 +313,11 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
-    auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
+    auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
+            if (!plt && pos >= dynJmpRelOffset && pos - dynJmpRelOffset < dynJmpRelSize)
+                continue;
 
             std::uint64_t rOffset = 0, rInfo = 0;
             std::int64_t rAddend = 0;
@@ -349,8 +356,8 @@ RelinkResult RelinkerPipeline::Relink() {
         }
     };
 
-    extractRela(dynRelaOffset, dynRelaSize);
-    extractRela(dynJmpRelOffset, dynJmpRelSize);
+    extractRela(dynRelaOffset, dynRelaSize, false);
+    extractRela(dynJmpRelOffset, dynJmpRelSize, true);
 
     for (const auto& ref : nidRefs)
         validationPolicy->ValidateRelocationTypeSupported(ref.RelocationTypeValue, ref.RelocationTableOffset);
@@ -478,9 +485,11 @@ RelinkResult RelinkerPipeline::Relink() {
         std::memcpy(buf.data() + pos + 16, &addend, 8);
     };
 
-    auto extractLocal = [&](const FileByteOffset relaOff, const ByteCount relaSize) {
+    auto extractLocal = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
+            if (!plt && pos >= dynJmpRelOffset && pos - dynJmpRelOffset < dynJmpRelSize)
+                continue;
             std::uint64_t rOffset = 0, rInfo = 0;
             std::int64_t rAddend = 0;
             std::memcpy(&rOffset, raw.data() + pos, 8);
@@ -510,8 +519,8 @@ RelinkResult RelinkerPipeline::Relink() {
         }
     };
 
-    extractLocal(dynRelaOffset, dynRelaSize);
-    extractLocal(dynJmpRelOffset, dynJmpRelSize);
+    extractLocal(dynRelaOffset, dynRelaSize, false);
+    extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());

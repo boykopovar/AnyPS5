@@ -8,6 +8,7 @@
 #include <iterator>
 #include <set>
 #include <sstream>
+#include <utility>
 #include <domain/ImportModule.hpp>
 
 namespace Relinker {
@@ -285,15 +286,26 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (name.empty() || name.find_first_of("\\:$\r\n") != std::string::npos) fail("Invalid dependency: " + name);
         if (dependencies.insert(name).second) image.Dependencies.push_back(name);
     }
-    std::map<std::uint64_t, std::uint64_t> relocationTargets;
-    const auto copyRelocations = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag, std::vector<std::uint8_t>& output, bool plt) {
-        if (!tags.contains(addressTag) && !tags.contains(sceAddressTag) && !tags.contains(sizeTag) && !tags.contains(sceSizeTag)) return;
+    const auto relocationRange = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) -> std::pair<std::uint64_t, std::uint64_t> {
+        if (!tags.contains(addressTag) && !tags.contains(sceAddressTag) && !tags.contains(sizeTag) && !tags.contains(sceSizeTag)) return {0, 0};
         const auto size = get(sizeTag, sceSizeTag);
         if (size % 24 != 0) fail("Invalid relocation table size");
-        const auto offset = table(addressTag, sceAddressTag, size);
-        if (plt && size != 0 && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
+        return {table(addressTag, sceAddressTag, size), size};
+    };
+    if (tags.contains(7) || tags.contains(0x6100002f)) {
+        if (get(9, 0x61000033) != 24) fail("Invalid RELA entry size");
+    }
+    const auto [relaOffset, relaSize] = relocationRange(7, 0x6100002f, 8, 0x61000031);
+    const auto [pltOffset, pltSize] = relocationRange(23, 0x61000029, 2, 0x6100002d);
+    if (pltSize != 0 && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
+    if (relaSize != 0 && pltSize != 0 && relaOffset < pltOffset + pltSize && pltOffset < relaOffset + relaSize
+        && relaOffset % 24 != pltOffset % 24)
+        fail("Unaligned overlapping relocation tables");
+    std::map<std::uint64_t, std::uint64_t> relocationTargets;
+    const auto copyRelocations = [&](std::uint64_t offset, std::uint64_t size, std::vector<std::uint8_t>& output, bool plt) {
         output.reserve(size);
         for (std::uint64_t index = 0; index < size; index += 24) {
+            if (!plt && offset + index >= pltOffset && offset + index - pltOffset < pltSize) continue;
             const auto info = Io::ReadU64(bytes, offset + index + 8);
             const auto relocation = static_cast<std::uint32_t>(info);
             if (relocation == 0) continue;
@@ -317,11 +329,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
         }
     };
-    if (tags.contains(7) || tags.contains(0x6100002f)) {
-        if (get(9, 0x61000033) != 24) fail("Invalid RELA entry size");
-    }
-    copyRelocations(7, 0x6100002f, 8, 0x61000031, image.Dynamic.RelaData, false);
-    copyRelocations(23, 0x61000029, 2, 0x6100002d, image.Dynamic.RelaPltData, true);
+    copyRelocations(relaOffset, relaSize, image.Dynamic.RelaData, false);
+    copyRelocations(pltOffset, pltSize, image.Dynamic.RelaPltData, true);
     if (tags.contains(3) || tags.contains(0x61000027)) image.Got = get(3, 0x61000027);
     if (tags.contains(12)) image.Init = tags.at(12);
     if (tags.contains(13)) image.Fini = tags.at(13);
