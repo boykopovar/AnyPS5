@@ -153,8 +153,7 @@ extern "C" int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
 static constexpr int GuestSetFlags = 4;
 
 static int SceErrorFromErrno(int error) {
-    constexpr int GuestEio = 5;
-    const int guest = error > 0 && error <= 34 ? error : GuestEio;
+    const int guest = error > 0 && error <= 34 ? error : FilesystemError(std::error_code(error, std::generic_category()));
     return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
 }
 
@@ -308,6 +307,7 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     constexpr int GuestEfault = 14;
     const auto status = std::filesystem::status(native, error);
     if (error == std::errc::not_a_directory) return SceErrorFromErrno(GuestEnotdir);
+    if (error == std::errc::filename_too_long || error == std::errc::too_many_symbolic_link_levels) return SceKernelError(FilesystemError(error));
     if (!std::filesystem::exists(status)) {
         return SceErrorFromErrno(2);
     }
