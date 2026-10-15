@@ -1187,6 +1187,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
+        mix(table.sharedMode ? 1u : 0u);
         mixWords(table.codes);
         mix(table.readRanges.size());
         for (const auto& [base, size] : table.readRanges) {

@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -1821,7 +1822,22 @@ void verifyMalformedPlans() {
     require(!ShaderDiskCache::EncodePlan(unblocked, bytes), "a phi without predecessor blocks was encoded");
 }
 
+void verifyLaneTablePlanModes() {
+    std::set<std::vector<std::byte>> encodings;
+    for (std::uint32_t flags = 0u; flags < 4u; ++flags) {
+        auto plan = handBuiltPlan();
+        auto& column = *plan.descriptorSources[1].tableColumn;
+        column.laneKey = (flags & 1u) != 0u;
+        column.implicitDerivatives = (flags & 2u) != 0u;
+        const auto bytes = encodedPlan(plan);
+        require(encodings.insert(bytes).second, "image table lane modes share a disk plan encoding");
+        IrResourcePlan decoded;
+        require(ShaderDiskCache::DecodePlan(bytes, decoded) && samePlan(plan, decoded), "image table lane modes changed in a disk plan round trip");
+    }
+}
+
 void verifyPlanRoundTrip() {
+    verifyLaneTablePlanModes();
     const auto handBuilt = handBuiltPlan();
     const auto handBytes = encodedPlan(handBuilt);
     IrResourcePlan handDecoded;

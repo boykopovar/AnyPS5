@@ -1818,6 +1818,83 @@ void verifyPointerTableOffsetCarry() {
 #endif
 }
 
+const std::vector<std::uint32_t> TableWaterfallCode{
+    0x36020083u, 0x2c1c0082u, 0x7e1e0280u, 0x7e140280u, 0xe0382000u, 0x80000201u, 0xe0382010u, 0x80000601u,
+    0xbf8c3f70u, 0xbe94037eu, 0xbe961314u, 0xd7600008u, 0x00002d02u, 0xd7600009u, 0x00002d03u, 0xd760000au,
+    0x00002d04u, 0xd760000bu, 0x00002d05u, 0xd760000cu, 0x00002d06u, 0xd760000du, 0x00002d07u, 0xd760000eu,
+    0x00002d08u, 0xd760000fu, 0x00002d09u, 0xbe98037eu, 0x7da40408u, 0x7da40609u, 0x7da4080au, 0x7da40a0bu,
+    0x7da40c0cu, 0x7da40e0du, 0x7da4100eu, 0x7da4120fu, 0xf0000f08u, 0x00020a0eu, 0xbe9a037eu, 0x8a141a14u,
+    0xbefe0318u, 0xbf85ffe0u, 0xbf8c3f70u, 0xe0702000u, 0x80010a00u, 0xbf810000u,
+};
+
+void verifyLaneImageTable() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, 70000> records{};
+    alignas(256) static std::array<std::uint32_t, 32> output{};
+    static std::array<std::uint32_t, 20> userData{};
+    auto lodCode = TableWaterfallCode;
+    const auto load = std::find(lodCode.begin(), lodCode.end(), 0xf0000f08u);
+    require(load != lodCode.end() && load + 1 != lodCode.end(), "lane image table: the program has no image_load");
+    load[0] = 0xf1800308u;
+    load[1] = 0x00820a0eu;
+    auto unboundCode = TableWaterfallCode;
+    unboundCode[0] = 0x7e020300u;
+    const auto request = [&](const std::vector<std::uint32_t>& code, std::uint32_t count) {
+        const auto table = TableV(records.data(), 32u, count);
+        const auto out = TableV(output.data(), 4u, static_cast<std::uint32_t>(output.size()));
+        constexpr std::array<std::uint32_t, 4> sampler{0x00000092u, 0x00fff000u, 0u, 0u};
+        userData.fill(0u);
+        std::copy(table.begin(), table.end(), userData.begin());
+        std::copy(out.begin(), out.end(), userData.begin() + 4);
+        std::copy(sampler.begin(), sampler.end(), userData.begin() + 16);
+        auto result = TableRequest(code, {0u, 0u});
+        result.context.userData = userData;
+        result.context.waveSize = 32u;
+        result.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        return result;
+    };
+    const auto fault = [](const TableCompiled& compiled) {
+        const auto code = TableMap(*compiled.result)[Abi::TableHeader(0) + Abi::TableFault];
+        return (code & Abi::PoisonFlag) == 0u ? Abi::PoisonReason::Count : static_cast<Abi::PoisonReason>(compiled.result->imageTablePoison.at(code & ~Abi::PoisonFlag).reason);
+    };
+    records[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    records[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    records[3] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+
+    const auto whole = request(unboundCode, static_cast<std::uint32_t>(records.size()));
+    const auto plan = GetResourcePlan(whole);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "lane image table: the waterfall T# was not planned as a table");
+    const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.laneKey && !column.implicitDerivatives && column.offset == 0u && column.addend == 0u && column.dwordCount == 8u, "lane image table: the column is wrong");
+    const auto compiled = CompileTable(whole);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    require(snapshot.records == records.size() && snapshot.keys == Abi::MaxKeys && snapshot.outside && compiled.result->imageTableFaults == 1u, "lane image table: the records past the snapshot were not marked outside it");
+    const auto& words = compiled.capture->snapshot.tables.words;
+    require((snapshot.codes[0] & Abi::PoisonFlag) == 0u && (snapshot.codes[1] & Abi::PoisonFlag) == 0u && words.at(snapshot.codes[0]).dwords == records[0] && words.at(snapshot.codes[1]).dwords == records[1], "lane image table: a record was not read at its index");
+    const auto& map = TableMap(*compiled.result);
+    const auto codes = TableCodes(map, 0u);
+    require(map[Abi::TableHeader(0) + Abi::TableRecordCount] == records.size() && fault(compiled) == Abi::PoisonReason::Count, "lane image table: the map does not hold the V#'s record count");
+    require(codes.size() == Abi::MaxKeys && codes[0] != Abi::NullCode && (codes[0] & Abi::PoisonFlag) == 0u && codes[2] == Abi::NullCode, "lane image table: the map codes are wrong");
+    require(ScanTableSpirv(compiled.result->spirv.Words()).nonUniform, "lane image table: the slot is not decorated NonUniform");
+
+    auto swizzled = request(TableWaterfallCode, 4u);
+    userData[1] |= 1u << 31u;
+    require(fault(CompileTable(swizzled)) == Abi::PoisonReason::LaneRecordLayout, "lane image table: a swizzled table V# was not a whole-table fault");
+    static_cast<void>(request(TableWaterfallCode, 4u));
+    userData[1] = (userData[1] & 0xc000ffffu) | (28u << 16u);
+    require(fault(CompileTable(swizzled)) == Abi::PoisonReason::LaneRecordLayout, "lane image table: records smaller than a T# were not a whole-table fault");
+
+    const auto mixed = request(lodCode, 4u);
+    const auto lodPlan = GetResourcePlan(mixed);
+    require(lodPlan->descriptorSources.at(lodPlan->info.images.at(0).source).tableColumn->implicitDerivatives, "lane image table: an LOD query did not mark the table");
+    require(fault(CompileTable(mixed)) == Abi::PoisonReason::LaneModes, "lane image table: float and integer records under an LOD query were not a whole-table fault");
+    records[1] = TableT(textures[1].bytes.data(), TableFormat8888UNorm, TableType2D);
+    require(fault(CompileTable(request(lodCode, 4u))) == Abi::PoisonReason::Count, "lane image table: records of one mode under an LOD query faulted");
+    records = {};
+}
+
 void verifyDescriptorPhis() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
@@ -5143,6 +5220,7 @@ int main(int argc, char** argv) {
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableOffsetCarry();
+            verifyLaneImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
@@ -5174,6 +5252,7 @@ int main(int argc, char** argv) {
         verifyScalarAddressRule();
         verifyPointerImageTable();
         verifyPointerTableOffsetCarry();
+        verifyLaneImageTable();
         verifyDescriptorPhis();
         verifyUniformTableImage();
         verifyLaneSelectedDescriptors();

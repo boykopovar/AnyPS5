@@ -1598,6 +1598,18 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto baseHigh = field(ImageTableAbi::TableBaseHigh);
     const auto outsideCode = field(ImageTableAbi::TableOutsideCode);
     const auto tableFault = field(ImageTableAbi::TableFault);
+    if (column.laneKey) {
+        const auto inMap = Binary(state, spv::OpULessThan, boolean, offset, keys);
+        const auto mapped = LoadTableMap(state, Select(state, u32, inMap, Binary(state, spv::OpIAdd, u32, mapStart, offset), ConstantU32(state, 0u)));
+        const auto loaded = Binary(state, spv::OpULessThan, boolean, offset, field(ImageTableAbi::TableRecordCount));
+        const auto outside = Select(state, u32, loaded, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)), ConstantU32(state, ImageTableAbi::NullCode));
+        TableWord word;
+        word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside));
+        word.addressLow = baseLow;
+        word.addressHigh = baseHigh;
+        word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
+        return word;
+    }
     const auto relative = Binary(state, spv::OpISub, u32, offset, ConstantU32(state, column.addend));
     const auto record = Binary(state, spv::OpUDiv, u32, relative, ConstantU32(state, column.stride));
     const auto remainder = Binary(state, spv::OpISub, u32, relative, Binary(state, spv::OpIMul, u32, record, ConstantU32(state, column.stride)));

@@ -539,6 +539,78 @@ private:
         return found->second;
     }
 
+    void LaneRecords(const TableColumn& column, ColumnRecords& records) {
+        const auto heap = EvaluateBuffer(column.heapSource);
+        if (heap.Type() != 0u) {
+            records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::NotBuffer));
+            return;
+        }
+        records.base = heap.Base48();
+        const bool present = heap.NumRecords() != 0u && (heap.fields[0] != 0u || (heap.fields[1] & 0xffffu) != 0u) && ((heap.fields[3] >> 12u) & 0x7fu) != 0u;
+        if (!present) {
+            return;
+        }
+        const std::uint64_t stride = heap.Stride();
+        const std::uint64_t last = static_cast<std::uint64_t>(column.offset) + (column.dwordCount - 1u) * sizeof(std::uint32_t);
+        const bool offsetChecked = heap.OutOfBounds() == 0u;
+        if (heap.SwizzleEnabled() || heap.AddTid() || heap.OutOfBounds() > 1u || stride == 0u || (offsetChecked && last >= stride) || ((records.base + column.offset + column.addend) & 3u) != 0u || (stride & 3u) != 0u) {
+            records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::LaneRecordLayout));
+            return;
+        }
+        records.size = heap.GetSize();
+        records.records = std::min(heap.NumRecords(), ImageTableAbi::KeyRecords(column.maxKey, 1u));
+        records.keys = std::min(records.records, ImageTableAbi::MaxKeys);
+        records.outside = records.keys < records.records;
+        records.states.assign(records.keys, RecordState::Read);
+        records.words.assign(records.keys, 0u);
+        constexpr auto Unread = std::numeric_limits<std::uint32_t>::max();
+        std::vector<std::uint32_t> first(records.keys, Unread);
+        std::vector<std::pair<std::uint64_t, std::uint32_t>> runs;
+        std::uint32_t total = 0;
+        std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t high = 0;
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            const auto byte = static_cast<std::uint32_t>(record * stride + column.offset + column.addend);
+            const auto address = records.base + byte;
+            const auto tail = records.base + static_cast<std::uint32_t>(byte + (column.dwordCount - 1u) * sizeof(std::uint32_t));
+            if (tail < address || !AddressAccessible(address) || !AddressAccessible(tail)) {
+                records.states[record] = RecordState::Unmapped;
+                continue;
+            }
+            if (!runs.empty() && address > runs.back().first && address - runs.back().first == static_cast<std::uint64_t>(runs.back().second) * sizeof(std::uint32_t)) {
+                runs.back().second += column.dwordCount;
+            } else {
+                runs.emplace_back(address, column.dwordCount);
+            }
+            first[record] = total;
+            total += column.dwordCount;
+            low = std::min(low, address);
+            high = std::max(high, tail + sizeof(std::uint32_t));
+        }
+        if (low < high) {
+            tables.ranges.emplace_back(low, high - low);
+            records.readRanges.emplace_back(low, high - low);
+        }
+        std::vector<std::uint32_t> read(total);
+        std::uint32_t at = 0;
+        for (const auto& [address, count] : runs) {
+            if (runtime.readWords != nullptr) {
+                if (!runtime.readWords(runtime.userContext, address, read.data() + at, count)) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
+            } else {
+                for (std::uint32_t word = 0; word < count; word++) read[at + word] = Read(address + word * sizeof(std::uint32_t));
+            }
+            at += count;
+        }
+        for (std::uint32_t record = 0; record < records.keys; record++) {
+            if (first[record] == Unread) continue;
+            DescriptorValue value;
+            value.dwordCount = column.dwordCount;
+            std::copy_n(read.begin() + first[record], column.dwordCount, value.dwords.begin());
+            value.availableDwordMask = static_cast<std::uint8_t>((1u << column.dwordCount) - 1u);
+            records.words[record] = WordsIndex(value);
+        }
+    }
+
     ColumnRecords& Column(std::uint32_t source) {
         if (const auto found = columns.find(source); found != columns.end()) {
             return found->second;
@@ -548,6 +620,10 @@ private:
         const bool active = source >= activeSources.size() || activeSources[source] != 0u;
         if (!active) {
             records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::Inactive));
+            return records;
+        }
+        if (column.laneKey) {
+            LaneRecords(column, records);
             return records;
         }
         if (column.address) {
@@ -730,6 +806,7 @@ private:
         out.keys = records.keys;
         out.fault = records.fault;
         out.outside = records.outside;
+        out.sharedMode = column.laneKey && column.implicitDerivatives;
         out.codes.assign(records.keys, 0u);
         out.readRanges = records.readRanges;
         TableTrace trace{records.base, records.size, records.records, records.keys, 0u, records.narrowed};
@@ -1162,6 +1239,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         out.map[header + Abi::TableSizeHigh] = static_cast<std::uint32_t>(column.size >> 32u);
         out.map[header + Abi::TableBaseLow] = static_cast<std::uint32_t>(column.base);
         out.map[header + Abi::TableBaseHigh] = static_cast<std::uint32_t>(column.base >> 32u);
+        out.map[header + Abi::TableRecordCount] = column.records;
         if (column.codes.size() != column.keys) throw std::runtime_error("image table snapshot has a truncated map");
         if (column.fault != 0u) {
             out.map[header + Abi::TableFault] = poison(resource, static_cast<PoisonReason>(column.fault & ~Abi::PoisonFlag), nullptr);
@@ -1188,6 +1266,19 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 }
             }
             out.map[mapStart + key] = mapped;
+        }
+        if (column.sharedMode && out.map[header + Abi::TableFault] == 0u) {
+            std::optional<std::uint32_t> shared;
+            for (std::uint32_t key = 0; key < column.keys; key++) {
+                const auto mapped = out.map[mapStart + key];
+                if (mapped == Abi::NullCode || (mapped & Abi::PoisonFlag) != 0u || (out.map[mapped + Abi::ImageRecordFlags] & Abi::PoisonFlag) != 0u) continue;
+                const auto mode = (out.map[mapped + Abi::ImageRecordFlags] >> Abi::ModeShift) & Abi::ModeMask;
+                if (shared.has_value() && *shared != mode) {
+                    out.map[header + Abi::TableFault] = poison(resource, PoisonReason::LaneModes, nullptr);
+                    break;
+                }
+                shared = mode;
+            }
         }
         if (sampler && out.map[header + Abi::TableFault] == 0u) {
             DescriptorValue zero;

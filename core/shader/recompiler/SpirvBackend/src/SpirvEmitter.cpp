@@ -272,6 +272,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         const bool oneSubgroup = state.laneCount == 2u || (program.WaveSize() == workgroup->hostSubgroupSize && workgroup->hostSubgroupSize <= 32u);
         state.tableIndexNonUniform = threads > program.WaveSize() || !oneSubgroup;
     }
+    if (std::ranges::any_of(program.Resources().descriptorSources, [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->laneKey; })) state.tableIndexNonUniform = true;
     state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
     // Stopped invocations would leave the wave LDS barriers incomplete.
