@@ -2662,8 +2662,9 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     const auto* recorder = Recorder::Active();
     const auto epoch = GuestMemory::CollectEpoch();
     const auto hint = memoize && epoch != 0 ? GuestMemory::UntrackedHint(address, bytes) : 0;
-    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
-    const bool cacheable = memoize && epoch != 0 && (stamp[3] & 1u) == 0;
+    const bool forgetting = (GuestMemory::ForgetSerial() & 1u) != 0;
+    const std::array<std::uint64_t, 5> stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    const bool cacheable = memoize && epoch != 0 && !forgetting;
     if (cacheable && std::any_of(comparedRanges.begin(), comparedRanges.end(), [&](const ComparedRange& entry) { return entry.address == address && entry.bytes == bytes && entry.stamp == stamp; })) {
         std::fill(changed.begin(), changed.end(), GuestMemory::BlockUnchanged);
         return true;
