@@ -1615,7 +1615,9 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         std::snprintf(text, sizeof(text), "CB metadata pass with depth or stencil work (DB_DEPTH_CONTROL 0x%08x, DB_RENDER_CONTROL 0x%08x, DB_Z_INFO 0x%08x, DB_STENCIL_INFO 0x%08x)", value(0x200), value(0x0), value(0x010), value(0x011));
         throw std::runtime_error(text);
     }
-    const auto samples = resolve && rasterizerSamples ? decodeSamples(cx) : 1u;
+    const auto modeControl = find(cx, 0x292);
+    const bool multisampleRaster = modeControl != cx.end() && (modeControl->second & 1u) != 0;
+    const auto samples = resolve && rasterizerSamples && multisampleRaster ? decodeSamples(cx) : 1u;
     if (!resolve) zero(cx, 0x2f8, ~0u, "multisampling or coverage conversion");
     zero(cx, 0x80, ~0u, "window offset");
     const auto viewportControl = read(cx, 0x206);

@@ -2981,6 +2981,9 @@ void multisampleTests() {
     queue.context[0x2f8] = 0x00200002;
     for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6aeu;
     expectFailure([&] { DecodeColorMetadataPass(queue); }, "differs from the rasterizer's");
+    queue.context[0x292] &= ~1u;
+    pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->mode == ColorMetadataPass::Mode::Resolve && pass->source.has_value() && pass->source->samples == 2 && pass->targets.size() == 1, "a CB resolve with MSAA_ENABLE off did not take its sample count from the source target despite a stale PA_SC_AA_CONFIG");
     queue = rasterizedResolve;
     std::vector<std::byte> resolvedBlock(2u * 65536u);
     const auto resolvedAddress = (reinterpret_cast<std::uintptr_t>(resolvedBlock.data()) + 65535u) / 65536u * 65536u;
