@@ -539,9 +539,31 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         targetOptions.barycentricSmoothLocation = layout.smoothLocation;
         targetOptions.barycentricLinearLocation = layout.linearLocation;
         targetOptions.barycentricPositionsLocation = layout.positionsLocation;
+        targetOptions.meshPerVertexLocations = layout.perVertexLocations;
         for (const auto& parameter : paired.parameters) {
             if (!parameter.perVertex) targetOptions.meshExportedLocations.push_back(parameter.location);
         }
+        if (!request.graphics->mesh || !request.target.mesh) throw std::runtime_error("barycentric emulation on the mesh path needs a mesh configuration and a device with mesh shaders");
+        const auto& config = *request.graphics->mesh;
+        const auto& limits = *request.target.mesh;
+        if (config.provokingVertex != 0u) throw std::runtime_error("barycentric emulation on the mesh path is only measured with the first provoking vertex");
+        const std::uint64_t perVertexParameters = layout.perVertexLocations.size();
+        const std::uint64_t sharedBytes = 16ull * config.maxVertices * (1u + perVertexParameters) + DeviceMemoryLdsBytes(request);
+        if (sharedBytes > limits.maxSharedMemoryBytes) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(sharedBytes) + " bytes of mesh shared memory for " + std::to_string(config.maxVertices) + " vertices, the device allows " + std::to_string(limits.maxSharedMemoryBytes));
+        MeshOutputUse use;
+        std::set<std::uint32_t> flatLocations;
+        for (const auto& output : program.Info().outputs) {
+            if (output.kind == StageOutputKind::Parameter && std::ranges::find(targetOptions.meshExportedLocations, output.location) != targetOptions.meshExportedLocations.end()) flatLocations.insert(output.location);
+            if (output.kind == StageOutputKind::ClipDistance) use.clipDistances = std::max(use.clipDistances, output.index + 1u);
+            if (output.kind == StageOutputKind::CullDistance) use.cullDistances = std::max(use.cullDistances, output.index + 1u);
+            if (output.kind == StageOutputKind::Layer) use.layer = true;
+        }
+        use.flatParameters = static_cast<std::uint32_t>(flatLocations.size());
+        use.perVertexParameters = static_cast<std::uint32_t>(perVertexParameters);
+        use.clipVaryings = (layout.smoothLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u) + (layout.linearLocation != BarycentricEmulationLayout::NoLocation ? 1u : 0u);
+        const auto budget = MeshBarycentricOutputBudget(config, limits, use);
+        if (budget.components > limits.maxOutputComponents) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(budget.components) + " mesh output components (" + std::to_string(budget.vertexLocations) + " per-vertex and " + std::to_string(budget.primitiveLocations) + " per-primitive locations), the device allows " + std::to_string(limits.maxOutputComponents));
+        if (budget.bytes > limits.maxOutputMemoryBytes) throw std::runtime_error("barycentric emulation on the mesh path needs " + std::to_string(budget.bytes) + " bytes of mesh output memory, the device allows " + std::to_string(limits.maxOutputMemoryBytes));
     }
 
     constexpr SpirvEmitter spirvEmitter;
@@ -1040,6 +1062,16 @@ bool sameLayout(const BindingLayout& left, const BindingLayout& right) {
     return left.descriptorSet == right.descriptorSet && left.firstBinding == right.firstBinding && left.pushConstantOffsetBytes == right.pushConstantOffsetBytes && left.pushConstantSizeBytes == right.pushConstantSizeBytes;
 }
 
+}
+
+MeshOutputBudget MeshBarycentricOutputBudget(const MeshConfiguration& mesh, const MeshTargetLimits& limits, const MeshOutputUse& use) {
+    const auto alignUp = [](std::uint64_t value, std::uint64_t granularity) { return granularity <= 1u ? value : (value + granularity - 1u) / granularity * granularity; };
+    MeshOutputBudget budget;
+    budget.vertexLocations = 1u + use.flatParameters + use.clipVaryings + (use.clipDistances + 3u) / 4u + (use.cullDistances + 3u) / 4u;
+    budget.primitiveLocations = 3u + 3u * use.perVertexParameters + 1u + (use.layer ? 1u : 0u);
+    budget.components = 4ull * (budget.vertexLocations + budget.primitiveLocations);
+    budget.bytes = 16ull * (budget.vertexLocations * alignUp(mesh.maxVertices, limits.outputPerVertexGranularity) + budget.primitiveLocations * alignUp(mesh.maxPrimitives, limits.outputPerPrimitiveGranularity));
+    return budget;
 }
 
 std::optional<MeshBarycentricLayout> MeshBarycentricLayoutOf(const RecompileResult& fragment) {

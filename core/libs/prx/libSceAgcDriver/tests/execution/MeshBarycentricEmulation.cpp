@@ -44,6 +44,10 @@ alignas(256) constexpr std::array<std::uint32_t, 3> BarycentricPixelCode{
     0xf800180f, 0x01000100, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 6> VertexValuePixelCode{
+    0xc80a0000, 0xc80e0001, 0xc8120002, 0xf800180f, 0x04040302, 0xbf810000,
+};
+
 struct Vertex {
     std::array<float, 4> position;
     std::array<float, 4> color;
@@ -54,6 +58,8 @@ struct Corner {
     float y;
     float w;
 };
+
+constexpr std::array<float, 3> VertexValues{0.25f, -3.5f, 7.75f};
 
 constexpr std::array<Corner, 3> Corners{{{-0.8f, -0.8f, 1.0f}, {0.9f, -0.6f, 2.5f}, {-0.5f, 0.85f, 0.5f}}};
 
@@ -105,7 +111,7 @@ void CheckValidator(AgcDriver::VulkanDevice& device, const AgcDriver::Pm4::DrawP
     rejected(meshResult, plain, "mesh shading");
 }
 
-ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::uint32_t inputs) {
+ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs) {
     Pixels.fill(Unwritten);
     auto target = device.Target();
     target.fragmentShaderBarycentricEnabled = false;
@@ -137,9 +143,9 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::uin
     pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     const std::vector<std::uint32_t> pixelUserData;
-    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(BarycentricPixelCode.data()), std::as_bytes(std::span(BarycentricPixelCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(BarycentricPixelCode.data()), BarycentricPixelCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {64u, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(meshPush, target),
@@ -150,6 +156,14 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::uin
     Require(pixelResult.barycentricEmulation.active, "the pixel shader did not emulate barycentrics");
     mesh.graphics->meshBarycentrics = ShaderRecompiler::MeshBarycentricLayoutOf(pixelResult);
     const auto pairedMesh = ShaderRecompiler::Recompile(mesh);
+    if (pixelCode.data() == BarycentricPixelCode.data()) {
+        auto last = mesh;
+        last.graphics->mesh->provokingVertex = 1u;
+        ExpectRejected([&] { static_cast<void>(ShaderRecompiler::Recompile(last)); }, "first provoking vertex");
+        auto wide = mesh;
+        wide.graphics->mesh->maxVertices = target.mesh->maxSharedMemoryBytes / 16u + 1u;
+        ExpectRejected([&] { static_cast<void>(ShaderRecompiler::Recompile(wide)); }, "mesh shared memory");
+    }
     Require(pairedMesh.meshBarycentrics == mesh.graphics->meshBarycentrics, "the paired mesh does not record the layout it was compiled for");
     Require(pairedMesh.pushConstants.size() == meshPush && pairedMesh.parameterExports == meshResult.parameterExports, "the paired mesh changed the push constants or exports the pixel shader was built for");
 
@@ -173,7 +187,7 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::uin
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
-    CheckValidator(device, draw, state, pairedMesh, pixelResult, PixelPushOffset(meshPush, target));
+    if (pixelCode.data() == BarycentricPixelCode.data()) CheckValidator(device, draw, state, pairedMesh, pixelResult, PixelPushOffset(meshPush, target));
     device.Draw(state, draw, shaders);
     device.WaitIdle();
     return pixelResult;
@@ -216,6 +230,22 @@ float Pixel(std::uint32_t x, std::uint32_t y, std::uint32_t channel) {
     return Pixels[(y * Width + x) * 4u + channel];
 }
 
+std::uint32_t CheckVertexValues() {
+    const std::array<float, 3> expected{VertexValues[1] - VertexValues[0], VertexValues[2] - VertexValues[0], VertexValues[0]};
+    std::uint32_t checked = 0;
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            if (!Barycentrics(x, y, false).inside) continue;
+            for (std::uint32_t channel = 0; channel < 3; ++channel) {
+                Require(Pixel(x, y, channel) == expected[channel], "v_interp_mov: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") channel " + std::to_string(channel) + " is " + std::to_string(Pixel(x, y, channel)) + ", expected " + std::to_string(expected[channel]));
+            }
+            ++checked;
+        }
+    }
+    Require(checked > 200u, "v_interp_mov: too few interior pixels were checked");
+    return checked;
+}
+
 std::uint32_t CheckBarycentrics(const std::string& what, bool perspective) {
     std::uint32_t checked = 0;
     for (std::uint32_t y = 0; y < Height; ++y) {
@@ -254,17 +284,20 @@ int main() {
         }
         for (std::size_t i = 0; i < Corners.size(); ++i) {
             const auto& corner = Corners[i];
-            Vertices[i] = {{corner.x * corner.w, corner.y * corner.w, 0.5f * corner.w, corner.w}, {0.0f, 0.0f, 0.0f, 1.0f}};
+            Vertices[i] = {{corner.x * corner.w, corner.y * corner.w, 0.5f * corner.w, corner.w}, {VertexValues[i], 0.0f, 0.0f, 1.0f}};
         }
         const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
         const auto linear = PixelInputBit(PixelInput::LinearCenter);
-        auto result = Draw(*device, perspective);
+        auto result = Draw(*device, BarycentricPixelCode, perspective);
         Require(result.barycentricEmulation.smooth && !result.barycentricEmulation.linear, "reading PERSP_CENTER I/J did not emulate perspective barycentrics");
         const auto smooth = CheckBarycentrics("mesh PERSP_CENTER I/J", true);
-        result = Draw(*device, linear);
+        result = Draw(*device, BarycentricPixelCode, linear);
         Require(!result.barycentricEmulation.smooth && result.barycentricEmulation.linear, "reading LINEAR_CENTER I/J did not emulate linear barycentrics");
         const auto noPerspective = CheckBarycentrics("mesh LINEAR_CENTER I/J", false);
-        std::printf("mesh barycentric emulation tests passed: %u perspective and %u linear I/J pixels\n", smooth, noPerspective);
+        result = Draw(*device, VertexValuePixelCode, perspective);
+        Require(result.barycentricEmulation.active && result.fragmentParameters.size() == 1 && result.fragmentParameters[0].perVertex, "v_interp_mov of P10 and P20 did not emulate per-vertex parameters");
+        const auto vertexValues = CheckVertexValues();
+        std::printf("mesh barycentric emulation tests passed: %u perspective and %u linear I/J pixels, %u raw vertex value pixels\n", smooth, noPerspective, vertexValues);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

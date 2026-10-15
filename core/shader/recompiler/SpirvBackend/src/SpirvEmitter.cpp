@@ -265,6 +265,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.barycentricLinearLocation = target.barycentricLinearLocation;
     state.barycentricPositionsLocation = target.barycentricPositionsLocation;
     state.meshExportedLocations = target.meshExportedLocations;
+    state.meshPerVertexLocations = target.meshPerVertexLocations;
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.hostSubgroupSize = target.subgroupSize;
     if (HostSubgroupSingleLane(state)) {

@@ -32,6 +32,7 @@ struct SpirvTargetOptions {
     std::uint32_t barycentricLinearLocation = 0xffffffffu;
     std::uint32_t barycentricPositionsLocation = 0xffffffffu;
     std::vector<std::uint32_t> meshExportedLocations;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> meshPerVertexLocations;
 };
 
 struct SpirvEmitInfo {

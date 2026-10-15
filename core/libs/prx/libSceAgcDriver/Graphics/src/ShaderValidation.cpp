@@ -656,6 +656,10 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
         const auto layout = ShaderRecompiler::LayoutBarycentricEmulation(last.fragmentParameters, last.barycentricEmulation, true);
         if (layout.positionsLocation != ShaderRecompiler::BarycentricEmulationLayout::NoLocation) {
             for (std::uint32_t corner = 0; corner < 3u; ++corner) primitiveLocations.push_back(layout.positionsLocation + corner);
+            for (const auto& [guest, relocated] : layout.perVertexLocations) {
+                static_cast<void>(guest);
+                for (std::uint32_t corner = 0; corner < 3u; ++corner) primitiveLocations.push_back(relocated + corner);
+            }
         }
     }
     Module previous;

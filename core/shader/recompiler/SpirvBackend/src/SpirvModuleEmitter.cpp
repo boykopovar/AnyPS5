@@ -848,6 +848,19 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
         state.module.AddName(state.meshFlatPositions, "meshBarycentricPositions");
         state.module.AddAnnotation(spv::OpDecorate, state.meshFlatPositions, spv::DecorationLocation, state.barycentricPositionsLocation);
         state.module.AddAnnotation(spv::OpDecorate, state.meshFlatPositions, spv::DecorationPerPrimitiveEXT);
+        for (const auto& [guest, relocated] : state.meshPerVertexLocations) {
+            const auto source = std::ranges::find_if(state.outputs, [guest = guest](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::Parameter && output.location == guest; });
+            if (source == state.outputs.end()) {
+                throw std::runtime_error("barycentric emulation on the mesh path: the mesh program does not export per-vertex parameter " + std::to_string(guest));
+            }
+            const auto staging = MeshArray(state, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), mesh.maxVertices);
+            const auto perPrimitive = MeshArray(state, spv::StorageClassOutput, corners, mesh.maxPrimitives);
+            state.interfaceVariables.push_back(perPrimitive);
+            state.module.AddName(perPrimitive, "meshPerVertexParameter" + std::to_string(guest));
+            state.module.AddAnnotation(spv::OpDecorate, perPrimitive, spv::DecorationLocation, relocated);
+            state.module.AddAnnotation(spv::OpDecorate, perPrimitive, spv::DecorationPerPrimitiveEXT);
+            state.meshVertexParameters.push_back({source->meshDataVariable, staging, perPrimitive});
+        }
     }
     state.meshAllocation = MeshArray(state, spv::StorageClassWorkgroup, TypeU32(state), 2u);
     state.meshPrimitiveData = MeshArray(state, spv::StorageClassPrivate, TypeU32(state), state.laneCount);
@@ -924,6 +937,10 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshPositionStaging, spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), index), value);
             const auto clip = state.module.AllocateId();
             state.module.AddFunction(spv::OpVectorShuffle, TypeF32Vector(state, 3u), clip, value, value, 0u, 1u, 3u);
+            for (const auto& parameter : state.meshVertexParameters) {
+                const auto staged = MeshLoad(state, parameter[0], spv::StorageClassPrivate, TypeF32Vector(state, 4u), ConstantU32(state, half));
+                state.module.AddFunction(spv::OpStore, MeshElement(state, parameter[1], spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), index), staged);
+            }
             for (const auto variable : {state.meshClipSmooth, state.meshClipLinear}) {
                 if (variable != 0u) {
                     state.module.AddFunction(spv::OpStore, MeshElement(state, variable, spv::StorageClassOutput, TypeF32Vector(state, 3u), index), clip);
@@ -970,6 +987,15 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
                 const auto array = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeConstruct, corners, array, staged[0], staged[1], staged[2]);
                 state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshFlatPositions, spv::StorageClassOutput, corners, index), array);
+                for (const auto& parameter : state.meshVertexParameters) {
+                    std::array<std::uint32_t, 3> values {};
+                    for (std::uint32_t component = 0; component < 3u; component++) {
+                        values.at(component) = MeshLoad(state, parameter[1], spv::StorageClassWorkgroup, TypeF32Vector(state, 4u), vertex.at(component));
+                    }
+                    const auto perVertex = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpCompositeConstruct, corners, perVertex, values[0], values[1], values[2]);
+                    state.module.AddFunction(spv::OpStore, MeshElement(state, parameter[2], spv::StorageClassOutput, corners, index), perVertex);
+                }
             }
         });
     };
