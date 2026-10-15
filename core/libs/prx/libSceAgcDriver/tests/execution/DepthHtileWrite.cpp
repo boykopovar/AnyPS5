@@ -84,7 +84,9 @@ int main() {
 
         Fill(0xfffffff0u);
         const Surface inheritedStencil{reinterpret_cast<std::uintptr_t>(InitialDepth.data()), stencil.stencil, stencil.htile, false, stencil.format, 0, 1};
-        Require(Draw(*device, shaders, inheritedStencil, StencilDraw(VK_COMPARE_OP_EQUAL, 9u, VK_STENCIL_OP_KEEP)) == Covered, "a fresh depth-only HTILE clear discarded inherited stencil data");
+        auto inheritedStencilDraw = StencilDraw(VK_COMPARE_OP_EQUAL, 9u, VK_STENCIL_OP_KEEP);
+        inheritedStencilDraw.depthTest = true;
+        Require(Draw(*device, shaders, inheritedStencil, inheritedStencilDraw) == Covered, "a fresh depth-only HTILE clear lost its initial depth or inherited stencil data");
 
         Fill(0xfffff3ffu);
         Require(Draw(*device, shaders, stencil, {.depthWrite = true}) == Covered, "the inherited-depth fixture did not write depth 0.5");
