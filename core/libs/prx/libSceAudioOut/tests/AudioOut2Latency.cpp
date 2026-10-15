@@ -1,3 +1,4 @@
+#include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <algorithm>
@@ -35,6 +36,12 @@ static bool ThrowsRuntimeError(TFunction function) {
 }
 
 namespace {
+
+static_assert(sizeof(AudioOut2MasteringCompressorStates) == 208);
+static_assert(sizeof(AudioOut2MasteringCompressorStatesV2) == 272);
+static_assert(sizeof(AudioOut2MasteringLimiterStates) == 112);
+static_assert(sizeof(AudioOut2MasteringStates) == 336);
+static_assert(sizeof(AudioOut2MasteringStatesV2) == 400);
 
 constexpr int systemUser = 0xFF;
 constexpr int user = 0x10000000;
