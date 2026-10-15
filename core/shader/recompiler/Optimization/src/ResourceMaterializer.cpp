@@ -578,7 +578,18 @@ private:
                     records.states[record] = RecordState::Unmapped;
                     continue;
                 }
-                const std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
+                std::uint64_t pointer = (static_cast<std::uint64_t>(Read(records.base + *highWord)) << 32u) | Read(records.base + *lowWord);
+                for (const auto& hop : column.pointerHops) {
+                    const auto low = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate);
+                    const auto high = ImageTableAbi::ScalarAddressDword(pointer, hop.offset, hop.immediate + 4u);
+                    if (!low.has_value() || !high.has_value() || (*low & 3u) != 0u || *high != *low + sizeof(std::uint32_t) || !AddressAccessible(*low) || !AddressAccessible(*high)) {
+                        records.states[record] = RecordState::Unmapped;
+                        break;
+                    }
+                    pointer = (static_cast<std::uint64_t>(Read(*high)) << 32u) | Read(*low);
+                    tables.ranges.emplace_back(*low, 2u * sizeof(std::uint32_t));
+                }
+                if (records.states[record] != RecordState::Read) continue;
                 DescriptorValue value;
                 value.dwordCount = column.sampler ? 4u : 8u;
                 std::uint64_t first = std::numeric_limits<std::uint64_t>::max();

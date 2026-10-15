@@ -108,8 +108,8 @@ static_assert(sizeof(IrResourcePlan) == 584, "IrResourcePlan changed: update Enc
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
-static_assert(sizeof(DescriptorSource) == 160, "DescriptorSource changed: update the plan encoder");
-static_assert(sizeof(TableColumn) == 80, "TableColumn changed: update the plan encoder");
+static_assert(sizeof(DescriptorSource) == 184, "DescriptorSource changed: update the plan encoder");
+static_assert(sizeof(TableColumn) == 104, "TableColumn changed: update the plan encoder");
 static_assert(sizeof(KeyDomain) == 16, "KeyDomain changed: update the plan encoder");
 static_assert(sizeof(ResourceBlock) == 80, "ResourceBlock changed: update the plan encoder");
 static_assert(sizeof(SrtRead) == 16, "SrtRead changed: update the plan encoder");
@@ -149,7 +149,7 @@ static_assert(fieldCount<IrResourcePlan>() == 21, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 31, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 15, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 16, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -1039,6 +1039,10 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.indirect);
         out.Value(column.indirectOffset);
         out.Value(column.indirectImmediate);
+        out.List(column.pointerHops, [](Writer& hops, const PointerHop& hop) {
+            hops.Value(hop.offset);
+            hops.Value(hop.immediate);
+        });
         out.Value(column.foldedAddend);
         out.Value(column.foldedCarry);
     });
@@ -1193,6 +1197,10 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.indirect);
         in.Value(column.indirectOffset);
         in.Value(column.indirectImmediate);
+        in.List(column.pointerHops, 8, [](Reader& hops, PointerHop& hop) {
+            hops.Value(hop.offset);
+            hops.Value(hop.immediate);
+        });
         in.Value(column.foldedAddend);
         in.Value(column.foldedCarry);
         source.tableColumn = table ? std::optional(std::move(column)) : std::nullopt;
