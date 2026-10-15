@@ -69,7 +69,7 @@ def main():
         assert f"Patch manifest: {manifest}\n" in result.stdout
         assert f'config = "{source.parent.as_posix()}/relinker-patches.toml"\n' in text, text
 
-        if os.name != "nt":  # Windows file names cannot contain a double quote
+        if os.name != "nt":
             quoted = work / "quoted"
             (quoted / "out").mkdir(parents=True)
             (quoted / "eboot.bin").write_bytes(image)
