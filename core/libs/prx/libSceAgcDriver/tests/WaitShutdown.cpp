@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "prx/libSceAgcDriver/Submit/include/CommandBuffer.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -50,6 +51,33 @@ void Submit(std::uint32_t queue, const std::vector<std::uint32_t>& words) {
     Require(result == 0, "shutdown wait submission failed");
 }
 
+void CheckCommandBufferSubmission() {
+    Require(sceAgcDriverSubmitMultiCommandBuffers(nullptr, nullptr, nullptr, 0) == 0, "empty multi submission failed");
+    Packet emptyPacket{nullptr, 0, 0, {}};
+    Require(sceAgcDriverSubmitCommandBuffer(nullptr, &emptyPacket) == 0, "null context submit failed");
+    Require(sceAgcDriverSubmitCommandBuffer(reinterpret_cast<void*>(std::uintptr_t{0x20}), &emptyPacket) == 0, "acb context submit failed");
+    std::uint32_t* cmdBufs[] = {nullptr};
+    const std::uint32_t cmdSizes[] = {0};
+    Require(sceAgcDriverSubmitMultiCommandBuffers(nullptr, cmdBufs, cmdSizes, 1) == 0, "null context multi submit failed");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(reinterpret_cast<void*>(std::uintptr_t{0x20}), cmdBufs, cmdSizes, 1) == 0, "acb context multi submit failed");
+
+    bool submitRejected = false;
+    try {
+        sceAgcDriverSubmitCommandBuffer(reinterpret_cast<void*>(std::uintptr_t{1}), &emptyPacket);
+    } catch (const std::runtime_error&) {
+        submitRejected = true;
+    }
+    Require(submitRejected, "unsupported queue context was not rejected");
+
+    bool multiRejected = false;
+    try {
+        sceAgcDriverSubmitMultiCommandBuffers(reinterpret_cast<void*>(std::uintptr_t{1}), cmdBufs, cmdSizes, 1);
+    } catch (const std::runtime_error&) {
+        multiRejected = true;
+    }
+    Require(multiRejected, "unsupported queue context for multi submit was not rejected");
+}
+
 void CheckShutdownCancellation() {
     static std::array<LabelState, 3> states{};
     constexpr std::array<std::uint32_t, 3> queues{0, 0x20, 0x28};
@@ -92,6 +120,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     try {
+        CheckCommandBufferSubmission();
         CheckShutdownCancellation();
         std::puts("unsatisfied label waits cancelled cleanly at shutdown");
         return 0;
