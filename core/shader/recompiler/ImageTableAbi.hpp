@@ -27,7 +27,8 @@ inline constexpr std::uint32_t TableBaseLow = 4;
 inline constexpr std::uint32_t TableBaseHigh = 5;
 inline constexpr std::uint32_t TableOutsideCode = 6;
 inline constexpr std::uint32_t TableFault = 7;
-inline constexpr std::uint32_t TableWords = 8;
+inline constexpr std::uint32_t TableRecordCount = 8;
+inline constexpr std::uint32_t TableWords = 9;
 
 inline constexpr std::uint32_t ImageRecordFlags = 0;
 inline constexpr std::uint32_t ImageRecordDword3 = 1;
@@ -81,6 +82,8 @@ enum class PoisonReason : std::uint32_t {
     DriverRejected,
     UnsupportedOperation,
     OffsetCarry,
+    LaneRecordLayout,
+    LaneModes,
     Count
 };
 
@@ -108,6 +111,8 @@ constexpr std::string_view PoisonReasonName(PoisonReason reason) {
         case PoisonReason::DriverRejected: return "rejected by the driver";
         case PoisonReason::UnsupportedOperation: return "unsupported operation";
         case PoisonReason::OffsetCarry: return "record offset carries past 32 bits";
+        case PoisonReason::LaneRecordLayout: return "table V# indexed per lane is swizzled, adds the thread ID, has an unbounded range check, misaligned records or records smaller than the descriptor";
+        case PoisonReason::LaneModes: return "records indexed per lane need different image modes under implicit derivatives";
         case PoisonReason::Count: break;
     }
     return "unknown";
