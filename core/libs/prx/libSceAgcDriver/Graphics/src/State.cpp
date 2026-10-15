@@ -156,8 +156,9 @@ constexpr std::uint32_t ScanModeMask = ~0x22u;
 constexpr std::uint32_t ScanControlMask = ~0x76033fffu;
 constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
-// Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space.
-constexpr std::uint32_t ClipControlMask = ~(0x80000u | 0x01000000u | 0x0c000000u);
+// Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) and bit 16 (CLIP_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space.
+// Bit 24 (DX_LINEAR_ATTR_CLIP_ENA) is accepted and ignored (see debt).
+constexpr std::uint32_t ClipControlMask = ~(0x10000u | 0x80000u | 0x01000000u | 0x0c000000u);
 
 bool zFormatSupported(std::uint32_t format) {
     return format == 0u || format == 1u || format == 2u || format == 3u || format == 9u;
@@ -1058,7 +1059,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
     zero(cx, 0x204, ClipControlMask, "unsupported PA_CL_CLIP_CNTL flags");
-    result.depthClamp = (read(cx, 0x204) & 0x0c000000u) != 0;
+    result.depthClamp = (read(cx, 0x204) & (0x10000u | 0x0c000000u)) != 0;
     result.negativeOneToOne = (read(cx, 0x204) & 0x80000u) == 0;
     const auto raster = read(cx, 0x205);
     // Bits 5-10 give the front/back polygon type (2 = filled triangles), which POLY_MODE (bit 3) turns on

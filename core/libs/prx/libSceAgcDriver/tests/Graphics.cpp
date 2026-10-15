@@ -3272,7 +3272,7 @@ void DepthClipTests() {
     collapsedQueue.context[0x10f] = std::bit_cast<std::uint32_t>(-1.0f);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(collapsedQueue); }, "unsupported viewport transform");
     for (std::uint32_t bit = 0; bit < 32; ++bit) {
-        if (bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
+        if (bit == 16 || bit == 19 || bit == 24 || bit == 26 || bit == 27) continue;
         for (const auto linearBit : {0u, 0x01000000u}) {
             queue.context[0x204] = (1u << bit) | linearBit;
             expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "PA_CL_CLIP_CNTL");
@@ -3282,9 +3282,10 @@ void DepthClipTests() {
     queue = makeState();
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
-    for (const auto clip : {0x00080000u, 0x00000000u, 0x0c080000u, 0x04000000u}) {
+    for (const auto clip : {0x00080000u, 0x00000000u, 0x0c080000u, 0x04000000u, 0x00090000u, 0x0c090000u}) {
         queue.context[0x204] = clip;
         const auto plain = AgcDriver::Graphics::DecodeState(queue);
+        Require(plain.depthClamp == ((clip & (0x10000u | 0x0c000000u)) != 0), "CLIP_DISABLE / ZCLIP depth-clamp mapping");
         queue.context[0x204] = clip | 0x01000000u;
         const auto linearClip = AgcDriver::Graphics::DecodeState(queue);
         Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected DX_LINEAR_ATTR_CLIP_ENA");
