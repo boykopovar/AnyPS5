@@ -4840,7 +4840,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             overhang = covered >= end;
         }
     }
-    if (unregisteredDrop && !overhang && !RegisteredReadableCovers(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
+    const bool registered = std::all_of(keep.begin(), keep.end(), [](const auto& range) { return RegisteredReadableCovers(range.first, static_cast<std::size_t>(range.second - range.first)); });
+    if (unregisteredDrop && !overhang && !registered) {
         static std::atomic<int> reports{0};
         if (reports.fetch_add(1) < 4) std::fprintf(stderr, "[gpu] storage image 0x%llx+0x%llx: memory no longer registered; %zu pending ranges dropped\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), keep.size());
         unregisteredDropped.fetch_add(1, std::memory_order_relaxed);
@@ -4858,7 +4859,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
-    for (const auto& [begin, end] : unitRuns(unsaved)) GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
+    for (const auto& [begin, end] : unitRuns(unsaved)) {
+        for (const auto& [from, to] : keep) {
+            const auto first = std::max(descriptor.baseAddress + begin, from);
+            const auto last = std::min(descriptor.baseAddress + end, to);
+            if (first < last) GuestMemory::ReadCommitted(first, std::span(original).subspan(static_cast<std::size_t>(first - descriptor.baseAddress), static_cast<std::size_t>(last - first)));
+        }
+    }
     DeviceBuffer linear(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
