@@ -22,6 +22,7 @@ constexpr std::size_t Tiles = HtileBytes / 4u;
 constexpr VkExtent2D InitialExtent{1024, 1024};
 constexpr std::size_t InitialPixels = static_cast<std::size_t>(InitialExtent.width) * InitialExtent.height;
 constexpr std::size_t InitialHtileBytes = 2u * 32768u;
+constexpr std::size_t PlaneBytes = 64u * 1024u;
 
 alignas(4096) std::array<float, InitialPixels> InitialDepth{};
 alignas(4096) std::array<std::uint8_t, InitialPixels> InitialStencil{};
@@ -29,9 +30,9 @@ alignas(4096) std::array<std::byte, InitialPixels * 4u> InitialColor{};
 alignas(256) std::array<std::uint32_t, InitialHtileBytes / 4u> InitialHtile{};
 
 
-alignas(4096) std::array<float, Width * Height * 2> Depth{};
-alignas(4096) std::array<float, Width * Height> StencilDepth{};
-alignas(4096) std::array<std::uint8_t, Width * Height> Stencil{};
+alignas(4096) std::array<float, PlaneBytes / sizeof(float)> Depth{};
+alignas(4096) std::array<float, PlaneBytes / sizeof(float)> StencilDepth{};
+alignas(4096) std::array<std::uint8_t, PlaneBytes> Stencil{};
 alignas(256) std::array<std::uint32_t, HtileBytes / 4u> Htile{};
 
 void Fill(std::uint32_t word, std::size_t count = Tiles) {
@@ -54,6 +55,10 @@ DrawOptions StencilDraw(VkCompareOp compare, std::uint32_t reference, VkStencilO
 
 int main() {
     try {
+        Require(AgcDriver::Graphics::DepthSliceBytes({Width, Height}, sizeof(float)) <= sizeof(Depth) &&
+            AgcDriver::Graphics::DepthSliceBytes({Width, Height}, sizeof(float)) <= sizeof(StencilDepth) &&
+            AgcDriver::Graphics::DepthSliceBytes({Width, Height}, sizeof(std::uint8_t)) <= sizeof(Stencil),
+            "depth fixtures do not cover their tiled footprints");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto shaders = Compile(*device);
