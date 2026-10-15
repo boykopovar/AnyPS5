@@ -262,6 +262,10 @@ struct Context {
         throw std::runtime_error("AGC graphics: required Vulkan memory type is unavailable");
     }
 
+    static bool HeapFits(const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, std::uint32_t heap, VkDeviceSize bytes) {
+        return reported.heapBudget[heap] != 0 && reported.heapUsage[heap] < reported.heapBudget[heap] && bytes <= reported.heapBudget[heap] - reported.heapUsage[heap];
+    }
+
     std::uint32_t BufferMemoryType(std::uint32_t mask, VkMemoryPropertyFlags flags, VkDeviceSize bytes) const {
         constexpr VkMemoryPropertyFlags coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         auto type = MemoryType(mask, flags);
@@ -278,13 +282,10 @@ struct Context {
         VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
         memoryProperties2(physical, &properties);
         const auto heap = memory.memoryTypes[type].heapIndex;
-        const auto fits = [&](std::uint32_t candidate) {
-            return reported.heapBudget[candidate] != 0 && reported.heapUsage[candidate] < reported.heapBudget[candidate] && bytes <= reported.heapBudget[candidate] - reported.heapUsage[candidate];
-        };
-        if (reported.heapBudget[heap] == 0 || fits(heap)) return type;
+        if (reported.heapBudget[heap] == 0 || HeapFits(reported, heap, bytes)) return type;
         for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
             const auto& candidate = memory.memoryTypes[i];
-            if ((mask & (1u << i)) != 0 && (candidate.propertyFlags & flags) == flags && candidate.heapIndex != heap && fits(candidate.heapIndex)) return i;
+            if ((mask & (1u << i)) != 0 && (candidate.propertyFlags & flags) == flags && candidate.heapIndex != heap && HeapFits(reported, candidate.heapIndex, bytes)) return i;
         }
         return type;
     }
@@ -299,19 +300,35 @@ struct Context {
         const auto heap = memory.memoryTypes[type].heapIndex;
         const auto budget = reported.heapBudget[heap];
         const auto usage = reported.heapUsage[heap];
-        if (budget == 0 || (usage < budget && bytes <= budget - usage)) return type;
-        const auto host = HostMemoryType(mask);
-        if (!host) return type;
+        if (budget == 0 || HeapFits(reported, heap, bytes)) return type;
+        const auto host = HostMemoryTypeWithRoom(mask, reported, bytes);
+        if (!host) {
+            if (!HostMemoryType(mask)) return type;
+            static std::atomic<std::uint64_t> kept{0}, keptBytes{0};
+            const auto count = kept.fetch_add(1) + 1;
+            const auto total = keptBytes.fetch_add(bytes) + bytes;
+            if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget and no allowed host heap has room, %llu bytes kept in device-local memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), type, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+            return type;
+        }
+        const auto hostHeap = memory.memoryTypes[*host].heapIndex;
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
         const auto count = placements.fetch_add(1) + 1;
         const auto total = placedBytes.fetch_add(bytes) + bytes;
-        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB; host heap %u uses %llu of its %llu MiB budget\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u), hostHeap, static_cast<unsigned long long>(reported.heapUsage[hostHeap] >> 20u), static_cast<unsigned long long>(reported.heapBudget[hostHeap] >> 20u));
         return *host;
     }
 
     std::optional<std::uint32_t> HostMemoryType(std::uint32_t mask) const {
         for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
             if ((mask & (1u << i)) != 0 && (memory.memoryHeaps[memory.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return i;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::uint32_t> HostMemoryTypeWithRoom(std::uint32_t mask, const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, VkDeviceSize bytes) const {
+        for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
+            const auto heap = memory.memoryTypes[i].heapIndex;
+            if ((mask & (1u << i)) != 0 && (memory.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0 && HeapFits(reported, heap, bytes)) return i;
         }
         return std::nullopt;
     }

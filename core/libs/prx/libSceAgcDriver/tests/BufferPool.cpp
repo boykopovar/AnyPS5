@@ -153,11 +153,15 @@ Context mockContext() {
 
 VkDeviceSize reportedBudget = 0;
 VkDeviceSize reportedUsage = 0;
+VkDeviceSize reportedHostBudget = 8000 * MiB;
+VkDeviceSize reportedHostUsage = 2000 * MiB;
 
 VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
     auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
     reported->heapBudget[0] = reportedBudget;
     reported->heapUsage[0] = reportedUsage;
+    reported->heapBudget[1] = reportedHostBudget;
+    reported->heapUsage[1] = reportedHostUsage;
 }
 
 Context budgetContext() {
@@ -221,6 +225,26 @@ void RefusedDevicePlacement() {
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
     Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+}
+
+void BothHeapsOverBudget() {
+    mock = MockDevice{};
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 1600 * MiB;
+    reportedHostUsage = reportedHostBudget - 32 * MiB;
+    {
+        auto context = budgetContext();
+        DeviceBuffer kept(context, 176 * MiB, usage);
+        Expect(mock.memoryTypes.at(MemoryOf(kept.Handle())) == 0, "with both heaps over their budgets, a device buffer was placed in a host heap without room instead of device-local memory");
+    }
+    {
+        auto context = budgetContext();
+        mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+        DeviceBuffer refused(context, 176 * MiB, usage);
+        Expect(mock.memoryTypes.at(MemoryOf(refused.Handle())) == 1, "with both heaps over their budgets, a device buffer refused device-local memory was not placed in the host memory type");
+    }
+    reportedHostUsage = 2000 * MiB;
 }
 
 void AttachmentReclaim() {
@@ -611,6 +635,7 @@ int main() {
         PartialSlabDoesNotRetry();
         HostPlacement();
         RefusedDevicePlacement();
+        BothHeapsOverBudget();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
