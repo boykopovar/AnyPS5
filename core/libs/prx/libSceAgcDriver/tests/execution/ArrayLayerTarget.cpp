@@ -68,6 +68,7 @@ alignas(256) std::array<std::uint32_t, 16> PixelCode{};
 alignas(256) std::array<std::uint32_t, Threads> Output{};
 
 void SampleSliceZero(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode);
+void OverlappingArrays(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode);
 
 std::uint64_t AddressOf(const void* data) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
@@ -170,10 +171,10 @@ void Load(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, 
     Dispatch(device, code, userData);
 }
 
-void LoadLayer(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t layer, std::uint32_t swizzleMode) {
+void LoadLayer(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t layer, std::uint32_t swizzleMode, std::uint32_t lastLayer = Layers - 1u) {
     auto& code = LoadCodes[layer];
     code = {0x7e020280, 0x7e040280u | layer, 0xf0001128, 0x00010300, 0x34080082, 0xbf8c3f70, 0xe0701000, 0x80000304, 0xbf810000};
-    Load(device, code, SurfaceDescriptor(surface, swizzleMode, Type2DArray, Layers - 1u));
+    Load(device, code, SurfaceDescriptor(surface, swizzleMode, Type2DArray, lastLayer));
 }
 
 void Sample2D(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t swizzleMode) {
@@ -187,23 +188,23 @@ void RequireOutput(std::uint32_t inside, std::uint32_t outside, const std::strin
     }
 }
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t slice, std::uint32_t swizzleMode, bool collapsed) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(std::uint64_t address, std::uint32_t slice, std::uint32_t swizzleMode, bool collapsed, std::uint32_t lastSlice) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(address >> 8u);
     cx[0x31b] = slice | (slice << 13u);
     cx[0x31c] = Color32FloatInfo;
     cx[0x31d] = 0;
     cx[0x3b0] = ((Side - 1u) << 14u) | (Side - 1u);
-    cx[0x3b8] = (TiledAttrib3 & ~(0x1fu << 14u)) | (swizzleMode << 14u) | (collapsed ? 0u : Layers - 1u);
+    cx[0x3b8] = (TiledAttrib3 & ~(0x1fu << 14u)) | (swizzleMode << 14u) | (collapsed ? 0u : lastSlice);
     cx[0x390] = static_cast<std::uint32_t>(address >> 40u);
     const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     Require(color.format == VK_FORMAT_R32_SFLOAT && color.bytes == LayerBytes && color.address == address + slice * LayerBytes, "the COLOR_32 float view did not decode as a 128x128 R32 slice of the array");
     if (collapsed) Require(color.arrayAddress == 0 && color.arrayLastSlice == 0, "a collapsed slice view unexpectedly describes a whole array");
-    else Require(color.arrayAddress == address && color.arrayLastSlice == Layers - 1u && color.arraySlice == slice, "the color view did not keep its array and slice");
+    else Require(color.arrayAddress == address && color.arrayLastSlice == lastSlice && color.arraySlice == slice, "the color view did not keep its array and slice");
     return color;
 }
 
-void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t slice, std::uint32_t swizzleMode, bool collapsed) {
+void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint32_t slice, std::uint32_t swizzleMode, bool collapsed, std::uint32_t lastSlice = Layers - 1u, std::uint32_t width = ScissorWidth) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::size_t at = 0;
@@ -230,7 +231,7 @@ void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
-    const auto color = DecodeTarget(surface, slice, swizzleMode, collapsed);
+    const auto color = DecodeTarget(surface, slice, swizzleMode, collapsed, lastSlice);
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
     AgcDriver::Graphics::State state{};
@@ -242,7 +243,7 @@ void DrawSlice(AgcDriver::VulkanDevice& device, std::uint64_t surface, std::uint
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(Side), static_cast<float>(Side), -static_cast<float>(Side), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {ScissorWidth, Side}};
+    state.scissor = {{0, 0}, {width, Side}};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blends = {blend};
@@ -296,6 +297,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t sw
     RequireOutput(drawn, Initial, "slice " + std::to_string(slice) + " uploaded again from guest memory");
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
     SampleSliceZero(device, texels, swizzleMode);
+    OverlappingArrays(device, texels, swizzleMode);
 }
 
 void SampleSliceZero(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode) {
@@ -352,6 +354,35 @@ void RetiredArrayLayer(AgcDriver::VulkanDevice& device) {
     const bool untouched = std::all_of(reinterpret_cast<const std::uint32_t*>(texels), reinterpret_cast<const std::uint32_t*>(texels + SurfaceBytes), [](std::uint32_t value) { return value == Initial; });
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
     Require(untouched, "CPU write-back stored results over a retired allocation");
+}
+
+void OverlappingArrays(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode) {
+    const auto surface = AddressOf(texels);
+    const auto next = surface + LayerBytes;
+    const auto drawn = std::bit_cast<std::uint32_t>(Drawn);
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, Initial);
+    AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DrawSlice(device, surface, 0, swizzleMode, false, 1u);
+    DrawSlice(device, next, 0, swizzleMode, false, 1u, Side);
+    const auto neighbour = StorageTexture::FindPending(next, 2u * LayerBytes);
+    Require(neighbour != nullptr && neighbour->Descriptor().baseAddress == next && neighbour->Descriptor().dimension == TextureDimension::k2DArray, "the next target did not render into the image of its own array");
+    DrawSlice(device, surface, 0, swizzleMode, false, 1u);
+    Require(StorageTexture::FindPending(next, 2u * LayerBytes) == neighbour, "a draw into slice 0 of the first array stored the next target's results, which only its unused second slice overlaps");
+    Sample2D(device, surface, swizzleMode);
+    RequireOutput(drawn, Initial, "slice 0 of the first array sampled as a 2D texture after both draws");
+    Require(StorageTexture::FindPending(next, 2u * LayerBytes) == neighbour, "a 2D texture over slice 0 of the first array stored the next target's results, which only its unused second slice overlaps");
+    LoadLayer(device, next, 0, swizzleMode, 1u);
+    RequireOutput(drawn, drawn, "slice 0 of the next array after the draw into the first");
+    LoadLayer(device, surface, 1, swizzleMode, 1u);
+    RequireOutput(drawn, drawn, "slice 1 of the first array (the next target's slice 0) read while the next target's results were pending");
+    LoadLayer(device, surface, 0, swizzleMode, 1u);
+    RequireOutput(drawn, Initial, "slice 0 of the first array after both draws");
+    LoadLayer(device, next, 1, swizzleMode, 1u);
+    RequireOutput(Initial, Initial, "slice 1 of the next array, which nothing drew");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
 
 }

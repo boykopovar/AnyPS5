@@ -3006,8 +3006,9 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer) {
             // walk: the collect memo is per worker packet, so on this thread a memoized answer could
             // miss a CPU write that landed after a worker's walk of the same range.
             GuestMemory::CollectWritesUncached(buffer.address, bytes);
-            if (!GuestMemory::UnchangedSince(buffer.address, bytes, resident->Generation()) || (buffer.dccAddress != 0 && ResidentKeysMoved(*resident))) {
-                resident->Refresh();
+            if (!GuestMemory::UnchangedSince(buffer.address, bytes, resident->GenerationFor(buffer.address, bytes)) || (buffer.dccAddress != 0 && ResidentKeysMoved(*resident))) {
+                if (resident->ImageLayers() > 1) resident->RefreshLayers(layer, 1);
+                else resident->Refresh();
                 ++refreshedPresents;
             }
             ++residentPresents;
