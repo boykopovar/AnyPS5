@@ -9578,6 +9578,7 @@ void verifyGuardedNullPointers() {
         std::string function;
         std::size_t calls = 0;
         std::size_t stores = 0;
+        std::size_t latches = 0;
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             const auto opcode = words[cursor] & 0xffffu;
@@ -9588,9 +9589,13 @@ void verifyGuardedNullPointers() {
             if (opcode == spv::OpAccessChain && count == 6u && names[words[cursor + 3]] == "fault_buffer" && constants.contains(words[cursor + 5]) && constants[words[cursor + 5]] == BdaAbi::SrtGuardWord) guardWords.push_back(words[cursor + 2]);
             if (function == "main" && opcode == spv::OpFunctionCall && names[words[cursor + 3]] == "record_bda_fault") ++calls;
             if (function == "main" && opcode == spv::OpAtomicStore && std::find(guardWords.begin(), guardWords.end(), words[cursor + 1]) != guardWords.end()) ++stores;
+            if (function == "main" && opcode == spv::OpAtomicCompareExchange && std::find(guardWords.begin(), guardWords.end(), words[cursor + 3]) != guardWords.end()) {
+                require(count == 9u && constants.contains(words[cursor + 8]) && constants[words[cursor + 8]] == 0u, "guarded pointer: the first-fault latch does not compare against zero");
+                ++latches;
+            }
             cursor += count;
         }
-        return std::pair{calls, stores};
+        return std::array{calls, stores, latches};
     };
 
     NestedRequest branch(branchCode, root.data());
@@ -9603,8 +9608,8 @@ void verifyGuardedNullPointers() {
     branch.request.context.memory = validRegions;
     const auto validResult = Recompile(branch.request, *valid);
     require(validResult->poisonedSrtReads == 0u && faultBinding(*validResult) && validResult->bdaAbiVersion == BdaAbi::Version, "guarded pointer: a guarded program has no fault buffer");
-    const auto [branchCalls, branchStores] = guardSites(*validResult);
-    require(branchCalls == 0u && branchStores == 1u, ("guarded pointer: a guarded read calls record_bda_fault " + std::to_string(branchCalls) + " times in main and stores its record to the fault buffer's guard word " + std::to_string(branchStores) + " times, expected one store and no call").c_str());
+    const auto [branchCalls, branchStores, branchLatches] = guardSites(*validResult);
+    require(branchCalls == 0u && branchStores == 0u && branchLatches == 1u, "guarded pointer: a continuing guarded read must latch its first fault without overwriting the guard word or calling record_bda_fault");
 
     for (const auto pointer : {std::uint64_t{0}, unmapped}) {
         for (const auto condition : {1u, 0u}) {
@@ -9690,8 +9695,8 @@ void verifyGuardedNullPointers() {
     chain.request.context.memory = mappedChainRegions;
     const auto mappedChainResult = Recompile(chain.request, *mappedChain);
     require(chainResult->poisonedSrtReads == 3u && nullChainResult->poisonedSrtReads == 1u && mappedChainResult->poisonedSrtReads == 0u, "guarded pointer: a chain result does not count its poisoned reads");
-    const auto [chainCalls, chainStores] = guardSites(*mappedChainResult);
-    require(chainCalls == 0u && chainStores == mappedChain->plan->guardedSrtSlots.size(), ("guarded pointer: a chain's guarded reads call record_bda_fault " + std::to_string(chainCalls) + " times in main and store to the guard word " + std::to_string(chainStores) + " times, expected one store per guard and no call").c_str());
+    const auto [chainCalls, chainStores, chainLatches] = guardSites(*mappedChainResult);
+    require(chainCalls == 0u && chainStores == 0u && chainLatches == mappedChain->plan->guardedSrtSlots.size(), "guarded pointer: a continuing chain must latch once per guard without overwriting the guard word or calling record_bda_fault");
     require(samePipeline(*chainResult, *mappedChainResult) && samePipeline(*nullChainResult, *mappedChainResult), "guarded pointer: a chain's poison changed the variant, the specialization or the module");
 
     const auto poisonedWords = [](const ResourceCapture& capture, std::uint32_t pc, std::uint64_t base) {
