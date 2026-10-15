@@ -24,6 +24,7 @@ static constexpr int PORT_TYPE_VOICE = 2;
 static constexpr int PORT_TYPE_PERSONAL = 3;
 static constexpr int PORT_TYPE_PADSPK = 4;
 static constexpr int PORT_TYPE_EX = 6;
+static constexpr int PORT_TYPE_SYS = 7;
 static constexpr int PORT_TYPE_VIBRATION = 10;
 static constexpr int PORT_TYPE_AUDIO3D = 126;
 static constexpr int PORT_TYPE_AUX = 127;
@@ -44,6 +45,11 @@ static constexpr std::uint32_t EX_CONFIGURE_MODE_DEFAULT = 0xFF;
 static constexpr std::uint32_t EX_CONFIGURE_TARGET_DEFAULT = 0xFF;
 static constexpr int ERROR_EX_INVALID_MODE = -2144993259;
 static constexpr int ERROR_EX_INVALID_CONTROL = -2144960503;
+static constexpr std::uint32_t SYS_OPEN_MODE_TRUEHD = 5;
+static constexpr std::uint32_t SYS_CONFIGURE_TYPE_HDMI = 1;
+static constexpr std::uint32_t SYS_CONFIGURE_TARGET_HDMI = 1;
+static constexpr std::uint32_t SYS_PORT_SAMPLES = 1024;
+static constexpr std::uint32_t SYS_PORT_FRAME_RATE = 192000;
 
 enum class Format {
     Unknown,
@@ -321,7 +327,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             for (int c = 0; c < port.channels; c++) {
                 port.volume[c] = DEFAULT_VOLUME;
             }
-            if (type != PORT_TYPE_VIBRATION && type != PORT_TYPE_EX) {
+            if (type != PORT_TYPE_VIBRATION && type != PORT_TYPE_EX && type != PORT_TYPE_SYS) {
                 openDevice(port);
             }
             static const bool trace = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
@@ -517,13 +523,30 @@ int APS5_VABI sceAudioOutDeviceIdOpen() {
     return 0;
 }
 
-int APS5_VABI sceAudioOutSysClose() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAudioOutSysClose(int handle) {
+    std::lock_guard<std::mutex> outputLock(g_outputMutex);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    Port* port = getPort(handle);
+    if (port == nullptr || port->type != PORT_TYPE_SYS) {
+        throw std::runtime_error("sceAudioOutSysClose: handle " + std::to_string(handle) + " is not an open Sys port");
+    }
+    *port = Port{};
     return 0;
 }
 
-int APS5_VABI sceAudioOutSysConfigureOutput() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAudioOutSysConfigureOutput(int type, std::uint64_t flags, std::uint32_t mode, std::uint32_t target, std::uint64_t option) {
+    if (type != SYS_CONFIGURE_TYPE_HDMI) {
+        throw std::runtime_error("sceAudioOutSysConfigureOutput: output type " + std::to_string(type) + " not supported");
+    }
+    if (flags != 0 || option != 0) {
+        throw std::runtime_error("sceAudioOutSysConfigureOutput: flags " + std::to_string(flags) + " and option " + std::to_string(option) + " not supported");
+    }
+    if (mode != SYS_OPEN_MODE_TRUEHD) {
+        throw std::runtime_error("sceAudioOutSysConfigureOutput: mode " + std::to_string(mode) + " not supported");
+    }
+    if (target != SYS_CONFIGURE_TARGET_HDMI) {
+        throw std::runtime_error("sceAudioOutSysConfigureOutput: target " + std::to_string(target) + " not supported");
+    }
     return 0;
 }
 
@@ -541,9 +564,12 @@ int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo(int type, void* info, std::uint32
     return 0;
 }
 
-int APS5_VABI sceAudioOutSysOpen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudioOutSysOpen(int userId, std::uint32_t mode) {
+    (void)userId;
+    if (mode != SYS_OPEN_MODE_TRUEHD) {
+        throw std::runtime_error("sceAudioOutSysOpen: mode " + std::to_string(mode) + " not supported");
+    }
+    return allocatePort(PORT_TYPE_SYS, SYS_PORT_SAMPLES, SYS_PORT_FRAME_RATE, Format::S16_8Ch);
 }
 
 int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, int mixLevel) {
