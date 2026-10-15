@@ -200,6 +200,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.breakAtInstance = tessellation->breakAtInstance;
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
+            target.mergedHull = tessellation->mergedHull;
         }
         if (stage == ShaderStageKind::Mesh) {
             if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
