@@ -117,7 +117,7 @@ void inactiveVertexPointSizeTests() {
         queue.context[0x207] = 0x01210000;
         return queue;
     };
-    for (const auto primitive : {2u, 4u, 5u, 6u, 7u, 17u}) {
+    for (const auto primitive : {2u, 4u, 5u, 6u, 7u, 17u, 19u}) {
         auto queue = pointSizeState();
         queue.userConfig[0x242] = primitive;
         for (const auto raster : {0u, 0x240u, 0x248u}) {
@@ -5791,6 +5791,41 @@ void rectListTests() {
     Draw(context, state, noInstances, {});
 }
 
+void quadListTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    queue.userConfig[0x242] = 19;
+    queue.context[0x1b3] = queue.context[0x1b4] = 2;
+    Require(DrawRejection(queue, false).empty(), "valid quad-list draw failed precheck");
+    auto state = DecodeState(queue);
+    Require(state.quadList, "quad-list state flag was not set");
+    Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, "quad-list did not decode to triangle list topology");
+    Require(RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Triangle, "quad-list did not produce triangle raster primitive");
+    Require(!state.primitiveRestart, "quad-list must not have primitive restart enabled");
+    queue.userConfig[0x24b] = 1;
+    state = DecodeState(queue);
+    Require(!state.primitiveRestart, "quad-list must suppress primitive restart");
+    queue.userConfig[0x24b] = 0;
+    const Context context{};
+    std::array<std::uint16_t, 8> indices{0, 1, 2, 3, 2, 3, 4, 5};
+    const auto drawOutcome = [&](std::uint32_t count, bool indexed) {
+        const AgcDriver::Pm4::DrawParameters draw = indexed ? AgcDriver::Pm4::DrawParameters{reinterpret_cast<std::uint64_t>(indices.data()), count, 2, 1, 0, true} : AgcDriver::Pm4::DrawParameters{0, count, 0, 1, 0, false};
+        try {
+            Draw(context, state, draw, {});
+        } catch (const std::exception& error) {
+            return std::string(error.what());
+        }
+        return std::string{};
+    };
+    for (const auto indexed : {false, true}) {
+        const auto complete = drawOutcome(4, indexed);
+        for (const auto count : {5u, 6u, 7u}) Require(drawOutcome(count, indexed) == complete, "a quad-list draw with partial trailing vertices was not drawn like complete quads");
+    }
+    Require(drawOutcome(0, true).empty(), "an indexed quad-list draw without indices was not skipped");
+    const AgcDriver::Pm4::DrawParameters noInstances{reinterpret_cast<std::uint64_t>(indices.data()), 4, 2, 0, 0, true};
+    Draw(context, state, noInstances, {});
+}
+
 ShaderRecompiler::RecompileResult recompilePixel(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code) {
     auto queue = makeState();
     queue.context[0x1b3] = 0x2u;
@@ -8244,6 +8279,7 @@ int main(int argc, char** argv) {
         parallelCompareTests();
         pixelParameterSlotTests();
         rectListTests();
+        quadListTests();
         floatControlsModeTests();
         barycentricEmulationTests();
         copiedWriterIndirectOverlapTests();
