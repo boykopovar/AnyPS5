@@ -4484,7 +4484,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
         const VkPipelineCreateFlags pipelineFlags = (context.pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0) | VK_PIPELINE_CREATE_DISPATCH_BASE_BIT;
         const Graphics::PipelineSpecialization specialization(shader);
         const auto subgroupSize = state->computeWave32 && (shader.hostSubgroupSize == 32u || shader.hostSubgroupSize > state->maxComputeSubgroupSize) ? std::min(shader.hostSubgroupSize, state->maxComputeSubgroupSize) : 0u;
-        if (const char* directory = std::getenv("APS5_DUMP_COMPUTE_PIPELINES"); directory != nullptr && *directory != '\0' && CaptureComputePipeline(shader.spirv.size())) {
+        if (const char* directory = std::getenv("APS5_DUMP_COMPUTE_PIPELINES"); directory != nullptr && *directory != '\0' && ComputePipelineCapture::OptionalEnabled() && CaptureComputePipeline(shader.spirv.size())) {
             ComputePipelineCapture capture;
             capture.spirv = shader.spirv.Copy();
             ComputeDescriptorSetLayout resourcesLayout;
@@ -4506,8 +4506,8 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
             capture.driverVersion = state->properties.driverVersion;
             capture.apiVersion = state->properties.apiVersion;
             std::copy_n(state->properties.pipelineCacheUUID, VK_UUID_SIZE, capture.pipelineCacheUuid.begin());
-            const auto path = capture.Write(directory);
-            std::fprintf(stderr, "[compute-capture] %s\n", path.string().c_str());
+            const auto path = capture.WriteOptional(directory);
+            if (!path.empty()) std::fprintf(stderr, "[compute-capture] %s\n", path.string().c_str());
         }
         if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] creating a pipeline for %zu SPIR-V words (program 0x%llx)\n", shader.spirv.size(), static_cast<unsigned long long>(programAddress));
         CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), context.pipelineCache, objects->module, objects->layout, pipelineFlags, 0, specialization.Info(), subgroupSize, &objects->pipeline, context.pipelineCacheSynchronization);
