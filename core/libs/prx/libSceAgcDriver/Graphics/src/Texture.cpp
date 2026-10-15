@@ -1897,8 +1897,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             stamped = false;
             if (!scoped) outside.clear();
         }
-        // Only the direct path uploads the selected layers alone (see upload); the others replace
-        // the whole image, so every pending layer's results are stored first.
         direct = keys == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
         if (alias != nullptr && direct) {
             // The alias's pending units that nothing stamped since its generation (a CPU store or a
@@ -1982,6 +1980,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         }
         std::fprintf(stderr, "[dcc-keys] refresh 0x%llx+0x%llx keys %s -> %s (dirty %d, %zu pending units, %zu cpu-stamped units%s)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), DccKeysName(uploadedKeys), DccKeysName(keys), dirty ? 1 : 0, pendingUnits, stampedUnits, keyFlip ? ", flip keeps unstamped results" : "");
     }
+    const bool selectedCpu = !direct && keys == DccKeys::Uncompressed && !cpuUploadLayers(changed).empty();
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layerPending[layer]) continue;
         if (keyFlip && layerGeneration[layer] != 0 && stampedBlocks[layer] != GuestMemory::BlockWritten) {
@@ -2000,7 +1999,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                 dropped = true;
                 continue;
             }
-        } else if (direct) {
+        } else if (direct || selectedCpu) {
             continue;
         }
         stored[layer] = true;
@@ -2198,6 +2197,25 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
 
 constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
+std::vector<bool> StorageTexture::cpuUploadLayers(const std::vector<bool>& units) const {
+    if (descriptor.dimension != TextureDimension::k2DArray || descriptor.mipCount != 1 || descriptor.dccAddress != 0 || IsBlockCompressed(descriptor.format) || geometry.thick || arrayLayers <= 1 || geometry.imageLayers != arrayLayers || trackedLayerBytes == 0 || units.size() != trackedLayers) return {};
+    std::vector<bool> selected(arrayLayers, false);
+    for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+        const auto begin = geometry.GuestLayerOffset(layer);
+        const auto end = begin + geometry.layerBytes;
+        if (end <= begin || end > guestBytes || begin % trackedLayerBytes != 0 || (end % trackedLayerBytes != 0 && end != guestBytes)) return {};
+        const auto first = static_cast<std::uint32_t>(begin / trackedLayerBytes);
+        const auto last = static_cast<std::uint32_t>((end + trackedLayerBytes - 1) / trackedLayerBytes);
+        if (first >= last || last > trackedLayers) return {};
+        selected[layer] = units[first];
+        for (auto unit = first + 1; unit < last; ++unit) {
+            if (units[unit] != selected[layer]) return {};
+        }
+    }
+    if (std::none_of(selected.begin(), selected.end(), [](bool value) { return value; }) || std::all_of(selected.begin(), selected.end(), [](bool value) { return value; })) return {};
+    return selected;
+}
+
 void StorageTexture::upload(const std::vector<bool>* layers) {
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2206,8 +2224,6 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     CaptureTrace::Log("upload image=%llx bytes=%llu generation=%llu reason=%s partial=%d", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), uploadReason, layers != nullptr);
     const auto elementBytes = BytesPerElement(descriptor.format);
     const auto linearBytes = sliceLinearBytes * arrayLayers;
-    // A layer selection applies to the direct path alone (the others upload everything); it names
-    // array layers, which the tracked layers are when there are several.
     if (layers != nullptr && ((!blockUnits && trackedLayers != arrayLayers) || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; }))) layers = nullptr;
     const auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     const auto stampLayers = [&](bool selectedOnly) {
@@ -2414,15 +2430,36 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
         return;
     }
-    layerOriginal.assign(trackedLayers, true);
-    cancelStoredSaves();
-    forgetBorrowed(0, trackedLayers);
-    stampLayers(false);
-    original.resize(static_cast<std::size_t>(guestBytes));
-    GuestMemory::ReadCommitted(descriptor.baseAddress, original);
+    const auto cpuLayers = uploadedKeys == DccKeys::Uncompressed && layers != nullptr ? cpuUploadLayers(*layers) : std::vector<bool>{};
+    const bool selectedCpu = !cpuLayers.empty();
+    std::uint64_t uploadedBytes = guestBytes;
+    if (selectedCpu) {
+        captureGuestBytes(layers);
+        for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+            if ((*layers)[unit]) forgetBorrowed(unit, 1);
+        }
+        stampLayers(true);
+        uploadedBytes = 0;
+        for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+            if (cpuLayers[layer]) uploadedBytes += geometry.layerBytes;
+        }
+    } else {
+        layerOriginal.assign(trackedLayers, true);
+        cancelStoredSaves();
+        forgetBorrowed(0, trackedLayers);
+        stampLayers(false);
+        original.resize(static_cast<std::size_t>(guestBytes));
+        GuestMemory::ReadCommitted(descriptor.baseAddress, original);
+    }
     {
             Buffer staging(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-            if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging.Bytes().data(), original.data(), original.size());
+            if (selectedCpu) {
+                for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+                    if (!cpuLayers[layer]) continue;
+                    const auto offset = geometry.GuestLayerOffset(layer);
+                    std::memcpy(staging.Bytes().data() + offset, original.data() + offset, static_cast<std::size_t>(geometry.layerBytes));
+                }
+            } else if (uploadedKeys == DccKeys::Uncompressed) std::memcpy(staging.Bytes().data(), original.data(), original.size());
             else ReadTextureSurface(descriptor, uploadedKeys, staging.Bytes().first(original.size()));
             DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             DeviceBuffer linear(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -2430,9 +2467,16 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             CommandBatch batch(context);
             const auto commands = batch.Handle();
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-            CopyBuffer(context, commands, staging.Handle(), 0, tiled.Handle(), 0, original.size());
+            if (selectedCpu) {
+                for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+                    if (!cpuLayers[layer]) continue;
+                    const auto offset = geometry.GuestLayerOffset(layer);
+                    CopyBuffer(context, commands, staging.Handle(), offset, tiled.Handle(), offset, geometry.layerBytes);
+                }
+            } else CopyBuffer(context, commands, staging.Handle(), 0, tiled.Handle(), 0, original.size());
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+                if (selectedCpu && !cpuLayers[layer]) continue;
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
@@ -2441,15 +2485,16 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             }
             const auto linearRead = WholeBufferBarrier(linear.Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             VkImageMemoryBarrier toTransfer{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            toTransfer.srcAccessMask = selectedCpu ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0u;
             toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            toTransfer.oldLayout = selectedCpu ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
             toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toTransfer.image = image;
             toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
-            context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearRead, 1, &toTransfer);
-            const auto regions = CopyRegions();
+            context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | (selectedCpu ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : 0u), VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearRead, 1, &toTransfer);
+            const auto regions = CopyRegions(selectedCpu ? &cpuLayers : nullptr);
             context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear.Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(regions.size()), regions.data());
             VkImageMemoryBarrier toGeneral = toTransfer;
             toGeneral.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -2461,7 +2506,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             batch.SubmitAndWait();
             APS5_LOG_CHARS_OUT("StorageTexture upload done");
     }
-    countStorageUpload(2, guestBytes);
+    countStorageUpload(2, uploadedBytes);
     ++version;
     if (profile) LookupOutcomes::Add(LookupOutcomes::UploadCpu, start);
 }

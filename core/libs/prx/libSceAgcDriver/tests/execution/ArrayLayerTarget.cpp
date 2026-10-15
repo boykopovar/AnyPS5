@@ -69,6 +69,7 @@ alignas(256) std::array<std::uint32_t, Threads> Output{};
 
 void SampleSliceZero(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode);
 void OverlappingArrays(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode, bool cpuWrite = false);
+void OverlappingArrayLastSlice(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode);
 
 std::uint64_t AddressOf(const void* data) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
@@ -299,6 +300,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t sw
     SampleSliceZero(device, texels, swizzleMode);
     OverlappingArrays(device, texels, swizzleMode);
     OverlappingArrays(device, texels, swizzleMode, true);
+    OverlappingArrayLastSlice(device, texels, swizzleMode);
 }
 
 void SampleSliceZero(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode) {
@@ -314,6 +316,32 @@ void SampleSliceZero(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std:
     Sample2D(device, surface, swizzleMode);
     RequireOutput(std::bit_cast<std::uint32_t>(Drawn), Initial, "slice 0 sampled as a 2D texture after the draw");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+    device.WaitIdle();
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+}
+
+void OverlappingArrayLastSlice(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode) {
+    const auto neighbourAddress = AddressOf(texels);
+    const auto surface = neighbourAddress + LayerBytes;
+    const auto cpuValue = std::bit_cast<std::uint32_t>(0.125f);
+    const auto drawn = std::bit_cast<std::uint32_t>(Drawn);
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / sizeof(std::uint32_t), Initial);
+    AgcDriver::GuestMemory::CollectWrites(neighbourAddress, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DrawSlice(device, surface, 1u, swizzleMode, false, 1u);
+    DrawSlice(device, neighbourAddress, 1u, swizzleMode, false, 1u, Side);
+    const auto neighbour = StorageTexture::FindPending(neighbourAddress, 2u * LayerBytes);
+    Require(neighbour != nullptr && neighbour->Descriptor().baseAddress == neighbourAddress, "the preceding target has no pending results");
+    std::fill_n(reinterpret_cast<std::uint32_t*>(texels + 2u * LayerBytes), LayerBytes / sizeof(std::uint32_t), cpuValue);
+    AgcDriver::GuestMemory::CollectWrites(surface + LayerBytes, LayerBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DrawSlice(device, surface, 1u, swizzleMode, false, 1u);
+    Require(StorageTexture::FindPending(neighbourAddress, 2u * LayerBytes) == neighbour, "CPU refresh of the last slice stored the preceding target's results");
+    LoadLayer(device, surface, 1u, swizzleMode, 1u);
+    RequireOutput(drawn, cpuValue, "the refreshed last slice keeps the CPU's untouched pixels");
+    LoadLayer(device, surface, 0u, swizzleMode, 1u);
+    RequireOutput(drawn, drawn, "the first slice sees the preceding target's pending results");
+    StorageTexture::FlushPending(neighbourAddress, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
@@ -369,21 +397,21 @@ void OverlappingArrays(AgcDriver::VulkanDevice& device, std::uint8_t* texels, st
     const auto neighbour = StorageTexture::FindPending(next, 2u * LayerBytes);
     Require(neighbour != nullptr && neighbour->Descriptor().baseAddress == next && neighbour->Descriptor().dimension == TextureDimension::k2DArray, "the next target did not render into the image of its own array");
     if (cpuWrite) {
-        *reinterpret_cast<std::uint32_t*>(texels) = std::bit_cast<std::uint32_t>(0.125f);
+        std::fill_n(reinterpret_cast<std::uint32_t*>(texels), LayerBytes / sizeof(std::uint32_t), std::bit_cast<std::uint32_t>(0.125f));
         AgcDriver::GuestMemory::CollectWrites(surface, LayerBytes);
         AgcDriver::GuestMemory::BumpCollectEpoch();
     }
     DrawSlice(device, surface, 0, swizzleMode, false, 1u);
     Require(StorageTexture::FindPending(next, 2u * LayerBytes) == neighbour, "a draw into slice 0 of the first array stored the next target's results, which only its unused second slice overlaps");
     Sample2D(device, surface, swizzleMode);
-    RequireOutput(drawn, Initial, "slice 0 of the first array sampled as a 2D texture after both draws");
+    RequireOutput(drawn, cpuWrite ? std::bit_cast<std::uint32_t>(0.125f) : Initial, "slice 0 of the first array sampled as a 2D texture after both draws");
     Require(StorageTexture::FindPending(next, 2u * LayerBytes) == neighbour, "a 2D texture over slice 0 of the first array stored the next target's results, which only its unused second slice overlaps");
     LoadLayer(device, next, 0, swizzleMode, 1u);
     RequireOutput(drawn, drawn, "slice 0 of the next array after the draw into the first");
     LoadLayer(device, surface, 1, swizzleMode, 1u);
     RequireOutput(drawn, drawn, "slice 1 of the first array (the next target's slice 0) read while the next target's results were pending");
     LoadLayer(device, surface, 0, swizzleMode, 1u);
-    RequireOutput(drawn, Initial, "slice 0 of the first array after both draws");
+    RequireOutput(drawn, cpuWrite ? std::bit_cast<std::uint32_t>(0.125f) : Initial, "slice 0 of the first array after both draws");
     LoadLayer(device, next, 1, swizzleMode, 1u);
     RequireOutput(Initial, Initial, "slice 1 of the next array, which nothing drew");
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
