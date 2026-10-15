@@ -457,6 +457,7 @@ private:
     bool refresh(std::uint32_t firstLayer, std::uint32_t lastLayer);
     void noteLayersBehind(std::uint32_t firstLayer, std::uint32_t lastLayer, const std::vector<bool>& outside);
     void refreshGeneration();
+    std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
     void takeRefreshProof(bool aliased);
     bool otherPendingOverlaps() const;
