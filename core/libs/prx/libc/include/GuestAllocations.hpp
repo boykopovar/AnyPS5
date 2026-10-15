@@ -19,6 +19,7 @@ struct Range {
     std::size_t allocationBytes;
     bool releasable = true;
     bool gpu = false;
+    std::uint64_t backingSerial = 0;
 };
 
 class Lease {
