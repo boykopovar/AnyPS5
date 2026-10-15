@@ -18,15 +18,24 @@ static inline HANDLE WindowsDescriptorHandle_nid_no_patch(int descriptor) {
     return reinterpret_cast<HANDLE>(handle);
 }
 
-static inline int WindowsDescriptorAccess_nid_no_patch(HANDLE handle, int descriptor, const char* function) {
+static inline ACCESS_MASK WindowsHandleAccess_nid_no_patch(HANDLE handle, int descriptor, const char* function) {
     using QueryObject = NTSTATUS(NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
     static const auto query = reinterpret_cast<QueryObject>(reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "NtQueryObject")));
     PUBLIC_OBJECT_BASIC_INFORMATION information{};
     const NTSTATUS status = query == nullptr ? -1 : query(handle, ObjectBasicInformation, &information, sizeof(information), nullptr);
     if (status < 0)
         throw std::runtime_error(std::string(function) + ": cannot read the access of descriptor " + std::to_string(descriptor) + ", status=" + std::to_string(status));
-    const bool read = (information.GrantedAccess & FILE_READ_DATA) != 0;
-    const bool write = (information.GrantedAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)) != 0;
+    return information.GrantedAccess;
+}
+
+static inline bool WindowsHandleOnlyAppends_nid_no_patch(ACCESS_MASK access) {
+    return (access & (FILE_WRITE_DATA | FILE_APPEND_DATA)) == FILE_APPEND_DATA;
+}
+
+static inline int WindowsDescriptorAccess_nid_no_patch(HANDLE handle, int descriptor, const char* function) {
+    const ACCESS_MASK access = WindowsHandleAccess_nid_no_patch(handle, descriptor, function);
+    const bool read = (access & FILE_READ_DATA) != 0;
+    const bool write = (access & (FILE_WRITE_DATA | FILE_APPEND_DATA)) != 0;
     if (read && write) return 2;
     if (write) return 1;
     if (read) return 0;
