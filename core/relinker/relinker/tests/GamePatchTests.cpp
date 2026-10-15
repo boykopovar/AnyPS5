@@ -463,6 +463,9 @@ void manifestConfig() {
     bad.Name = "a\"b";
     hold(bad, "name");
     bad = patch;
+    bad.Name = "a\\b";
+    hold(bad, "name");
+    bad = patch;
     bad.Target = "a\"b";
     hold(bad, "target");
     bad = patch;

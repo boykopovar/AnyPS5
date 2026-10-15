@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -68,21 +69,22 @@ def main():
         assert f"Patch manifest: {manifest}\n" in result.stdout
         assert f'config = "{source.parent.as_posix()}/relinker-patches.toml"\n' in text, text
 
-        quoted = work / "quoted"
-        (quoted / "out").mkdir(parents=True)
-        (quoted / "eboot.bin").write_bytes(image)
-        (quoted / 'we"ird.toml').write_text(patch_text(address, expected))
-        result = run("--skip-sce-module", "--patches", str(quoted / 'we"ird.toml'), str(quoted / "eboot.bin"), str(quoted / "out" / "app.elf"))
-        assert result.returncode == 2 and "Patch manifest cannot hold the config" in result.stderr, (result.stdout, result.stderr)
-        assert not list((quoted / "out").iterdir()), "output written despite the manifest error"
+        if os.name != "nt":  # Windows file names cannot contain a double quote
+            quoted = work / "quoted"
+            (quoted / "out").mkdir(parents=True)
+            (quoted / "eboot.bin").write_bytes(image)
+            (quoted / 'we"ird.toml').write_text(patch_text(address, expected))
+            result = run("--skip-sce-module", "--patches", str(quoted / 'we"ird.toml'), str(quoted / "eboot.bin"), str(quoted / "out" / "app.elf"))
+            assert result.returncode == 2 and "Patch manifest cannot hold the config" in result.stderr, (result.stdout, result.stderr)
+            assert not list((quoted / "out").iterdir()), "output written despite the manifest error"
 
-        reduced = work / 'we"ird'
-        (reduced / "out").mkdir(parents=True)
-        (reduced / "eboot.bin").write_bytes(image)
-        (reduced / "p.toml").write_text(patch_text(address, expected))
-        result = run("--skip-sce-module", "--patches", str(reduced / "p.toml"), str(reduced / "eboot.bin"), str(reduced / "out" / "app.elf"))
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        assert 'config = "p.toml"\n' in (reduced / "out" / "app.patches.toml").read_text()
+            reduced = work / 'we"ird'
+            (reduced / "out").mkdir(parents=True)
+            (reduced / "eboot.bin").write_bytes(image)
+            (reduced / "p.toml").write_text(patch_text(address, expected))
+            result = run("--skip-sce-module", "--patches", str(reduced / "p.toml"), str(reduced / "eboot.bin"), str(reduced / "out" / "app.elf"))
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            assert 'config = "p.toml"\n' in (reduced / "out" / "app.patches.toml").read_text()
 
         result = run("--verify-patches", str(manifest), str(source), "--skip-sce-module")
         assert result.returncode == 0 and "applicable: flip_bit eboot.bin" in result.stdout, (result.stdout, result.stderr)
