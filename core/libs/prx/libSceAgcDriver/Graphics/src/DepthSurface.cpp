@@ -345,6 +345,10 @@ public:
         return std::any_of(textures.begin(), textures.end(), held) || std::any_of(stencilCopy.textures.begin(), stencilCopy.textures.end(), held);
     }
 
+    bool SampledElsewhere() const {
+        return std::any_of(textures.begin(), textures.end(), [](const auto& entry) { return entry.second.use_count() > 1; });
+    }
+
     std::uint64_t written = ++depthWrites;
     bool retired = false;
 
@@ -1010,6 +1014,25 @@ bool takeClearedHtile(const DepthTarget& target) {
 const DepthSurface* drawnDepth = nullptr;
 
 std::atomic<std::uint64_t> surfacesSerial{0};
+std::atomic<std::uint64_t> surfacesReleased{0};
+
+void releaseRetired(const Context& context) {
+    auto* recorder = Recorder::Active();
+    if (recorder != nullptr && recorder->Device() != context.device) return;
+    auto& list = surfaces();
+    for (auto it = list.begin(); it != list.end();) {
+        const auto& surface = **it;
+        if (!surface.retired || surface.context.device != context.device || surface.target.samples != 1u || surface.SampledElsewhere()) {
+            ++it;
+            continue;
+        }
+        if (drawnDepth == &surface) drawnDepth = nullptr;
+        std::shared_ptr<DepthSurface> released = std::move(*it);
+        it = list.erase(it);
+        surfacesReleased.fetch_add(1, std::memory_order_release);
+        if (recorder != nullptr) recorder->Keep(std::move(released));
+    }
+}
 
 std::uint32_t expandedHtileWord(std::uint32_t word, bool stencilInHtile, VkImageAspectFlags cleared) {
     if (!stencilInHtile) return (cleared & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 ? 0xfffc000fu : word;
@@ -1072,6 +1095,10 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
 
 std::uint64_t DepthSurfacesSerial() {
     return surfacesSerial.load(std::memory_order_acquire);
+}
+
+std::uint64_t DepthSurfacesReleased() {
+    return surfacesReleased.load(std::memory_order_acquire);
 }
 
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel) {
@@ -1201,6 +1228,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
         auto sampling = target.samples == 1u ? DepthSamplingState{} : prepareDepthSampling(context, target);
         creationLease = target.samples == 1u || !sampling.refusal.empty() ? GuestAllocations::Lease{} : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix();
         lock.lock();
+        releaseRetired(context);
         surfacesSerial.fetch_add(1, std::memory_order_release);
         surfaces().push_back(std::make_unique<DepthSurface>(context, target, std::move(sampling)));
         auto& fresh = *surfaces().back();

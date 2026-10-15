@@ -69,6 +69,7 @@ private:
         std::vector<bool> owned;
         VkExtent2D extent;
         std::uint32_t layers = 1;
+        std::uint64_t depthReleases = 0;
         std::shared_ptr<Framebuffer> framebuffer;
     };
     void release() noexcept;
