@@ -24,8 +24,10 @@
 #include <filesystem>
 #else
 #include <fcntl.h>
+#include <filesystem>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <vector>
 #endif
 
 namespace {
@@ -139,8 +141,21 @@ int DuplicateDescriptor(int descriptor) {
     return _dup(descriptor);
 }
 #else
+int CreateBackingFile() {
+#ifdef __APPLE__
+    const auto path = (std::filesystem::temp_directory_path() / "anyps5-jit-XXXXXX").string();
+    std::vector<char> name(path.begin(), path.end());
+    name.push_back('\0');
+    const int file = ::mkostemp(name.data(), O_CLOEXEC);
+    if (file >= 0) ::unlink(name.data());
+    return file;
+#else
+    return memfd_create("anyps5 jit shared memory", MFD_CLOEXEC);
+#endif
+}
+
 int CreateBacking(std::size_t bytes, int* descriptor, std::shared_ptr<JitObject>* object) {
-    const int file = memfd_create("anyps5 jit shared memory", MFD_CLOEXEC);
+    const int file = CreateBackingFile();
     if (file < 0) return HostFailure("create JIT shared memory", errno);
     const bool representable = bytes <= static_cast<std::uint64_t>(std::numeric_limits<off_t>::max());
     if (!representable || ftruncate(file, static_cast<off_t>(bytes)) != 0) {

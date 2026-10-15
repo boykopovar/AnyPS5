@@ -11,6 +11,10 @@
 #include <string>
 #include <sys/mman.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #include <cstdio>
 #include <iterator>
 #include <map>
@@ -148,8 +152,8 @@ public:
 
 private:
     Arena() {
-#if defined(__linux__)
-        SeedLinuxUsedRanges();
+#if defined(__linux__) || defined(__APPLE__)
+        SeedHostUsedRanges();
 #elif defined(_WIN32)
         _writeWatched = std::getenv("APS5_NO_WRITE_WATCH") == nullptr;
         SYSTEM_INFO system{};
@@ -182,7 +186,8 @@ private:
     }
 
 #if defined(__linux__)
-    void SeedLinuxUsedRanges() {
+    static std::vector<std::pair<std::uintptr_t, std::uintptr_t>> HostMappings() {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> mappings;
         std::ifstream maps("/proc/self/maps");
         if (!maps.is_open()) throw std::runtime_error("guest arena: cannot open /proc/self/maps");
         std::string line;
@@ -191,6 +196,48 @@ private:
             std::uintptr_t begin = 0, end = 0;
             char dash = 0;
             if (!(fields >> std::hex >> begin >> dash >> end) || dash != '-' || end <= begin) throw std::runtime_error("guest arena: malformed /proc/self/maps line: " + line);
+            mappings.emplace_back(begin, end);
+        }
+        return mappings;
+    }
+
+    static int ReserveNoReplace(std::uintptr_t address, std::size_t bytes) {
+        void* const wanted = reinterpret_cast<void*>(address);
+        void* const placed = mmap(wanted, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+        if (placed == wanted) return 0;
+        if (placed == MAP_FAILED) return errno;
+        munmap(placed, bytes);
+        return EINVAL;
+    }
+#elif defined(__APPLE__)
+    static std::vector<std::pair<std::uintptr_t, std::uintptr_t>> HostMappings() {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> mappings;
+        mach_vm_address_t address = ArenaStart;
+        while (address < ApplicationAreaEnd) {
+            mach_vm_size_t size = 0;
+            vm_region_basic_info_data_64_t info{};
+            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+            mach_port_t object = MACH_PORT_NULL;
+            const kern_return_t result = mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+            if (result == KERN_INVALID_ADDRESS) break;
+            if (result != KERN_SUCCESS) throw std::runtime_error("guest arena: mach_vm_region failed");
+            mappings.emplace_back(static_cast<std::uintptr_t>(address), static_cast<std::uintptr_t>(address + size));
+            address += size;
+        }
+        return mappings;
+    }
+
+    static int ReserveNoReplace(std::uintptr_t address, std::size_t bytes) {
+        mach_vm_address_t wanted = address;
+        const kern_return_t result = mach_vm_map(mach_task_self(), &wanted, bytes, 0, VM_FLAGS_FIXED, MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_NONE, VM_PROT_ALL, VM_INHERIT_DEFAULT);
+        if (result == KERN_SUCCESS) return 0;
+        return result == KERN_NO_SPACE ? EEXIST : ENOMEM;
+    }
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
+    void SeedHostUsedRanges() {
+        for (const auto& [begin, end] : HostMappings()) {
             if (end <= ArenaStart || begin >= ApplicationAreaEnd) continue;
             const auto first = std::max(begin, ArenaStart);
             const auto last = std::min(end, ApplicationAreaEnd);
@@ -208,12 +255,8 @@ private:
         constexpr std::uintptr_t kChunk = 1ULL << 30;
         for (std::uintptr_t cursor = from; cursor < to; cursor += kChunk) {
             const auto end = std::min(cursor + kChunk, to);
-            void* const wanted = reinterpret_cast<void*>(cursor);
-            void* const placed = mmap(wanted, end - cursor, PROT_NONE,
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
-            if (placed == wanted) continue;
-            const int failed = placed == MAP_FAILED ? errno : EINVAL;
-            if (placed != MAP_FAILED) munmap(placed, end - cursor);
+            const int failed = ReserveNoReplace(cursor, end - cursor);
+            if (failed == 0) continue;
             if (failed != EEXIST) {
                 char message[128];
                 std::snprintf(message, sizeof(message), "guest arena: cannot reserve 0x%llx+0x%llx",
@@ -428,7 +471,7 @@ void GuestArenaForgetSection_nid_postfix(void* section) {
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 namespace {
 int PosixProtection(std::uint32_t windowsProtection) {
     switch (windowsProtection) {
@@ -449,7 +492,7 @@ void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
     if (mprotect(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)) != 0)

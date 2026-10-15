@@ -8,7 +8,7 @@
 #include <limits>
 #include <stdexcept>
 
-struct Category { const void* const* vtable; };
+struct Category { void* const* vtable; };
 struct ErrorCode { int value; const Category* category; };
 using Message = GuestLocale::String* (APS5_VABI *)(GuestLocale::String*, const Category*, int);
 using Name = const char* (APS5_VABI *)(const Category*);

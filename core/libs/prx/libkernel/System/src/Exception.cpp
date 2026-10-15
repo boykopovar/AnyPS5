@@ -19,7 +19,9 @@
 #include <cstdlib>
 #include <system_error>
 #include <pthread.h>
+#ifndef __APPLE__
 #include <ucontext.h>
+#endif
 #include <unistd.h>
 #endif
 
@@ -306,6 +308,67 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
 constexpr int HostSignal = SIGUSR1;
 constexpr std::size_t FxsaveRegisterBytes = 416;
 
+#ifdef __APPLE__
+using HostMcontext = __darwin_mcontext64;
+
+HostMcontext& HostContext(void* context) {
+    return *static_cast<ucontext_t*>(context)->uc_mcontext;
+}
+
+void FromHost(const HostMcontext& host, GuestMcontext& m) {
+    const auto& s = host.__ss;
+    m.rdi = s.__rdi;
+    m.rsi = s.__rsi;
+    m.rdx = s.__rdx;
+    m.rcx = s.__rcx;
+    m.r8 = s.__r8;
+    m.r9 = s.__r9;
+    m.rax = s.__rax;
+    m.rbx = s.__rbx;
+    m.rbp = s.__rbp;
+    m.r10 = s.__r10;
+    m.r11 = s.__r11;
+    m.r12 = s.__r12;
+    m.r13 = s.__r13;
+    m.r14 = s.__r14;
+    m.r15 = s.__r15;
+    m.rip = s.__rip;
+    m.rsp = s.__rsp;
+    m.rflags = s.__rflags;
+    m.cs = s.__cs & 0xffffu;
+    m.len = sizeof(GuestMcontext);
+    constexpr std::size_t FxsaveAreaBytes = 512;
+    static_assert(sizeof(host.__fs) - offsetof(__darwin_x86_float_state64, __fpu_fcw) >= FxsaveAreaBytes && FxsaveAreaBytes <= sizeof(m.fpstate));
+    std::memcpy(m.fpstate, &host.__fs.__fpu_fcw, FxsaveAreaBytes);
+}
+
+void ToHost(const GuestMcontext& m, HostMcontext& host) {
+    auto& s = host.__ss;
+    s.__rdi = m.rdi;
+    s.__rsi = m.rsi;
+    s.__rdx = m.rdx;
+    s.__rcx = m.rcx;
+    s.__r8 = m.r8;
+    s.__r9 = m.r9;
+    s.__rax = m.rax;
+    s.__rbx = m.rbx;
+    s.__rbp = m.rbp;
+    s.__r10 = m.r10;
+    s.__r11 = m.r11;
+    s.__r12 = m.r12;
+    s.__r13 = m.r13;
+    s.__r14 = m.r14;
+    s.__r15 = m.r15;
+    s.__rip = m.rip;
+    s.__rsp = m.rsp;
+    s.__rflags = m.rflags;
+    std::memcpy(&host.__fs.__fpu_fcw, m.fpstate, FxsaveRegisterBytes);
+}
+#else
+mcontext_t& HostContext(void* context) {
+    return static_cast<ucontext_t*>(context)->uc_mcontext;
+}
+
 void FromHost(const mcontext_t& host, GuestMcontext& m) {
     const auto* g = host.gregs;
     m.rdi = g[REG_RDI];
@@ -355,6 +418,7 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
     g[REG_EFL] = static_cast<greg_t>(m.rflags);
     if (host.fpregs != nullptr) std::memcpy(host.fpregs, m.fpstate, FxsaveRegisterBytes);
 }
+#endif
 
 void Deliver(int, siginfo_t*, void* context) {
     const auto handler = Handler(RaisedSignal);
@@ -364,7 +428,7 @@ void Deliver(int, siginfo_t*, void* context) {
         (void)written;
         std::abort();
     }
-    auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
+    auto& host = HostContext(context);
     GuestUcontext ucontext{};
     FromHost(host, ucontext.mcontext);
     CallHandler(handler, RaisedSignal, ucontext);

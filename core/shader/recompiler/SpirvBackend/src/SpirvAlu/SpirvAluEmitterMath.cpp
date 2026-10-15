@@ -21,7 +21,7 @@ struct Pair {
 };
 
 std::uint32_t Exact(SpirvEmitterState& state, std::uint32_t result) {
-    state.module.AddAnnotation(spv::OpDecorate, result, spv::DecorationNoContraction);
+    if (!state.pixelContraction || state.program.Resources().stage != IrShaderStage::Pixel) state.module.AddAnnotation(spv::OpDecorate, result, spv::DecorationNoContraction);
     return result;
 }
 

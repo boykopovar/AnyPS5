@@ -4,6 +4,7 @@
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
+#include <atomic>
 #include <cstring>
 
 namespace {
@@ -12,6 +13,18 @@ constexpr std::uint64_t MetaVersion = 2;
 constexpr std::size_t LoadBiasOffset = 0x08;
 constexpr std::size_t HeaderCountOffset = 0x58;
 constexpr std::size_t HeadersOffset = 0x60;
+
+std::atomic<unsigned long long> imagesAdded{0};
+std::atomic<unsigned long long> imagesRemoved{0};
+
+void CountAdded(const mach_header*, std::intptr_t) { imagesAdded.fetch_add(1, std::memory_order_relaxed); }
+void CountRemoved(const mach_header*, std::intptr_t) { imagesRemoved.fetch_add(1, std::memory_order_relaxed); }
+
+const bool countersRegistered = [] {
+    _dyld_register_func_for_add_image(CountAdded);
+    _dyld_register_func_for_remove_image(CountRemoved);
+    return true;
+}();
 
 }
 
@@ -34,6 +47,8 @@ extern "C" int dl_iterate_phdr(int (*callback)(dl_phdr_info*, std::size_t, void*
         info.dlpi_name = header->filetype == MH_EXECUTE ? "" : _dyld_get_image_name(index);
         info.dlpi_phdr = reinterpret_cast<const Elf64_Phdr*>(meta + HeadersOffset);
         info.dlpi_phnum = static_cast<std::uint16_t>(count);
+        info.dlpi_adds = imagesAdded.load(std::memory_order_relaxed);
+        info.dlpi_subs = imagesRemoved.load(std::memory_order_relaxed);
         if (const int result = callback(&info, sizeof(info), data); result != 0) return result;
     }
     return 0;

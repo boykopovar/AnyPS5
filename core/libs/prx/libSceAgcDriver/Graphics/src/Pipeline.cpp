@@ -10,12 +10,17 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <condition_variable>
 #include <cstdlib>
+#include <deque>
+#include <functional>
 #include <list>
 #include <mutex>
+#include <thread>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -90,7 +95,35 @@ Framebuffer::~Framebuffer() {
     if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
 }
 
+bool ClampsDepthRange(const Context& context) {
+#ifdef __APPLE__
+    return !context.depthRangeUnrestricted;
+#else
+    static_cast<void>(context);
+    return false;
+#endif
+}
+
+void ReportClampedDepth(const char* what, float low, float high) {
+    static std::once_flag reported;
+    std::call_once(reported, [&] { std::fprintf(stderr, "[gpu] %s [%f, %f] is clamped to [0, 1]: the device lacks VK_EXT_depth_range_unrestricted\n", what, low, high); });
+}
+
+float DeviceDepth(const Context& context, float depth) {
+    return ClampsDepthRange(context) ? std::clamp(depth, 0.0f, 1.0f) : depth;
+}
+
+VkViewport DeviceViewport(const Context& context, VkViewport viewport) {
+    viewport.minDepth = DeviceDepth(context, viewport.minDepth);
+    viewport.maxDepth = DeviceDepth(context, viewport.maxDepth);
+    return viewport;
+}
+
 void ValidateDepthBounds(const Context& context, const State& state) {
+    if (ClampsDepthRange(context) && state.depthBoundsTest && (state.minDepthBounds < 0.0f || state.minDepthBounds > 1.0f || state.maxDepthBounds < 0.0f || state.maxDepthBounds > 1.0f)) {
+        ReportClampedDepth("depth bounds", state.minDepthBounds, state.maxDepthBounds);
+        return;
+    }
     Require(!state.depthBoundsTest || context.depthRangeUnrestricted || (state.minDepthBounds >= 0.0f && state.minDepthBounds <= 1.0f && state.maxDepthBounds >= 0.0f && state.maxDepthBounds <= 1.0f), "depth bounds outside [0, 1] require VK_EXT_depth_range_unrestricted");
 }
 
@@ -125,7 +158,8 @@ bool ValidateSampleLocations(const Context& context, const State& state) {
 
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(std::isfinite(viewport.minDepth) && std::isfinite(viewport.maxDepth), "non-finite viewport depth range");
-    Require(context.depthRangeUnrestricted || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
+    if (ClampsDepthRange(context) && (viewport.minDepth < 0 || viewport.minDepth > 1 || viewport.maxDepth < 0 || viewport.maxDepth > 1)) ReportClampedDepth("viewport depth", viewport.minDepth, viewport.maxDepth);
+    Require(context.depthRangeUnrestricted || ClampsDepthRange(context) || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
     Require(std::isfinite(viewport.x) && std::isfinite(viewport.y) && std::isfinite(viewport.width) && std::isfinite(viewport.height), "viewport arithmetic overflow");
     Require(viewport.width <= context.limits.maxViewportDimensions[0] && std::abs(viewport.height) <= context.limits.maxViewportDimensions[1], "viewport dimensions exceed device limits");
     Require(viewport.x >= context.limits.viewportBoundsRange[0] && viewport.x + viewport.width <= context.limits.viewportBoundsRange[1], "viewport X exceeds device bounds");
@@ -711,8 +745,9 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
 
 void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
     const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
+    const auto viewport = DeviceViewport(context, state.viewport);
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, best != VK_NULL_HANDLE ? best : pipeline);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
+    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     if (state.stencilReplayReference) context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, *state.stencilReplayReference);
     if (libraries) {
@@ -721,7 +756,7 @@ void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
     }
     if (depthBias) context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant), state.depthBiasClamp, state.depthBiasSlope);
     if (!depthBounds) return;
-    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, DeviceDepth(context, state.minDepthBounds), DeviceDepth(context, state.maxDepthBounds));
 }
 
 void Pipeline::setLibraryState(VkCommandBuffer commands, const State& state) const {
@@ -729,7 +764,7 @@ void Pipeline::setLibraryState(VkCommandBuffer commands, const State& state) con
     context.Resolved(&DeviceFunctions::cmdSetCullMode, "vkCmdSetCullModeEXT")(commands, state.cullMode);
     context.Resolved(&DeviceFunctions::cmdSetFrontFace, "vkCmdSetFrontFaceEXT")(commands, state.frontFace);
     context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, depthBias ? HostDepthBiasConstant(context, state.depth->format, state.depthBiasConstant) : 0.0f, depthBias ? state.depthBiasClamp : 0.0f, depthBias ? state.depthBiasSlope : 0.0f);
-    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, depthBounds ? state.minDepthBounds : 0.0f, depthBounds ? state.maxDepthBounds : 1.0f);
+    context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, depthBounds ? DeviceDepth(context, state.minDepthBounds) : 0.0f, depthBounds ? DeviceDepth(context, state.maxDepthBounds) : 1.0f);
     context.Resolved(&DeviceFunctions::cmdSetDepthTestEnable, "vkCmdSetDepthTestEnableEXT")(commands, depth && state.depthTest);
     context.Resolved(&DeviceFunctions::cmdSetDepthWriteEnable, "vkCmdSetDepthWriteEnableEXT")(commands, depth && state.depthWrite);
     context.Resolved(&DeviceFunctions::cmdSetDepthCompareOp, "vkCmdSetDepthCompareOpEXT")(commands, depth ? state.depthCompare : VK_COMPARE_OP_ALWAYS);
@@ -753,10 +788,11 @@ void Pipeline::ContinueSecondChannel(VkCommandBuffer commands) const {
 void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state) const {
     Require(backFaces != VK_NULL_HANDLE, "the pipeline draws both faces in one pass");
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, backFaces);
-    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
+    const auto viewport = DeviceViewport(context, state.viewport);
+    context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
-    if (depthBounds) context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+    if (depthBounds) context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, DeviceDepth(context, state.minDepthBounds), DeviceDepth(context, state.maxDepthBounds));
 }
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
@@ -910,8 +946,59 @@ struct PipelineStore {
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
     std::uint64_t evicted = 0;
+    std::uint64_t deferred = 0;
+    std::uint64_t queued = 0;
+    std::unordered_set<std::uint64_t> building;
+    std::unordered_set<std::uint64_t> failed;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
+
+struct PipelineBuilds {
+    std::mutex mutex;
+    std::condition_variable work;
+    std::condition_variable idle;
+    std::deque<std::pair<VkDevice, std::function<void()>>> jobs;
+    std::unordered_map<VkDevice, std::size_t> pending;
+    bool started = false;
+};
+
+PipelineBuilds& Builds() {
+    static auto* builds = new PipelineBuilds();
+    return *builds;
+}
+
+void runBuilds(PipelineBuilds& builds) {
+    std::unique_lock lock(builds.mutex);
+    for (;;) {
+        builds.work.wait(lock, [&] { return !builds.jobs.empty(); });
+        auto [device, job] = std::move(builds.jobs.front());
+        builds.jobs.pop_front();
+        lock.unlock();
+        job();
+        lock.lock();
+        if (--builds.pending[device] == 0) builds.idle.notify_all();
+    }
+}
+
+void enqueueBuild(VkDevice device, std::function<void()> job) {
+    auto& builds = Builds();
+    std::lock_guard lock(builds.mutex);
+    if (!builds.started) {
+        const char* text = std::getenv("APS5_ASYNC_PIPELINE_THREADS");
+        const int threads = std::clamp(text != nullptr ? std::atoi(text) : 2, 1, 8);
+        for (int i = 0; i < threads; ++i) std::thread(runBuilds, std::ref(builds)).detach();
+        builds.started = true;
+    }
+    ++builds.pending[device];
+    builds.jobs.emplace_back(device, std::move(job));
+    builds.work.notify_one();
+}
+
+void waitForBuilds(VkDevice device) {
+    auto& builds = Builds();
+    std::unique_lock lock(builds.mutex);
+    builds.idle.wait(lock, [&] { return builds.pending[device] == 0; });
+}
 
 // Never destroyed: the pipelines belong to a device that may already be gone when statics die, and
 // the device's teardown (ClearCachedPipelines) is the place to destroy them.
@@ -942,8 +1029,27 @@ void reportPipelines(PipelineStore& store) {
     if (now - store.lastReport < std::chrono::seconds(10)) return;
     store.lastReport = now;
     const auto lookups = store.hits + store.misses + store.uncached;
-    AgcDriver::ProfilePrint_nid_no_patch( "[pipecache] %llu lookups over 10 s: %llu hits (%.0f%%), %llu misses, %llu private (no variant id), %llu evicted, %zu cached\n", static_cast<unsigned long long>(lookups), static_cast<unsigned long long>(store.hits), lookups != 0 ? 100.0 * static_cast<double>(store.hits) / static_cast<double>(lookups) : 0.0, static_cast<unsigned long long>(store.misses), static_cast<unsigned long long>(store.uncached), static_cast<unsigned long long>(store.evicted), store.entries.size());
-    store.hits = store.misses = store.uncached = store.evicted = 0;
+    AgcDriver::ProfilePrint_nid_no_patch( "[pipecache] %llu lookups over 10 s: %llu hits (%.0f%%), %llu misses, %llu private (no variant id), %llu evicted, %zu cached; async: %llu queued, %llu draws deferred, %zu building\n", static_cast<unsigned long long>(lookups), static_cast<unsigned long long>(store.hits), lookups != 0 ? 100.0 * static_cast<double>(store.hits) / static_cast<double>(lookups) : 0.0, static_cast<unsigned long long>(store.misses), static_cast<unsigned long long>(store.uncached), static_cast<unsigned long long>(store.evicted), store.entries.size(), static_cast<unsigned long long>(store.queued), static_cast<unsigned long long>(store.deferred), store.building.size());
+    store.hits = store.misses = store.uncached = store.evicted = store.deferred = store.queued = 0;
+}
+
+void insertPipeline(PipelineStore& store, const Context& context, std::uint64_t hash, const std::vector<std::byte>& key, std::shared_ptr<Pipeline> pipeline) {
+    // Entries of another device belong to one the driver replaced (it does so under the GpuMutex
+    // before any draw reaches the new device), whose objects went with it: forget them.
+    for (auto it = store.entries.begin(); it != store.entries.end();) {
+        it = alive(*it, context) ? std::next(it) : abandon(store, it);
+    }
+    store.entries.push_back({context.device, context.bufferPool, hash, key, std::move(pipeline)});
+    store.index[hash] = std::prev(store.entries.end());
+    constexpr std::size_t bound = 1024;
+    while (store.entries.size() > bound) {
+        // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
+        const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
+        if (victim == store.entries.end()) break;
+        store.index.erase(victim->hash);
+        store.entries.erase(victim);
+        ++store.evicted;
+    }
 }
 
 }
@@ -983,27 +1089,77 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
     }
     ++store.misses;
-    // Entries of another device belong to one the driver replaced (it does so under the GpuMutex
-    // before any draw reaches the new device), whose objects went with it: forget them.
-    for (auto it = store.entries.begin(); it != store.entries.end();) {
-        it = alive(*it, context) ? std::next(it) : abandon(store, it);
-    }
     auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    store.entries.push_back({context.device, context.bufferPool, hash, key, pipeline});
-    store.index[hash] = std::prev(store.entries.end());
-    constexpr std::size_t bound = 1024;
-    while (store.entries.size() > bound) {
-        // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
-        const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
-        if (victim == store.entries.end()) break;
-        store.index.erase(victim->hash);
-        store.entries.erase(victim);
-        ++store.evicted;
-    }
+    insertPipeline(store, context, hash, key, pipeline);
     return pipeline;
 }
 
+std::shared_ptr<Pipeline> TryCachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, std::shared_ptr<const ShaderResources> resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    if (disabled) return CachedPipeline(context, state, vertexInput, *resources, shaders, attachmentLayout);
+    auto& store = Pipelines();
+    std::vector<std::byte> key;
+    std::uint64_t hash = 0;
+    {
+        std::lock_guard lock(store.mutex);
+        pipelineKey(store.scratchKey, context, state, vertexInput, resources->SetLayouts(), shaders, attachmentLayout);
+        if (!store.scratchKey.empty()) {
+            hash = hashKey(store.scratchKey);
+            const auto found = store.index.find(hash);
+            const bool resident = found != store.index.end() && found->second->key == store.scratchKey;
+            if (resident && alive(*found->second, context)) {
+                ++store.hits;
+                reportPipelines(store);
+                store.entries.splice(store.entries.end(), store.entries, found->second);
+                return found->second->pipeline;
+            }
+            if ((found == store.index.end() || resident) && store.failed.erase(hash) == 0) {
+                if (!store.building.insert(hash).second) {
+                    ++store.deferred;
+                    reportPipelines(store);
+                    return nullptr;
+                }
+                ++store.misses;
+                ++store.queued;
+                ++store.deferred;
+                reportPipelines(store);
+                key = store.scratchKey;
+            }
+        }
+    }
+    if (key.empty()) return CachedPipeline(context, state, vertexInput, *resources, shaders, attachmentLayout);
+    auto programs = std::make_shared<std::vector<ShaderRecompiler::RecompileResult>>();
+    programs->reserve(shaders.size());
+    for (const auto& shader : shaders) programs->push_back(*shader.program);
+    std::vector<CompiledShader> copies;
+    copies.reserve(shaders.size());
+    for (std::size_t i = 0; i < shaders.size(); ++i) copies.push_back({shaders[i].stage, &(*programs)[i], shaders[i].pushConstantOffset});
+    enqueueBuild(context.device, [context, state, vertexInput, resources = std::move(resources), programs, copies = std::move(copies), attachmentLayout, hash, key = std::move(key)] {
+        std::shared_ptr<Pipeline> pipeline;
+        try {
+            pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources->SetLayouts(), copies, attachmentLayout);
+        } catch (const std::exception&) {
+        }
+        auto& store = Pipelines();
+        std::lock_guard lock(store.mutex);
+        store.building.erase(hash);
+        if (pipeline == nullptr) {
+            store.failed.insert(hash);
+            return;
+        }
+        const auto found = store.index.find(hash);
+        if (found != store.index.end() && found->second->key == key && alive(*found->second, context)) return;
+        if (found != store.index.end()) {
+            if (found->second->key != key) return;
+            abandon(store, found->second);
+        }
+        insertPipeline(store, context, hash, key, pipeline);
+    });
+    return nullptr;
+}
+
 void ClearCachedPipelines(VkDevice device) {
+    waitForBuilds(device);
     auto& store = Pipelines();
     std::lock_guard lock(store.mutex);
     for (auto it = store.entries.begin(); it != store.entries.end();) {

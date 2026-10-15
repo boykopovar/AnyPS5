@@ -51,6 +51,10 @@ bool StackHoldsImport() {
         std::uintptr_t low = 0;
         std::uintptr_t high = 0;
         Bounds() {
+#ifdef __APPLE__
+            high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(pthread_self()));
+            low = high - pthread_get_stacksize_np(pthread_self());
+#else
             pthread_attr_t attributes;
             if (pthread_getattr_np(pthread_self(), &attributes) != 0) return;
             void* base = nullptr;
@@ -60,6 +64,7 @@ bool StackHoldsImport() {
                 high = low + size;
             }
             pthread_attr_destroy(&attributes);
+#endif
         }
     };
     thread_local const Bounds bounds;

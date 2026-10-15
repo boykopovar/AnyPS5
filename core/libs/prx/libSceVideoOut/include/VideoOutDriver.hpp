@@ -18,6 +18,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
+#include "prx/libSceVideoOut/include/PresentThread.hpp"
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -250,7 +251,7 @@ private:
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
 
-    std::jthread presentThread;
+    PresentThread presentThread;
     std::jthread vblankThread;
 };
 

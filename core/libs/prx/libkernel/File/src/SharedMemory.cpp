@@ -31,6 +31,11 @@
 #include <sys/uio.h>
 #include <unistd.h>
 #include <cstdio>
+#ifdef __APPLE__
+#include <cstdlib>
+#include <filesystem>
+#include <sys/param.h>
+#endif
 #endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
@@ -47,6 +52,13 @@ bool IsHostSharedMemoryDescriptor(int descriptor) {
     objectPath[length] = '\0';
     return std::string_view(objectPath).starts_with("/dev/shm/anyps5-shm-") ||
         std::string_view(objectPath).starts_with("/memfd:anyps5 shm_open");
+#elif defined(__APPLE__)
+    char objectPath[MAXPATHLEN];
+    if (::fcntl(descriptor, F_GETPATH, objectPath) != 0) return false;
+    const std::filesystem::path object(objectPath);
+    std::error_code error;
+    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path(), error);
+    return !error && object.parent_path() == directory && object.filename().string().starts_with("anyps5-shm-");
 #else
     (void)descriptor;
     return false;
@@ -149,6 +161,21 @@ std::string NamedHostPath(const char* path, int& error) {
     return hostName;
 }
 
+int HostShmOpen(const char* name, int flags, mode_t mode) {
+#ifdef __APPLE__
+    const int descriptor = ::shm_open(name, flags & ~O_CLOEXEC, mode);
+    if (descriptor >= 0 && (flags & O_CLOEXEC) != 0 && ::fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) {
+        const int error = errno;
+        ::close(descriptor);
+        errno = error;
+        return -1;
+    }
+    return descriptor;
+#else
+    return ::shm_open(name, flags, mode);
+#endif
+}
+
 int OpenNamedFile(const char* path, int flags, int mode) {
     int validationError = 0;
     const auto hostName = NamedHostPath(path, validationError);
@@ -167,13 +194,13 @@ int OpenNamedFile(const char* path, int flags, int mode) {
     bool created = false;
     int descriptor;
     if (flags & SCE_KERNEL_O_CREAT) {
-        descriptor = ::shm_open(hostName.c_str(), hostFlags | O_CLOEXEC | O_EXCL, permissions);
+        descriptor = HostShmOpen(hostName.c_str(), hostFlags | O_CLOEXEC | O_EXCL, permissions);
         created = descriptor >= 0;
         if (descriptor < 0 && errno == EEXIST && !(flags & SCE_KERNEL_O_EXCL)) {
-            descriptor = ::shm_open(hostName.c_str(), (hostFlags & ~(O_CREAT | O_EXCL)) | O_CLOEXEC, 0);
+            descriptor = HostShmOpen(hostName.c_str(), (hostFlags & ~(O_CREAT | O_EXCL)) | O_CLOEXEC, 0);
         }
     } else {
-        descriptor = ::shm_open(hostName.c_str(), hostFlags | O_CLOEXEC, 0);
+        descriptor = HostShmOpen(hostName.c_str(), hostFlags | O_CLOEXEC, 0);
     }
     if (descriptor >= 0) {
         if (!created || ::fchmod(descriptor, permissions) == 0) return descriptor;
@@ -208,6 +235,13 @@ int CreateAnonymousFile() {
     }
     errno = EEXIST;
     return -1;
+#elif defined(__APPLE__)
+    const auto path = (std::filesystem::temp_directory_path() / "anyps5-shm-XXXXXX").string();
+    std::vector<char> name(path.begin(), path.end());
+    name.push_back('\0');
+    const int descriptor = ::mkostemp(name.data(), O_CLOEXEC);
+    if (descriptor >= 0) ::unlink(name.data());
+    return descriptor;
 #else
     const int descriptor = memfd_create("anyps5 shm_open", MFD_CLOEXEC);
     return descriptor;

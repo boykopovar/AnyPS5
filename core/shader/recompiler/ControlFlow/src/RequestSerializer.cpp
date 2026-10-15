@@ -774,7 +774,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(29u);
+    writer.WriteU32(30u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -799,6 +799,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.vertexSubgroups);
     writer.WriteBool(request.target.float16DenormPreserve);
     writer.WriteU32Span(request.context.linkedCallFallbacks);
+    writer.WriteBool(request.target.fragmentBarycentricBuiltins);
+    writer.WriteBool(request.target.pixelContraction);
     return base64Encode(buffer);
 }
 
@@ -807,7 +809,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 29u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 30u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -842,6 +844,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version >= 26u) {
         result.linkedCallFallbacks = reader.ReadU32Vector();
         result.request.context.linkedCallFallbacks = result.linkedCallFallbacks;
+    }
+    if (version >= 30u) {
+        result.request.target.fragmentBarycentricBuiltins = reader.ReadBool();
+        result.request.target.pixelContraction = reader.ReadBool();
     }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;

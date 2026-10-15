@@ -1,5 +1,11 @@
 # libkernel technical debt
 
+### Build
+
+- macOS: guest named `shm_open` uses host POSIX shared memory ([SharedMemory.cpp](../../../core/libs/prx/libkernel/File/src/SharedMemory.cpp)), which on macOS limits names to 31 characters (the 52-character `/anyps5-shm-<sha1>` name fails with `ENAMETOOLONG`), allows `ftruncate` only once, and reports no path, device or inode, so named objects are not recognized as shared memory. Anonymous objects are unlinked temporary files, so their dirty pages can be written back to disk. Direct memory itself is backed by an unlinked POSIX shared-memory object sized once ([DirectMemory.cpp](../../../core/libs/prx/libkernel/DirectMemory/DirectMemory.cpp)).
+- macOS: [ModuleInfo.cpp](../../../core/libs/prx/libkernel/Module/src/ModuleInfo.cpp) lists only relinked guest images, because the macOS `dl_iterate_phdr` in [GuestImages.cpp](../../../core/libs/prx/libc/src/specifics/macos/GuestImages.cpp) reports only images carrying `__APS5DATA,__meta`; system `.prx` libraries are missing from `sceKernelGetModuleList`. Images are keyed by their Mach-O header, while `dlopen` returns an opaque handle, so the id `dlopen` hands out for a module differs from the one `ModuleIdForImage_nid_no_patch` reports for its header. `dlpi_tls_modid` is 0.
+- macOS: `sceKernelGetCurrentCpu` ([Process.cpp](../../../core/libs/prx/libkernel/System/src/Process.cpp)) derives the CPU from the host thread id, since macOS has no `sched_getcpu`; thread CPU time ([Thread.cpp](../../../core/libs/prx/libkernel/Pthread/src/Thread.cpp)) comes from `thread_info` at microsecond resolution.
+
 ### Silent stubs
 
 - [sceKernelGetSocPowerConsumption](../../../core/libs/prx/libkernel/System/src/ThermalSensors.cpp) (libkernel) - returns `EINVAL` and writes nothing, as `sceKernelGetSocSensorTemperature` does when the host has no sensor: the host's package power is not read (Linux RAPL `energy_uj` is readable by root only, and Windows has no general source). The prototype is not documented. PS5LM Plus (PPSA99581) passes a zeroed 128-byte buffer and, on success, reads its first 32-bit word as milliwatts, accepting 1000 to 350000; on failure it shows 0 W

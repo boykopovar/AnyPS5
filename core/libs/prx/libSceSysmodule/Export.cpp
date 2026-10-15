@@ -8,7 +8,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
-#else
+#elif !defined(__APPLE__)
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
@@ -38,6 +38,10 @@ void* openHostModule(const char* name) {
     return dlopen_nid_postfix(relative.c_str(), kRtldNow);
 }
 
+#ifdef __APPLE__
+extern "C" int APS5_VABI sceKernelGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
+#endif
+
 bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION mbi{};
@@ -56,6 +60,8 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     std::strncpy(info->name, path, sizeof(info->name) - 1);
     info->name[sizeof(info->name) - 1] = '\0';
     return true;
+#elif defined(__APPLE__)
+    return sceKernelGetModuleInfoForUnwind(addr, 0, info) == 0;
 #else
     const auto mapping = HostMapping::Find(addr, "sceSysmoduleGetModuleInfoForUnwind");
     if (!mapping) {

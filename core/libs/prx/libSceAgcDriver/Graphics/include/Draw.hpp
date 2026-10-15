@@ -98,7 +98,7 @@ const char* IndirectDrawPathName(IndirectDrawPath path);
 // Draw packets that drew nothing, for the [draws] line: Nothing (an empty count, or no color writes
 // and no pixel shader), Prechecked (State.hpp's DrawRejection refused it before the decode) and
 // Thrown (the decode or the build threw); `us` is the packet's time in the driver.
-enum class DrawSkip : std::uint8_t { Nothing, Prechecked, Thrown, Count };
+enum class DrawSkip : std::uint8_t { Nothing, Prechecked, Thrown, PipelinePending, Count };
 void CountDrawSkip(DrawSkip kind, double us);
 
 // Recorded draws whose written guest buffers were copied (their results reach guest memory by a CPU

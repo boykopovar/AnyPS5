@@ -276,14 +276,19 @@ VideoOutDriver::VideoOutDriver() {
 #ifdef __linux__
     SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
 #endif
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
+    const bool initializeOnPresenter = PresentThread::OnHostMainThread();
+    if (!initializeOnPresenter && SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
         throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError());
     }
     try {
         AgcDriverWaitIdle_nid_postfix();
         std::promise<void> started;
         auto attached = started.get_future();
-        presentThread = std::jthread([this, &started](std::stop_token token) {
+        presentThread.Start([this, &started, initializeOnPresenter](std::stop_token token) {
+            if (initializeOnPresenter && SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0) {
+                started.set_exception(std::make_exception_ptr(std::runtime_error(std::string("SDL_InitSubSystem(VIDEO | GAMECONTROLLER) failed: ") + SDL_GetError())));
+                return;
+            }
             try {
                 AgcDriverRaiseWorkerThreadPriority_nid_postfix("presenter");
             } catch (...) {

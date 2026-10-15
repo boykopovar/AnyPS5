@@ -102,6 +102,7 @@ private:
 // draw as before.
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+std::shared_ptr<Pipeline> TryCachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, std::shared_ptr<const ShaderResources> resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout);
 struct DescribedSetLayouts {
     PipelineSetLayouts layouts;
     std::vector<std::uint32_t> mainKey;

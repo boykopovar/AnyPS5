@@ -256,6 +256,8 @@ private:
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
         append(key, value.narrowSubgroupClock);
+        append(key, value.fragmentBarycentricBuiltins);
+        append(key, value.pixelContraction);
         append(key, value.float64DenormPreserve);
         append(key, value.registrationModules);
         append(key, value.registrationWordLimit);

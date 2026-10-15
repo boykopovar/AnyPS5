@@ -72,7 +72,7 @@ std::tm toHostTm(const GuestTm& guest) {
     host.tm_isdst = guest.tm_isdst;
 #ifndef _WIN32
     host.tm_gmtoff = static_cast<long>(guest.tm_gmtoff);
-    host.tm_zone = guest.tm_zone;
+    host.tm_zone = const_cast<char*>(guest.tm_zone);
 #endif
     return host;
 }

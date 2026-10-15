@@ -58,10 +58,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs) {
+ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs, bool builtins = false) {
     Pixels.fill(Unwritten);
     auto target = device.Target();
     target.fragmentShaderBarycentricEnabled = false;
+    target.fragmentBarycentricBuiltins = builtins;
     static const auto positions = ClipPositions();
 
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -238,12 +239,22 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
+        const auto linear = PixelInputBit(PixelInput::LinearCenter);
+        if (device->Target().fragmentBarycentricBuiltins) {
+            auto builtin = Draw(*device, BarycentricPixelCode, perspective, true);
+            Require(!builtin.barycentricEmulation.active, "reading PERSP_CENTER I/J with barycentric built-ins needed a geometry stage");
+            const auto builtinSmooth = CheckBarycentrics("PERSP_CENTER I/J from BaryCoordKHR", true);
+            builtin = Draw(*device, BarycentricPixelCode, linear, true);
+            Require(!builtin.barycentricEmulation.active, "reading LINEAR_CENTER I/J with barycentric built-ins needed a geometry stage");
+            const auto builtinLinear = CheckBarycentrics("LINEAR_CENTER I/J from BaryCoordNoPerspKHR", false);
+            std::printf("barycentric built-in tests passed: %u perspective and %u linear I/J pixels\n", builtinSmooth, builtinLinear);
+        }
         if (!device->GeometryLimits()) {
+            if (device->Target().fragmentBarycentricBuiltins) return 0;
             std::puts("skipped, the device lacks geometryShader");
             return VulkanTestSkipped;
         }
-        const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
-        const auto linear = PixelInputBit(PixelInput::LinearCenter);
         auto result = Draw(*device, BarycentricPixelCode, perspective);
         Require(result.barycentricEmulation.active && result.barycentricEmulation.smooth && !result.barycentricEmulation.linear, "reading PERSP_CENTER I/J did not emulate perspective barycentrics");
         const auto smooth = CheckBarycentrics("PERSP_CENTER I/J", true);

@@ -10,7 +10,7 @@
 #include <string_view>
 #include <system_error>
 #include <sys/stat.h>
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>

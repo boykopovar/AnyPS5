@@ -274,6 +274,8 @@ struct VulkanDevice::State {
     bool tessellationShader = false;
     bool meshShader = false;
     bool fragmentShaderBarycentric = false;
+    bool fragmentBarycentricBuiltins = false;
+    bool pixelContraction = false;
     bool geometryShader = false;
     bool sampleRateShading = false;
     bool shaderClipDistance = false;
@@ -930,6 +932,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     APS5_LOG_OUT("VulkanDevice constructor window=%p", static_cast<const void*>(window));
 #ifdef _WIN32
     state->library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+    state->library = SDL_LoadObject("libvulkan.1.dylib");
 #else
     state->library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -970,9 +974,22 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             instanceExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
             state->swapchainColorSpaces = true;
         }
-        create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
-        create.ppEnabledExtensionNames = instanceExtensions.data();
     }
+#ifdef __APPLE__
+    {
+        const auto enumerateExtensions = state->InstanceFunction<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties");
+        std::uint32_t availableCount = 0;
+        check(enumerateExtensions(nullptr, &availableCount, nullptr), "vkEnumerateInstanceExtensionProperties");
+        std::vector<VkExtensionProperties> available(availableCount);
+        check(enumerateExtensions(nullptr, &availableCount, available.data()), "vkEnumerateInstanceExtensionProperties");
+        if (std::any_of(available.begin(), available.end(), [](const auto& item) { return std::strcmp(item.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0; })) {
+            instanceExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+            create.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+        }
+    }
+#endif
+    create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
+    create.ppEnabledExtensionNames = instanceExtensions.data();
     check(state->InstanceFunction<PFN_vkCreateInstance>("vkCreateInstance")(&create, nullptr, &state->instance), "vkCreateInstance");
     APS5_LOG_OUT("Vulkan instance created instance=%p", reinterpret_cast<void*>(state->instance));
     if (window != nullptr) {
@@ -1118,12 +1135,19 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &barycentricFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         state->fragmentShaderBarycentric = barycentricFeatures.fragmentShaderBarycentric == VK_TRUE;
+        state->fragmentBarycentricBuiltins = state->fragmentShaderBarycentric;
         if (state->fragmentShaderBarycentric && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
             VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
             VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
             state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
             state->fragmentShaderBarycentric = FragmentShaderBarycentricUsable(driver.driverID, state->fragmentShaderBarycentric);
         }
+    }
+    if (hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+        VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
+        state->pixelContraction = driver.driverID == VK_DRIVER_ID_MOLTENVK;
     }
     VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlockFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT};
     if (hasExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)) {
@@ -1162,11 +1186,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     std::vector<const char*> deviceExtensions;
     if (window != nullptr) deviceExtensions.assign(presentationExtensions.begin(), presentationExtensions.end());
+#ifdef __APPLE__
+    if (hasExtension("VK_KHR_portability_subset")) deviceExtensions.push_back("VK_KHR_portability_subset");
+#endif
     if (window != nullptr && hasExtension(VK_EXT_HDR_METADATA_EXTENSION_NAME)) {
         deviceExtensions.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
         state->hdrMetadata = true;
     }
-    if (state->fragmentShaderBarycentric) {
+    if (state->fragmentBarycentricBuiltins) {
         deviceExtensions.push_back(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityFragmentBarycentricKHR);
         state->spirvExtensions.push_back("SPV_KHR_fragment_shader_barycentric");
@@ -1603,7 +1630,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         deviceInfo.pNext = &nonSeamlessCubeFeatures;
     }
     byteFeatures.pNext = const_cast<void*>(deviceInfo.pNext);
-    if (state->fragmentShaderBarycentric) {
+    if (state->fragmentBarycentricBuiltins) {
         barycentricFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &barycentricFeatures;
     }
@@ -3325,6 +3352,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     const auto& limits = state->properties.limits;
     ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_1, state->meshShader ? 0x00010400u : 0x00010300u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
     target.fragmentShaderBarycentricEnabled = state->fragmentShaderBarycentric;
+    target.fragmentBarycentricBuiltins = state->fragmentBarycentricBuiltins;
+    target.pixelContraction = state->pixelContraction;
     target.nonConstantImageOffsets = state->maintenance8;
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
@@ -3399,7 +3428,7 @@ Graphics::Context VulkanDevice::buildContext() const {
         state->depthRangeUnrestricted,
         true,
         state->subgroup,
-        state->fragmentShaderBarycentric,
+        state->fragmentBarycentricBuiltins,
         state->samplerAnisotropy,
         state->textureCompressionBC,
         state->detiler.get(),

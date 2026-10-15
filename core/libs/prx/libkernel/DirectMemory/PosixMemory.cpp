@@ -10,7 +10,7 @@
 #include <new>
 #include <stdexcept>
 #include <system_error>
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -47,7 +47,7 @@ constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 class ScopedDescriptor {
 public:
     explicit ScopedDescriptor(int value) noexcept : descriptor(fcntl(value, F_DUPFD_CLOEXEC, 0)), error(descriptor < 0 ? errno : 0) {}
@@ -137,7 +137,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
         static_cast<std::uint64_t>(offset) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) - rounded)
         return failed(GuestInvalid);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     const ScopedDescriptor pinnedDescriptor(descriptor);
     if (pinnedDescriptor.Get() < 0) return failed(pinnedDescriptor.Error());
     const int mappingDescriptor = pinnedDescriptor.Get();

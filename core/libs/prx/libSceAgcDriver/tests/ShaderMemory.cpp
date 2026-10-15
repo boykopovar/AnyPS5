@@ -2163,6 +2163,59 @@ void verifyLanesOutsideHostSubgroup() {
     require(pixel(permlanex16, 32u) && pixel(permlane16, 8u), "host lanes: a v_permlane16_b32 row that the host subgroup may hold did not build");
 }
 
+void verifyPixelContraction() {
+    using namespace ShaderRecompiler;
+    const auto exactOperations = [](std::span<const std::uint32_t> words) {
+        std::size_t exact = 0;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "pixel contraction: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == spv::OpDecorate && count == 3u && words[cursor + 2] == spv::DecorationNoContraction) ++exact;
+            cursor += count;
+        }
+        return exact;
+    };
+    const auto pixel = [&](bool contraction) {
+        static constexpr std::array<std::uint32_t, 4> code{0x06020100u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+        ShaderPixelStageInfo info{};
+        info.inputAddr = PixelInputBit(PixelInput::PerspectiveCenter);
+        info.hasPerspectiveCenterVgpr = true;
+        info.targetOutputMode[0] = 9u;
+        info.targetExportMapping.fill(0xe4u);
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.pixel = info;
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 64;
+        request.target.pixelContraction = contraction;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return exactOperations(Recompile(request).spirv.Words());
+    };
+    const auto compute = [&](bool contraction) {
+        static constexpr std::array<std::uint32_t, 4> code{0x06020100u, 0xe0700000u, 0x80000100u, 0xbf810000u};
+        static constexpr std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 64;
+        request.target.pixelContraction = contraction;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return exactOperations(Recompile(request).spirv.Words());
+    };
+    require(pixel(false) != 0u, "pixel contraction: v_add_f32 in a pixel program was not exact");
+    require(pixel(true) == 0u, "pixel contraction: a pixel program kept NoContraction on a contracting target");
+    require(compute(false) != 0u && compute(true) == compute(false), "pixel contraction: a compute program lost NoContraction");
+}
+
 void verifyHalfWaveReduction() {
     using namespace ShaderRecompiler;
     static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
@@ -2992,7 +3045,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQR0AAAA=", "new requests did not use serialization version 29");
+    require(requestPrefix(encoded, 8u) == "NVNQQR4AAAA=", "new requests did not use serialization version 30");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -3106,11 +3159,15 @@ void verifyPixelRequestSerialization() {
         const auto upgraded19 = serializer.Deserialize(serializer.Serialize(legacy19.request));
         require(RecompileCacheKey::ContextHash(legacy19.request) == RecompileCacheKey::ContextHash(upgraded19.request), "upgrading version19 changed shader identity");
     }
+    minimal.target.fragmentBarycentricBuiltins = true;
+    require(serializer.Deserialize(serializer.Serialize(minimal)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
+    minimal.target.pixelContraction = true;
+    require(serializer.Deserialize(serializer.Serialize(minimal)).request.target.pixelContraction && !serializer.Deserialize(encoded).request.target.pixelContraction, "pixel contraction was lost in serialization");
     constexpr std::size_t mappingOffset = 8u + 37u + 18u + 163u;
     for (std::size_t bytes = 0; bytes < 41u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQR4AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQR8AAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -3236,6 +3293,7 @@ void verifyVertexInfoVersion19() {
     while (allBitsOffset < version26Pixel.size() && version26Pixel[allBitsOffset] == allBitsBytes[allBitsOffset]) ++allBitsOffset;
     require(allBitsOffset == flagOffset + 2u, "the front-face all-bits flag does not follow the dithered coverage flag");
     version26Pixel.erase(version26Pixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset), version26Pixel.begin() + static_cast<std::ptrdiff_t>(allBitsOffset + 2u + 16u));
+    version26Pixel.resize(version26Pixel.size() - 2u);
     version26Pixel[4] = 26u;
     const auto replay26 = serializer.Deserialize(encodeBase64(version26Pixel));
     require(replay26.request.context.pixel.has_value() && replay26.request.context.pixel->rasterPrimitive == RasterPrimitive::Rectangle && !replay26.request.context.pixel->frontFaceAllBits, "a version 26 request lost its pixel primitive class or read a front-face all-bits flag");
@@ -3252,16 +3310,18 @@ void verifyVertexInfoVersion19() {
     auto version28 = decodeBase64(serializer.Serialize(sampledPixel));
     require(std::equal(maskedBytes.begin(), maskedBytes.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u), version28.begin()) && version28[maskOffset + 1u] == 0x1u && version28[maskOffset + 5u] == 0x2u && version28[maskOffset + 9u] == 0x4u && version28[maskOffset + 13u] == 0x8u, "the quad sample masks are not the four words after the quad pixel mask");
     version28.erase(version28.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u), version28.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes));
+    version28.resize(version28.size() - 2u);
     version28[4] = 28u;
     const auto replay28 = serializer.Deserialize(encodeBase64(version28));
     require(replay28.request.context.pixel.has_value() && replay28.request.context.pixel->quadPixelMask == 0x2u && replay28.request.context.pixel->quadSampleMask == std::array<std::uint16_t, 4>{0xffffu, 0xffffu, 0xffffu, 0xffffu} && decodeBase64(serializer.Serialize(replay28.request)) == maskedBytes, "a version 28 request read quad sample masks or misread the fields after them");
     auto version27 = maskedBytes;
     version27.erase(version27.begin() + static_cast<std::ptrdiff_t>(maskOffset), version27.begin() + static_cast<std::ptrdiff_t>(maskOffset + 1u + sampleMaskBytes));
+    version27.resize(version27.size() - 2u);
     version27[4] = 27u;
     const auto replay27 = serializer.Deserialize(encodeBase64(version27));
     require(replay27.request.context.pixel.has_value() && replay27.request.context.pixel->quadPixelMask == 0xfu && serializer.Serialize(replay27.request) == encodedPixel, "a version 27 request read a quad pixel mask or misread the fields after it");
     legacyPixel.erase(legacyPixel.begin() + static_cast<std::ptrdiff_t>(flagOffset), legacyPixel.begin() + static_cast<std::ptrdiff_t>(flagOffset + 4u + sampleMaskBytes));
-    legacyPixel.resize(legacyPixel.size() - sizeof(std::uint64_t));
+    legacyPixel.resize(legacyPixel.size() - sizeof(std::uint64_t) - 2u);
     for (const auto version : {19u, 20u, 21u, 22u}) {
         auto versionPixel = legacyPixel;
         versionPixel[4] = static_cast<std::uint8_t>(version);
@@ -3364,7 +3424,7 @@ void verifyLegacyPixelRequests() {
         require(!pixel.orderedPixelShader, "a legacy request became a primitive-ordered pixel shader");
         require(request.shader.stage == ShaderStage::Fragment && request.shader.code.size() == 1u && request.shader.code[0] == 0xbf810000u && !request.context.vertex.has_value() && request.context.memory.empty(), "legacy guest context was misaligned");
         require(request.target.vulkanVersion == 0x00401000u && request.target.spirvVersion == 0x00010300u && request.target.subgroupSize == 64u && request.layout.firstBinding == 11u && request.layout.pushConstantSizeBytes == 128u, "legacy target or binding layout was misaligned");
-        require(request.useCache == (version == 1u) && request.target.nonConstantImageOffsets == (version >= 6u) && request.target.srgbDecodeFormats == 0u && !request.target.narrowSubgroupClock && !request.target.float64DenormPreserve && !request.target.registrationModules && !request.target.float16DenormPreserve, "legacy request trailer was misread");
+        require(request.useCache == (version == 1u) && request.target.nonConstantImageOffsets == (version >= 6u) && request.target.srgbDecodeFormats == 0u && !request.target.narrowSubgroupClock && !request.target.float64DenormPreserve && !request.target.registrationModules && !request.target.float16DenormPreserve && !request.target.fragmentBarycentricBuiltins && !request.target.pixelContraction, "legacy request trailer was misread");
         const auto upgraded = serializer.Deserialize(serializer.Serialize(request));
         require(upgraded.request.context.pixel->targetExportMapping == pixel.targetExportMapping && RecompileCacheKey::ContextHash(upgraded.request) == RecompileCacheKey::ContextHash(request), "upgrading a legacy capture changed its pixel mapping");
     }
@@ -5118,6 +5178,7 @@ int main(int argc, char** argv) {
         verifySrgbDepthCompareModes();
         verifyQuadMaskNeighbourReads();
         verifyCoherentGds();
+        verifyPixelContraction();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
         const std::vector<std::uint32_t> minimalSpirv{
             0x07230203u, 0x00010000u, 0u, 5u, 0u,

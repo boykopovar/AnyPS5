@@ -21,7 +21,12 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#else
 #include <link.h>
+#endif
 #endif
 
 #ifdef _WIN32
@@ -62,6 +67,26 @@ void* Symbol(Module& module, const char* name) {
 #endif
 }
 #ifndef _WIN32
+#ifdef __APPLE__
+std::uintptr_t MainProgramBase() {
+    static const std::uintptr_t base = [] {
+        for (std::uint32_t index = 0; index < _dyld_image_count(); ++index) {
+            const auto* header = _dyld_get_image_header(index);
+            if (header != nullptr && header->filetype == MH_EXECUTE) return reinterpret_cast<std::uintptr_t>(header);
+        }
+        return std::uintptr_t{0};
+    }();
+    return base;
+}
+
+bool FromGuestModule(void* address) {
+    Dl_info info{};
+    if (address == nullptr || !::dladdr(address, &info) || info.dli_fname == nullptr) return false;
+    if (reinterpret_cast<std::uintptr_t>(info.dli_fbase) == MainProgramBase()) return true;
+    const std::string path(info.dli_fname);
+    return path.ends_with(".prx");
+}
+#else
 const link_map* MainProgramMap() {
     static const link_map* const map = [] {
         void* handle = ::dlopen(nullptr, RTLD_LAZY);
@@ -82,6 +107,7 @@ bool FromGuestModule(void* address) {
     const std::string path(info.dli_fname);
     return path.ends_with(".prx");
 }
+#endif
 
 void* DefaultScopeSymbol(const char* symbolName) {
     auto* result = ::dlsym(RTLD_DEFAULT, symbolName);

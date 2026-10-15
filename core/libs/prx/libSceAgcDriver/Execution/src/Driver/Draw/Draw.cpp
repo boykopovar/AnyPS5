@@ -381,6 +381,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (graphics.rectList) buildRectList();
     if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active) {
         require(!graphics.rectList && graphics.stages.path == Graphics::ShaderPath::Vertex && programs.size() == 2 && programResults[0] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs a vertex shader before it");
+        if (!localDevice->GeometryLimits().has_value()) {
+            static std::once_flag reported;
+            std::call_once(reported, [] { std::fprintf(stderr, "[gpu] draws whose pixel shader reads barycentrics are skipped: the device has neither usable VK_KHR_fragment_shader_barycentric nor geometry shaders\n"); });
+            return DrawVerdict::Nothing;
+        }
         results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), localDevice->GeometryLimits()));
         stages.insert(stages.begin() + 1, Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
     }

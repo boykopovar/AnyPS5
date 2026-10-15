@@ -100,7 +100,13 @@ int OpenMetadata(const std::filesystem::path& path, bool directory) {
     }
     return descriptor;
 #else
+#ifdef __APPLE__
+    int descriptor = ::open(path.c_str(), O_EVTONLY | O_NONBLOCK | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    // Tech debt (docs/dev/debt/libSceLibcInternal.md): macOS has no O_PATH, so an unreadable file or a socket reports its directory's volume.
+    if (descriptor < 0 && !directory && (errno == EACCES || errno == EOPNOTSUPP)) descriptor = ::open(path.parent_path().c_str(), O_EVTONLY | O_CLOEXEC | O_DIRECTORY);
+#else
     const int descriptor = ::open(path.c_str(), O_PATH | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+#endif
     return descriptor < 0 ? Fail(HostError(errno)) : descriptor;
 #endif
 }

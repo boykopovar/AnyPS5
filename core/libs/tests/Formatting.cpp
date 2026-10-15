@@ -9,6 +9,17 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
+#include <cstdarg>
+
+#ifdef _WIN32
+#define TEST_VA_LIST __builtin_sysv_va_list
+#define TEST_VA_START __builtin_sysv_va_start
+#define TEST_VA_END __builtin_sysv_va_end
+#else
+#define TEST_VA_LIST std::va_list
+#define TEST_VA_START va_start
+#define TEST_VA_END va_end
+#endif
 
 extern "C" {
 int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
@@ -31,54 +42,54 @@ static void Require(bool condition) {
 }
 
 static int APS5_VABI FormatList(char* buffer, size_t size, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    TEST_VA_LIST args;
+    TEST_VA_START(args, format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const VaList original = list;
     const int result = vsnprintf_nid_postfix(buffer, size, format, &list);
     Require(std::memcmp(&list, &original, sizeof(list)) == 0);
-    __builtin_sysv_va_end(args);
+    TEST_VA_END(args);
     return result;
 }
 
 static int APS5_VABI FormatListS(char* buffer, size_t size, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    TEST_VA_LIST args;
+    TEST_VA_START(args, format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vsnprintf_s_nid_postfix(buffer, size, format, &list);
-    __builtin_sysv_va_end(args);
+    TEST_VA_END(args);
     return result;
 }
 
 static int APS5_VABI ScanList(const char* buffer, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    TEST_VA_LIST args;
+    TEST_VA_START(args, format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vsscanf_nid_postfix(buffer, format, &list);
-    __builtin_sysv_va_end(args);
+    TEST_VA_END(args);
     return result;
 }
 
 static int APS5_VABI ScanListS(const char* buffer, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    TEST_VA_LIST args;
+    TEST_VA_START(args, format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vsscanf_s_nid_postfix(buffer, format, &list);
-    __builtin_sysv_va_end(args);
+    TEST_VA_END(args);
     return result;
 }
 
 static int APS5_VABI PrintList(const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    TEST_VA_LIST args;
+    TEST_VA_START(args, format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vprintf_nid_postfix(format, &list);
-    __builtin_sysv_va_end(args);
+    TEST_VA_END(args);
     return result;
 }
 

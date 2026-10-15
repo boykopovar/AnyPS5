@@ -126,7 +126,10 @@ struct PthreadPrivate {
     std::atomic<int> priority{DEFAULT_THREAD_PRIORITY};
     int scope = GUEST_SCOPE_SYSTEM;
     int cpuClockThread = 0;
-#ifndef _WIN32
+#ifdef __APPLE__
+    unsigned int hostThreadPort = 0;
+    bool hostCpuClockBound = false;
+#elif !defined(_WIN32)
     clockid_t hostCpuClock{};
     bool hostCpuClockBound = false;
     void* guestStack = nullptr;

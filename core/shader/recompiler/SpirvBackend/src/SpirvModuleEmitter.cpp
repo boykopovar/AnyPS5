@@ -114,6 +114,21 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeF32(state)), pointer, variable, ConstantU32(state, component + 1u));
         state.module.AddFunction(spv::OpLoad, TypeF32(state), value, pointer);
+        if (kind == StageInputKind::BaryCoordSmooth && state.program.Metadata().barycentricBuiltinsUnnormalized) {
+            // Tech debt (docs/dev/debt/shader.md): Apple GPUs leave [[barycentric_coord, center_perspective]]
+            // unnormalized unless the fragment function reads [[position]], so the load keeps a use of gl_FragCoord.w
+            // that leaves the weight unchanged and that fast math cannot fold away.
+            const auto fragCoordW = state.module.AllocateId();
+            state.module.AddFunction(spv::OpBitcast, TypeF32(state), fragCoordW, EmitInputComponentU32(state, StageInputKind::FragCoord, 3u));
+            const auto magnitude = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeF32(state), magnitude, GlslStd450(state), GLSLstd450FAbs, fragCoordW);
+            const auto bound = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFAdd, TypeF32(state), bound, value, magnitude);
+            const auto kept = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeF32(state), kept, GlslStd450(state), GLSLstd450FMin, value, bound);
+            state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, kept);
+            return bits;
+        }
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
         return bits;
     }

@@ -27,6 +27,7 @@
 #include <cstdarg>
 #include <deque>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -424,12 +425,20 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
 }
 #else
 #include <sys/statvfs.h>
+#ifdef __APPLE__
+#include <sys/mount.h>
+#else
 #include <sys/vfs.h>
+#endif
 static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     constexpr long PipeFilesystem = 0x50495045;
     struct stat file{};
     if (::fstat(descriptor, &file) != 0) return SceErrorFromErrno(errno) & 0xffff;
+#ifdef __APPLE__
+    if (S_ISSOCK(file.st_mode)) return GUEST_EINVAL;
+#else
     if (S_ISSOCK(file.st_mode) && (::fcntl(descriptor, F_GETFL) & O_PATH) == 0) return GUEST_EINVAL;
+#endif
     if (S_ISFIFO(file.st_mode)) {
         struct statfs kind{};
         if (::fstatfs(descriptor, &kind) == 0 && static_cast<long>(kind.f_type) == PipeFilesystem) return GUEST_EINVAL;
@@ -438,7 +447,9 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
     if (::fstatvfs(descriptor, &host) != 0) return SceErrorFromErrno(errno) & 0xffff;
     if (host.f_flag & ST_RDONLY) fs->f_flags |= KERNEL_MNT_RDONLY;
     if (host.f_flag & ST_NOSUID) fs->f_flags |= KERNEL_MNT_NOSUID;
+#ifdef ST_NOEXEC
     if (host.f_flag & ST_NOEXEC) fs->f_flags |= KERNEL_MNT_NOEXEC;
+#endif
     fs->f_bsize = host.f_frsize != 0 ? host.f_frsize : host.f_bsize;
     fs->f_iosize = host.f_bsize;
     fs->f_blocks = host.f_blocks;
@@ -516,6 +527,41 @@ int File::DuplicateFrom(int fd, int start) {
 #endif
 }
 
+#ifdef __APPLE__
+namespace {
+
+struct DirectoryResume {
+    dev_t device;
+    ino_t inode;
+    off_t base;
+    std::size_t skip;
+};
+
+std::mutex directoryResumeMutex;
+std::map<int, DirectoryResume> directoryResumes;
+
+std::size_t TakeDirectoryResume(int fd, const struct stat& directory, off_t base) {
+    std::lock_guard lock(directoryResumeMutex);
+    const auto found = directoryResumes.find(fd);
+    if (found == directoryResumes.end()) return 0;
+    const auto resume = found->second;
+    directoryResumes.erase(found);
+    return resume.device == directory.st_dev && resume.inode == directory.st_ino && resume.base == base ? resume.skip : 0;
+}
+
+void KeepDirectoryResume(int fd, const struct stat& directory, off_t base, std::size_t skip) {
+    std::lock_guard lock(directoryResumeMutex);
+    directoryResumes[fd] = {directory.st_dev, directory.st_ino, base, skip};
+}
+
+void ForgetDirectoryResume(int fd) {
+    std::lock_guard lock(directoryResumeMutex);
+    directoryResumes.erase(fd);
+}
+
+}
+#endif
+
 static int LookupError(const std::filesystem::path& native) {
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
@@ -582,6 +628,9 @@ int APS5_VABI close_nid_postfix(int d) {
     File::ForgetDirectoryDescriptor(d);
     File::ForgetFileLock(d);
     return WithoutParameterHandler([d] { return ::_close(d); });
+#elif defined(__APPLE__)
+    ForgetDirectoryResume(d);
+    return ::close(d);
 #else
     return ::close(d);
 #endif
@@ -905,6 +954,8 @@ int APS5_VABI sceKernelFdatasync(int fd) {
     if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
 #ifdef _WIN32
     if (NativeSync(fd) != 0) return SceErrorFromErrno(errno);
+#elif defined(__APPLE__)
+    if (::fsync(fd) != 0) return SceErrorFromErrno(errno);
 #else
     if (::fdatasync(fd) != 0) return SceErrorFromErrno(errno);
 #endif
@@ -936,6 +987,7 @@ int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
 
 #else
 
+
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
     if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
@@ -946,15 +998,35 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (base < 0) return SceErrorFromErrno(errno);
     if (basep != nullptr) *basep = static_cast<int64_t>(base);
     std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+#ifdef __APPLE__
+    using HostEntry = struct dirent;
+    struct stat directory{};
+    if (::fstat(fd, &directory) != 0) return SceErrorFromErrno(errno);
+    const std::size_t skip = TakeDirectoryResume(fd, directory, base);
+    off_t position = 0;
+    const auto read = ::syscall(SYS_getdirentries64, fd, host.data(), host.size(), &position);
+#else
+    using HostEntry = struct dirent64;
     const auto read = ::syscall(SYS_getdents64, fd, host.data(), host.size());
+#endif
     if (read < 0) return SceErrorFromErrno(errno);
     std::size_t written = 0;
     off_t resume = base;
-    for (long offset = 0; offset < read;) {
-        const auto* entry = reinterpret_cast<const struct dirent64*>(host.data() + offset);
+    std::size_t index = 0;
+    for (long offset = 0; offset < read; ++index) {
+        const auto* entry = reinterpret_cast<const HostEntry*>(host.data() + offset);
+#ifdef __APPLE__
+        if (index < skip) {
+            offset += entry->d_reclen;
+            continue;
+        }
+#endif
         const auto nameLength = std::strlen(entry->d_name);
         const auto record = (GuestHeaderBytes + nameLength + 1 + 3) & ~std::size_t{3};
         if (nameLength > GuestMaxName || written + record > static_cast<std::size_t>(nbytes)) {
+#ifdef __APPLE__
+            KeepDirectoryResume(fd, directory, base, index);
+#endif
             if (::lseek(fd, resume, SEEK_SET) < 0) return SceErrorFromErrno(errno);
             if (written != 0) return static_cast<int>(written);
             return nameLength > GuestMaxName ? static_cast<int>(0x80020000u | GUEST_ENAMETOOLONG) : SceErrorFromErrno(GUEST_EINVAL);
@@ -970,10 +1042,14 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
         out[7] = static_cast<char>(nameBytes);
         std::memcpy(out + GuestHeaderBytes, entry->d_name, nameLength);
         written += record;
+#ifndef __APPLE__
         resume = entry->d_off;
+#endif
         offset += entry->d_reclen;
     }
+#ifndef __APPLE__
     if (::lseek(fd, resume, SEEK_SET) < 0) return SceErrorFromErrno(errno);
+#endif
     return static_cast<int>(written);
 }
 

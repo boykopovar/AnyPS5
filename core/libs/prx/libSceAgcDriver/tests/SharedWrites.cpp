@@ -13,6 +13,10 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#ifdef __APPLE__
+#define RUSAGE_THREAD RUSAGE_SELF
+#endif
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif

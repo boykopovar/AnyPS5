@@ -116,8 +116,8 @@ public:
         const bool endOfFile = std::feof(GetHandle()) != 0;
         const bool error = std::ferror(GetHandle()) != 0;
 #else
-        const bool endOfFile = ::feof_unlocked(GetHandle()) != 0;
-        const bool error = ::ferror_unlocked(GetHandle()) != 0;
+        const bool endOfFile = feof_unlocked(GetHandle()) != 0;
+        const bool error = ferror_unlocked(GetHandle()) != 0;
 #endif
         _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) |
             (endOfFile ? 0x20 : 0) | (error || guestError ? 0x40 : 0));

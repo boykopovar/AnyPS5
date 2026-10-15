@@ -8,6 +8,11 @@
 #else
 #include <sched.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <crt_externs.h>
+#include <mach/mach.h>
+#include <pthread.h>
+#endif
 #endif
 
 #include "SceTypes.hpp"
@@ -88,6 +93,11 @@ public:
             if (_wputenv_s(L"ANYPS5_LOADEXEC_ARGV_SKIP", L"") != 0 || !SetEnvironmentVariableW(L"ANYPS5_LOADEXEC_ARGV_SKIP", nullptr))
                 throw std::runtime_error("LoadExec: cannot clear the argument marker");
         }
+#elif defined(__APPLE__)
+        const int count = *_NSGetArgc();
+        char** values = *_NSGetArgv();
+        for (int index = 0; index < count; ++index)
+            arguments.emplace_back(values[index]);
 #else
         std::ifstream stream("/proc/self/cmdline", std::ios::binary);
         if (!stream)
@@ -382,6 +392,10 @@ int APS5_VABI sceKernelGetCurrentCpu(void) {
             throw std::system_error(GetLastError(), std::system_category(), "Reading processor group size");
         index += count;
     }
+#elif defined(__APPLE__)
+    std::uint64_t thread = 0;
+    pthread_threadid_np(nullptr, &thread);
+    const auto index = static_cast<unsigned>(thread);
 #else
     const int cpu = ::sched_getcpu();
     if (cpu < 0)
@@ -498,7 +512,19 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     usage->ru_nivcsw = 0;
 #else
     struct rusage native{};
+#ifdef __APPLE__
+    if (who != 0) {
+        thread_basic_info_data_t info{};
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        const mach_port_t thread = pthread_mach_thread_np(pthread_self());
+        if (thread_info(thread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&info), &count) != KERN_SUCCESS)
+            throw std::runtime_error("getrusage: thread_info failed");
+        native.ru_utime = {info.user_time.seconds, info.user_time.microseconds};
+        native.ru_stime = {info.system_time.seconds, info.system_time.microseconds};
+    } else if (::getrusage(RUSAGE_SELF, &native) != 0)
+#else
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
+#endif
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
     usage->ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
     usage->ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);

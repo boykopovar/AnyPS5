@@ -457,7 +457,7 @@ struct DrawProfile {
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
-constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
+constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown", "pipeline building"};
 
 DrawProfile& Profile() {
     static DrawProfile profile;
@@ -2217,6 +2217,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         const auto built = resources->SetLayouts();
         Require(described.layouts.main == built.main && described.layouts.fragment == built.fragment && described.layouts.split == built.split && std::ranges::equal(described.mainKey, built.mainKey) && std::ranges::equal(described.fragmentKey, built.fragmentKey), "set layouts described from the shaders differ from the draw's");
     }
+    static const bool asyncPipelines = std::getenv("APS5_ASYNC_PIPELINES") != nullptr;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
     for (const auto reference : stencilReferences) {
         auto selected = pipelineState;
@@ -2227,7 +2228,21 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(!selectedPipeline->SplitsFaces() && !selectedPipeline->SplitsSecondChannel(), "stencil replay refuses pipeline face or channel splits");
         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
     }
-    auto pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+    std::shared_ptr<Pipeline> pipeline;
+    if (!stencilReplay.empty()) {
+        pipeline = stencilReplay.front().second;
+    } else if (asyncPipelines && lean && !resources->HoldsLease()) {
+        pipeline = TryCachedPipeline(context, pipelineState, inputs.VertexLayout(), resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+        if (pipeline == nullptr) {
+            recorder->Keep(resources);
+            if (recipeOut != nullptr) *recipeOut = nullptr;
+            CountDrawSkip(DrawSkip::PipelinePending, 0.0);
+            report(" deferred (pipeline building)");
+            return;
+        }
+    } else {
+        pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     std::vector<std::shared_ptr<StorageTexture>> owners;

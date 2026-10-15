@@ -297,7 +297,11 @@ static void ReleaseHostStack(Fiber* fiber) {
 static void AllocateHostStack(Fiber* fiber) {
     const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
     const auto bytes = (fiber->contextSize + FIBER_HOST_STACK_MARGIN + page - 1) / page * page + page;
+#ifdef __APPLE__
+    void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+#else
     void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+#endif
     if (mapping == MAP_FAILED) throw std::runtime_error(std::string("sceFiberInitialize: no host stack of ") + std::to_string(bytes) + " bytes for fiber '" + fiber->name + "' (errno " + std::to_string(errno) + ")");
     if (mprotect(mapping, page, PROT_NONE) != 0) {
         const int error = errno;
