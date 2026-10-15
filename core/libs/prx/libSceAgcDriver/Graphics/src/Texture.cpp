@@ -2150,6 +2150,17 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
 
 constexpr std::uint64_t GenerationBaselineBytes = 1ull << 20;
 
+bool SingleKeyColorFor(const GuestTextureResource& resource, VkFormat format, DccKeys keys, VkClearColorValue& clear) {
+    if (keys != DccKeys::ClearSingle) return false;
+    const auto elementBytes = BytesPerElement(resource.format);
+    if (elementBytes == 0 || elementBytes > sizeof(std::uint32_t) * 4) return false;
+    std::uint32_t pattern[4]{};
+    auto* bytes = reinterpret_cast<std::byte*>(pattern);
+    if (!ReadSingleElement(resource, std::span(bytes, elementBytes))) return false;
+    for (std::size_t at = elementBytes; at < sizeof(pattern); at += elementBytes) std::memcpy(bytes + at, bytes, elementBytes);
+    return FillClearColor(format, elementBytes, pattern, clear);
+}
+
 void StorageTexture::upload(const std::vector<bool>* layers) {
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -2181,7 +2192,8 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     uploadedKeys = ProvedClearKeys(descriptor, guestBytes, keyProof);
     filledKeys = DccKeys::Uncompressed;
     VkClearColorValue clearValue{};
-    if (IsDccClear(uploadedKeys) && ClearColorFor(storageFormat, uploadedKeys, clearValue)) {
+    const bool fastClear = IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle;
+    if (fastClear && (ClearColorFor(storageFormat, uploadedKeys, clearValue) || SingleKeyColorFor(descriptor, storageFormat, uploadedKeys, clearValue))) {
         // A fast-cleared surface is cleared on the GPU; its texel memory is neither read nor filled.
         // The clear is recorded into the open batch like a direct upload (the image kept by it): a
         // batch of its own submitted the recorder's work first and waited for all of it, 25-40 ms

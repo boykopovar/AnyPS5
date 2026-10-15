@@ -79,6 +79,8 @@ struct DccKeyProof {
 // APS5_NO_KEY_FAST_PATH=1 scans on every call and stores nothing.
 DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes, DccKeyProof& proof);
 bool KeyFastPath();
+bool SingleKeysReadable(const GuestTextureResource& resource);
+bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte> element);
 // Cumulative outcomes of ProvedClearKeys: calls answered by a proof, scans made, and scans not kept.
 struct DccKeyProofCounts {
     std::uint64_t proved;

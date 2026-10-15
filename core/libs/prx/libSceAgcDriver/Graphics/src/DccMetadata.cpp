@@ -57,10 +57,6 @@ DccKeys ByteKeys(std::uint8_t key) {
     }
 }
 
-bool SingleKeysReadable(const GuestTextureResource& resource) {
-    return KeyBytes % BytesPerElement(resource.format) == 0;
-}
-
 void ExpandSingleBlocks(std::span<std::byte> bytes, std::size_t elementBytes) {
     for (std::size_t block = 0; block < bytes.size(); block += KeyBytes) {
         const auto blockBytes = std::min<std::size_t>(KeyBytes, bytes.size() - block);
@@ -741,6 +737,19 @@ void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std:
     if (keys == DccKeys::Uncompressed || keys == DccKeys::ClearSingle) GuestMemory::ReadCommitted(resource.baseAddress, bytes);
     else FillDccClear(ResolveTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, bytes);
     if (keys == DccKeys::ClearSingle) ExpandSingleBlocks(bytes, BytesPerElement(resource.format));
+}
+
+bool SingleKeysReadable(const GuestTextureResource& resource) {
+    return KeyBytes % BytesPerElement(resource.format) == 0;
+}
+
+bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte> element) {
+    if (!SingleKeysReadable(resource)) return false;
+    const auto bytes = BytesPerElement(resource.format);
+    if (element.size() < bytes) return false;
+    const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+    GuestMemory::ReadCommitted(resource.baseAddress, element.subspan(0, bytes));
+    return true;
 }
 
 namespace {
