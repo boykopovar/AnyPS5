@@ -197,6 +197,8 @@ double APS5_VABI acos_nid_postfix(double x) { return std::acos(x); }
 double APS5_VABI sqrt_nid_postfix(double x) { return std::sqrt(x); }
 float APS5_VABI sqrtf_nid_postfix(float x) { return std::sqrt(x); }
 double APS5_VABI fabs_nid_postfix(double x) { return std::fabs(x); }
+float APS5_VABI fabsf_nid_postfix(float x) { return std::fabs(x); }
+long double APS5_VABI fabsl_nid_postfix(long double x) { return std::fabsl(x); }
 int APS5_VABI abs_nid_postfix(int x) { return x < 0 ? static_cast<int>(0u - static_cast<unsigned>(x)) : x; }
 double APS5_VABI trunc_nid_postfix(double x) { return std::trunc(x); }
 double APS5_VABI ceil_nid_postfix(double x) { return std::ceil(x); }
