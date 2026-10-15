@@ -388,6 +388,7 @@ void RetiredArrayLayer(AgcDriver::VulkanDevice& device) {
 }
 
 void UncommittedUnusedLayers(AgcDriver::VulkanDevice& device, std::uint32_t slice) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) return;
     GuestBlock block(LayerBytes, slice * LayerBytes, false);
     const auto surface = AddressOf(block.Data());
     const auto active = surface + slice * LayerBytes;
