@@ -390,8 +390,9 @@ if(BUILD_TESTING)
     target_link_libraries(guest_standard_stream_tests PRIVATE libc)
     configure_windows_unwind(guest_standard_stream_tests)
     add_test(NAME guest_standard_streams COMMAND guest_standard_stream_tests)
+    add_test(NAME guest_standard_streams_failed_reopen COMMAND guest_standard_stream_tests --failed-reopen)
     if(WIN32)
-        set_tests_properties(guest_standard_streams PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_standard_streams guest_standard_streams_failed_reopen PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(file_streams_tests ${LIBS_INCLUDE_DIR}/tests/FileStreams.cpp)

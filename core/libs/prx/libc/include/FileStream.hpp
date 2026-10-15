@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_FILESTREAM_HPP
 
+#include <cerrno>
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
@@ -76,8 +77,34 @@ public:
     }
 
     GuestFilePrefix& GuestState() { return _guest; }
+    bool IsHostStandard() const {
+        return _handle == stdin || _handle == stdout || _handle == stderr;
+    }
+
+    void Detach() {
+        _handle = nullptr;
+        _guest.flags = 0;
+        _guest.descriptor = -1;
+    }
+
     bool Reopen(const std::filesystem::path& filename, const char* mode) {
         auto* previous = GetHandle();
+        if (!filename.empty() && IsHostStandard()) {
+#ifdef _WIN32
+            std::wstring probeMode;
+            for (const char character : std::string_view(mode)) probeMode.push_back(static_cast<unsigned char>(character));
+            std::FILE* const probe = ::_wfopen(filename.c_str(), probeMode.c_str());
+#else
+            std::FILE* const probe = std::fopen(filename.c_str(), mode);
+#endif
+            if (!probe) {
+                const int error = errno;
+                Detach();
+                errno = error;
+                return false;
+            }
+            std::fclose(probe);
+        }
         _guest = {};
         guestError = false;
 #ifdef _WIN32

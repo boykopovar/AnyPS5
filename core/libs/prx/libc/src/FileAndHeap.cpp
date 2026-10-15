@@ -271,7 +271,8 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
         std::filesystem::path path;
         if (*filename) {
             if (const int error = ResolvePathError_nid_no_patch(filename, path)) {
-                stream->Close();
+                if (stream->IsHostStandard()) stream->Detach();
+                else stream->Close();
                 if (stream->IsDynamic()) delete stream;
                 errno = error;
                 return nullptr;
