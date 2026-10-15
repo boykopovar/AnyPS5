@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <cstring>
 #include <exception>
 
 namespace AgcDriver::Graphics {
@@ -132,6 +133,12 @@ VkBuffer Buffer::Handle() const {
 std::span<std::byte> Buffer::Bytes() {
     Require(mapping != nullptr, "device-local buffer has no host mapping");
     return {static_cast<std::byte*>(mapping), size};
+}
+
+void Buffer::ClearRobustnessTail() {
+    Require(mapping != nullptr, "device-local buffer has no host mapping");
+    const auto end = std::min(capacity, (size + 3u) & ~std::size_t{3u});
+    if (end > size) std::memset(static_cast<std::byte*>(mapping) + size, 0, end - size);
 }
 
 void Buffer::Invalidate() {

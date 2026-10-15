@@ -27,6 +27,16 @@ inline std::unique_ptr<AgcDriver::VulkanDevice> OpenVulkanTestDevice() {
     }
 }
 
+inline std::unique_ptr<AgcDriver::VulkanDevice> OpenVulkanTestDeviceWithoutRobustBufferAccess2() {
+    try {
+        return std::make_unique<AgcDriver::VulkanDevice>(AgcDriver::VulkanDevice::WithoutRobustBufferAccess2{});
+    } catch (const std::exception& error) {
+        if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+        std::printf("skipped, no usable Vulkan device: %s\n", error.what());
+        return nullptr;
+    }
+}
+
 inline std::uint32_t PixelPushOffset(std::uint32_t vertexPush, const ShaderRecompiler::SpirvTarget& target) {
     return AgcDriver::Graphics::StagePushOffset(vertexPush, ShaderRecompiler::ShaderStage::Fragment, target.fixedPushSlots);
 }

@@ -160,6 +160,14 @@ std::uint32_t directWordIndex(SpirvEmitterState& state, const MemoryResourceAcce
     return EmitAddU32(state, relative, base);
 }
 
+std::uint32_t loadDirectWord(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t word) {
+    const auto value = state.module.AllocateId();
+    const auto pointer = EmitMemoryElementPointer(state, access, word);
+    if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
+    else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+    return value;
+}
+
 std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t bits) {
     if (context.Memory(instruction).gpuDescriptor) return EmitBdaRead(context, instruction, address, bits);
     auto& state = context.state;
@@ -170,13 +178,7 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
     return EmitValueOrZeroIfCondition(state, EmitMemoryElementInBounds(state, access, last), [&] {
-        const auto load = [&](std::uint32_t word) {
-            const auto value = state.module.AllocateId();
-            const auto pointer = EmitMemoryElementPointer(state, access, word);
-            if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access.memoryAccess);
-            else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-            return value;
-        };
+        const auto load = [&](std::uint32_t word) { return loadDirectWord(state, access, word); };
         const auto shift = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), misalignment, ConstantU32(state, 3u));
         const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(index), shift);
         const auto high = EmitValueOrZeroIfCondition(state, unaligned, [&] {
@@ -275,6 +277,66 @@ void writeBuffer(SpirvValueEmitContext& context, const IrValue& instruction, std
     });
 }
 
+constexpr std::uint32_t OutOfRangeWord = 0x3fffffffu;
+
+bool robustDirect(SpirvValueEmitContext& context, const IrValue& instruction) {
+    return context.state.robustBufferAccess2 && !context.Memory(instruction).gpuDescriptor;
+}
+
+std::uint32_t robustIndex(SpirvEmitterState& state, std::uint32_t guard, std::uint32_t index) {
+    return Select(state, TypeU32(state), guard, index, ConstantU32(state, OutOfRangeWord));
+}
+
+struct RobustDirect {
+    MemoryResourceAccess access;
+    std::uint32_t misalignment = 0;
+    std::uint32_t unaligned = 0;
+};
+
+RobustDirect robustAccess(SpirvValueEmitContext& context, const IrValue& instruction, bool load) {
+    RobustDirect result;
+    result.access = directAccess(context, instruction, false, load && !context.Memory(instruction).coherent);
+    result.misalignment = baseMisalignment(context, instruction);
+    result.unaligned = nonzero(context.state, result.misalignment);
+    return result;
+}
+
+std::uint32_t readRobust(SpirvEmitterState& state, const RobustDirect& direct, std::uint32_t address, std::uint32_t bits, std::uint32_t condition) {
+    const auto u32 = TypeU32(state);
+    const auto& access = direct.access;
+    const auto index = directWordIndex(state, access, address);
+    const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
+    const auto guard = both(state, condition, EmitMemoryElementInBounds(state, access, Select(state, u32, direct.unaligned, next, index)));
+    const auto shift = Binary(state, spv::OpShiftLeftLogical, u32, direct.misalignment, ConstantU32(state, 3u));
+    const auto low = Binary(state, spv::OpShiftRightLogical, u32, loadDirectWord(state, access, robustIndex(state, guard, index)), shift);
+    const auto high = EmitValueOrZeroIfCondition(state, direct.unaligned, [&] {
+        return Binary(state, spv::OpShiftLeftLogical, u32, loadDirectWord(state, access, robustIndex(state, guard, next)), Binary(state, spv::OpISub, u32, ConstantU32(state, 32u), shift));
+    });
+    auto value = EmitOrU32(state, low, high);
+    if (bits != 32u) {
+        const auto subwordShift = Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, address, 3u), ConstantU32(state, 3u));
+        value = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, value, subwordShift), (1u << bits) - 1u);
+    }
+    return value;
+}
+
+void writeRobust(SpirvValueEmitContext& context, const IrValue& instruction, const RobustDirect& direct, std::uint32_t address, std::uint32_t value, std::uint32_t condition) {
+    auto& state = context.state;
+    const auto& access = direct.access;
+    EmitIfCondition(state, both(state, condition, direct.unaligned), [&] { writeBuffer(context, instruction, address, value); });
+    EmitIfCondition(state, Unary(state, spv::OpLogicalNot, TypeBool(state), direct.unaligned), [&] {
+        const auto index = directWordIndex(state, access, address);
+        const auto pointer = EmitMemoryElementPointer(state, access, robustIndex(state, both(state, condition, EmitMemoryElementInBounds(state, access, index)), index));
+        if (access.memoryAccess != 0u) state.module.AddFunction(spv::OpStore, pointer, value, access.memoryAccess);
+        else state.module.AddFunction(spv::OpStore, pointer, value);
+    });
+}
+
+void writeChecked(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t value, std::uint32_t bits) {
+    if (bits == 32u && robustDirect(context, instruction)) writeRobust(context, instruction, robustAccess(context, instruction, false), address, value, ConstantBool(context.state, true));
+    else writeBuffer(context, instruction, address, value, bits);
+}
+
 std::uint32_t composite(SpirvEmitterState& state, std::uint32_t components, const std::array<std::uint32_t, 4>& values) {
     if (components == 1u) return values[0];
     const auto result = state.module.AllocateId();
@@ -334,17 +396,21 @@ std::uint32_t formatted(SpirvValueEmitContext& context, const IrValue& instructi
                 if (info.packedBitfield) {
                     packed = EmitOrU32(state, packed, Binary(state, spv::OpShiftLeftLogical, u32, EmitAndConstant(state, encoded, (1u << info.componentBits[component]) - 1u), ConstantU32(state, info.componentBitOffset[component])));
                 } else {
-                    writeBuffer(context, instruction, addresses[component].guest, encoded, info.componentBits[component]);
+                    writeChecked(context, instruction, addresses[component].guest, encoded, info.componentBits[component]);
                 }
             }
-            if (info.packedBitfield) writeBuffer(context, instruction, addresses[0].guest, packed);
+            if (info.packedBitfield) writeChecked(context, instruction, addresses[0].guest, packed, 32u);
         });
         return ConstantU32(state, 0u);
     }
+    const bool robust = robustDirect(context, instruction);
+    const auto direct = robust ? robustAccess(context, instruction, true) : RobustDirect{};
     for (std::uint32_t component = 0; component < info.componentCount; ++component) {
-        values[component] = EmitValueOrZeroIfCondition(state, both(state, inBounds, required[component]), [&] {
+        const auto condition = both(state, inBounds, required[component]);
+        const auto readBits = info.packedBitfield ? 32u : info.componentBits[component];
+        const auto decode = [&](std::uint32_t loaded) {
             const auto bits = info.componentBits[component];
-            auto raw = readBuffer(context, instruction, addresses[component].guest, info.packedBitfield ? 32u : bits);
+            auto raw = loaded;
             if (bits != 32u) {
                 const auto signedType = IsSignedFormatComponent(info.type);
                 const auto type = signedType ? TypeI32(state) : u32;
@@ -354,7 +420,9 @@ std::uint32_t formatted(SpirvValueEmitContext& context, const IrValue& instructi
                 if (signedType) raw = Unary(state, spv::OpBitcast, u32, raw);
             }
             return memory.d16 ? EmitD16FormatComponent(state, info, component, raw) : NormalizeFormatComponent(state, info, component, raw);
-        });
+        };
+        if (robust) values[component] = Select(state, u32, condition, decode(readRobust(state, direct, addresses[component].guest, readBits, condition)), ConstantU32(state, 0u));
+        else values[component] = EmitValueOrZeroIfCondition(state, condition, [&] { return decode(readBuffer(context, instruction, addresses[component].guest, readBits)); });
     }
     const bool integer = info.type == SpirvFormatComponentType::Uint || info.type == SpirvFormatComponentType::Sint;
     const auto one = ConstantU32(state, integer ? 1u : memory.d16 ? 0x3c00u : 0x3f800000u);
@@ -719,7 +787,19 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
     const auto& memory = context.Memory(instruction);
     const auto type = components == 1u ? TypeU32(state) : TypeU32Composite(state, components);
     const auto zero = components == 1u ? ConstantU32(state, 0u) : ConstantU32CompositeZero(state, components);
-    return EmitValueOrDefaultIfCondition(state, context.Arg(instruction, instruction.ArgumentCount() - 1u), type, zero, [&] {
+    const auto active = context.Arg(instruction, instruction.ArgumentCount() - 1u);
+    const bool wide = components == 2u && memory.coherent && state.storageBufferU64Variable != 0u;
+    if (!memory.formatted && !wide && robustDirect(context, instruction)) {
+        const auto resource = descriptor(context, instruction);
+        const auto direct = robustAccess(context, instruction, true);
+        std::array<std::uint32_t, 4> values{};
+        for (std::uint32_t component = 0; component < components; ++component) {
+            const auto access = address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
+            values[component] = readRobust(state, direct, access.guest, memory.dataBits, both(state, active, access.inBounds));
+        }
+        return composite(state, components, values);
+    }
+    return EmitValueOrDefaultIfCondition(state, active, type, zero, [&] {
         const auto resource = descriptor(context, instruction);
         if (memory.formatted) return EmitValueOrDefaultIfCondition(state, resource.valid, type, zero, [&] { return formattedDispatch(context, instruction, resource, components, false, 0u); });
         const auto readComponents = [&] {
@@ -750,7 +830,18 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
 void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t components) {
     auto& state = context.state;
     const auto& memory = context.Memory(instruction);
-    EmitIfCondition(state, context.Arg(instruction, instruction.ArgumentCount() - 1u), [&] {
+    const auto active = context.Arg(instruction, instruction.ArgumentCount() - 1u);
+    if (!memory.formatted && memory.dataBits == 32u && robustDirect(context, instruction)) {
+        const auto resource = descriptor(context, instruction);
+        const auto values = storeValues(state, storeData(context, instruction), components);
+        const auto direct = robustAccess(context, instruction, false);
+        for (std::uint32_t component = 0; component < components; ++component) {
+            const auto access = address(context, instruction, resource, component * 4u, 4u);
+            writeRobust(context, instruction, direct, access.guest, values[component], both(state, active, access.inBounds));
+        }
+        return;
+    }
+    EmitIfCondition(state, active, [&] {
         const auto resource = descriptor(context, instruction);
         if (memory.formatted) {
             EmitIfCondition(state, resource.valid, [&] { static_cast<void>(formattedDispatch(context, instruction, resource, components, true, storeData(context, instruction))); });
@@ -776,6 +867,7 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
     const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
+    if (robustDirect(context, instruction)) return readRobust(state, robustAccess(context, instruction, true), byte, 32u, inBounds);
     if (!context.Memory(instruction).gpuDescriptor) return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, byte, 32u); });
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }

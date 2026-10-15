@@ -25,6 +25,7 @@ struct ProfileInput {
     VkPhysicalDeviceFeatures core{};
     VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     VkPhysicalDeviceLimits limits{};
+    bool robustBufferAccess2 = false;
 
     ProfileInput() {
         core.shaderInt64 = VK_TRUE;
@@ -42,6 +43,7 @@ struct ProfileInput {
         target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
         target.supportedCapabilities = capabilities;
         target.supportedExtensions = extensions;
+        target.robustBufferAccess2 = robustBufferAccess2;
         return target;
     }
 };
@@ -99,13 +101,18 @@ void CheckProfile() {
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityStorageImageMultisample); }, "shaderStorageImageMultisample");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityFragmentBarycentricKHR); }, "fragmentShaderBarycentric");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityMeshShadingEXT); }, "meshShader");
+    invalid([](auto& value) { value.robustBufferAccess2 = true; value.core.robustBufferAccess = VK_TRUE; }, "robustBufferAccess2");
+    invalid([](auto& value) { value.robustBufferAccess2 = true; value.robustness.robustBufferAccess2 = VK_TRUE; }, "robustBufferAccess2");
     ProfileInput enabled;
     enabled.capabilities.push_back(spv::CapabilitySampledImageArrayDynamicIndexing);
     enabled.capabilities.push_back(spv::CapabilityStorageImageArrayNonUniformIndexing);
     enabled.core.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
     enabled.indexing.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
+    enabled.robustBufferAccess2 = true;
+    enabled.core.robustBufferAccess = VK_TRUE;
+    enabled.robustness.robustBufferAccess2 = VK_TRUE;
     const AgcDriver::ShaderDeviceProfile accepted(enabled.Target(), enabled.device, enabled.limits);
-    Require(accepted.Target().supportedCapabilities.size() == 6u, "enabled descriptor indexing was rejected");
+    Require(accepted.Target().supportedCapabilities.size() == 6u && accepted.Target().robustBufferAccess2, "enabled descriptor indexing or robustBufferAccess2 was rejected");
 }
 
 void CheckAbi() {

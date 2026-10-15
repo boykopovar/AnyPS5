@@ -107,8 +107,18 @@ void RunGuestLeaseWaitTests() {
     Require(unmapped, "waiting unmap did not resume after the lease was released");
 }
 
+static void descriptorRangeTests() {
+    using AgcDriver::Graphics::GuestBufferMemory;
+    AgcDriver::Graphics::Require(GuestBufferMemory::DescriptorRange(0u) == 0u && GuestBufferMemory::DescriptorRange(4096u) == 4096u, "a descriptor range below the cap changed");
+    AgcDriver::Graphics::Require(GuestBufferMemory::DescriptorRange(0xfffffffbu) == 0xfffffffbu && GuestBufferMemory::DescriptorRange(0xfffffffcu) == 0xfffffffcu, "a descriptor range up to the cap changed");
+    AgcDriver::Graphics::Require(GuestBufferMemory::DescriptorRange(0xfffffffdu) == 0xfffffffcu && GuestBufferMemory::DescriptorRange(0xffffffffu) == 0xfffffffcu, "a descriptor range of almost 4 GiB is not capped below the sentinel's byte offset");
+    AgcDriver::Graphics::Require(GuestBufferMemory::DescriptorRange(0x100000000ull) == 0xfffffffcu && GuestBufferMemory::DescriptorRange(~std::uint64_t{0}) == 0xfffffffcu, "a descriptor range of 4 GiB or more is not capped");
+    AgcDriver::Graphics::Require(GuestBufferMemory::DescriptorRange(GuestBufferMemory::ViewBytes(0xfffffff0u, 3u)) <= GuestBufferMemory::MaxViewRange, "a view rounded up past the cap is not capped");
+}
+
 void RunGuestAllocationTests() {
     leaseSnapshotTests();
+    descriptorRangeTests();
     void* pointer = GuestHeap::GuestHeapAllocate_nid_postfix(32);
     Require(reinterpret_cast<std::uintptr_t>(pointer) % alignof(std::max_align_t) == 0, "guest malloc is not suitably aligned");
     std::memset(pointer, 0x55, 32);
