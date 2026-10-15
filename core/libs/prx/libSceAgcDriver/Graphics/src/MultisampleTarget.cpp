@@ -781,6 +781,57 @@ void ClearMultisampleTargets(VkDevice device) {
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
+std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges) {
+    if (ranges.empty() || !anyGuarded().load(std::memory_order_acquire)) return std::nullopt;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> excluded;
+    {
+        std::shared_lock lock(guardedMutex());
+        for (const auto& range : guarded()) {
+            if (range.device != device || !range.active->load(std::memory_order_acquire)) continue;
+            excluded.emplace_back(range.address, range.address + range.bytes);
+        }
+    }
+    if (excluded.empty()) return std::nullopt;
+    std::sort(excluded.begin(), excluded.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    merged.reserve(excluded.size());
+    for (const auto& range : excluded) {
+        if (!merged.empty() && range.first <= merged.back().second) merged.back().second = std::max(merged.back().second, range.second);
+        else merged.push_back(range);
+    }
+    std::vector<ShaderRecompiler::BdaAbi::Range> filtered;
+    filtered.reserve(ranges.size() + merged.size());
+    bool changed = false;
+    for (const auto& range : ranges) {
+        auto cursor = range.begin;
+        for (const auto& [begin, end] : merged) {
+            if (end <= cursor) continue;
+            if (begin >= range.end) break;
+            const auto cutBegin = std::max(cursor, begin);
+            const auto cutEnd = std::min(range.end, end);
+            if (cutBegin > cursor) {
+                auto part = range;
+                part.begin = cursor;
+                part.end = cutBegin;
+                part.deviceAddress += cursor - range.begin;
+                filtered.push_back(part);
+            }
+            if (cutBegin < cutEnd) {
+                changed = true;
+                cursor = cutEnd;
+            }
+            if (cursor == range.end) break;
+        }
+        if (cursor < range.end) {
+            auto part = range;
+            part.begin = cursor;
+            part.deviceAddress += cursor - range.begin;
+            filtered.push_back(part);
+        }
+    }
+    return changed ? std::optional(std::move(filtered)) : std::nullopt;
+}
+
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
     RequireNoResidentDepthRead_nid_no_patch(address, bytes);
     if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
