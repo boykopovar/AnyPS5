@@ -337,7 +337,8 @@ constexpr std::size_t GuestBytes = std::size_t{MaxArrayLayers} * 2048u + 65536u;
 
 std::vector<std::uint32_t> resolveTable(const Context& context, std::span<const Entry> entries) {
     ShaderRecompiler::RecompileResult program;
-    ShaderRecompiler::DescriptorBinding map;
+    ShaderRecompiler::DescriptorBinding map{};
+    map.descriptorSet = ShaderRecompiler::RuntimeAbi::DescriptorSet;
     map.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
     map.role = ShaderRecompiler::DescriptorRole::ImageTableMap;
     map.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap);
@@ -349,7 +350,8 @@ std::vector<std::uint32_t> resolveTable(const Context& context, std::span<const 
     map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
     map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords + static_cast<std::uint32_t>(entries.size());
     program.bindings.push_back(map);
-    ShaderRecompiler::DescriptorBinding images;
+    ShaderRecompiler::DescriptorBinding images{};
+    images.descriptorSet = ShaderRecompiler::RuntimeAbi::DescriptorSet;
     images.kind = ShaderRecompiler::DescriptorKind::SampledImage;
     images.role = ShaderRecompiler::DescriptorRole::ImageTable;
     images.binding = ShaderRecompiler::RuntimeAbi::ImageTableBinding;
