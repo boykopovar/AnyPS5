@@ -220,6 +220,7 @@ struct GuestContext {
     std::span<const MemoryRegion> memory;
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
+    bool convertedSamples = false;
 };
 
 struct MeshTargetLimits {

@@ -904,6 +904,10 @@ std::uint32_t colorCompareReference(IrBufferFormat format) {
     }
 }
 
+bool convertedSampleCompatible(const ImageResource& image) {
+    return image.resourceClass != ImageResourceClass::Storage && !image.depthCompare && !image.atomic && !image.packed && image.table == NoTable && image.depthBitsCompatible && (image.emulatedCompare & EmulatedCompare::ConvertedSampleUnsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray);
+}
+
 std::uint32_t convertedSampleState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index) {
     const auto& image = info.images[index];
     if (image.srgbDecodeCompatible || image.depthCompare || image.resourceClass == ImageResourceClass::Storage || index >= snapshot.images.size()) return 0u;
@@ -1017,7 +1021,12 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.images.size(); ++i) {
         const auto& image = plan.info.images[i];
         if (image.table != NoTable) continue;
-        static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(i), plan.info.runtimeImageModes.at(i)));
+        const auto& descriptor = snapshot.images.at(i);
+        if (!image.convertedSamples && !image.srgbDecodeCompatible && convertedSampleCompatible(image) && descriptor.dwordCount == 8u && !nullImageDescriptor(image, descriptor)) {
+            const auto format = rawImageFormat(descriptor);
+            if (format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11Float) throw ConvertedSampleRequired("samples a converted image through a shader prepared without converted-sample modes");
+        }
+        static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, plan.info.runtimeImageModes.at(i)));
     }
 }
 
@@ -1342,8 +1351,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             append(IrTextureNumericClass::Uint, IrBufferFormat::Invalid, IrBufferFormat::Invalid, false, false);
             if (!storage) append(IrTextureNumericClass::Sint, IrBufferFormat::Invalid, IrBufferFormat::Invalid, false, false);
             append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UInt, IrBufferFormat::Invalid, false, false);
-            const bool convertedSample = (image.emulatedCompare & EmulatedCompare::ConvertedSampleUnsupported) == 0u && image.table == NoTable && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray);
-            if ((image.srgbDecodeCompatible || (!storage && convertedSample)) && image.depthBitsCompatible) {
+            if ((image.srgbDecodeCompatible || (image.convertedSamples && convertedSampleCompatible(image))) && image.depthBitsCompatible) {
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Invalid, false, false);
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
             }

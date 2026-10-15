@@ -2,6 +2,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -385,6 +387,47 @@ void CheckSample(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, st
     }
 }
 
+void CheckConvertedPreparation(AgcDriver::VulkanDevice& device, const std::uint8_t* texels) {
+    std::vector<std::uint32_t> userData(24, 0u);
+    const auto texture = TextureDescriptor(texels, UnormFormat, SwizzleXYZ1, LoadWidth);
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    std::copy(PointSampler.begin(), PointSampler.end(), userData.begin() + 12);
+    const std::span<const std::uint32_t> code = SampleAt;
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    auto converted = request;
+    converted.context.convertedSamples = true;
+    const auto convertedMode = [](const ShaderRecompiler::ImageResource& mode) { return mode.conversionFormat == ShaderRecompiler::IrBufferFormat::Format11_11_10UNorm || mode.conversionFormat == ShaderRecompiler::IrBufferFormat::Format10_11_11Float; };
+    const auto plain = ShaderRecompiler::GetResourcePlan(request);
+    Require(plain->info.images.size() == 1u && std::ranges::none_of(plain->info.runtimeImageModes.at(0), convertedMode), "a sampled image is prepared with converted-sample modes before a converted descriptor was seen");
+    const auto prepared = ShaderRecompiler::GetResourcePlan(converted);
+    Require(prepared->info.images.size() == 1u && std::ranges::count_if(prepared->info.runtimeImageModes.at(0), convertedMode) == 2, "a sampled image is not prepared with both converted-sample modes once a converted descriptor was seen");
+    const auto handle = ShaderRecompiler::PrepareShader(request);
+    Require(!ShaderRecompiler::PreparedShaderInvocation::TryCreate(converted, handle).has_value(), "an artifact prepared without converted-sample modes matches a request that asks for them");
+    const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, handle);
+    Require(invocation.has_value(), "the prepared artifact does not match its own request");
+    ShaderRecompiler::SrtRuntime runtime;
+    runtime.userData = userData;
+    runtime.shaderBase = request.shader.codeAddress;
+    std::string reason;
+    try {
+        static_cast<void>(invocation->Capture(runtime));
+    } catch (const ShaderRecompiler::ConvertedSampleRequired& error) {
+        reason = error.what();
+    }
+    Require(!reason.empty(), "capturing a converted descriptor through an artifact prepared without converted-sample modes does not ask for them");
+    const auto convertedHandle = ShaderRecompiler::PrepareShader(converted);
+    const auto convertedInvocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(converted, convertedHandle);
+    Require(convertedInvocation.has_value(), "the artifact prepared with converted-sample modes does not match its request");
+    static_cast<void>(convertedInvocation->Capture(runtime));
+}
+
 void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* texels, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& extra, const std::string& reason, const std::string& what, std::uint32_t format = UnormFormat) {
     std::string refusal;
     try {
@@ -422,6 +465,7 @@ int main() {
         CheckSample(*device, texels, SampleAt, SampleStart, UnormFormat, SwizzleZYX1, BilinearSampler, true, false, "bilinear image_sample_lz Z Y X 1");
         CheckSample(*device, texels, SampleWrapped, WrappedStart, UnormFormat, SwizzleX011, WrapPointSampler, false, true, "wrapped point image_sample_lz X 0 1 1");
         CheckSample(*device, texels, SampleWrapped, WrappedStart, UnormFormat, SwizzleXYZ1, WrapBilinearSampler, true, true, "wrapped bilinear image_sample_lz X Y Z 1");
+        CheckConvertedPreparation(*device, texels);
         RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, BorderSampler, "implemented only with wrap or clamp-to-edge addressing", "image_sample_lz with clamp-to-border addressing");
         RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
         RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_get_lod");

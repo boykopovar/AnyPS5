@@ -1347,16 +1347,17 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
     const auto texelIndex = [&](std::uint32_t coordinate, std::uint32_t offset) {
         return Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {coordinate})), offset);
     };
-    const auto f32x4 = TypeF32Vector(state, 4);
+    const auto filteredType = converted ? TypeF32Vector(state, 4) : f32;
     const auto vector = [&](const std::array<std::uint32_t, 4>& channels) {
+        if (!converted) return channels[0];
         const auto value = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeConstruct, f32x4, value, channels[0], channels[1], channels[2], channels[3]);
+        state.module.AddFunction(spv::OpCompositeConstruct, filteredType, value, channels[0], channels[1], channels[2], channels[3]);
         return value;
     };
     const auto mix = [&](std::uint32_t first, std::uint32_t second, std::uint32_t weight) {
-        return ext(f32x4, GLSLstd450FMix, {first, second, vector({weight, weight, weight, weight})});
+        return ext(filteredType, GLSLstd450FMix, {first, second, vector({weight, weight, weight, weight})});
     };
-    const auto filtered = EmitValueIfElse(state, equal(parameter(1u), 0u), f32x4, [&] {
+    const auto filtered = EmitValueIfElse(state, equal(parameter(1u), 0u), filteredType, [&] {
         return vector(compareTexel(texelIndex(scaledU, offsetX), texelIndex(scaledV, offsetY)));
     }, [&] {
         const auto half = f32Constant(0.5f);
@@ -1370,15 +1371,19 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
         const auto y0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, floorV), offsetY);
         const auto x1 = Binary(state, spv::OpIAdd, i32, x0, ConstantI32(state, 1));
         const auto y1 = Binary(state, spv::OpIAdd, i32, y0, ConstantI32(state, 1));
-        const auto top = mix(vector(compareTexel(x0, y0)), vector(compareTexel(x1, y0)), weightU);
-        const auto bottom = mix(vector(compareTexel(x0, y1)), vector(compareTexel(x1, y1)), weightU);
+        const auto topLeft = vector(compareTexel(x0, y0));
+        const auto topRight = vector(compareTexel(x1, y0));
+        const auto top = mix(topLeft, topRight, weightU);
+        const auto bottomLeft = vector(compareTexel(x0, y1));
+        const auto bottomRight = vector(compareTexel(x1, y1));
+        const auto bottom = mix(bottomLeft, bottomRight, weightU);
         return mix(top, bottom, weightV);
     });
     if (converted) {
         ctx.Define(access.inst, ResultVector(ctx, access, filtered, IrTextureNumericClass::Float, false, false));
         return;
     }
-    const auto result = extract(f32, filtered, 0u);
+    const auto result = filtered;
     const auto channelResult = [&](std::uint32_t channel) {
         const auto selector = RuntimeImageSwizzle(state, mem.resource, channel);
         return Select(state, f32, equal(selector, 0u), zero, Select(state, f32, equal(selector, 1u), one, result));
