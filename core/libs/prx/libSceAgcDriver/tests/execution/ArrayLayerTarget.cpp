@@ -83,22 +83,24 @@ std::string Hex(std::uint32_t value) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(std::size_t registeredBytes = SurfaceBytes, std::size_t registeredOffset = 0) : registeredOffset(registeredOffset) {
+    explicit GuestBlock(std::size_t registeredBytes = SurfaceBytes, std::size_t registeredOffset = 0, bool commitAll = true) : registeredOffset(registeredOffset) {
 #ifdef _WIN32
         block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, LayerBytes));
-        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block + (commitAll ? 0 : registeredOffset), commitAll ? SurfaceBytes : registeredBytes, PAGE_READWRITE, commitAll ? SurfaceBytes : registeredBytes);
 #else
-        void* mapped = mmap(nullptr, SurfaceBytes + LayerBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, SurfaceBytes + LayerBytes, commitAll ? PROT_READ | PROT_WRITE : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + LayerBytes - 1) & ~(static_cast<std::uintptr_t>(LayerBytes) - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
             if (aligned + SurfaceBytes != begin + SurfaceBytes + LayerBytes) munmap(reinterpret_cast<void*>(aligned + SurfaceBytes), begin + LayerBytes - aligned);
             block = reinterpret_cast<std::uint8_t*>(aligned);
-            if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, SurfaceBytes);
+            if (!commitAll) Require(mprotect(block + registeredOffset, registeredBytes, PROT_READ | PROT_WRITE) == 0, "cannot commit the active array slice");
+            if (AgcDriver::GuestMemory::WriteWatched()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block + (commitAll ? 0 : registeredOffset), commitAll ? SurfaceBytes : registeredBytes);
         }
 #endif
         Require(block != nullptr, "array layer target: cannot allocate the guest block");
+        if (!commitAll) GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(block), SurfaceBytes);
         GuestAllocations::Mutation().Add(block + registeredOffset, registeredBytes, true, true, true);
     }
 
@@ -385,6 +387,39 @@ void RetiredArrayLayer(AgcDriver::VulkanDevice& device) {
     Require(untouched, "CPU write-back stored results over a retired allocation");
 }
 
+void UncommittedUnusedLayers(AgcDriver::VulkanDevice& device, std::uint32_t slice) {
+    GuestBlock block(LayerBytes, slice * LayerBytes, false);
+    const auto surface = AddressOf(block.Data());
+    const auto active = surface + slice * LayerBytes;
+    auto* texels = reinterpret_cast<std::uint32_t*>(active);
+    std::fill_n(texels, LayerBytes / sizeof(std::uint32_t), Initial);
+    Require(AgcDriver::GuestMemory::CollectWrites(active, LayerBytes) != 0, "the committed array slice has no write history");
+    Require(AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes) == 0, "the unused array slices unexpectedly have complete write history");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    DrawSlice(device, surface, slice, TileR64KBX, false);
+    const auto pending = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(pending != nullptr, "the committed array slice has no pending draw results");
+    Require(pending->GenerationFor(active, LayerBytes) != 0, "an uncommitted unused slice erased the active slice's write history");
+    const auto version = pending->Version();
+    for (unsigned repeat = 0; repeat < 3; ++repeat) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(pending->RefreshLayers(slice, 1), "an unchanged committed slice was uploaded again");
+        Require(pending->GenerationFor(active, LayerBytes) != 0 && pending->Version() == version, "repeated refresh erased the committed slice's write history");
+        Require(StorageTexture::FindPending(surface, SurfaceBytes) == pending, "refresh settled unchanged GPU results for an uncommitted unused slice");
+    }
+    const auto cpu = std::bit_cast<std::uint32_t>(0.125f);
+    std::fill_n(texels, LayerBytes / sizeof(std::uint32_t), cpu);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!pending->RefreshLayers(slice, 1), "the active array slice ignored a genuine CPU write");
+    LoadLayer(device, surface, slice, TileR64KBX);
+    RequireOutput(cpu, cpu, "a committed array slice after a genuine CPU write");
+    DrawSlice(device, surface, slice, TileR64KBX, false);
+    StorageTexture::FlushPending(active, LayerBytes, nullptr, "test");
+    device.WaitIdle();
+    Require(std::count(texels, texels + LayerBytes / sizeof(std::uint32_t), std::bit_cast<std::uint32_t>(Drawn)) == ScissorWidth * Side, "write-back lost results in the committed array slice");
+    AgcDriver::Graphics::ClearCachedTextures(device.Device());
+}
+
 void OverlappingArrays(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t swizzleMode, bool cpuWrite) {
     const auto surface = AddressOf(texels);
     const auto next = surface + LayerBytes;
@@ -432,6 +467,8 @@ int main() {
         UnregisteredUnusedLayer(*device, 0u);
         UnregisteredUnusedLayer(*device, Layers - 1u);
         RetiredArrayLayer(*device);
+        UncommittedUnusedLayers(*device, 0u);
+        UncommittedUnusedLayers(*device, Layers - 1u);
         std::puts("array layer target tests passed");
         return 0;
     } catch (const std::exception& error) {
