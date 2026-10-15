@@ -60,6 +60,17 @@ int main() {
         coverage.Exclude(base, block, 7);
         require(!coverage.Restore(base, block, 6) && !coverage.Covers(base, block), "a delayed mapping notification erased a repeated import");
         require(coverage.Restore(base, block, 8), "a fresh replacement did not restore the latest import exclusion");
+        coverage.Initialize(base, 2 * block);
+        coverage.Exclude(base, block, 10);
+        require(coverage.Restore(base + 16384, 16384, 11), "a fresh partial-block private mapping stayed excluded");
+        require(coverage.Covers(base + 16384, 16384), "the restored private pages are not watched");
+        require(!coverage.Covers(base, 16384) && !coverage.Covers(base + 32768, 32768), "restoring private pages watched an imported neighbour");
+        require(!coverage.Covers(base + 16383, 2) && !coverage.Covers(base + 32767, 2), "a boundary query included excluded pages");
+        require(!coverage.Restore(base + 32768, 4096, 10), "a stale partial mapping restored an exclusion");
+        coverage.Exclude(base + 4096, 1, 12);
+        require(!coverage.Covers(base + 16384, 16384), "a repeated import kept partial coverage from an older mapping");
+        require(!coverage.Restore(base + 16384, 16384, 11), "a delayed partial mapping restored a newer import");
+        require(coverage.Restore(base + 16384, 16384, 13), "fresh partial coverage was not restored after re-import");
         std::cout << "write watch coverage passed\n";
         return 0;
     } catch (const std::exception& error) {
