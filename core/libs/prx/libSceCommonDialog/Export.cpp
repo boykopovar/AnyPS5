@@ -20,4 +20,8 @@ bool APS5_VABI sceCommonDialogIsUsed(void) {
  return false;
 }
 
+bool APS5_VABI sceCommonDialogIs(void) {
+ return false;
+}
+
 }

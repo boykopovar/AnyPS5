@@ -77,4 +77,15 @@ int APS5_VABI scePlayGoDialogGetStatus(void) {
     return g_status.load();
 }
 
+int APS5_VABI scePlayGoDialog(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePlayGoDialogParamInitialize(void* param) {
+    if (!param) return ERROR_PARAM_INVALID;
+    std::memset(param, 0, 0x80);
+    return 0;
+}
+
 }

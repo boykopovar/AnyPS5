@@ -37,4 +37,12 @@ int APS5_VABI sceNpBandwidthTestShutdown(int context_id, void* result) {
     return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
 
+int APS5_VABI sceNpUtilityInit(void) {
+    return 0;
+}
+
+int APS5_VABI sceNpUtilityTerm(void) {
+    return 0;
+}
+
 }

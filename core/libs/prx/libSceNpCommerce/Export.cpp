@@ -84,4 +84,25 @@ int APS5_VABI sceNpCommerceDialogOpen2(void) {
  return 0;
 }
 
+int APS5_VABI sceNpCommerceDialog(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceNpCommerceDialogInitializeInternal(void) {
+ return sceNpCommerceDialogInitialize();
+}
+
+int APS5_VABI sceNpCommerceDialogParamInitialize(void* param) {
+ if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+ std::memset(param, 0, 0x80);
+ return 0;
+}
+
+int APS5_VABI sceNpCommerceDialogParamInitialize2(void* param) {
+ if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+ std::memset(param, 0, 0x80);
+ return 0;
+}
+
 }

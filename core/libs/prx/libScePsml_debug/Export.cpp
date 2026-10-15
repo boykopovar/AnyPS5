@@ -280,4 +280,24 @@ int APS5_VABI scePsmlMfsrEnableQuality8K() {
     return 0;
 }
 
+int APS5_VABI scePsmlBcSisrGetInternalBufferRequirement(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlBcSisrGetPacketSizeInDwords(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlBcSisrInit(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePsmlMfsrEnableLightWeight(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

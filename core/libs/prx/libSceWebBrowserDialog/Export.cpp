@@ -86,4 +86,30 @@ int APS5_VABI sceWebBrowserDialogResetCookie() {
     return 0;
 }
 
+int APS5_VABI sceWebBrowserDialog(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceWebBrowserDialogGetEvent(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceWebBrowserDialogNavigate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceWebBrowserDialogParamInitialize(void* param) {
+    if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
+    std::memset(param, 0, 0x80);
+    return 0;
+}
+
+int APS5_VABI sceWebBrowserDialogSetZoom(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

@@ -191,4 +191,36 @@ int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList() {
     return SCE_NP_ERROR_SIGNED_OUT;
 }
 
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoListIndividual(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessPoll(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessRequest(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessRequestConsumableEntitlementInfo(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessRequestConsume(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
+int APS5_VABI sceNpEntitlementAccessRequestConsumeEntitlement(void) {
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+
 }
