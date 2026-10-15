@@ -23,7 +23,11 @@ public:
         if (bytes == 0 || bytes > size || address < base || address - base > size - bytes) return false;
         const auto first = (address - base) / BlockBytes;
         const auto last = (address - base + bytes - 1) / BlockBytes;
-        return std::none_of(excluded.begin() + first, excluded.begin() + last + 1, [](auto generation) { return generation != 0; });
+        const auto firstPage = (address - base) % BlockBytes / PageBytes;
+        const auto lastPage = (address - base + bytes - 1) % BlockBytes / PageBytes;
+        if (first == last) return (excluded[first] & pageMask(firstPage, lastPage + 1)) == 0;
+        if ((excluded[first] & pageMask(firstPage, PagesPerBlock)) != 0 || (excluded[last] & pageMask(0, lastPage + 1)) != 0) return false;
+        return std::none_of(excluded.begin() + first + 1, excluded.begin() + last, [](auto mask) { return mask != 0; });
     }
 
     bool ExcludedSpan(std::uint64_t address, std::size_t bytes, std::uint64_t* begin, std::uint64_t* end) const {
@@ -40,10 +44,12 @@ public:
         if (!excludedBlocks(address, bytes, first, last)) return false;
         bool changed = false;
         for (auto block = first; block <= last; ++block) {
-            changed = changed || excluded[block] == 0;
+            const auto pages = (std::min<std::uint64_t>(BlockBytes, size - block * BlockBytes) + PageBytes - 1) / PageBytes;
+            const auto mask = pageMask(0, pages);
+            changed = changed || excluded[block] != mask;
             auto& stamp = excludedGenerations[block];
             stamp = std::max(stamp, std::max<std::uint64_t>(generation, 1));
-            excluded[block] = 1;
+            excluded[block] = mask;
         }
         return changed;
     }
@@ -58,21 +64,28 @@ public:
         const auto offset = address - base;
         if (offset >= size) return false;
         bytes = static_cast<std::size_t>(std::min<std::uint64_t>(bytes, size - offset));
-        const auto first = offset / BlockBytes + (offset % BlockBytes != 0);
+        const auto firstPage = offset / PageBytes + (offset % PageBytes != 0);
         const auto stop = offset + bytes;
-        const auto end = stop / BlockBytes + (stop == size && stop % BlockBytes != 0);
+        const auto endPage = stop / PageBytes + (stop == size && stop % PageBytes != 0);
+        if (firstPage >= endPage) return false;
+        const auto first = firstPage / PagesPerBlock;
+        const auto last = (endPage - 1) / PagesPerBlock;
         bool changed = false;
-        for (auto block = first; block < end; ++block) {
-            if (excluded[block] != 0 && excludedGenerations.at(block) < generation) {
+        for (auto block = first; block <= last; ++block) {
+            const auto mask = pageMask(block == first ? firstPage % PagesPerBlock : 0, block == last ? (endPage - 1) % PagesPerBlock + 1 : PagesPerBlock);
+            if ((excluded[block] & mask) != 0 && excludedGenerations.at(block) < generation) {
                 changed = true;
-                excluded[block] = 0;
-                excludedGenerations.erase(block);
+                excluded[block] &= static_cast<std::uint16_t>(~mask);
+                if (excluded[block] == 0) excludedGenerations.erase(block);
             }
         }
         return changed;
     }
 
 private:
+    static std::uint16_t pageMask(std::size_t first, std::size_t end) {
+        return static_cast<std::uint16_t>(((1u << end) - 1u) & ~((1u << first) - 1u));
+    }
     bool excludedBlocks(std::uint64_t address, std::size_t bytes, std::size_t& first, std::size_t& last) const {
         if (bytes == 0 || size == 0) return false;
         if (address < base) {
@@ -88,9 +101,11 @@ private:
         return true;
     }
     static constexpr std::size_t BlockBytes = 65536;
+    static constexpr std::size_t PageBytes = 4096;
+    static constexpr std::size_t PagesPerBlock = BlockBytes / PageBytes;
     std::uint64_t base = 0;
     std::size_t size = 0;
-    std::vector<std::uint8_t> excluded;
+    std::vector<std::uint16_t> excluded;
     std::unordered_map<std::uint64_t, std::uint64_t> excludedGenerations;
 };
 
