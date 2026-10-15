@@ -10,6 +10,7 @@
 #include <io/FileWriter.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <codegen/CodegenException.hpp>
+#include <relinker/patching/GamePatch.hpp>
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
@@ -32,9 +33,10 @@ struct ConvertedExecutable {
     std::vector<Relinker::GuestArtifact> GuestArtifacts;
     std::vector<std::uint8_t> Bytes;
     std::string Diagnostics;
+    std::vector<Relinker::GamePatch::AppliedPatch> AppliedPatches;
 };
 
-ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, Cli::ConsoleProgress& progress) {
+ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath, const std::string& absPath, const bool mainExecutable, const std::string& targetName, const std::vector<Relinker::GamePatch::PatchEntry>& patches, Cli::ConsoleProgress& progress) {
     Io::FileReader fileReader;
     Relinker::ConversionInput input;
     input.Executable = fileReader.Read(inputPath);
@@ -63,11 +65,13 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.WindowsDiagnostics = args.windowsDiagnostics && mainExecutable;
     options.LinuxFixedBase = args.linuxFixedBase;
     options.ExcludedModules = args.excludedSceModules;
+    options.Patches = patches;
+    options.TargetName = targetName;
     progress.IncludeFile(Io::Utf8Path(input.InputPath));
     progress.IncludeFile(Io::Utf8Path(input.OutputPath));
     for (const auto& module : input.Modules) progress.IncludeFile(Io::Utf8Path(module.Path));
     auto converted = Relinker::Conversion(progress).Convert(std::move(input), options);
-    return {inputPath, absPath, std::move(converted.Analysis), std::move(converted.Modules), std::move(converted.Executable), std::move(converted.WindowsDiagnostics)};
+    return {inputPath, absPath, std::move(converted.Analysis), std::move(converted.Modules), std::move(converted.Executable), std::move(converted.WindowsDiagnostics), std::move(converted.AppliedPatches)};
 }
 
 #ifdef _WIN32
@@ -164,6 +168,93 @@ bool SameOutputDestination(const std::filesystem::path& first, const std::filesy
     return false;
 }
 
+std::string ReadText(const std::string& path) {
+    const auto bytes = Io::FileReader().Read(path);
+    return std::string(bytes.begin(), bytes.end());
+}
+
+std::filesystem::path ExecutableRelative(const std::string& executable) {
+    const auto relative = Io::NativePath(executable).lexically_normal();
+    if (relative.empty() || relative.has_root_path() || *relative.begin() == ".." || !relative.has_filename())
+        throw Domain::RelinkerException("--executable must be a file inside the guest module parent directory: " + executable);
+    return relative;
+}
+
+std::vector<std::filesystem::path> ModuleDirectories(const Cli::Args& args, const std::filesystem::path& moduleRoot) {
+    std::vector<std::filesystem::path> moduleDirectories;
+    for (const auto* name : {"sce_module", "sce_modules", "prx"}) moduleDirectories.push_back(moduleRoot / name);
+    for (const auto& name : args.moduleDirectories) moduleDirectories.push_back((moduleRoot / Io::NativePath(name)).lexically_normal());
+    for (auto& directory : moduleDirectories) if (!directory.has_filename()) directory = directory.parent_path();
+    return moduleDirectories;
+}
+
+std::filesystem::path ResolveExtraExecutable(const std::filesystem::path& moduleRoot, const std::vector<std::filesystem::path>& moduleDirectories, const std::filesystem::path& relative, const std::string& executable) {
+    const auto input = moduleRoot / relative;
+    if (!std::filesystem::is_regular_file(input)) throw Domain::RelinkerException("--executable is not a file: " + Io::Utf8Path(input));
+    if (std::any_of(moduleDirectories.begin(), moduleDirectories.end(), [&](const auto& directory) { return Cli::SameDirectory(directory, input.parent_path()); }))
+        throw Domain::RelinkerException("--executable is in a guest module directory: " + executable);
+    return input;
+}
+
+std::vector<Relinker::GamePatch::PatchEntry> LoadPatches(const Cli::Args& args) {
+    if (args.noPatches) return {};
+    std::filesystem::path path;
+    if (!args.patchesPath.empty()) {
+        path = Io::NativePath(args.patchesPath);
+        if (!std::filesystem::is_regular_file(path)) throw Domain::RelinkerException("Patch file not found: " + args.patchesPath);
+    } else {
+        path = Io::NativePath(args.inputPath).parent_path() / Relinker::GamePatch::PatchFileName;
+        if (!std::filesystem::is_regular_file(path)) return {};
+    }
+    std::cout << "Patches: " << Io::Utf8Path(path) << '\n';
+    return Relinker::GamePatch::ParsePatchFile(ReadText(Io::Utf8Path(path))).Entries;
+}
+
+int RunVerifyPatches(const Cli::Args& args) {
+    using namespace Relinker::GamePatch;
+    const auto file = ParsePatchFile(ReadText(args.verifyPatchesPath));
+    Io::FileReader reader;
+    std::vector<VerifyTarget> executables;
+    std::vector<VerifyTarget> modules;
+    const auto inputPath = Io::NativePath(args.inputPath);
+    if (!std::filesystem::is_regular_file(inputPath))
+        throw Domain::RelinkerException((args.verifyOutput ? "output not found: " : "input not found: ") + args.inputPath);
+    if (args.verifyOutput) {
+        executables.push_back({file.MainTarget.value_or(std::string()), reader.Read(args.inputPath)});
+        for (const auto& executable : args.executables) {
+            const auto relative = ExecutableRelative(executable);
+            const auto output = OutputExecutablePath(inputPath, executable);
+            if (!std::filesystem::is_regular_file(output)) throw Domain::RelinkerException("output not found: " + Io::Utf8Path(output));
+            executables.push_back({relative.generic_string(), reader.Read(Io::Utf8Path(output))});
+        }
+    } else {
+        executables.push_back({Io::Utf8Path(inputPath.filename()), reader.Read(args.inputPath)});
+        std::filesystem::path moduleRoot = args.executables.empty() ? std::filesystem::path() : std::filesystem::absolute(Io::NativePath(args.sceModulePath)).lexically_normal();
+        if (!args.skipSceModule) {
+            auto native = Cli::ReadModules(std::filesystem::absolute(inputPath).lexically_normal(), Io::NativePath(args.sceModulePath), args.excludedSceModules, args.moduleDirectories);
+            for (auto& module : native.Modules) modules.push_back({ModuleTargetName(module.Path, native.Root), std::move(module.Bytes)});
+        }
+        const auto moduleDirectories = ModuleDirectories(args, moduleRoot);
+        for (const auto& executable : args.executables) {
+            const auto relative = ExecutableRelative(executable);
+            const auto input = ResolveExtraExecutable(moduleRoot, moduleDirectories, relative, executable);
+            executables.push_back({relative.generic_string(), reader.Read(Io::Utf8Path(input))});
+        }
+    }
+    const auto results = VerifyPatches(file, executables, modules, args.verifyOutput);
+    std::size_t mismatches = 0;
+    std::size_t notChecked = 0;
+    for (const auto& result : results) {
+        std::cout << StatusName(result.Status) << ": " << (result.Name.empty() ? std::string() : result.Name + " ") << result.Target << " va=0x" << std::hex << result.VirtualAddress;
+        if (result.Status != VerifyStatus::NotChecked) std::cout << " off=0x" << result.Offset;
+        std::cout << std::dec << ' ' << (result.Status == VerifyStatus::NotChecked ? "(" + result.Detail + ")" : result.Detail) << '\n';
+        if (result.Status == VerifyStatus::Mismatch) ++mismatches;
+        if (result.Status == VerifyStatus::NotChecked) ++notChecked;
+    }
+    std::cout << "Verified " << results.size() << " patches: " << results.size() - mismatches - notChecked << " ok, " << notChecked << " not-checked, " << mismatches << " mismatch\n";
+    return mismatches == 0 ? 0 : 1;
+}
+
 int Run(const int argc, char* argv[]) {
     Cli::Args args;
     try {
@@ -180,6 +271,7 @@ int Run(const int argc, char* argv[]) {
 
     Cli::ConsoleProgress progress(std::cout);
     try {
+        if (!args.verifyPatchesPath.empty()) return RunVerifyPatches(args);
         auto extension = Io::Utf8Path(Io::NativePath(args.outputPath).extension());
         for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
         if (!args.toWindows && !args.toMacos && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
@@ -200,21 +292,11 @@ int Run(const int argc, char* argv[]) {
         std::vector<ExtraExecutable> extraExecutables;
         const auto outputDirectory = Io::NativePath(absPath).parent_path();
         const auto moduleRoot = args.executables.empty() ? std::filesystem::path() : std::filesystem::absolute(Io::NativePath(args.sceModulePath)).lexically_normal();
-        std::vector<std::filesystem::path> moduleDirectories;
-        for (const auto* name : {"sce_module", "sce_modules", "prx"}) moduleDirectories.push_back(moduleRoot / name);
-        for (const auto& name : args.moduleDirectories) moduleDirectories.push_back((moduleRoot / Io::NativePath(name)).lexically_normal());
-        for (auto& directory : moduleDirectories) if (!directory.has_filename()) directory = directory.parent_path();
+        const auto moduleDirectories = ModuleDirectories(args, moduleRoot);
         for (const auto& executable : args.executables) {
-            const auto relative = Io::NativePath(executable).lexically_normal();
-            if (relative.empty() || relative.has_root_path() || *relative.begin() == ".." || !relative.has_filename())
-                throw Domain::RelinkerException("--executable must be a file inside the guest module parent directory: " + executable);
-            const auto input = moduleRoot / relative;
-            if (!std::filesystem::is_regular_file(input)) throw Domain::RelinkerException("--executable is not a file: " + Io::Utf8Path(input));
-            if (std::any_of(moduleDirectories.begin(), moduleDirectories.end(), [&](const auto& directory) { return Cli::SameDirectory(directory, input.parent_path()); }))
-                throw Domain::RelinkerException("--executable is in a guest module directory: " + executable);
-            std::string name;
-            for (const auto& part : relative) name += (name.empty() ? "" : ".") + Io::Utf8Path(part);
-            const auto output = outputDirectory / Io::NativePath(name + Io::Utf8Path(Io::NativePath(absPath).extension()));
+            const auto relative = ExecutableRelative(executable);
+            const auto input = ResolveExtraExecutable(moduleRoot, moduleDirectories, relative, executable);
+            const auto output = Relinker::GamePatch::OutputExecutablePath(Io::NativePath(absPath), executable);
             if (std::filesystem::equivalent(Io::NativePath(args.inputPath), input)) throw Domain::RelinkerException("Executable is converted twice: " + executable);
             if (output.lexically_normal() == Io::NativePath(absPath).lexically_normal()) throw Domain::RelinkerException("Executable outputs collide: " + Io::Utf8Path(output));
             for (const auto& extra : extraExecutables) {
@@ -224,6 +306,8 @@ int Run(const int argc, char* argv[]) {
             extraExecutables.push_back({executable, relative, input, output});
         }
 
+        const auto patches = LoadPatches(args);
+        const std::string mainTarget = Io::Utf8Path(Io::NativePath(args.inputPath).filename());
         progress.IncludeFile(args.inputPath);
         progress.IncludeFile(absPath);
         for (const auto& extra : extraExecutables) {
@@ -231,10 +315,10 @@ int Run(const int argc, char* argv[]) {
             progress.IncludeFile(Io::Utf8Path(extra.Output));
         }
         std::vector<ConvertedExecutable> executables;
-        executables.push_back(Convert(args, args.inputPath, absPath, true, progress));
+        executables.push_back(Convert(args, args.inputPath, absPath, true, mainTarget, patches, progress));
         for (const auto& [executable, relative, input, output] : extraExecutables) {
             std::cout << "Executable: " << relative.generic_string() << '\n';
-            auto converted = Convert(args, Io::Utf8Path(input), Io::Utf8Path(output), false, progress);
+            auto converted = Convert(args, Io::Utf8Path(input), Io::Utf8Path(output), false, relative.generic_string(), patches, progress);
             const auto& mainArtifacts = executables.front().GuestArtifacts;
             const bool shared = converted.GuestArtifacts.size() == mainArtifacts.size() && std::equal(mainArtifacts.begin(), mainArtifacts.end(), converted.GuestArtifacts.begin(), [](const auto& left, const auto& right) {
                 return left.Path == right.Path && left.Bytes == right.Bytes;
@@ -243,6 +327,23 @@ int Run(const int argc, char* argv[]) {
             executables.push_back(std::move(converted));
         }
         const auto& guestArtifacts = executables.front().GuestArtifacts;
+        if (!patches.empty()) {
+            std::vector<std::string> targetNames{mainTarget};
+            for (const auto& extra : extraExecutables) targetNames.push_back(extra.Relative.generic_string());
+            if (!guestArtifacts.empty()) {
+                const auto patchModuleRoot = std::filesystem::absolute(Io::NativePath(args.sceModulePath)).lexically_normal();
+                for (const auto& artifact : guestArtifacts) targetNames.push_back(Relinker::GamePatch::ModuleTargetName(artifact.SourcePath, patchModuleRoot));
+            }
+            Relinker::GamePatch::MatchTargets(patches, targetNames);
+        }
+        std::vector<std::vector<Relinker::GamePatch::AppliedPatch>> appliedRecords;
+        for (const auto& executable : executables) appliedRecords.push_back(executable.AppliedPatches);
+        const auto appliedPatches = Relinker::GamePatch::AggregateManifest(appliedRecords);
+        const auto patchFile = args.patchesPath.empty() ? Io::NativePath(args.inputPath).parent_path() / Relinker::GamePatch::PatchFileName : Io::NativePath(args.patchesPath);
+        std::filesystem::path manifestPath;
+        std::string manifestText;
+        if (!appliedPatches.empty()) manifestPath = Io::NativePath(absPath).parent_path() / Io::NativePath(Io::Utf8Path(Io::NativePath(absPath).stem()) + Relinker::GamePatch::ManifestSuffix);
+        if (!manifestPath.empty()) manifestText = Relinker::GamePatch::WriteManifest(appliedPatches, mainTarget, Io::Utf8Path(patchFile));
 
         const Elfpatcher::Linux::LinuxDesktopEntryWriter desktopEntryWriter;
         const auto desktopEntry = args.toWindows || args.toMacos ? std::nullopt : desktopEntryWriter.Prepare(Io::NativePath(args.inputPath).parent_path() / "sce_sys", Io::NativePath(absPath));
@@ -284,12 +385,18 @@ int Run(const int argc, char* argv[]) {
         }
 
         checkOutputInputs(Io::NativePath(absPath), "Executable");
+        if (!manifestPath.empty()) {
+            checkOutputInputs(manifestPath, "Patch manifest");
+            if (std::filesystem::exists(manifestPath) && std::filesystem::exists(patchFile) && std::filesystem::equivalent(manifestPath, patchFile))
+                throw Domain::RelinkerException("Patch manifest output would overwrite the patch file: " + Io::Utf8Path(manifestPath));
+        }
         for (const auto& artifact : guestArtifacts) checkOutputInputs(artifact.Path, "Guest module");
 
         std::vector<std::filesystem::path> outputPaths;
         for (const auto& executable : executables) outputPaths.push_back(Io::NativePath(executable.OutputPath));
         for (const auto& artifact : guestArtifacts) outputPaths.push_back(artifact.Path);
         outputPaths.insert(outputPaths.end(), registryPaths.begin(), registryPaths.end());
+        if (!manifestPath.empty()) outputPaths.push_back(manifestPath);
         if (desktopEntry) {
             outputPaths.push_back(desktopEntry->IconPath);
             outputPaths.push_back(desktopEntry->EntryPath);
@@ -333,7 +440,9 @@ int Run(const int argc, char* argv[]) {
                 fileWriter.Write(Io::Utf8Path(neededPaths[executables.size() + index]), registryWriter->WriteNeededLibraries(guestArtifacts[index].NeededLibraries));
             }
         }
+        if (!manifestPath.empty()) fileWriter.Write(Io::Utf8Path(manifestPath), manifestText);
         progress.Finish();
+        if (!manifestPath.empty()) std::cout << "Patch manifest: " << Io::Utf8Path(manifestPath) << '\n';
         if (desktopEntry) std::cout << "Desktop entry: " << Io::Utf8Path(desktopEntryWriter.Write(*desktopEntry)) << '\n';
         std::cout << "\nConversion complete\n"
                   << "Output file: " << absPath << '\n'

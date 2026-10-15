@@ -5,14 +5,34 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
+#include <iterator>
 #include <string_view>
 #include <system_error>
 
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] [--patches <file> | --no-patches] <input.elf> <output.elf>\n"
+           "       relinker --verify-patches <file> [--verify-output] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... <path>\n"
            "Example: relinker input.elf output.elf";
+}
+
+namespace {
+
+constexpr std::string_view kVerifyRejectedOptions[] = {
+    "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base",
+    "--to-intel", "--to-rosetta", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
+    "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
+};
+
+constexpr std::string_view kModuleDiscoveryOptions[] = {"--sce-module-path", "--module-dir", "--exclude-sce-module", "--skip-sce-module"};
+
+template<std::size_t Count>
+bool IsOneOf(const std::string& option, const std::string_view (&names)[Count]) {
+    return std::find(std::begin(names), std::end(names), option) != std::end(names);
+}
+
 }
 
 static std::uint64_t ParseLinuxFixedBase(std::string_view value) {
@@ -32,9 +52,12 @@ Args ParseArgs(int argc, char* argv[]) {
     Args args;
     bool unusedFilterSpecified = false;
     bool sceModulePathSpecified = false;
+    std::vector<std::string> givenOptions;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg.rfind("--", 0) == 0) givenOptions.push_back(arg);
+        else if (arg.rfind("unused-filter=", 0) == 0) givenOptions.push_back("unused-filter=");
         if (arg == "--help") {
             args.showHelp = true;
         } else if (arg == "--windows-fixed-base") {
@@ -87,6 +110,18 @@ Args ParseArgs(int argc, char* argv[]) {
                 throw std::runtime_error("unused-filter must be specified once with a value of 0, 1 or 2");
             args.unusedFilterLevel = static_cast<std::uint32_t>(value[0] - '0');
             unusedFilterSpecified = true;
+        } else if (arg == "--patches") {
+            if (!args.patchesPath.empty()) throw std::runtime_error("--patches cannot be repeated");
+            if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--")) throw std::runtime_error("--patches requires a file");
+            args.patchesPath = argv[++i];
+        } else if (arg == "--no-patches") {
+            args.noPatches = true;
+        } else if (arg == "--verify-patches") {
+            if (!args.verifyPatchesPath.empty()) throw std::runtime_error("--verify-patches cannot be repeated");
+            if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--")) throw std::runtime_error("--verify-patches requires a file");
+            args.verifyPatchesPath = argv[++i];
+        } else if (arg == "--verify-output") {
+            args.verifyOutput = true;
         } else if (arg == "--registry") {
             args.writeRegistry = true;
         } else if (arg == "--rpath") {
@@ -118,6 +153,19 @@ Args ParseArgs(int argc, char* argv[]) {
         } else {
             throw std::runtime_error("unexpected argument: " + arg);
         }
+    }
+
+    const bool verifying = !args.verifyPatchesPath.empty();
+    if (args.verifyOutput && !verifying) throw std::runtime_error("--verify-output requires --verify-patches");
+    if (!args.patchesPath.empty() && args.noPatches) throw std::runtime_error("--patches conflicts with --no-patches");
+    if (verifying) {
+        for (const auto& option : givenOptions) {
+            if (IsOneOf(option, kVerifyRejectedOptions))
+                throw std::runtime_error(option + " cannot be used with --verify-patches");
+            if (args.verifyOutput && IsOneOf(option, kModuleDiscoveryOptions))
+                throw std::runtime_error("module discovery options have no effect with --verify-output");
+        }
+        if (!args.outputPath.empty()) throw std::runtime_error("unexpected argument: " + args.outputPath);
     }
 
     if (args.skipSceModule && sceModulePathSpecified) throw std::runtime_error("--sce-module-path conflicts with --skip-sce-module");
@@ -154,11 +202,11 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.linuxFixedBase && args.lazyBinding)
         throw std::runtime_error("--linux-fixed-base conflicts with --lazy-binding");
 
-    if (!args.showHelp && (args.inputPath.empty() || args.outputPath.empty()))
+    if (!args.showHelp && (args.inputPath.empty() || (!verifying && args.outputPath.empty())))
         throw std::runtime_error(Usage());
 
 
-    if (!sceModulePathSpecified && !args.skipSceModule && !args.inputPath.empty()) args.sceModulePath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.inputPath)).parent_path());
+    if (!sceModulePathSpecified && !args.skipSceModule && !args.inputPath.empty() && !args.verifyOutput) args.sceModulePath = Io::Utf8Path(std::filesystem::absolute(Io::NativePath(args.inputPath)).parent_path());
 
     return args;
 }

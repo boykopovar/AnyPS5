@@ -278,6 +278,43 @@ void targetSelection() {
     expectThrows({"--to-rosetta", "--windows", "input.elf", "output.elf"}, rosettaConflict);
 }
 
+void patchOptions() {
+    auto args = parse({"--patches", "p.toml", "in.elf", "out.elf"});
+    require(args.patchesPath == "p.toml" && !args.noPatches, "--patches value");
+    args = parse({"--no-patches", "in.elf", "out.elf"});
+    require(args.noPatches && args.patchesPath.empty(), "--no-patches");
+    expectThrows({"--patches", "p.toml", "--no-patches", "in.elf", "out.elf"}, "--patches conflicts with --no-patches");
+    expectThrows({"--patches", "p.toml", "--patches", "q.toml", "in.elf", "out.elf"}, "--patches cannot be repeated");
+    expectThrows({"in.elf", "out.elf", "--patches"}, "--patches requires a file");
+}
+
+void verifyMode() {
+    auto args = parse({"--verify-patches", "p.toml", "in.elf"});
+    require(args.verifyPatchesPath == "p.toml" && args.inputPath == "in.elf" && args.outputPath.empty() && !args.verifyOutput, "verify positional");
+    require(!args.sceModulePath.empty(), "input mode keeps the default module path");
+    args = parse({"in.elf", "--verify-patches", "p.toml", "--sce-module-path", "m", "--module-dir", "d", "--exclude-sce-module", "x.prx", "--executable", "a/b.bin"});
+    require(args.sceModulePath == "m" && args.executables.size() == 1, "input mode options");
+    args = parse({"--verify-patches", "p.toml", "--skip-sce-module", "in.elf"});
+    require(args.skipSceModule, "input mode --skip-sce-module");
+    args = parse({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--executable", "a/b.bin"});
+    require(args.verifyOutput && args.sceModulePath.empty() && args.executables.size() == 1, "output mode accepts --executable");
+    const std::string noEffect = "module discovery options have no effect with --verify-output";
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--sce-module-path", "m"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--module-dir", "d"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--exclude-sce-module", "x.prx"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--skip-sce-module"}, noEffect);
+    expectThrows({"--verify-patches", "p.toml", "in.elf", "extra"}, "unexpected argument: extra");
+    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
+        expectThrows({"--verify-patches", "p.toml", option, "in.elf"}, std::string(option) + " cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--rpath", "x", "in.elf"}, "--rpath cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "unused-filter=1", "in.elf"}, "unused-filter= cannot be used with --verify-patches");
+    expectThrows({"--verify-patches", "p.toml", "--linux-fixed-base", "0x10000", "in.elf"}, "--linux-fixed-base cannot be used with --verify-patches");
+    expectThrows({"--verify-output", "in.elf", "out.elf"}, "--verify-output requires --verify-patches");
+    expectThrows({"--verify-patches"}, "--verify-patches requires a file");
+    expectUsage({"--verify-patches", "p.toml"});
+}
+
 int main() {
     try {
         defaults();
@@ -308,6 +345,8 @@ int main() {
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();
+        patchOptions();
+        verifyMode();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
