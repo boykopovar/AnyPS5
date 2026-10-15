@@ -287,33 +287,24 @@ void RequireSampledImageWithinDeviceLimits(const Context& context, const GuestTe
     const bool cube = descriptor.dimension == TextureDimension::kCube;
     const VkImageCreateFlags flags = (cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (SrgbTwinFormat(context, format) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
     const VkExtent3D extent{descriptor.width, descriptor.height, geometry.imageDepth};
-    const auto& device = context.limits;
-    const auto deviceExtent = type == VK_IMAGE_TYPE_1D ? device.maxImageDimension1D : type == VK_IMAGE_TYPE_3D ? device.maxImageDimension3D : cube ? device.maxImageDimensionCube : device.maxImageDimension2D;
-    VkExtent3D maxExtent{deviceExtent, type == VK_IMAGE_TYPE_1D ? 1u : deviceExtent, type == VK_IMAGE_TYPE_3D ? deviceExtent : 1u};
-    std::uint32_t maxLayers = device.maxImageArrayLayers;
-    std::optional<VkDeviceSize> maxBytes;
-    const char* source = "VkPhysicalDeviceLimits";
-    if (const auto supported = sampledImageFormatLimits(context, format, type, flags)) {
-        maxExtent = supported->maxExtent;
-        maxLayers = supported->maxArrayLayers;
-        maxBytes = supported->maxResourceSize;
-        source = "vkGetPhysicalDeviceImageFormatProperties";
-    }
+    const auto supported = sampledImageFormatLimits(context, format, type, flags);
     const auto blockWidth = static_cast<std::uint64_t>(BlockWidth(descriptor.format));
     const auto leastBytes = (extent.width + blockWidth - 1u) / blockWidth * ((extent.height + blockWidth - 1u) / blockWidth) * BytesPerElement(descriptor.format) * extent.depth * geometry.imageLayers;
-    const bool extentFits = extent.width <= maxExtent.width && extent.height <= maxExtent.height && extent.depth <= maxExtent.depth;
-    const bool layersFit = geometry.imageLayers <= maxLayers;
-    const bool bytesFit = !maxBytes || leastBytes <= *maxBytes;
+    const bool extentFits = supported && extent.width <= supported->maxExtent.width && extent.height <= supported->maxExtent.height && extent.depth <= supported->maxExtent.depth;
+    const bool layersFit = supported && geometry.imageLayers <= supported->maxArrayLayers;
+    const bool bytesFit = supported && leastBytes <= supported->maxResourceSize;
     if (extentFits && layersFit && bytesFit) return;
     char fields[224];
     std::snprintf(fields, sizeof(fields), "guest texture 0x%llx (%ux%u, %s, depth or last array slice %u, base array %u, format %u, mips %u)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, dimensionName(descriptor.dimension), descriptor.depthOrLastArray, descriptor.baseArray, descriptor.format, descriptor.mipCount);
     char text[448];
-    if (!layersFit) {
-        std::snprintf(text, sizeof(text), "AGC graphics: %s needs %u array layers, more than the %u of VkFormat %d images (%s)", fields, geometry.imageLayers, maxLayers, static_cast<int>(format), source);
+    if (!supported) {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs a sampled VkFormat %d image of type %d with create flags 0x%x, which vkGetPhysicalDeviceImageFormatProperties reports unsupported", fields, static_cast<int>(format), static_cast<int>(type), static_cast<unsigned>(flags));
+    } else if (!layersFit) {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs %u array layers, more than the %u of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, geometry.imageLayers, supported->maxArrayLayers, static_cast<int>(format));
     } else if (!extentFits) {
-        std::snprintf(text, sizeof(text), "AGC graphics: %s needs an extent of %ux%ux%u, more than the %ux%ux%u of VkFormat %d images (%s)", fields, extent.width, extent.height, extent.depth, maxExtent.width, maxExtent.height, maxExtent.depth, static_cast<int>(format), source);
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs an extent of %ux%ux%u, more than the %ux%ux%u of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, extent.width, extent.height, extent.depth, supported->maxExtent.width, supported->maxExtent.height, supported->maxExtent.depth, static_cast<int>(format));
     } else {
-        std::snprintf(text, sizeof(text), "AGC graphics: %s needs at least %llu bytes, more than the maxResourceSize of %llu of VkFormat %d images (%s)", fields, static_cast<unsigned long long>(leastBytes), static_cast<unsigned long long>(*maxBytes), static_cast<int>(format), source);
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs at least %llu bytes, more than the maxResourceSize of %llu of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, static_cast<unsigned long long>(leastBytes), static_cast<unsigned long long>(supported->maxResourceSize), static_cast<int>(format));
     }
     throw std::runtime_error(text);
 }

@@ -46,6 +46,8 @@ struct MockDevice {
     std::map<std::uint32_t, VkDescriptorBufferInfo> bufferWrites;
     std::vector<std::string> missing;
     VkResult imageResult = VK_SUCCESS;
+    VkResult imageFormatResult = VK_SUCCESS;
+    std::uint32_t imageFormatQueries = 0;
     VkExtent3D maxExtent{32768, 32768, 1};
     VkDeviceSize maxResourceSize = VkDeviceSize{1} << 40u;
 };
@@ -193,6 +195,9 @@ VKAPI_ATTR void VKAPI_CALL formatProperties(VkPhysicalDevice, VkFormat, VkFormat
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL imageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    ++mock.imageFormatQueries;
+    *properties = {};
+    if (mock.imageFormatResult != VK_SUCCESS) return mock.imageFormatResult;
     *properties = {mock.maxExtent, 16, MaxArrayLayers, VK_SAMPLE_COUNT_1_BIT, mock.maxResourceSize};
     return VK_SUCCESS;
 }
@@ -439,6 +444,25 @@ void testResourceSize(Context context) {
     Require(mock.images.size() == 1, "the texture over maxResourceSize created an image:" + createdImages());
 }
 
+void testUnsupportedImageCombination(Context context) {
+    static int physicalTag = 0;
+    context.physical = reinterpret_cast<VkPhysicalDevice>(&physicalTag);
+    const Block guest(4096);
+    const Registration registered(guest.data, guest.bytes);
+    const CachedTexturesCleared cleared(context.device);
+    const std::array<Entry, 1> entries{{
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 8, 8, SwModeLinear, Type2D, 0), Shape::Image2D},
+    }};
+    mock.images.clear();
+    mock.imageFormatResult = VK_ERROR_FORMAT_NOT_SUPPORTED;
+    const auto queriesBefore = mock.imageFormatQueries;
+    const auto map = resolveTable(context, entries);
+    mock.imageFormatResult = VK_SUCCESS;
+    Require(mock.imageFormatQueries > queriesBefore, "the unsupported image combination did not reach the format query");
+    requireRejected(map, 0, "an 8x8 registered texture whose exact image combination is unsupported");
+    Require(mock.images.empty(), "the unsupported image combination reached vkCreateImage:" + createdImages());
+}
+
 void testPartlyRegisteredSurface(const Context& context) {
     const Block straddling(8192);
     const Registration registered(straddling.data + 4096, 4096);
@@ -485,6 +509,7 @@ void RunImageTableEntryValidationTests() {
         const CachedTexturesCleared cleared(context.device);
         testTableEntries(context);
         testResourceSize(context);
+        testUnsupportedImageCombination(context);
         testPartlyRegisteredSurface(context);
         testVulkanErrorPropagates(context);
         Require(mock.missing.empty(), "the mock lacks the Vulkan function " + (mock.missing.empty() ? std::string{} : mock.missing.front()));
