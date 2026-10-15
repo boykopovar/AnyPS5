@@ -99,6 +99,15 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
         return bits;
     }
+    if (kind == StageInputKind::SampleMask) {
+        const auto pointer = state.module.AllocateId();
+        const auto value = state.module.AllocateId();
+        const auto bits = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeI32(state)), pointer, variable, ConstantU32(state, 0u));
+        state.module.AddFunction(spv::OpLoad, TypeI32(state), value, pointer);
+        state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
+        return bits;
+    }
     if (kind == StageInputKind::FragCoord || kind == StageInputKind::TessCoord) {
         const auto pointer = state.module.AllocateId();
         const auto value = state.module.AllocateId();

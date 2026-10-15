@@ -374,6 +374,9 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         if (loaded(PixelInput::Ancillary)) {
             setVector(static_cast<VectorReg>(vgpr(PixelInput::Ancillary)), builtin(StageInputKind::PackedAncillary));
         }
+        if (loaded(PixelInput::SampleCoverage)) {
+            setVector(static_cast<VectorReg>(vgpr(PixelInput::SampleCoverage)), builtin(StageInputKind::SampleMask));
+        }
         if (loaded(PixelInput::LineStipple)) {
             setVector(static_cast<VectorReg>(vgpr(PixelInput::LineStipple)), entryIr.Constant(0u));
         }

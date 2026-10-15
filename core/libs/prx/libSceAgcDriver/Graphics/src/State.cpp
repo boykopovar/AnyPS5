@@ -155,6 +155,8 @@ bool ditheredAlphaLocationsSupported(const Registers& cx) {
 constexpr std::uint32_t ScanModeMask = ~0x22u;
 constexpr std::uint32_t ScanControlMask = ~0x76033fffu;
 constexpr std::uint32_t PixelShaderIteratesSamples = 0x10000u;
+constexpr std::uint32_t PixelSampleCoverageInput = 0x4000u;
+constexpr std::uint32_t PixelSampleRateInputs = 0x2011u;
 constexpr std::uint32_t ScreenOffsetMask = ~0x01ff01ffu;
 // Bits 26/27 (ZCLIP_NEAR/FAR_DISABLE) become depth clamping; bit 19 selects the [0, 1] clip space.
 constexpr std::uint32_t ClipControlMask = ~(0x80000u | 0x01000000u | 0x0c000000u);
@@ -440,6 +442,15 @@ constexpr std::uint32_t CoveredCentroidIsCenter = 1u << 29u;
 constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
 constexpr std::uint32_t PixelCenterPositionInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
+
+bool sampleCoverageSupported(const QueueState& queue, std::uint32_t samples, bool perSampleShading) {
+    if (samples == 1u || PixelProgramSkipped(queue)) return true;
+    const auto ena = find(queue.context, 0x1b3);
+    const auto addr = find(queue.context, 0x1b4);
+    if (ena == queue.context.end() || addr == queue.context.end()) return true;
+    const auto inputs = ena->second & addr->second;
+    return (inputs & PixelSampleCoverageInput) == 0u || (!perSampleShading && (inputs & PixelSampleRateInputs) == 0u);
+}
 
 bool coveredCentroidSupported(const QueueState& queue) {
     const auto config = find(queue.context, 0x2f8);
@@ -1091,6 +1102,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     zero(cx, 0x293, ScanControlMask, "primitive discard or out-of-order rasterization");
     result.perSampleShading = result.samples > 1 && (read(cx, 0x293) & PixelShaderIteratesSamples) != 0;
+    Require(sampleCoverageSupported(queue, result.samples, result.perSampleShading), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
     if (depthKeepsSampleZero) {
         Require(rasterizesSampleZeroOnly(cx, result), "the depth target's sample count differs from the rasterizer's");
         rasterizeSampleZero(result);
