@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
+#include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <bit>
@@ -34,6 +35,11 @@ void writeCaptured(Driver& driver, SubmissionCapture& capture, const CapturedSub
 
 bool EopRelease(std::span<const std::uint32_t> words) {
     return words.size() >= 8 && (words[0] >> 30u) == 3u && Pm4::PacketWords(words[0]) == 8u && ((words[0] >> 8u) & 0xffu) == 0x49u && ((words[2] >> 24u) & 7u) == 2u;
+}
+
+bool& submitsQueue0() {
+    struct SubmitsQueue0Storage {};
+    return HostThreadLocal<bool, SubmitsQueue0Storage>();
 }
 
 }
@@ -310,10 +316,20 @@ void Driver::executeRewindTail(const Submission& stalled) {
     execute(tail);
 }
 
-void Driver::Submit(const Packet* packet, std::uint32_t queue) {
+void Driver::SubmitFlip(const FlipInfo& info) {
+    const auto argument = static_cast<std::uint64_t>(info.argument);
+    std::array<std::uint32_t, FlipPacketWords> words{FlipPacketHeader, info.handle, static_cast<std::uint32_t>(info.index), info.mode, static_cast<std::uint32_t>(argument), static_cast<std::uint32_t>(argument >> 32u)};
+    const Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Submit(&packet, 0, true);
+}
+
+void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
     const auto receivedAt = APS5_ENABLE_TIMING_LOG ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     CheckFailure();
     require(queue == 0 || (queue >= 0x20 && queue < 0x58), "unsupported compute queue");
+    static const bool flipsInOrder = std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr || std::getenv("APS5_SYNC_FLIP") != nullptr;
+    const bool unorderedFlip = cpuFlip && !flipsInOrder && !APS5_ENABLE_TIMING_LOG && !submitsQueue0();
+    if (queue == 0 && !cpuFlip) submitsQueue0() = true;
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
     const auto descriptor = *packet;
     require(descriptor.flags == 0, "nonzero submission flags are not implemented");
@@ -343,11 +359,22 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue) {
     auto* const capture = SubmissionCapture::Active();
     auto captured = capture != nullptr ? SubmissionCapture::Prepare(queue, SubmissionKind::Submit, submission.commands, submission.conditionalEnds) : CapturedSubmission{};
     {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex);
         rethrowFailure();
         checkStopping();
         require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
         reserveOutputs(submission);
+        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0) {
+            const auto now = FrameTiming::Clock::now();
+            auto frame = std::make_shared<FrameTiming>(++frameSerial);
+            frame->IncludeSubmission(accepted, now, now, now, true);
+            frame->SetFlip(accepted, 0, now, now);
+            ++flipsCounted;
+            submission.flips.begin()->second->GpuReady(frame);
+            lock.unlock();
+            AgcDriverDeliverEopInterrupt(0);
+            return;
+        }
         submission.shaders = shaders;
         submission.serial = accepted + 1;
 
@@ -375,6 +402,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue) {
 void Driver::SuspendPoint() {
     const auto receivedAt = APS5_ENABLE_TIMING_LOG ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     require(!onWorkerThread(), "worker cannot suspend itself");
+    submitsQueue0() = true;
     auto* const capture = SubmissionCapture::Active();
     auto captured = capture != nullptr ? SubmissionCapture::Prepare(0, SubmissionKind::Suspend, {}, {}) : CapturedSubmission{};
     std::unique_lock lock(mutex);

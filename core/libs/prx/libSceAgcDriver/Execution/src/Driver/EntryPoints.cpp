@@ -99,6 +99,12 @@ extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::Fl
     return AgcDriver::DriverDetail::Driver::Get().ReserveEopFlip(info);
 }
 
+extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {
+    AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 extern "C" std::uint64_t AgcDriverDispatchesAdoptedAhead_nid_postfix() {
     return AgcDriver::DriverDetail::Driver::Get().DispatchesAdoptedAhead();
 }
