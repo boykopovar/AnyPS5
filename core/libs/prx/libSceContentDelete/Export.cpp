@@ -20,11 +20,31 @@ int APS5_VABI sceContentDeleteInitialize(const ContentDeleteInitParam* init_para
 }
 
 int APS5_VABI sceContentDeleteByPath(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentDeleteById(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceContentDeleteByIdListForSf(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceContentDeleteGlobalMstat(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceContentDeleteMemoryInitialize(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceContentDeleteMemoryTerminate(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
