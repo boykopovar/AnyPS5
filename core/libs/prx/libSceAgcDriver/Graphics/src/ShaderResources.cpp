@@ -4478,6 +4478,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const bool same = !item.dataWords.empty() ? item.dataWords == binding.guestDescriptor : !patched && std::memcmp(item.buffer->Bytes().data(), binding.guestDescriptor.data(), item.size) == 0;
                 if (same) continue;
                 if (item.dataWords.empty() && patched) return std::nullopt;
+                if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back({index, 0, item.size, binding.guestDescriptor});
                 continue;
             }
@@ -4503,6 +4504,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return std::nullopt;
                 if (guestMemory.WritesOverlap(begin, bytes) || recorder.PendingWriteOverlaps(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return std::nullopt;
+                if (moved.empty()) moved.reserve(allocations.size());
                 moved.push_back({index, address, static_cast<std::size_t>(size)});
             }
         }
@@ -4527,12 +4529,16 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     selected.clear();
     std::array<std::uint64_t, 3> stamp{};
     bool stamped = false;
+    const auto keep = [&](DrawBindings::Snapshot snapshot) {
+        if (result->snapshots.empty()) result->snapshots.reserve(allocations.size());
+        result->snapshots.push_back(std::move(snapshot));
+    };
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         if (override != moved.end() && !override->words.empty()) {
             constexpr std::size_t MovedWordBufferSlots = 8;
-            const auto held = std::find_if(movedWordBuffers.begin(), movedWordBuffers.end(), [&](const MovedWordBuffer& entry) { return entry.allocation == index && entry.size == override->size && entry.words == override->words; });
+            const auto held = std::find_if(movedWordBuffers.begin(), movedWordBuffers.end(), [&](const MovedWordBuffer& entry) { return entry.allocation == index && entry.size == override->size && std::ranges::equal(entry.words, override->words); });
             std::shared_ptr<Buffer> buffer;
             if (held != movedWordBuffers.end()) {
                 buffer = held->buffer;
@@ -4542,12 +4548,12 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 for (const auto& patch : dataPatches) {
                     if (patch.allocation == index && patch.byte < override->size) buffer->Bytes()[patch.byte] = static_cast<std::byte>(patch.adjustment);
                 }
-                MovedWordBuffer entry{index, override->words, override->size, buffer};
+                MovedWordBuffer entry{index, {override->words.begin(), override->words.end()}, override->size, buffer};
                 if (movedWordBuffers.size() < MovedWordBufferSlots) movedWordBuffers.push_back(std::move(entry));
                 else movedWordBuffers[movedWordBufferNext++ % MovedWordBufferSlots] = std::move(entry);
             }
             selected.push_back(index);
-            result->snapshots.push_back({0, std::move(buffer)});
+            keep({0, std::move(buffer)});
             continue;
         }
         std::uint64_t address = item.address;
@@ -4589,7 +4595,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             else stamped = false;
         }
         selected.push_back(index);
-        result->snapshots.push_back({begin, std::move(buffer)});
+        keep({begin, std::move(buffer)});
         totalSnapshotBytes += bytes;
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }

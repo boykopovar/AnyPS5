@@ -22,6 +22,7 @@ void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi
     const auto userCount = ((resources >> 1u) & 0x1fu) | (((resources >> 27u) & 1u) << 5u);
     require(userCount <= 32, "graphics user SGPR count exceeds the register bank");
     program.userData.clear();
+    program.userData.reserve(userCount + 8u);
     for (std::uint32_t i = 0; i < userCount; ++i) {
         Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, program.userDataBase + i);
         program.userData.push_back(staticAbi ? ReadGraphicsRegister(queue.shader, program.userDataBase + i) : readUserData(queue.shader, program.userDataBase + i));

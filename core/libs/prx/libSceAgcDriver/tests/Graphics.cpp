@@ -4227,10 +4227,12 @@ void descriptorSnapshotTests() {
             const auto original = findWrite(0).buffers;
             const auto originalThird = findWrite(4).buffers;
             std::vector<ShaderResources::MovedBuffer> moved;
+            std::array<std::vector<std::uint32_t>, 2> words;
             for (std::size_t index = 0; index < 2; ++index) {
                 if ((selected & (1u << index)) == 0) continue;
                 const std::size_t bytes = index == 0 ? 24 : 12;
-                moved.push_back({index, 0, bytes, std::vector<std::uint32_t>(bytes / 4, static_cast<std::uint32_t>(0x12340000u + index))});
+                words[index].assign(bytes / 4, static_cast<std::uint32_t>(0x12340000u + index));
+                moved.push_back({index, 0, bytes, words[index]});
             }
             mock.writes.clear();
             const auto snapshots = resources.PrepareDrawBindings(recorder, moved);
@@ -4625,7 +4627,8 @@ void imageTableSnapshotAllocationTests() {
         const auto state = DecodeState(makeState());
         ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
         const auto originalMap = findWrite(map.binding).buffers.at(0);
-        const std::array<ShaderResources::MovedBuffer, 1> moved{{{0, 0, 16, {11, 22, 33, 44}}}};
+        const std::array<std::uint32_t, 4> movedWords{11, 22, 33, 44};
+        const std::array<ShaderResources::MovedBuffer, 1> moved{{{0, 0, 16, movedWords}}};
         const auto sets = cache.Counters().sets;
         mock.writes.clear();
         mock.variableDescriptorCount.reset();

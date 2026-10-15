@@ -2503,7 +2503,8 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         const auto original = updates.calls.front();
         Require(original.buffers.size() == 2 && original.images.size() == 2, "descriptor test lacks mixed bindings and an image array");
         for (std::size_t allocation = 0; allocation < 2; ++allocation) {
-            const ShaderResources::MovedBuffer moved{allocation, 0, 16, {5, 6, 7, 8}};
+            const std::array<std::uint32_t, 4> words{5, 6, 7, 8};
+            const ShaderResources::MovedBuffer moved{allocation, 0, 16, words};
             const auto draw = resources.PrepareDrawBindings(snapshots, std::span(&moved, 1));
             Require(draw != nullptr && draw->snapshots.size() == 1, "moved shader data did not create a draw snapshot");
             Require(updates.calls.size() == allocation + 2 && updates.copies == 0, "draw descriptors copied GPU memory or needed multiple updates");
