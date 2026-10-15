@@ -51,6 +51,7 @@ constexpr std::uint32_t kInternalFlag = 0x80000000u;
 constexpr std::uint16_t kAcmModuleId = 0x010b;
 constexpr std::uint16_t kTrophy2ModuleId = 0x0110;
 constexpr std::uint16_t kVoiceChatModuleId = 0x0114;
+constexpr std::uint16_t kProprietaryVoiceChatHelperModuleId = 0x0132;
 constexpr std::uint16_t kPsmlModuleId = 0x0137;
 constexpr std::uint32_t kAgcModuleId = 0x80000094;
 
@@ -237,6 +238,13 @@ int main() {
     Require(sceSysmoduleIsLoaded(kPsmlModuleId) == 0);
     Require(sceSysmoduleUnloadModule(kPsmlModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kPsmlModuleId) == kModuleUnloaded);
+
+    Require(sceSysmoduleIsLoaded(kProprietaryVoiceChatHelperModuleId) == kModuleUnloaded);
+    Require(sceSysmoduleUnloadModule(kProprietaryVoiceChatHelperModuleId) == kModuleUnloaded);
+    Require(sceSysmoduleLoadModule(kProprietaryVoiceChatHelperModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kProprietaryVoiceChatHelperModuleId) == 0);
+    Require(sceSysmoduleUnloadModule(kProprietaryVoiceChatHelperModuleId) == 0);
+    Require(sceSysmoduleIsLoaded(kProprietaryVoiceChatHelperModuleId) == kModuleUnloaded);
 
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kAgcModuleId) == 0);
