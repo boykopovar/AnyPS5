@@ -284,8 +284,9 @@ std::filesystem::path ComputePipelineCapture::Write(const std::filesystem::path&
     RequireCapture(!std::filesystem::is_symlink(CaptureStatus(directory)), "capture directory is a symbolic link");
     const auto recordStatus = CaptureStatus(recordDirectory);
     if (std::filesystem::exists(recordStatus)) {
+        RequireCapture(std::filesystem::is_directory(recordStatus) && !std::filesystem::is_symlink(recordStatus), "existing capture path is not a regular capture");
         const auto captureStatus = CaptureStatus(path);
-        RequireCapture(std::filesystem::is_directory(recordStatus) && !std::filesystem::is_symlink(recordStatus) && std::filesystem::is_regular_file(captureStatus) && !std::filesystem::is_symlink(captureStatus), "existing capture path is not a regular capture");
+        RequireCapture(std::filesystem::is_regular_file(captureStatus) && !std::filesystem::is_symlink(captureStatus), "existing capture path is not a regular capture");
         RequireCapture(ReadBytes(path) == bytes, "existing capture differs or is incomplete");
         return path;
     }

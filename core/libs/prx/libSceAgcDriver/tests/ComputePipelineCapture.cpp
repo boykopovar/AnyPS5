@@ -244,6 +244,13 @@ void CheckOptionalInvalid() {
     Require(std::filesystem::remove(path), "cannot remove owned damaged record");
     Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an incomplete existing record");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && !std::filesystem::exists(path), "incomplete record disabled optional capture or was replaced");
+    Require(std::filesystem::create_directory(path), "cannot create owned nonregular capture");
+    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a nonregular existing capture");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::is_directory(path), "nonregular capture disabled optional capture or was changed");
+    std::filesystem::remove_all(path.parent_path());
+    std::ofstream(path.parent_path(), std::ios::binary).put('x');
+    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a non-directory existing record");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(path.parent_path()) == 1u, "non-directory record disabled optional capture or was changed");
     Directory unexpected;
     const auto foreign = unexpected.path / "foreign";
     std::ofstream(foreign, std::ios::binary).put('x');
