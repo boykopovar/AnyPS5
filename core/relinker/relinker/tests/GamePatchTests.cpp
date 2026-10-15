@@ -453,7 +453,7 @@ void manifestConfig() {
     require(config("").find("config =") == std::string::npos, "empty config was recorded");
     require(config("dir/p.toml").find("config = \"dir/p.toml\"\n") != std::string::npos, "forward-slash path");
     rejects([&] { config("dir/p\x7f.toml"); }, "Patch manifest cannot hold the config");
-    rejects([&] { config("dir\\p.toml"); }, "Patch manifest cannot hold the config: dir\\p.toml");
+    rejects([&] { config("dir/p\x01.toml"); }, "Patch manifest cannot hold the config: p\x01.toml");
     const auto quoted = config("we\"ird/p.toml");
     require(quoted.find("config = \"p.toml\"\n") != std::string::npos, "quote path was not reduced to the file name");
     require(ParsePatchFile(quoted).Entries.size() == 1, "manifest with a reduced config did not parse");

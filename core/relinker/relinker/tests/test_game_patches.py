@@ -66,7 +66,7 @@ def main():
         text = manifest.read_text()
         assert 'main_target = "eboot.bin"' in text and 'name = "flip_bit"' in text, text
         assert f"Patch manifest: {manifest}\n" in result.stdout
-        assert f'config = "{source.parent / "relinker-patches.toml"}"\n' in text, text
+        assert f'config = "{source.parent.as_posix()}/relinker-patches.toml"\n' in text, text
 
         quoted = work / "quoted"
         (quoted / "out").mkdir(parents=True)
