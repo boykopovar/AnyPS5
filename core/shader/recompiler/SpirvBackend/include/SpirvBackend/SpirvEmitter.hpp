@@ -26,6 +26,12 @@ struct SpirvTargetOptions {
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool meshBarycentricPixel = false;
+    bool meshBarycentricVertex = false;
+    std::uint32_t barycentricSmoothLocation = 0xffffffffu;
+    std::uint32_t barycentricLinearLocation = 0xffffffffu;
+    std::uint32_t barycentricPositionsLocation = 0xffffffffu;
+    std::vector<std::uint32_t> meshExportedLocations;
 };
 
 struct SpirvEmitInfo {

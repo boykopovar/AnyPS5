@@ -50,6 +50,8 @@ struct Module {
     std::uint32_t primitiveIndices = 0;
     bool fragmentBarycentric = false;
     bool layerOutput = false;
+    bool meshCapability = false;
+    std::uint32_t primitiveInputs = 0;
     std::map<std::uint32_t, std::vector<std::uint32_t>> modes;
 
     const std::vector<std::uint32_t>& Type(std::uint32_t id) const {
@@ -74,17 +76,17 @@ struct Module {
         throw std::runtime_error("AGC graphics: unsupported SPIR-V interface type");
     }
 
-    std::uint32_t AddLocations(std::map<std::uint32_t, std::string>& locations, std::uint32_t location, std::uint32_t typeId, bool patch, std::uint32_t depth = 0) const {
+    std::uint32_t AddLocations(std::map<std::uint32_t, std::string>& locations, std::uint32_t location, std::uint32_t typeId, bool patch, bool primitive = false, std::uint32_t depth = 0) const {
         Require(depth < 8 && location < 256, "graphics interface exceeds supported locations");
         const auto& type = Type(typeId);
         if ((type[0] & 0xffffu) == spv::OpTypeArray) {
             Require(type.size() == 4, "malformed interface array");
             const auto count = constants.find(type[3]);
             Require(count != constants.end() && count->second != 0 && count->second <= 256, "invalid interface array length");
-            for (std::uint32_t i = 0; i < count->second; ++i) location = AddLocations(locations, location, type[2], patch, depth + 1);
+            for (std::uint32_t i = 0; i < count->second; ++i) location = AddLocations(locations, location, type[2], patch, primitive, depth + 1);
             return location;
         }
-        Require(locations.emplace(location | (patch ? 0x10000u : 0u), std::string(patch ? "patch:" : "vertex:") + Signature(typeId)).second, "duplicate shader interface location");
+        Require(locations.emplace(location | (patch ? 0x10000u : 0u), std::string(patch ? "patch:" : primitive ? "primitive:" : "vertex:") + Signature(typeId)).second, "duplicate shader interface location");
         return location + 1;
     }
 
@@ -152,7 +154,7 @@ struct Module {
     }
 };
 
-Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation) {
+Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, std::span<const std::uint32_t> primitiveLocations = {}) {
     using Stage = ShaderRecompiler::ShaderStage;
     Require(compiled.program != nullptr, "missing compiled shader");
     const auto& shader = *compiled.program;
@@ -236,8 +238,9 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     (control || evaluation) &&
                     capability == spv::CapabilityTessellation;
 
+                if (fragment && capability == spv::CapabilityMeshShadingEXT) module.meshCapability = true;
                 const bool isMeshCapability =
-                    mesh &&
+                    (mesh || (fragment && !primitiveLocations.empty())) &&
                     capability == spv::CapabilityMeshShadingEXT;
 
                 const bool isGeometryCapability =
@@ -338,7 +341,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     terminateExtension = true;
                     break;
                 }
-                Require(extension == "SPV_KHR_float_controls" || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
+                Require(extension == "SPV_KHR_float_controls" || (imageInt64Atomics && extension == "SPV_EXT_shader_image_int64") || (viewportIndexLayer && extension == "SPV_EXT_shader_viewport_index_layer") || (fragment && demoteToHelperInvocation && extension == "SPV_EXT_demote_to_helper_invocation") || (mesh && (extension == "SPV_EXT_mesh_shader" || extension == "SPV_KHR_physical_storage_buffer")) || (fragment && !primitiveLocations.empty() && extension == "SPV_EXT_mesh_shader") || ((descriptorIndexing || runtimeDescriptorArray) && extension == "SPV_EXT_descriptor_indexing") || (shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version && (extension == "SPV_KHR_physical_storage_buffer" || extension == "SPV_KHR_8bit_storage")), "unsupported SPIR-V extension");
                 break;
             }
             case spv::OpTerminateInvocation:
@@ -517,10 +520,13 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 module.secondSource = module.Signature(typeId);
             } else if (decoration.location) {
                 Require(!vertexArray || (outer[0] & 0xffffu) == spv::OpTypeArray, "per-vertex interface lacks a control-point or mesh-output dimension");
-                Require(!decoration.perPrimitive, "per-primitive user outputs are unsupported");
+                Require(!decoration.perPrimitive || ((mesh && output) || (fragment && input)), "per-primitive user interface is unsupported for this stage");
+                Require(!decoration.perPrimitive || !decoration.patch, "a per-primitive interface cannot be a patch");
+                Require(!decoration.perPrimitive || std::ranges::find(primitiveLocations, *decoration.location) != primitiveLocations.end(), "per-primitive user interface at a location the barycentric emulation does not reserve");
                 Require(!decoration.builtin, "shader input cannot have both location and built-in decorations");
                 auto& locations = variable.storage == spv::StorageClassInput ? module.inputs : module.outputs;
-                module.AddLocations(locations, *decoration.location, typeId, decoration.patch);
+                module.AddLocations(locations, *decoration.location, typeId, decoration.patch, decoration.perPrimitive);
+                if (decoration.perPrimitive && fragment) module.primitiveInputs++;
             } else if (decoration.builtin) {
                 module.Builtin(*decoration.builtin, typeId, variable.storage, stage, subgroup);
             } else {
@@ -607,6 +613,8 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     Require(push == (!shader.pushConstants.empty() || mesh || (control && !rectListControl)), "recompiler push constant metadata disagrees with SPIR-V");
     for (const auto id : module.interface) Require(module.variables.contains(id), "entry point interface contains an unknown variable");
     if (mesh) Require(module.primitiveIndices == state.stages.mesh->outputPrimitiveSize, "mesh shader does not export primitive indices");
+    if (fragment) Require(module.primitiveInputs == 0 || !primitiveLocations.empty(), "per-primitive pixel inputs need the barycentric emulation layout");
+    if (fragment) Require(!module.meshCapability || module.primitiveInputs != 0, "a pixel shader declares mesh shading without a per-primitive input");
     if (stage == Stage::Vertex || mesh || evaluation || geometry) Require(module.position, "vertex shader does not export position");
     return module;
 }
@@ -642,13 +650,21 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
     }
     const std::array<Stage, 4> tessStages{Stage::Local, Stage::TessellationControl, Stage::TessellationEvaluation, Stage::Fragment};
     static_cast<void>(AssemblePushConstants(shaders));
+    std::vector<std::uint32_t> primitiveLocations;
+    if (mesh && !shaders.empty() && shaders.back().program != nullptr && shaders.back().program->barycentricEmulation.active) {
+        const auto& last = *shaders.back().program;
+        const auto layout = ShaderRecompiler::LayoutBarycentricEmulation(last.fragmentParameters, last.barycentricEmulation, true);
+        if (layout.positionsLocation != ShaderRecompiler::BarycentricEmulationLayout::NoLocation) {
+            for (std::uint32_t corner = 0; corner < 3u; ++corner) primitiveLocations.push_back(layout.positionsLocation + corner);
+        }
+    }
     Module previous;
     for (std::size_t i = 0; i < shaders.size(); ++i) {
         const auto expected = state.rectList ? (i == 0 ? Stage::Vertex : tessStages[i]) : tessellation ? tessStages[i] : geometry && i == 1 ? Stage::Geometry : i == shaders.size() - 1 ? Stage::Fragment : state.stages.path == ShaderPath::Geometry ? Stage::Mesh : Stage::Vertex;
         Require(shaders[i].program != nullptr, "missing compiled shader");
         Require(shaders[i].stage == expected, "graphics stage order disagrees");
         for (const auto& binding : shaders[i].program->bindings) Require(binding.descriptorSet == ShaderRecompiler::RuntimeAbi::DescriptorSet || (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet), "graphics resource uses a descriptor set other than its stage's");
-        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation);
+        const auto current = Inspect(shaders[i], state, subgroup, fragmentShaderBarycentric, descriptorIndexing, imageInt64Atomics, geometryShader, sampleRateShading, bufferInt64Atomics, shaderClipDistance, shaderCullDistance, viewportIndexLayer, runtimeDescriptorArray, demoteToHelperInvocation, shaderTerminateInvocation, primitiveLocations);
         if (i != 0) {
             for (const auto& [location, signature] : current.inputs) {
                 const auto output = previous.outputs.find(location);

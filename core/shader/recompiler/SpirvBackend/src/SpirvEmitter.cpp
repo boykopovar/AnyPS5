@@ -259,6 +259,12 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.registrationModules = target.registrationModules;
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
+    state.meshBarycentricPixel = target.meshBarycentricPixel;
+    state.meshBarycentricVertex = target.meshBarycentricVertex;
+    state.barycentricSmoothLocation = target.barycentricSmoothLocation;
+    state.barycentricLinearLocation = target.barycentricLinearLocation;
+    state.barycentricPositionsLocation = target.barycentricPositionsLocation;
+    state.meshExportedLocations = target.meshExportedLocations;
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.hostSubgroupSize = target.subgroupSize;
     if (HostSubgroupSingleLane(state)) {

@@ -107,6 +107,18 @@ struct SpirvEmitterState {
     bool registrationModules = false;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
+    bool meshBarycentricPixel = false;
+    bool meshBarycentricVertex = false;
+    std::uint32_t barycentricSmoothLocation = 0xffffffffu;
+    std::uint32_t barycentricLinearLocation = 0xffffffffu;
+    std::uint32_t barycentricPositionsLocation = 0xffffffffu;
+    std::vector<std::uint32_t> meshExportedLocations;
+    std::uint32_t meshPositionStaging = 0;
+    std::uint32_t meshClipSmooth = 0;
+    std::uint32_t meshClipLinear = 0;
+    std::uint32_t meshFlatPositions = 0;
+    std::uint32_t pixelFlatPositions = 0;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> solvedBarycentrics;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     std::uint32_t spirvVersion = 0x00010300u;

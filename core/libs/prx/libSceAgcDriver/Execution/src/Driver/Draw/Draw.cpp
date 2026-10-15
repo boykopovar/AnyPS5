@@ -359,6 +359,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     };
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     std::vector<std::uint32_t> pushOffsets(programs.size(), 0);
+    std::optional<ShaderRecompiler::MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::size_t> resultIndex(programs.size(), 0);
     for (std::size_t i = 0; i < programs.size(); ++i) {
         if (roles[i] == Role::GeometryBack) continue;
@@ -386,7 +387,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                         break;
                     }
                 }
-                compiledStages.push_back(materializeDrawStage(i, pushCursorBytes, queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected));
+                compiledStages.push_back(materializeDrawStage(i, pushCursorBytes, queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics));
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 programResults[i] = compiledStages.back().get();
                 if (candidate != dataCandidates[i].end()) verifyDataStage(i, *candidate->first);
@@ -449,7 +450,21 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         phaseTiming.Phase(DrawRowRectList);
     };
     if (graphics.rectList) buildRectList();
-    if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active) {
+    if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active && graphics.stages.path == Graphics::ShaderPath::Geometry) {
+        require(localDevice->Target().mesh.has_value(), "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs barycentric emulation on the mesh path, which requires VK_EXT_mesh_shader; this device has no mesh shaders");
+        require(!graphics.rectList && graphics.stages.mesh && programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics needs exactly one mesh program before it to emulate them");
+        meshBarycentrics = ShaderRecompiler::MeshBarycentricLayoutOf(*programResults[1]);
+        if (programResults[0]->meshBarycentrics != meshBarycentrics) {
+            const auto pushBytes = programResults[0]->pushConstants.size();
+            const auto exports = programResults[0]->parameterExports;
+            compiledStages.push_back(materializeDrawStage(0, pushOffsets[0], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics));
+            if (!rejected.empty()) return DrawVerdict::Rejected;
+            programResults[0] = compiledStages.back().get();
+            stages[0].program = programResults[0];
+            require(programResults[0]->pushConstants.size() == pushBytes && programResults[0]->parameterExports == exports, "pairing the mesh program with its pixel shader changed the push constants or the parameter exports the pixel shader was built for");
+        }
+        require(programResults[0]->meshBarycentrics == meshBarycentrics, "the mesh program was compiled for a different barycentric layout than its pixel shader");
+    } else if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active) {
         require(!graphics.rectList && graphics.stages.path == Graphics::ShaderPath::Vertex && programs.size() == 2 && programResults[0] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs a vertex shader before it");
         results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), localDevice->GeometryLimits()));
         stages.insert(stages.begin() + 1, Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
@@ -535,7 +550,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 auto& result = results[resultIndex[programIndex]];
                 const auto pushBytes = result.pushConstants.size();
                 decodeVertexInfo(programIndex);
-                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected);
+                result = *materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
                 if (!rejected.empty()) return DrawVerdict::Rejected;
                 require(result.pushConstants.size() == pushBytes, "patched program changed its push constant layout");
             }

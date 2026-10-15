@@ -731,6 +731,19 @@ void writeGraphicsCompileContext(Writer& writer, const GraphicsCompileContext& g
     writer.WriteU32(graphics.draw.indexCount);
     writer.WriteU32(graphics.draw.indexElementBytes);
     writer.WriteU32(graphics.draw.instanceCount);
+    writer.WriteBool(graphics.meshBarycentrics.has_value());
+    if (graphics.meshBarycentrics.has_value()) {
+        const auto& barycentrics = *graphics.meshBarycentrics;
+        writer.WriteBool(barycentrics.emulation.active);
+        writer.WriteBool(barycentrics.emulation.smooth);
+        writer.WriteBool(barycentrics.emulation.linear);
+        writer.WriteU64(barycentrics.parameters.size());
+        for (const auto& parameter : barycentrics.parameters) {
+            writer.WriteU32(parameter.location);
+            writer.WriteU32(parameter.sourceLocation);
+            writer.WriteBool(parameter.perVertex);
+        }
+    }
 }
 
 GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGraphicsCompileContext& storage, std::uint32_t version) {
@@ -769,6 +782,22 @@ GraphicsCompileContext readGraphicsCompileContext(Reader& reader, DeserializedGr
     storage.draw.indexElementBytes = reader.ReadU32();
     storage.draw.instanceCount = reader.ReadU32();
     graphics.draw = storage.draw;
+    if (version >= 33u && reader.ReadBool()) {
+        MeshBarycentricLayout barycentrics;
+        barycentrics.emulation.active = reader.ReadBool();
+        barycentrics.emulation.smooth = reader.ReadBool();
+        barycentrics.emulation.linear = reader.ReadBool();
+        const auto count = reader.ReadU64();
+        reader.Require(count, 9u);
+        for (std::uint64_t i = 0; i < count; i++) {
+            FragmentParameter parameter{};
+            parameter.location = reader.ReadU32();
+            parameter.sourceLocation = reader.ReadU32();
+            parameter.perVertex = reader.ReadBool();
+            barycentrics.parameters.push_back(parameter);
+        }
+        graphics.meshBarycentrics = std::move(barycentrics);
+    }
     return graphics;
 }
 
@@ -778,7 +807,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(32u);
+    writer.WriteU32(33u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -812,7 +841,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 32u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 33u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);

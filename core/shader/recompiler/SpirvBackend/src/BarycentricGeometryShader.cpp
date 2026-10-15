@@ -142,7 +142,7 @@ private:
 
 }
 
-BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation) {
+BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentParameter> parameters, const BarycentricEmulation& emulation, bool meshPositions) {
     BarycentricEmulationLayout layout;
     if (!emulation.active) return layout;
     std::array<bool, ParameterLocations> used {};
@@ -160,6 +160,7 @@ BarycentricEmulationLayout LayoutBarycentricEmulation(std::span<const FragmentPa
     };
     if (emulation.smooth) layout.smoothLocation = take(1u);
     if (emulation.linear) layout.linearLocation = take(1u);
+    if (meshPositions) layout.positionsLocation = take(3u);
     for (const auto& parameter : parameters) {
         if (parameter.perVertex) layout.perVertexLocations.emplace_back(parameter.location, take(3u));
     }

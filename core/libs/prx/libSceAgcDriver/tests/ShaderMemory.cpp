@@ -3067,7 +3067,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQSAAAAA=", "new requests did not use serialization version 32");
+    require(requestPrefix(encoded, 8u) == "NVNQQSEAAAA=", "new requests did not use serialization version 33");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -3185,7 +3185,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQSEAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQSIAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{

@@ -116,6 +116,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
         require(a.location == b.location && a.components == b.components && a.resource.fields == b.resource.fields && a.fetchIndex == b.fetchIndex && a.formatComponents == b.formatComponents, prefix + "vertex attribute differs");
     }
     require(left.barycentricEmulation.active == right.barycentricEmulation.active && left.barycentricEmulation.smooth == right.barycentricEmulation.smooth && left.barycentricEmulation.linear == right.barycentricEmulation.linear, prefix + "barycentric emulation differs");
+    require(left.meshBarycentrics == right.meshBarycentrics, prefix + "mesh barycentric layout differs");
 }
 
 void requireSameVariant(const CompiledVariant& left, const CompiledVariant& right, const char* what) {
@@ -193,6 +194,7 @@ RecompileResult sampleResult() {
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
     result.barycentricEmulation = {true, false, true};
+    result.meshBarycentrics = MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 2, false, true}, FragmentParameter{3, 3, false, false}}};
     result.variantId = 99;
     result.imageTablePoison = {{{1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, 8u, 2u, 6u}, {{9u, 0u, 0u, 0u, 0u, 0u, 0u, 0u}, 4u, 0xffffffffu, 19u}};
     result.imageTableRanges = {{0x1000u, 0x200u}, {0x5000000000ull, 48u}};
@@ -579,6 +581,18 @@ void verifyArtifactStorageIsolation() {
     require(ShaderDiskCache::EncodeEntry(key, variant) != before, "the stored artifact ignores vertex input metadata");
 }
 
+void verifyMeshBarycentricRequestSerialization() {
+    for (const auto& layout : {std::optional<MeshBarycentricLayout>{}, std::optional<MeshBarycentricLayout>{MeshBarycentricLayout{{true, true, true}, {FragmentParameter{0, 2, false, true}, FragmentParameter{4, 4, false, false}}}}}) {
+        SampleRequest sample;
+        sample.request.shader.stage = ShaderStage::Mesh;
+        sample.request.context.compute.reset();
+        sample.request.graphics = GraphicsCompileContext{0, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}, layout};
+        const auto text = RequestSerializer{}.Serialize(sample.request);
+        const auto restored = RequestSerializer{}.Deserialize(text);
+        require(restored.request.graphics.has_value() && restored.request.graphics->meshBarycentrics == layout, "a captured mesh request lost its barycentric layout");
+    }
+}
+
 void verifyKeySensitivity() {
     SampleRequest base;
     const auto key = base.Key();
@@ -645,6 +659,40 @@ void verifyKeySensitivity() {
         const auto changed = withMode(mode);
         require(changed.first != astro.first && changed.second != astro.second, std::string("the key ignores ") + what);
     }
+
+    const auto meshKeys = [&](const std::optional<MeshBarycentricLayout>& layout) {
+        SampleRequest sample;
+        sample.request.shader.stage = ShaderStage::Mesh;
+        sample.request.context.compute.reset();
+        sample.request.graphics = GraphicsCompileContext{0, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}, layout};
+        return std::pair{sample.Key(), RecompileCacheKey::ContextHash(sample.request)};
+    };
+    const std::vector<std::pair<const char*, std::optional<MeshBarycentricLayout>>> meshLayouts{
+        {"no mesh barycentric layout", std::nullopt},
+        {"smooth mesh barycentrics", MeshBarycentricLayout{{true, true, false}, {}}},
+        {"linear mesh barycentrics", MeshBarycentricLayout{{true, false, true}, {}}},
+        {"smooth and linear mesh barycentrics", MeshBarycentricLayout{{true, true, true}, {}}},
+        {"a per-vertex mesh parameter", MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 0, false, true}}}},
+        {"another per-vertex mesh parameter source", MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 1, false, true}}}},
+        {"a flat mesh parameter", MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 0, false, false}}}},
+    };
+    for (std::size_t i = 0; i < meshLayouts.size(); ++i) {
+        require(meshKeys(meshLayouts[i].second) == meshKeys(meshLayouts[i].second), std::string("the key of ") + meshLayouts[i].first + " is not deterministic");
+        for (std::size_t j = i + 1; j < meshLayouts.size(); ++j) {
+            const auto left = meshKeys(meshLayouts[i].second);
+            const auto right = meshKeys(meshLayouts[j].second);
+            require(left.first != right.first && left.second != right.second, std::string("the mesh key confuses ") + meshLayouts[i].first + " with " + meshLayouts[j].first);
+        }
+    }
+
+    const auto pixelKeys = [&](bool meshPath) {
+        SampleRequest sample;
+        sample.request.shader.stage = ShaderStage::Fragment;
+        sample.request.context.compute.reset();
+        sample.request.graphics = GraphicsCompileContext{0, {}, meshPath ? std::optional(MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}) : std::nullopt, std::nullopt, {}, std::nullopt};
+        return std::pair{sample.Key(), RecompileCacheKey::ContextHash(sample.request)};
+    };
+    require(pixelKeys(true).first != pixelKeys(false).first && pixelKeys(true).second != pixelKeys(false).second, "a pixel shader on the mesh path shares a key with the vertex path");
 
     SampleRequest moved;
     moved.userData[0] ^= 0x10000u;
@@ -2115,6 +2163,7 @@ int main(int argc, char** argv) {
         verifyPrebuiltPack(directory / "packs");
         verifyArtifactStorageIsolation();
         verifyKeySensitivity();
+        verifyMeshBarycentricRequestSerialization();
         verifyFloatModeSerialization();
         verifyPlanRoundTrip();
         verifyPlanKey();
