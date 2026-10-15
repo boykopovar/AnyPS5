@@ -443,6 +443,12 @@ constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBi
 constexpr std::uint32_t PixelCenterPositionInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
 
+bool overrasterized(const Registers& cx, std::uint32_t samples) {
+    const auto eqaa = find(cx, 0x201);
+    const auto mode = find(cx, 0x292);
+    return samples > 1u && eqaa != cx.end() && mode != cx.end() && (mode->second & 1u) != 0 && ((eqaa->second >> 24u) & 7u) == static_cast<std::uint32_t>(std::countr_zero(samples));
+}
+
 bool sampleCoverageSupported(const QueueState& queue, std::uint32_t samples, bool perSampleShading) {
     if (samples == 1u || PixelProgramSkipped(queue)) return true;
     const auto ena = find(queue.context, 0x1b3);
@@ -1180,8 +1186,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }
-        if (color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
-        Require(color.samples == result.samples, "a color target's sample count differs from the rasterizer's");
+        const bool merged = color.samples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
+        if (!merged && color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
+        Require((color.samples == result.samples && !result.mergedCoverage) || merged, "a color target's sample count differs from the rasterizer's");
+        result.mergedCoverage = merged;
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
         if (result.colors.empty()) {
             result.renderExtent = color.extent;

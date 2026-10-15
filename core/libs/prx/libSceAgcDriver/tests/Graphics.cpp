@@ -2734,6 +2734,28 @@ void multisampleTests() {
     }
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
+    {
+        auto smooth = multisampled();
+        smooth.context[0x2f8] = 0x0020c002u;
+        smooth.context[0x31d] = 0u;
+        smooth.context[0x201] = 0x02130000u;
+        smooth.context[0x1b3] = 0x4002u;
+        smooth.context[0x1b4] = 0x4002u;
+        const auto merged = DecodeState(smooth);
+        Require(merged.samples == 4 && merged.mergedCoverage && merged.colors.size() == 1 && merged.colors[0].samples == 1 && !merged.perSampleShading, "a radeonsi smoothing draw (4 raster samples, OVERRASTERIZATION_AMOUNT 2, one-sample target) did not decode as merged coverage");
+        smooth.context[0x201] = 0x01130000u;
+        expectFailure([&] { DecodeState(smooth); }, "a color target's sample count differs from the rasterizer's");
+        smooth.context[0x201] = 0x02130000u;
+        smooth.context[0x293] = 0x10000u;
+        expectFailure([&] { DecodeState(smooth); }, "SAMPLE_COVERAGE in a multisampled pixel shader");
+        smooth.context[0x1b3] = 2u;
+        smooth.context[0x1b4] = 2u;
+        const auto iteratedSmooth = DecodeState(smooth);
+        Require(iteratedSmooth.samples == 1 && !iteratedSmooth.mergedCoverage && !iteratedSmooth.perSampleShading, "an overrasterized draw that runs per sample into a one-sample target did not rasterize sample 0 alone");
+        smooth.context[0x293] = 0u;
+        smooth.context[0x292] = 2u;
+        expectFailure([&] { DecodeState(smooth); }, "a color target's sample count differs from the rasterizer's");
+    }
     queue.context[0x302] = 0x44cc;
     state = DecodeState(queue);
     Require(state.customSampleLocations && state.sampleLocationGrid, "a standard 2x pattern with its samples swapped in one pixel did not decode as a grid");

@@ -27,6 +27,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -49,7 +50,11 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 16>, 3> Programs{};
+constexpr std::array<std::array<float, 4>, 3> HalfTriangle{{
+    {-1.0f, -1.0f, 0.5f, 1.0f}, {1.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f}
+}};
+
+alignas(256) std::array<std::array<std::uint32_t, 16>, 4> Programs{};
 std::size_t programCount = 0;
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -145,11 +150,11 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t inputAddr, std::span<const std::uint32_t> pixelCode) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t inputAddr, std::span<const std::uint32_t> pixelCode, std::span<const std::array<float, 4>, 3> triangle = Triangle, std::uint32_t rasterSamples = 1) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
-    const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
+    const auto vertexBuffer = BufferDescriptor(triangle.data(), 16u, static_cast<std::uint32_t>(triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
     const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
     ShaderRecompiler::RecompileRequest vertex{
@@ -201,7 +206,9 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.blends = {blend};
     state.blend = blend;
     state.blendConstants = {};
-    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+    state.samples = rasterSamples;
+    state.mergedCoverage = rasterSamples > 1;
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(triangle.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
 }
 
@@ -232,6 +239,40 @@ void Expect(AgcDriver::VulkanDevice& device, std::uint32_t inputAddr, std::uint3
     }
 }
 
+bool ExpectMerged(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t bytes = std::size_t{Width} * Height * 16u;
+    Block block(bytes);
+    std::fill(block.data, block.data + bytes, std::uint8_t{0xff});
+    const auto color = DecodeTarget(block, Rgba32FloatInfo);
+    try {
+        Draw(device, color, ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage), Program(0u), HalfTriangle, 4u);
+    } catch (const std::exception& error) {
+        if (std::string_view(error.what()).find("VK_NV_framebuffer_mixed_samples") == std::string_view::npos) throw;
+        return false;
+    }
+    const auto stored = ReadBack(device, block.Address(), bytes);
+    std::uint32_t full = 0;
+    std::uint32_t partial = 0;
+    std::uint32_t untouched = 0;
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            const auto* texel = stored.data() + (static_cast<std::size_t>(y) * Width + x) * 16u;
+            if (std::all_of(texel, texel + 16, [](std::uint8_t byte) { return byte == 0xffu; })) {
+                ++untouched;
+                continue;
+            }
+            std::array<float, 4> value{};
+            std::memcpy(value.data(), texel, sizeof(value));
+            const auto mask = static_cast<std::uint32_t>(value[0]);
+            Require(value[0] == static_cast<float>(mask) && mask >= 1u && mask <= 15u && value[1] == 0.0f && value[2] == 0.0f && value[3] == 1.0f, "merged coverage: pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") holds (" + std::to_string(value[0]) + ", " + std::to_string(value[1]) + ", " + std::to_string(value[2]) + ", " + std::to_string(value[3]) + ")");
+            if (mask == 15u) ++full;
+            else ++partial;
+        }
+    }
+    Require(full != 0 && partial != 0 && untouched != 0, "merged coverage: a half-covering triangle wrote " + std::to_string(full) + " fully covered, " + std::to_string(partial) + " partly covered and left " + std::to_string(untouched) + " pixels");
+    return true;
+}
+
 }
 
 int main() {
@@ -243,6 +284,7 @@ int main() {
         Expect(*device, PixelInputBit(PixelInput::SampleCoverage), 0u, "SAMPLE_COVERAGE alone");
         Expect(*device, PixelInputBit(PixelInput::PerspectiveCenter) | PixelInputBit(PixelInput::SampleCoverage), 2u, "SAMPLE_COVERAGE after the perspective center");
         Expect(*device, PixelInputBit(PixelInput::Ancillary) | PixelInputBit(PixelInput::SampleCoverage), 1u, "SAMPLE_COVERAGE after ANCILLARY");
+        if (!ExpectMerged(*device)) std::puts("merged coverage not tested: the device lacks VK_NV_framebuffer_mixed_samples with merged coverage reduction");
         std::puts("pixel sample coverage tests passed");
         return 0;
     } catch (const std::exception& error) {
