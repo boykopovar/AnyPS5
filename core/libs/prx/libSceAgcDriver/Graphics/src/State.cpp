@@ -19,6 +19,14 @@
 #include <sstream>
 
 namespace AgcDriver::Graphics {
+
+void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
+    if (state.depth || pixel.posZ) return;
+    if (!std::isfinite(state.viewport.minDepth) || !std::isfinite(state.viewport.maxDepth)) return;
+    state.viewport.minDepth = std::clamp(state.viewport.minDepth, 0.0f, 1.0f);
+    state.viewport.maxDepth = std::clamp(state.viewport.maxDepth, 0.0f, 1.0f);
+}
+
 namespace {
 
 std::uint32_t read(const Registers& registers, std::uint32_t offset, RegisterBank bank = RegisterBank::Context) {

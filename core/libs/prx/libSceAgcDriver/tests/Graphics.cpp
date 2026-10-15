@@ -3157,6 +3157,52 @@ void quadPixelMaskTests() {
     expectFailure([&] { AgcDriver::Graphics::ValidateSampleMask(context, varying, storing); }, "differs between the pixels of a quad");
 }
 
+void UnusedViewportDepthTests() {
+    auto queue = makeState();
+    queue.context[0x204] = 0;
+    queue.context[0x113] = std::bit_cast<std::uint32_t>(1.0f);
+    queue.context[0x114] = 0;
+    const auto decoded = AgcDriver::Graphics::DecodeState(queue);
+    Require(!decoded.depth && decoded.viewport.minDepth == -1 && decoded.viewport.maxDepth == 1, "unused depth fixture changed");
+    AgcDriver::Graphics::Context context{};
+    context.limits.maxViewportDimensions[0] = context.limits.maxViewportDimensions[1] = 16384;
+    context.limits.viewportBoundsRange[0] = -32768;
+    context.limits.viewportBoundsRange[1] = 32767;
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.posX = pixel.posY = pixel.posW = true;
+    auto color = decoded;
+    AgcDriver::Graphics::NormalizeUnusedViewportDepth(color, pixel);
+    AgcDriver::Graphics::ValidateViewport(context, color.viewport);
+    Require(color.viewport.minDepth == 0 && color.viewport.maxDepth == 1, "unused viewport depth is not representable");
+    Require(color.viewport.x == decoded.viewport.x && color.viewport.y == decoded.viewport.y && color.viewport.width == decoded.viewport.width && color.viewport.height == decoded.viewport.height && color.negativeOneToOne == decoded.negativeOneToOne && color.depthClamp == decoded.depthClamp, "unused depth changed coverage or clipping");
+    auto observed = decoded;
+    pixel.posZ = true;
+    AgcDriver::Graphics::NormalizeUnusedViewportDepth(observed, pixel);
+    Require(observed.viewport.minDepth == -1, "fragment position depth was changed");
+    expectFailure([&] { AgcDriver::Graphics::ValidateViewport(context, observed.viewport); }, "viewport depth outside");
+    pixel.posZ = false;
+    auto attached = decoded;
+    attached.depth.emplace();
+    AgcDriver::Graphics::NormalizeUnusedViewportDepth(attached, pixel);
+    Require(attached.viewport.minDepth == -1, "attached depth was changed");
+    expectFailure([&] { AgcDriver::Graphics::ValidateViewport(context, attached.viewport); }, "viewport depth outside");
+    auto reversed = decoded;
+    reversed.viewport.minDepth = 2;
+    reversed.viewport.maxDepth = -1;
+    AgcDriver::Graphics::NormalizeUnusedViewportDepth(reversed, pixel);
+    AgcDriver::Graphics::ValidateViewport(context, reversed.viewport);
+    Require(reversed.viewport.minDepth == 1 && reversed.viewport.maxDepth == 0, "reversed unused depth is not representable");
+    auto bounded = decoded;
+    bounded.viewport.minDepth = 0.25f;
+    bounded.viewport.maxDepth = 0.75f;
+    AgcDriver::Graphics::NormalizeUnusedViewportDepth(bounded, pixel);
+    Require(bounded.viewport.minDepth == 0.25f && bounded.viewport.maxDepth == 0.75f, "an in-range viewport changed");
+    auto invalid = decoded;
+    invalid.viewport.minDepth = std::numeric_limits<float>::infinity();
+    AgcDriver::Graphics::NormalizeUnusedViewportDepth(invalid, pixel);
+    expectFailure([&] { AgcDriver::Graphics::ValidateViewport(context, invalid.viewport); }, "non-finite viewport");
+}
+
 void DepthClipTests() {
     auto queue = makeState();
     const auto direct = AgcDriver::Graphics::DecodeState(queue);
@@ -7234,6 +7280,11 @@ int main(int argc, char** argv) {
     setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--unused-viewport-depth") {
+            UnusedViewportDepthTests();
+            DepthClipTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--unused-stencil-reference") {
             stencilReferenceUnusedTests();
             return 0;
@@ -7355,6 +7406,7 @@ int main(int argc, char** argv) {
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();
+        UnusedViewportDepthTests();
         DepthStencilTests();
         OneDimensionalColorTests();
         htileDepthClearTests();
