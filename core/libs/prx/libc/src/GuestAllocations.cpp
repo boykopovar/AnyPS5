@@ -355,10 +355,25 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
     }
 }
 
+// The lowest registered range that can touch `address`: the one that starts at or
+// after it, or the one before it when that one reaches into the address. Starting a
+// scan at lower_bound alone misses a range the address falls inside, which is exactly
+// the overlap these queries have to report.
+decltype(registry().ranges)::iterator firstRangeTouching(std::uintptr_t address) {
+    auto& ranges = registry().ranges;
+    auto it = ranges.lower_bound(address);
+    if (it == ranges.begin()) return it;
+    const auto& previous = *std::prev(it);
+    if (previous.second->bytes != 0 && address < previous.first + previous.second->bytes) return std::prev(it);
+    return it;
+}
+
 void GuestAllocationsRequireAvailable_nid_postfix(void*, const void* pointer, std::size_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(address != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid fixed guest mapping");
-    for (const auto& [base, range] : registry().ranges) {
+    const auto first = firstRangeTouching(address);
+    for (auto it = first; it != registry().ranges.end(); ++it) {
+        const auto& [base, range] = *it;
         if (base >= address + bytes) break;
         if (base + range->bytes > address) {
             char message[160];
@@ -371,7 +386,9 @@ void GuestAllocationsRequireAvailable_nid_postfix(void*, const void* pointer, st
 bool GuestAllocationsOverlaps_nid_postfix(void*, const void* pointer, std::size_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(address != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest allocation range");
-    for (const auto& [base, range] : registry().ranges) {
+    const auto first = firstRangeTouching(address);
+    for (auto it = first; it != registry().ranges.end(); ++it) {
+        const auto& [base, range] = *it;
         if (base >= address + bytes) break;
         if (base + range->bytes > address) return true;
     }
@@ -562,6 +579,7 @@ Lease GuestAllocationsAcquire_nid_postfix() {
     std::lock_guard lock(registry().mutex);
     if (auto shared = registry().readableLease.lock()) return Lease(std::move(shared));
     auto ranges = std::make_shared<Lease::Ranges>();
+    ranges->reserve(registry().ranges.size());
     for (const auto& [address, range] : registry().ranges) {
         if (range->readable && range->bytes != 0) ranges->push_back(range);
     }
