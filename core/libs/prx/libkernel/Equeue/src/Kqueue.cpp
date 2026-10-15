@@ -48,7 +48,7 @@ constexpr std::uint32_t NOTE_MSECONDS = 0x0002;
 constexpr std::uint32_t NOTE_USECONDS = 0x0004;
 constexpr std::uint32_t NOTE_NSECONDS = 0x0008;
 constexpr std::uint32_t NOTE_TIMER_PRECMASK = NOTE_SECONDS | NOTE_MSECONDS | NOTE_USECONDS | NOTE_NSECONDS;
-constexpr std::uint16_t KNOTE_CLEARED_FLAGS = EV_ADD | EV_DELETE | EV_ENABLE | EV_DISABLE | EV_FORCEONESHOT;
+constexpr std::uint16_t KNOTE_CLEARED_FLAGS = EV_ADD | EV_DELETE | EV_ENABLE;
 
 std::mutex g_kqueueMutex;
 std::unordered_map<int, KernelEqueueRef> g_kqueues;
@@ -155,7 +155,7 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     if (period < 0) {
         return GUEST_EINVAL;
     }
-    if (period == 0 && (flags & EV_ONESHOT) == 0) {
+    if (period == 0 && (flags & (EV_ONESHOT | EV_FORCEONESHOT)) == 0) {
         period = 1;
     }
     if ((change.fflags & ~NOTE_TIMER_PRECMASK) != 0) {
@@ -168,7 +168,7 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     const std::uint64_t now = KernelEqueuePrivate::MonotonicNs();
     KernelEqueueEvent event{};
     event.deadlineNs = *periodNs <= std::numeric_limits<std::uint64_t>::max() - now ? now + *periodNs : std::numeric_limits<std::uint64_t>::max();
-    event.intervalNs = (flags & EV_ONESHOT) != 0 ? 0 : *periodNs;
+    event.intervalNs = (flags & (EV_ONESHOT | EV_FORCEONESHOT)) != 0 ? 0 : *periodNs;
     event.event = change;
     event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
     event.event.fflags = 0;
@@ -195,6 +195,7 @@ int AddUserKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_
 void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
     if ((change.fflags & NOTE_TRIGGER) != 0) {
         event.triggered = true;
+        event.event.data = change.data;
     }
     const std::uint32_t control = change.fflags & NOTE_FFCTRLMASK;
     change.fflags &= NOTE_FFLAGSMASK;
@@ -205,14 +206,13 @@ void TouchUserKnote(KernelEqueueEvent& event, KernelEvent& change) {
     } else if (control == NOTE_FFCOPY) {
         event.event.fflags = change.fflags;
     }
-    event.event.data = change.data;
     if ((change.flags & EV_CLEAR) != 0) {
         event.triggered = false;
     }
 }
 
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
-    if (change.filter == EVFILT_TIMER) {
+    if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0)) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
     }
     if ((change.filter == EVFILT_READ || change.filter == EVFILT_WRITE) && (change.fflags & NOTE_LOWAT) != 0) {
@@ -223,10 +223,29 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     }
     return GuestErrno(queue->EditEvent(change.ident, change.filter, [&change](KernelEqueueEvent& event) {
         event.event.udata = change.udata;
+        if ((change.flags & EV_DISABLE) != 0) {
+            event.event.flags |= EV_DISABLE;
+        } else if ((change.flags & (EV_ADD | EV_ENABLE)) != 0) {
+            event.event.flags &= ~EV_DISABLE;
+        }
+        if ((change.flags & EV_DISPATCH) != 0) {
+            event.event.flags |= EV_DISPATCH;
+        }
+        if ((change.flags & EV_FORCEONESHOT) != 0) {
+            event.event.flags |= EV_FORCEONESHOT;
+        }
+        if ((change.flags & EV_ONESHOT) != 0) {
+            event.event.flags |= EV_ONESHOT;
+        }
+        if ((change.flags & EV_CLEAR) != 0) {
+            event.event.flags |= EV_CLEAR;
+        }
         if (change.filter == EVFILT_USER) {
             TouchUserKnote(event, change);
         } else if (change.filter == EVFILT_VNODE) {
-            SetVnodeNotes(event, change.fflags);
+            if (change.fflags != 0 || (change.flags & EV_ADD) != 0) {
+                SetVnodeNotes(event, change.fflags);
+            }
         }
     }));
 }
@@ -240,15 +259,6 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
     }
     if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
-    }
-    if ((change.flags & EV_DISABLE) != 0) {
-        NotImplemented_nid_no_patch("kevent: EV_DISABLE");
-    }
-    if ((change.flags & EV_DISPATCH) != 0) {
-        NotImplemented_nid_no_patch("kevent: EV_DISPATCH");
-    }
-    if ((change.flags & EV_FORCEONESHOT) != 0) {
-        NotImplemented_nid_no_patch("kevent: EV_FORCEONESHOT");
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
         if (const int error = DescriptorFilterError(kqueueDescriptor, change.ident)) {
