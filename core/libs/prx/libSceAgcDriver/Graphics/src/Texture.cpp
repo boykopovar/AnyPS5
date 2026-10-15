@@ -3575,8 +3575,8 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
         }
         return false;
     };
-    for (const auto* texture : pending.textures) {
-        if (overlapsAny(texture)) return true;
+    for (const auto& [begin, end] : ranges) {
+        if (end > begin && pending.textures.MayOverlap(begin, static_cast<std::size_t>(end - begin))) return true;
     }
     for (const auto* texture : pending.flushing) {
         if (overlapsAny(texture)) return true;

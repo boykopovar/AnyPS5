@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <bitset>
 #include <cmath>
@@ -1004,15 +1005,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if ((clear || tests != 0) && depthSurfaceBound(cx)) {
             decodeDepth(cx, depthControl, (read(cx, 0x203) & 2u) != 0 && !PixelProgramSkipped(queue), result);
         } else if (depthPassThrough(depthControl) || ((depthControl & 0xbu) != 0 && (tests == 0 || depthPlanesAbsent(cx)))) {
-            static bool reported = false;
-            if (!reported) {
-                reported = true;
+            static std::atomic<bool> reported{false};
+            if (!reported.exchange(true)) {
                 std::fprintf(stderr, "[gpu] always-pass depth/stencil state is rendered without a depth target (DB_DEPTH_CONTROL=0x%08x)\n", depthControl);
             }
         } else if (IgnoreDepthTest()) {
-            static bool reported = false;
-            if (!reported) {
-                reported = true;
+            static std::atomic<bool> reported{false};
+            if (!reported.exchange(true)) {
                 std::fprintf(stderr, "[gpu] depth/stencil tests are ignored (APS5_IGNORE_DEPTH_TEST; DB_DEPTH_CONTROL=0x%08x)\n", depthControl);
             }
         } else {
@@ -1141,9 +1140,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     result.quadSampleMask = decodeQuadSampleMask(cx, result.samples);
     result.pixelEarlyZ = !PixelProgramSkipped(queue) && PixelEarlyZ(read(cx, 0x203));
     if ((read(cx, 0x207) & LayerExports & ~result.layerExports & ~(1u << 21u)) != 0) {
-        static bool reported = false;
-        if (!reported) {
-            reported = true;
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true)) {
             std::fprintf(stderr, "[gpu] layer/viewport index vertex exports are ignored (PA_CL_VS_OUT_CNTL=0x%08x)\n", read(cx, 0x207));
         }
     }
@@ -1511,9 +1509,8 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
         } else {
-            static bool reported = false;
-            if (!reported) {
-                reported = true;
+            static std::atomic<bool> reported{false};
+            if (!reported.exchange(true)) {
                 std::fprintf(stderr, "[gpu] DCC keys of mipmapped color targets are ignored\n");
             }
         }

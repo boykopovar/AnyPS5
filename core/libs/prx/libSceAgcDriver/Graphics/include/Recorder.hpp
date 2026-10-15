@@ -26,6 +26,24 @@ namespace AgcDriver::Graphics {
 
 class Buffer;
 
+class SnapshotArena {
+public:
+    static constexpr std::size_t InputLimit = 4096;
+    static constexpr std::size_t ChunkBytes = std::size_t{4} << 20u;
+    struct Slice {
+        std::shared_ptr<Buffer> chunk;
+        VkDeviceSize offset = 0;
+        std::span<std::byte> bytes;
+        std::size_t consumed = 0;
+        std::uint64_t batch = 0;
+    };
+    Slice Allocate(const Context& context, std::size_t bytes);
+
+private:
+    std::shared_ptr<Buffer> chunk;
+    VkDeviceSize cursor = 0;
+};
+
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
 // Sync waits for every batch, then runs its completion actions (write-backs) in order. Objects handed
@@ -96,6 +114,8 @@ public:
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
     void BoundKeptBytes();
     std::size_t InFlightKeptBytes() const { return inFlightKeptBytes; }
+    SnapshotArena::Slice AllocateSnapshot(std::size_t bytes);
+    void KeepSlice(const SnapshotArena::Slice& slice);
     enum class SnapshotUse : std::uint8_t { Storage, Vertex, Index16, Index32, Index16Restart, Index32Restart };
     static constexpr std::size_t DrawSnapshotBudget = std::size_t{1024} << 20u;
     static constexpr std::size_t DrawSnapshotEntries = 1024;
@@ -104,6 +124,10 @@ public:
     static constexpr std::size_t DrawInputEntries = 16384;
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer);
+    const SnapshotArena::Slice* UnwrittenDrawSlice(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp);
+    void NoteUnwrittenDrawSlice(std::uint64_t address, const std::array<std::uint64_t, 3>& stamp, const SnapshotArena::Slice& slice);
+    const SnapshotArena::Slice* ReusableDrawSlice(std::uint64_t address, std::size_t bytes, std::uint64_t registryGeneration);
+    void KeepDrawSlice(std::uint64_t address, const SnapshotArena::Slice& slice, std::uint64_t generation, std::uint64_t registryGeneration);
     std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0);
     void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
     static constexpr std::size_t IndexRangeEntries = 16384;
@@ -838,10 +862,19 @@ private:
         std::shared_ptr<Buffer> buffer;
     };
     std::unordered_map<std::uint64_t, UnwrittenSnapshot> unwrittenSnapshots;
+    std::unordered_map<std::uint64_t, SnapshotArena::Slice> unwrittenSlices;
+    struct KeptSlice {
+        SnapshotArena::Slice slice;
+        std::uint64_t generation;
+        std::uint64_t registryGeneration;
+    };
+    std::unordered_map<std::uint64_t, KeptSlice> keptSlices;
     std::array<std::uint64_t, 3> unwrittenStamp{};
     std::size_t unwrittenBytes = 0;
     void retireUnwrittenSnapshots(const std::array<std::uint64_t, 3>& stamp);
     std::array<DrawSnapshotPool, 2> drawSnapshotPools;
+    SnapshotArena snapshotArena;
+    std::uint64_t batchesOpened = 0;
     void eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterator entry);
     struct IndexRange {
         std::uint64_t generation;

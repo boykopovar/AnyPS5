@@ -4500,6 +4500,10 @@ std::size_t ShaderResources::MaxDrawSnapshotBytes() {
     return static_cast<std::size_t>(mib * 1024ull * 1024ull);
 }
 
+std::span<std::byte> ShaderResources::DrawBindings::Snapshot::Contents() const {
+    return sliced ? buffer->Bytes().subspan(static_cast<std::size_t>(offset), bytes) : buffer->Bytes();
+}
+
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved) const {
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
     const auto reads = guestMemory.InPlaceReads();
@@ -4552,8 +4556,38 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             stamp = {GuestMemory::TrackerGeneration(), GuestMemory::CollectEpoch(), registryGeneration};
             stamped = true;
         }
-        auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp);
         static const bool verifySnapshots = std::getenv("APS5_VERIFY_DRAW_SNAPSHOTS") != nullptr;
+        if (bytes != 0 && bytes <= SnapshotArena::InputLimit) {
+            SnapshotArena::Slice slice;
+            const bool epochMemo = stamp[1] != 0;
+            if (const auto* held = epochMemo ? recorder.UnwrittenDrawSlice(begin, bytes, stamp) : nullptr) {
+                slice = *held;
+                recorder.KeepSlice(slice);
+                if (verifySnapshots) {
+                    static std::atomic<std::uint64_t> checked{0}, differing{0};
+                    if (std::memcmp(slice.bytes.data(), reinterpret_cast<const void*>(begin), bytes) != 0) differing.fetch_add(1);
+                    if (checked.fetch_add(1) % 200000 == 199999) std::fprintf(stderr, "[draw-snapshots] verify: %llu fast slice answers checked, %llu differing%c", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(differing.load()), 10);
+                }
+            } else {
+                const auto generation = GuestMemory::CollectWrites(begin, bytes);
+                if (const auto* kept = recorder.ReusableDrawSlice(begin, bytes, registryGeneration)) {
+                    slice = *kept;
+                    recorder.KeepSlice(slice);
+                } else {
+                    slice = recorder.AllocateSnapshot(bytes);
+                    std::memcpy(slice.bytes.data(), reinterpret_cast<const void*>(begin), bytes);
+                    recorder.KeepDrawSlice(begin, slice, generation, registryGeneration);
+                }
+                if (epochMemo && GuestMemory::TrackerGeneration() == stamp[0]) recorder.NoteUnwrittenDrawSlice(begin, stamp, slice);
+                else if (epochMemo) stamped = false;
+            }
+            selected.push_back(index);
+            result->snapshots.push_back({begin, std::move(slice.chunk), slice.offset, bytes, true});
+            totalSnapshotBytes += bytes;
+            CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
+            continue;
+        }
+        auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp);
         if (verifySnapshots && buffer != nullptr) {
             static std::atomic<std::uint64_t> checked{0}, differing{0};
             const auto slow = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, GuestMemory::CollectWrites(begin, bytes));
@@ -4621,14 +4655,16 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result->snapshots[snapshotIndex];
-                buffers[offset + element] = {snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()};
+                buffers[offset + element] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.Contents().size()};
             }
         }
     }
     Require(nextWrite == writes.end(), "draw snapshot writes disagree with their descriptor bindings");
     context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     recorder.Keep(result);
-    for (const auto& snapshot : result->snapshots) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+    for (const auto& snapshot : result->snapshots) {
+        if (!snapshot.sliced) recorder.KeepBytes(snapshot.buffer.get(), snapshot.buffer->Bytes().size());
+    }
     return result;
 }
 

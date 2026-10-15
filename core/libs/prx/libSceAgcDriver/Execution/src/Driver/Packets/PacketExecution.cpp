@@ -120,6 +120,17 @@ void Driver::execute(const Submission& submission) {
         state = &queues[submission.queue];
     }
     auto& queue = *state;
+    if (submission.queue == 0 && drawEntries() && registerKeyEnabled()) {
+        if (drawAhead == nullptr) drawAhead = std::make_unique<DrawAhead>(*this, DrawAhead::Workers());
+        drawAhead->Post(submission, queue);
+    }
+    struct RetireDrawAhead {
+        DrawAhead* drawAhead;
+        std::uint64_t serial;
+        ~RetireDrawAhead() {
+            if (drawAhead != nullptr) drawAhead->Retire(serial);
+        }
+    } retireDrawAhead{submission.queue == 0 ? drawAhead.get() : nullptr, submission.serial};
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f execute serial=%llu queue=0x%x dwords=%zu\n", TraceMs(), static_cast<unsigned long long>(submission.serial), submission.queue, submission.commands.size());
 
@@ -202,6 +213,7 @@ void Driver::execute(const Submission& submission) {
             recordQueuedLabelsBeforeRead(submission.queue);
             if (!Pm4::PredicationPasses(queue)) {
                 cursor = opcode == 0x3f ? submission.conditionalEnds.at(cursor) : nextCursor;
+                if (submission.queue == 0 && drawAhead != nullptr) drawAhead->Skip(submission.serial, cursor);
                 continue;
             }
         }
@@ -340,6 +352,7 @@ void Driver::execute(const Submission& submission) {
                 }
             }
         } else if (drawPacket) {
+            if (submission.queue == 0 && drawAhead != nullptr) drawAhead->Progress(submission.serial, cursor);
             landPendingWaits(submission.queue);
             bool drawn = false;
             timed(&WorkerProfile::drawMs, [&] {
@@ -375,7 +388,10 @@ void Driver::execute(const Submission& submission) {
             landPendingWaits(submission.queue);
             recordQueuedLabelsBeforeRead(submission.queue);
             const auto condition = Pm4::ReadCondition(packet);
-            if (condition == 0) nextCursor = submission.conditionalEnds.at(cursor);
+            if (condition == 0) {
+                nextCursor = submission.conditionalEnds.at(cursor);
+                if (submission.queue == 0 && drawAhead != nullptr) drawAhead->Skip(submission.serial, nextCursor);
+            }
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f queue 0x%x COND_EXEC at DWORD %zu reads 0x%x at 0x%llx: %s %zu dwords\n", TraceMs(), submission.queue, cursor, condition, static_cast<unsigned long long>(packet[1] | (static_cast<std::uint64_t>(packet[2]) << 32u)), condition == 0 ? "skips" : "executes", submission.conditionalEnds.at(cursor) - cursor - count);
         } else if (opcode == 0x91) {
             landPendingWaits(submission.queue);

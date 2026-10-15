@@ -932,6 +932,16 @@ void NoteDispatchRegisters(std::span<const std::uint32_t> packet, QueueState& qu
     }
 }
 
+std::uint32_t RegisterOffset(std::uint32_t value) {
+    return registerOffset(value);
+}
+
+std::optional<std::pair<std::uint32_t, std::uint32_t>> CopyDataContextRegisters(std::span<const std::uint32_t> packet) {
+    if (packet.size() < 6 || ((packet[0] >> 8u) & 0xffu) != 0x40 || !CopyDataToRegister(packet)) return std::nullopt;
+    require(packet[4] >= ContextRegisterBase, "COPY_DATA to a register outside the context registers is not implemented");
+    return std::pair{packet[4] - ContextRegisterBase, copyDataCount(packet)};
+}
+
 void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue) {
     const auto opcode = (packet[0] >> 8u) & 0xffu;
     require(packet.size() == 5 && IndirectRegisterOpcode(opcode), "expected indirect register packet");

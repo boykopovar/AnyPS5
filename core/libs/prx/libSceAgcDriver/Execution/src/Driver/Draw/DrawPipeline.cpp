@@ -181,6 +181,24 @@ std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, s
     return std::nullopt;
 }
 
+bool DrawPipeline::OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    if (ranges.empty()) return false;
+    auto low = ranges.front().first;
+    auto high = ranges.front().second;
+    for (const auto& [begin, end] : ranges) {
+        low = std::min(low, begin);
+        high = std::max(high, end);
+    }
+    std::lock_guard lock(mutex);
+    for (const auto& item : items) {
+        for (const auto& [begin, limit] : item.writes) {
+            if (begin >= high || limit <= low) continue;
+            if (std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.first < limit && begin < range.second; })) return true;
+        }
+    }
+    return false;
+}
+
 bool DrawPipeline::Overlaps(std::uint64_t address, std::size_t bytes) {
     const auto end = address + bytes;
     std::lock_guard lock(mutex);

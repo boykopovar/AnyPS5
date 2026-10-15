@@ -153,6 +153,10 @@ public:
         struct Snapshot {
             std::uint64_t address;
             std::shared_ptr<Buffer> buffer;
+            VkDeviceSize offset = 0;
+            std::size_t bytes = 0;
+            bool sliced = false;
+            std::span<std::byte> Contents() const;
         };
         DescriptorCache* cache = nullptr;
         VkDescriptorSetLayout layout = VK_NULL_HANDLE;

@@ -37,12 +37,23 @@
 #include <pthread.h>
 #include <sstream>
 #include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #endif
 
 namespace AgcDriver::GuestMemory {
 namespace {
+thread_local ISpeculativeReadGate* speculativeGate = nullptr;
+
+void requireNotSpeculative(const char* operation) {
+    if (speculativeGate != nullptr) throw SpeculativeReadRefused(std::string("guest memory ") + operation + " is not available to a speculative reader");
+}
+
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("AGC driver: ") + reason);
 }
@@ -1469,6 +1480,7 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::func
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store) {
+    requireNotSpeculative("store");
     return storeOwn(address, bytes, [&] {
         store();
         return std::pair<std::uint64_t, std::uint64_t>{address, address + bytes};
@@ -2082,14 +2094,71 @@ void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes)) {
     readGuard.store(guard, std::memory_order_release);
 }
 
-void FlushGpuWrites(std::uint64_t address, std::size_t bytes) {
+namespace {
+bool copyThroughKernel(std::uint64_t address, std::span<std::byte> destination) {
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(static_cast<std::uintptr_t>(address)), destination.data(), destination.size(), &copied) != 0 && copied == destination.size();
+#elif defined(__APPLE__)
+    mach_vm_size_t copied = 0;
+    return mach_vm_read_overwrite(mach_task_self(), address, destination.size(), reinterpret_cast<mach_vm_address_t>(destination.data()), &copied) == KERN_SUCCESS && copied == destination.size();
+#else
+    iovec local{destination.data(), destination.size()};
+    iovec remote{reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), destination.size()};
+    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(destination.size());
+#endif
+}
+
+void flushBeforeAccess(std::uint64_t address, std::size_t bytes) {
     if (const auto hook = flushHook.load(std::memory_order_acquire)) hook(address, bytes);
+}
+
+}
+
+SpeculativeReadScope::SpeculativeReadScope(ISpeculativeReadGate& gate) : previous(speculativeGate) {
+    speculativeGate = &gate;
+}
+
+SpeculativeReadScope::~SpeculativeReadScope() {
+    speculativeGate = previous;
+}
+
+bool SpeculativeReadsSupported() {
+    static const bool supported = [] {
+        const std::uint64_t probe = 0x5a5a5a5aa5a5a5a5ull;
+        std::uint64_t copied = 0;
+        return copyThroughKernel(reinterpret_cast<std::uintptr_t>(&probe), std::as_writable_bytes(std::span(&copied, 1))) && copied == probe;
+    }();
+    return supported;
+}
+
+bool SpeculativeReader() {
+    return speculativeGate != nullptr;
+}
+
+void FlushGpuWrites(std::uint64_t address, std::size_t bytes) {
+    requireNotSpeculative("access with a flush");
+    flushBeforeAccess(address, bytes);
 }
 
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment) {
     if (destination.empty()) return;
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, destination.size());
-    FlushGpuWrites(address, destination.size());
+    if (auto* gate = speculativeGate) {
+        try {
+            CheckRange(reinterpret_cast<const void*>(address), destination.size(), alignment);
+        } catch (const std::runtime_error& error) {
+            throw SpeculativeReadRefused(error.what());
+        }
+        gate->Enter();
+        struct Leave {
+            ISpeculativeReadGate& gate;
+            ~Leave() { gate.Leave(); }
+        } leave{*gate};
+        if (!copyThroughKernel(address, destination)) throw SpeculativeReadRefused("AGC driver: a speculative guest read found the range unmapped");
+        return;
+    }
+    flushBeforeAccess(address, destination.size());
     const TimedAccess timed(CounterRead, destination.size());
     CountReadCaller(__builtin_return_address(0));
     const auto* source = reinterpret_cast<const void*>(address);
@@ -2117,6 +2186,7 @@ void copyCommitted(std::uint64_t address, std::span<std::byte> destination) {
 }
 
 void ReadCommitted(std::uint64_t address, std::span<std::byte> destination) {
+    requireNotSpeculative("read of committed pages");
     if (destination.empty()) return;
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, destination.size());
     FlushGpuWrites(address, destination.size());
@@ -2126,6 +2196,7 @@ void ReadCommitted(std::uint64_t address, std::span<std::byte> destination) {
 }
 
 void ReadCommittedUnsynced(std::uint64_t address, std::span<std::byte> destination) {
+    requireNotSpeculative("read of committed pages");
     if (destination.empty()) return;
     if (const auto guard = readGuard.load(std::memory_order_acquire)) guard(address, destination.size());
     const TimedAccess timed(CounterRead, destination.size());
@@ -2140,6 +2211,7 @@ bool EqualsCommitted(std::uint64_t address, std::span<const std::byte> bytes) {
 }
 
 bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> bytes) {
+    requireNotSpeculative("compare");
     if (bytes.empty()) return true;
     const TimedAccess timed(CounterCompare, bytes.size());
     if (Accessible(reinterpret_cast<const void*>(address), bytes.size())) return std::memcmp(reinterpret_cast<const void*>(address), bytes.data(), bytes.size()) == 0;
@@ -2150,6 +2222,7 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 }
 
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
+    requireNotSpeculative("compare");
     if (bytes.empty()) return Compare::Equal;
     if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
     auto outcome = Compare::Equal;
@@ -2163,6 +2236,7 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
 }
 
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out) {
+    requireNotSpeculative("copy");
     if (out.empty()) return Compare::Equal;
     if (address == 0 || out.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
     auto outcome = Compare::Equal;
@@ -2188,6 +2262,7 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
 }
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+    requireNotSpeculative("store");
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     if (current.empty()) return;
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
@@ -2226,6 +2301,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
 }
 
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {
+    requireNotSpeculative("store");
     if (source.empty()) return;
     // A store, as in WriteChanged.
     const ReadSiteScope site(ReadSite::Store);

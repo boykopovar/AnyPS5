@@ -7,6 +7,7 @@
 #include <functional>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -194,6 +195,30 @@ unsigned long long CodeOffset(const void* address);
 void SetFlushHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 void SetReadGuard(void (*guard)(std::uint64_t address, std::size_t bytes));
 void FlushGpuWrites(std::uint64_t address, std::size_t bytes);
+class ISpeculativeReadGate {
+public:
+    virtual void Enter() = 0;
+    virtual void Leave() = 0;
+
+protected:
+    ~ISpeculativeReadGate() = default;
+};
+class SpeculativeReadRefused : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+class SpeculativeReadScope {
+public:
+    explicit SpeculativeReadScope(ISpeculativeReadGate& gate);
+    ~SpeculativeReadScope();
+    SpeculativeReadScope(const SpeculativeReadScope&) = delete;
+    SpeculativeReadScope& operator=(const SpeculativeReadScope&) = delete;
+
+private:
+    ISpeculativeReadGate* previous;
+};
+bool SpeculativeReadsSupported();
+bool SpeculativeReader();
 // Moves with every ForgetPages call (the libc invalidator: memory unmapped or re-registered): odd
 // while the call stores its page states, moved past it after, so a reader that loads an even
 // value before consulting the page states and reading directly, and the same value after, knows

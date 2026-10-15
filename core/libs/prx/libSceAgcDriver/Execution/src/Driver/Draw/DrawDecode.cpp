@@ -121,9 +121,13 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
 }
 
 std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Submission& submission) {
+    return decodeDraw(queue, *submission.shaders);
+}
+
+std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const ShaderRegistry& registry) {
     auto product = std::make_shared<DrawDecode>();
-    product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, *submission.shaders));
-    DecodeGraphicsPrograms(*product, queue, *submission.shaders, false, true);
+    product->state = Graphics::DecodeState(queue, VertexWorkgroupRequired(queue, registry));
+    DecodeGraphicsPrograms(*product, queue, registry, false, true);
     product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue));
     product->pixel.targetExportPacking = Graphics::ExportPackings(product->state);
     product->pixel.dualSourceBlend = product->state.dualSourceBlend;

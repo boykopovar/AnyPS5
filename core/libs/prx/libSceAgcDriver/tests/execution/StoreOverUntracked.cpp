@@ -280,6 +280,8 @@ Outcome RunSecondStore(const char* name) {
     };
     Store(surface.Texels());
     if (!heldLive(Stored)) return Outcome::Missed;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 3> runs{{{address - 64, address}, {address + SurfaceBytes, address + SurfaceBytes + 64}, {address + SurfaceBytes - 4, address + SurfaceBytes}}};
+    Require(StorageTexture::AnyPendingOverlaps(runs) && !StorageTexture::AnyPendingOverlaps(std::span(runs).first(2)), "store over untracked: a list of runs does not overlap the pending surface exactly when one of its runs does");
     StorageTexture::FlushAllPending("store over untracked fixture");
     hold.unlock();
     {

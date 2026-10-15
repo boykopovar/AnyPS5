@@ -189,9 +189,14 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
             return page;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        GuestMemory::FlushGpuWrites(base, PageBytes);
+        if (GuestMemory::SpeculativeReader()) {
+            GuestMemory::Read(base, std::as_writable_bytes(std::span(page.words)), sizeof(std::uint32_t));
+            page.valid.SetAll();
+        } else {
+            GuestMemory::FlushGpuWrites(base, PageBytes);
+            page.lazy = true;
+        }
         if (CaptureProfiled()) CaptureTotals().pageReadNanoseconds += NanosecondsSince(started);
-        page.lazy = true;
     }
     return page;
 }

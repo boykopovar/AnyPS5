@@ -1988,8 +1988,10 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         const auto commands = snapshotRecorder.Commands();
         RecordMemoryBarrier(snapshotContext, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         const auto copy = snapshotContext.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
-        VkBufferCopy region{0, 0, elementBytes};
+        Require(first->snapshots[0].Contents().size() == elementBytes && second->snapshots[0].Contents().size() == elementBytes, "a draw snapshot does not cover its input");
+        VkBufferCopy region{first->snapshots[0].offset, 0, elementBytes};
         copy(commands, first->snapshots[0].buffer->Handle(), downloaded->Handle(), 1, &region);
+        region.srcOffset = second->snapshots[0].offset;
         region.dstOffset = elementBytes;
         copy(commands, second->snapshots[0].buffer->Handle(), downloaded->Handle(), 1, &region);
         RecordMemoryBarrier(snapshotContext, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
@@ -2335,8 +2337,9 @@ void misalignedRegionTests(const Device& device, Recorder& recorder) {
         const auto check = [&] {
             const auto bindings = resources.PrepareDrawBindings(regionRecorder);
             Require(bindings != nullptr && bindings->snapshots.size() == 1, "the read-only misaligned draw input was not snapshotted");
-            const auto contents = bindings->snapshots.front().buffer->Bytes();
-            Require(bindings->snapshots.front().address == view - adjustment && contents.size() == adjustment + elementBytes, "the draw snapshot does not start at the aligned offset below the view");
+            const auto& front = bindings->snapshots.front();
+            const auto contents = front.Contents();
+            Require(front.address == view - adjustment && contents.size() == adjustment + elementBytes, "the draw snapshot does not start at the aligned offset below the view");
             Require(std::memcmp(contents.data() + adjustment, guest + offset, elementBytes) == 0, "the shader's patched offset into the draw snapshot misses the view's bytes");
         };
         check();
@@ -2419,9 +2422,9 @@ void misalignedSnapshotTests(const Device& device, Recorder& recorder) {
         Require(push[0] == std::byte{0} && adjustment == offset % alignment, "the inner view's shader offset is not its distance from the binding");
         const auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
         Require(bindings != nullptr && bindings->snapshots.size() == 2, "read-only draw inputs were not snapshotted");
-        const auto outerContents = bindings->snapshots[0].buffer->Bytes();
+        const auto outerContents = bindings->snapshots[0].Contents();
         Require(outerContents.size() >= outerBytes && std::memcmp(outerContents.data(), guest + outer, outerBytes) == 0, "an aligned draw snapshot misses its view's bytes");
-        const auto contents = bindings->snapshots[1].buffer->Bytes();
+        const auto contents = bindings->snapshots[1].Contents();
         Require(contents.size() >= adjustment + elementBytes, "a draw snapshot ends before the bytes the shader reads");
         Require(std::memcmp(contents.data() + adjustment, guest + offset, elementBytes) == 0, "the shader's offset into a draw snapshot misses the view's bytes");
         snapshotRecorder.Sync();
@@ -2509,8 +2512,11 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
             Require(actual.buffers.size() == original.buffers.size() && actual.images.size() == original.images.size(), "snapshot update omitted unchanged descriptors");
             for (const auto& [key, before] : original.buffers) {
                 const auto after = actual.buffers.at(key);
-                const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
-                Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
+                const bool snapshotted = key.first == (allocation == 0 ? 2u : 7u);
+                const auto& snapshot = draw->snapshots.front();
+                const auto expected = snapshotted ? snapshot.buffer->Handle() : before.buffer;
+                const auto expectedOffset = snapshotted ? snapshot.offset : before.offset;
+                Require(after.buffer == expected && after.offset == expectedOffset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
             }
             for (const auto& [key, before] : original.images) {
                 const auto after = actual.images.at(key);
@@ -2520,6 +2526,188 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
         snapshots.Sync();
     }
     recorder.Activate();
+}
+
+bool drawSnapshotArenaTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    constexpr std::size_t bytes = 2 * 65536;
+    void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "skipped, host imports unavailable: draw snapshot arena not tested\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } unregister{context, block};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "skipped, host import of the test block refused: draw snapshot arena not tested\n";
+        return false;
+    }
+    constexpr std::array<std::size_t, 2> elementBytes{100, SnapshotArena::InputLimit};
+    const std::array<std::uint64_t, 2> elements{address + 4096, address + 65536};
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 2;
+    for (std::size_t index = 0; index < elements.size(); ++index) {
+        const auto element = elements[index];
+        for (const auto word : {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, static_cast<std::uint32_t>(elementBytes[index]), 0x31000000u}) binding.guestDescriptor.push_back(word);
+    }
+    binding.bufferWritten = {false, false};
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    {
+        auto snapshotContext = context;
+        DescriptorUpdates updates(snapshotContext);
+        DescriptorCache cache(snapshotContext);
+        snapshotContext.descriptorCache = &cache;
+        Recorder snapshotRecorder(snapshotContext);
+        snapshotRecorder.Activate();
+        ShaderResources resources(snapshotContext, compute);
+        const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 1);
+        std::vector<std::shared_ptr<ShaderResources::DrawBindings>> held;
+                const auto holds = [&](const ShaderResources::DrawBindings& bindings, std::byte expected) {
+            return std::all_of(bindings.snapshots.begin(), bindings.snapshots.end(), [&](const auto& snapshot) {
+                const auto contents = snapshot.Contents();
+                return std::all_of(contents.begin(), contents.end(), [&](std::byte value) { return value == expected; });
+            });
+        };
+        {
+            const std::array<std::byte, 2> marks{std::byte{0x01}, std::byte{0x02}};
+            for (std::size_t index = 0; index < elements.size(); ++index) std::memset(reinterpret_cast<void*>(elements[index]), std::to_integer<int>(marks[index]), elementBytes[index]);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            const auto calls = updates.calls.size();
+            const auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
+            Require(bindings != nullptr && bindings->snapshots.size() == 2, "draw inputs for the descriptor check were not snapshotted");
+            Require(updates.calls.size() == calls + 1, "a draw did not write exactly one descriptor update");
+            Require(bindings->snapshots[0].buffer == bindings->snapshots[1].buffer && bindings->snapshots[1].offset >= bindings->snapshots[0].offset + elementBytes[0] && bindings->snapshots[1].offset != 0, "the descriptor check needs two slices of one chunk, the second at a nonzero offset");
+            for (std::size_t index = 0; index < elements.size(); ++index) {
+                const auto& snapshot = bindings->snapshots[index];
+                const auto& descriptor = updates.calls.back().buffers.at({0, static_cast<std::uint32_t>(index)});
+                Require(descriptor.buffer == snapshot.buffer->Handle() && descriptor.offset == snapshot.offset && descriptor.range == elementBytes[index], "a draw descriptor does not name the buffer, offset and range of its slice");
+                const auto visible = snapshot.buffer->Bytes().subspan(static_cast<std::size_t>(descriptor.offset), static_cast<std::size_t>(descriptor.range));
+                Require(std::all_of(visible.begin(), visible.end(), [&](std::byte value) { return value == marks[index]; }), "reading through a draw descriptor did not return the bytes of its own slice");
+            }
+        }
+        const auto keptBefore = snapshotRecorder.OpenKeptBytes();
+        const std::size_t draws = SnapshotArena::ChunkBytes / elementBytes[1] + 8;
+        for (std::size_t draw = 0; draw < draws; ++draw) {
+            const auto value = static_cast<std::byte>(0x20 + draw % 64);
+            for (std::size_t index = 0; index < elements.size(); ++index) std::memset(reinterpret_cast<void*>(elements[index]), std::to_integer<int>(value), elementBytes[index]);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
+            Require(bindings != nullptr && bindings->snapshots.size() == 2, "small read-only draw inputs were not snapshotted");
+            for (std::size_t index = 0; index < elements.size(); ++index) {
+                const auto& snapshot = bindings->snapshots[index];
+                Require(snapshot.address == elements[index] && snapshot.bytes == elementBytes[index] && snapshot.offset % alignment == 0, "a draw snapshot slice is misplaced or misaligned");
+                Require(snapshot.offset + snapshot.bytes <= snapshot.buffer->Bytes().size(), "a draw snapshot slice ends past its chunk");
+            }
+            Require(holds(*bindings, value), "a draw snapshot slice does not hold the guest bytes of its draw");
+            held.push_back(std::move(bindings));
+        }
+        Require(snapshotRecorder.OpenKeptBytes() - keptBefore >= draws * (elementBytes[0] + elementBytes[1]), "draw snapshot slices were not counted as kept bytes");
+        std::vector<std::tuple<const Buffer*, VkDeviceSize, std::size_t>> ranges;
+        for (const auto& bindings : held) {
+            for (const auto& snapshot : bindings->snapshots) ranges.emplace_back(snapshot.buffer.get(), snapshot.offset, snapshot.bytes);
+        }
+        std::sort(ranges.begin(), ranges.end());
+        for (std::size_t index = 1; index < ranges.size(); ++index) {
+            const auto& [previousChunk, previousOffset, previousBytes] = ranges[index - 1];
+            const auto& [chunk, offset, sliceBytes] = ranges[index];
+            Require(previousChunk != chunk || previousOffset + previousBytes <= offset, "two draw snapshot slices share bytes of one chunk");
+        }
+        Require(std::get<0>(ranges.front()) != std::get<0>(ranges.back()), "the draw snapshot arena never moved to a new chunk");
+        for (std::size_t draw = 0; draw < held.size(); ++draw) Require(holds(*held[draw], static_cast<std::byte>(0x20 + draw % 64)), "a later draw snapshot overwrote an earlier draw's slice");
+        const auto keptBeforeSmall = snapshotRecorder.OpenKeptBytes();
+        const auto firstSmall = snapshotRecorder.AllocateSnapshot(4);
+        auto lastSmall = firstSmall;
+        std::size_t smallSlices = 1;
+        while (lastSmall.chunk == firstSmall.chunk) {
+            lastSmall = snapshotRecorder.AllocateSnapshot(4);
+            ++smallSlices;
+        }
+        const auto chargedSmall = snapshotRecorder.OpenKeptBytes() - keptBeforeSmall;
+        Require(chargedSmall >= SnapshotArena::ChunkBytes - static_cast<std::size_t>(firstSmall.offset), "a chunk filled by " + std::to_string(smallSlices) + " small draw snapshot slices was charged " + std::to_string(chargedSmall) + " kept bytes, less than the chunk it retains");
+        Require(chargedSmall <= 2 * SnapshotArena::ChunkBytes, "small draw snapshot slices were charged more than the chunk space they consumed");
+        const auto firstBatchRanges = ranges;
+        snapshotRecorder.Submit();
+        std::vector<std::shared_ptr<ShaderResources::DrawBindings>> second;
+        constexpr std::size_t secondDraws = 16;
+        for (std::size_t draw = 0; draw < secondDraws; ++draw) {
+            const auto value = static_cast<std::byte>(0xa0 + draw);
+            for (std::size_t index = 0; index < elements.size(); ++index) std::memset(reinterpret_cast<void*>(elements[index]), std::to_integer<int>(value), elementBytes[index]);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            auto bindings = resources.PrepareDrawBindings(snapshotRecorder);
+            Require(bindings != nullptr && bindings->snapshots.size() == 2, "draw inputs after a submit were not snapshotted");
+            Require(holds(*bindings, value), "a draw snapshot slice after a submit does not hold the guest bytes of its draw");
+            second.push_back(std::move(bindings));
+        }
+        for (std::size_t draw = 0; draw < held.size(); ++draw) Require(holds(*held[draw], static_cast<std::byte>(0x20 + draw % 64)), "a draw snapshot slice of the submitted batch changed while the next batch allocated");
+        std::vector<std::tuple<const Buffer*, VkDeviceSize, std::size_t>> secondRanges;
+        for (const auto& bindings : second) {
+            for (const auto& snapshot : bindings->snapshots) secondRanges.emplace_back(snapshot.buffer.get(), snapshot.offset, snapshot.bytes);
+        }
+        for (const auto& [chunk, offset, sliceBytes] : secondRanges) {
+            for (const auto& [firstChunkPointer, firstOffset, firstBytes] : firstBatchRanges) {
+                Require(chunk != firstChunkPointer || offset + sliceBytes <= firstOffset || firstOffset + firstBytes <= offset, "a draw snapshot slice allocated after a submit overlaps a slice of the submitted batch");
+            }
+        }
+        const auto sameSlice = [](const ShaderResources::DrawBindings::Snapshot& a, const ShaderResources::DrawBindings::Snapshot& b) { return a.buffer == b.buffer && a.offset == b.offset; };
+        const auto keptBeforeRepeat = snapshotRecorder.OpenKeptBytes();
+        const auto repeated = resources.PrepareDrawBindings(snapshotRecorder);
+        const auto again = resources.PrepareDrawBindings(snapshotRecorder);
+        Require(repeated != nullptr && again != nullptr && again->snapshots.size() == 2, "unchanged small draw inputs were not snapshotted");
+        if (AgcDriver::GuestMemory::CollectEpoch() != 0) {
+            Require(sameSlice(again->snapshots[0], repeated->snapshots[0]) && sameSlice(again->snapshots[1], repeated->snapshots[1]), "a draw in the same collect epoch copied its unchanged small inputs again");
+            Require(snapshotRecorder.OpenKeptBytes() == keptBeforeRepeat, "draw snapshot slices reused in the batch that allocated them were charged again");
+        } else if (!AgcDriver::GuestMemory::Watched(elements[0], elementBytes[0]) || !AgcDriver::GuestMemory::Watched(elements[1], elementBytes[1])) {
+            Require(!sameSlice(again->snapshots[0], repeated->snapshots[0]) && !sameSlice(again->snapshots[1], repeated->snapshots[1]), "a draw reused a small input's slice without a collect epoch or a write watch to bound it");
+        } else {
+            Require(sameSlice(again->snapshots[0], repeated->snapshots[0]) && sameSlice(again->snapshots[1], repeated->snapshots[1]), "a draw without a collect epoch copied its unchanged, write-watched small inputs again");
+        }
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto nextEpoch = resources.PrepareDrawBindings(snapshotRecorder);
+        Require(nextEpoch != nullptr && nextEpoch->snapshots.size() == 2, "unchanged small inputs were not snapshotted in a new collect epoch");
+        if (AgcDriver::GuestMemory::Watched(elements[0], elementBytes[0]) && AgcDriver::GuestMemory::Watched(elements[1], elementBytes[1])) {
+            Require(sameSlice(nextEpoch->snapshots[0], repeated->snapshots[0]) && sameSlice(nextEpoch->snapshots[1], repeated->snapshots[1]), "a draw in a new collect epoch copied its unchanged, write-watched small inputs again");
+        }
+        std::memset(reinterpret_cast<void*>(elements[0]), 0x5a, elementBytes[0]);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto changed = resources.PrepareDrawBindings(snapshotRecorder);
+        Require(changed != nullptr && !sameSlice(changed->snapshots[0], repeated->snapshots[0]) && std::all_of(changed->snapshots[0].Contents().begin(), changed->snapshots[0].Contents().end(), [](std::byte value) { return value == std::byte{0x5a}; }), "a draw after a store and a new collect epoch reused the slice taken before the store");
+        std::weak_ptr<Buffer> firstChunk = held.front()->snapshots.front().buffer;
+        held.clear();
+        second.clear();
+        Require(!firstChunk.expired(), "a draw snapshot chunk was released before its batch completed");
+        snapshotRecorder.Sync();
+        snapshotRecorder.FlushDeferredReleases();
+        const auto reclaimDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!firstChunk.expired() && std::chrono::steady_clock::now() < reclaimDeadline) std::this_thread::yield();
+        Require(firstChunk.expired(), "a draw snapshot chunk was not reclaimed once its batch completed");
+    }
+    recorder.Activate();
+    return true;
 }
 
 void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
@@ -2560,7 +2748,7 @@ void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
         return;
     }
     const auto element = address + 4096;
-    constexpr std::size_t elementBytes = 1024;
+    constexpr std::size_t elementBytes = 2 * SnapshotArena::InputLimit;
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
     binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
@@ -3278,6 +3466,11 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     retile(*half, unit3, unit / 2, 0x22, true);
     Require(AnyShadowedOverlaps(unit3, 1) && AnyShadowedOverlaps(unit4 - 1, 1) && AnyShadowedOverlaps(unit3 + 1000, 64), "a fresh unit is not seen as shadowed");
     Require(!AnyShadowedOverlaps(unit3 - 1, 1) && !AnyShadowedOverlaps(unit4, unit) && !AnyShadowedOverlaps(address, 3 * unit), "a range outside the unit is seen as shadowed");
+    {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 3> outside{{{unit3 - 8, unit3}, {unit4, unit4 + unit}, {address, address + 3 * unit}}};
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 3> lastInside{{{unit3 - 8, unit3}, {unit4, unit4 + 8}, {unit4 - 4, unit4}}};
+        Require(!AnyShadowedOverlaps(outside) && AnyShadowedOverlaps(lastInside), "a list of runs is not shadowed exactly when one of its runs is");
+    }
     {
         // An upload's runs over units 2..4 split at unit 3's freshness; the fresh piece reads the slab.
         const std::pair<std::uint64_t, std::uint64_t> run{2 * unit, 5 * unit};
@@ -8245,6 +8438,15 @@ int main(int argc, char** argv) {
             std::cout << "Address space pending write tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshots-only") {
+            misalignedSnapshotTests(device, recorder);
+            misalignedRegionTests(device, recorder);
+            drawSnapshotReuseTests(device, recorder);
+            drawDescriptorWriteTests(device, recorder);
+            if (!drawSnapshotArenaTests(device, recorder)) return 77;
+            std::cout << "Draw snapshot tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
             unwrittenSnapshotTests(device);
@@ -8344,6 +8546,7 @@ int main(int argc, char** argv) {
         drawSnapshotPatchTests(device);
         drawSnapshotEpochTests(device);
         gpu.lock();
+        static_cast<void>(drawSnapshotArenaTests(device, recorder));
         recorder.Activate();
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;

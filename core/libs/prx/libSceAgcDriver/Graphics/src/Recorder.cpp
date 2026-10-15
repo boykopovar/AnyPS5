@@ -1521,6 +1521,7 @@ void Recorder::ensureOpen() {
         dropStaleHoldKept();
         batch->kept.insert(batch->kept.end(), holdKept.begin(), holdKept.end());
         open = std::move(batch);
+        ++batchesOpened;
         if (PerformanceTrace::Recording()) {
             static std::atomic<std::uint64_t> traceIds{0};
             open->traceId = traceIds.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -2515,6 +2516,76 @@ void Recorder::KeepBytes(const void* owner, std::size_t bytes) {
     if (open->keptOwners.insert(owner).second) open->keptBytes += bytes;
 }
 
+SnapshotArena::Slice SnapshotArena::Allocate(const Context& context, std::size_t bytes) {
+    Require(bytes != 0 && bytes <= InputLimit, "a draw snapshot slice must hold 1 to InputLimit bytes");
+    const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 64);
+    auto offset = (cursor + alignment - 1) / alignment * alignment;
+    std::size_t consumed = 0;
+    if (chunk == nullptr || offset + bytes > chunk->Bytes().size()) {
+        if (chunk != nullptr) consumed = static_cast<std::size_t>(chunk->Bytes().size() - cursor);
+        chunk = std::make_shared<Buffer>(context, ChunkBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        cursor = 0;
+        offset = 0;
+    }
+    consumed += static_cast<std::size_t>(offset + bytes - cursor);
+    cursor = offset + bytes;
+    return {chunk, offset, chunk->Bytes().subspan(static_cast<std::size_t>(offset), bytes), consumed};
+}
+
+SnapshotArena::Slice Recorder::AllocateSnapshot(std::size_t bytes) {
+    ensureOpen();
+    auto slice = snapshotArena.Allocate(context, bytes);
+    open->keptBytes += slice.consumed;
+    slice.batch = batchesOpened;
+    if (slice.offset == 0) {
+        unwrittenSlices.clear();
+        keptSlices.clear();
+    }
+    return slice;
+}
+
+void Recorder::KeepSlice(const SnapshotArena::Slice& slice) {
+    ensureOpen();
+    if (slice.batch != batchesOpened) KeepBytes(slice.bytes.data(), slice.bytes.size());
+}
+
+const SnapshotArena::Slice* Recorder::UnwrittenDrawSlice(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp) {
+    retireUnwrittenSnapshots(stamp);
+    const auto found = unwrittenSlices.find(address);
+    if (found == unwrittenSlices.end() || found->second.bytes.size() != bytes) return nullptr;
+    return &found->second;
+}
+
+const SnapshotArena::Slice* Recorder::ReusableDrawSlice(std::uint64_t address, std::size_t bytes, std::uint64_t registryGeneration) {
+    const auto found = keptSlices.find(address);
+    if (found == keptSlices.end()) return nullptr;
+    if (found->second.slice.bytes.size() != bytes || found->second.registryGeneration != registryGeneration || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+        keptSlices.erase(found);
+        return nullptr;
+    }
+    return &found->second.slice;
+}
+
+void Recorder::KeepDrawSlice(std::uint64_t address, const SnapshotArena::Slice& slice, std::uint64_t generation, std::uint64_t registryGeneration) {
+    if (generation == 0) return;
+    if (const auto found = keptSlices.find(address); found != keptSlices.end()) {
+        found->second = {slice, generation, registryGeneration};
+        return;
+    }
+    if (keptSlices.size() >= UnwrittenSnapshotEntries) return;
+    keptSlices.emplace(address, KeptSlice{slice, generation, registryGeneration});
+}
+
+void Recorder::NoteUnwrittenDrawSlice(std::uint64_t address, const std::array<std::uint64_t, 3>& stamp, const SnapshotArena::Slice& slice) {
+    retireUnwrittenSnapshots(stamp);
+    if (const auto found = unwrittenSlices.find(address); found != unwrittenSlices.end()) {
+        found->second = slice;
+        return;
+    }
+    if (unwrittenSlices.size() >= UnwrittenSnapshotEntries) return;
+    unwrittenSlices.emplace(address, slice);
+}
+
 void Recorder::BoundKeptBytes() {
     if (!GuestMemory::GpuMutex().HeldByThisThread()) return;
     if (open != nullptr && open->keptBytes >= KeptBytesBudget) Submit();
@@ -2542,6 +2613,7 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
 void Recorder::retireUnwrittenSnapshots(const std::array<std::uint64_t, 3>& stamp) {
     if (stamp == unwrittenStamp) return;
     unwrittenSnapshots.clear();
+    unwrittenSlices.clear();
     unwrittenBytes = 0;
     unwrittenStamp = stamp;
 }

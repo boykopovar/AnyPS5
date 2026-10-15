@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
+#include <span>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -119,6 +120,21 @@ void Finish() {
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Scratch.data()), sizeof(Scratch));
 }
 
+void QueuedWritesAnswerRunLists() {
+    std::atomic<bool> release{false};
+    const auto base = reinterpret_cast<std::uint64_t>(Scratch.data());
+    DrawPipeline::Queue0().Enqueue([&release] {
+        while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, {{base + 256, base + 512}});
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 3> runs{{{base, base + 256}, {base + 512, base + 768}, {base + 508, base + 512}}};
+    const bool lastRun = DrawPipeline::Queue0().OverlapsAny(runs);
+    const bool outside = DrawPipeline::Queue0().OverlapsAny(std::span(runs).first(2));
+    const bool single = DrawPipeline::Queue0().Overlaps(base + 508, 4);
+    release = true;
+    DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Flush);
+    Require(lastRun && single && !outside, "a list of runs does not overlap a queued commit's writes exactly when one of its runs does");
+}
+
 void InputsAfterQueuedLabels() {
     Output.fill(0xcafebabeu);
     Pattern = {0x40404040u, 0, 0, 0};
@@ -170,6 +186,7 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
+        QueuedWritesAnswerRunLists();
         InputsAfterQueuedLabels();
         FillIntoFullPipeline();
         AgcDriverShutdown_nid_postfix();

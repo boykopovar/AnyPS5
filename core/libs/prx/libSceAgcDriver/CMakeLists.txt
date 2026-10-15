@@ -145,6 +145,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/IndirectDispatch.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Dispatch/VariantValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/Draw.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawAhead.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawProgramTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
@@ -1145,6 +1146,14 @@ if(BUILD_TESTING)
     set_tests_properties(agc_draw_snapshot_cap PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_draw_snapshot_epoch COMMAND agc_driver_recorder_tests --draw-snapshot-epoch-only)
     set_tests_properties(agc_draw_snapshot_epoch PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME agc_draw_snapshots COMMAND agc_driver_recorder_tests --draw-snapshots-only)
+    set_tests_properties(agc_draw_snapshots PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME agc_draw_snapshots_no_collect_memo COMMAND agc_driver_recorder_tests --draw-snapshots-only)
+    set_tests_properties(agc_draw_snapshots_no_collect_memo PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "APS5_NO_COLLECT_MEMO=1")
+    add_test(NAME agc_draw_snapshots_watched_imports COMMAND agc_driver_recorder_tests --draw-snapshots-only)
+    set_tests_properties(agc_draw_snapshots_watched_imports PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "APS5_WRITE_WATCH_IMPORTS=watch")
+    add_test(NAME agc_draw_snapshots_no_collect_memo_watched_imports COMMAND agc_driver_recorder_tests --draw-snapshots-only)
+    set_tests_properties(agc_draw_snapshots_no_collect_memo_watched_imports PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "APS5_NO_COLLECT_MEMO=1;APS5_WRITE_WATCH_IMPORTS=watch")
     add_test(NAME agc_multisample_guest_access COMMAND agc_driver_recorder_tests --multisample-only)
     set_tests_properties(agc_multisample_guest_access PROPERTIES SKIP_RETURN_CODE 77)
     add_test(NAME agc_draw_inputs_in_place COMMAND agc_driver_recorder_tests --draw-inputs-in-place-only)
@@ -1165,7 +1174,7 @@ if(BUILD_TESTING)
     add_test(NAME agc_metadata_pass COMMAND agc_driver_recorder_tests --metadata-pass-only)
     set_tests_properties(agc_metadata_pass PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_recorder_read_list agc_host_import_unmap agc_parked_import_unmap agc_host_import_retirement agc_sparse_run_import agc_sparse_run_import_copied agc_unit_shadow agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_draw_snapshot_epoch agc_multisample_guest_access agc_draw_inputs_in_place agc_resident_present agc_slice_dirty agc_queued_write_groups agc_metadata_pass agc_tiled_resolve PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_recorder_read_list agc_host_import_unmap agc_parked_import_unmap agc_host_import_retirement agc_sparse_run_import agc_sparse_run_import_copied agc_unit_shadow agc_descriptor_pool_recycling agc_draw_snapshot_cap agc_draw_snapshot_epoch agc_draw_snapshots agc_draw_snapshots_no_collect_memo agc_draw_snapshots_watched_imports agc_draw_snapshots_no_collect_memo_watched_imports agc_multisample_guest_access agc_draw_inputs_in_place agc_resident_present agc_slice_dirty agc_queued_write_groups agc_metadata_pass agc_tiled_resolve PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME agc_host_import_second_mapping COMMAND agc_driver_recorder_tests --host-import-second-mapping-only)
         set_tests_properties(agc_host_import_second_mapping PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
@@ -1708,6 +1717,14 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_stencil_replay_no_gpl PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_GPL=1" TIMEOUT 30 SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(agc_driver_stencil_replay_no_gpl PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_draw_ahead_verify COMMAND agc_driver_draw_ahead_tests)
+    set_tests_properties(agc_driver_draw_ahead_verify PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_VERIFY_DRAW_ENTRIES=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_draw_ahead_small_cache COMMAND agc_driver_draw_ahead_tests small-cache)
+    set_tests_properties(agc_driver_draw_ahead_small_cache PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_CACHE_ENTRIES=2" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_draw_ahead_verify agc_driver_draw_ahead_small_cache PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
