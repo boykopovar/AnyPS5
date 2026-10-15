@@ -98,7 +98,9 @@ std::string describe(std::span<const std::uint32_t> p) {
         case 0x40: {
             const auto source = Pm4::CopyDataSource(p);
             if (Pm4::CopyDataToRegister(p)) return format("source select %u source %s to register 0x%x", source, hex(address(p[2], p[3])).c_str(), p[4]);
-            return format("source select %u source %s to %s (%zu bytes)", source, hex(address(p[2], p[3])).c_str(), hex(address(p[4], p[5])).c_str(), Pm4::CopyDataBytes(p));
+            const auto from = source == Pm4::CopyDataSelectGds ? format("GDS offset 0x%x", p[2]) : hex(address(p[2], p[3]));
+            const auto to = Pm4::CopyDataDestination(p) == Pm4::CopyDataSelectGds ? format("GDS offset 0x%x", p[4]) : hex(address(p[4], p[5]));
+            return format("source select %u source %s to %s (%zu bytes)", source, from.c_str(), to.c_str(), Pm4::CopyDataBytes(p));
         }
         case 0x50: {
             const auto from = Pm4::DmaSource(p) == Pm4::DmaSourceData ? format("fill 0x%08x", p[2]) : "copy from " + describeDmaEnd(Pm4::DmaSource(p), p[2], p[3], false);

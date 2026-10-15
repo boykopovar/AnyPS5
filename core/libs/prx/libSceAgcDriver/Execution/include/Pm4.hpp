@@ -148,7 +148,9 @@ inline constexpr std::uint32_t DmaSourceData = 2;
 inline constexpr std::uint32_t DmaDestinationNowhere = 2;
 inline std::size_t DmaBytes(std::span<const std::uint32_t> packet) { return packet[6] & 0x3ffffffu; }
 inline constexpr std::uint32_t CopyDataGpuClockSource = 18;
+inline constexpr std::uint32_t CopyDataSelectGds = 6;
 inline std::uint32_t CopyDataSource(std::span<const std::uint32_t> packet) { return ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u); }
+inline std::uint32_t CopyDataDestination(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) << 1u; }
 inline bool CopyDataImmediate(std::uint32_t source) { return source >= 10 && source != CopyDataGpuClockSource; }
 inline bool CopyDataToRegister(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) == 0; }
 inline std::size_t CopyDataBytes(std::span<const std::uint32_t> packet) { return (packet[1] & 0x10000u) != 0 ? 8 : 4; }
