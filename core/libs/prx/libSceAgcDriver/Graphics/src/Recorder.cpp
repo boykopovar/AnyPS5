@@ -27,6 +27,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include "prx/libc/include/general/AtomicSharedPtr.hpp"
@@ -1979,6 +1980,22 @@ void Recorder::NoteSampledDraw(VkCommandBuffer commands) {
     if (open->sampleActive) open->samplesDrawn = true;
 }
 
+void Recorder::NoteDrawTraceToken(std::uint64_t token) noexcept {
+    if (token == 0 || open == nullptr) return;
+    try {
+        auto inserted = open->drawTraceTokenSet.insert(token);
+        if (!inserted.second) return;
+        try {
+            open->drawTraceTokens.push_back(token);
+        } catch (...) {
+            open->drawTraceTokenSet.erase(inserted.first);
+            throw;
+        }
+    } catch (...) {
+        AgcDriver::CaptureTrace::Log("draw-token-note-failed token=%llu", static_cast<unsigned long long>(token));
+    }
+}
+
 bool Recorder::gpuSampleCounter() {
     if (sampleCounterState != 0) return sampleCounterState > 0;
     sampleCounterState = -1;
@@ -3315,13 +3332,28 @@ void Recorder::Submit() {
         for (const auto& [begin, end] : notedReads(*open)) open->readGeneration = std::max(open->readGeneration, GuestMemory::CollectWrites(begin, end - begin));
     }
     auto batch = std::move(open);
-    Check(function(endCommandBuffer, "vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
+    inFlight.push_back(std::move(batch));
+    auto& pending = inFlight.back();
+    inFlightKeptBytes += pending->keptBytes;
+    if (function(endCommandBuffer, "vkEndCommandBuffer")(pending->commands) != VK_SUCCESS) {
+        inFlightKeptBytes -= pending->keptBytes;
+        auto discarded = std::move(inFlight.back());
+        inFlight.pop_back();
+        discardUnsubmitted(std::move(discarded), false);
+        return;
+    }
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
-    submission.pCommandBuffers = &batch->commands;
+    submission.pCommandBuffers = &pending->commands;
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
-    CaptureTrace::Log("submit batch=%llu reads=%zu writes=%zu", static_cast<unsigned long long>(serial), batch->reads.size(), batch->writes.size());
+    std::string tokensStr = "[";
+    for (std::size_t i = 0; i < pending->drawTraceTokens.size(); ++i) {
+        if (i > 0) tokensStr += ",";
+        tokensStr += std::to_string(pending->drawTraceTokens[i]);
+    }
+    tokensStr += "]";
+    CaptureTrace::Log("submit batch=%llu tokens=%s", static_cast<unsigned long long>(serial), tokensStr.c_str());
     VkTimelineSemaphoreSubmitInfoKHR timelineInfo{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
     timelineInfo.signalSemaphoreValueCount = 1;
     timelineInfo.pSignalSemaphoreValues = &serial;
@@ -3331,24 +3363,32 @@ void Recorder::Submit() {
         submission.pSignalSemaphores = &timeline;
     }
     const auto submitStart = std::chrono::steady_clock::now();
-    Check(function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence), "vkQueueSubmit recorder");
-    batch->submitted = true;
-    batch->serial = ++submissions;
-    batch->submittedAt = std::chrono::steady_clock::now();
-    if (DrawProfiled()) {
-        const auto us = std::chrono::duration<double, std::micro>(batch->submittedAt - submitStart).count();
-        ++submitCount;
-        submitUs += us;
-        submitMaxUs = std::max(submitMaxUs, us);
-        if (auto* frame = PerformanceContext::Current()) frame->Add(frame->Get("Recorder", "submit"), batch->submittedAt - submitStart);
+    if (function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, pending->fence) != VK_SUCCESS) {
+        inFlightKeptBytes -= pending->keptBytes;
+        auto discarded = std::move(inFlight.back());
+        inFlight.pop_back();
+        discardUnsubmitted(std::move(discarded), false);
+        return;
+    }
+    pending->submitted = true;
+    pending->serial = ++submissions;
+    pending->submittedAt = std::chrono::steady_clock::now();
+    CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(pending->serial), tokensStr.c_str());
+    try {
+        if (DrawProfiled()) {
+            const auto us = std::chrono::duration<double, std::micro>(pending->submittedAt - submitStart).count();
+            ++submitCount;
+            submitUs += us;
+            submitMaxUs = std::max(submitMaxUs, us);
+            if (auto* frame = PerformanceContext::Current()) frame->Add(frame->Get("Recorder", "submit"), pending->submittedAt - submitStart);
+        }
+    } catch (...) {
     }
     {
         std::lock_guard lock(completedMutex);
-        newestSubmitted = batch->serial;
-        newestSubmittedAt = batch->submittedAt;
+        newestSubmitted = pending->serial;
+        newestSubmittedAt = pending->submittedAt;
     }
-    inFlight.push_back(std::move(batch));
-    inFlightKeptBytes += inFlight.back()->keptBytes;
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
 }
 
@@ -3871,10 +3911,41 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
     }
     batch->labelDwords.clear();
     batch->wideLabels.clear();
-    release(*batch);
+    release(*batch, true);
 }
 
-void Recorder::release(Batch& batch) noexcept {
+void Recorder::discardUnsubmitted(std::unique_ptr<Batch> batch, bool reusable) noexcept {
+    if (batch == nullptr) return;
+    if (batch->completionLabelCount != 0) {
+        completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
+        batch->completionLabelCount = 0;
+    }
+    if (batch->writeBackCompletionCount != 0) {
+        writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
+        batch->writeBackCompletionCount = 0;
+    }
+    if (!batch->labelDwords.empty() || !batch->wideLabels.empty()) {
+        std::lock_guard tableLock(labelTableMutex);
+        for (const auto dword : batch->labelDwords) {
+            const auto found = labels.find(dword);
+            if (found != labels.end() && found->second.batch == batch.get()) labels.erase(found);
+        }
+        for (const auto entry : batch->wideLabels) wideLabels.erase(entry);
+        recordedLabels.store(labels.size(), std::memory_order_relaxed);
+    }
+    batch->labelDwords.clear();
+    batch->wideLabels.clear();
+    batch->completions.clear();
+    batch->kept.clear();
+    try {
+        publishPendingWrites();
+    } catch (...) {
+    }
+    if (activeRecorder == this && open == nullptr) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
+    release(*batch, reusable);
+}
+
+void Recorder::release(Batch& batch, bool reusable) noexcept {
     if (batch.queries != VK_NULL_HANDLE) {
         if (!GpuTimingEnabled() && sparePools.size() < 64) {
             try {
@@ -3893,7 +3964,7 @@ void Recorder::release(Batch& batch) noexcept {
     batch.segmentPool.reset();
     // A completed (or never submitted) batch's objects are kept for reuse: the fence is signaled or
     // untouched, so resetting it cannot block, and the command buffer is no longer pending.
-    if (batch.commands != VK_NULL_HANDLE && batch.fence != VK_NULL_HANDLE && spare.size() < 64 && function(resetFences, "vkResetFences")(context.device, 1, &batch.fence) == VK_SUCCESS) {
+    if (reusable && batch.commands != VK_NULL_HANDLE && batch.fence != VK_NULL_HANDLE && spare.size() < 64 && function(resetFences, "vkResetFences")(context.device, 1, &batch.fence) == VK_SUCCESS) {
         spare.emplace_back(batch.commands, batch.fence);
         batch.commands = VK_NULL_HANDLE;
         batch.fence = VK_NULL_HANDLE;
