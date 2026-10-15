@@ -113,9 +113,10 @@ int ValidateRequests(KernelAioRwRequest* req, std::int32_t size, const void* id)
     return 0;
 }
 
-int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, bool write, std::int32_t* id) {
+int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, bool write, std::int32_t* id, const char* name) {
     const int error = ValidateRequests(req, size, id);
     if (error != 0) return error;
+    if (size > AioRequestNumMax) throw std::runtime_error(std::string(name) + ": more than 128 requests per batch is not modelled");
     const std::int32_t queue = AllocateId();
     bool aborted = false;
     for (std::int32_t i = 0; i < size; ++i) {
@@ -226,12 +227,12 @@ int APS5_VABI sceKernelAioSetParam(KernelAioSchedulingParam* param, int32_t sche
 
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
     (void)prio;
-    return SubmitCommands(req, size, false, id);
+    return SubmitCommands(req, size, false, id, "sceKernelAioSubmitReadCommands");
 }
 
 int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
     (void)prio;
-    return SubmitCommands(req, size, true, id);
+    return SubmitCommands(req, size, true, id, "sceKernelAioSubmitWriteCommands");
 }
 
 int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, int32_t size, int32_t prio, int32_t* id) {
