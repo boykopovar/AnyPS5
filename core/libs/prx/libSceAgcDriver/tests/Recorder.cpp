@@ -73,6 +73,7 @@ int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::siz
 int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
 int APS5_VABI sceKernelMunmap(void*, std::size_t);
+int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
 }
 
 using namespace AgcDriver::Graphics;
@@ -1729,6 +1730,70 @@ void secondMappingImportTests(const Device& device) {
     const auto second = HostImportSerial(context, address, bytes, true);
     Require(second != 0 && second != first, "the import of direct memory whose pages were replaced was kept");
     HostImportFor(context, address, bytes);
+}
+
+int reimportBench(const Device& device) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || context.settleQueue == VK_NULL_HANDLE || !AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "skipped, the re-import bench requires host imports, a settle queue and write watching\n";
+        return 77;
+    }
+    constexpr std::size_t bytes = 1126ull << 20u;
+    constexpr std::size_t step = 1440ull << 10u;
+    constexpr std::size_t moves = 5;
+    constexpr std::size_t page = 4096;
+    constexpr std::size_t alignment = 2ull << 20u;
+    struct Release {
+        void* mapping = nullptr;
+        std::int64_t physical = -1;
+        ~Release() {
+            if (mapping != nullptr) sceKernelMunmap(mapping, bytes);
+            if (physical >= 0) sceKernelReleaseDirectMemory(physical, bytes);
+        }
+    } release;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, alignment, 0, &release.physical) == 0, "allocate the re-import bench backing");
+    Require(sceKernelMapDirectMemory(&release.mapping, bytes, 0x33, 0, release.physical, alignment) == 0, "map the re-import bench backing");
+    const auto address = reinterpret_cast<std::uint64_t>(release.mapping);
+    const auto end = address + bytes;
+    auto* memory = static_cast<std::byte*>(release.mapping);
+    for (std::size_t offset = 0; offset < bytes; offset += 4 * page) std::memset(memory + offset, 0x5a, 64);
+    std::cout << "re-import bench: " << (bytes >> 20u) << " MiB of singly mapped direct memory at 0x" << std::hex << address << std::dec << ", watched=" << AgcDriver::GuestMemory::Watched(address, bytes) << ", 1 of 4 pages nonzero, the head loses GPU access " << (step >> 10u) << " KiB at a time\n";
+    const auto milliseconds = [](std::chrono::steady_clock::time_point from, std::chrono::steady_clock::time_point to) { return std::chrono::duration<double, std::milli>(to - from).count(); };
+    std::unique_lock gpu(GpuMutex());
+    PrepareImportWatch(context);
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto cleanup = [&] {
+        if (!gpu.owns_lock()) gpu.lock();
+        recorder.Sync();
+        recorder.FlushDeferredReleases();
+        ClearHostImports(context.device);
+    };
+    try {
+        for (std::size_t move = 0; move <= moves; ++move) {
+            const auto begin = address + move * step;
+            if (move != 0) {
+                gpu.unlock();
+                Require(sceKernelMprotect(reinterpret_cast<void*>(begin - step), step, 0x03) == 0, "take GPU access from the head of the re-import bench range");
+                gpu.lock();
+            }
+            const auto started = std::chrono::steady_clock::now();
+            const auto* import = HostImportFor(context, begin, static_cast<std::size_t>(end - begin));
+            const auto imported = std::chrono::steady_clock::now();
+            Require(import != nullptr && import->base == begin && import->base + import->bytes == end, "the re-import bench range was not imported whole");
+            const char* kind = import->alias != nullptr ? "through a shared alias" : import->unwatched ? "compared" : "settled and watched";
+            recorder.Sync();
+            recorder.FlushDeferredReleases();
+            const auto synced = std::chrono::steady_clock::now();
+            std::printf("re-import %zu: %.1f MiB at +%.2f MiB, %s, import %.1f ms, recorder sync after it %.1f ms, %.1f MiB imported in all\n", move, static_cast<double>(end - begin) / 1048576.0, static_cast<double>(begin - address) / 1048576.0, kind, milliseconds(started, imported), milliseconds(imported, synced), static_cast<double>(HostImportLiveBytes()) / 1048576.0);
+            std::fflush(stdout);
+        }
+    } catch (...) {
+        cleanup();
+        throw;
+    }
+    cleanup();
+    return 0;
 }
 #endif
 
@@ -8061,6 +8126,14 @@ int main(int argc, char** argv) {
             }
             hostImportRetirementTests(device);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--reimport-bench") {
+#ifdef _WIN32
+            return reimportBench(device);
+#else
+            std::cout << "skipped, the re-import bench measures Windows host imports of singly mapped direct memory\n";
+            return 77;
+#endif
         }
         if (argc == 2 && std::string_view(argv[1]) == "--sparse-run-import-only") {
             if (device.GetContext().hostImportAlignment == 0) {
