@@ -126,7 +126,7 @@ std::string SubmissionSerialOf(const std::string& trace, const std::string& reco
     const auto field = trace.find("submission=", position);
     if (field == std::string::npos) return {};
     const auto start = field + std::string("submission=").size();
-    const auto end = line.find(' ', start);
+    const auto end = trace.find(' ', start);
     return trace.substr(start, end == std::string::npos ? std::string::npos : end - start);
 }
 
