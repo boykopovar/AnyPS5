@@ -364,6 +364,7 @@ namespace {
 // callback), and address-based builds verify every image section on each build, so without the table
 // each of those verifications was a VirtualQuery. APS5_NO_IMAGE_PAGE_CACHE=1 leaves the image uncached.
 constexpr std::size_t PageBytes = 4096;
+constexpr std::size_t BlockPages = 64;
 constexpr std::uint8_t PageReadable = 1;
 constexpr std::uint8_t PageWritable = 2;
 constexpr std::uint8_t PageInaccessible = 4;
@@ -373,36 +374,48 @@ struct PageSpan {
     std::size_t size = 0;
     // Per page: access flags, zero while unknown.
     std::uint8_t* pages = nullptr;
+    std::uint8_t* blocks = nullptr;
     static constexpr std::size_t ChunkEntries = 65536;
-    struct alignas(8) Chunk { std::array<std::uint8_t, ChunkEntries> entries{}; };
+    struct alignas(8) Chunk {
+        std::array<std::uint8_t, ChunkEntries> entries{};
+        std::array<std::uint8_t, ChunkEntries / BlockPages> blocks{};
+    };
     std::atomic<Chunk*>* chunks = nullptr;
 
-    std::uint8_t* chunkData(std::size_t index, bool create) const {
+    Chunk* chunkAt(std::size_t index, bool create) const {
         auto* chunk = chunks[index].load(std::memory_order_acquire);
         if (chunk == nullptr && create) {
             auto fresh = std::unique_ptr<Chunk>(new (std::nothrow) Chunk{});
             if (fresh != nullptr && chunks[index].compare_exchange_strong(chunk, fresh.get(), std::memory_order_acq_rel, std::memory_order_acquire)) chunk = fresh.release();
         }
-        return chunk == nullptr ? nullptr : chunk->entries.data();
+        return chunk;
     }
 
     std::uint8_t* entry(std::size_t index, bool create) const {
         if (chunks == nullptr) return pages + index;
-        auto* data = chunkData(index / ChunkEntries, create);
-        return data == nullptr ? nullptr : data + index % ChunkEntries;
+        auto* chunk = chunkAt(index / ChunkEntries, create);
+        return chunk == nullptr ? nullptr : chunk->entries.data() + index % ChunkEntries;
+    }
+
+    std::uint8_t* blockEntry(std::size_t block, bool create) const {
+        if (chunks == nullptr) return blocks + block;
+        auto* chunk = chunkAt(block * BlockPages / ChunkEntries, create);
+        return chunk == nullptr ? nullptr : chunk->blocks.data() + block % (ChunkEntries / BlockPages);
     }
 
     bool allocate() {
         if (size == 0) return false;
-        const auto count = (size / PageBytes + 8) & ~static_cast<std::size_t>(7);
+        const auto count = (size / PageBytes + BlockPages) & ~(BlockPages - 1);
 #ifdef _WIN32
         const auto chunkCount = (count + ChunkEntries - 1) / ChunkEntries;
         chunks = new (std::nothrow) std::atomic<Chunk*>[chunkCount]{};
         if (chunks == nullptr) size = 0;
         return chunks != nullptr;
 #else
-        pages = static_cast<std::uint8_t*>(std::calloc(count, 1));
+        const auto blockCount = (count / BlockPages + 8) & ~static_cast<std::size_t>(7);
+        pages = static_cast<std::uint8_t*>(std::calloc(count + blockCount, 1));
         if (pages == nullptr) size = 0;
+        else blocks = pages + count;
         return pages != nullptr;
 #endif
     }
@@ -411,24 +424,63 @@ struct PageSpan {
         return size != 0 && address >= base && address - base < size;
     }
 
+    static std::uint8_t loadByte(const std::uint8_t* at) {
+        return std::atomic_ref<std::uint8_t>(*const_cast<std::uint8_t*>(at)).load(std::memory_order_relaxed);
+    }
+
+    static void storeByte(std::uint8_t* at, std::uint8_t value) {
+        std::atomic_ref<std::uint8_t>(*at).store(value, std::memory_order_relaxed);
+    }
+
+    static std::uint64_t loadWide(const std::uint8_t* at) {
+        return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(const_cast<std::uint8_t*>(at))).load(std::memory_order_relaxed);
+    }
+
     std::uint8_t load(std::uintptr_t address) const {
         auto* value = entry((address - base) / PageBytes, false);
-        return value == nullptr ? 0 : std::atomic_ref<std::uint8_t>(*value).load(std::memory_order_relaxed);
+        return value == nullptr ? 0 : loadByte(value);
+    }
+
+    std::uint8_t common(std::size_t block) const {
+        const auto* at = entry(block * BlockPages, false);
+        if (at == nullptr) return 0;
+        const auto value = loadByte(at);
+        const std::uint64_t wide = 0x0101010101010101ull * value;
+        for (std::size_t offset = 0; offset < BlockPages; offset += 8) {
+            if (loadWide(at + offset) != wide) return 0;
+        }
+        return value;
+    }
+
+    void settle(std::size_t first, std::size_t last) {
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        for (auto block = first / BlockPages; block <= (last - 1) / BlockPages; ++block) {
+            const auto value = common(block);
+            auto* summary = blockEntry(block, false);
+            if (summary == nullptr || loadByte(summary) == value) continue;
+            storeByte(summary, value);
+            if (value == 0) continue;
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            if (common(block) != value) storeByte(summary, 0);
+        }
     }
 
     void store(std::uintptr_t address, std::uint8_t value) {
-        if (auto* at = entry((address - base) / PageBytes, value != 0 && value != PageInaccessible)) std::atomic_ref<std::uint8_t>(*at).store(value, std::memory_order_relaxed);
+        store(address, address + PageBytes, value);
     }
 
     void store(std::uintptr_t first, std::uintptr_t last, std::uint8_t value) {
-        auto index = (first - base) / PageBytes;
-        const auto stop = (last - 1 - base) / PageBytes + 1;
-        while (index < stop) {
-            const auto next = std::min(stop, (index / ChunkEntries + 1) * ChunkEntries);
+        if (first >= last) return;
+        const auto begin = (first - base) / PageBytes;
+        const auto end = (last - 1 - base) / PageBytes + 1;
+        auto index = begin;
+        while (index < end) {
+            const auto next = std::min(end, (index / ChunkEntries + 1) * ChunkEntries);
             if (auto* at = entry(index, value != 0 && value != PageInaccessible)) {
-                for (; index < next; ++index, ++at) std::atomic_ref<std::uint8_t>(*at).store(value, std::memory_order_relaxed);
+                for (; index < next; ++index, ++at) storeByte(at, value);
             } else index = next;
         }
+        settle(begin, end);
     }
 
     // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
@@ -443,11 +495,23 @@ struct PageSpan {
                 index = std::min(stop, (index / ChunkEntries + 1) * ChunkEntries);
                 continue;
             }
-            if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(at)).load(std::memory_order_relaxed) == wide) {
+            if (index % BlockPages == 0) {
+                const auto block = index / BlockPages;
+                const auto* summary = blockEntry(block, false);
+                if (block % 8 == 0 && index + 8 * BlockPages <= stop && loadWide(summary) == wide) {
+                    index += 8 * BlockPages;
+                    continue;
+                }
+                if (index + BlockPages <= stop && loadByte(summary) == value) {
+                    index += BlockPages;
+                    continue;
+                }
+            }
+            if (index % 8 == 0 && index + 8 <= stop && loadWide(at) == wide) {
                 index += 8;
                 continue;
             }
-            if (std::atomic_ref<std::uint8_t>(*at).load(std::memory_order_relaxed) != value) break;
+            if (loadByte(at) != value) break;
             ++index;
         }
         return std::min(limit, base + index * PageBytes);
@@ -498,7 +562,7 @@ struct PageStates {
             if (span->size == 0 || bytes == 0 || address >= span->base + span->size || address + bytes <= span->base) continue;
             const auto last = std::min(address + bytes, span->base + span->size);
             for (auto at = std::max(address, span->base) & ~static_cast<std::uintptr_t>(PageBytes - 1); at < last; at += PageBytes) {
-                if (span->load(at) == PageInaccessible) span->store(at, 0);
+                if (span->load(at) == PageInaccessible) span->store(at, at + PageBytes, 0);
             }
         }
     }

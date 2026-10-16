@@ -24,6 +24,7 @@ void RunHeapMirrorRunUnwatchTests(const AgcDriver::Graphics::Context& context, c
 void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
+void RunPageBlockTests();
 void RunColorTargetLayoutTests();
 void RunLiveStackAccessTests();
 
