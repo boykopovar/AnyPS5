@@ -15,36 +15,51 @@ constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 constexpr int sceSemValueMax = 0x7fffffff;
 std::mutex semInitializationMutex;
-std::unordered_map<PthreadSemPrivate*, int> semWaiters;
+std::unordered_map<PthreadSemPrivate*, std::shared_ptr<PthreadSemPrivate>> semRegistry;
 
 PthreadSem destroyedSem() {
     return reinterpret_cast<PthreadSem>(std::uintptr_t{2});
 }
 
-PthreadSemPrivate* resolveSem(PthreadSem* sem) {
+std::shared_ptr<PthreadSemPrivate> resolveSem(PthreadSem* sem) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
-    std::atomic_ref<PthreadSem> slot(*sem);
-    const auto current = slot.load(std::memory_order_acquire);
+    std::lock_guard lock(semInitializationMutex);
+    const auto current = *sem;
     if (!current || current == destroyedSem())
         throw std::runtime_error("Semaphore is not initialized or has been destroyed");
-    return current;
+    const auto it = semRegistry.find(current);
+    if (it == semRegistry.end())
+        throw std::runtime_error("Semaphore is not initialized or has been destroyed");
+    return it->second;
 }
 
-struct WaiterGuard {
-    PthreadSemPrivate* sem;
-    explicit WaiterGuard(PthreadSemPrivate* s) : sem(s) {
-        std::lock_guard lock(semInitializationMutex);
-        ++semWaiters[sem];
-    }
-    ~WaiterGuard() {
-        std::lock_guard lock(semInitializationMutex);
-        if (const auto it = semWaiters.find(sem); it != semWaiters.end()) {
-            if (--it->second <= 0)
-                semWaiters.erase(it);
-        }
-    }
+struct SemaphoreWaitCleanupContext {
+    std::shared_ptr<PthreadSemPrivate>* owner;
+    bool waiterRegistered;
 };
+
+void APS5_VABI CleanupSemaphoreWait(void* argument) {
+    auto* context = static_cast<SemaphoreWaitCleanupContext*>(argument);
+    if (!context || !context->owner || !*context->owner)
+        return;
+    const auto owner = *context->owner;
+    if (context->waiterRegistered) {
+        std::lock_guard lock(owner->_mutex);
+        if (owner->_waiters > 0)
+            --owner->_waiters;
+        context->waiterRegistered = false;
+    }
+    context->owner->reset();
+}
+
+void finishSemaphoreWait(PthreadSemPrivate* sem, SemaphoreWaitCleanupContext& context, void* cleanupMark) {
+    if (context.waiterRegistered) {
+        --sem->_waiters;
+        context.waiterRegistered = false;
+    }
+    ThreadCancel::CleanupRestore(cleanupMark);
+}
 
 }
 
@@ -57,76 +72,154 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
         return SCE_KERNEL_ERROR_EINVAL;
     (void)flag;
     (void)name;
-    auto replacement = std::make_unique<PthreadSemPrivate>(value);
+    auto replacement = std::make_shared<PthreadSemPrivate>(value);
     std::lock_guard lock(semInitializationMutex);
-    std::atomic_ref<PthreadSem>(*sem).store(replacement.release(), std::memory_order_release);
+    const auto previous = *sem;
+    if (previous && previous != destroyedSem()) {
+        const auto it = semRegistry.find(previous);
+        if (it != semRegistry.end()) {
+            std::lock_guard semLock(previous->_mutex);
+            if (previous->_waiters != 0)
+                return SCE_KERNEL_ERROR_EBUSY;
+            previous->_destroyed = true;
+            previous->_cv.NotifyAll();
+            semRegistry.erase(it);
+        }
+    }
+    semRegistry.emplace(replacement.get(), replacement);
+    *sem = replacement.get();
     return 0;
 }
 
 int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
-    std::lock_guard lock(semInitializationMutex);
-    auto current = *sem;
+    std::lock_guard registryLock(semInitializationMutex);
+    const auto current = *sem;
     if (current == destroyedSem())
         return SCE_KERNEL_ERROR_EINVAL;
     if (!current)
         throw std::runtime_error("Semaphore is not initialized");
-    if (const auto it = semWaiters.find(current); it != semWaiters.end() && it->second > 0)
+    const auto it = semRegistry.find(current);
+    if (it == semRegistry.end())
+        return SCE_KERNEL_ERROR_EINVAL;
+    const auto owner = it->second;
+    std::lock_guard semLock(owner->_mutex);
+    if (owner->_waiters != 0)
         return SCE_KERNEL_ERROR_EBUSY;
+    owner->_destroyed = true;
     *sem = destroyedSem();
-    delete current;
+    semRegistry.erase(it);
     return 0;
 }
 
 int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
-    auto* current = resolveSem(sem);
-    std::lock_guard lock(current->_mutex);
-    if (current->_count == sceSemValueMax)
+    const auto owner = resolveSem(sem);
+    std::lock_guard lock(owner->_mutex);
+    if (owner->_destroyed)
+        return SCE_KERNEL_ERROR_EINVAL;
+    if (owner->_count == sceSemValueMax)
         return SCE_KERNEL_ERROR_EOVERFLOW;
-    ++current->_count;
-    current->_cv.NotifyOne();
+    ++owner->_count;
+    owner->_cv.NotifyOne();
     return 0;
 }
 
 int APS5_VABI scePthreadSemWait(PthreadSem* sem) {
-    auto* current = resolveSem(sem);
     ThreadCancel::Check();
+    auto owner = resolveSem(sem);
+    auto* current = owner.get();
     std::unique_lock lock(current->_mutex);
-    WaiterGuard waiterGuard(current);
-    ThreadCancel::WaitUntil(current->_cv, lock, std::nullopt, [&] { return current->_count > 0; });
-    --current->_count;
-    return 0;
+    if (current->_destroyed)
+        return SCE_KERNEL_ERROR_EINVAL;
+    ++current->_waiters;
+    SemaphoreWaitCleanupContext cleanupContext{&owner, true};
+    CleanupHandler cleanup{};
+    void* const cleanupMark = ThreadCancel::CleanupMark();
+    __pthread_cleanup_push_imp_nid_postfix(CleanupSemaphoreWait, &cleanupContext, &cleanup);
+    try {
+        ThreadCancel::WaitUntil(current->_cv, lock, std::nullopt, [&] { return current->_count > 0 || current->_destroyed; });
+        if (current->_destroyed) {
+            finishSemaphoreWait(current, cleanupContext, cleanupMark);
+            return SCE_KERNEL_ERROR_EINVAL;
+        }
+        --current->_count;
+        finishSemaphoreWait(current, cleanupContext, cleanupMark);
+        return 0;
+    } catch (...) {
+        if (cleanupContext.waiterRegistered && lock.owns_lock())
+            --current->_waiters;
+        cleanupContext.waiterRegistered = false;
+        ThreadCancel::CleanupRestore(cleanupMark);
+        throw;
+    }
 }
 
 int APS5_VABI scePthreadSemTrywait(PthreadSem* sem) {
-    auto* current = resolveSem(sem);
-    std::lock_guard lock(current->_mutex);
-    if (current->_count <= 0)
+    const auto owner = resolveSem(sem);
+    std::lock_guard lock(owner->_mutex);
+    if (owner->_destroyed)
+        return SCE_KERNEL_ERROR_EINVAL;
+    if (owner->_count <= 0)
         return sceBusy;
-    --current->_count;
+    --owner->_count;
     return 0;
 }
 
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
-    auto* current = resolveSem(sem);
     ThreadCancel::Check();
+    auto owner = resolveSem(sem);
+    auto* current = owner.get();
     std::unique_lock lock(current->_mutex);
-    WaiterGuard waiterGuard(current);
-    const auto acquired = ThreadCancel::WaitUntil(current->_cv, lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0; });
-    if (!acquired)
-        return sceTimedOut;
-    --current->_count;
-    return 0;
+    if (current->_destroyed)
+        return SCE_KERNEL_ERROR_EINVAL;
+    ++current->_waiters;
+    SemaphoreWaitCleanupContext cleanupContext{&owner, true};
+    CleanupHandler cleanup{};
+    void* const cleanupMark = ThreadCancel::CleanupMark();
+    __pthread_cleanup_push_imp_nid_postfix(CleanupSemaphoreWait, &cleanupContext, &cleanup);
+    try {
+        const auto acquired = ThreadCancel::WaitUntil(current->_cv, lock, TimedWait::DeadlineNanos(usec), [&] { return current->_count > 0 || current->_destroyed; });
+        if (current->_destroyed) {
+            finishSemaphoreWait(current, cleanupContext, cleanupMark);
+            return SCE_KERNEL_ERROR_EINVAL;
+        }
+        if (!acquired) {
+            finishSemaphoreWait(current, cleanupContext, cleanupMark);
+            return sceTimedOut;
+        }
+        --current->_count;
+        finishSemaphoreWait(current, cleanupContext, cleanupMark);
+        return 0;
+    } catch (...) {
+        if (cleanupContext.waiterRegistered && lock.owns_lock())
+            --current->_waiters;
+        cleanupContext.waiterRegistered = false;
+        ThreadCancel::CleanupRestore(cleanupMark);
+        throw;
+    }
 }
 
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
-    auto* current = resolveSem(sem);
+    const auto owner = resolveSem(sem);
     if (!value)
         throw std::invalid_argument("Semaphore value pointer is null");
-    std::lock_guard lock(current->_mutex);
-    *value = current->_count;
+    std::lock_guard lock(owner->_mutex);
+    if (owner->_destroyed)
+        return SCE_KERNEL_ERROR_EINVAL;
+    *value = owner->_count;
     return 0;
+}
+
+int APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
+    std::shared_ptr<PthreadSemPrivate> owner;
+    try {
+        owner = resolveSem(sem);
+    } catch (...) {
+        return -1;
+    }
+    std::lock_guard lock(owner->_mutex);
+    return owner->_destroyed ? -1 : owner->_waiters;
 }
 
 }
