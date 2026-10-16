@@ -148,4 +148,23 @@ int main() {
         Require(scePthreadSemPost(&raceSem) == SCE_OK);
         racer.join();
     }
+
+    PthreadSem queuedSem = nullptr;
+    Require(scePthreadSemInit(&queuedSem, 0, 0, nullptr) == SCE_OK);
+    std::atomic<bool> postStarted{false};
+    std::thread concurrentPost([&] {
+        postStarted.store(true, std::memory_order_release);
+        for (int attempt = 0; attempt < 1000; ++attempt) {
+            try {
+                const int result = scePthreadSemPost(&queuedSem);
+                Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EINVAL || result == SCE_KERNEL_ERROR_EOVERFLOW);
+                if (result == SCE_KERNEL_ERROR_EINVAL) break;
+            } catch (const std::runtime_error&) {
+                break;
+            }
+        }
+    });
+    while (!postStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    Require(scePthreadSemDestroy(&queuedSem) == SCE_OK);
+    concurrentPost.join();
 }
