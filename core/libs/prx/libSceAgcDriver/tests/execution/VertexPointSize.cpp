@@ -128,6 +128,10 @@ void RequireSquares(const std::vector<Square>& squares, std::uint32_t side, cons
     }
 }
 
+void RequireAtMostOnePixel(const std::vector<Square>& squares, const char* name) {
+    for (const auto& square : squares) Require(square.pixels <= 1u, std::string(name) + ": a point with no positive size covers more than one pixel");
+}
+
 void Run(AgcDriver::VulkanDevice& device) {
     std::cout << "device: " << device.DeviceName() << "\n";
     RequireSquares(RunCase(device, "register size 1", positionCode, {1.0f, 1.0f, 1.0f, false}, 0.5f), 1u, "register size 1");
@@ -140,6 +144,10 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto one = SizeExportCode(1.0f);
     RequireSquares(RunCase(device, "vertex size 1 clamped to 5", one, {1.0f, 5.0f, 8.0f, true}, 0.5f), 5u, "vertex size 1 clamped to 5");
     RequireSquares(RunCase(device, "vertex size over a register size", six, {1.0f, 1.0f, 8.0f, true}, 0.0f), 6u, "vertex size over a register size");
+    const auto zero = SizeExportCode(0.0f);
+    RequireAtMostOnePixel(RunCase(device, "vertex size 0 within [0, 4]", zero, {0.0f, 0.0f, 4.0f, true}, 0.5f), "vertex size 0 within [0, 4]");
+    const auto negative = SizeExportCode(-3.0f);
+    RequireAtMostOnePixel(RunCase(device, "vertex size -3 within [0, 4]", negative, {1.0f, 0.0f, 4.0f, true}, 0.5f), "vertex size -3 within [0, 4]");
 }
 
 }

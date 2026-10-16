@@ -137,7 +137,9 @@ void decodePointSize(const QueueState& queue, State& result) {
     const bool fromVertex = (result.paClVsOutCntl & (1u << 16u)) != 0;
     Require(!fromVertex || (result.paClVsOutCntl & (1u << 21u)) != 0, "USE_VTX_POINT_SIZE without VS_OUT_MISC_VEC_ENA is unsupported");
     Require(fromVertex || (size & 0xffffu) == size >> 16u, "points whose PA_SU_POINT_SIZE width and height differ are unsupported");
+    Require(fromVertex || (size & 0xffffu) != 0, "points of size 0 (PA_SU_POINT_SIZE 0) are unsupported");
     Require((limits & 0xffffu) <= limits >> 16u, "PA_SU_POINT_MINMAX with a minimum above its maximum is unsupported");
+    Require(!fromVertex || (limits >> 16u) != 0, "a vertex point size clamped to 0 (PA_SU_POINT_MINMAX maximum 0) is unsupported");
     result.pointSize = static_cast<float>(size & 0xffffu) / 8.0f;
     result.pointSizeMin = static_cast<float>(limits & 0xffffu) / 8.0f;
     result.pointSizeMax = static_cast<float>(limits >> 16u) / 8.0f;

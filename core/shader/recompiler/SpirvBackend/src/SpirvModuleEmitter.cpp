@@ -425,6 +425,10 @@ std::uint32_t ExportVector(SpirvValueEmitContext& ctx, std::uint32_t data, const
     return vector;
 }
 
+float PointSizeFloor(const ShaderVertexInputInfo& vertex) {
+    return std::max(vertex.pointSizeMin, std::numeric_limits<float>::min());
+}
+
 void EmitAuxPositionExport(SpirvValueEmitContext& ctx, std::uint32_t data, const ExportInfo& exp) {
     auto& state = ctx.state;
     if (state.inputInfo.vertex == nullptr) {
@@ -460,7 +464,7 @@ void EmitAuxPositionExport(SpirvValueEmitContext& ctx, std::uint32_t data, const
             auto size = f32;
             if (state.inputInfo.vertex->pointList) {
                 size = state.module.AllocateId();
-                state.module.AddFunction(spv::OpExtInst, TypeF32(state), size, GlslStd450(state), GLSLstd450FClamp, f32, ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSizeMin)), ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSizeMax)));
+                state.module.AddFunction(spv::OpExtInst, TypeF32(state), size, GlslStd450(state), GLSLstd450FClamp, f32, ConstantF32(state, std::bit_cast<std::uint32_t>(PointSizeFloor(*state.inputInfo.vertex))), ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSizeMax)));
             }
             state.module.AddFunction(spv::OpStore, state.pointSizeVariable, size);
             continue;
@@ -1192,7 +1196,14 @@ void EmitProgram(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpStore, state.pixelValidMaskVariable, ConstantU32(state, 1u));
     }
     if (AlphaToCoverage(state)) StoreCoverage(state, ConstantI32(state, -1));
-    if (state.pointSizeVariable != 0u && state.inputInfo.vertex != nullptr && state.inputInfo.vertex->pointList) state.module.AddFunction(spv::OpStore, state.pointSizeVariable, ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSize)));
+    if (state.pointSizeVariable != 0u && state.inputInfo.vertex != nullptr && state.inputInfo.vertex->pointList) {
+        const auto& vertex = *state.inputInfo.vertex;
+        const bool fromVertex = (vertex.paClVsOutCntl & (1u << 16u)) != 0u;
+        if (!fromVertex && !(vertex.pointSize > 0.0f)) FailEmit("a point list without a vertex point size needs a positive PA_SU_POINT_SIZE");
+        if (fromVertex && !(vertex.pointSizeMax > 0.0f)) FailEmit("a vertex point size needs a positive PA_SU_POINT_MINMAX maximum");
+        const auto size = fromVertex ? std::clamp(vertex.pointSize, PointSizeFloor(vertex), vertex.pointSizeMax) : vertex.pointSize;
+        state.module.AddFunction(spv::OpStore, state.pointSizeVariable, ConstantF32(state, std::bit_cast<std::uint32_t>(size)));
+    }
     if (OrderedPixelShader(state)) {
         state.module.AddFunction(spv::OpBeginInvocationInterlockEXT);
     }
