@@ -128,6 +128,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             const auto key = std::pair{serial, guardSerial};
             if (std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key) == it->spaceKeys.end()) continue;
             if (auto shared = it->buffer.lock(); shared != nullptr) {
+                tableBytes = shared->Bytes().size();
                 ++cache.hits;
                 ++cache.classes.spaceTables;
                 table = std::move(shared);
