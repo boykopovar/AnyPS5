@@ -235,13 +235,14 @@ int main() {
                 faultingWrites += RunFault(*device, guest, coherent, barrier, 32, native, "wave32") ? 1u : 0u;
                 faultingWrites += RunFault(*device, guest, coherent, barrier, 64, native, "wave64") ? 1u : 0u;
                 if (split.subgroupSize != native.subgroupSize) faultingWrites += RunFault(*device, guest, coherent, barrier, 64, split, "wave64-split") ? 1u : 0u;
-                if (barrier) {
+                if (barrier && native.subgroupSize == 32u) {
                     faultingWrites += RunFault(*device, guest, coherent, barrier, 32, native, "wave32", true) ? 1u : 0u;
                     faultingWrites += RunFault(*device, guest, coherent, barrier, 64, native, "wave64", true) ? 1u : 0u;
                     if (split.subgroupSize != native.subgroupSize) faultingWrites += RunFault(*device, guest, coherent, barrier, 64, split, "wave64-split", true) ? 1u : 0u;
                 }
             }
         }
+        if (native.subgroupSize != 32u) std::printf("skipped, mixed-lane barrier BDA fault controls need subgroup size 32, device reports %u\n", native.subgroupSize);
         Require(faultingWrites == 0u, "BDA span reads: " + std::to_string(faultingWrites) + " faulting programs still wrote guest memory");
         std::puts("BDA span read tests passed");
         return 0;
