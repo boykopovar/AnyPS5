@@ -1,6 +1,7 @@
 #include "VulkanTestDevice.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -193,8 +194,10 @@ void FailureCapture(AgcDriver::VulkanDevice& device) {
     const auto expected = failure([&] { static_cast<void>(PrepareShader(request)); });
     const char* previous = std::getenv("APS5_DUMP_SHADERS");
     const std::string saved = previous != nullptr ? previous : "";
-    const std::string path = "shader_12345cafe.req";
+    const std::string path = "shader_12345cafe.prepare.req";
+    const std::string capturePath = "shader_12345cafe.req";
     std::remove(path.c_str());
+    std::remove(capturePath.c_str());
 #ifdef _WIN32
     Require(_putenv_s("APS5_DUMP_SHADERS", "") == 0, "cannot disable shader capture");
 #else
@@ -215,6 +218,14 @@ void FailureCapture(AgcDriver::VulkanDevice& device) {
     std::ostringstream dumpedPrefix;
     dumpedPrefix << "shader 0x" << std::hex << request.shader.codeAddress << " stage " << static_cast<unsigned>(request.shader.stage) << " (" << path << "): ";
     Require(actual == dumpedPrefix.str() + expected, "enabled shader capture changed the diagnosed failure");
+    Require(!std::ifstream(capturePath, std::ios::binary).is_open(), "a preparation failure was dumped as a dispatch request");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request) == capturePath, "a dispatch request dump has the wrong name");
+    std::ifstream capture(capturePath, std::ios::binary);
+    std::ostringstream captureText;
+    captureText << capture.rdbuf();
+    capture.close();
+    std::remove(capturePath.c_str());
+    Require(captureText.str() == RequestSerializer{}.Serialize(request), "an earlier preparation failure dump suppressed the dispatch request dump");
 #ifdef _WIN32
     Require(_putenv_s("APS5_DUMP_SHADERS", saved.c_str()) == 0, "cannot restore shader capture");
 #else
