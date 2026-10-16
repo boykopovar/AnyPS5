@@ -752,6 +752,31 @@ bool ReadSingleElement(const GuestTextureResource& resource, std::span<std::byte
     return true;
 }
 
+bool ProvedSingleUniform(const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint64_t collected, DccSingleProof& proof) {
+    if (!SingleKeysReadable(resource) || guestBytes < KeyBytes) return false;
+    const auto bytes = BytesPerElement(resource.format);
+    if (bytes == 0 || bytes > 16) return false;
+    const auto blocks = static_cast<std::size_t>(guestBytes / KeyBytes);
+    if (proof.generation != 0 && proof.address == resource.baseAddress && proof.bytes == guestBytes && proof.format == resource.format && collected != 0 && GuestMemory::UnchangedSince(resource.baseAddress, static_cast<std::size_t>(guestBytes), proof.generation)) return proof.uniform;
+    std::byte first[16]{};
+    bool uniform = true;
+    std::vector<std::byte> buffer(std::min<std::uint64_t>(guestBytes, std::uint64_t(1) << 20));
+    {
+        const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
+        GuestMemory::ReadCommitted(resource.baseAddress, std::span(first, bytes));
+        for (std::size_t block = 1; block < blocks && uniform;) {
+            const auto offset = block * KeyBytes;
+            const auto size = static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), guestBytes - offset));
+            GuestMemory::ReadCommitted(resource.baseAddress + offset, buffer);
+            const auto covered = size / KeyBytes;
+            for (std::size_t index = 0; index < covered && uniform; ++index) uniform = std::equal(first, first + bytes, buffer.begin() + index * KeyBytes);
+            block += covered;
+        }
+    }
+    proof = collected != 0 ? DccSingleProof{resource.baseAddress, guestBytes, collected, resource.format, uniform} : DccSingleProof{};
+    return uniform;
+}
+
 namespace {
 
 DccKeys EncodedKeys(const GuestTextureResource& resource, DccKeys keys) {
