@@ -59,11 +59,16 @@ static std::optional<GuestFileMode> ParseFileMode(const char* mode) {
     return result;
 }
 
+#ifdef _WIN32
+static constexpr DWORD AppendOnlyAccess = FILE_GENERIC_WRITE & ~FILE_WRITE_DATA;
+#endif
+
 static std::FILE* OpenNative(const std::filesystem::path& path, const std::string& nativeMode) {
 #ifdef _WIN32
     const char access = nativeMode[0];
     const bool update = nativeMode.find('+') != std::string::npos;
-    const DWORD desired = update ? GENERIC_READ | GENERIC_WRITE : access == 'r' ? GENERIC_READ : GENERIC_WRITE;
+    const DWORD writes = access == 'a' ? AppendOnlyAccess : GENERIC_WRITE;
+    const DWORD desired = update ? GENERIC_READ | writes : access == 'r' ? GENERIC_READ : writes;
     const DWORD disposition = access == 'r' ? OPEN_EXISTING
         : nativeMode.find('x') != std::string::npos ? CREATE_NEW : access == 'w' ? CREATE_ALWAYS : OPEN_ALWAYS;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
@@ -90,14 +95,11 @@ static std::FILE* OpenNative(const std::filesystem::path& path, const std::strin
 }
 
 #ifdef _WIN32
-static bool AppendThroughDescriptor(int descriptor) {
-    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
-    if (handle == INVALID_HANDLE_VALUE) return false;
-    if (descriptor <= 2 || GetFileType(handle) != FILE_TYPE_DISK) return true;
+static bool MoveAppendingHandle(int descriptor, HANDLE handle, DWORD access, DWORD options) {
     const int translation = ::_setmode(descriptor, _O_BINARY);
     if (translation == -1 || ::_setmode(descriptor, translation) == -1) return false;
     HANDLE copy = nullptr;
-    if (!DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+    if (!DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &copy, access, TRUE, options)) {
         errno = EBADF;
         return false;
     }
@@ -106,11 +108,29 @@ static bool AppendThroughDescriptor(int descriptor) {
         CloseHandle(copy);
         return false;
     }
+    auto* const standard = HostStandardHandle_nid_no_patch(descriptor);
     const int moved = ::_dup2(appending, descriptor);
     const int error = errno;
     ::_close(appending);
+    KeepStandardHandle_nid_no_patch(descriptor, standard);
     errno = error;
     return moved == 0;
+}
+
+static bool AppendThroughDescriptor(int descriptor) {
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    if (descriptor <= 2 || GetFileType(handle) != FILE_TYPE_DISK) return true;
+    return MoveAppendingHandle(descriptor, handle, 0, DUPLICATE_SAME_ACCESS);
+}
+
+static bool AppendOnlyDescriptor(int descriptor) {
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    if (GetFileType(handle) != FILE_TYPE_DISK) return true;
+    const ACCESS_MASK access = WindowsHandleAccess_nid_no_patch(handle, descriptor, "freopen");
+    if (WindowsHandleOnlyAppends_nid_no_patch(access)) return true;
+    return MoveAppendingHandle(descriptor, handle, ((access & FILE_READ_DATA) != 0 ? FILE_GENERIC_READ : 0) | AppendOnlyAccess, 0);
 }
 
 static bool IsPipeStream(std::FILE* native) {
@@ -280,6 +300,15 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
             }
         }
         if (stream->Reopen(path, parsed->native.c_str())) {
+#ifdef _WIN32
+            if (parsed->append && !AppendOnlyDescriptor(_fileno(stream->GetHandle()))) {
+                const int error = errno;
+                stream->Close();
+                if (stream->IsDynamic()) delete stream;
+                errno = error;
+                return nullptr;
+            }
+#endif
             if (parsed->append) static_cast<void>(std::fseek(stream->GetHandle(), 0, SEEK_END));
             if (!path.empty() && parsed->writes) RecordWrittenPath_nid_no_patch(path);
             return stream;
