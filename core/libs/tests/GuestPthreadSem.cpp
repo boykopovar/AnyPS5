@@ -18,7 +18,7 @@ int APS5_VABI scePthreadSemWait(PthreadSem* sem);
 int APS5_VABI scePthreadSemTrywait(PthreadSem* sem);
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, unsigned int usec);
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
-int APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem);
+int APS5_VABI APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem);
 int APS5_VABI APS5_Test_GetPthreadSemApiPauseCount();
 void APS5_VABI APS5_Test_SetPthreadSemApiPause(int kind);
 void APS5_VABI APS5_Test_ReleasePthreadSemApiPause();
