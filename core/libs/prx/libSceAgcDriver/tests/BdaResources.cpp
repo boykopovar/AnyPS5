@@ -1796,6 +1796,36 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         reject([&] { resources.CheckFaults(); }, "rect-list requires");
     }
     {
+        ShaderRecompiler::RecompileResult deferred;
+        deferred.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+        deferred.deferredTypeFaultsOnly = true;
+        auto read = binding(Role::GuestBuffers, 6);
+        read.guestDescriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32) & 0xffffu, sizeof(guest), 0x00027facu};
+        read.bufferWritten = {false};
+        read.bufferRead = {true};
+        deferred.bindings = {binding(Role::FaultBuffer, 5), read};
+        const CompiledShader stage{ShaderRecompiler::ShaderStage::Compute, &deferred, 0};
+        auto placeholder = disabled;
+        placeholder.emptyBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0x1000});
+        {
+            ShaderResources resources(placeholder, stage);
+            Require(resources.ChecksFaults() && !resources.NeedsCompletion(), "a fault buffer kept only for deferred V# TYPE checks is polled although every captured V# has TYPE 0");
+        }
+        deferred.bindings[1].guestDescriptor[3] |= 2u << 30u;
+        deferred.bindings[1].bufferDescriptorStatus = {ShaderRecompiler::StaticBufferDescriptorStatus::UnsupportedType};
+        {
+            ShaderResources resources(placeholder, stage);
+            Require(resources.NeedsCompletion() && !resources.Reusable() && ShaderResources::NeverReusable(std::span<const CompiledShader>(&stage, 1)), "a captured V# of TYPE 2 behind a deferred check is not polled at completion");
+        }
+        deferred.deferredTypeFaultsOnly = false;
+        deferred.bindings[1].guestDescriptor[3] &= 0x3fffffffu;
+        deferred.bindings[1].bufferDescriptorStatus.clear();
+        {
+            ShaderResources resources(placeholder, stage);
+            Require(resources.NeedsCompletion(), "a compute fault buffer with other fault sources is not polled");
+        }
+    }
+    {
         ShaderResources resources(context, compiled, snapshots);
         Require(ShaderResources::NeverReusable(std::span<const CompiledShader>(&compiled, 1)) && !resources.Reusable(), "an address-based build is reusable");
         Require(resources.UsesAddressTable(), "an address-based build does not use the BDA table");

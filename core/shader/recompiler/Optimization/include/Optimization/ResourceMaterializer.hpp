@@ -50,14 +50,14 @@ struct RuntimeImageModeMatch {
 class ResourceMaterializer {
 public:
     static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
-    void ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets = true) const;
+    void ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets = true, bool deferredStaticBufferFaults = false) const;
     static std::vector<ImageResource> RuntimeImageModes(const ImageResource& image);
     static RuntimeImageModeMatch TryRuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);
     static std::uint32_t RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);
     static void PrepareImageModes(ShaderInfo& info);
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
-    [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
+    [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program, bool deferredStaticBufferFaults = false) const;
     static void CompactPlan(IrResourcePlan& plan);
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();

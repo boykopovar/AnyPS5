@@ -309,6 +309,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& descriptor = snapshot.buffers.at(index);
         if (descriptor.dwordCount != 4u) fail("buffer specialization requires four descriptor words");
         const auto& buffer = info.buffers[index];
+        if (!snapshot.bufferDescriptorStatus.empty() && snapshot.bufferDescriptorStatus.size() != snapshot.buffers.size()) fail("buffer descriptor status differs from captured buffers");
+        const auto status = snapshot.bufferDescriptorStatus.empty() ? StaticBufferDescriptorStatus::Valid : snapshot.bufferDescriptorStatus[index];
+        const auto type = descriptor.dwords[3] >> 30u;
+        if (status == StaticBufferDescriptorStatus::UnsupportedType) {
+            if (!buffer.deferredTypeValidation || type == 0u) fail("buffer descriptor uses an unsupported type");
+        } else if (status != StaticBufferDescriptorStatus::Valid || type != 0u) fail("buffer descriptor status is inconsistent with its original words");
         const auto format = (descriptor.dwords[3] >> 12u) & 0x7fu;
         const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
         if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (present && format == 0u))) fail("buffer specialization has an unsupported format");
@@ -534,6 +540,11 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
         switch (physical.role) {
         case DescriptorRole::GuestBuffers:
             physical.guestDescriptor = GuestBuffersDescriptor(entry.resources, snapshot);
+            if (!snapshot.bufferDescriptorStatus.empty()) {
+                if (snapshot.bufferDescriptorStatus.size() != snapshot.buffers.size()) fail("buffer descriptor status differs from captured buffers");
+                for (const auto resource : entry.resources) physical.bufferDescriptorStatus.push_back(snapshot.bufferDescriptorStatus.at(resource));
+                if (std::ranges::all_of(physical.bufferDescriptorStatus, [](StaticBufferDescriptorStatus status) { return status == StaticBufferDescriptorStatus::Valid; })) physical.bufferDescriptorStatus.clear();
+            }
             writtenHere += entry.writtenBuffers;
             readOnlyHere += entry.readOnlyBuffers;
             break;
