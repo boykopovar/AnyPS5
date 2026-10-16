@@ -1,25 +1,38 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "ImageTableAbi.hpp"
 #include "Recompiler.hpp"
 #include "RuntimeAbi.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
+#include <iostream>
 #include <map>
 #include <new>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -53,6 +66,15 @@ struct MockDevice {
     VkExtent3D maxExtent{32768, 32768, 1};
     VkDeviceSize maxResourceSize = VkDeviceSize{1} << 40u;
     std::vector<VkDeviceSize> bufferCreations;
+    std::set<VkImage> destroyedImages;
+    std::map<VkImage, VkDeviceMemory> imageMemory;
+    bool imageMemoryNext = false;
+    std::uint32_t imageMemoryFailures = 0;
+    VkResult imageMemoryResult = VK_SUCCESS;
+    VkDeviceSize bufferMemorySize = 0;
+    VkResult bufferMemoryResult = VK_SUCCESS;
+    std::uint32_t bufferMemoryFailures = 0;
+    VkResult submitResult = VK_SUCCESS;
     std::array<VkDeviceSize, VK_MAX_MEMORY_HEAPS> heapBudget{};
     std::array<VkDeviceSize, VK_MAX_MEMORY_HEAPS> heapUsage{};
 };
@@ -73,10 +95,15 @@ VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice, const VkImageCreateInfo* in
 
 VKAPI_ATTR void VKAPI_CALL imageMemoryRequirements(VkDevice, VkImage, VkMemoryRequirements* requirements) {
     *requirements = {65536, 1024, 0x3};
+    mock.imageMemoryNext = true;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL bindImageMemory(VkDevice, VkImage, VkDeviceMemory, VkDeviceSize) { return VK_SUCCESS; }
-VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice, VkImage, const VkAllocationCallbacks*) {}
+VKAPI_ATTR VkResult VKAPI_CALL bindImageMemory(VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize) {
+    mock.imageMemory[image] = memory;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) { mock.destroyedImages.insert(image); }
 
 VKAPI_ATTR VkResult VKAPI_CALL createImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) {
     *view = newHandle<VkImageView>();
@@ -97,6 +124,15 @@ VKAPI_ATTR void VKAPI_CALL bufferMemoryRequirements(VkDevice, VkBuffer buffer, V
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL allocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+    const bool image = std::exchange(mock.imageMemoryNext, false);
+    if (image && mock.imageMemoryFailures != 0) {
+        --mock.imageMemoryFailures;
+        return mock.imageMemoryResult;
+    }
+    if (!image && mock.bufferMemorySize != 0 && info->allocationSize == mock.bufferMemorySize) {
+        ++mock.bufferMemoryFailures;
+        return mock.bufferMemoryResult;
+    }
     *memory = newHandle<VkDeviceMemory>();
     mock.memories[*memory].resize(static_cast<std::size_t>(info->allocationSize));
     return VK_SUCCESS;
@@ -183,7 +219,7 @@ VKAPI_ATTR VkResult VKAPI_CALL createFence(VkDevice, const VkFenceCreateInfo*, c
 VKAPI_ATTR void VKAPI_CALL destroyFence(VkDevice, VkFence, const VkAllocationCallbacks*) {}
 VKAPI_ATTR VkResult VKAPI_CALL beginCommandBuffer(VkCommandBuffer, const VkCommandBufferBeginInfo*) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL endCommandBuffer(VkCommandBuffer) { return VK_SUCCESS; }
-VKAPI_ATTR VkResult VKAPI_CALL queueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) { return VK_SUCCESS; }
+VKAPI_ATTR VkResult VKAPI_CALL queueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) { return mock.submitResult; }
 VKAPI_ATTR VkResult VKAPI_CALL waitForFences(VkDevice, std::uint32_t, const VkFence*, VkBool32, std::uint64_t) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL getFenceStatus(VkDevice, VkFence) { return VK_SUCCESS; }
 VKAPI_ATTR VkResult VKAPI_CALL queueWaitIdle(VkQueue) { return VK_SUCCESS; }
@@ -557,6 +593,182 @@ void testHeapSize(Context context) {
     Require(largestBufferCreated() < 3 * 256 * KiB, "the 3-layer entry larger than every heap reached the texture upload: a buffer of " + std::to_string(largestBufferCreated()) + " bytes was created");
 }
 
+void testOutOfMemoryEntry(const Context& context) {
+    const Block guest(2 * MiB);
+    const Registration registered(guest.data, guest.bytes);
+    const CachedTexturesCleared cleared(context.device);
+    const std::array<Entry, 2> imageEntries{{
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 16, 16, SwModeLinear, Type2D, 0), Shape::Image2D},
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 4, 8, SwModeLinear, Type2D, 0), Shape::Image2D},
+    }};
+    for (const auto result : {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        const auto name = "Vulkan result " + std::to_string(result);
+        mock.images.clear();
+        mock.destroyedImages.clear();
+        mock.imageMemoryResult = result;
+        mock.imageMemoryFailures = 1;
+        std::vector<std::uint32_t> map;
+        std::string thrown;
+        try {
+            map = resolveTable(context, imageEntries);
+        } catch (const VulkanError& error) {
+            thrown = error.what();
+        }
+        const auto unused = mock.imageMemoryFailures;
+        mock.imageMemoryFailures = 0;
+        mock.imageMemoryResult = VK_SUCCESS;
+        Require(unused == 0, name + " was never returned: the 16x16 entry allocated no image memory");
+        Require(thrown.empty(), name + " from the 16x16 entry's image allocation reached the caller instead of faulting that entry: " + thrown);
+        requireRejected(map, 0, "a 16x16 texture whose image allocation fails with " + name);
+        requireServed(map, 1, "a 4x8 texture after the entry whose image allocation failed with " + name);
+        const auto failed = std::find_if(mock.images.begin(), mock.images.end(), [](const auto& image) { return image.second.extent.width == 16; });
+        Require(failed != mock.images.end() && mock.destroyedImages.contains(failed->first), "the image of the entry whose allocation failed with " + name + " was not destroyed:" + createdImages());
+    }
+    const std::array<Entry, 2> bufferEntries{{
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 512, 520, SwModeLinear, Type2D, 0), Shape::Image2D},
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 8, 16, SwModeLinear, Type2D, 0), Shape::Image2D},
+    }};
+    mock.images.clear();
+    mock.destroyedImages.clear();
+    mock.bufferMemorySize = 512 * 520 * 4;
+    mock.bufferMemoryResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    mock.bufferMemoryFailures = 0;
+    std::vector<std::uint32_t> map;
+    std::string thrown;
+    try {
+        map = resolveTable(context, bufferEntries);
+    } catch (const VulkanError& error) {
+        thrown = error.what();
+    }
+    const auto failures = mock.bufferMemoryFailures;
+    mock.bufferMemorySize = 0;
+    mock.bufferMemoryResult = VK_SUCCESS;
+    Require(failures != 0, "the 512x520 entry allocated no upload buffer of 1064960 bytes");
+    Require(thrown.empty(), "VK_ERROR_OUT_OF_DEVICE_MEMORY from the 512x520 entry's upload buffer allocation reached the caller instead of faulting that entry: " + thrown);
+    requireRejected(map, 0, "a 512x520 texture whose upload buffer allocation fails with VK_ERROR_OUT_OF_DEVICE_MEMORY after its image was allocated");
+    requireServed(map, 1, "an 8x16 texture after the entry whose upload buffer allocation failed");
+    const auto failed = std::find_if(mock.images.begin(), mock.images.end(), [](const auto& image) { return image.second.extent.width == 512; });
+    Require(failed != mock.images.end() && mock.destroyedImages.contains(failed->first) && mock.imageMemory.contains(failed->first) && !mock.memories.contains(mock.imageMemory.at(failed->first)), "the image of the 512x520 entry whose upload buffer failed, or its memory, was not released:" + createdImages());
+}
+
+void testUploadSubmitOutOfMemoryPropagates(const Context& context) {
+    const Block guest(4096);
+    const Registration registered(guest.data, guest.bytes);
+    const CachedTexturesCleared cleared(context.device);
+    const std::array<Entry, 1> entries{{
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 8, 2, SwModeLinear, Type2D, 0), Shape::Image2D},
+    }};
+    mock.images.clear();
+    mock.submitResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    std::optional<VkResult> thrown;
+    std::string message;
+    try {
+        static_cast<void>(resolveTable(context, entries));
+    } catch (const VulkanError& error) {
+        thrown = error.result;
+        message = error.what();
+    }
+    mock.submitResult = VK_SUCCESS;
+    Require(thrown == VK_ERROR_OUT_OF_DEVICE_MEMORY, "VK_ERROR_OUT_OF_DEVICE_MEMORY from the vkQueueSubmit of an image table entry's upload was turned into a faulting entry instead of reaching the caller");
+    Require(message.find("vkQueueSubmit graphics: Vulkan result -2") != std::string::npos, "the propagated out-of-memory error names another call: " + message);
+}
+
+void testDeviceLossFromImageMemoryPropagates(const Context& context) {
+    const Block guest(4096);
+    const Registration registered(guest.data, guest.bytes);
+    const CachedTexturesCleared cleared(context.device);
+    const std::array<Entry, 1> entries{{
+        {textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 8, 4, SwModeLinear, Type2D, 0), Shape::Image2D},
+    }};
+    mock.images.clear();
+    mock.imageMemoryResult = VK_ERROR_DEVICE_LOST;
+    mock.imageMemoryFailures = 1;
+    std::optional<VkResult> thrown;
+    std::string message;
+    try {
+        static_cast<void>(resolveTable(context, entries));
+    } catch (const VulkanError& error) {
+        thrown = error.result;
+        message = error.what();
+    }
+    mock.imageMemoryFailures = 0;
+    mock.imageMemoryResult = VK_SUCCESS;
+    Require(thrown == VK_ERROR_DEVICE_LOST, "VK_ERROR_DEVICE_LOST from an image table entry's vkAllocateMemory was turned into a faulting entry instead of reaching the caller");
+    Require(message.find("vkAllocateMemory texture: Vulkan result -4") != std::string::npos, "the propagated device loss names another call: " + message);
+}
+
+struct ArenaBlock {
+    std::byte* data = nullptr;
+    std::size_t bytes;
+    explicit ArenaBlock(std::size_t bytes) : bytes(bytes) {
+        data = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, bytes));
+        Require(data != nullptr, "cannot allocate a guest arena block for the image table reuse test");
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(data, bytes, PAGE_READWRITE, bytes);
+#endif
+    }
+    ArenaBlock(const ArenaBlock&) = delete;
+    ArenaBlock& operator=(const ArenaBlock&) = delete;
+    ~ArenaBlock() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+#endif
+        GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
+    }
+};
+
+void requireResolutions(const ImageTableReuseCounts& before, std::uint64_t reused, std::uint64_t resolved, const std::string& what) {
+    const auto now = ImageTableReuses();
+    Require(now.reused - before.reused == reused && now.resolved - before.resolved == resolved, what + ": " + std::to_string(now.reused - before.reused) + " tables reused and " + std::to_string(now.resolved - before.resolved) + " resolved, expected " + std::to_string(reused) + " and " + std::to_string(resolved));
+}
+
+void testOutOfMemoryTableResolvedAgain(const Context& context) {
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: reuse of an image table with an entry out of memory not tested\n";
+        return;
+    }
+    std::exception_ptr failure;
+    std::thread([&] {
+        try {
+            const ArenaBlock guest(65536);
+            const Registration registered(guest.data, guest.bytes);
+            const CachedTexturesCleared cleared(context.device);
+            const auto address = addressOf(guest.data);
+            const std::array<Entry, 2> served{{
+                {textureWords(address, FormatR8G8B8A8Unorm, 16, 8, SwModeLinear, Type2D, 0), Shape::Image2D},
+                {textureWords(address, FormatR8G8B8A8Unorm, 4, 4, SwModeLinear, Type2D, 0), Shape::Image2D},
+            }};
+            const std::array<Entry, 2> exhausted{{
+                {textureWords(address, FormatR8G8B8A8Unorm, 16, 16, SwModeLinear, Type2D, 0), Shape::Image2D},
+                {textureWords(address, FormatR8G8B8A8Unorm, 8, 8, SwModeLinear, Type2D, 0), Shape::Image2D},
+            }};
+            mock.images.clear();
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            auto before = ImageTableReuses();
+            requireServed(resolveTable(context, served), 0, "a 16x8 texture in a guest arena block");
+            requireServed(resolveTable(context, served), 1, "a 4x4 texture in a guest arena block");
+            requireResolutions(before, 1, 1, "a table of two served entries resolved twice in one collect epoch");
+            mock.imageMemoryResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            mock.imageMemoryFailures = 1;
+            before = ImageTableReuses();
+            auto map = resolveTable(context, exhausted);
+            const auto unused = mock.imageMemoryFailures;
+            mock.imageMemoryFailures = 0;
+            mock.imageMemoryResult = VK_SUCCESS;
+            Require(unused == 0, "the 16x16 entry in the guest arena block allocated no image memory");
+            requireRejected(map, 0, "a 16x16 texture in a guest arena block whose image allocation fails with VK_ERROR_OUT_OF_DEVICE_MEMORY");
+            requireServed(map, 1, "an 8x8 texture next to the entry whose image allocation failed");
+            map = resolveTable(context, exhausted);
+            requireResolutions(before, 0, 2, "a table whose entry ran out of memory, resolved again in the same collect epoch");
+            requireServed(map, 0, "the 16x16 texture once its image allocation succeeds");
+            requireServed(map, 1, "the 8x8 texture next to it");
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    }).join();
+    if (failure) std::rethrow_exception(failure);
+}
+
 }
 
 void RunImageTableEntryValidationTests() {
@@ -573,6 +785,10 @@ void RunImageTableEntryValidationTests() {
         testPartlyRegisteredSurface(context);
         testVulkanErrorPropagates(context);
         testHeapSize(context);
+        testOutOfMemoryEntry(context);
+        testUploadSubmitOutOfMemoryPropagates(context);
+        testDeviceLossFromImageMemoryPropagates(context);
+        testOutOfMemoryTableResolvedAgain(context);
         Require(mock.missing.empty(), "the mock lacks the Vulkan function " + (mock.missing.empty() ? std::string{} : mock.missing.front()));
     }
     mock = MockDevice{};

@@ -4262,6 +4262,10 @@ void ShaderResources::resolveImageTables() {
             const bool depthCompare = binding.imageDepthCompare.at(element);
             try {
                 texture = cachedTexture(context, words, resource, components, guestBytes, depthCompare);
+            } catch (const TextureMemoryExhausted& error) {
+                table.map[faults + element] = rejectTableElement(table, words, error.what());
+                reusable = false;
+                continue;
             } catch (const VulkanError&) {
                 throw;
             } catch (const std::runtime_error& error) {
