@@ -19,6 +19,9 @@ int APS5_VABI scePthreadSemTrywait(PthreadSem* sem);
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, unsigned int usec);
 int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
 int APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem);
+int APS5_VABI APS5_Test_GetPthreadSemApiPauseCount();
+void APS5_VABI APS5_Test_SetPthreadSemApiPause(int kind);
+void APS5_VABI APS5_Test_ReleasePthreadSemApiPause();
 }
 
 static constexpr int SCE_OK = 0;
@@ -32,6 +35,14 @@ static void Require(bool value) { if (!value) std::abort(); }
 static void WaitForSemaphoreWaiters(PthreadSem* sem, int expected) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (APS5_Test_GetPthreadSemWaiterCount(sem) != expected) {
+        if (std::chrono::steady_clock::now() >= deadline) Require(false);
+        std::this_thread::yield();
+    }
+}
+
+static void WaitForSemaphoreApiPause() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (APS5_Test_GetPthreadSemApiPauseCount() != 1) {
         if (std::chrono::steady_clock::now() >= deadline) Require(false);
         std::this_thread::yield();
     }
@@ -151,20 +162,18 @@ int main() {
 
     PthreadSem queuedSem = nullptr;
     Require(scePthreadSemInit(&queuedSem, 0, 0, nullptr) == SCE_OK);
-    std::atomic<bool> postStarted{false};
+    APS5_Test_SetPthreadSemApiPause(1);
+    std::atomic<int> postResult{-1};
     std::thread concurrentPost([&] {
-        postStarted.store(true, std::memory_order_release);
-        for (int attempt = 0; attempt < 1000; ++attempt) {
-            try {
-                const int result = scePthreadSemPost(&queuedSem);
-                Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EINVAL || result == SCE_KERNEL_ERROR_EOVERFLOW);
-                if (result == SCE_KERNEL_ERROR_EINVAL) break;
-            } catch (const std::runtime_error&) {
-                break;
-            }
+        try {
+            postResult = scePthreadSemPost(&queuedSem);
+        } catch (...) {
+            postResult = -2;
         }
     });
-    while (!postStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    WaitForSemaphoreApiPause();
     Require(scePthreadSemDestroy(&queuedSem) == SCE_OK);
+    APS5_Test_ReleasePthreadSemApiPause();
     concurrentPost.join();
+    Require(postResult == SCE_KERNEL_ERROR_EINVAL);
 }
