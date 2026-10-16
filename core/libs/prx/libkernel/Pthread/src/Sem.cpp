@@ -94,7 +94,7 @@ int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
     std::lock_guard registryLock(semInitializationMutex);
-    const auto current = *sem;
+    const auto current = std::atomic_ref<PthreadSem>(*sem).load(std::memory_order_acquire);
     if (current == destroyedSem())
         return SCE_KERNEL_ERROR_EINVAL;
     if (!current)
