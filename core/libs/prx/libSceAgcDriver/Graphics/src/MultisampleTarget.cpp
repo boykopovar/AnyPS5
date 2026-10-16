@@ -19,11 +19,20 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
 namespace {
+
+std::uint32_t MultisampledBlockLog2(ColorTileMode mode) {
+    switch (mode) {
+        case ColorTileMode::Standard4KB: return 12u;
+        case ColorTileMode::Standard64KB: case ColorTileMode::Z64KBX: case ColorTileMode::D64KBX: case ColorTileMode::RenderTarget: return 16u;
+        default: return 0u;
+    }
+}
 
 bool sameTarget(const ColorTarget& a, const ColorTarget& b) {
     return a.surfaceAddress == b.surfaceAddress && a.format == b.format && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.samples == b.samples;
@@ -129,6 +138,7 @@ public:
     std::shared_ptr<Texture> Sampled(VkComponentMapping components) {
         Require(sampleable, "the device cannot sample the multisampled color target's format at its sample count");
         Require(cmask.Refusal().empty(), cmask.Refusal());
+        Require(htileRefusal.empty(), htileRefusal);
         Require(cmask.Keys() != DccKeys::Clear0000, "sampling a multisampled color target whose CMASK fast clear no draw has applied is not implemented");
         Require(Recorder::Active() != nullptr, "a multisampled color target is only sampled by recorded draws and dispatches");
         ApplyFastClear(target);
@@ -185,6 +195,9 @@ public:
     VkRenderPass resolvePass = VK_NULL_HANDLE;
     MultisampledCmask cmask;
     MultisampledColorFill colorFill;
+    std::uint64_t htileAddress = 0;
+    std::uint64_t htileBytes = 0;
+    std::string htileRefusal;
 
 private:
     bool sampleable = false;
@@ -247,7 +260,7 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
 
 void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active) {
     auto bytes = std::max<std::uint64_t>(target.bytes * target.samples, static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.elementBytes * target.samples);
-    if (target.tileMode == ColorTileMode::RenderTarget && std::has_single_bit(target.elementBytes) && std::has_single_bit(target.samples)) {
+    if (MultisampledBlockLog2(target.tileMode) == 16u && target.tileMode != ColorTileMode::Standard64KB && std::has_single_bit(target.elementBytes) && std::has_single_bit(target.samples)) {
         const auto log2Samples = std::countr_zero(target.samples);
         const auto log2Pixels = 16u - std::countr_zero(target.elementBytes) - log2Samples;
         const auto log2Width = (log2Pixels + ((log2Samples & 1u) == 0u ? 1u : 0u)) / 2u;
@@ -298,6 +311,8 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     switch (resource.tileMode) {
         case TextureTileMode::kStandard4KB: use.tileMode = ColorTileMode::Standard4KB; break;
         case TextureTileMode::kStandard64KB: use.tileMode = ColorTileMode::Standard64KB; break;
+        case TextureTileMode::kZ64KBX: use.tileMode = ColorTileMode::Z64KBX; break;
+        case TextureTileMode::kD64KBX: use.tileMode = ColorTileMode::D64KBX; break;
         case TextureTileMode::kR64KBX: use.tileMode = ColorTileMode::RenderTarget; break;
         default: refuse("whose tile mode " + std::to_string(static_cast<int>(resource.tileMode)) + " has no modeled multisampled color footprint");
     }
@@ -317,12 +332,31 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     RequireNoMultisampleTarget(use.address, static_cast<std::size_t>(bytes), "sampling a multisampled texture no draw rendered to");
     GuestMemory::FlushGpuWrites(use.address, static_cast<std::size_t>(bytes));
     if (!GuestMemory::Accessible(reinterpret_cast<const void*>(use.address), static_cast<std::size_t>(bytes))) refuse(std::string("whose color memory ") + range + " is not mapped");
+    std::uint64_t htileBytes = 0;
+    bool htileCleared = false;
+    if (resource.dccAddress != 0) {
+        if (use.tileMode != ColorTileMode::Z64KBX) refuse("whose compression metadata over a tile mode " + std::to_string(static_cast<int>(resource.tileMode)) + " surface is not modeled");
+        htileBytes = HtileMetadataBytes(use.extent);
+        char htileRange[64];
+        std::snprintf(htileRange, sizeof(htileRange), "0x%llx+0x%llx", static_cast<unsigned long long>(resource.dccAddress), static_cast<unsigned long long>(htileBytes));
+        GuestMemory::FlushGpuWrites(resource.dccAddress, static_cast<std::size_t>(htileBytes));
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(resource.dccAddress), static_cast<std::size_t>(htileBytes))) refuse(std::string("whose HTILE ") + htileRange + " is not mapped");
+        std::vector<std::uint32_t> words(static_cast<std::size_t>(htileBytes / sizeof(std::uint32_t)));
+        std::memcpy(words.data(), reinterpret_cast<const void*>(resource.dccAddress), words.size() * sizeof(std::uint32_t));
+        htileCleared = words.front() == 0u;
+        const auto mixed = std::find_if(words.begin(), words.end(), [&](std::uint32_t word) { return htileCleared ? word != 0u : (word & 15u) != 15u; });
+        if (mixed != words.end()) {
+            char text[96];
+            std::snprintf(text, sizeof(text), " holds 0x%08x at +0x%llx after 0x%08x", *mixed, static_cast<unsigned long long>((mixed - words.begin()) * sizeof(std::uint32_t)), words.front());
+            refuse(std::string("whose HTILE ") + htileRange + text + ", which is neither all cleared to 0.0 nor all expanded");
+        }
+    }
     const auto* memory = reinterpret_cast<const std::byte*>(use.address);
     std::uint32_t value = 0;
-    std::memcpy(&value, memory, sizeof(value));
+    if (!htileCleared) std::memcpy(&value, memory, sizeof(value));
     char held[16];
     std::snprintf(held, sizeof(held), "0x%08x", value);
-    const auto repeated = std::mismatch(memory + sizeof(value), memory + bytes, memory).first;
+    const auto repeated = htileCleared ? memory + bytes : std::mismatch(memory + sizeof(value), memory + bytes, memory).first;
     if (repeated != memory + bytes) {
         char offset[32];
         std::snprintf(offset, sizeof(offset), "+0x%llx", static_cast<unsigned long long>(repeated - memory));
@@ -334,6 +368,8 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     auto& created = *targets().back();
     guard(context, use, created.active);
     created.colorFill.NoteFill(use.address, static_cast<std::size_t>(bytes), value);
+    created.htileAddress = resource.dccAddress;
+    created.htileBytes = htileBytes;
     return created;
 }
 
@@ -396,7 +432,7 @@ bool MultisampledCmask::TakeClear() {
 }
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target) {
-    const auto blockLog2 = target.tileMode == ColorTileMode::Standard4KB ? 12u : target.tileMode == ColorTileMode::Standard64KB || target.tileMode == ColorTileMode::RenderTarget ? 16u : 0u;
+    const auto blockLog2 = MultisampledBlockLog2(target.tileMode);
     if (blockLog2 == 0 || !std::has_single_bit(target.elementBytes) || !std::has_single_bit(target.samples)) return 0;
     const auto samplesLog2 = static_cast<std::uint32_t>(std::countr_zero(target.samples));
     const auto elementsLog2 = blockLog2 - static_cast<std::uint32_t>(std::countr_zero(target.elementBytes)) - samplesLog2;
@@ -526,6 +562,16 @@ void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
         target->colorFill.NoteFill(address, bytes, pattern);
+        if (target->htileBytes != 0 && address < target->htileAddress + target->htileBytes && target->htileAddress < address + bytes) {
+            if (pattern == 0u && address <= target->htileAddress && address + bytes >= target->htileAddress + target->htileBytes) {
+                target->htileRefusal.clear();
+                target->colorFill.NoteFill(target->target.address, static_cast<std::size_t>(MultisampledColorBytes(target->target)), 0u);
+            } else {
+                char text[224];
+                std::snprintf(text, sizeof(text), "a fill of 0x%llx+0x%zx with 0x%08x over the HTILE 0x%llx+0x%llx of a sampled multisampled depth-layout texture is not modeled", static_cast<unsigned long long>(address), bytes, pattern, static_cast<unsigned long long>(target->htileAddress), static_cast<unsigned long long>(target->htileBytes));
+                target->htileRefusal = text;
+            }
+        }
         const auto before = target->cmask.Keys();
         target->cmask.NoteFill(address, bytes, pattern);
         if (before == DccKeys::Clear0000 || target->cmask.Keys() != DccKeys::Clear0000) continue;

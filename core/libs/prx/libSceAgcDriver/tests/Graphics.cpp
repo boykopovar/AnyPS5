@@ -2966,6 +2966,11 @@ void multisampleTests() {
     Require(MultisampledColorBytes(narrow) == 0x50000, "an 8x 4-byte target is not 32x64 pixels per 64 KiB block");
     srgb.extent = {100, 100};
     Require(MultisampledColorBytes(srgb) == 0x40000, "a 4x 100x100 4-byte target does not span 2x2 64 KiB blocks");
+    for (const auto mode : {ColorTileMode::Z64KBX, ColorTileMode::D64KBX}) {
+        auto swizzled = srgb;
+        swizzled.tileMode = mode;
+        Require(MultisampledColorBytes(swizzled) == 0x40000, "a 4x 100x100 4-byte surface of another 64 KiB swizzle does not span 2x2 64 KiB blocks");
+    }
     srgb.tileMode = ColorTileMode::Standard4KB;
     Require(MultisampledColorBytes(srgb) == 0x31000, "a 4x 4-byte target is not 16x16 pixels per 4 KiB block");
     srgb.tileMode = ColorTileMode::Linear;
