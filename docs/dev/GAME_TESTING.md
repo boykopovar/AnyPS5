@@ -82,7 +82,7 @@ Include, in this order:
 
 1. Commit (and each PR applied on top), and whether the tree was modified.
 2. Title ID, region and version.
-3. Host: CPU, GPU, driver, OS (and kernel on Linux).
+3. Host: CPU, OS (and kernel on Linux), the GPU as the log's `Selected GPU name=` line names it, and the driver version. Copy the GPU from that line, not from what the machine is expected to use: without presentation support (for example under Xvfb) AnyPS5 can select a software renderer such as llvmpipe, and on Windows a different adapter or Mesa Dozen.
 4. The exact command and every `APS5_*` / `ANYPS5_*` variable.
 5. Exit code and the last 200 log lines; the kernel line (Linux) or crash report (Windows) for a crash.
 6. Presents per 10 s and storage-image lines if memory is involved.
