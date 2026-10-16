@@ -164,7 +164,7 @@ bool DeclaresLayer(std::span<const std::uint32_t> words) {
     return false;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField, std::span<const Vertex> vertices = Vertices) {
+void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField, std::span<const Vertex> vertices = Vertices, bool executeMesh = true) {
     const auto target = device.Target();
     const auto vertexBuffer = BufferDescriptor(vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(vertices.size()));
     const AgcDriver::Pm4::DrawParameters draw{0, 6u * color.layers, 0, 1, 0, false};
@@ -240,7 +240,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     state.blendConstants = {};
     if (mesh) {
         Require(DeclaresLayer(geometryResult.spirv), "the mesh program declares no Layer output");
-
+        if (!executeMesh) return;
     }
     if (mesh) {
         const auto replaySafe = geometryResult.layerReplaySafe;
@@ -399,7 +399,8 @@ int main(int argc, char** argv) {
         }
         const bool vertexOnly = argc == 2 && std::strcmp(argv[1], "--vertex-only") == 0;
         const bool mips = argc == 2 && std::strcmp(argv[1], "--mips") == 0;
-        Require(argc == 1 || vertexOnly || mips, "usage: layered volume draw [--vertex-only|--mips]");
+        const bool meshExecution = argc == 2 && std::strcmp(argv[1], "--mesh-execution") == 0;
+        Require(argc == 1 || vertexOnly || mips || meshExecution, "usage: layered volume draw [--vertex-only|--mips|--mesh-execution]");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto target = device->Target();
@@ -410,6 +411,10 @@ int main(int argc, char** argv) {
         if (mips) {
             MipTargets(*device);
             return 0;
+        }
+        if (meshExecution && (!target.mesh.has_value() || (target.subgroupSize != 32u && target.subgroupSize != 64u))) {
+            std::puts("skipped, mesh execution requires a supported 32- or 64-lane host subgroup layout");
+            return VulkanTestSkipped;
         }
         std::printf("graphics pipeline libraries: %s\n", device->GraphicsPipelineLibraries() ? "enabled" : "disabled");
         BuildBands();
@@ -458,7 +463,7 @@ int main(int argc, char** argv) {
         Run(*device, thickColor, false, PixelCode, false);
         Check(thickVolume.Data(), thickColor, "thick SW_4KB_S_X vertex draw and writeback", WhiteBands);
         if (vertexOnly) std::puts("layered volume vertex draw tests passed");
-        else if (target.mesh.has_value()) {
+        else if (meshExecution) {
             const GuestVolume meshVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
             const auto meshColor = VolumeTarget(meshVolume.Data());
             Run(*device, meshColor, true, PixelCode, false);
@@ -468,7 +473,8 @@ int main(int argc, char** argv) {
             Run(*device, meshFieldColor, true, LayerFieldPixelCode, true);
             Check(meshFieldVolume.Data(), meshFieldColor, "mesh fragment layer input", LayerFieldBands);
         }
-        else std::puts("mesh case skipped, the device has no VK_EXT_mesh_shader");
+        else if (target.mesh.has_value()) Run(*device, color, true, PixelCode, false, Vertices, false);
+        else std::puts("mesh compilation skipped, the device has no VK_EXT_mesh_shader");
         std::puts("layered volume draw tests passed");
         return 0;
     } catch (const std::exception& error) {
