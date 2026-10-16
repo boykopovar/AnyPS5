@@ -4945,7 +4945,7 @@ void verifyGuardedNullPointers() {
             if (opcode == spv::OpFunction) function = names[words[cursor + 2]];
             if (opcode == spv::OpAccessChain && count == 6u && names[words[cursor + 3]] == "fault_buffer" && constants.contains(words[cursor + 5]) && constants[words[cursor + 5]] == BdaAbi::SrtGuardWord) guardWords.push_back(words[cursor + 2]);
             if (function == "main" && opcode == spv::OpFunctionCall && names[words[cursor + 3]] == "record_bda_fault") ++calls;
-            if (function == "main" && opcode == spv::OpStore && std::find(guardWords.begin(), guardWords.end(), words[cursor + 1]) != guardWords.end()) ++stores;
+            if (function == "main" && opcode == spv::OpAtomicStore && std::find(guardWords.begin(), guardWords.end(), words[cursor + 1]) != guardWords.end()) ++stores;
             cursor += count;
         }
         return std::pair{calls, stores};

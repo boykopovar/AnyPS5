@@ -1510,7 +1510,7 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
             EmitIfCondition(state, poisoned, [&] {
                 const auto record = Binary(state, spv::OpIAdd, u32, ConstantU32(state, records), Binary(state, spv::OpIMul, u32, Binary(state, spv::OpISub, u32, flag, ConstantU32(state, 1u)), ConstantU32(state, 3u)));
                 const auto stage = ConstantU32(state, static_cast<std::uint32_t>(resources.stage) << BdaAbi::SrtGuardStageShift);
-                state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord)), Binary(state, spv::OpBitwiseOr, u32, record, stage));
+                state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord)), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), Binary(state, spv::OpBitwiseOr, u32, record, stage));
             });
             StopBdaInvocationIf(state, poisoned);
         }
