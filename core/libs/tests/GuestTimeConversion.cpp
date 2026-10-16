@@ -322,6 +322,12 @@ static void CheckGuestZone() {
         "An empty guest TZ was not treated as UTC");
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
     tzset_nid_postfix();
+    Require(setenv_nid_postfix("TZ", "EST5", 1) == 0, "Could not set the guest time zone without tzset");
+    Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 19 && result.tm_gmtoff == -18000,
+        "localtime ignored a guest TZ change made without tzset");
+    Require(std::strcmp(tzname_nid_postfix[0], "EST") == 0, "Implicit guest TZ update did not refresh tzname");
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
 }
 
 static bool ZoneFieldsConsistent(const GuestTm& time, std::int64_t instant, int hour) {
