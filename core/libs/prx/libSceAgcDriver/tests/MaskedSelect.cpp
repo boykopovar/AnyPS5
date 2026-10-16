@@ -1445,6 +1445,21 @@ int main() {
         return !LayerReplaySafe(b.program);
     });
 
+    passed &= run("layer replay distinguishes read-only address access from address writes", [] {
+        Builder b;
+        b.program.Info().usesDma = true;
+        auto& address = b.emit(IrOpcode::GetAddressResource, IrType::AddressResource, {});
+        auto& offset = b.constant(0u);
+        auto& active = b.truth();
+        b.emit(IrOpcode::LoadAddressU32, IrType::U32, {&address, &offset, &offset, &active});
+        if (!LayerReplaySafe(b.program)) return false;
+        b.program.Info().bdaWrites = true;
+        if (LayerReplaySafe(b.program)) return false;
+        b.program.Info().bdaWrites = false;
+        b.emit(IrOpcode::StoreAddressU32, IrType::Void, {&address, &offset, &offset, &b.constant(1u), &active});
+        return !LayerReplaySafe(b.program);
+    });
+
     passed &= run("layer replay rejects guest buffer stores and shader clocks", [] {
         Builder written;
         auto& buffer = written.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {});

@@ -692,7 +692,7 @@ bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program) {
 }
 
 bool LayerReplaySafe(const IrProgram& program) {
-    if (program.Info().bdaWrites || program.Info().usesDma) return false;
+    if (program.Info().bdaWrites) return false;
     for (const auto& block : program.Blocks()) {
         for (const auto* instruction : block->Instructions()) {
             const auto opcode = instruction->Opcode();
