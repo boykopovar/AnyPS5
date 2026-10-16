@@ -122,6 +122,8 @@ static void Require(bool condition) {
     if (!condition) std::abort();
 }
 
+static void APS5_VABI IgnoreNetCtlEvent(int, void*) {}
+
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
 }
@@ -1226,20 +1228,19 @@ int main() {
         Require(second.tx_bytes >= first.tx_bytes && second.rx_bytes >= first.rx_bytes);
     }
     {
-        const auto dummyCallback = [](int, void*) {};
         int cid = -1;
         Require(sceNetCtlRegisterCallbackV6(nullptr, nullptr, &cid) == static_cast<int>(0x80412107));
-        Require(sceNetCtlRegisterCallbackV6(dummyCallback, nullptr, nullptr) == static_cast<int>(0x80412107));
+        Require(sceNetCtlRegisterCallbackV6(IgnoreNetCtlEvent, nullptr, nullptr) == static_cast<int>(0x80412107));
         int cids[8] = {};
         for (int i = 0; i < 8; ++i) {
-            Require(sceNetCtlRegisterCallbackV6(dummyCallback, nullptr, &cids[i]) == 0);
+            Require(sceNetCtlRegisterCallbackV6(IgnoreNetCtlEvent, nullptr, &cids[i]) == 0);
             Require(cids[i] == i);
         }
-        Require(sceNetCtlRegisterCallbackV6(dummyCallback, nullptr, &cid) == static_cast<int>(0x80412103));
+        Require(sceNetCtlRegisterCallbackV6(IgnoreNetCtlEvent, nullptr, &cid) == static_cast<int>(0x80412103));
         Require(sceNetCtlUnregisterCallbackV6(-1) == static_cast<int>(0x80412105));
         Require(sceNetCtlUnregisterCallbackV6(8) == static_cast<int>(0x80412105));
         Require(sceNetCtlUnregisterCallbackV6(3) == 0);
-        Require(sceNetCtlRegisterCallbackV6(dummyCallback, nullptr, &cid) == 0);
+        Require(sceNetCtlRegisterCallbackV6(IgnoreNetCtlEvent, nullptr, &cid) == 0);
         Require(cid == 3);
         for (int i = 0; i < 8; ++i) {
             Require(sceNetCtlUnregisterCallbackV6(i) == 0);

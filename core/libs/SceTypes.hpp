@@ -1277,7 +1277,7 @@ struct NetCtlIfStat {
     std::uint32_t reserved[8];
 };
 
-using NetCtlCallback = void (*)(int, void*);
+using NetCtlCallback = void (APS5_VABI *)(int, void*);
 
 struct HttpEpoll;
 using HttpEpollHandle = HttpEpoll*;
