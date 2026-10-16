@@ -7952,6 +7952,14 @@ void pipelineJournalTests() {
         GraphicsPipelineRecipe lineDecoded;
         Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(lineState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), lineDecoded), "the line strip mesh recipe does not decode");
         Require(lineDecoded.state.stages.mesh && lineDecoded.state.stages.mesh->outputPrimitiveSize == 2u && lineDecoded.state.stages.mesh->esgsItemSize == 4u, "the recipe dropped the mesh output primitive size");
+        auto pointState = state;
+        pointState.vertexPoints = true;
+        pointState.pointSize = 4.0f;
+        pointState.pointSizeMin = 0.5f;
+        pointState.pointSizeMax = 8.0f;
+        GraphicsPipelineRecipe pointDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(pointState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), pointDecoded), "the point list recipe does not decode");
+        Require(pointDecoded.state.vertexPoints && pointDecoded.state.pointSize == 4.0f && pointDecoded.state.pointSizeMin == 0.5f && pointDecoded.state.pointSizeMax == 8.0f, "the recipe dropped the vertex point list or its point sizes");
         auto fourSampleState = state;
         fourSampleState.samples = 4;
         auto maskState = fourSampleState;
