@@ -2242,6 +2242,10 @@ bool LabelShaderKey(std::span<const std::uint32_t> key, std::size_t at, std::siz
             at += count;
         }
         if (at >= end) return false;
+        const auto statuses = static_cast<std::size_t>(key[at]);
+        if (!label(at, 1 + statuses, Component::Other)) return false;
+        at += 1 + statuses;
+        if (at >= end) return false;
         const auto samplers = static_cast<std::size_t>(key[at]);
         if (!label(at, 1 + samplers, Component::Sampler)) return false;
         at += 1 + samplers;

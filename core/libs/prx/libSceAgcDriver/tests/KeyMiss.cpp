@@ -5,10 +5,12 @@
 #include <vector>
 
 using namespace AgcDriver;
+using Graphics::CompiledShader;
 using Graphics::ContentKeyComponent;
 using Graphics::ContentKeyDiff;
 using Graphics::ShaderResources;
 using ShaderRecompiler::DescriptorRole;
+using ShaderRecompiler::StaticBufferDescriptorStatus;
 
 namespace {
 
@@ -21,6 +23,7 @@ struct Binding {
     std::vector<std::uint32_t> words;
     std::uint32_t count = 1;
     std::vector<std::uint32_t> shapes;
+    std::vector<StaticBufferDescriptorStatus> statuses;
 };
 
 std::vector<std::uint32_t> shaderKey(bool dataWords, bool movable, const std::vector<Binding>& bindings) {
@@ -31,11 +34,26 @@ std::vector<std::uint32_t> shaderKey(bool dataWords, bool movable, const std::ve
         const bool emitted = (movable && binding.role == DescriptorRole::GuestBuffers && binding.words.size() == binding.count * 4u) || (dataWords && !movable) || !data;
         if (emitted) key.insert(key.end(), binding.words.begin(), binding.words.end());
         for (int flags = 0; flags < 9; ++flags) key.push_back(0u);
+        key.push_back(static_cast<std::uint32_t>(binding.statuses.size()));
+        for (const auto status : binding.statuses) key.push_back(static_cast<std::uint32_t>(status));
         key.push_back(0u);
         key.push_back(static_cast<std::uint32_t>(binding.shapes.size()));
         key.insert(key.end(), binding.shapes.begin(), binding.shapes.end());
     }
     return key;
+}
+
+std::vector<std::uint32_t> contentKey(bool dataWords, bool movable, const std::vector<Binding>& bindings) {
+    ShaderRecompiler::RecompileResult program;
+    program.variantId = 7;
+    for (const auto& binding : bindings) {
+        ShaderRecompiler::DescriptorBinding item{ShaderRecompiler::DescriptorKind::UniformBuffer, binding.role, 0u, 0u, binding.count};
+        item.guestDescriptor = binding.words;
+        for (const auto shape : binding.shapes) item.imageShapes.push_back(static_cast<ShaderRecompiler::DescriptorImageShape>(shape));
+        item.bufferDescriptorStatus = binding.statuses;
+        program.bindings.push_back(std::move(item));
+    }
+    return ShaderResources::ContentKey(CompiledShader{ShaderRecompiler::ShaderStage::Compute, &program, 0u}, dataWords, movable);
 }
 
 std::vector<std::uint32_t> drawKey(std::uint32_t device, const std::vector<std::uint32_t>& stage, std::uint32_t target) {
@@ -53,6 +71,21 @@ std::vector<Binding> bindings() {
 void expectOnly(const ContentKeyDiff& diff, std::optional<ContentKeyComponent> component, const char* message) {
     for (std::size_t i = 0; i < diff.size(); ++i) {
         check(diff[i] == (component && i == static_cast<std::size_t>(*component)), message);
+    }
+}
+
+std::vector<Binding> statusBindings() {
+    return {{DescriptorRole::GuestBuffers, {10, 11, 12, 13, 14, 15, 16, 17}, 2, {}, {StaticBufferDescriptorStatus::Valid, StaticBufferDescriptorStatus::UnsupportedType}}, {DescriptorRole::GuestImages, {20, 21, 22, 23, 24, 25, 26, 27}}, {DescriptorRole::GuestSamplers, {30, 31, 32, 33}}};
+}
+
+void testKeysFollowContentKey() {
+    const std::vector<Binding> table{{DescriptorRole::ImageTable, {50, 51, 52, 53, 54, 55, 56, 57}, 1, {1}}, {DescriptorRole::SamplerTable, {60, 61, 62, 63}}};
+    for (const bool dataWords : {false, true}) {
+        for (const bool movable : {false, true}) {
+            check(shaderKey(dataWords, movable, bindings()) == contentKey(dataWords, movable, bindings()), "hand-built key differs from ContentKey");
+            check(shaderKey(dataWords, movable, table) == contentKey(dataWords, movable, table), "hand-built table key differs from ContentKey");
+            check(shaderKey(dataWords, movable, statusBindings()) == contentKey(dataWords, movable, statusBindings()), "hand-built status key differs from ContentKey");
+        }
     }
 }
 
@@ -104,6 +137,34 @@ void testDispatchKey() {
     expectOnly(diff, ContentKeyComponent::Sampler, "sampler table word");
 }
 
+void testBufferDescriptorStatus() {
+    ContentKeyDiff diff;
+    const auto base = shaderKey(true, false, statusBindings());
+    check(ShaderResources::DiffContentKeys(base, base, false, diff), "keys with buffer descriptor status were not comparable");
+    expectOnly(diff, std::nullopt, "equal keys with buffer descriptor status reported a difference");
+    auto status = statusBindings();
+    status[0].statuses[1] = StaticBufferDescriptorStatus::Valid;
+    check(ShaderResources::DiffContentKeys(base, shaderKey(true, false, status), false, diff), "buffer descriptor status entry");
+    expectOnly(diff, ContentKeyComponent::Other, "buffer descriptor status entry");
+    auto image = statusBindings();
+    image[1].words[5] += 1;
+    check(ShaderResources::DiffContentKeys(base, shaderKey(true, false, image), false, diff), "image word after status entries");
+    expectOnly(diff, ContentKeyComponent::Image, "image word after status entries");
+    auto sampler = statusBindings();
+    sampler[2].words[1] += 1;
+    check(ShaderResources::DiffContentKeys(base, shaderKey(true, false, sampler), false, diff), "sampler word after status entries");
+    expectOnly(diff, ContentKeyComponent::Sampler, "sampler word after status entries");
+    auto buffer = statusBindings();
+    buffer[0].words[6] += 1;
+    check(ShaderResources::DiffContentKeys(base, shaderKey(true, false, buffer), false, diff), "V# word beside status entries");
+    expectOnly(diff, ContentKeyComponent::BufferWord2, "V# word beside status entries");
+    const auto draw = drawKey(5, shaderKey(true, true, statusBindings()), 0x1000);
+    check(ShaderResources::DiffContentKeys(draw, drawKey(5, shaderKey(true, true, status), 0x1000), true, diff), "draw buffer descriptor status entry");
+    expectOnly(diff, ContentKeyComponent::Other, "draw buffer descriptor status entry");
+    check(ShaderResources::DiffContentKeys(draw, drawKey(5, shaderKey(true, true, sampler), 0x1000), true, diff), "draw sampler word after status entries");
+    expectOnly(diff, ContentKeyComponent::Sampler, "draw sampler word after status entries");
+}
+
 std::vector<std::uint32_t> withDevice(std::vector<std::uint32_t> key, std::uint32_t device) {
     key.push_back(device);
     key.push_back(0u);
@@ -144,7 +205,9 @@ void testDrawKey() {
 
 int main() {
     try {
+        testKeysFollowContentKey();
         testDispatchKey();
+        testBufferDescriptorStatus();
         testDispatchKeyWithDevice();
         testDrawKey();
         std::puts("Key miss attribution passed");
