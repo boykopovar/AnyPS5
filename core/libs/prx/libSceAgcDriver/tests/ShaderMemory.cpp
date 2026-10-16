@@ -1917,7 +1917,15 @@ void verifyDescriptorPhis() {
     AgcDriver::ShaderMemory twoLaneMemory({});
     const auto twoLaneCapture = twoLaneMemory.Capture(twoLane);
     twoLane.context.memory = twoLaneMemory.Regions();
-    require(countOps(Recompile(twoLane, *twoLaneCapture)->spirv, OpImageSampleExplicitLod) == 4u, "descriptor Phi: the specialized two-lane SPIR-V does not sample once per edge and half");
+    const auto twoLaneResult = Recompile(twoLane, *twoLaneCapture);
+    const auto& twoLaneWords = twoLaneResult->spirv.Words();
+    std::size_t invocations = 0;
+    for (std::size_t cursor = 5; cursor < twoLaneWords.size() && (twoLaneWords[cursor] >> 16u) != 0u; cursor += twoLaneWords[cursor] >> 16u) {
+        if ((twoLaneWords[cursor] & 0xffffu) == spv::OpExecutionMode && twoLaneWords[cursor + 2] == spv::ExecutionModeLocalSize) invocations = std::size_t{twoLaneWords[cursor + 3]} * twoLaneWords[cursor + 4] * twoLaneWords[cursor + 5];
+    }
+    require(invocations == 32u || invocations == 64u, "descriptor Phi: the wave64 program runs neither one nor two lanes per invocation");
+    const std::size_t lanesPerInvocation = 64u / invocations;
+    require(countOps(twoLaneResult->spirv, OpImageSampleExplicitLod) == 2u * lanesPerInvocation, "descriptor Phi: the specialized wave64 SPIR-V does not sample once per edge and lane");
 
     auto dynamic = makeRequest(dynamicCode);
     expectFailure([&] { static_cast<void>(GetResourcePlan(dynamic)); }, "GetSamplerResource dword 0 is not a valid runtime value", "descriptor Phi: an edge without an SRT slot was accepted");

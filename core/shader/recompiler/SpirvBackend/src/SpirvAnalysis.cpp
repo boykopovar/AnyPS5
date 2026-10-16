@@ -1,6 +1,8 @@
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "RdnaDecoder/RdnaInstruction.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
@@ -516,6 +518,255 @@ std::unordered_set<const IrValue*> WaveUniformValues(const IrProgram& program) {
         if (!lanes) uniform.insert(value);
     }
     return uniform;
+}
+
+namespace {
+
+const IrBlock* BlockWithId(const IrProgram& program, std::uint32_t id) {
+    const auto& blocks = program.BlockOrder();
+    const auto& infos = program.Metadata().blockInfo;
+    for (std::size_t index = 0; index < infos.size() && index < blocks.size(); ++index) {
+        if (infos[index].id == id) return blocks[index];
+    }
+    return nullptr;
+}
+
+std::unordered_set<const IrBlock*> BlocksBefore(const IrProgram& program, std::initializer_list<std::uint32_t> starts, std::uint32_t stop) {
+    const IrBlock* stopBlock = BlockWithId(program, stop);
+    std::unordered_set<const IrBlock*> region;
+    std::vector<const IrBlock*> pending;
+    for (const auto id : starts) pending.push_back(BlockWithId(program, id));
+    while (!pending.empty()) {
+        const IrBlock* block = pending.back();
+        pending.pop_back();
+        if (block == nullptr || block == stopBlock || !region.insert(block).second) continue;
+        for (const IrBlock* successor : block->Successors()) pending.push_back(successor);
+    }
+    return region;
+}
+
+bool IsImmediate(const IrValue* value, std::uint32_t bits) {
+    return value->HasImmediate() && value->ImmediateU32() == bits;
+}
+
+bool OwnLaneBit(const IrValue& shift, const IrValue* mask) {
+    if (shift.Argument(0)->Resolve() != mask) return false;
+    const IrValue* amount = shift.Argument(1)->Resolve();
+    if (amount->Opcode() != IrOpcode::BitwiseAnd32) return false;
+    const IrValue* lhs = amount->Argument(0)->Resolve();
+    const IrValue* rhs = amount->Argument(1)->Resolve();
+    if (!((lhs->Opcode() == IrOpcode::LaneId && IsImmediate(rhs, 31u)) || (rhs->Opcode() == IrOpcode::LaneId && IsImmediate(lhs, 31u)))) return false;
+    const auto& uses = shift.Uses();
+    return std::all_of(uses.begin(), uses.end(), [&](const IrValue* use) {
+        return use->Opcode() == IrOpcode::BitwiseAnd32 && (IsImmediate(use->Argument(0)->Resolve(), 1u) || IsImmediate(use->Argument(1)->Resolve(), 1u));
+    });
+}
+
+enum class MaskWord {
+    Neutral,
+    Low,
+    High,
+    OwnHalf,
+    Mixed,
+};
+
+MaskWord CombineWords(MaskWord lhs, MaskWord rhs) {
+    if (lhs == MaskWord::Neutral) return rhs;
+    if (rhs == MaskWord::Neutral || lhs == rhs) return lhs;
+    return MaskWord::Mixed;
+}
+
+std::optional<bool> LowHalfTest(const IrValue* condition) {
+    condition = condition->Resolve();
+    if (condition->ArgumentCount() != 2u || condition->Argument(0)->Resolve()->Opcode() != IrOpcode::LaneId) return std::nullopt;
+    const IrValue* bound = condition->Argument(1)->Resolve();
+    if (condition->Opcode() == IrOpcode::ULessThan32 && IsImmediate(bound, 32u)) return true;
+    if (condition->Opcode() == IrOpcode::UGreaterThanEqual32 && IsImmediate(bound, 32u)) return false;
+    if (condition->Opcode() == IrOpcode::UGreaterThan32 && IsImmediate(bound, 31u)) return false;
+    return std::nullopt;
+}
+
+bool LaneLocalBallots(const IrProgram& program) {
+    std::unordered_map<const IrValue*, MaskWord> words;
+    const auto derived = [&](const IrValue* value) { return words.contains(value->Resolve()); };
+    const auto wordOf = [&](const IrValue* value) {
+        const auto found = words.find(value->Resolve());
+        return found == words.end() ? MaskWord::Neutral : found->second;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const IrBlock* block : program.BlockOrder()) {
+            for (const IrValue* inst : block->Instructions()) {
+                std::optional<MaskWord> word;
+                switch (inst->Opcode()) {
+                case IrOpcode::CompositeExtractU32x4: {
+                    const IrValue* index = inst->Argument(1)->Resolve();
+                    if (inst->Argument(0)->Resolve()->Opcode() != IrOpcode::Ballot || !index->HasImmediate()) break;
+                    word = index->ImmediateU32() == 0u ? MaskWord::Low : index->ImmediateU32() == 1u ? MaskWord::High : MaskWord::Neutral;
+                    break;
+                }
+                case IrOpcode::BitwiseAnd32:
+                case IrOpcode::BitwiseOr32:
+                case IrOpcode::BitwiseXor32:
+                case IrOpcode::BitwiseNot32:
+                case IrOpcode::Phi:
+                    for (std::size_t index = 0; index < inst->ArgumentCount(); ++index) {
+                        if (!derived(inst->Argument(index))) continue;
+                        word = CombineWords(word.value_or(MaskWord::Neutral), wordOf(inst->Argument(index)));
+                    }
+                    break;
+                case IrOpcode::SelectU32: {
+                    if (!derived(inst->Argument(1)) && !derived(inst->Argument(2))) break;
+                    word = CombineWords(wordOf(inst->Argument(1)), wordOf(inst->Argument(2)));
+                    if (const auto low = LowHalfTest(inst->Argument(0))) {
+                        const MaskWord lowArm = wordOf(inst->Argument(*low ? 1 : 2));
+                        const MaskWord highArm = wordOf(inst->Argument(*low ? 2 : 1));
+                        if ((lowArm == MaskWord::Low || lowArm == MaskWord::OwnHalf) && (highArm == MaskWord::High || highArm == MaskWord::OwnHalf)) word = MaskWord::OwnHalf;
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
+                if (!word) continue;
+                const auto [entry, inserted] = words.try_emplace(inst, *word);
+                if (inserted || entry->second != *word) {
+                    entry->second = *word;
+                    changed = true;
+                }
+            }
+        }
+    }
+    for (const IrBlock* block : program.BlockOrder()) {
+        for (const IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() != IrOpcode::Ballot) continue;
+            const auto& uses = inst->Uses();
+            if (!std::all_of(uses.begin(), uses.end(), [](const IrValue* use) { return use->Opcode() == IrOpcode::CompositeExtractU32x4; })) return false;
+        }
+    }
+    for (const auto& [value, word] : words) {
+        if (word == MaskWord::Mixed) return false;
+        for (const IrValue* use : value->Uses()) {
+            switch (use->Opcode()) {
+            case IrOpcode::BitwiseAnd32:
+            case IrOpcode::BitwiseOr32:
+            case IrOpcode::BitwiseXor32:
+            case IrOpcode::BitwiseNot32:
+            case IrOpcode::Phi:
+                break;
+            case IrOpcode::SelectU32:
+                if (use->Argument(0)->Resolve() == value) return false;
+                break;
+            case IrOpcode::ShiftRightLogical32:
+                if (word != MaskWord::OwnHalf || !OwnLaneBit(*use, value)) return false;
+                break;
+            default:
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+std::optional<std::unordered_set<const IrBlock*>> WaveMaskRegion(const IrProgram& program, const BlockInfo& info) {
+    const auto& terminator = info.terminator;
+    if (!terminator.loopHeader && terminator.mergeBlock != InvalidControlFlowId) return BlocksBefore(program, {terminator.trueBlock, terminator.falseBlock}, terminator.mergeBlock);
+    const IrBlock* branch = BlockWithId(program, info.id);
+    std::optional<std::unordered_set<const IrBlock*>> innermost;
+    for (const auto& header : program.Metadata().blockInfo) {
+        if (!header.terminator.loopHeader) continue;
+        auto body = BlocksBefore(program, {header.terminator.trueBlock, header.terminator.falseBlock}, header.terminator.mergeBlock);
+        body.insert(BlockWithId(program, header.id));
+        if (!body.contains(branch)) continue;
+        if (!innermost || body.size() < innermost->size()) innermost = std::move(body);
+    }
+    return innermost;
+}
+
+}
+
+OneLaneRejection Wave64OneLaneRejection(const IrProgram& program, std::uint32_t workgroupThreads, std::span<const std::uint32_t> capabilities, IrOpcode* blocker) {
+    const auto reject = [&](OneLaneRejection rejection, IrOpcode opcode) {
+        if (blocker != nullptr) *blocker = opcode;
+        return rejection;
+    };
+    const auto uniform = WaveUniformValues(program);
+    const auto isUniform = [&](const IrValue* value) {
+        const IrValue* resolved = value->Resolve();
+        return resolved->HasImmediate() || uniform.contains(resolved);
+    };
+    const bool ballotsLaneLocal = LaneLocalBallots(program);
+    bool sharedWrites = false;
+    for (const IrBlock* block : program.BlockOrder()) {
+        for (const IrValue* inst : block->Instructions()) {
+            switch (inst->Opcode()) {
+            case IrOpcode::Ballot:
+                if (!ballotsLaneLocal) return reject(OneLaneRejection::WaveOperation, inst->Opcode());
+                break;
+            case IrOpcode::DppMoveU32:
+            case IrOpcode::DppUpdateU32:
+            case IrOpcode::Permlane16U32:
+            case IrOpcode::PermuteU32:
+            case IrOpcode::BpermuteU32:
+            case IrOpcode::SwizzleU32:
+            case IrOpcode::DataAppend:
+            case IrOpcode::DataConsume:
+            case IrOpcode::ReadLane:
+                return reject(OneLaneRejection::WaveOperation, inst->Opcode());
+            case IrOpcode::ReadFirstLane:
+                if (!isUniform(inst->Argument(0))) return reject(OneLaneRejection::WaveOperation, inst->Opcode());
+                break;
+            case IrOpcode::Sendmsg:
+            case IrOpcode::EmitVertex:
+            case IrOpcode::MeshAllocate:
+                return reject(OneLaneRejection::WaveSideEffect, inst->Opcode());
+            default:
+                break;
+            }
+            const auto access = SharedAccessOf(inst->Opcode());
+            sharedWrites |= access != SharedAccess::None && access != SharedAccess::Read;
+        }
+    }
+    if (sharedWrites && workgroupThreads > program.WaveSize()) return OneLaneRejection::SharedMemory;
+    const auto supported = [&](std::uint32_t capability) { return std::find(capabilities.begin(), capabilities.end(), capability) != capabilities.end(); };
+    const auto& resources = program.Info();
+    const bool bindless = std::any_of(resources.images.begin(), resources.images.end(), [](const auto& image) { return image.table != NoTable; }) ||
+                          std::any_of(resources.samplers.begin(), resources.samplers.end(), [](const auto& sampler) { return sampler.table != NoTable; });
+    if (bindless && !(supported(spv::CapabilityShaderNonUniform) && supported(spv::CapabilitySampledImageArrayNonUniformIndexing) && supported(spv::CapabilityStorageImageArrayNonUniformIndexing))) {
+        return OneLaneRejection::BindlessIndex;
+    }
+    for (const auto& info : program.Metadata().blockInfo) {
+        if (info.terminator.kind != TerminatorKind::ConditionalBranch || !IsWaveMaskBranch(info.terminator.condition)) continue;
+        const auto region = WaveMaskRegion(program, info);
+        if (!region) return OneLaneRejection::WaveMaskRegion;
+        for (const IrBlock* block : *region) {
+            for (const IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::Barrier || (sharedWrites && SharedAccessOf(inst->Opcode()) != SharedAccess::None)) return reject(OneLaneRejection::WaveMaskRegion, inst->Opcode());
+                if (inst->Type() == IrType::Void || !uniform.contains(inst)) continue;
+                for (const IrValue* use : inst->Uses()) {
+                    if (use->Parent() == nullptr || !region->contains(use->Parent())) return reject(OneLaneRejection::WaveMaskRegion, inst->Opcode());
+                }
+            }
+        }
+        for (const auto& other : program.Metadata().blockInfo) {
+            const IrValue* condition = other.condition;
+            if (condition == nullptr || condition->Parent() == nullptr || !region->contains(condition->Parent()) || !uniform.contains(condition)) continue;
+            if (!region->contains(BlockWithId(program, other.id))) return OneLaneRejection::WaveMaskRegion;
+        }
+    }
+    return OneLaneRejection::None;
+}
+
+const char* OneLaneRejectionName(OneLaneRejection rejection) {
+    switch (rejection) {
+    case OneLaneRejection::None: return "one lane per invocation";
+    case OneLaneRejection::WaveOperation: return "two lanes: reads other lanes or the wave mask";
+    case OneLaneRejection::WaveSideEffect: return "two lanes: wave-level side effect";
+    case OneLaneRejection::WaveMaskRegion: return "two lanes: a wave-mask branch guards a scalar result, a barrier or LDS";
+    case OneLaneRejection::SharedMemory: return "two lanes: writes LDS in a workgroup of more than one wave";
+    case OneLaneRejection::BindlessIndex: return "two lanes: bindless table without non-uniform indexing";
+    }
+    return "two lanes";
 }
 
 }

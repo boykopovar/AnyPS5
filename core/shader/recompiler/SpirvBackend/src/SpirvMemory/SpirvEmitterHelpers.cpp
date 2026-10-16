@@ -165,7 +165,7 @@ void DefineInputs(SpirvEmitterState& state) {
     for (const auto& input : state.program.Info().inputs) {
         state.inputs.push_back(SpirvInputBinding {input});
     }
-    if (state.laneCount == 2u) {
+    if (state.laneCount == 2u || state.waveSpansSubgroups) {
         const auto addBuiltin = [&](StageInputKind kind, std::uint32_t components, const char* name) {
             if (std::none_of(state.inputs.begin(), state.inputs.end(), [kind](const SpirvInputBinding& input) {
                 return input.kind == kind;

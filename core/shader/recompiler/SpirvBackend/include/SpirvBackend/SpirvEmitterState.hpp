@@ -100,6 +100,7 @@ struct SpirvEmitterState {
     std::uint32_t laneCount = 1;
     std::uint32_t hostSubgroupSize = 0;
     bool splitSubgroup = false;
+    bool waveSpansSubgroups = false;
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool registrationModules = false;

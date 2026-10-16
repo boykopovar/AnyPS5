@@ -69,6 +69,7 @@ namespace ShaderRecompiler
     }
 
     std::uint32_t EmitSubgroupLocalInvocationId(SpirvEmitterState& state) {
+        if (state.waveSpansSubgroups) return EmitBinaryU32(state, spv::OpBitwiseAnd, EmitLocalInvocationIndex(state), ConstantU32(state, 63u));
         const auto value = HostInvocationId(state);
         if (state.splitSubgroup) return EmitBinaryU32(state, spv::OpBitwiseAnd, value, ConstantU32(state, 31u));
         return state.laneHalf == 0 ? value : EmitAddU32(state, value, ConstantU32(state, 32));
@@ -81,6 +82,19 @@ namespace ShaderRecompiler
     }
 
     std::uint32_t EmitWaveBallot(SpirvEmitterState& state, std::uint32_t ballot) {
+        if (state.waveSpansSubgroups) {
+            const auto mask = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), mask, ballot, 0u);
+            const auto upper = state.module.AllocateId();
+            state.module.AddFunction(spv::OpINotEqual, TypeBool(state), upper, EmitBinaryU32(state, spv::OpBitwiseAnd, EmitLocalInvocationIndex(state), ConstantU32(state, 32u)), ConstantU32(state, 0u));
+            const auto low = state.module.AllocateId();
+            const auto high = state.module.AllocateId();
+            const auto result = state.module.AllocateId();
+            state.module.AddFunction(spv::OpSelect, TypeU32(state), low, upper, ConstantU32(state, 0u), mask);
+            state.module.AddFunction(spv::OpSelect, TypeU32(state), high, upper, mask, ConstantU32(state, 0u));
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, low, high, ConstantU32(state, 0u), ConstantU32(state, 0u));
+            return result;
+        }
         if (!state.splitSubgroup) return ballot;
         const auto word = EmitBinaryU32(state, spv::OpShiftRightLogical, HostInvocationId(state), ConstantU32(state, 5u));
         const auto mask = state.module.AllocateId();
