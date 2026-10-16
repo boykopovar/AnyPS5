@@ -76,7 +76,6 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
     try {
         bool submitted = false;
         bool presentable = false;
-        bool trailing = false;
         double waitedMs = 0;
         {
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Present);
@@ -124,16 +123,10 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
                 timing.Mark("render_fence_wait");
             }
             if (submitted && (syncFlip || inFlight != 0)) {
-
                 presenting->QueuePresent();
                 timing.Mark("queue_present");
-                trailing = !syncFlip;
                 submitted = false;
             }
-        }
-        if (trailing) {
-            waitedMs += presenting->FinishPresent();
-            timing.Mark("render_fence_wait");
         }
         if (submitted) {
             waitedMs = presenting->FinishPresent();
