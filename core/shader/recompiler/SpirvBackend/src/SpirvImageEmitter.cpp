@@ -1365,8 +1365,14 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
         const auto centreV = Binary(state, spv::OpFSub, f32, scaledV, half);
         const auto floorU = ext(f32, GLSLstd450Floor, {centreU});
         const auto floorV = ext(f32, GLSLstd450Floor, {centreV});
-        const auto weightU = Binary(state, spv::OpFSub, f32, centreU, floorU);
-        const auto weightV = Binary(state, spv::OpFSub, f32, centreV, floorV);
+        const auto weight = [&](std::uint32_t centre, std::uint32_t floored) {
+            const auto fraction = Binary(state, spv::OpFSub, f32, centre, floored);
+            if (!converted) return fraction;
+            const auto steps = ext(f32, GLSLstd450RoundEven, {Binary(state, spv::OpFMul, f32, fraction, f32Constant(256.0f))});
+            return Binary(state, spv::OpFMul, f32, steps, f32Constant(1.0f / 256.0f));
+        };
+        const auto weightU = weight(centreU, floorU);
+        const auto weightV = weight(centreV, floorV);
         const auto x0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, floorU), offsetX);
         const auto y0 = Binary(state, spv::OpIAdd, i32, Unary(state, spv::OpConvertFToS, i32, floorV), offsetY);
         const auto x1 = Binary(state, spv::OpIAdd, i32, x0, ConstantI32(state, 1));

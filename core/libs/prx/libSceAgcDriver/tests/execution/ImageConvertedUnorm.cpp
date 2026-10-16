@@ -55,6 +55,7 @@ constexpr std::array<std::uint32_t, 4> WrapBilinearSampler{0x00000090u, 0x00fff0
 constexpr std::array<std::uint32_t, 4> WrapPointSampler{0x00000090u, 0x00fff000u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> BorderSampler{0x000000b6u, 0x00fff000u, 0u, 0u};
 constexpr std::uint32_t SampleStep = 0x3a200000u;
+constexpr std::uint32_t OffGridStep = 0x3a206000u;
 constexpr std::uint32_t SampleStart = 0x39c00000u;
 constexpr std::uint32_t WrappedStart = 0xbac00000u;
 constexpr std::uint32_t FloatStart = 0x3c000000u;
@@ -109,6 +110,9 @@ alignas(256) constexpr auto GetLod = SamplerCode(0xf1800308u);
 alignas(256) constexpr auto SampleAt = SampleAtCode(SampleStep, SampleStart);
 alignas(256) constexpr auto SampleWrapped = SampleAtCode(SampleStep, WrappedStart);
 alignas(256) constexpr auto SampleFloat = SampleAtCode(SampleStep, FloatStart);
+alignas(256) constexpr auto SampleOffGrid = SampleAtCode(OffGridStep, SampleStart);
+alignas(256) constexpr auto SampleWrappedOffGrid = SampleAtCode(OffGridStep, WrappedStart);
+alignas(256) constexpr auto SampleFloatOffGrid = SampleAtCode(OffGridStep, FloatStart);
 
 constexpr std::array<std::uint32_t, 11> StoreValues{
     0x00000000u, 0x3f800000u, 0x3f000000u, 0x3eaaaaabu, 0x80000000u, 0xbf800000u,
@@ -358,7 +362,7 @@ double ChannelValue(std::uint32_t texel, std::uint32_t swizzle, std::uint32_t co
     return static_cast<double>(Field(texel, selector - 4u)) / (selector == 6u ? 1023.0 : 2047.0);
 }
 
-void CheckSample(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t start, std::uint32_t format, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& sampler, bool linear, bool wrap, const std::string& what) {
+void CheckSample(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, std::span<const std::uint32_t> code, std::uint32_t step, std::uint32_t start, std::uint32_t format, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& sampler, bool linear, bool wrap, const std::string& what) {
     Run(device, code, TextureDescriptor(texels, format, swizzle, LoadWidth), sampler, 1);
     const auto texelAt = [&](std::int64_t index) {
         const auto width = static_cast<std::int64_t>(LoadWidth);
@@ -368,13 +372,13 @@ void CheckSample(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, st
         return texel;
     };
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const auto x = static_cast<double>(tid) * 1.25 + static_cast<double>(std::bit_cast<float>(start)) * LoadWidth;
+        const auto x = (static_cast<double>(tid) * static_cast<double>(std::bit_cast<float>(step)) + static_cast<double>(std::bit_cast<float>(start))) * LoadWidth;
         for (std::uint32_t component = 0; component < 4u; ++component) {
             double expected = 0.0;
             if (linear) {
                 const auto centre = x - 0.5;
                 const auto first = static_cast<std::int64_t>(std::floor(centre));
-                const auto weight = centre - std::floor(centre);
+                const auto weight = std::nearbyint((centre - std::floor(centre)) * 256.0) / 256.0;
                 const auto left = ChannelValue(texelAt(first), swizzle, component, format == FloatFormat);
                 const auto right = ChannelValue(texelAt(first + 1), swizzle, component, format == FloatFormat);
                 expected = left + (right - left) * weight;
@@ -460,11 +464,14 @@ int main() {
         CheckStore(*device, texels + StoreOffset, StoreXz, 0x5u, "image_store dmask:0x5");
         CheckFloatStore(*device, texels + FloatOffset);
         CheckFloatLoad(*device, texels + FloatOffset);
-        CheckSample(*device, texels + FloatOffset, SampleFloat, FloatStart, FloatFormat, SwizzleXYZ1, BilinearSampler, true, false, "bilinear image_sample_lz of R10_G11_B11_FLOAT");
-        CheckSample(*device, texels, SampleAt, SampleStart, UnormFormat, SwizzleXYZ1, PointSampler, false, false, "point image_sample_lz X Y Z 1");
-        CheckSample(*device, texels, SampleAt, SampleStart, UnormFormat, SwizzleZYX1, BilinearSampler, true, false, "bilinear image_sample_lz Z Y X 1");
-        CheckSample(*device, texels, SampleWrapped, WrappedStart, UnormFormat, SwizzleX011, WrapPointSampler, false, true, "wrapped point image_sample_lz X 0 1 1");
-        CheckSample(*device, texels, SampleWrapped, WrappedStart, UnormFormat, SwizzleXYZ1, WrapBilinearSampler, true, true, "wrapped bilinear image_sample_lz X Y Z 1");
+        CheckSample(*device, texels + FloatOffset, SampleFloat, SampleStep, FloatStart, FloatFormat, SwizzleXYZ1, BilinearSampler, true, false, "bilinear image_sample_lz of R10_G11_B11_FLOAT");
+        CheckSample(*device, texels, SampleAt, SampleStep, SampleStart, UnormFormat, SwizzleXYZ1, PointSampler, false, false, "point image_sample_lz X Y Z 1");
+        CheckSample(*device, texels, SampleAt, SampleStep, SampleStart, UnormFormat, SwizzleZYX1, BilinearSampler, true, false, "bilinear image_sample_lz Z Y X 1");
+        CheckSample(*device, texels, SampleWrapped, SampleStep, WrappedStart, UnormFormat, SwizzleX011, WrapPointSampler, false, true, "wrapped point image_sample_lz X 0 1 1");
+        CheckSample(*device, texels, SampleWrapped, SampleStep, WrappedStart, UnormFormat, SwizzleXYZ1, WrapBilinearSampler, true, true, "wrapped bilinear image_sample_lz X Y Z 1");
+        CheckSample(*device, texels + FloatOffset, SampleFloatOffGrid, OffGridStep, FloatStart, FloatFormat, SwizzleXYZ1, BilinearSampler, true, false, "off-grid bilinear image_sample_lz of R10_G11_B11_FLOAT");
+        CheckSample(*device, texels, SampleOffGrid, OffGridStep, SampleStart, UnormFormat, SwizzleZYX1, BilinearSampler, true, false, "off-grid bilinear image_sample_lz Z Y X 1");
+        CheckSample(*device, texels, SampleWrappedOffGrid, OffGridStep, WrappedStart, UnormFormat, SwizzleXYZ1, WrapBilinearSampler, true, true, "off-grid wrapped bilinear image_sample_lz X Y Z 1");
         CheckConvertedPreparation(*device, texels);
         RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, BorderSampler, "implemented only with wrap or clamp-to-edge addressing", "image_sample_lz with clamp-to-border addressing");
         RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
