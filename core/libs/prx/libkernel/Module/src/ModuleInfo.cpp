@@ -23,6 +23,10 @@
 #else
 #include <dlfcn.h>
 #include <link.h>
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/DynamicLinker.hpp"
+#include "wasm-runtime/Host.hpp"
+#endif
 #include <mutex>
 #include <unistd.h>
 #include <unordered_map>
@@ -109,6 +113,9 @@ EhFrame::Tables FrameTables(const dl_phdr_info& image, std::uintptr_t header) {
 
 std::string ImageName(const dl_phdr_info& image) {
     std::string path = image.dlpi_name ? image.dlpi_name : "";
+#ifdef __EMSCRIPTEN__
+    if (path.empty()) path = WasmRuntime::MainImageName();
+#endif
     if (path.empty()) {
         char executable[4096];
         const auto length = ::readlink("/proc/self/exe", executable, sizeof(executable) - 1);

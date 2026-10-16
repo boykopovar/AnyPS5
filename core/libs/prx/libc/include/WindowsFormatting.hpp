@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <array>
 #include <cerrno>
 #include <cmath>
@@ -79,9 +80,13 @@ private:
                 args.overflow_arg_area = static_cast<char*>(args.overflow_arg_area) + 8;
             }
         }
-        T value;
-        std::memcpy(&value, address, sizeof(value));
-        return value;
+        if constexpr (std::is_same_v<T, long double>) {
+            return GuestLongDoubleLoad(address);
+        } else {
+            T value;
+            std::memcpy(&value, address, sizeof(value));
+            return value;
+        }
     }
 
 };
@@ -343,8 +348,6 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         } else if (std::strchr("aAeEfFgG", conversion)) {
             const char* nan = conversion >= 'a' ? "nan" : "NAN";
             if (length == "L") {
-                static_assert(sizeof(long double) == 16);
-                static_assert(std::numeric_limits<long double>::digits == 64);
                 const long double value = args.Next<long double>();
                 if (std::isnan(value)) output.Value(NanSpec(spec), nan);
                 else output.Value(spec + "L" + conversion, value);

@@ -1,3 +1,6 @@
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Guest.hpp"
+#endif
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"
@@ -328,7 +331,7 @@ PthreadPrivate::~PthreadPrivate() {
 }
 
 static void BindHostCpuClock(PthreadPrivate* self) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
     (void)self;
 #else
     clockid_t clock{};
@@ -531,6 +534,9 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
+#ifdef __EMSCRIPTEN__
+    WasmRuntime::SetNextThreadStackSize(self->stackSize);
+#endif
     RegisterStack(self);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;

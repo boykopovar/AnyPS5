@@ -22,6 +22,9 @@
 #include <ucontext.h>
 #include <unistd.h>
 #endif
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Guest.hpp"
+#endif
 
 extern "C" Pthread APS5_VABI scePthreadSelf();
 #ifdef _WIN32
@@ -300,6 +303,31 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         throw std::runtime_error("sceKernelRaiseException: cannot redirect the target thread");
     }
     ResumeThread(native);
+    return true;
+}
+#elif defined(__EMSCRIPTEN__)
+bool RaiseOn(Pthread thread) {
+    using namespace WasmRuntime;
+    if (thread != scePthreadSelf()) throw std::runtime_error("sceKernelRaiseException: WebAssembly cannot interrupt another guest thread");
+    auto& cpu = CurrentCpu();
+    GuestUcontext ucontext{};
+    auto& m = ucontext.mcontext;
+    const Register order[] = {Rdi, Rsi, Rdx, Rcx, R8, R9, Rax, Rbx, Rbp, R10, R11, R12, R13, R14, R15};
+    std::uint64_t* fields[] = {&m.rdi, &m.rsi, &m.rdx, &m.rcx, &m.r8, &m.r9, &m.rax, &m.rbx, &m.rbp, &m.r10, &m.r11, &m.r12, &m.r13, &m.r14, &m.r15};
+    for (std::size_t index = 0; index < std::size(order); ++index) *fields[index] = cpu.gpr[order[index]];
+    std::memcpy(&m.rip, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(cpu.gpr[Rsp])), sizeof(m.rip));
+    m.rsp = cpu.gpr[Rsp] + 8;
+    m.rflags = cpu.rflags;
+    m.fsbase = cpu.fsBase;
+    m.gsbase = cpu.gsBase;
+    m.len = sizeof(GuestMcontext);
+    SetFpWord(m, MxcsrOffset, cpu.mxcsr);
+    SetFpWord(m, MxcsrMaskOffset, DefaultMxcsrMask);
+    CallHandler(Handler(RaisedSignal), RaisedSignal, ucontext);
+    for (std::size_t index = 0; index < std::size(order); ++index) cpu.gpr[order[index]] = *fields[index];
+    cpu.rflags = m.rflags;
+    cpu.mxcsr = FpWord(m, MxcsrOffset);
+    TransferGuest(m.rip, m.rsp);
     return true;
 }
 #else

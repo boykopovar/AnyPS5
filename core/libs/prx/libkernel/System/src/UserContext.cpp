@@ -5,11 +5,34 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#ifdef __EMSCRIPTEN__
+#include "prx/libc/include/General.hpp"
+#else
 #include <immintrin.h>
+#endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
 
+#ifdef __EMSCRIPTEN__
+extern "C" {
+
+int APS5_VABI getcontext_nid_postfix(UserUcontext* context) {
+    static_cast<void>(context);
+    NotImplemented_nid_no_patch(__func__);
+    *__error_nid_postfix() = 22;
+    return -1;
+}
+
+int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+    static_cast<void>(context);
+    NotImplemented_nid_no_patch(__func__);
+    *__error_nid_postfix() = 22;
+    return -1;
+}
+
+}
+#else
 namespace {
 
 struct RegisterFrame {
@@ -217,3 +240,4 @@ int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
 }
 
 }
+#endif

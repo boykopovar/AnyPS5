@@ -10,18 +10,30 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Guest.hpp"
+#else
 #include <xmmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
 namespace {
 
+void RaiseInvalid() {
+#ifdef __EMSCRIPTEN__
+    WasmRuntime::CurrentCpu().mxcsr |= 1;
+#else
+    std::feraiseexcept(FE_INVALID);
+#endif
+}
+
 template<typename TFloat>
 std::int64_t RoundToInt64(TFloat value) {
     const TFloat rounded = std::round(value);
     if (!(rounded >= static_cast<TFloat>(INT64_MIN) && rounded < -static_cast<TFloat>(INT64_MIN))) {
-        std::feraiseexcept(FE_INVALID);
+        RaiseInvalid();
         return INT64_MIN;
     }
     return static_cast<std::int64_t>(rounded);
@@ -119,7 +131,9 @@ float AtanhfLog1p(float x) {
     return kFloat * Ln2High - ((halfSquare - (s * (halfSquare + r) + (kFloat * Ln2Low + c))) - f);
 }
 
+#ifndef __EMSCRIPTEN__
 static_assert(std::numeric_limits<long double>::digits == 64, "guest long double is the x87 80-bit format");
+#endif
 
 struct ExtendedParts {
     std::uint64_t mantissa;
@@ -261,7 +275,7 @@ double APS5_VABI nearbyint_nid_postfix(double x) { return std::nearbyint(x); }
 double APS5_VABI cbrt_nid_postfix(double x) { return std::cbrt(x); }
 double APS5_VABI asin_nid_postfix(double x) {
     if (std::isgreater(x, 1.0) || std::isless(x, -1.0)) {
-        std::feraiseexcept(FE_INVALID);
+        RaiseInvalid();
         return -std::numeric_limits<double>::quiet_NaN();
     }
     return std::asin(x);
@@ -291,7 +305,7 @@ long double APS5_VABI asinl_nid_postfix(long double x) {
     const int exponent = parts.signExponent & 0x7fff;
     if (exponent >= 0x3fff) {
         if (exponent == 0x3fff && (parts.mantissa & 0x7fffffffffffffffull) == 0) return x * HalfPiHigh + x * HalfPiLow;
-        std::feraiseexcept(FE_INVALID);
+        RaiseInvalid();
         errno = EDOM;
         return (x - x) / (x - x);
     }
@@ -379,7 +393,7 @@ double APS5_VABI atanh_nid_postfix(double x) { return std::atanh(x); }
 float APS5_VABI atanhf_nid_postfix(float x) {
     const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
     if (magnitude > 0x3f800000u) {
-        std::feraiseexcept(FE_INVALID);
+        RaiseInvalid();
         errno = EDOM;
         return (x - x) / (x - x);
     }
@@ -533,10 +547,14 @@ int APS5_VABI __signbitl_nid_postfix(long double x) {
 }
 
 int APS5_VABI __isfinitel_nid_postfix(long double x) {
+#ifdef __EMSCRIPTEN__
+    return std::isfinite(x) ? 1 : 0;
+#else
     static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64 && std::numeric_limits<long double>::max_exponent == 16384 && std::endian::native == std::endian::little, "guest long double requires little-endian x87 extended precision storage");
     std::uint16_t exponent;
     std::memcpy(&exponent, reinterpret_cast<const std::uint8_t*>(&x) + 8, sizeof(exponent));
     return (exponent & 0x7fffu) != 0x7fffu;
+#endif
 }
 
 static std::mutex g_randLock;
@@ -591,8 +609,21 @@ static_assert(sizeof(GuestFloatingPointEnvironment) == 32 && offsetof(GuestFloat
 
 int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment* environment) {
     if (environment == nullptr) throw std::invalid_argument("fegetenv: null environment");
+#ifdef __EMSCRIPTEN__
+    const auto& cpu = WasmRuntime::CurrentCpu();
+    std::memset(environment, 0, sizeof(*environment));
+    environment->control = 0xFFFF0000u | cpu.x87Fcw;
+    environment->status = 0xFFFF0000u | (cpu.x87Fsw & ~0x3800u) | ((cpu.x87Top & 7u) << 11);
+    std::uint32_t tags = 0;
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        if ((cpu.x87Tags & (1u << slot)) == 0) tags |= 3u << (2 * slot);
+    }
+    environment->tag = 0xFFFF0000u | tags;
+    environment->mxcsr = cpu.mxcsr;
+#else
     asm volatile("fnstenv %0\n\tfldcw %0" : "+m"(*environment));
     environment->mxcsr = _mm_getcsr();
+#endif
     return 0;
 }
 

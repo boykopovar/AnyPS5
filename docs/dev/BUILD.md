@@ -61,6 +61,8 @@ Project switches accept `ON` or `OFF`:
 | `-DBUILD_TESTING=ON`             | `OFF`   | Build and register tests.                        |
 | `-DANYPS5_RELINKER_ONLY=ON`      | `OFF`   | Build only the relinker and its tests, without third-party dependencies. |
 | `-DANYPS5_BUILD_WASM=ON`         | `OFF`   | Build only the browser relinker (`relinker_web` target). Requires `emcmake` from Emscripten and `BUILD_TESTING=OFF`. |
+| `-DANYPS5_BUILD_WASM_RUNTIME=ON` | `OFF`   | Build only the [WebAssembly runtime](WASM_RUNTIME.md); configure with `emcmake`. |
+| `-DANYPS5_BUILD_SHADER_TOOLS=ON` | `OFF`   | Build only `anyps5-wgsl`, which compiles captured draws to WGSL, without the system libraries. |
 | `-DANYPS5_ENABLE_SPIRV_TOOLS=ON` | `OFF`   | Enable SPIR-V validation and optimization.       |
 | `-DANYPS5_ENABLE_ASAN=ON`       | `OFF`   | Build with AddressSanitizer on Linux and move the guest arena out of ASan's shadow gap. |
 | `-DANYPS5_USE_SYSTEM_DEPS=ON`    | `OFF`   | Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the submodules. |

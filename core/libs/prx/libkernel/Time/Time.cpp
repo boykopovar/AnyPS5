@@ -19,7 +19,11 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Host.hpp"
+#else
 #include <x86intrin.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -657,19 +661,27 @@ int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     return 0;
 }
 
+static std::uint64_t ReadHostTsc() {
+#ifdef __EMSCRIPTEN__
+    return WasmRuntime::ReadTsc();
+#else
+    return __rdtsc();
+#endif
+}
+
 uint64_t APS5_VABI sceKernelReadTsc(void) {
-    if (TimeScale() == 1.0) return __rdtsc();
-    static const std::uint64_t origin = __rdtsc();
-    return origin + static_cast<std::uint64_t>(static_cast<double>(__rdtsc() - origin) * TimeScale());
+    if (TimeScale() == 1.0) return ReadHostTsc();
+    static const std::uint64_t origin = ReadHostTsc();
+    return origin + static_cast<std::uint64_t>(static_cast<double>(ReadHostTsc() - origin) * TimeScale());
 }
 
 uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
     static const std::uint64_t frequency = [] {
         const std::uint64_t startNanos = RawMonotonicNanos();
-        const std::uint64_t startTicks = __rdtsc();
+        const std::uint64_t startTicks = ReadHostTsc();
         TimedWait::SleepNanos(20000000ULL);
         const std::uint64_t elapsedNanos = RawMonotonicNanos() - startNanos;
-        const std::uint64_t elapsedTicks = __rdtsc() - startTicks;
+        const std::uint64_t elapsedTicks = ReadHostTsc() - startTicks;
         return static_cast<std::uint64_t>(static_cast<long double>(elapsedTicks) * 1000000000.0L / static_cast<long double>(elapsedNanos));
     }();
     return frequency;

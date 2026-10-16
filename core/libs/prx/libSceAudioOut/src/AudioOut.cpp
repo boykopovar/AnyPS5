@@ -10,12 +10,18 @@
 #include <vector>
 #include <prx/libc/include/General.hpp>
 
+#ifndef __EMSCRIPTEN__
 #include "SDL.h"
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#ifndef __EMSCRIPTEN__
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#else
+#include "wasm-runtime/Platform.hpp"
+#endif
 #include "AudioOutShutdown.hpp"
 
 static constexpr int PORT_TYPE_MAIN = 0;
@@ -84,9 +90,17 @@ static int channelsForFormat(Format f) {
     }
 }
 
+#ifdef __EMSCRIPTEN__
+using AudioDeviceId = std::uint32_t;
+struct AudioDeviceSpec {};
+#else
+using AudioDeviceId = SDL_AudioDeviceID;
+using AudioDeviceSpec = SDL_AudioSpec;
+
 static SDL_AudioFormat sdlFormat(Format f) {
     return formatIsFloat(f) ? AUDIO_F32SYS : AUDIO_S16SYS;
 }
+#endif
 
 static std::uint32_t bytesPerSample(Format f) {
     return formatIsFloat(f) ? sizeof(float) : sizeof(std::int16_t);
@@ -103,8 +117,8 @@ struct Port {
     int mixLevel = DEFAULT_VOLUME;
     std::uint64_t lastDataOutputTime = 0;
     std::uint64_t virtualQueueEnd = 0;
-    SDL_AudioDeviceID device = 0;
-    SDL_AudioSpec spec = {};
+    AudioDeviceId device = 0;
+    AudioDeviceSpec spec = {};
 };
 
 static std::mutex g_mutex;
@@ -112,6 +126,20 @@ static std::array<std::mutex, PORTS_MAX> g_outputMutexes;
 static Port g_ports[PORTS_MAX];
 static bool g_sdlInitialized = false;
 
+#ifdef __EMSCRIPTEN__
+static bool openDevice(Port& port) {
+    const int stream = WasmAudio::Open(port.freq);
+    if (stream < 0) return false;
+    port.device = static_cast<AudioDeviceId>(stream) + 1;
+    return true;
+}
+
+static void closeDevice(Port& port) {
+    if (port.device != 0) WasmAudio::Close(static_cast<int>(port.device) - 1);
+    port.device = 0;
+    port.spec = {};
+}
+#else
 static bool ensureSdlAudio() {
     if (g_sdlInitialized) {
         return true;
@@ -151,6 +179,7 @@ static void closeDevice(Port& port) {
     port.device = 0;
     port.spec = {};
 }
+#endif
 
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
 
@@ -210,7 +239,25 @@ static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
     lock.lock();
 }
 
+static void paceVirtualPort(Port& port, bool hasData, std::unique_lock<std::mutex>& lock);
+
 static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+#ifdef __EMSCRIPTEN__
+    const int stream = static_cast<int>(port.device) - 1;
+    if (!WasmAudio::Running()) {
+        paceVirtualPort(port, data != nullptr, lock);
+        return;
+    }
+    const std::uint32_t limit = data == nullptr ? 0u : static_cast<std::uint32_t>(TARGET_LATENCY_US * WasmAudio::Frequency / 1000000ULL);
+    const std::uint64_t waitStart = sceKernelGetProcessTime();
+    while (WasmAudio::Queued(stream) > limit && sceKernelGetProcessTime() - waitStart <= DRAIN_TIMEOUT_US) {
+        sleepUs(lock, DRAIN_SLEEP_US);
+    }
+    if (data == nullptr) return;
+    std::vector<std::uint8_t> prepareBuf;
+    const void* prepared = prepareBuffer(port, data, prepareBuf);
+    WasmAudio::Write(stream, {prepared, formatIsFloat(port.format), static_cast<std::uint32_t>(port.channels), port.samplesNum});
+#else
     if (data == nullptr) {
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
@@ -251,6 +298,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
         throw std::runtime_error(std::string("SDL_QueueAudio: ") + SDL_GetError());
     }
+#endif
     // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
 }
 

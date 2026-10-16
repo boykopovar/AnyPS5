@@ -1,0 +1,18 @@
+[package]
+name = "anyps5-wasm-aot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gimli = { version = "0.34.0", default-features = false, features = ["read", "std"] }
+iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "encoder", "instr_info", "code_asm", "intel"] }
+wasm-encoder = "0.262.0"
+wasmparser = "0.262.0"
+
+[dev-dependencies]
+unicorn-engine = "2.1.5"
+wasmprinter = "0.262.0"
+wasmtime = "49.0.3"
+
+[profile.dev.package."*"]
+opt-level = 2

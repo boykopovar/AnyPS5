@@ -30,6 +30,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#elif defined(__EMSCRIPTEN__)
+#include <sys/mman.h>
 #else
 #include <windows.h>
 
@@ -283,7 +285,9 @@ void ZeroReusedPhysical(std::uint64_t start, std::size_t bytes) {
 class PhysicalBacking {
 public:
     PhysicalBacking(std::size_t bytes, int memoryType, std::uint64_t start) : memoryType(memoryType), bytes(bytes) {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+        static_cast<void>(start);
+#elif defined(_WIN32)
         static_cast<void>(start);
         const auto size = static_cast<std::uint64_t>(bytes);
         section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, static_cast<DWORD>(size >> 32), static_cast<DWORD>(size), nullptr);
@@ -317,7 +321,8 @@ public:
 #endif
 
     ~PhysicalBacking() {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+#elif defined(_WIN32)
         GuestArena::GuestArenaForgetSection_nid_postfix(section);
         CloseHandle(section);
 #else
@@ -329,7 +334,11 @@ public:
     PhysicalBacking& operator=(const PhysicalBacking&) = delete;
 
     void Map(std::uintptr_t address, std::size_t bytes, std::uint64_t offset, int protection) const {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+        static_cast<void>(offset);
+        static_cast<void>(protection);
+        GuestArena::GuestArenaCommit_nid_postfix(reinterpret_cast<void*>(address), bytes, 0x04, PS5_PAGE_SIZE);
+#elif defined(_WIN32)
         GuestArena::GuestArenaMapDirect_nid_postfix(reinterpret_cast<void*>(address), bytes, section, offset, WinProtFromPosix(protection));
 #else
         if (::mmap(reinterpret_cast<void*>(address), bytes, protection, MAP_SHARED | MAP_FIXED, file, static_cast<off_t>(fileOffset + offset)) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map direct memory backing");
@@ -339,7 +348,8 @@ public:
 private:
     int memoryType;
     std::size_t bytes;
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+#elif defined(_WIN32)
     HANDLE section = nullptr;
 #else
     int file = -1;
@@ -582,6 +592,9 @@ bool WriteSharedBacking(std::uintptr_t address, const void* source, std::size_t 
 void AddMapping(std::uintptr_t address, std::size_t len, std::uint64_t phys, int nativeProt) {
     ValidatePhysicalRange(phys, len);
     EraseMappings(address, address + len);
+#ifdef __EMSCRIPTEN__
+    if (!MappingsSharingPhys(phys, phys + len).empty()) throw std::system_error(ENOTSUP, std::generic_category(), "WebAssembly memory cannot map one direct memory range at two addresses");
+#endif
     for (std::size_t offset = 0; offset < len;) {
         const auto& page = g_physPages.at(phys + offset);
         std::size_t bytes = PS5_PAGE_SIZE;
@@ -649,6 +662,9 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
 #ifdef _WIN32
             GuestArena::GuestArenaReset_nid_postfix(addr, len);
             if (nativeProtection != PROT_NONE) CommitArenaRange(addr, len, WinProtFromPosix(nativeProtection));
+#elif defined(__EMSCRIPTEN__)
+            GuestArena::GuestArenaReset_nid_postfix(addr, len);
+            GuestArena::GuestArenaCommit_nid_postfix(addr, len, 0x04, PS5_PAGE_SIZE);
 #else
             if (::mmap(addr, len, nativeProtection, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "remap anonymous memory");
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(addr, len);
@@ -659,11 +675,17 @@ bool RemapFixedIntoRegistered(GuestAllocations::Mutation& mutation, void* addr, 
     return true;
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
 bool ArenaAvailable() { return GuestArena::GuestArenaAvailable_nid_postfix(); }
 
 void* ArenaCommit(void* addr, size_t len, int prot) {
+#ifdef __EMSCRIPTEN__
+    static_cast<void>(prot);
+    GuestArena::GuestArenaCommit_nid_postfix(addr, len, 0x04, PS5_PAGE_SIZE);
+    return addr;
+#else
     return mmap(addr, len, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+#endif
 }
 
 void ArenaForget(void* addr, size_t len) {
@@ -672,7 +694,7 @@ void ArenaForget(void* addr, size_t len) {
 #endif
 
 void Unmap(void* addr, size_t len) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
     if (ArenaAvailable() && GuestArena::GuestArenaContains_nid_postfix(addr, len))
         GuestArena::GuestArenaReset_nid_postfix(addr, len);
     else if (munmap(addr, len) != 0) throw std::system_error(errno, std::generic_category(), "munmap failed");
@@ -724,7 +746,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
             }
         }
 #endif
-#if defined(__linux__)
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
         if (ArenaAvailable() && !GuestArena::GuestArenaContains_nid_postfix(addr, len))
             throw std::invalid_argument("fixed mapping is outside the guest address space arena");
         if (ArenaAvailable()) {
@@ -745,7 +767,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
         return result;
     }
     if (addr) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
         if (ArenaAvailable()) {
             void* placed = GuestArena::GuestArenaAllocateFromHint_nid_postfix(
                 reinterpret_cast<std::uintptr_t>(addr), len, alignment);
@@ -753,7 +775,11 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
             ArenaForget(placed, len);
             throw std::system_error(errno, std::generic_category(), "Arena mapping failed");
         }
+#ifdef __EMSCRIPTEN__
+        throw std::runtime_error("the guest address space arena is unavailable");
+#else
         return MapAtOrAbove(reinterpret_cast<std::uintptr_t>(addr), len, prot, alignment);
+#endif
 #else
         return mmap_aligned(len, prot, alignment, reinterpret_cast<std::uintptr_t>(addr));
 #endif
@@ -761,7 +787,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
 #ifdef _WIN32
     return mmap_aligned(len, prot, alignment);
 #endif
-#if defined(__linux__)
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
     if (ArenaAvailable()) {
         void* placed = GuestArena::GuestArenaAllocate_nid_postfix(len, alignment);
         if (void* committed = ArenaCommit(placed, len, prot); committed != MAP_FAILED) return committed;
@@ -873,7 +899,7 @@ void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t le
         auto* pieceAddress = const_cast<void*>(piece);
         std::lock_guard lock(g_directLock);
         EraseMappings(reinterpret_cast<std::uintptr_t>(piece), reinterpret_cast<std::uintptr_t>(piece) + pieceBytes);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__EMSCRIPTEN__)
         Unmap(pieceAddress, pieceBytes);
 #else
         if (KernelArena::Get().Contains(pieceAddress, pieceBytes)) munmap(pieceAddress, pieceBytes);
@@ -1012,8 +1038,11 @@ int DoMapShared(void** addr, size_t len, int prot, HostSharedMemory object) {
     GuestAllocations::Mutation mutation;
     void* mapped = MapPlaced(*addr, len, PROT_NONE, 0, PS5_PAGE_SIZE);
     try {
-#ifdef _WIN32
+#if defined(_WIN32)
         GuestArena::GuestArenaMap_nid_postfix(mapped, len, object, 0, WinProtFromPosix(nativeProtection));
+#elif defined(__EMSCRIPTEN__)
+        static_cast<void>(object);
+        throw std::system_error(ENOTSUP, std::generic_category(), "shared memory mappings are not supported in WebAssembly");
 #else
         if (::mmap(mapped, len, nativeProtection, MAP_SHARED | MAP_FIXED, object, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
 #endif

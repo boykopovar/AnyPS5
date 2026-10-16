@@ -17,6 +17,9 @@
 #else
 #include <dlfcn.h>
 #include <link.h>
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/DynamicLinker.hpp"
+#endif
 #endif
 
 #ifdef _WIN32

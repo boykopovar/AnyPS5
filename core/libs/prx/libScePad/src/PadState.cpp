@@ -10,6 +10,9 @@
 #include <deque>
 #include <mutex>
 #include <stdexcept>
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Platform.hpp"
+#endif
 
 namespace {
     std::mutex stateMutex;
@@ -102,14 +105,19 @@ namespace {
 }
 
 void Pad::Initialize() {
-    std::lock_guard lock(stateMutex);
-    if (failure) std::rethrow_exception(failure);
-    if (!initialized) {
-        timestamp = sceKernelGetProcessTime();
-        lastFuseTime = timestamp;
-        queue.clear();
+    {
+        std::lock_guard lock(stateMutex);
+        if (failure) std::rethrow_exception(failure);
+        if (!initialized) {
+            timestamp = sceKernelGetProcessTime();
+            lastFuseTime = timestamp;
+            queue.clear();
+        }
+        initialized = true;
     }
-    initialized = true;
+#ifdef __EMSCRIPTEN__
+    WasmInput::Start();
+#endif
 }
 
 bool Pad::IsInitialized() {
