@@ -1,5 +1,6 @@
 # shader technical debt
 
+- [BDA read faults](../../../core/shader/recompiler/SpirvBackend/src/SpirvBdaFault.cpp) keep compute invocations at their barriers and mask later writes by faulted lanes. Hull and mesh programs with barriers still use the non-stopping fault protocol without that write mask. Console fault behavior is not modeled.
 ### Build
 
 - [GuestContext memory](../../../core/shader/recompiler/Recompiler.hpp) rejects direct construction from temporary owning ranges. The view does not own the region array or its referenced bytes. That storage must outlive the request and its consumers, including when supplied through named containers, existing spans or pointers.
