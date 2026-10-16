@@ -32,11 +32,14 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     case RdnaOpcode::VMulF32:
     case RdnaOpcode::VMulLegacyF32:
     case RdnaOpcode::VMullitF32:
+        flush = 3u;
+        break;
     case RdnaOpcode::VMinF32:
     case RdnaOpcode::VMaxF32:
     case RdnaOpcode::VMin3F32:
     case RdnaOpcode::VMax3F32:
     case RdnaOpcode::VMed3F32:
+        return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 3u;
     case RdnaOpcode::VFractF32:
     case RdnaOpcode::VFloorF32:
     case RdnaOpcode::VCeilF32:
