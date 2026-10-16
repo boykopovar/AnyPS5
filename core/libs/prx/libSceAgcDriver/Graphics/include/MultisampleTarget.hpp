@@ -65,7 +65,9 @@ void ResolveMultisampleTarget(const Context& context, const ColorTarget& source,
 bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 void NoteColorMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
 void ClearMultisampleTargets(VkDevice device);
-std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
+std::uint64_t MultisampleTargetRangeGeneration();
+std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
+    VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation);
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);

@@ -41,6 +41,7 @@ struct TableEntry {
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::weak_ptr<Buffer> buffer;
     std::uint64_t spaceSerial = 0;
+    std::uint64_t guardSerial = 0;
 };
 
 struct TableCache {
@@ -135,9 +136,30 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
     std::vector<ShaderRecompiler::BdaAbi::Range> built;
     if (!cached.has_value()) built = memory.AddressRanges();
     const auto& addressRanges = cached.has_value() ? *cached->ranges : built;
-    auto filtered = ExcludeMultisampleTargetRanges(context.device, addressRanges);
+    const auto serial = cached.has_value() ? cached->serial : 0;
+    auto guardSerial = MultisampleTargetRangeGeneration();
+    if (tableCacheEnabled() && serial != 0) {
+        auto& cache = Tables();
+        std::lock_guard lock(cache.mutex);
+        if (cache.device != context.device) {
+            cache.entries.clear();
+            cache.device = context.device;
+        }
+        for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
+            if (it->spaceSerial != serial || it->guardSerial != guardSerial) continue;
+            if (auto shared = it->buffer.lock(); shared != nullptr) {
+                ++cache.hits;
+                ++cache.classes.spaceTables;
+                table = std::move(shared);
+                cache.entries.splice(cache.entries.begin(), cache.entries, it);
+                return;
+            }
+            cache.entries.erase(it);
+            break;
+        }
+    }
+    auto filtered = ExcludeMultisampleTargetRanges(context.device, addressRanges, guardSerial);
     const auto& ranges = filtered.has_value() ? *filtered : addressRanges;
-    const auto serial = cached.has_value() && !filtered.has_value() ? cached->serial : 0;
     Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
     Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / sizeof(ShaderRecompiler::BdaAbi::Range), "BDA table size overflow");
     tableBytes = sizeof(ShaderRecompiler::BdaAbi::Header) + ranges.size() * sizeof(ShaderRecompiler::BdaAbi::Range);
@@ -150,20 +172,6 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         if (cache.device != context.device) {
             cache.entries.clear();
             cache.device = context.device;
-        }
-        if (serial != 0) {
-            for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-                if (it->spaceSerial != serial) continue;
-                if (auto shared = it->buffer.lock(); shared != nullptr) {
-                    ++cache.hits;
-                    ++cache.classes.spaceTables;
-                    table = std::move(shared);
-                    cache.entries.splice(cache.entries.begin(), cache.entries, it);
-                    return;
-                }
-                cache.entries.erase(it);
-                break;
-            }
         }
         hash = hashRanges(ranges);
         classifyFirstEntry(cache, hash, ranges);
@@ -189,7 +197,10 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
                 ++cache.hits;
                 // An equal table of an earlier space (a rebuild that mapped the same ranges the
                 // same way): the next build of this space binds it by the serial.
-                if (serial != 0) it->spaceSerial = serial;
+                if (serial != 0) {
+                    it->spaceSerial = serial;
+                    it->guardSerial = guardSerial;
+                }
                 table = std::move(shared);
                 cache.entries.splice(cache.entries.begin(), cache.entries, it);
                 return;
@@ -210,7 +221,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.device = context.device;
         }
         auto cachedRanges = filtered.has_value() ? std::move(*filtered) : cached.has_value() ? *cached->ranges : std::move(built);
-        cache.entries.push_front({hash, std::move(cachedRanges), table, serial});
+        cache.entries.push_front({hash, std::move(cachedRanges), table, serial, guardSerial});
         while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
     }
 }
