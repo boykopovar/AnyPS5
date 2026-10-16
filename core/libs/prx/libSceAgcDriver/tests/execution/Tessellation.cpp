@@ -361,6 +361,26 @@ alignas(256) constexpr auto MergedHullHalfWords = [] {
     return code;
 }();
 
+alignas(256) constexpr auto MergedHullHalfRecord = [] {
+    std::array<std::uint32_t, MergedHullCode.size() + 6u> code{};
+    std::size_t at = 0;
+    for (std::size_t index = 0; index < MergedHullCode.size(); ++index) {
+        const auto word = MergedHullCode[index];
+        if (word == 0xbf88001cu) {
+            code[at++] = 0xbf880020u;
+        } else if (word == 0xd9340000u) {
+            ++index;
+            for (const auto value : {0xda840002u, 0x0000080au, 0xd87c0000u, 0x0000080au, 0xd8340004u, 0x0000090au}) code[at++] = value;
+        } else if (word == 0xd8d80048u) {
+            const auto operands = MergedHullCode[++index];
+            for (const auto value : {0xd8f00048u, operands, 0xda9c004au, operands}) code[at++] = value;
+        } else {
+            code[at++] = word;
+        }
+    }
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullRegisters{
     0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf88001c,
     0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
@@ -1018,6 +1038,7 @@ int main() {
         RequirePatches(*device, target, MergedHullCode, "merged hull program", MergedTriangles, MergedHullCode);
         RequirePatches(*device, target, MergedHullRegisters, "merged hull program storing its local part's registers", MergedTriangles, MergedHullRegisters);
         RequirePatches(*device, target, MergedHullHalfWords, "merged hull program passing a value through 16-bit LDS writes and reads", MergedTriangles, MergedHullHalfWords);
+        RequirePatches(*device, target, MergedHullHalfRecord, "merged hull program writing its own record's position in 16-bit halves", MergedTriangles, MergedHullHalfRecord);
         RequireCounterClockwise(*device, target);
         RequireLevelClamps(*device, target);
         RequireIntegerPartitioning(*device, target);
