@@ -19,6 +19,7 @@ bool RunSparseBufferHoleTests(const AgcDriver::Graphics::Context& context, const
 void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
+void RunPageBlockTests();
 void RunColorTargetLayoutTests();
 void RunLiveStackAccessTests();
 
