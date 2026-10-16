@@ -34,14 +34,13 @@ namespace {
 // copies). Hence several recent tables, most recently used first, matched by a word hash before
 // the byte compare. APS5_BDA_TABLE_CACHE_ENTRIES sets how many (default 8; 1 is the previous
 // behaviour); APS5_NO_BDA_TABLE_CACHE=1 builds every table.
-// A table built for (or found equal to) the cached address space's ranges carries the space's
-// serial: a build served by that space alone binds it by the serial, with no hash and no compare.
+// A table built for (or found equal to) cached address-space ranges carries their serial and
+// multisample generation, allowing equivalent spaces to bind the table without hashing or comparing.
 struct TableEntry {
     std::uint64_t hash;
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::weak_ptr<Buffer> buffer;
-    std::uint64_t spaceSerial = 0;
-    std::uint64_t guardSerial = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> spaceKeys;
 };
 
 struct TableCache {
@@ -146,7 +145,8 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.device = context.device;
         }
         for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
-            if (it->spaceSerial != serial || it->guardSerial != guardSerial) continue;
+            const auto key = std::pair{serial, guardSerial};
+            if (std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key) == it->spaceKeys.end()) continue;
             if (auto shared = it->buffer.lock(); shared != nullptr) {
                 ++cache.hits;
                 ++cache.classes.spaceTables;
@@ -195,11 +195,12 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             }
             if (sameRanges(it->ranges, ranges)) {
                 ++cache.hits;
-                // An equal table of an earlier space (a rebuild that mapped the same ranges the
-                // same way): the next build of this space binds it by the serial.
                 if (serial != 0) {
-                    it->spaceSerial = serial;
-                    it->guardSerial = guardSerial;
+                    const auto key = std::pair{serial, guardSerial};
+                    auto found = std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key);
+                    if (found != it->spaceKeys.end()) it->spaceKeys.erase(found);
+                    it->spaceKeys.push_back(key);
+                    if (it->spaceKeys.size() > tableCacheEntries()) it->spaceKeys.erase(it->spaceKeys.begin());
                 }
                 table = std::move(shared);
                 cache.entries.splice(cache.entries.begin(), cache.entries, it);
@@ -221,7 +222,8 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             cache.device = context.device;
         }
         auto cachedRanges = filtered.has_value() ? std::move(*filtered) : cached.has_value() ? *cached->ranges : std::move(built);
-        cache.entries.push_front({hash, std::move(cachedRanges), table, serial, guardSerial});
+        cache.entries.push_front({hash, std::move(cachedRanges), table, {}});
+        if (serial != 0) cache.entries.front().spaceKeys.emplace_back(serial, guardSerial);
         while (cache.entries.size() > tableCacheEntries()) cache.entries.pop_back();
     }
 }
