@@ -38,7 +38,20 @@ void* Allocate(std::size_t size) {
     }
 }
 
+void* AllocateAligned(std::size_t size, std::size_t align) {
+    for (;;) {
+        GuestNewHandler handler = nullptr;
+        void* ptr = nullptr;
+        int res = ApplicationHeapPosixAlign_nid_no_patch(&ptr, align, size == 0 ? 1 : size);
+        if (res == 0 && ptr != nullptr) return ptr;
+        handler = g_newHandler.load();
+        if (handler == nullptr) throw std::bad_alloc();
+        handler();
+    }
 }
+
+}
+
 
 extern "C" {
 
@@ -84,6 +97,11 @@ unsigned char _ZSt7nothrow_nid_postfix = 0;
 void* APS5_VABI _Znwm_nid_postfix(std::size_t size) {
     return Allocate(size);
 }
+
+void* APS5_VABI _ZnwmSt11align_val_t_nid_postfix(std::size_t size, std::size_t align) {
+    return AllocateAligned(size, align);
+}
+
 
 void* APS5_VABI _Znam_nid_postfix(std::size_t size) {
     return Allocate(size);

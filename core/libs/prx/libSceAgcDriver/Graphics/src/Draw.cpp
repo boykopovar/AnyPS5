@@ -2525,6 +2525,10 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (binding.resident != nullptr) {
             // The results stay on the GPU until something reads the target's memory.
             binding.resident->MarkSliceDirty(binding.color.arraySlice);
+            if (binding.color.dccAddress != 0) {
+                const auto targetBytes = ColorTargetLayout(binding.color.extent.width, binding.color.extent.height, binding.color.tileMode, binding.color.elementBytes).Bytes();
+                MarkDccUncompressed(context, binding.color.dccAddress, targetBytes, colorKeyCount(binding.color, targetBytes));
+            }
             continue;
         }
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);

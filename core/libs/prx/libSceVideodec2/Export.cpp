@@ -330,7 +330,7 @@ std::uint32_t AlignUp(std::uint32_t value, std::uint32_t alignment) {
 }
 
 std::uint64_t ChromaOffset(std::uint32_t width, std::uint32_t height) {
-    return static_cast<std::uint64_t>(AlignUp(width, PitchAlignment)) * height;
+    return static_cast<std::uint64_t>(AlignUp(width, PitchAlignment)) * AlignUp(height, HeightAlignment);
 }
 
 std::uint64_t LumaBytes(std::uint32_t width, std::uint32_t height) {

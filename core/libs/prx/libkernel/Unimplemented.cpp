@@ -111,4 +111,26 @@ int APS5_VABI sceKernelUnknown19(void) {
     NotImplemented_nid_no_patch("uDGXwUKqi8s");
     return 0;
 }
+
+APS5_EXPORT("f7uOxY9mM1U", sceKernelStackGuard);
+std::uintptr_t sceKernelStackGuard = 0xDEADBEEFCAFEBABEull;
+
+APS5_EXPORT("Ou3iL1abvng", sceKernelStackChkFail);
+void APS5_VABI sceKernelStackChkFail(void) {
+    NotImplemented_nid_no_patch("Ou3iL1abvng");
 }
+
+int* APS5_VABI __error_nid_postfix();
+APS5_EXPORT("9BcDykPmo1I", sceKernelErrorPointer);
+int* APS5_VABI sceKernelErrorPointer(void) {
+    return __error_nid_postfix();
+}
+
+int APS5_VABI rename_nid_postfix(const char* from, const char* to);
+APS5_EXPORT("NN01qLRhiqU", sceKernelRenameStub);
+int APS5_VABI sceKernelRenameStub(const char* from, const char* to) {
+    return rename_nid_postfix(from, to);
+}
+}
+
+
