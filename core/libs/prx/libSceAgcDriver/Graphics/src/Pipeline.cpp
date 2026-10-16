@@ -448,6 +448,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         dynamic.pDynamicStates = dynamicStates.data();
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.rasterizerDiscardEnable = state.rasterizerDiscard ? VK_TRUE : VK_FALSE;
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
         Require(!state.depthBiasPerFace || (depthBias && state.cullMode == VK_CULL_MODE_NONE), "per-face depth bias needs both faces rasterized");
         raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
@@ -873,6 +874,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         append(key, front);
         append(key, back);
     }
+    append(key, state.rasterizerDiscard);
     append(key, state.stages.mesh.has_value());
     if (state.stages.mesh) {
         const auto& mesh = *state.stages.mesh;

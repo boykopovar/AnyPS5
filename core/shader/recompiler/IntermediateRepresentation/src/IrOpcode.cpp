@@ -123,6 +123,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("MeshArgument", U32, U32),
     makeMeta("MeshRestartStart", U32, U32, U1),
     makeMeta("MeshAllocate", Void, U32),
+    makeMeta("MeshCapturedWord", U32, U32, U1),
     makeMeta("TessellationBase", U32, U32),
     makeMeta("GetTessellationAttribute", U32, U32, U32, U1),
     makeMeta("SetTessellationAttribute", Void, U32, U32, U32, U1),

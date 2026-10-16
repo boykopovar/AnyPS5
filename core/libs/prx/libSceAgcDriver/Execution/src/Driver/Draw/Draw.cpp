@@ -9,6 +9,8 @@
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
+#include <map>
+#include <mutex>
 #include <cstdio>
 #include <cstring>
 
@@ -442,6 +444,20 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         phaseTiming.Phase(DrawRowRectList);
     };
     if (graphics.rectList) buildRectList();
+    if (graphics.stages.tessellationGeometry) {
+        static std::mutex captureMutex;
+        static std::map<std::pair<std::uint32_t, std::uint32_t>, ShaderRecompiler::RecompileResult> captureShaders;
+        const auto& geometry = *graphics.stages.tessellationGeometry;
+        {
+            std::lock_guard captureLock(captureMutex);
+            auto found = captureShaders.find({geometry.esgsItemSize, geometry.primitivesPerGroup});
+            if (found == captureShaders.end()) found = captureShaders.emplace(std::pair{geometry.esgsItemSize, geometry.primitivesPerGroup}, ShaderRecompiler::BuildTessellationCaptureGeometryShader(geometry, localDevice->Target(), localDevice->GeometryLimits())).first;
+            results.push_back(found->second);
+        }
+        const auto evaluation = std::ranges::find_if(stages, [](const Graphics::CompiledShader& stage) { return stage.stage == Stage::TessellationEvaluation; });
+        require(evaluation != stages.end(), "tessellation followed by a geometry stage has no domain program");
+        stages.insert(std::next(evaluation), Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
+    }
     if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active) {
         require(!graphics.rectList && graphics.stages.path == Graphics::ShaderPath::Vertex && programs.size() == 2 && programResults[0] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs a vertex shader before it");
         results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), localDevice->GeometryLimits()));
@@ -551,7 +567,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
 
     std::vector<std::shared_ptr<DispatchVariant>> recipeStages;
-    if (registerKey && !drawParameters.indirect && !patchedStages && Graphics::DrawRecipes()) {
+    if (registerKey && !drawParameters.indirect && !patchedStages && !graphics.stages.tessellationGeometry && Graphics::DrawRecipes()) {
         recipeStages.reserve(programs.size());
         for (std::size_t i = 0; i < programs.size(); ++i) recipeStages.push_back(drawHit ? matched[i] : fresh[i]);
         if (std::all_of(recipeStages.begin(), recipeStages.end(), [](const std::shared_ptr<DispatchVariant>& variant) { return variant == nullptr; })) recipeStages.clear();

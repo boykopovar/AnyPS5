@@ -201,6 +201,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
             target.mergedHull = tessellation->mergedHull;
+            target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }
         if (stage == ShaderStageKind::Mesh) {
             if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
@@ -219,6 +220,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.provokingVertex = mesh->provokingVertex;
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
+            target.capturedInput = tessellation != nullptr;
             if (target.threadsNum[0] == 0u || target.maxVertices == 0u || target.maxPrimitives == 0u || (target.outputPrimitiveSize != 2u && target.outputPrimitiveSize != 3u) || target.provokingVertex >= target.outputPrimitiveSize) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
         }
         ShaderStageInputInfo result;

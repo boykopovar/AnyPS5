@@ -1,6 +1,7 @@
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
@@ -887,16 +888,42 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     validate(!vertexWorkgroup || ((value & 0x02002020u) == 0x2000u && !tessellation), "a vertex program that needs a workgroup requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
     const bool geometry = (value & 0x20u) != 0 || vertexWorkgroup;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
-    validate(!tessellation || !geometry, "combined tessellation and geometry is unsupported by the reference path");
-    const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
+    const auto path = tessellation ? geometry ? ShaderPath::TessellationGeometry : ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
+    result.hullWaveSize = (value & 0x00200000u) != 0 ? 32u : 64u;
     APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
+    const auto meshConfiguration = [&](std::uint32_t inputPrimitive, bool fastLaunch) {
+        const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
+        const auto vertices = (group >> 9u) & 0x1ffu;
+        const auto primitives = group & 0x1ffu;
+        validate(!fastLaunch || (!vertexWorkgroup && inputPrimitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        const auto maxVertices = read(queue.context, 0x1ff);
+        const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
+        const auto outputType = read(queue.context, 0x29b);
+        validate(outputType == 2 || (outputType == 1 && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a line strip from a geometry program, is unsupported");
+        const auto outputSize = outputType == 1 ? 2u : 3u;
+        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
+        const auto inputSize = inputPrimitive == 1 ? 1u : inputPrimitive == 2 ? 2u : 3u;
+        validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
+        const auto inputStep = inputPrimitive == 5 || inputPrimitive == 6 ? 1u : inputSize;
+        const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
+        const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
+        validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
+        const auto resources = read(queue.shader, 0x8b, RegisterBank::Shader);
+        const auto esgsItemSize = read(queue.context, 0x2ab);
+        validate(esgsItemSize != 0 && esgsItemSize * vertices <= 0xffffu, "invalid VGT_ESGS_RING_ITEMSIZE");
+        const auto amplification = fastLaunch ? read(queue.context, 0x2d3) & 0x1ffu : verticesPerPrimitive - outputSize + 1u;
+        validate(amplification != 0, "fast launch subgroup amplifies to no primitives");
+        const auto maxPrimitives = outputSize == 2u && !fastLaunch ? std::max(primitives * amplification, maxVertices) : primitives * amplification;
+        const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
+        return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, 0, esgsItemSize, outputSize};
+    };
     if (path == ShaderPath::Vertex) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
         validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
-    } else if (path == ShaderPath::Tessellation) {
-        validate((value & 0x00600020u) == 0, "wave32 tessellation or geometry amplification is unsupported");
-        validate((value & ~0x0207ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+    } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
+        if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
         const auto config = read(queue.context, 0x2d6);
         const auto parameters = read(queue.context, 0x2db);
         const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
@@ -909,35 +936,31 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         result.maxTessellationLevel = readFloat(queue.context, 0x286);
         Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
         result.tessellation = tess;
+        if (path == ShaderPath::TessellationGeometry) result.tessellationGeometry = meshConfiguration(4u, false);
     } else {
         const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
         validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
-        const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
-        const auto vertices = (group >> 9u) & 0x1ffu;
-        const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && primitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
-        const auto maxVertices = read(queue.context, 0x1ff);
-        const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
-        const auto outputType = read(queue.context, 0x29b);
-        validate(outputType == 2 || (outputType == 1 && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a line strip from a geometry program, is unsupported");
-        const auto outputSize = outputType == 1 ? 2u : 3u;
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
-        const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
-        validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
-        const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
-        const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
-        const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
-        validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
-        const auto resources = read(queue.shader, 0x8b, RegisterBank::Shader);
-        const auto esgsItemSize = read(queue.context, 0x2ab);
-        validate(esgsItemSize != 0 && esgsItemSize * vertices <= 0xffffu, "invalid VGT_ESGS_RING_ITEMSIZE");
-        const auto amplification = fastLaunch ? read(queue.context, 0x2d3) & 0x1ffu : verticesPerPrimitive - outputSize + 1u;
-        validate(amplification != 0, "fast launch subgroup amplifies to no primitives");
-        const auto maxPrimitives = outputSize == 2u && !fastLaunch ? std::max(primitives * amplification, maxVertices) : primitives * amplification;
-        const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, 0, esgsItemSize, outputSize};
+        result.mesh = meshConfiguration(primitive, fastLaunch);
     }
     return result;
+}
+
+std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stage == ShaderRecompiler::ShaderStage::Fragment) return stages.fragmentWaveSize;
+    if (stage == ShaderRecompiler::ShaderStage::Local || stage == ShaderRecompiler::ShaderStage::TessellationControl) return stages.hullWaveSize;
+    return stages.vertexWaveSize;
+}
+
+std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stages.mesh) return stages.mesh;
+    if (stage == ShaderRecompiler::ShaderStage::TessellationEvaluation || stage == ShaderRecompiler::ShaderStage::Mesh) return stages.tessellationGeometry;
+    return std::nullopt;
+}
+
+std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset) {
+    const bool preRasterization = pushOffset < PipelinePushSlotBytes;
+    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) return ShaderRecompiler::MeshDrawPushOffsetBytes;
+    return stages.tessellation && preRasterization ? ShaderRecompiler::TessellationLevelPushOffsetBytes : PipelinePushSlotBytes;
 }
 
 bool DepthResummarizeDrawsNothing(const QueueState& queue) {

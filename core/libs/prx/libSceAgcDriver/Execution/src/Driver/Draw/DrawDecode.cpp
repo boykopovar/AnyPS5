@@ -120,7 +120,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             roles.push_back(role);
         };
         auto& graphics = product->state;
-        if (graphics.stages.path == Graphics::ShaderPath::Tessellation) {
+        if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
             const auto localAddress = programAddress(0x148);
             const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
             const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;
@@ -135,6 +135,11 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             }
             InitializeMerged(queue, programs.back(), 0x102, !mergedHull, staticAbi);
             append(0x0c8, 2, Stage::TessellationEvaluation, 0x08b, 0x08c, Role::Domain);
+            if (graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
+                InitializeMerged(queue, programs.back(), 0x82, false, staticAbi);
+                append(0x0c8, 2, Stage::Mesh, 0x08b, 0x08c, Role::Main);
+                InitializeMerged(queue, programs.back(), 0x82, false, staticAbi);
+            }
         } else if (graphics.stages.path == Graphics::ShaderPath::Geometry) {
             const auto frontAddress = programAddress(0xc8);
             const auto front = ProgramSnapshot(registry, frontAddress, {2, 4});

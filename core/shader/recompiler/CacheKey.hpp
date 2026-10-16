@@ -100,11 +100,16 @@ private:
     }
 
     static void appendMesh(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
-        if (request.shader.stage != ShaderStage::Mesh) return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
+        if (request.shader.stage == ShaderStage::TessellationEvaluation && mesh != nullptr) {
+            append(key, mesh->esgsItemSize);
+            return;
+        }
+        if (request.shader.stage != ShaderStage::Mesh) return;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        if (request.graphics->tessellation) append(key, 0x63617074ull);
     }
 
     static void appendTessellation(std::vector<std::uint64_t>& key, const RecompileRequest& request) {

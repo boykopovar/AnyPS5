@@ -18,13 +18,13 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     using Stage = ShaderRecompiler::ShaderStage;
     phaseTiming.Phase(DrawRowVectors);
     const auto& program = programs[i];
-    const auto waveSize = program.binary.stage == Stage::Fragment ? graphics.stages.fragmentWaveSize : graphics.stages.vertexWaveSize;
+    const auto waveSize = Graphics::StageWaveSize(graphics.stages, program.binary.stage);
     ShaderRecompiler::RecompileRequest request{
         program.binary,
         {waveSize, program.firstUserSgpr, program.userData, std::nullopt, program.binary.stage == Stage::Fragment ? std::optional(pixel) : std::nullopt, vertexInfos[i], memory, RegisteredFloatMode(*program.snapshot)},
         localDevice->Target(),
-        {0, 0, pushOffset, (graphics.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : graphics.stages.tessellation && pushOffset < Graphics::PipelinePushSlotBytes ? ShaderRecompiler::TessellationLevelPushOffsetBytes : Graphics::PipelinePushSlotBytes) - pushOffset % Graphics::PipelinePushSlotBytes},
-        ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, graphics.stages.mesh, graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}}
+        {0, 0, pushOffset, Graphics::StagePushLimit(graphics.stages, pushOffset) - pushOffset % Graphics::PipelinePushSlotBytes},
+        ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(graphics.stages, program.binary.stage), graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}}
     };
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     const auto invocation = InvocationFor(*program.snapshot, program.codeOffset, request);

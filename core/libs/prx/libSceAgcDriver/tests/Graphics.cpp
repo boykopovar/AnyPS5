@@ -943,8 +943,40 @@ void ShaderStageTests() {
     queue.context[0x2db] = 0x40049;
     queue.context[0x286] = 0x42800000;
     queue.context[0x287] = 0x3f800000;
-    queue.context[0x2d5] = 0x202d;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "combined tessellation and geometry");
+    queue.context[0x2d5] = 0x0260210d;
+    {
+        const auto wave32 = AgcDriver::Graphics::DecodeState(queue).stages;
+        Require(wave32.path == AgcDriver::Graphics::ShaderPath::Tessellation && wave32.hullWaveSize == 32 && wave32.vertexWaveSize == 32 && !wave32.tessellationGeometry, "HS_W32 and GS_W32 tessellation routing decoded differently");
+    }
+    queue.context[0x2d5] = 0x60212d;
+    queue.context[0x29b] = 2;
+    queue.context[0x2ce] = 6;
+    queue.context[0x1ff] = 0xc0;
+    queue.context[0x2ab] = 4;
+    queue.userConfig[0x25b] = 0x4020;
+    queue.shader[0x8b] = 0x67001c;
+    {
+        std::vector<AgcDriver::Graphics::RegisterRead> geometryLog;
+        AgcDriver::Graphics::ShaderStages geometry;
+        {
+            const AgcDriver::Graphics::RegisterReadLogScope logScope(&geometryLog);
+            geometry = AgcDriver::Graphics::DecodeState(queue).stages;
+        }
+        for (const auto read : geometryLog) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a tessellation geometry register the decoder reads: " + std::to_string(read.offset));
+        Require(geometry.path == AgcDriver::Graphics::ShaderPath::TessellationGeometry && geometry.tessellation && !geometry.mesh && geometry.hullWaveSize == 32 && geometry.vertexWaveSize == 32, "tessellation followed by an NGG geometry stage decoded differently");
+        const auto& subgroup = geometry.tessellationGeometry;
+        Require(subgroup && subgroup->inputPrimitive == 4 && subgroup->primitivesPerGroup == 10 && subgroup->verticesPerGroup == 30 && subgroup->maxVertices == 192 && subgroup->maxPrimitives == 128 && subgroup->threadsPerGroup == 192 && subgroup->ldsSizeDwords == 1536 && subgroup->esgsItemSize == 4, "the geometry subgroup after tessellation decoded differently");
+    }
+    queue.context[0x2d5] = 0x0260212d;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation and geometry routing");
+    queue.context[0x2d5] = 0x60012d;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation and geometry routing");
+    queue.context.erase(0x29b);
+    queue.context.erase(0x2ce);
+    queue.context.erase(0x1ff);
+    queue.context.erase(0x2ab);
+    queue.shader.erase(0x8b);
+    queue.userConfig.erase(0x25b);
     queue.context[0x2d5] = 0x0200210d;
     queue.context[0x2d6] = 0;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "control-point counts");

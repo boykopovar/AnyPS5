@@ -834,13 +834,14 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
         wave = pixel->wave32 ? 32u : 64u;
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
-        wave = (routing & 0x00400000u) != 0 ? 32u : 64u;
+        wave = (routing & (stage == Stage::TessellationControl ? 0x00200000u : 0x00400000u)) != 0 ? 32u : 64u;
         if (registration && stage == Stage::Vertex && (routing & 0x02002024u) == 0x2000u && ProgramUsesWorkgroup(snapshot, codeOffset)) return nullptr;
         if ((routing & 0x20u) != 0 || stage == Stage::Mesh || (routing & 4u) != 0 || ((routing >> 3u) & 3u) == 1u) {
             if (registration) return {};
             auto stageState = state;
             stageState.context[0x1b6] = 0;
             const auto stages = Graphics::DecodeShaderStages(stageState);
+            if (stages.tessellationGeometry) return {};
             graphics = ShaderRecompiler::GraphicsCompileContext{0, {}, stages.mesh, stages.tessellation, {}};
             if (stages.mesh) { stage = Stage::Mesh; firstUser = 0; }
             if (stages.tessellation && snapshot.type == 2) stage = Stage::TessellationEvaluation;
@@ -1180,9 +1181,10 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     require(decoded.programs.size() == decoded.roles.size(), "graphics ABI program roles are incomplete");
     for (const auto& program : decoded.programs) require(program.snapshot != nullptr, "graphics ABI has no registered shader snapshot");
     std::vector<ShaderRecompiler::ProgramRole> expected;
-    if (decoded.state.stages.path == Graphics::ShaderPath::Tessellation) {
+    if (decoded.state.stages.path == Graphics::ShaderPath::Tessellation || decoded.state.stages.path == Graphics::ShaderPath::TessellationGeometry) {
         if (!decoded.roles.empty() && decoded.roles.front() == ShaderRecompiler::ProgramRole::Local) expected.push_back(ShaderRecompiler::ProgramRole::Local);
         expected.insert(expected.end(), {ShaderRecompiler::ProgramRole::Hull, ShaderRecompiler::ProgramRole::Domain});
+        if (decoded.state.stages.path == Graphics::ShaderPath::TessellationGeometry) expected.push_back(ShaderRecompiler::ProgramRole::Main);
     } else {
         expected.push_back(ShaderRecompiler::ProgramRole::Main);
         if (decoded.state.stages.path == Graphics::ShaderPath::Geometry && !decoded.programs.empty() && decoded.programs.front().snapshot->type == 4) expected.push_back(ShaderRecompiler::ProgramRole::GeometryBack);
@@ -1201,19 +1203,19 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     std::vector<PreparedGraphicsStage> prepared;
     std::uint32_t pushOffset = 0;
     const bool fixedSlots = target.fixedPushSlots;
-    const auto capacity = decoded.state.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : decoded.state.stages.tessellation ? ShaderRecompiler::TessellationLevelPushOffsetBytes : Graphics::PipelinePushSlotBytes;
+    const auto capacity = Graphics::StagePushLimit(decoded.state.stages, 0);
     for (std::size_t index = 0; index < decoded.programs.size(); ++index) {
         if (decoded.roles[index] == ShaderRecompiler::ProgramRole::GeometryBack) continue;
         const auto& program = decoded.programs[index];
         const bool fragment = program.binary.stage == ShaderRecompiler::ShaderStage::Fragment;
-        const auto wave = fragment ? decoded.state.stages.fragmentWaveSize : decoded.state.stages.vertexWaveSize;
+        const auto wave = Graphics::StageWaveSize(decoded.state.stages, program.binary.stage);
         std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
         if (!fragment) vertex = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, nullptr, true, 8u - program.firstUserSgpr);
         if (vertex) vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports;
         pushOffset = Graphics::StagePushOffset(pushOffset, program.binary.stage, fixedSlots);
         const auto offset = pushOffset;
         const auto room = (fixedSlots && fragment ? Graphics::PipelinePushSlotBytes : capacity) - pushOffset % Graphics::PipelinePushSlotBytes;
-        ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, decoded.state.stages.mesh, decoded.state.stages.tessellation, {}}};
+        ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(decoded.state.stages, program.binary.stage), decoded.state.stages.tessellation, {}}};
         std::vector<std::uint64_t> key;
         ShaderRecompiler::BuildPreparedShaderKey(request, key);
         std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;

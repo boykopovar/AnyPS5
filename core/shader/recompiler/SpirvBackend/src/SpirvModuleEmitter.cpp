@@ -609,7 +609,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
         return pointer;
     }
     const auto address = ctx.Arg(inst, 1);
-    const bool patch = kind == TessellationAttribute::PatchOutput || kind == TessellationAttribute::PatchInput;
+    const bool patch = kind == TessellationAttribute::PatchOutput || kind == TessellationAttribute::PatchInput || kind == TessellationAttribute::GeometryOutput;
     const bool local = kind == TessellationAttribute::LocalOutput || kind == TessellationAttribute::ControlInput;
     const auto stride = local ? state.program.Metadata().tessellationLocalStride : kind == TessellationAttribute::ControlShared ? state.program.Metadata().tessellationSharedStride : state.program.Metadata().tessellationControlStride;
     const auto type = TypePointer(state, storage, TypeU32(state));
@@ -644,7 +644,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
 }
 
 void DefineTessellationInterfaces(SpirvEmitterState& state) {
-    std::array<bool, 10> used {};
+    std::array<bool, 11> used {};
     for (const IrBlock* block : state.program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() != IrOpcode::GetTessellationAttribute && inst->Opcode() != IrOpcode::SetTessellationAttribute) {
@@ -674,6 +674,8 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             type = array(TypeF32(state), 4u);
         } else if (instance) {
             type = kind == TessellationAttribute::InstanceInput ? array(TypeU32(state), tess.inputControlPoints) : TypeU32(state);
+        } else if (kind == TessellationAttribute::GeometryOutput) {
+            type = array(TypeU32Vector(state, 4u), (tess.geometryItemDwords + 3u) / 4u);
         } else if (patch) {
             type = array(TypeU32Vector(state, 4u), (state.program.Metadata().tessellationPatchStride + 15u) / 16u);
         } else {
@@ -1313,6 +1315,17 @@ std::uint32_t EmitMeshDrawParameter(SpirvValueEmitContext& ctx, const IrValue& i
 
 namespace {
 
+std::uint32_t MeshPushAddress(SpirvEmitterState& state, std::uint32_t first) {
+    const auto push = [&](std::uint32_t dword) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePushConstantElementPointer(state), pointer, state.pushConstantVariable, ConstantU32(state, 0u), ConstantU32(state, MeshDrawPushOffsetBytes / 4u + dword));
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+        return Unary(state, spv::OpUConvert, TypeScalarU64(state), value);
+    };
+    return Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), push(first), Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), push(first + 1u), ConstantU32(state, 32u)));
+}
+
 std::uint32_t MeshArgumentAddress(SpirvEmitterState& state) {
     const auto push = [&](std::uint32_t dword) {
         const auto pointer = state.module.AllocateId();
@@ -1349,6 +1362,16 @@ std::uint32_t EmitMeshRestartStart(SpirvValueEmitContext& ctx, const IrValue& in
         const auto position = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, TypeU32(state), position, GlslStd450(state), GLSLstd450UMin, ctx.Arg(inst, 0), last);
         return LoadMeshArgumentWord(state, address, Binary(state, spv::OpIAdd, TypeU32(state), position, ConstantU32(state, MeshRestartTableDword)));
+    });
+}
+
+std::uint32_t EmitMeshCapturedWord(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.Resources().stage != IrShaderStage::Mesh) {
+        ctx.Fail(inst, "captured geometry input read outside a mesh shader");
+    }
+    return EmitValueOrZeroIfCondition(state, ctx.Arg(inst, 1), [&]() {
+        return LoadMeshArgumentWord(state, MeshPushAddress(state, MeshCapturedItemAddressDword), ctx.Arg(inst, 0));
     });
 }
 
