@@ -90,9 +90,37 @@ int main() {
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
     Require(scePthreadSemDestroy(&context.sem) == SCE_OK);
 
-    bool rejected = false;
-    try { scePthreadSemWait(&context.sem); }
-    catch (const std::runtime_error&) { rejected = true; }
-    Require(rejected);
+    Require(scePthreadSemDestroy(&context.sem) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadSemDestroy(&sem) == SCE_OK);
+
+    PthreadSem busySem = nullptr;
+    Require(scePthreadSemInit(&busySem, 0, 0, nullptr) == SCE_OK);
+    std::atomic<bool> waiterStarted{false};
+    std::atomic<int> waitResult{-1};
+    std::thread waiterThread([&] {
+        waiterStarted = true;
+        waitResult = scePthreadSemWait(&busySem);
+    });
+    while (!waiterStarted) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    Require(scePthreadSemDestroy(&busySem) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadSemPost(&busySem) == SCE_OK);
+    waiterThread.join();
+    Require(waitResult == SCE_OK);
+    Require(scePthreadSemDestroy(&busySem) == SCE_OK);
+
+    for (int iter = 0; iter < 50; ++iter) {
+        PthreadSem raceSem = nullptr;
+        Require(scePthreadSemInit(&raceSem, 0, 0, nullptr) == SCE_OK);
+        std::atomic<bool> racerStarted{false};
+        std::thread racer([&] {
+            racerStarted = true;
+            Require(scePthreadSemWait(&raceSem) == SCE_OK);
+            Require(scePthreadSemDestroy(&raceSem) == SCE_OK);
+        });
+        while (!racerStarted) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        Require(scePthreadSemPost(&raceSem) == SCE_OK);
+        racer.join();
+    }
 }
