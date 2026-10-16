@@ -100,6 +100,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     }
     const std::uint32_t denormals = floatMode.has_value() ? (floatMode->floatMode >> 4u) & 3u : 0u;
     if (denormals == 1u || denormals == 2u) {
+        if (inst.op == RdnaOpcode::VMullitF32 && (denormals == 2u || (floatMode->floatMode & 3u) == 0u)) return denormals == 1u ? 2u : 1u;
         throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " is not implemented");
     }
     return denormals == 0u ? flush : 0u;
