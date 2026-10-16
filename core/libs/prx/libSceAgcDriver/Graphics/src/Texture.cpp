@@ -293,7 +293,16 @@ void RequireSampledImageWithinDeviceLimits(const Context& context, const GuestTe
     const bool extentFits = supported && extent.width <= supported->maxExtent.width && extent.height <= supported->maxExtent.height && extent.depth <= supported->maxExtent.depth;
     const bool layersFit = supported && geometry.imageLayers <= supported->maxArrayLayers;
     const bool bytesFit = supported && leastBytes <= supported->maxResourceSize;
-    if (extentFits && layersFit && bytesFit) return;
+    std::uint32_t largestHeap = 0;
+    VkDeviceSize heapBytes = 0;
+    for (std::uint32_t memoryType = 0; memoryType < std::min<std::uint32_t>(context.memory.memoryTypeCount, VK_MAX_MEMORY_TYPES); ++memoryType) {
+        const auto heap = context.memory.memoryTypes[memoryType].heapIndex;
+        if (heap >= VK_MAX_MEMORY_HEAPS || context.memory.memoryHeaps[heap].size <= heapBytes) continue;
+        largestHeap = heap;
+        heapBytes = context.memory.memoryHeaps[heap].size;
+    }
+    const bool heapFits = leastBytes <= heapBytes;
+    if (extentFits && layersFit && bytesFit && heapFits) return;
     char fields[224];
     std::snprintf(fields, sizeof(fields), "guest texture 0x%llx (%ux%u, %s, depth or last array slice %u, base array %u, format %u, mips %u)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, dimensionName(descriptor.dimension), descriptor.depthOrLastArray, descriptor.baseArray, descriptor.format, descriptor.mipCount);
     char text[448];
@@ -303,8 +312,10 @@ void RequireSampledImageWithinDeviceLimits(const Context& context, const GuestTe
         std::snprintf(text, sizeof(text), "AGC graphics: %s needs %u array layers, more than the %u of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, geometry.imageLayers, supported->maxArrayLayers, static_cast<int>(format));
     } else if (!extentFits) {
         std::snprintf(text, sizeof(text), "AGC graphics: %s needs an extent of %ux%ux%u, more than the %ux%ux%u of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, extent.width, extent.height, extent.depth, supported->maxExtent.width, supported->maxExtent.height, supported->maxExtent.depth, static_cast<int>(format));
-    } else {
+    } else if (!bytesFit) {
         std::snprintf(text, sizeof(text), "AGC graphics: %s needs at least %llu bytes, more than the maxResourceSize of %llu of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, static_cast<unsigned long long>(leastBytes), static_cast<unsigned long long>(supported->maxResourceSize), static_cast<int>(format));
+    } else {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs at least %llu bytes, more than the %llu bytes of memory heap %u, the largest a memory type allocates from", fields, static_cast<unsigned long long>(leastBytes), static_cast<unsigned long long>(heapBytes), largestHeap);
     }
     throw std::runtime_error(text);
 }

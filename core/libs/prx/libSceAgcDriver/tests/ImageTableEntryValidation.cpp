@@ -36,6 +36,8 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
 constexpr std::uint32_t MaxArrayLayers = 2048;
 constexpr std::uint32_t Elements = 6;
+constexpr VkDeviceSize KiB = 1024;
+constexpr VkDeviceSize MiB = 1024 * KiB;
 
 struct MockDevice {
     std::uintptr_t next = 0x10000;
@@ -50,6 +52,9 @@ struct MockDevice {
     std::uint32_t imageFormatQueries = 0;
     VkExtent3D maxExtent{32768, 32768, 1};
     VkDeviceSize maxResourceSize = VkDeviceSize{1} << 40u;
+    std::vector<VkDeviceSize> bufferCreations;
+    std::array<VkDeviceSize, VK_MAX_MEMORY_HEAPS> heapBudget{};
+    std::array<VkDeviceSize, VK_MAX_MEMORY_HEAPS> heapUsage{};
 };
 
 MockDevice mock;
@@ -83,6 +88,7 @@ VKAPI_ATTR void VKAPI_CALL destroyImageView(VkDevice, VkImageView, const VkAlloc
 VKAPI_ATTR VkResult VKAPI_CALL createBuffer(VkDevice, const VkBufferCreateInfo* info, const VkAllocationCallbacks*, VkBuffer* buffer) {
     *buffer = newHandle<VkBuffer>();
     mock.bufferSizes[*buffer] = info->size;
+    mock.bufferCreations.push_back(info->size);
     return VK_SUCCESS;
 }
 
@@ -200,6 +206,15 @@ VKAPI_ATTR VkResult VKAPI_CALL imageFormatProperties(VkPhysicalDevice, VkFormat,
     if (mock.imageFormatResult != VK_SUCCESS) return mock.imageFormatResult;
     *properties = {mock.maxExtent, 16, MaxArrayLayers, VK_SAMPLE_COUNT_1_BIT, mock.maxResourceSize};
     return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL memoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    for (auto* next = static_cast<VkBaseOutStructure*>(properties->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) continue;
+        auto& reported = *reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(next);
+        std::copy(mock.heapBudget.begin(), mock.heapBudget.end(), reported.heapBudget);
+        std::copy(mock.heapUsage.begin(), mock.heapUsage.end(), reported.heapUsage);
+    }
 }
 
 PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
@@ -391,6 +406,18 @@ void requireRejected(const std::vector<std::uint32_t>& map, std::uint32_t elemen
     Require((map[Abi::HeaderWords + element] & Abi::PoisonFlag) != 0u, what + ": the entry was served instead of faulting when selected; images created:" + createdImages());
 }
 
+std::array<std::uint32_t, 8> layeredWords(const Block& guest, std::uint32_t layers) {
+    return textureWords(addressOf(guest.data), FormatR8G8B8A8Unorm, 256, 256, SwModeLinear, Type2DArray, layers - 1u);
+}
+
+std::size_t imagesWithLayers(std::uint32_t layers) {
+    return static_cast<std::size_t>(std::count_if(mock.images.begin(), mock.images.end(), [&](const auto& image) { return image.second.extent.width == 256 && image.second.arrayLayers == layers; }));
+}
+
+VkDeviceSize largestBufferCreated() {
+    return mock.bufferCreations.empty() ? 0 : *std::max_element(mock.bufferCreations.begin(), mock.bufferCreations.end());
+}
+
 void testTableEntries(Context context) {
     static int physicalTag = 0;
     context.physical = reinterpret_cast<VkPhysicalDevice>(&physicalTag);
@@ -499,6 +526,37 @@ void testVulkanErrorPropagates(const Context& context) {
     Require(message.find("vkCreateImage: Vulkan result -4") != std::string::npos, "the propagated device loss names another call: " + message);
 }
 
+void testHeapSize(Context context) {
+    static int physicalTag = 0;
+    context.physical = reinterpret_cast<VkPhysicalDevice>(&physicalTag);
+    context.memoryProperties2 = memoryProperties2;
+    const Block guest(MiB);
+    const Registration registered(guest.data, guest.bytes);
+    const CachedTexturesCleared cleared(context.device);
+    const std::array<Entry, 2> entries{{
+        {layeredWords(guest, 2), Shape::Image2DArray},
+        {layeredWords(guest, 3), Shape::Image2DArray},
+    }};
+    mock.images.clear();
+    mock.heapBudget = {64 * MiB, 64 * MiB};
+    mock.heapUsage = {64 * MiB - 512 * KiB, 64 * MiB - 256 * KiB};
+    auto map = resolveTable(context, entries);
+    mock.heapBudget = {};
+    mock.heapUsage = {};
+    requireServed(map, 1, "a 256x256 RGBA8 array of 3 layers (786432 bytes) in heaps of 4 GiB whose VK_EXT_memory_budget budgets leave 524288 and 262144 bytes");
+    Require(imagesWithLayers(3) == 1, "the 3-layer entry within the heaps' sizes created no image:" + createdImages());
+    context.memory.memoryHeaps[0].size = 512 * KiB;
+    context.memory.memoryHeaps[1].size = 256 * KiB;
+    ClearCachedTextures(context.device);
+    mock.images.clear();
+    mock.bufferCreations.clear();
+    map = resolveTable(context, entries);
+    requireServed(map, 0, "a 256x256 RGBA8 array of 2 layers (524288 bytes) in heaps of 524288 and 262144 bytes");
+    requireRejected(map, 1, "a 256x256 RGBA8 array of 3 layers (786432 bytes) in heaps of 524288 and 262144 bytes");
+    Require(imagesWithLayers(3) == 0, "the 3-layer entry larger than every heap created an image:" + createdImages());
+    Require(largestBufferCreated() < 3 * 256 * KiB, "the 3-layer entry larger than every heap reached the texture upload: a buffer of " + std::to_string(largestBufferCreated()) + " bytes was created");
+}
+
 }
 
 void RunImageTableEntryValidationTests() {
@@ -514,6 +572,7 @@ void RunImageTableEntryValidationTests() {
         testUnsupportedImageCombination(context);
         testPartlyRegisteredSurface(context);
         testVulkanErrorPropagates(context);
+        testHeapSize(context);
         Require(mock.missing.empty(), "the mock lacks the Vulkan function " + (mock.missing.empty() ? std::string{} : mock.missing.front()));
     }
     mock = MockDevice{};
