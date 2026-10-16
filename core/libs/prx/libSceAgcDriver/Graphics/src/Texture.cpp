@@ -637,7 +637,7 @@ bool Texture::RefreshDepthCopy() {
     VkCommandBuffer commands = VK_NULL_HANDLE;
     if (recorder != nullptr) {
         commands = recorder->Commands();
-        recorder->Keep(linear);
+        recorder->Keep(linear, linear->Size());
         recorder->Keep(owned);
         recorder->Keep(storageSource);
     } else {
