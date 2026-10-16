@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
@@ -1511,6 +1512,16 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     Require(words[0] == 1 && words[1] == 2 && words[2] == 5 && words[4] == 4 && words[3] == 0, "the stores did not land (or the later store of a dword lost)");
     const auto after = Recorder::StoreCounts();
     Require(after.stores == before.stores + 1 && after.replaced == before.replaced + 0 && after.joined == before.joined + 0, "store counters are off");
+    store(8, 1);
+    recorder.NotePendingWrite(address + 32, 4);
+    auto* commandWords = static_cast<std::uint32_t*>(block);
+    CommandBuffer disjoint{commandWords + 12, commandWords + 16, commandWords + 12, nullptr, nullptr, nullptr, 0};
+    Agc::Command::Emit(&disjoint, 0x7a, {0x20000243, 0x400}, __func__);
+    Require(recorder.Recording(), "a disjoint command allocation drained the GPU store");
+    CommandBuffer reused{commandWords + 6, commandWords + 10, commandWords + 6, nullptr, nullptr, nullptr, 0};
+    Agc::Command::Emit(&reused, 0x7a, {0x20000243, 0x400}, __func__);
+    recorder.Sync();
+    Require(words[8] == 0x400, "a pending GPU label overwrote a reused command word");
     // The covered-access mask: reported once by the next Commands() call, then cleared.
     VkAccessFlags covered = 0xffffffffu;
     recorder.Commands(&covered);
@@ -8084,6 +8095,12 @@ int main(int argc, char** argv) {
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
+            if (device.GetContext().hostImportAlignment == 0) return 77;
+            const auto before = Recorder::StoreCounts().stores;
+            storeRunTests(device, recorder);
+            return Recorder::StoreCounts().stores != before ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--copied-direct-only") {
             copiedDirectOrderingTests(device, recorder);
             return 0;

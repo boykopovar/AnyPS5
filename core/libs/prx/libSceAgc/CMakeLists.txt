@@ -130,7 +130,7 @@ add_test_executable(agc_register_command_tests EXCLUDE_FROM_ALL
         Patch/src/IndirectRegisters.cpp
 )
 target_include_directories(agc_register_command_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_register_command_tests PRIVATE libc)
+target_link_libraries(agc_register_command_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_register_command_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_register_command_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -149,7 +149,7 @@ add_test_executable(agc_cb_cond_write_tests EXCLUDE_FROM_ALL
         Cb/src/Branch.cpp
 )
 target_include_directories(agc_cb_cond_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_cb_cond_write_tests PRIVATE libc)
+target_link_libraries(agc_cb_cond_write_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_cb_cond_write_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_cb_cond_write_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -193,7 +193,7 @@ add_test_executable(agc_branch_patch_tests EXCLUDE_FROM_ALL
         Patch/src/Branch.cpp
 )
 target_include_directories(agc_branch_patch_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_branch_patch_tests PRIVATE libc)
+target_link_libraries(agc_branch_patch_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_branch_patch_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_branch_patch_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -213,7 +213,7 @@ add_test_executable(agc_predication_tests EXCLUDE_FROM_ALL
         Predication/src/Predication.cpp
 )
 target_include_directories(agc_predication_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_predication_tests PRIVATE libc)
+target_link_libraries(agc_predication_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_predication_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_predication_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -330,7 +330,7 @@ add_test_executable(agc_dma_data_tests EXCLUDE_FROM_ALL
         DcbFlow/src/Memory.cpp
 )
 target_include_directories(agc_dma_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_dma_data_tests PRIVATE libc)
+target_link_libraries(agc_dma_data_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_dma_data_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_dma_data_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -350,7 +350,7 @@ add_test_executable(agc_write_data_patch_tests EXCLUDE_FROM_ALL
         Patch/src/WaitRegMem.cpp
 )
 target_include_directories(agc_write_data_patch_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_write_data_patch_tests PRIVATE libc)
+target_link_libraries(agc_write_data_patch_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_write_data_patch_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_write_data_patch_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -370,7 +370,7 @@ add_test_executable(agc_prime_utcl2_tests EXCLUDE_FROM_ALL
         DcbState/src/Display.cpp
 )
 target_include_directories(agc_prime_utcl2_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_prime_utcl2_tests PRIVATE libc)
+target_link_libraries(agc_prime_utcl2_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_prime_utcl2_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_prime_utcl2_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
@@ -391,7 +391,7 @@ add_test_executable(agc_cond_exec_patch_tests EXCLUDE_FROM_ALL
         Patch/src/CondExec.cpp
 )
 target_include_directories(agc_cond_exec_patch_tests PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(agc_cond_exec_patch_tests PRIVATE libc)
+target_link_libraries(agc_cond_exec_patch_tests PRIVATE libSceAgcDriver libc)
 configure_windows_unwind(agc_cond_exec_patch_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_cond_exec_patch_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
