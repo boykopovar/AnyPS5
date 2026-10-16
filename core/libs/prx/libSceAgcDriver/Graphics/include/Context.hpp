@@ -78,6 +78,10 @@ struct DescriptorRejected : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+struct BdaUnalignedAccess : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 // Device entry points resolved once per device (VulkanDevice's State fills it after setup): the
 // loader's vkGetDeviceProcAddr is a name lookup under its global mutex per call, paid at every
 // record site otherwise. Null members (tests, APS5_NO_PROC_TABLE=1) resolve per call (Resolved).

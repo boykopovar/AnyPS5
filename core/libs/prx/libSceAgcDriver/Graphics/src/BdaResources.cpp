@@ -292,6 +292,7 @@ void BdaResources::CheckFault() const {
             break;
         }
     }
+    if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Unaligned) throw BdaUnalignedAccess(message.str());
     throw std::runtime_error(message.str());
 }
 

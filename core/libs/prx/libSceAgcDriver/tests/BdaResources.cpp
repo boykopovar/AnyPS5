@@ -1835,6 +1835,26 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         Require(guest[0] == 123, "failed GPU command published writes");
     }
     {
+        const auto fail = [&](ShaderRecompiler::BdaAbi::FaultReason reason, std::uint32_t word, std::uint32_t value) {
+            ShaderResources resources(context, compiled);
+            std::memcpy(access.bytes(access.descriptor(6).buffer).data() + word * sizeof(std::uint32_t), &value, sizeof(value));
+            const ShaderRecompiler::BdaAbi::Fault report{ShaderRecompiler::BdaAbi::FaultState::Ready, reason, 0x7fff99880002ULL, 4, 0, 0x5c8, 0};
+            std::memcpy(access.bytes(access.descriptor(5).buffer).data(), &report, sizeof(report));
+            try {
+                resources.WriteBack();
+            } catch (const BdaUnalignedAccess& error) {
+                Require(std::string(error.what()).find("BDA access failed") != std::string::npos, "an unaligned BDA access did not report the failed access");
+                return true;
+            } catch (const std::runtime_error& error) {
+                Require(std::string(error.what()).find("BDA access failed") != std::string::npos, "a BDA fault did not report the failed access");
+                return false;
+            }
+            throw std::runtime_error("a recorded BDA fault was not reported");
+        };
+        Require(fail(ShaderRecompiler::BdaAbi::FaultReason::Unaligned, 2, 777) && guest[2] == 777, "an unaligned BDA access lost the stores of the dispatch's other invocations");
+        Require(!fail(ShaderRecompiler::BdaAbi::FaultReason::Unmapped, 3, 888) && guest[3] == 0, "a failed GPU command published writes");
+    }
+    {
         auto aligned = context;
         aligned.limits.minStorageBufferOffsetAlignment = 16;
         GuestBufferMemory unaligned(aligned);
