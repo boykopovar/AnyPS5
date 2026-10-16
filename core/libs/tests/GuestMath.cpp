@@ -69,6 +69,10 @@ double APS5_VABI asin_nid_postfix(double);
 float APS5_VABI atan2f_nid_postfix(float, float);
 float APS5_VABI hypotf_nid_postfix(float, float);
 double APS5_VABI hypot_nid_postfix(double, double);
+double APS5_VABI fmin_nid_postfix(double, double);
+float APS5_VABI fminf_nid_postfix(float, float);
+double APS5_VABI fmax_nid_postfix(double, double);
+float APS5_VABI fmaxf_nid_postfix(float, float);
 float APS5_VABI tanf_nid_postfix(float);
 int APS5_VABI rand_nid_postfix();
 void APS5_VABI srand_nid_postfix(unsigned int);
@@ -181,6 +185,18 @@ static void CheckExactOperations() {
     Require(fma_nid_postfix(tenth, 10., -1.) == 0x1p-54);
     Require(fma_nid_postfix(0x1p1023, 2., -0x1p1023) == 0x1p1023);
     Require(std::isnan(fma_nid_postfix(INFINITY, 0., 1.)));
+    Require(fmin_nid_postfix(2.5, 3.5) == 2.5 && fmin_nid_postfix(3.5, 2.5) == 2.5);
+    Require(fmin_nid_postfix(-2.5, -3.5) == -3.5 && fmin_nid_postfix(-3.5, -2.5) == -3.5);
+    Require(fmin_nid_postfix(nan, 2.5) == 2.5 && fmin_nid_postfix(2.5, nan) == 2.5);
+    Require(std::isnan(fmin_nid_postfix(nan, nan)));
+    Require(fmin_nid_postfix(-INFINITY, 100.0) == -INFINITY && fmin_nid_postfix(INFINITY, 100.0) == 100.0);
+    Require(fminf_nid_postfix(2.5f, 3.5f) == 2.5f && fminf_nid_postfix(nan, 2.5f) == 2.5f);
+    Require(fmax_nid_postfix(2.5, 3.5) == 3.5 && fmax_nid_postfix(3.5, 2.5) == 3.5);
+    Require(fmax_nid_postfix(-2.5, -3.5) == -2.5 && fmax_nid_postfix(-3.5, -2.5) == -2.5);
+    Require(fmax_nid_postfix(nan, 2.5) == 2.5 && fmax_nid_postfix(2.5, nan) == 2.5);
+    Require(std::isnan(fmax_nid_postfix(nan, nan)));
+    Require(fmax_nid_postfix(INFINITY, 100.0) == INFINITY && fmax_nid_postfix(-INFINITY, 100.0) == 100.0);
+    Require(fmaxf_nid_postfix(2.5f, 3.5f) == 3.5f && fmaxf_nid_postfix(nan, 2.5f) == 2.5f);
 }
 
 static void CheckNearbyint() {
