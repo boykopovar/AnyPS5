@@ -61,11 +61,15 @@ ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
+// Whether the probe selected dma-buf imports for ranges with a shared backing.
+bool DmaBufImportSelected(const Context& context);
 
 // The host import of the registered allocation containing [address, address + bytes), made on demand
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
 // the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+// Whether the existing import covering [address, address + bytes) is a dma-buf import.
+bool HostImportUsesDmaBuf(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
