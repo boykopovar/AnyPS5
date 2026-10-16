@@ -148,9 +148,12 @@ int APS5_VABI scePthreadSemWait(PthreadSem* sem) {
         finishSemaphoreWait(current, cleanupContext, cleanupMark);
         return 0;
     } catch (...) {
-        if (cleanupContext.waiterRegistered && lock.owns_lock())
+        if (cleanupContext.waiterRegistered) {
+            if (!lock.owns_lock())
+                lock.lock();
             --current->_waiters;
-        cleanupContext.waiterRegistered = false;
+            cleanupContext.waiterRegistered = false;
+        }
         ThreadCancel::CleanupRestore(cleanupMark);
         throw;
     }
@@ -193,9 +196,12 @@ int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
         finishSemaphoreWait(current, cleanupContext, cleanupMark);
         return 0;
     } catch (...) {
-        if (cleanupContext.waiterRegistered && lock.owns_lock())
+        if (cleanupContext.waiterRegistered) {
+            if (!lock.owns_lock())
+                lock.lock();
             --current->_waiters;
-        cleanupContext.waiterRegistered = false;
+            cleanupContext.waiterRegistered = false;
+        }
         ThreadCancel::CleanupRestore(cleanupMark);
         throw;
     }
