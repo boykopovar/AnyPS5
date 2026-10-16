@@ -456,7 +456,7 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
     if ((flags & ~AcceptedFlags) != 0) return Fail(GuestInvalid);
     if (path != anonymousObject) {
 #ifdef _WIN32
-        NotImplemented_nid_no_patch("shm_open of a named object");
+        return Fail(45);
 #else
         return OpenNamedFile(path, flags, mode);
 #endif
@@ -472,8 +472,7 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
 extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
 #ifdef _WIN32
     (void)path;
-    NotImplemented_nid_no_patch("shm_unlink of a named object");
-    return 0;
+    return Fail(45);
 #else
     int validationError = 0;
     const auto hostName = NamedHostPath(path, validationError);

@@ -52,7 +52,7 @@ int APS5_VABI getpid_nid_postfix(void);
 
 int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, void* mask) {
     constexpr int LevelWhich = 3, WhichThread = 1, WhichProcess = 2;
-    constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
+    constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22, GuestErange = 34, GuestEopnotsupp = 45;
     constexpr std::size_t MaximumSize = 256 / 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
@@ -63,18 +63,18 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     auto* self = scePthreadSelf();
     if (which == WhichThread) {
         if (id != -1 && id != static_cast<std::int64_t>(self->tid)) {
-            if (LiveGuestThreadExists(id)) NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread or process");
+            if (LiveGuestThreadExists(id)) return fail(GuestEopnotsupp);
             return fail(GuestEsrch);
         }
     } else if (which == WhichProcess) {
         if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
     } else if (which >= 3 && which <= 6) {
-        NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread or process");
+        return fail(GuestEopnotsupp);
     } else {
         return fail(GuestEinval);
     }
     if (level < 1 || level > 3) return fail(GuestEinval);
-    if (level != LevelWhich) NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread or process");
+    if (level != LevelWhich) return fail(GuestEopnotsupp);
     KernelCpumask affinity = 0;
     if (which == WhichThread) scePthreadGetaffinity(self, &affinity);
     else affinity = LiveGuestThreadsAffinity();
@@ -85,7 +85,7 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
 
 int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, const void* mask) {
     constexpr int LevelWhich = 3, WhichThread = 1, WhichProcess = 2;
-    constexpr int GuestEsrch = 3, GuestEdeadlk = 11, GuestEfault = 14, GuestEinval = 22, GuestErange = 34;
+    constexpr int GuestEsrch = 3, GuestEdeadlk = 11, GuestEfault = 14, GuestEinval = 22, GuestErange = 34, GuestEopnotsupp = 45;
     constexpr std::size_t MaximumSize = 256 / 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
@@ -100,18 +100,18 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
     auto* self = scePthreadSelf();
     if (which == WhichThread) {
         if (id != -1 && id != static_cast<std::int64_t>(self->tid)) {
-            if (LiveGuestThreadExists(id)) NotImplemented_nid_no_patch("cpuset_setaffinity other than the calling thread or process");
+            if (LiveGuestThreadExists(id)) return fail(GuestEopnotsupp);
             return fail(GuestEsrch);
         }
     } else if (which == WhichProcess) {
         if (id != -1 && id != getpid_nid_postfix()) return fail(GuestEsrch);
     } else if (which >= 3 && which <= 6) {
-        NotImplemented_nid_no_patch("cpuset_setaffinity other than the calling thread or process");
+        return fail(GuestEopnotsupp);
     } else {
         return fail(GuestEinval);
     }
     if (level < 1 || level > 3) return fail(GuestEinval);
-    if (level != LevelWhich) NotImplemented_nid_no_patch("cpuset_setaffinity other than the calling thread or process");
+    if (level != LevelWhich) return fail(GuestEopnotsupp);
     KernelCpumask requested = 0;
     std::memcpy(&requested, bytes, sizeof(requested));
     const KernelCpumask affinity = requested & sceKernelGetAvailableCpumask();
@@ -128,7 +128,7 @@ struct GuestRtPrio {
 
 int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority) {
     constexpr int Lookup = 0, Set = 1;
-    constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22;
+    constexpr int GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22, GuestEopnotsupp = 45;
     constexpr std::uint16_t Normal = 3;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
@@ -139,17 +139,17 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
     auto* self = scePthreadSelf();
     if (lwpid != 0 && static_cast<std::int64_t>(lwpid) != static_cast<std::int64_t>(self->tid)) {
         if (!LiveGuestThreadExists(lwpid)) return fail(GuestEsrch);
-        NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
+        return fail(GuestEopnotsupp);
     }
     const int policy = self->schedPolicy.load(std::memory_order_relaxed);
-    if (policy == 1 || policy == 3) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
+    if (policy == 1 || policy == 3) return fail(GuestEopnotsupp);
     if (function == Lookup) {
         priority->type = Normal;
         priority->prio = 0;
         return 0;
     }
     if (priority->type == Normal && priority->prio == 0) return 0;
-    NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
+    return fail(GuestEopnotsupp);
 }
 
 int APS5_VABI pthread_setconcurrency_nid_postfix(int newLevel) {

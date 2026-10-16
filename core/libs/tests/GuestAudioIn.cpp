@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -22,16 +21,6 @@ int APS5_VABI sceAudioInClose(int);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TCall>
-static bool ReportsNotImplemented(const char* name, TCall call) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
 
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32
@@ -66,12 +55,16 @@ void TestValidation() {
     Require(sceAudioInAsyncOpen(user, 0, 0, 385, 48000, 2) == invalidSize);
     Require(sceAudioInAsyncOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
     Require(sceAudioInAsyncOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
-    Require(ReportsNotImplemented("sceAudioInHqOpen", [] { sceAudioInHqOpen(user, 0, 0, 256, 48000, 2); }));
-    Require(ReportsNotImplemented("sceAudioInHqOpen", [] { sceAudioInHqOpen(user, 0, 0, 128, 16000, 2); }));
-    Require(ReportsNotImplemented("sceAudioInAsyncOpen", [] { sceAudioInAsyncOpen(user, 0, 0, 384, 48000, 2); }));
-    Require(ReportsNotImplemented("sceAudioInOpen", [] { sceAudioInOpen(user, 0, 0, 256, 48000, 0x10); }));
-    Require(ReportsNotImplemented("sceAudioInHqOpen", [] { sceAudioInHqOpen(user, 0, 0, 128, 48000, 0x10); }));
-    Require(ReportsNotImplemented("sceAudioInAsyncOpen", [] { sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 0x10); }));
+    const int hq = sceAudioInHqOpen(user, 0, 0, 256, 48000, 2);
+    Require(hq > 0 && sceAudioInClose(hq) == 0);
+    const int hq16000 = sceAudioInHqOpen(user, 0, 0, 128, 16000, 2);
+    Require(hq16000 > 0 && sceAudioInClose(hq16000) == 0);
+    const int async = sceAudioInAsyncOpen(user, 0, 0, 384, 48000, 2);
+    Require(async > 0 && sceAudioInClose(async) == 0);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 384, 44100, 2) == invalidFreq);
+    Require(sceAudioInOpen(user, 0, 0, 256, 48000, 0x10) == invalidParam);
+    Require(sceAudioInHqOpen(user, 0, 0, 128, 48000, 0x10) == invalidParam);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 0x10) == invalidParam);
 }
 
 void TestCapture() {

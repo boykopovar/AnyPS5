@@ -24,6 +24,11 @@ class DocLinkTests(unittest.TestCase):
         text = f"a\n{FENCE}\n[](int a)\n{FENCE}\nb\n"
         self.assertEqual(check_conventions.fenced_lines(text), {2, 3, 4})
 
+    def test_crlf_fences_do_not_hide_links_after_the_block(self):
+        text = "```\r\ncode\r\n```\r\nsee [missing](missing.md)\r\n"
+        self.assertEqual(check_conventions.links("docs/dev/guide.md", text),
+                         [("missing.md", "docs/dev/missing.md")])
+
 
 if __name__ == "__main__":
     unittest.main()

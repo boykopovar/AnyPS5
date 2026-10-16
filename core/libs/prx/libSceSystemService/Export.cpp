@@ -48,8 +48,7 @@ constexpr wchar_t MainExecutableVariableWide[] = L"APS5_EBOOT";
 #endif
 
 [[noreturn]] void UnconvertedExecutable(const std::string& message) {
-    NotImplemented_nid_no_patch(("sceSystemServiceLoadExec: " + message).c_str());
-    std::abort();
+    throw std::runtime_error("sceSystemServiceLoadExec: " + message);
 }
 
 std::string ConvertedExecutableName(const char* path) {
@@ -281,10 +280,10 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  if (paramId != SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME) {
-  NotImplemented_nid_no_patch("sceSystemServiceParamGetString: parameter other than the system name");
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  if (bufSize < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) {
-  NotImplemented_nid_no_patch("sceSystemServiceParamGetString: buffer shorter than 65 bytes");
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
  std::memcpy(buf, SystemName, sizeof(SystemName));
@@ -339,8 +338,7 @@ int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* 
  (void)titleId;
  (void)arguments;
  (void)param;
- NotImplemented_nid_no_patch("sceSystemServiceLaunchApp: launching another application");
- return 0;
+ return SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
@@ -352,8 +350,7 @@ int APS5_VABI sceSystemServiceOpenChallengeActivity(void) {
 }
 
 int APS5_VABI sceSystemServiceOpenTournamentOccurrence(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
@@ -370,10 +367,10 @@ int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
  if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: application other than the running title");
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  if (how != -1 || reason != 0 || coreDump != 0) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  LibcExit_nid_no_patch(0);
 }

@@ -352,14 +352,14 @@ int APS5_VABI wait_nid_postfix(int* status) {
 int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
     (void)file;
     (void)arguments;
-    NotImplemented_nid_no_patch("execvp: executable replacement");
+    *__error_nid_postfix() = 78;
     return -1;
 }
 
 int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
     (void)path;
     (void)arguments;
-    NotImplemented_nid_no_patch("execv: executable replacement");
+    *__error_nid_postfix() = 78;
     return -1;
 }
 
@@ -367,7 +367,7 @@ int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char*
     (void)path;
     (void)arguments;
     (void)environment;
-    NotImplemented_nid_no_patch("execve: executable replacement");
+    *__error_nid_postfix() = 78;
     return -1;
 }
 
@@ -608,7 +608,7 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
 }
 
 int APS5_VABI getdtablesize_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+    *__error_nid_postfix() = 78;
     return -1;
 }
 

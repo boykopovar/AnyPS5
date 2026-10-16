@@ -76,18 +76,18 @@ Port* find(int handle) {
     return port.used ? &port : nullptr;
 }
 
-int checkArguments(std::uint32_t type, std::uint32_t index, std::uint32_t len, std::uint32_t freq) {
+int checkArguments(std::uint32_t type, std::uint32_t index, std::uint32_t len, std::uint32_t freq, bool asyncLength = false) {
     if (type != 0 && type != 1) return AUDIO_IN_ERROR_INVALID_TYPE;
     if (index != 0) return AUDIO_IN_ERROR_INVALID_PARAM;
-    if (len != 128 && len != 256) return AUDIO_IN_ERROR_INVALID_SIZE;
+    if (asyncLength ? len == 0 || len > MAX_ASYNC_LEN : len != 128 && len != 256) return AUDIO_IN_ERROR_INVALID_SIZE;
     if (freq != 48000 && freq != 16000) return AUDIO_IN_ERROR_INVALID_FREQ;
     return 0;
 }
 
 int openPort(std::uint32_t len, std::uint32_t freq, std::uint32_t param, const char* function) {
     if (param == 0x10) {
-        NotImplemented_nid_no_patch(function);
-        return 0;
+        (void)function;
+        return AUDIO_IN_ERROR_INVALID_PARAM;
     }
     Format format{};
     if (!formatOf(param, format)) return AUDIO_IN_ERROR_INVALID_PARAM;
@@ -180,28 +180,18 @@ int32_t APS5_VABI sceAudioInClose(int32_t handle) {
 int32_t APS5_VABI sceAudioInHqOpen(int32_t user_id, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
     (void)user_id;
     if (const int error = checkArguments(type, index, len, freq); error != 0) return error;
-    if (len != 128 || freq != 48000) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
-    }
     return openPort(len, freq, param, __func__);
 }
 
 int32_t APS5_VABI sceAudioInAsyncOpen(int32_t user_id, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
     (void)user_id;
-    const int error = checkArguments(type, index, len, freq);
-    if (error == AUDIO_IN_ERROR_INVALID_SIZE && len <= MAX_ASYNC_LEN) {
-        NotImplemented_nid_no_patch(__func__);
-        return 0;
-    }
-    if (error != 0) return error;
+    if (const int error = checkArguments(type, index, len, freq, true); error != 0) return error;
     return openPort(len, freq, param, __func__);
 }
 
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ std::lock_guard lock(g_mutex);
+ return find(handle) ? 0 : AUDIO_IN_ERROR_INVALID_HANDLE;
 }
 
 }

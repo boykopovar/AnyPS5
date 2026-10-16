@@ -18,9 +18,10 @@ constexpr int CES_ERROR_UNASSIGNED_CODE = static_cast<int>(0x805C0020);
 constexpr int CES_ERROR_INVALID_DST_BUFFER = static_cast<int>(0x805C0030);
 constexpr int CES_ERROR_DST_BUFFER_END = static_cast<int>(0x805C0031);
 
-constexpr uint8_t PROFILES[2] = {0, 1};
+constexpr uint8_t PROFILES[3] = {0, 1, 2};
 constexpr const uint8_t* CP1252_PROFILE = &PROFILES[0];
 constexpr const uint8_t* CP1251_PROFILE = &PROFILES[1];
+constexpr const uint8_t* CP1250_PROFILE = &PROFILES[2];
 
 constexpr uint16_t CP1252_HIGH[32] = {
     0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
@@ -38,8 +39,20 @@ constexpr uint16_t CP1251_HIGH[128] = {
     0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, 0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F,
 };
 
+constexpr uint16_t CP1250_HIGH[128] = {
+    0x20AC, 0x0081, 0x201A, 0x0083, 0x201E, 0x2026, 0x2020, 0x2021, 0x0088, 0x2030, 0x0160, 0x2039, 0x015A, 0x0164, 0x017D, 0x0179,
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0098, 0x2122, 0x0161, 0x203A, 0x015B, 0x0165, 0x017E, 0x017A,
+    0x00A0, 0x02C7, 0x02D8, 0x0141, 0x00A4, 0x0104, 0x00A6, 0x00A7, 0x00A8, 0x00A9, 0x015E, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x017B,
+    0x00B0, 0x00B1, 0x02DB, 0x0142, 0x00B4, 0x00B5, 0x00B6, 0x00B7, 0x00B8, 0x0105, 0x015F, 0x00BB, 0x013D, 0x02DD, 0x013E, 0x017C,
+    0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7, 0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E,
+    0x0110, 0x0143, 0x0147, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x00D7, 0x0158, 0x016E, 0x00DA, 0x0170, 0x00DC, 0x00DD, 0x0162, 0x00DF,
+    0x0155, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x013A, 0x0107, 0x00E7, 0x010D, 0x00E9, 0x0119, 0x00EB, 0x011B, 0x00ED, 0x00EE, 0x010F,
+    0x0111, 0x0144, 0x0148, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x00F7, 0x0159, 0x016F, 0x00FA, 0x0171, 0x00FC, 0x00FD, 0x0163, 0x02D9,
+};
+
 uint32_t sbcToUnicode(const uint8_t* profile, uint8_t sbc) {
     if (profile == CP1251_PROFILE) return sbc >= 0x80 ? CP1251_HIGH[sbc - 0x80] : sbc;
+    if (profile == CP1250_PROFILE) return sbc >= 0x80 ? CP1250_HIGH[sbc - 0x80] : sbc;
     return sbc >= 0x80 && sbc < 0xA0 ? CP1252_HIGH[sbc - 0x80] : sbc;
 }
 
@@ -51,6 +64,19 @@ bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
         }
         for (uint32_t i = 0; i < 128; ++i) {
             if (CP1251_HIGH[i] == code) {
+                sbc = static_cast<uint8_t>(0x80 + i);
+                return true;
+            }
+        }
+        return false;
+    }
+    if (profile == CP1250_PROFILE) {
+        if (code < 0x80 || (code >= 0xA0 && code <= 0xFF)) {
+            sbc = static_cast<uint8_t>(code);
+            return true;
+        }
+        for (uint8_t i = 0; i < 128; ++i) {
+            if (CP1250_HIGH[i] == code) {
                 sbc = static_cast<uint8_t>(0x80 + i);
                 return true;
             }
@@ -105,7 +131,12 @@ uint32_t encodeUtf8(uint32_t code, uint8_t* utf8) {
     utf8[0] = static_cast<uint8_t>(0xE0 | code >> 12);
     utf8[1] = static_cast<uint8_t>(0x80 | (code >> 6 & 0x3F));
     utf8[2] = static_cast<uint8_t>(0x80 | (code & 0x3F));
-    return 3;
+    if (code < 0x10000) return 3;
+    utf8[0] = static_cast<uint8_t>(0xF0 | (code >> 18));
+    utf8[1] = static_cast<uint8_t>(0x80 | (code >> 12 & 0x3F));
+    utf8[2] = static_cast<uint8_t>(0x80 | (code >> 6 & 0x3F));
+    utf8[3] = static_cast<uint8_t>(0x80 | (code & 0x3F));
+    return 4;
 }
 
 constexpr uint8_t EUC_JP_TAG[8] = {'E', 'U', 'C', 'J', 'P', '9', '3', '2'};
@@ -115,7 +146,7 @@ bool isEucJp(const void* profile) {
 }
 
 bool isSbc(const void* profile) {
-    return profile == CP1252_PROFILE || profile == CP1251_PROFILE;
+    return profile == CP1252_PROFILE || profile == CP1251_PROFILE || profile == CP1250_PROFILE;
 }
 
 const void* contextProfile(const void* context) {
@@ -150,7 +181,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
         code = JisX0208::TO_UCS2[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
         return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
-    if (lead == 0x8F) NotImplemented_nid_no_patch("EUC-JP JIS X 0212 characters");
+    if (lead == 0x8F) return mbcsMax < 3 ? CES_ERROR_SRC_BUFFER_END : CES_ERROR_UNASSIGNED_CODE;
     return CES_ERROR_INVALID_ENCODE;
 }
 
@@ -271,8 +302,7 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1251(void) {
 }
 
 const void* APS5_VABI sceCesRefersUcsProfileCp1250(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return CP1250_PROFILE;
 }
 
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
@@ -342,7 +372,7 @@ int APS5_VABI sceCesEucJpToUcs2(const void* profile, const uint8_t* euc, uint32_
 }
 
 int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len) {
-    if (profile != CP1252_PROFILE && profile != CP1251_PROFILE) return CES_ERROR_INVALID_PARAMETER;
+    if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
 
     uint8_t encoded[3];
@@ -354,7 +384,7 @@ int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8
 }
 
 int APS5_VABI sceCesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len, const uint8_t* profile, uint8_t* sbc) {
-    if (profile != CP1252_PROFILE && profile != CP1251_PROFILE) return CES_ERROR_INVALID_PARAMETER;
+    if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!utf8) return CES_ERROR_INVALID_SRC_BUFFER;
     if (utf8max == 0) return CES_ERROR_SRC_BUFFER_END;
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;

@@ -230,6 +230,42 @@ class QuotedPathTests(unittest.TestCase):
             self.assertIn("[comment]", result.stdout)
             self.assertIn("core/x.cpp", result.stdout)
 
+    def test_non_ascii_export_path_does_not_crash_duplicate_check(self):
+        checker = Path(__file__).resolve().parents[1] / "check_conventions.py"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Conventions Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=root, capture_output=True, text=True, check=True,
+                )
+
+            git("init", "-q")
+            git("config", "core.quotePath", "true")
+            readme = root / "README.md"
+            readme.write_text("# Example\n", encoding="utf-8")
+            first = root / "core/libs/prx/libSceA/caf\u00e9.cpp"
+            first.parent.mkdir(parents=True)
+            first.write_text("int APS5_VABI sceFoo(int value) { return value; }\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "feat: add first export")
+            second = root / "core/libs/prx/libSceB/Export.cpp"
+            second.parent.mkdir(parents=True)
+            second.write_text("int APS5_VABI sceFoo(int value) { return value + 1; }\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "feat: add duplicate export")
+            result = subprocess.run(
+                [sys.executable, "-I", str(checker), "--base", "HEAD~1"],
+                cwd=root, capture_output=True, text=True, encoding="utf-8",
+                env={key: value for key, value in os.environ.items()
+                     if key not in ("GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY", "GITHUB_ACTIONS")},
+            )
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("[duplicate-export]", result.stdout)
+
 
 class SilentStubSectionTests(unittest.TestCase):
     path = "core/libs/prx/libSceExample/Export.cpp"

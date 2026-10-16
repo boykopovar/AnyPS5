@@ -336,7 +336,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::uint16_t writtenPh = _programHeaderLayoutBuilder->WriteLayout(buf, layoutRequest);
     _byteWriter->WriteU16(buf, kEhdrPhNumOffset, writtenPh);
     if (_fixedBase)
-        RebaseProgramHeaders(buf, phOff, phEntSize, writtenPh, base);
+        RebaseProgramHeaders(buf, tableOff, phEntSize, writtenPh, base);
 
     SectionHeaderTableRequest sectionRequest{};
     sectionRequest.DynStrOffset = dynStrOff;

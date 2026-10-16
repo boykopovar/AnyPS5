@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,7 +45,7 @@ bool DescriptorSet(const void* set, int descriptor) {
 
 void UnknownDescriptor(int descriptor) {
     const auto what = "select on descriptor " + std::to_string(descriptor) + " (not a libSceNet socket)";
-    NotImplemented_nid_no_patch(what.c_str());
+    throw std::runtime_error(what);
 }
 
 void ClearDescriptor(void* set, int descriptor) {
@@ -105,7 +106,7 @@ int HostPoll(KernelSocketPoll::Entry* descriptors, int count, int timeoutMillise
             auto& entry = descriptors[index];
             if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) return -GuestEbadf;
             if (!GuestSockets::PipeReady(entry.descriptor, entry.events, entry.revents)) {
-                NotImplemented_nid_no_patch(("select on descriptor " + std::to_string(entry.descriptor) + " (neither a socket nor a pipe)").c_str());
+                throw std::runtime_error("select on descriptor " + std::to_string(entry.descriptor) + " (neither a socket nor a pipe)");
             }
             if (entry.revents != 0) ++ready;
         }

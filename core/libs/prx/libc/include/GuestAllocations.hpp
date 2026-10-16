@@ -6,6 +6,7 @@
 #include <memory>
 #include <functional>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace GuestAllocations {
@@ -30,6 +31,7 @@ public:
 
     Lease() = default;
     explicit Lease(std::shared_ptr<const Ranges> ranges) : ranges(std::move(ranges)) {}
+    explicit Lease(Ranges ranges) : ranges(std::make_shared<const Ranges>(std::move(ranges))) {}
 
     const_iterator begin() const { return held().begin(); }
     const_iterator end() const { return held().end(); }

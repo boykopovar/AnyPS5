@@ -133,7 +133,7 @@ HostImportsProof HostImportsIdentity(const Context& context);
 std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, std::size_t bytes);
 
 // Deferred lease release (see GuestBufferMemory.cpp). An address-based build leases every readable
-// registered allocation until its write-back, which runs when its batch completed; the guest's
+// GPU-registered allocation until its write-back, which runs when its batch completed; the guest's
 // unmap/mprotect/free of a leased allocation waits for that through the registry's pin waiter, which
 // submits the recorder and finishes its batches up to the newest one recorded with a lease. SyncLeaseWork
 // says whether the build's work must instead be synced as soon as it is recorded

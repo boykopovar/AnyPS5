@@ -56,8 +56,7 @@ int APS5_VABI sceCoredumpAttachUserFile(uint32_t userValue, const char* path) {
 }
 
 int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
 }
 
 int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(uint32_t userValue, const void* mem, size_t size, const char* name) {
@@ -68,8 +67,7 @@ int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(uint32_t userValue, const 
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(void) {
-    NotImplemented_nid_no_patch("Uxqkdta7wEg");
-    return 0;
+    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
 }
 
 void APS5_VABI sceCoredumpDebugTextOut(const char* str, int len) {
@@ -95,13 +93,11 @@ int APS5_VABI sceCoredumpGetStopInfoCpu(void* info, size_t size) {
 int APS5_VABI sceCoredumpGetThreadContextInfo(void* threadContextInfo, size_t threadContextInfoSize) {
     (void)threadContextInfo;
     (void)threadContextInfoSize;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
 }
 
 int APS5_VABI sceCoredumpWriteUserString() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
 }
 
 int APS5_VABI sceCoredumpAttachUserMemoryFile(uint32_t userValue, const void* mem, size_t size) {

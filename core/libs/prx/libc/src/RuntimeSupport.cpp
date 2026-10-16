@@ -193,7 +193,6 @@ unsigned __int128 APS5_VABI __umodti3_nid_postfix(unsigned __int128 dividend, un
 }
 
 void APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(void*) {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 }

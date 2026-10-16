@@ -272,7 +272,6 @@ int APS5_VABI sceHttpSetAuthInfoCallback(int id, HttpAuthInfoCallback callback, 
 int APS5_VABI sceHttpSetCookieEnabled(int id, int enable) {
     (void)id;
     if (static_cast<uint32_t>(enable) > 1) return ERROR_INVALID_VALUE;
-    if (enable != 0) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

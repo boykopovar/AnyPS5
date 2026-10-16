@@ -4,22 +4,12 @@
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/DcbState/include/Marker.hpp"
+#include "prx/libSceAgc/DcbState/include/Workload.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
-#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-namespace {
-
-std::uint32_t* RejectUnregisteredWorkloadStream(CommandBuffer* buf, std::uint32_t streamId, const char* function) {
-    if (buf == nullptr || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
-    NotImplemented_nid_no_patch(function);
-    return nullptr;
-}
-
-}
 
 extern "C" {
 
@@ -72,28 +62,26 @@ std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, 
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t videoOutHandle, std::int32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
-    (void)buf;
-    (void)videoOutHandle;
-    (void)displayBufferIndex;
-    (void)flipMode;
-    (void)flipArg;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    auto* packet = Agc::Command::Allocate(buf, AgcDriver::FlipPacketWords, __func__);
+    packet[0] = AgcDriver::FlipPacketHeader;
+    packet[1] = videoOutHandle;
+    packet[2] = static_cast<std::uint32_t>(displayBufferIndex);
+    packet[3] = flipMode;
+    packet[4] = static_cast<std::uint32_t>(static_cast<std::uint64_t>(flipArg));
+    packet[5] = static_cast<std::uint32_t>(static_cast<std::uint64_t>(flipArg) >> 32u);
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount) {
-    (void)workloadIds;
-    (void)workloadCount;
-    return RejectUnregisteredWorkloadStream(buf, streamId, __func__);
+    return Agc::Workload::WriteActive(buf, streamId, workloadIds, workloadCount, __func__);
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadComplete(CommandBuffer* buf, std::uint32_t streamId, std::uint32_t workloadId) {
-    (void)workloadId;
-    return RejectUnregisteredWorkloadStream(buf, streamId, __func__);
+    return Agc::Workload::WriteComplete(buf, streamId, workloadId, __func__);
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadStreamInactive(CommandBuffer* buf, std::uint32_t streamId) {
-    return RejectUnregisteredWorkloadStream(buf, streamId, __func__);
+    return Agc::Workload::WriteStreamInactive(buf, streamId, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {
@@ -108,6 +96,18 @@ uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
     (void)color;
     auto* packet = Agc::Marker::Push(buf, str, __func__);
+    Agc::Marker::Pop(buf, __func__);
+    return packet;
+}
+
+uint32_t* APS5_VABI sceAgcAcbPushMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    return Agc::Marker::Push(buf, str, length, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    auto* packet = Agc::Marker::Push(buf, str, length, __func__);
     Agc::Marker::Pop(buf, __func__);
     return packet;
 }

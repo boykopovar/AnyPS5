@@ -55,7 +55,6 @@ int APS5_VABI sceProprietaryVoiceChatHelperGetVoiceChatUsageState(void) {
     auto& helper = State();
     std::lock_guard lock(helper.mutex);
     RequireInitialized(helper, __func__);
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

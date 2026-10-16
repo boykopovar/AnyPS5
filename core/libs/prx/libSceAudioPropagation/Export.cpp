@@ -295,8 +295,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPath(AudioPropagationHan
     static_cast<void>(path);
     static_cast<void>(data);
     static_cast<void>(gain);
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    throw std::invalid_argument(std::string(__func__) + ": audio paths are outside the no-propagation model");
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle system, const RenderInfo* infos, std::uint32_t count) {

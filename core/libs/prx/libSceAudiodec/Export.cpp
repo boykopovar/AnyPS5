@@ -68,7 +68,6 @@ std::int32_t wordSizeOf(const void* param) {
 
 std::int32_t validateWordSize(std::int32_t wordSize) {
     if (wordSize == Audiodec::WORD_SIZE_16BIT || wordSize == Audiodec::WORD_SIZE_FLOAT) return 0;
-    if (wordSize == 0) NotImplemented_nid_no_patch("libSceAudiodec 24-bit PCM output");
     return ERROR_INVALID_WORD_LENGTH;
 }
 

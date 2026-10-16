@@ -48,7 +48,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     const auto fileOffset = [&](std::uint64_t address, std::uint64_t size) {
         for (const auto& header : headers) {
             if (header.Type != 1 || address < header.MappedAddress || address - header.MappedAddress > header.FileSize || size > header.FileSize - (address - header.MappedAddress)) continue;
-            const auto offset = header.Offset + address - header.MappedAddress;
+            const auto relative = address - header.MappedAddress;
+            if (header.Offset > std::numeric_limits<std::uint64_t>::max() - relative)
+                throw Domain::RelinkerException("Code analysis: file offset overflow", address);
+            const auto offset = header.Offset + relative;
             range(offset, size);
             return offset;
         }

@@ -355,7 +355,7 @@ int OpenHostWatch(int descriptor, std::uint32_t notes, HostWatch& host) {
             return GUEST_EINVAL;
         }
         if (type != FILE_TYPE_DISK) {
-            NotImplemented_nid_no_patch("EVFILT_VNODE: a descriptor that is not a file or a directory");
+            throw std::invalid_argument("EVFILT_VNODE: a descriptor that is not a file or a directory");
         }
         host.target = ::ReOpenFile(handle, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
     }
@@ -435,7 +435,7 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
         return GUEST_EINVAL;
     }
     if (!S_ISREG(status.st_mode) && !S_ISDIR(status.st_mode)) {
-        NotImplemented_nid_no_patch("EVFILT_VNODE: a descriptor that is not a file or a directory");
+        throw std::invalid_argument("EVFILT_VNODE: a descriptor that is not a file or a directory");
     }
     host.target = ::fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
     if (host.target < 0) {
@@ -634,7 +634,7 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
         return GUEST_EINVAL;
     }
     if (!S_ISREG(status.st_mode) && !S_ISDIR(status.st_mode)) {
-        NotImplemented_nid_no_patch("EVFILT_VNODE: a descriptor that is not a file or a directory");
+        throw std::invalid_argument("EVFILT_VNODE: a descriptor that is not a file or a directory");
     }
     host.directory = S_ISDIR(status.st_mode);
     const auto path = "/proc/self/fd/" + std::to_string(descriptor);
@@ -699,7 +699,7 @@ int VnodeDescriptorError(int descriptor) {
 
 void RequireVnodeNotes(std::uint32_t fflags) {
     if ((fflags & ~MAPPED_NOTES) != 0) {
-        NotImplemented_nid_no_patch(("EVFILT_VNODE: fflags " + std::to_string(fflags & ~MAPPED_NOTES)).c_str());
+        throw std::invalid_argument("EVFILT_VNODE: unsupported fflags " + std::to_string(fflags & ~MAPPED_NOTES));
     }
 }
 

@@ -133,7 +133,10 @@ public:
                     }
                 }
                 if (!container) throw RelinkerException("Init/fini array is not file-backed", arrayVa);
-                std::uint64_t arrayFileOff = container->fileOffset + (arrayVa - container->vaddr);
+                const auto relative = arrayVa - container->vaddr;
+                if (container->fileOffset > std::numeric_limits<std::uint64_t>::max() - relative)
+                    throw RelinkerException("Init/fini array file offset overflow", arrayVa);
+                std::uint64_t arrayFileOff = container->fileOffset + relative;
                 if (arrayFileOff > elfBytes.size() || arraySz > elfBytes.size() - arrayFileOff)
                     throw RelinkerException("Init/fini array is out of bounds", arrayVa);
                 for (std::uint64_t k = 0; k < arraySz / 8; ++k) {

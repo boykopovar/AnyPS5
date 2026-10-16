@@ -142,11 +142,35 @@ static void TestInvalidListener() {
     RejectListener(&param, 0);
 }
 
+static void TestDefaultApply() {
+    const auto listenerParam = Listener();
+    Ngs2GeomListenerWork listener{};
+    Require(sceNgs2GeomCalcListener(&listenerParam, &listener, 0) == SCE_NGS2_OK);
+    Ngs2GeomSourceParam source{};
+    Require(sceNgs2GeomResetSourceParam(&source) == SCE_NGS2_OK);
+    Ngs2GeomAttribute attribute;
+    Ngs2GeomAttribute defaultAttribute;
+    std::memset(&attribute, 0x5a, sizeof(attribute));
+    Require(sceNgs2GeomApply(&listener, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(sceNgs2GeomApply(&listener, &source, &defaultAttribute, 15) == SCE_NGS2_OK);
+    Require(std::memcmp(&attribute, &defaultAttribute, sizeof(attribute)) == 0);
+    Require(attribute.pitch_ratio == 1.0f);
+    Require(attribute.a3d_attrib.position.z == 0.0f);
+    Require(attribute.level[0] > 0.0f);
+    std::memset(&attribute, 0x5a, sizeof(attribute));
+    Require(sceNgs2GeomApply(&listener, &source, &attribute, 16) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 1.0f);
+    Require(attribute.a3d_attrib.position.x == 0.0f && attribute.a3d_attrib.position.y == 0.0f && attribute.a3d_attrib.position.z == 0.0f);
+    Require(attribute.level[0] == 0.0f);
+    Require(sceNgs2GeomApply(&listener, &source, nullptr, 0) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+}
+
 int main() {
     TestLayouts();
     TestResetListenerParam();
     TestResetSourceParam();
     TestListenerTransform();
     TestInvalidListener();
+    TestDefaultApply();
     return 0;
 }

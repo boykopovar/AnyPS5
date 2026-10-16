@@ -12,6 +12,9 @@
 #include <span>
 
 extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps);
+extern "C" int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Shader* vs, const Shader* ps);
+extern "C" int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps);
+extern "C" int APS5_VABI sceAgcUnknown_vieBRwlh1Lw(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 extern "C" int APS5_VABI sceAgcUpdateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 
@@ -120,6 +123,13 @@ void testMapping() {
     check(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
     check(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
     checkIdentity(regular, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
+
+    auto updated = filled();
+    const auto untouched = filled();
+    check(sceAgcUpdateInterpolantMapping_0100(updated.data(), &gs, &ps) == 0, "interpolant mapping update failed");
+    check(preparedCount == inputs.size(), "interpolant mapping update prepared registers past its inputs");
+    check(std::memcmp(updated.data(), regular.data(), written) == 0, "interpolant mapping update differs from the created mapping");
+    check(std::memcmp(updated.data() + inputs.size(), untouched.data(), sizeof(updated) - written) == 0, "interpolant mapping update wrote past its inputs");
 }
 
 void testUpdateMapping() {
@@ -209,7 +219,7 @@ int main() {
         testMapping();
         testUpdateMapping();
         testRejections();
-        check(mappings == 7u && links == 5u, "mapping preparation call count changed");
+        check(mappings == 8u && links == 6u, "mapping preparation call count changed");
         LibcRunShutdown_nid_postfix();
         std::puts("AGC interpolant mapping tests passed");
         return 0;

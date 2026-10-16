@@ -127,6 +127,15 @@ int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Sh
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue, true);
 }
 
+int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Shader* vs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, vs, ps, CreateInterpolantValue, false);
+}
+
+APS5_EXPORT("dbOlWdppb4o", sceAgcUnknownCreateInterpolantMapping);
+int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue, true);
+}
+
 int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16, true);
 }

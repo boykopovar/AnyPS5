@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -14,7 +15,7 @@ int APS5_VABI sceAgcSuspendPoint(void) {
 }
 
 int APS5_VABI sceAgcSetSubmitMode(std::uint32_t mode) {
-    if (mode != 0) NotImplemented_nid_no_patch(__func__);
+    if (mode != 0) throw std::invalid_argument("sceAgcSetSubmitMode: only submit mode 0 is supported");
     return 0;
 }
 

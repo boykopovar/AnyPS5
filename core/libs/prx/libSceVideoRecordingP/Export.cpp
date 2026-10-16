@@ -54,9 +54,14 @@ int APS5_VABI sceVideoRecordingQueryMemSize(const void* param) {
 
 int APS5_VABI sceVideoRecordingSetInfo(int32_t info, const void* data, size_t size) {
     if (data == nullptr && size != 0) APS5_INVALID_ARG_EX;
-    const auto* bytes = static_cast<const unsigned char*>(data);
     std::lock_guard lock(g_infoMutex);
-    g_info[info].assign(bytes, bytes + size);
+    auto& value = g_info[info];
+    if (size == 0) {
+        value.clear();
+        return 0;
+    }
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    value.assign(bytes, bytes + size);
     return 0;
 }
 
