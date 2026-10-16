@@ -39,7 +39,7 @@ namespace ShaderRecompiler
             state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, own, zero, zero, zero);
             return;
         }
-        state.module.AddFunction(spv::OpGroupNonUniformBallot, TypeU32Vector(state, 4u), result, ConstantU32(state, spv::ScopeSubgroup), predicate);
+        state.module.AddSubgroupBallot(TypeU32Vector(state, 4u), result, ConstantU32(state, spv::ScopeSubgroup), predicate);
     }
 
     void EmitSubgroupBallotFindLsb(SpirvEmitterState& state, std::uint32_t result, std::uint32_t ballot) {

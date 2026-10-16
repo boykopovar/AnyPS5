@@ -298,6 +298,64 @@ void testIdsBeyondTheBoundAreRejected() {
     check(rejected, "a module whose ids reach its bound was specialized");
 }
 
+void testBlockBallotsOfOnePredicateShareOneBallot() {
+    SpirvModule module;
+    const auto typeBool = module.Type(spv::OpTypeBool);
+    const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
+    const auto typeBallot = module.Type(spv::OpTypeVector, typeU32, 4u);
+    const auto typeVoid = module.Type(spv::OpTypeVoid);
+    const auto typeFunction = module.Type(spv::OpTypeFunction, typeVoid);
+    const auto scope = module.Constant(spv::OpConstant, typeU32, static_cast<std::uint32_t>(spv::ScopeSubgroup));
+    const auto truth = module.Constant(spv::OpConstantTrue, typeBool);
+    const auto other = module.Constant(spv::OpConstantFalse, typeBool);
+    const auto helper = module.AllocateId();
+    const auto main = module.AllocateId();
+    const auto first = module.AllocateId();
+    const auto repeated = module.AllocateId();
+    const auto distinct = module.AllocateId();
+    const auto inHelper = module.AllocateId();
+    const auto afterHelper = module.AllocateId();
+    const auto afterCall = module.AllocateId();
+    const auto afterLabel = module.AllocateId();
+    const auto next = module.AllocateId();
+    module.AddFunction(spv::OpFunction, typeVoid, main, spv::FunctionControlMaskNone, typeFunction);
+    module.AddFunction(spv::OpLabel, module.AllocateId());
+    module.AddSubgroupBallot(typeBallot, first, scope, truth);
+    module.AddSubgroupBallot(typeBallot, repeated, scope, truth);
+    module.AddSubgroupBallot(typeBallot, distinct, scope, other);
+    module.BeginHelperFunction();
+    module.AddFunction(spv::OpFunction, typeVoid, helper, spv::FunctionControlMaskNone, typeFunction);
+    module.AddFunction(spv::OpLabel, module.AllocateId());
+    module.AddSubgroupBallot(typeBallot, inHelper, scope, truth);
+    module.AddFunction(spv::OpReturn);
+    module.AddFunction(spv::OpFunctionEnd);
+    module.EndHelperFunction();
+    module.AddSubgroupBallot(typeBallot, afterHelper, scope, truth);
+    module.AddFunction(spv::OpFunctionCall, typeVoid, module.AllocateId(), helper);
+    module.AddSubgroupBallot(typeBallot, afterCall, scope, truth);
+    module.AddFunction(spv::OpBranch, next);
+    module.AddFunction(spv::OpLabel, next);
+    module.AddSubgroupBallot(typeBallot, afterLabel, scope, truth);
+    module.AddFunction(spv::OpReturn);
+    module.AddFunction(spv::OpFunctionEnd);
+    const auto words = module.Finalize();
+    std::map<std::uint32_t, std::uint32_t> ballotSources;
+    std::map<std::uint32_t, std::uint32_t> copySources;
+    for (std::size_t offset = 5; offset < words.size(); offset += words[offset] >> spv::WordCountShift) {
+        if ((words[offset] >> spv::WordCountShift) == 0u) break;
+        const auto opcode = words[offset] & 0xffffu;
+        if (opcode == spv::OpGroupNonUniformBallot) ballotSources[words[offset + 2u]] = words[offset + 4u];
+        if (opcode == spv::OpCopyObject) copySources[words[offset + 2u]] = words[offset + 3u];
+    }
+    check(ballotSources.size() == 5u, "a block did not ballot each predicate exactly once");
+    check(copySources.size() == 2u && copySources.contains(repeated) && copySources.contains(afterHelper), "a repeated ballot in one block was not a copy of the first");
+    check(copySources[repeated] == first && copySources[afterHelper] == first, "a repeated ballot did not copy the block's first ballot");
+    check(ballotSources[distinct] == other, "a ballot of another predicate was reused");
+    check(ballotSources.contains(inHelper), "a helper function reused a ballot of the function it interrupted");
+    check(ballotSources.contains(afterCall), "a ballot after a function call reused one from before the call");
+    check(ballotSources.contains(afterLabel), "a ballot in a later block reused one from an earlier block");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();
@@ -312,6 +370,7 @@ int main() {
     testModulesAreIndependent();
     testIdsStayUniqueBeyondCacheCapacity();
     testEmittedWordsAreStable();
+    testBlockBallotsOfOnePredicateShareOneBallot();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
