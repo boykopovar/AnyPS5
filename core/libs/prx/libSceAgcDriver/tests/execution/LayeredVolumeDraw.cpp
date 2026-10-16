@@ -176,7 +176,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     };
     if (mesh) geometry.graphics = ShaderRecompiler::GraphicsCompileContext{0, {}, Subgroup, std::nullopt, {draw.indexAddress, draw.indexCount, draw.indexSize, draw.instanceCount}};
     geometry.useCache = false;
-    const auto geometryResult = ShaderRecompiler::Recompile(geometry);
+    auto geometryResult = ShaderRecompiler::Recompile(geometry);
     if (mesh) {
         for (const auto required : {ShaderRecompiler::PipelineSpecialization::MeshLayerBase, ShaderRecompiler::PipelineSpecialization::MeshLayerCount}) {
             bool found = false;
@@ -234,6 +234,17 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     if (mesh) {
         Require(DeclaresLayer(geometryResult.spirv), "the mesh program declares no Layer output");
 
+    }
+    if (mesh) {
+        const auto replaySafe = geometryResult.layerReplaySafe;
+        geometryResult.layerReplaySafe = false;
+        auto empty = draw;
+        empty.indexCount = 0u;
+        device.Draw(state, empty, shaders);
+        empty = draw;
+        empty.instanceCount = 0u;
+        device.Draw(state, empty, shaders);
+        geometryResult.layerReplaySafe = replaySafe;
     }
     device.Draw(state, draw, shaders);
     device.WaitIdle();
