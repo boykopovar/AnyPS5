@@ -320,12 +320,8 @@ void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(GuestLocale::IosBase* self) {
 void APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(GuestLocale::IosBase* self) {
     if (self == nullptr) throw std::invalid_argument("ios_base _Addstd: null stream");
     std::lock_guard lock(g_standardStreamMutex);
-    for (self->standardStream = 0; ++self->standardStream <= StandardStreamSlots; ) {
+    for (self->standardStream = 0; ++self->standardStream < StandardStreamSlots; ) {
         if (g_standardStreams[self->standardStream] == nullptr || g_standardStreams[self->standardStream] == self) break;
-    }
-    if (self->standardStream > StandardStreamSlots) {
-        self->standardStream = 0;
-        throw std::runtime_error("ios_base _Addstd: every standard stream slot is taken");
     }
     g_standardStreams[self->standardStream] = self;
     ++g_standardStreamOpens[self->standardStream];

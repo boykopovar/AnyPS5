@@ -176,14 +176,18 @@ static void CheckStandardStreams() {
     Require(streams[0].stream.standardStream == 1);
     _ZNSt8ios_baseD2Ev_nid_postfix(&streams[1].stream);
     Require(streams[1].stream.locale == nullptr && streams[1].stream.standardStream == 2);
-    for (int index = 2; index < 8; ++index) {
+    for (int index = 2; index < 7; ++index) {
         _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[index].stream);
         Require(streams[index].stream.standardStream == index + 1);
     }
-    Require(streams[8].stream.standardStream == 0);
-    RequireException([&] { _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[8].stream); });
-    Require(streams[8].stream.standardStream == 0);
-    for (int index = 2; index < 8; ++index) {
+    _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[7].stream);
+    _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[8].stream);
+    Require(streams[7].stream.standardStream == 8 && streams[8].stream.standardStream == 8);
+    _ZNSt8ios_baseD2Ev_nid_postfix(&streams[7].stream);
+    Require(streams[7].stream.locale == classic);
+    _ZNSt8ios_baseD2Ev_nid_postfix(&streams[8].stream);
+    Require(streams[8].stream.locale == nullptr);
+    for (int index = 2; index < 7; ++index) {
         _ZNSt8ios_baseD2Ev_nid_postfix(&streams[index].stream);
         Require(streams[index].stream.locale == nullptr && streams[index].stream.standardStream == index + 1);
     }
