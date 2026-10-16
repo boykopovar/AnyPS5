@@ -39,6 +39,7 @@ int APS5_VABI sceKernelClearEventFlag(KernelEventFlag ef, std::uint64_t bit_patt
 int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t set_pattern, int* num_wait_threads);
 int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat);
 int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat, KernelUseconds* timeout);
+int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle);
 }
 
 static constexpr int SCE_OK = 0;
@@ -249,22 +250,17 @@ int main() {
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
 
     Require(sceKernelCreateEventFlag(&ef, "multi_race", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
-    std::atomic<bool> t1Started{false};
-    std::atomic<bool> t2Started{false};
     std::atomic<int> t1Res{-1};
     std::atomic<int> t2Res{-1};
     std::uint64_t pat1 = 0;
     std::uint64_t pat2 = 0;
     std::thread t1([&] {
-        t1Started = true;
         t1Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pat1, nullptr);
     });
     std::thread t2([&] {
-        t2Started = true;
         t2Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL, &pat2, nullptr);
     });
-    while (!t1Started || !t2Started) std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    while (APS5_Test_GetEventFlagWaiterCount(ef) != 2) std::this_thread::yield();
     Require(sceKernelSetEventFlag(ef, 0x01) == SCE_OK);
     t1.join();
     t2.join();
@@ -287,8 +283,7 @@ int main() {
         ++delWaitersStarted;
         delRes2 = sceKernelWaitEventFlag(ef, 0x02, EVF_WAITMODE_AND, nullptr, nullptr);
     });
-    while (delWaitersStarted < 2) std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    while (delWaitersStarted < 2 || APS5_Test_GetEventFlagWaiterCount(ef) != 2) std::this_thread::yield();
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
     delT1.join();
     delT2.join();
