@@ -17,6 +17,8 @@ int APS5_VABI sceVoiceSetMuteFlag(std::uint32_t, bool);
 int APS5_VABI sceVoiceGetMuteFlag(std::uint32_t, bool*);
 int APS5_VABI sceVoiceGetPortInfo(std::uint32_t, VoicePortInfo*);
 int APS5_VABI sceVoiceReadFromOPort(std::uint32_t, void*, std::uint32_t*);
+int APS5_VABI sceVoiceEnableChat(void);
+int APS5_VABI sceVoiceDisableChat(void);
 int APS5_VABI sceVoiceResetPort(std::uint32_t);
 }
 
@@ -44,9 +46,16 @@ std::uint32_t CreatePort(std::int32_t type, float volume) {
 
 int main() {
     RequireThrows([] { sceVoiceResetPort(0); });
+    RequireThrows([] { sceVoiceEnableChat(); });
+    RequireThrows([] { sceVoiceDisableChat(); });
     VoiceInitParam init{};
     VoiceStartParam start{};
     Require(sceVoiceInit(&init, 0) == 0);
+    Require(sceVoiceEnableChat() == 0);
+    Require(sceVoiceEnableChat() == 0);
+    Require(sceVoiceDisableChat() == 0);
+    Require(sceVoiceDisableChat() == 0);
+    Require(sceVoiceEnableChat() == 0);
     Require(sceVoiceStart(&start) == 0);
     const auto input = CreatePort(2, 0.5f);
     const auto output = CreatePort(3, 0.25f);
