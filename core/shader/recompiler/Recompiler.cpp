@@ -781,11 +781,10 @@ std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t varian
     return entry->module;
 }
 
-std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
+std::span<const std::uint64_t> bindingPlanIdentity(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports) {
     struct BindingPlanKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
     key.clear();
-    key.push_back(variant.artifact.variantId);
     for (std::size_t index = 0; index < variant.info.info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
         key.push_back(descriptor.dwordCount);
@@ -808,6 +807,20 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     }
     key.push_back(exports.size());
     for (const auto mapping : exports) key.push_back(mapping);
+    return key;
+}
+
+bool specializedDiskCache(std::span<const std::byte> artifactIdentity) {
+    static const bool enabled = [] { return ShaderDiskCache::SpecializedEnabled() && !DebugProbeActive(); }();
+    return enabled && artifactIdentity.size() == ShaderDiskCache::ArtifactIdentityBytes;
+}
+
+std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, std::span<const std::uint64_t> identity, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet, std::span<const std::byte> artifactIdentity) {
+    struct BindingPlanMemoKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanMemoKeyStorage>();
+    key.clear();
+    key.push_back(variant.artifact.variantId);
+    key.insert(key.end(), identity.begin(), identity.end());
     static PrimedSharedMutex mutex;
     static std::map<std::vector<std::uint64_t>, std::shared_ptr<PreparedBindingPlan>> plans;
     std::shared_ptr<PreparedBindingPlan> plan;
@@ -822,7 +835,16 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     }
     std::call_once(plan->ready, [&] {
         try {
+            std::vector<std::byte> diskKey;
+            const bool disk = specializedDiskCache(artifactIdentity);
+            if (disk) {
+                ShaderDiskCache::BuildBindingPlanKey(artifactIdentity, identity, diskKey);
+                if (ShaderDiskCache::LoadBindingPlan(diskKey, plan->bindings)) {
+                    return;
+                }
+            }
             plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet);
+            if (disk) ShaderDiskCache::StoreBindingPlan(std::move(diskKey), std::make_shared<const DescriptorBindingPlan>(plan->bindings));
         } catch (...) {
             plan->failure = std::current_exception();
         }
@@ -831,7 +853,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     return plan;
 }
 
-std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target) {
+std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes, std::span<const PipelineSpecializationConstant> constants, const SpirvTarget& target, std::span<const std::byte> artifactIdentity, std::span<const std::uint64_t> identity, std::span<const std::uint32_t> moduleKey, bool registrationDefaults) {
     struct ModuleKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, ModuleKeyStorage>();
     key.clear();
@@ -851,7 +873,23 @@ std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderAr
     }
     std::call_once(entry->ready, [&] {
         try {
+            std::vector<std::byte> diskKey;
+            const bool disk = specializedDiskCache(artifactIdentity);
+            if (disk) {
+                ShaderDiskCache::BuildSpecializedKey(artifactIdentity, identity, moduleKey, classes, constants, registrationDefaults, diskKey);
+                ShaderDiskCache::SpecializedModule stored;
+                if (ShaderDiskCache::LoadSpecialized(diskKey, stored)) {
+                    auto module = std::make_shared<SpecializedModule>();
+                    module->spirv = std::move(stored.spirv);
+                    module->bindings = std::move(stored.bindings);
+                    module->pushData = stored.pushData;
+                    module->specializationId = constants.empty() ? 0u : nextVariantId();
+                    entry->module = std::move(module);
+                    return;
+                }
+            }
             entry->module = buildSpecializedModule(artifact, classes, constants, target);
+            if (disk) ShaderDiskCache::StoreSpecialized(std::move(diskKey), std::make_shared<const ShaderDiskCache::SpecializedModule>(ShaderDiskCache::SpecializedModule{entry->module->spirv, entry->module->bindings, entry->module->pushData}));
         } catch (...) {
             entry->failure = std::current_exception();
         }
@@ -889,7 +927,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .stencilReferenceDword = artifact.stencilReferenceDword,
         .variantId = artifact.variantId
     };
-    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules);
+    const auto exports = request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{};
+    const auto planIdentity = bindingPlanIdentity(variant, snapshot, exports);
+    const std::span<const std::byte> artifactIdentity{variant.artifactIdentity.data(), variant.artifactIdentity.size()};
+    const auto plan = preparedBindingPlan(variant, planIdentity, snapshot, exports, request.target.registrationModules, artifactIdentity);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
     std::shared_ptr<PreparedModuleEntry> entry;
     struct LocalModuleKeyStorage {};
@@ -964,7 +1005,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
                     constants.push_back({first + 5u, kind});
                 }
             }
-            const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, [&] { return specializeModule(variant.artifact, vertexClasses, constants, request.target); }) : specializeModule(variant.artifact, vertexClasses, constants, request.target);
+            const auto specialize = [&] { return specializeModule(artifact, vertexClasses, constants, request.target, artifactIdentity, planIdentity, moduleKey, registrationDefaults); };
+            const auto module = artifact.registrationModule && plan->bindings.specialization.empty() ? registrationModule(artifact.variantId, moduleKey, specialize) : specialize();
             if (variant.bindings.layout.UsesPushData() && !module->pushData) throw std::runtime_error("specialization removed the prepared push constant interface");
             auto selected = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings);
             entry->bindings = std::move(selected);
@@ -1062,35 +1104,45 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
     cacheHit = false;
     const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive();
     std::vector<std::byte> diskKey;
-    std::shared_ptr<const CompiledVariant> variant;
+    std::array<std::byte, ShaderDiskCache::ArtifactIdentityBytes> artifactIdentity{};
     if (disk) {
         ShaderDiskCache::BuildKey(request, HostSubgroupSize(request), diskKey);
+        std::vector<std::byte> identity;
+        ShaderDiskCache::BuildArtifactIdentity(diskKey, identity);
+        std::copy(identity.begin(), identity.end(), artifactIdentity.begin());
+    }
+    std::shared_ptr<const CompiledVariant> variant;
+    if (disk) {
         CompiledVariant loaded;
         if (ShaderDiskCache::Load(diskKey, loaded)) {
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
+            loaded.artifactIdentity = artifactIdentity;
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
         }
     }
     if (variant == nullptr) {
         static const bool layoutPair = std::getenv("APS5_NO_PERF_LAYOUT_PAIR") == nullptr;
+        std::shared_ptr<CompiledVariant> owned;
         std::exception_ptr emissionFailure;
         try {
             if (layoutPair && preparation != nullptr) {
-                variant = std::make_shared<const CompiledVariant>(PreparedInterface::Compile(source, request, *preparation, &emissionFailure));
+                owned = std::make_shared<CompiledVariant>(PreparedInterface::Compile(source, request, *preparation, &emissionFailure));
             } else {
                 auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request, preparation);
                 source.program.reset();
-                variant = std::make_shared<const CompiledVariant>(compileVariant(request, std::move(program), &emissionFailure));
+                owned = std::make_shared<CompiledVariant>(compileVariant(request, std::move(program), &emissionFailure));
             }
         } catch (...) {
             if (emissionFailure != nullptr && FailureMemo()) source.emissionFailures.push_back({request.shader.codeAddress, request.layout, emissionFailure});
             throw;
         }
+        owned->artifactIdentity = artifactIdentity;
         if (disk) {
-            if (auto persisted = ShaderDiskCache::Persist(diskKey, *variant)) variant = std::move(persisted);
-            else ShaderDiskCache::Store(std::move(diskKey), variant);
+            if (auto persisted = ShaderDiskCache::Persist(diskKey, *owned)) variant = std::move(persisted);
+            else ShaderDiskCache::Store(diskKey, owned);
         }
+        if (variant == nullptr) variant = std::move(owned);
     }
     source.program.reset();
     source.variants.push_back(variant);
