@@ -23,6 +23,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -523,6 +524,22 @@ void verifyOfflineEntryHelpers() {
     require(ShaderDiskCache::IsCurrentEntryHeader(std::span(file).first(ShaderDiskCache::EntryHeaderBytes), file.size()), "a current entry header is not recognized");
     require(!ShaderDiskCache::IsCurrentEntryHeader(std::span(file).first(ShaderDiskCache::EntryHeaderBytes), file.size() - 1), "a header with the wrong file size is recognized");
     require(!ShaderDiskCache::IsCurrentEntryHeader(std::span(file).first(8), file.size()), "a short header is recognized");
+
+    auto oversized = file;
+    const auto wrappedKeyBytes = std::numeric_limits<std::uint64_t>::max() - ShaderDiskCache::EntryHeaderBytes + 1;
+    const auto wrappedPayloadBytes = std::uint64_t(oversized.size());
+    std::memcpy(oversized.data() + 16, &wrappedKeyBytes, sizeof(wrappedKeyBytes));
+    std::memcpy(oversized.data() + 24, &wrappedPayloadBytes, sizeof(wrappedPayloadBytes));
+    require(!ShaderDiskCache::IsCurrentEntryHeader(std::span(oversized).first(ShaderDiskCache::EntryHeaderBytes), oversized.size()), "an entry header with an overflowing key length is recognized");
+    require(ShaderDiskCache::EntryKey(oversized).empty(), "an entry with an overflowing key length yields a key");
+    CompiledVariant oversizedDecoded;
+    require(ShaderDiskCache::DecodeEntry(oversized, key, oversizedDecoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with an overflowing key length decodes");
+
+    const auto maximumFileBytes = std::numeric_limits<std::uint64_t>::max();
+    const auto unalignedKeyBytes = maximumFileBytes - ShaderDiskCache::EntryHeaderBytes;
+    std::memcpy(oversized.data() + 16, &unalignedKeyBytes, sizeof(unalignedKeyBytes));
+    std::memcpy(oversized.data() + 24, &maximumFileBytes, sizeof(maximumFileBytes));
+    require(!ShaderDiskCache::IsCurrentEntryHeader(std::span(oversized).first(ShaderDiskCache::EntryHeaderBytes), maximumFileBytes), "an entry header whose key alignment overflows is recognized");
 
     const auto before = ShaderDiskCache::Totals();
     OfflineCompileTimings timings;

@@ -171,9 +171,10 @@ struct FileHeader {
 
 static_assert(sizeof(FileHeader) == ShaderDiskCache::EntryHeaderBytes);
 
+constexpr std::size_t EntryAlignment = 8;
+
 std::size_t PayloadOffset(std::size_t keyBytes) {
-    constexpr std::size_t alignment = 8;
-    return (sizeof(FileHeader) + keyBytes + alignment - 1) / alignment * alignment;
+    return (sizeof(FileHeader) + keyBytes + EntryAlignment - 1) / EntryAlignment * EntryAlignment;
 }
 
 class SharedPlanTable {
@@ -1434,6 +1435,7 @@ bool parseEntryHeader(std::span<const std::byte> bytes, std::uint64_t fileBytes,
     if (bytes.size() < sizeof(FileHeader) || fileBytes < sizeof(FileHeader)) return false;
     std::memcpy(&header, bytes.data(), sizeof(header));
     if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion() || header.keyBytes == 0) return false;
+    if (header.keyBytes > fileBytes - sizeof(FileHeader) || header.keyBytes > std::numeric_limits<std::size_t>::max() - sizeof(FileHeader) - (EntryAlignment - 1)) return false;
     payloadOffset = PayloadOffset(static_cast<std::size_t>(header.keyBytes));
     return payloadOffset <= fileBytes && header.payloadBytes == fileBytes - payloadOffset;
 }
