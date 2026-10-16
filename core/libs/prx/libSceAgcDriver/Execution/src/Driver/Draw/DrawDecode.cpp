@@ -35,6 +35,7 @@ void InitializeMerged(const QueueState& queue, DrawProgram& program, std::uint32
     program.mergedPointerRequired = pointerRequired;
     program.firstUserSgpr = 0;
     program.userData.insert(program.userData.begin(), 8, 0);
+    program.hiddenUserWords = 8;
     Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, pointerBase);
     Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, pointerBase + 1);
     if (staticAbi) return;

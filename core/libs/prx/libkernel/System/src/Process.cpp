@@ -31,6 +31,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -178,6 +179,11 @@ struct GuestResourceLimit {
     std::int64_t rlim_cur;
     std::int64_t rlim_max;
 };
+
+namespace {
+std::mutex openFileLimitMutex;
+std::optional<GuestResourceLimit> guestOpenFileLimit;
+}
 
 struct GuestResourceUsage {
     KernelTimeval ru_utime;
@@ -340,6 +346,13 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
 
     GuestResourceLimit current{};
     getrlimit_nid_postfix(resource, &current);
+    if (resource == guestRlimitNofile) {
+        if (requested.rlim_max <= current.rlim_max && requested.rlim_cur <= requested.rlim_max) {
+            std::lock_guard lock(openFileLimitMutex);
+            guestOpenFileLimit = requested;
+            return 0;
+        }
+    }
     if (requested.rlim_cur != current.rlim_cur || requested.rlim_max != current.rlim_max)
         throw std::runtime_error("setrlimit: changing the limit of resource " + std::to_string(resource) + " is not supported");
     return 0;
@@ -547,17 +560,19 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
         return 0;
     }
     case guestRlimitNofile: {
+        std::lock_guard lock(openFileLimitMutex);
+        if (!guestOpenFileLimit) {
 #ifdef _WIN32
-        constexpr std::int64_t crtDescriptors = 8192;
-        limit->rlim_cur = crtDescriptors;
-        limit->rlim_max = crtDescriptors;
+            constexpr std::int64_t crtDescriptors = 8192;
+            guestOpenFileLimit = GuestResourceLimit{crtDescriptors, crtDescriptors};
 #else
-        rlimit native{};
-        if (::getrlimit(RLIMIT_NOFILE, &native) != 0)
-            throw std::system_error(errno, std::generic_category(), "getrlimit: getrlimit failed");
-        limit->rlim_cur = toGuestLimit(native.rlim_cur);
-        limit->rlim_max = toGuestLimit(native.rlim_max);
+            rlimit native{};
+            if (::getrlimit(RLIMIT_NOFILE, &native) != 0)
+                throw std::system_error(errno, std::generic_category(), "getrlimit: getrlimit failed");
+            guestOpenFileLimit = GuestResourceLimit{toGuestLimit(native.rlim_cur), toGuestLimit(native.rlim_max)};
 #endif
+        }
+        *limit = *guestOpenFileLimit;
         return 0;
     }
     case guestRlimitCpu:

@@ -94,7 +94,7 @@ void ComputePipelineCapture::Validate() const {
     RequireCapture(mainEntry, "compute main entry point missing");
     RequireCapture(deviceName.size() < VK_MAX_PHYSICAL_DEVICE_NAME_SIZE && deviceName.find('\0') == std::string::npos, "invalid device name");
     RequireCapture((flags & ~(VK_PIPELINE_CREATE_DISPATCH_BASE_BIT | VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR)) == 0, "unsupported pipeline flags");
-    RequireCapture(stageFlags == 0, "unsupported shader stage flags");
+    RequireCapture(stageFlags == 0 || (stageFlags == VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT && requiredSubgroupSize != 0), "unsupported shader stage flags");
     RequireCapture(requiredSubgroupSize == 0 || (requiredSubgroupSize <= 128 && (requiredSubgroupSize & (requiredSubgroupSize - 1u)) == 0), "invalid required subgroup size");
     RequireCapture(sets.size() <= 8, "too many descriptor sets");
     std::size_t totalBindings = 0;

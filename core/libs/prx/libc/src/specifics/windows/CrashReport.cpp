@@ -2,7 +2,9 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include "prx/libc/include/CallTrace.hpp"
+#include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -304,6 +306,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
         // Another thread is already reporting; let it finish before this fault ends the process.
         Sleep(INFINITE);
     }
+    LibcRunEndFlush_nid_no_patch();
     const auto* context = info->ContextRecord;
     char line[MAX_PATH + 64];
     char threadName[128] = "";
@@ -394,6 +397,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     ReportCallTrace();
     std::fflush(stderr);
     ReportAllThreads();
+    LibcRunFailureReports_nid_no_patch();
     std::fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -546,10 +550,12 @@ void ReportBacktrace(const char* what, bool reportThreads) {
 
 void AbortSignalHandler(int) {
     ReportBacktrace("abort() (SIGABRT)", true);
+    LibcRunFailureReports_nid_no_patch();
 }
 
 void InvalidParameterHandler(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, std::uintptr_t) {
     ReportBacktrace("UCRT invalid parameter", true);
+    LibcRunFailureReports_nid_no_patch();
 }
 
 // Static destruction runs on the thread that ends the process (ExitProcess -> DLL_PROCESS_DETACH),

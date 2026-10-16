@@ -26,6 +26,59 @@ namespace ShaderRecompiler
             return value;
         }
 
+        std::uint32_t SpannedLane(SpirvEmitterState& state) {
+            return EmitBinaryU32(state, spv::OpBitwiseAnd, EmitLocalInvocationIndex(state), ConstantU32(state, 63u));
+        }
+
+        std::uint32_t SpannedSlot(SpirvEmitterState& state, std::uint32_t index) {
+            if (state.spannedExchangeVariable == 0u) {
+                state.spannedExchangeVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, 64u), spv::StorageClassWorkgroup);
+                state.module.AddName(state.spannedExchangeVariable, "wave_exchange");
+            }
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAccessChain, TypeU32ElementPointer(state, spv::StorageClassWorkgroup), pointer, state.spannedExchangeVariable, index);
+            return pointer;
+        }
+
+        void SpannedBarrier(SpirvEmitterState& state) {
+            state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
+        }
+
+        std::uint32_t SpannedLoad(SpirvEmitterState& state, std::uint32_t index) {
+            const auto value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), value, SpannedSlot(state, index));
+            return value;
+        }
+
+        void SpannedBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
+            const auto lane = SpannedLane(state);
+            SpannedBarrier(state);
+            state.module.AddFunction(spv::OpAtomicStore, SpannedSlot(state, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 1u))), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 0u));
+            SpannedBarrier(state);
+            const auto bit = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), ConstantU32(state, 1u), EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u)));
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpAtomicOr, TypeU32(state), previous, SpannedSlot(state, EmitBinaryU32(state, spv::OpShiftRightLogical, lane, ConstantU32(state, 5u))), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), Select(state, TypeU32(state), predicate, bit, ConstantU32(state, 0u)));
+            SpannedBarrier(state);
+            const auto low = SpannedLoad(state, ConstantU32(state, 0u));
+            const auto high = SpannedLoad(state, ConstantU32(state, 1u));
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, low, high, ConstantU32(state, 0u), ConstantU32(state, 0u));
+        }
+
+        void SpannedShuffle(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane) {
+            const bool boolean = type == TypeBool(state);
+            if (!boolean && type != TypeU32(state) && type != TypeF32(state)) throw SpannedWaveUnsupported("a spanned wave shuffles only 32-bit and boolean values");
+            std::uint32_t word = value;
+            if (boolean) word = Select(state, TypeU32(state), value, ConstantU32(state, 1u), ConstantU32(state, 0u));
+            else if (type != TypeU32(state)) word = Unary(state, spv::OpBitcast, TypeU32(state), value);
+            SpannedBarrier(state);
+            state.module.AddFunction(spv::OpStore, SpannedSlot(state, SpannedLane(state)), word);
+            SpannedBarrier(state);
+            const auto read = SpannedLoad(state, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 63u)));
+            if (boolean) state.module.AddFunction(spv::OpINotEqual, type, result, read, ConstantU32(state, 0u));
+            else if (type != TypeU32(state)) state.module.AddFunction(spv::OpBitcast, type, result, read);
+            else state.module.AddFunction(spv::OpCopyObject, type, result, read);
+        }
+
     }
 
     bool HostSubgroupSingleLane(const SpirvEmitterState& state) {
@@ -33,6 +86,14 @@ namespace ShaderRecompiler
     }
 
     void EmitSubgroupBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
+        if (state.spannedWave) {
+            SpannedBallot(state, result, predicate);
+            return;
+        }
+        EmitHostSubgroupBallot(state, result, predicate);
+    }
+
+    void EmitHostSubgroupBallot(SpirvEmitterState& state, std::uint32_t result, std::uint32_t predicate) {
         if (HostSubgroupSingleLane(state)) {
             const auto zero = ConstantU32(state, 0u);
             const auto own = Select(state, TypeU32(state), predicate, ConstantU32(state, 1u), zero);
@@ -43,6 +104,19 @@ namespace ShaderRecompiler
     }
 
     void EmitSubgroupBallotFindLsb(SpirvEmitterState& state, std::uint32_t result, std::uint32_t ballot) {
+        if (state.spannedWave) {
+            const auto low = state.module.AllocateId();
+            const auto high = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), low, ballot, 0u);
+            state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), high, ballot, 1u);
+            const auto lowFirst = state.module.AllocateId();
+            const auto highFirst = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), lowFirst, GlslStd450(state), GLSLstd450FindILsb, low);
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), highFirst, GlslStd450(state), GLSLstd450FindILsb, high);
+            const auto lowActive = Binary(state, spv::OpINotEqual, TypeBool(state), low, ConstantU32(state, 0u));
+            state.module.AddFunction(spv::OpSelect, TypeU32(state), result, lowActive, lowFirst, EmitAddU32(state, highFirst, ConstantU32(state, 32u)));
+            return;
+        }
         if (HostSubgroupSingleLane(state)) {
             const auto own = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), own, ballot, 0u);
@@ -53,11 +127,23 @@ namespace ShaderRecompiler
     }
 
     void EmitSubgroupShuffle(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane) {
+        if (state.spannedWave) {
+            SpannedShuffle(state, type, result, value, lane);
+            return;
+        }
         if (HostSubgroupSingleLane(state)) {
             state.module.AddFunction(spv::OpCopyObject, type, result, value);
             return;
         }
         state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, result, ConstantU32(state, spv::ScopeSubgroup), value, lane);
+    }
+
+    void EmitSubgroupShuffleInHalf(SpirvEmitterState& state, std::uint32_t type, std::uint32_t result, std::uint32_t value, std::uint32_t lane) {
+        if (!state.spannedWave) {
+            EmitSubgroupShuffle(state, type, result, value, EmitHostSubgroupLane(state, lane));
+            return;
+        }
+        state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, result, ConstantU32(state, spv::ScopeSubgroup), value, EmitBinaryU32(state, spv::OpBitwiseAnd, lane, ConstantU32(state, 31u)));
     }
 
     void EmitSubgroupElect(SpirvEmitterState& state, std::uint32_t result) {
@@ -69,12 +155,14 @@ namespace ShaderRecompiler
     }
 
     std::uint32_t EmitSubgroupLocalInvocationId(SpirvEmitterState& state) {
+        if (state.spannedWave) return SpannedLane(state);
         const auto value = HostInvocationId(state);
         if (state.splitSubgroup) return EmitBinaryU32(state, spv::OpBitwiseAnd, value, ConstantU32(state, 31u));
         return state.laneHalf == 0 ? value : EmitAddU32(state, value, ConstantU32(state, 32));
     }
 
     std::uint32_t EmitHostSubgroupLane(SpirvEmitterState& state, std::uint32_t lane) {
+        if (state.spannedWave) return lane;
         if (!state.splitSubgroup) return lane;
         const auto base = EmitBinaryU32(state, spv::OpBitwiseAnd, HostInvocationId(state), ConstantU32(state, ~31u));
         return EmitAddU32(state, base, lane);

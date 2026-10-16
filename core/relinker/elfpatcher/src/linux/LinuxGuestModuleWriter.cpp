@@ -141,18 +141,18 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         bytes.insert(bytes.end(), stub.begin(), stub.end());
         return start;
     };
-    const auto callThrough = [&](std::uint64_t target) {
+    const auto finalizer = [&](std::uint64_t target) {
         if (target == 0) return std::uint64_t{};
         const auto start = address();
-        const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(start + 5);
+        const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(start + 11);
         if (distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Guest finaliser exceeds relative branch range");
-        bytes.push_back(0xe9);
+        bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe9});
         Io::AppendU32(bytes, static_cast<std::uint32_t>(distance));
         return start;
     };
     const auto init = lifecycle(image.Init);
-    const auto fini = callThrough(image.Fini);
+    const auto fini = finalizer(image.Fini);
     Io::AlignBuffer(bytes, 8);
     const auto dynamicOffset = bytes.size();
     const auto dynamicAddress = address();

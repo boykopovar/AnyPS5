@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_OPTIMIZATION_INCLUDE_OPTIMIZATION_SRTWALKER_HPP
 
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "UserDataUse.hpp"
 
 #include <cstdint>
 #include <span>
@@ -35,6 +36,7 @@ struct SrtRuntime {
     SrtMemoryProbe accessible = nullptr;
     SrtMemoryProbe pendingWrite = nullptr;
     SrtMemoryBulkReader readWords = nullptr;
+    SrtUserDataUse* userDataUse = nullptr;
 };
 
 enum class RuntimeValueType {

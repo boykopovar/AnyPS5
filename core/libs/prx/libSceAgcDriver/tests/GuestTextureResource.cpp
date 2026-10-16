@@ -104,6 +104,10 @@ void RunGuestTextureResourceTests() {
     Fields nullType = base;
     nullType.typeRaw = 0;
     Require(IsNullTextureResource(pack(nullType)), "a type-0 texture with a nonzero base was not classified as null");
+    nullType.typeRaw = 1;
+    Require(IsNullTextureResource(pack(nullType)), "a type-1 texture with a nonzero base was not classified as null");
+    nullType.typeRaw = 2;
+    Require(!IsNullTextureResource(pack(nullType)), "a reserved type-2 texture was classified as null");
     auto result = DecodeTextureResource(pack(base));
     Require(result.baseAddress == (base.base40 << 8u), "decoded base address changed");
     Require(result.width == 16 && result.height == 16, "decoded width or height changed");

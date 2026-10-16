@@ -124,6 +124,24 @@ class CheckCompileTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("1 translation units compile", result.stdout)
 
+    def test_a_build_directory_beside_the_checkout_is_matched(self):
+        repo = self.root / "AnyPS5"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        sibling = self.root / "sibling-build"
+        sibling.mkdir()
+        source = repo / "src" / "unit.cpp"
+        source.parent.mkdir()
+        source.write_text("int x;\n", encoding="utf-8")
+        script = self.compiler("import sys\nsys.exit(0)\n")
+        entry = {"directory": str(sibling), "command": f'"{sys.executable}" "{script}" "{source}"',
+                 "file": str(source)}
+        (sibling / "compile_commands.json").write_text(json.dumps([entry]), encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(TOOL), "--build", str(sibling), "src/unit.cpp"],
+                                cwd=repo, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+
     def test_a_changed_file_with_a_non_ascii_name_is_checked(self):
         self.failing("caf\u00e9.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "caf\u00e9.cpp"], check=True)

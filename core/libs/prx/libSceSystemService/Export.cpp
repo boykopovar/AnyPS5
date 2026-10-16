@@ -183,6 +183,9 @@ void StartHostExecutable(HostLaunch& launch) {
     std::vector<char*> argv;
     for (auto& argument : launch.arguments) argv.push_back(argument.data());
     argv.push_back(nullptr);
+    if (const int host = HostStandardError_nid_no_patch(); host >= 0 && ::dup2(host, 2) != 2) {
+        throw std::runtime_error("sceSystemServiceLoadExec: cannot give the host standard error back to descriptor 2: " + std::string(std::strerror(errno)));
+    }
     ::execv(launch.executable.c_str(), argv.data());
     throw std::runtime_error("sceSystemServiceLoadExec: execv failed: " + std::string(std::strerror(errno)));
 }

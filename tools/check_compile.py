@@ -40,20 +40,22 @@ def entries(build):
     return json.loads(result.stdout)
 
 
-def entry_key(entry):
+def entry_key(entry, root):
     directory = Path(entry["directory"]).resolve()
     source = Path(entry["file"])
     if not source.is_absolute():
         source = directory / source
     source = source.resolve()
-    common = Path(os.path.commonpath([str(directory), str(source)]))
-    return os.path.relpath(source, common).replace(os.sep, "/")
+    try:
+        return source.relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return source.as_posix()
 
 
-def index(build):
+def index(build, root):
     commands = {}
     for entry in entries(build):
-        commands.setdefault(entry_key(entry), entry)
+        commands.setdefault(entry_key(entry, root), entry)
     return commands
 
 
@@ -96,7 +98,7 @@ def syntax_only(entry, source):
 
 
 def check(root, build, files):
-    commands = index(build)
+    commands = index(build, root)
     checked = 0
     failed = 0
     for file in files:

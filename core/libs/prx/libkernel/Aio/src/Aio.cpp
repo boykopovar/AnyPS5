@@ -10,6 +10,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -60,6 +61,11 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
     const GuestArena::HostWrite destination(buf, nbyte);
     if (!destination.Open()) {
         errno = EFAULT;
+        return -1;
+    }
+    if (const auto archived = File::ReadArchivedFile(fd, buf, nbyte, &offset)) {
+        if (*archived >= 0) return *archived;
+        errno = static_cast<int>(-*archived);
         return -1;
     }
 #ifdef _WIN32

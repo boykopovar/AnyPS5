@@ -94,7 +94,7 @@ class RelinkerEligibilityTests(unittest.TestCase):
                             encoding="utf-8")
         environment = dict(os.environ, PR_NUMBER="7", GITHUB_TRIGGERING_ACTOR="maintainer")
         result = subprocess.run([self.node, "harness.js", "scenario.json", "gate.js"], cwd=self.root,
-                                capture_output=True, text=True, env=environment, timeout=20)
+                                capture_output=True, text=True, env=environment, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 

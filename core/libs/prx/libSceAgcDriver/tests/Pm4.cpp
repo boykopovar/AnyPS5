@@ -3,16 +3,27 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -21,6 +32,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 extern "C" int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size);
@@ -62,18 +76,22 @@ void testCatalog() {
     for (const auto& opcode : AgcDriver::Pm4::Opcodes) {
         check(values.insert(opcode.value).second, "duplicate PM4 opcode");
         const auto packet = makePacket(opcode.value, {0});
-        check(AgcDriver::Pm4::Name(packet[0]) == opcode.name, "opcode name mismatch");
+        check(AgcDriver::Pm4::Name(packet[0]) == opcode.name && AgcDriver::Pm4::KnownName(packet[0]) == opcode.name, "opcode name mismatch");
         const auto reason = AgcDriver::Pm4::UnsupportedReason(packet[0]);
         if (!reason.empty()) expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, std::string(reason).c_str());
     }
     check(values.size() == 56, "reference opcode catalog is incomplete");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
+    check(AgcDriver::Pm4::KnownName(makePacket(0xff, {0})[0]).empty() && AgcDriver::Pm4::Name(makePacket(0xff, {0})[0]) == "UNKNOWN_0xff", "an unknown opcode is named");
     const std::array<std::pair<std::uint32_t, const char*>, 11> custom{{
         {5, "DRAW_RESET"}, {6, "WAIT_FLIP_DONE"}, {9, "DISPATCH_RESET"}, {11, "PUSH_MARKER"},
         {12, "POP_MARKER"}, {20, "ACQUIRE_MEM_CUSTOM"}, {21, "WRITE_DATA_CUSTOM"}, {23, "FLIP"},
         {24, "RELEASE_MEM_CUSTOM"}, {25, "DMA_DATA_CUSTOM"}, {26, "CONTEXT_STATE"}
     }};
-    for (const auto& [id, name] : custom) check(AgcDriver::Pm4::Name(makePacket(0x10, {0}, id << 2)[0]) == name, "custom opcode name mismatch");
+    for (const auto& [id, name] : custom) {
+        const auto header = makePacket(0x10, {0}, id << 2)[0];
+        check(AgcDriver::Pm4::Name(header) == name && AgcDriver::Pm4::KnownName(header) == name, "custom opcode name mismatch");
+    }
 }
 
 void testNopPad() {
@@ -1237,6 +1255,370 @@ void testAsyncMemoryFailure() {
     expectFailure([] { LibcRunShutdown_nid_postfix(); }, "guest");
 }
 
+class CapturedStderr {
+public:
+    CapturedStderr() {
+#ifdef _WIN32
+        path = std::filesystem::temp_directory_path() / ("aps5-pm4-ring-" + std::to_string(GetCurrentProcessId()) + ".txt");
+        file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        check(file != INVALID_HANDLE_VALUE, "cannot create the stderr capture file");
+        previous = GetStdHandle(STD_ERROR_HANDLE);
+        check(SetStdHandle(STD_ERROR_HANDLE, file) != 0, "cannot redirect stderr");
+#else
+        path = std::filesystem::temp_directory_path() / ("aps5-pm4-ring-" + std::to_string(::getpid()) + ".txt");
+        file = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        check(file >= 0, "cannot create the stderr capture file");
+        std::fflush(stderr);
+        previous = ::dup(2);
+        check(previous >= 0 && ::dup2(file, 2) >= 0, "cannot redirect stderr");
+#endif
+    }
+
+    ~CapturedStderr() {
+#ifdef _WIN32
+        SetStdHandle(STD_ERROR_HANDLE, previous);
+        CloseHandle(file);
+#else
+        std::fflush(stderr);
+        ::dup2(previous, 2);
+        ::close(previous);
+        ::close(file);
+#endif
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+
+    CapturedStderr(const CapturedStderr&) = delete;
+    CapturedStderr& operator=(const CapturedStderr&) = delete;
+
+    std::vector<std::string> RingLines() const {
+        std::ifstream input(path, std::ios::binary);
+        std::vector<std::string> lines;
+        for (std::string line; std::getline(input, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.starts_with("[pm4 ring]")) lines.push_back(line);
+        }
+        return lines;
+    }
+
+private:
+    std::filesystem::path path;
+#ifdef _WIN32
+    HANDLE file = INVALID_HANDLE_VALUE;
+    HANDLE previous = nullptr;
+#else
+    int file = -1;
+    int previous = -1;
+#endif
+};
+
+std::vector<std::string> recordedWrites(const std::vector<std::string>& lines) {
+    std::vector<std::string> writes;
+    std::string entry;
+    for (const auto& line : lines) {
+        if (line.starts_with("[pm4 ring] queue ") && line.find(" #") != std::string::npos) {
+            entry = line.substr(17, line.find(" serial") - 17);
+        } else if (line.find("WRITE_DATA") != std::string::npos) {
+            check(!entry.empty() && line.size() >= 8, "a WRITE_DATA line is not under a submission");
+            writes.push_back(entry + " " + line.substr(line.size() - 8));
+            entry.clear();
+        }
+    }
+    return writes;
+}
+
+void submitWrites(std::uint32_t queue, std::uint32_t first, std::uint32_t count) {
+    alignas(8) static std::uint32_t target = 0;
+    for (std::uint32_t value = first; value < first + count; ++value) {
+        auto words = writeWord(target, value);
+        submitWords(words, queue);
+    }
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testSubmissionRing() {
+    submitWrites(0, 0x5a000001u, 6);
+    submitWrites(0x20, 0x5b000001u, 2);
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        AgcDriver::DriverDetail::DumpSubmissionRings("ring test");
+        lines = capture.RingLines();
+    }
+    check(!lines.empty() && lines.front() == "[pm4 ring] ring test: 2 queue(s), up to 4 submissions each, oldest first", "the ring dump header is wrong");
+    check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x0: 6 submissions recorded, last 4 kept") != lines.end(), "the ring dump does not count every submission of queue 0");
+    check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x20: 2 submissions recorded, last 2 kept") != lines.end(), "the ring dump does not count every submission of queue 0x20");
+    const std::vector<std::string> expected{"0x0 #3 5a000003", "0x0 #4 5a000004", "0x0 #5 5a000005", "0x0 #6 5a000006", "0x20 #1 5b000001", "0x20 #2 5b000002"};
+    check(recordedWrites(lines) == expected, "the ring dump does not hold exactly the last submissions of each queue in order");
+}
+
+void testEmptySubmissionRing() {
+    CapturedStderr capture;
+    AgcDriver::DriverDetail::DumpSubmissionRings("ring test");
+    check(capture.RingLines() == std::vector<std::string>{"[pm4 ring] ring test: no submissions recorded"}, "the dump of empty rings is not one line");
+}
+
+void testDisabledSubmissionRing() {
+    submitWrites(0, 0x5a000001u, 2);
+    CapturedStderr capture;
+    AgcDriver::DriverDetail::DumpSubmissionRings("ring test");
+    check(capture.RingLines() == std::vector<std::string>{"[pm4 ring] ring test: disabled (APS5_PM4_RING=0)"}, "the dump of disabled rings is not one line");
+}
+
+void expectSettingRejected(const char* text) {
+    alignas(8) static std::uint32_t target = 0;
+    auto words = writeWord(target, 1);
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    expectFailure([&] { sceAgcDriverSubmitDcb(&packet); }, text);
+    AgcDriverWaitIdle_nid_postfix();
+    check(target == 0, "a submission rejected for its ring or watchdog setting was executed");
+}
+
+void testInvalidSubmissionRing() {
+    expectSettingRejected("APS5_PM4_RING must be a number");
+}
+
+void testInvalidStallWatchdog() {
+    expectSettingRejected("APS5_STALL_WATCHDOG_SECS must be a number");
+}
+
+void testSubmissionRingFailureReport() {
+    submitWrites(0, 0x5a000001u, 3);
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        LibcRunFailureReports_nid_no_patch();
+        lines = capture.RingLines();
+    }
+    check(!lines.empty() && lines.front() == "[pm4 ring] failure report: 1 queue(s), up to 2 submissions each, oldest first", "the failure report does not dump the rings");
+    check(recordedWrites(lines) == std::vector<std::string>{"0x0 #2 5a000002", "0x0 #3 5a000003"}, "the failure report does not hold the last submissions in order");
+}
+
+#ifdef _WIN32
+std::atomic<DWORD> heapTrapThread{0};
+std::atomic<std::uint32_t> heapTrapAllocations{0};
+decltype(&HeapAlloc) heapAllocOriginal = nullptr;
+decltype(&HeapReAlloc) heapReAllocOriginal = nullptr;
+
+LPVOID WINAPI trappedHeapAlloc(HANDLE heap, DWORD flags, SIZE_T bytes) {
+    if (GetCurrentThreadId() == heapTrapThread.load()) heapTrapAllocations.fetch_add(1);
+    return heapAllocOriginal(heap, flags, bytes);
+}
+
+LPVOID WINAPI trappedHeapReAlloc(HANDLE heap, DWORD flags, LPVOID block, SIZE_T bytes) {
+    if (GetCurrentThreadId() == heapTrapThread.load()) heapTrapAllocations.fetch_add(1);
+    return heapReAllocOriginal(heap, flags, block, bytes);
+}
+
+void** importSlot(HMODULE module, const char* function) {
+    auto* base = reinterpret_cast<std::byte*>(module);
+    const auto* headers = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    const auto& directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    for (auto* import = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(base + directory.VirtualAddress); import->Name != 0; ++import) {
+        const auto* names = reinterpret_cast<const IMAGE_THUNK_DATA*>(base + import->OriginalFirstThunk);
+        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA*>(base + import->FirstThunk);
+        for (; names->u1.AddressOfData != 0; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+            const auto* byName = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
+            if (std::strcmp(reinterpret_cast<const char*>(byName->Name), function) == 0) return reinterpret_cast<void**>(&slots->u1.Function);
+        }
+    }
+    return nullptr;
+}
+
+void replaceSlot(void** slot, void* value) {
+    DWORD protection = 0;
+    check(VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &protection) != 0, "cannot unprotect a ucrtbase.dll import");
+    *slot = value;
+    DWORD ignored = 0;
+    check(VirtualProtect(slot, sizeof(void*), protection, &ignored) != 0, "cannot protect a ucrtbase.dll import");
+}
+
+class CrtHeapTrap {
+public:
+    CrtHeapTrap() {
+        const HMODULE runtime = GetModuleHandleW(L"ucrtbase.dll");
+        check(runtime != nullptr, "ucrtbase.dll is not loaded");
+        allocSlot = importSlot(runtime, "HeapAlloc");
+        reAllocSlot = importSlot(runtime, "HeapReAlloc");
+        check(allocSlot != nullptr && reAllocSlot != nullptr, "ucrtbase.dll does not import HeapAlloc and HeapReAlloc");
+        heapAllocOriginal = reinterpret_cast<decltype(&HeapAlloc)>(*allocSlot);
+        heapReAllocOriginal = reinterpret_cast<decltype(&HeapReAlloc)>(*reAllocSlot);
+        replaceSlot(allocSlot, reinterpret_cast<void*>(trappedHeapAlloc));
+        replaceSlot(reAllocSlot, reinterpret_cast<void*>(trappedHeapReAlloc));
+    }
+
+    ~CrtHeapTrap() {
+        replaceSlot(allocSlot, reinterpret_cast<void*>(heapAllocOriginal));
+        replaceSlot(reAllocSlot, reinterpret_cast<void*>(heapReAllocOriginal));
+    }
+
+    CrtHeapTrap(const CrtHeapTrap&) = delete;
+    CrtHeapTrap& operator=(const CrtHeapTrap&) = delete;
+
+    template<typename TAction>
+    std::uint32_t Allocations(TAction action) {
+        heapTrapAllocations.store(0);
+        heapTrapThread.store(GetCurrentThreadId());
+        action();
+        heapTrapThread.store(0);
+        return heapTrapAllocations.load();
+    }
+
+private:
+    void** allocSlot = nullptr;
+    void** reAllocSlot = nullptr;
+};
+
+void testSubmissionRingFailureReportHeap() {
+    alignas(8) static std::uint32_t target = 0;
+    auto words = joinPackets({makePacket(0x13, {0x40}), writeWord(target, 0x5c000001u)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    std::vector<std::string> lines;
+    {
+        CrtHeapTrap trap;
+        check(trap.Allocations([&] { check(AgcDriver::Pm4::Name(words[0]) == "INDEX_BUFFER_SIZE", "INDEX_BUFFER_SIZE is misnamed"); }) != 0, "the heap trap does not see the allocation of a packet name");
+        CapturedStderr capture;
+        const auto allocations = trap.Allocations([] { LibcRunFailureReports_nid_no_patch(); });
+        lines = capture.RingLines();
+        check(allocations == 0, "the failure report allocated from the C runtime heap");
+    }
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 INDEX_BUFFER_SIZE 00000040") != std::string::npos; }), "the failure report does not name INDEX_BUFFER_SIZE");
+    check(recordedWrites(lines) == std::vector<std::string>{"0x0 #1 5c000001"}, "the failure report does not hold the submission");
+}
+#endif
+
+bool hasRingLine(const std::vector<std::string>& lines, std::string_view prefix, std::string_view suffix) {
+    return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) { return line.size() >= prefix.size() + suffix.size() && line.starts_with(prefix) && line.ends_with(suffix); });
+}
+
+void awaitRingLine(const CapturedStderr& capture, std::string_view prefix, std::string_view suffix, const char* reason) {
+    for (int waited = 0; waited < 1000 && !hasRingLine(capture.RingLines(), prefix, suffix); ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    check(hasRingLine(capture.RingLines(), prefix, suffix), reason);
+}
+
+void checkOneStallDump(const std::vector<std::string>& lines, std::uint32_t& done) {
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "the stalled submission did not finish after it was released");
+    check(std::count_if(lines.begin(), lines.end(), [](const std::string& line) { return line.find("has not progressed") != std::string::npos; }) == 1, "a stalled waiter dumped the rings more than once");
+}
+
+std::string stallPrefix(const char* waiter, const void* address) {
+    char text[160];
+    std::snprintf(text, sizeof(text), "[pm4 ring] queue 0x0 %s 0x%llx has not progressed", waiter, static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(address)));
+    return text;
+}
+
+void testStallWatchdog() {
+    alignas(8) static std::uint32_t gate = 0;
+    alignas(8) static std::uint32_t done = 0;
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        auto words = joinPackets({makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x19}), writeWord(done, 1)});
+        submitWords(words);
+        awaitRingLine(capture, stallPrefix("WAIT_REG_MEM at", &gate), " for 1 s (APS5_STALL_WATCHDOG_SECS): 1 queue(s), up to 16 submissions each, oldest first",
+                      "a WAIT_REG_MEM stalled past APS5_STALL_WATCHDOG_SECS did not dump the rings");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        check(std::atomic_ref<std::uint32_t>(done).load() == 0, "the stalled submission finished before its gate was opened");
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+        AgcDriverWaitIdle_nid_postfix();
+        lines = capture.RingLines();
+    }
+    checkOneStallDump(lines, done);
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 WAIT_REG_MEM 00000013") != std::string::npos; }), "the stall dump does not decode the stalled submission");
+}
+
+void testStallWatchdogRewind() {
+    alignas(8) static std::uint32_t done = 0;
+    static std::vector<std::uint32_t> words;
+    words = joinPackets({makePacket(0x59, {0}), writeWord(done, 1)});
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        submitWords(words);
+        awaitRingLine(capture, stallPrefix("REWIND at", &words[1]), " for 1 s (APS5_STALL_WATCHDOG_SECS): 1 queue(s), up to 16 submissions each, oldest first",
+                      "a REWIND stalled past APS5_STALL_WATCHDOG_SECS did not dump the rings");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        check(std::atomic_ref<std::uint32_t>(done).load() == 0, "the tail of a REWIND ran before the title released it");
+        std::atomic_ref<std::uint32_t>(words[1]).store(0x80000000u);
+        AgcDriverWaitIdle_nid_postfix();
+        lines = capture.RingLines();
+    }
+    checkOneStallDump(lines, done);
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 REWIND 00000000") != std::string::npos; }), "the stall dump does not decode the stalled REWIND");
+}
+
+struct RenderingGateState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool closed = true;
+    bool waiting = false;
+
+    void Open() {
+        {
+            std::lock_guard lock(mutex);
+            closed = false;
+        }
+        changed.notify_all();
+    }
+};
+
+class RenderingGate final : public AgcDriver::IRenderingWait {
+public:
+    explicit RenderingGate(std::shared_ptr<RenderingGateState> state) : state(std::move(state)) {}
+
+    void Wait() override {
+        std::unique_lock lock(state->mutex);
+        state->waiting = true;
+        state->changed.notify_all();
+        state->changed.wait(lock, [&] { return !state->closed; });
+    }
+
+private:
+    std::shared_ptr<RenderingGateState> state;
+};
+
+class GatedOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { throw std::runtime_error("the gated test output takes no flips"); }
+    std::shared_ptr<AgcDriver::IRenderingWait> CaptureRenderingWait(std::uint32_t) override { return std::make_shared<RenderingGate>(state); }
+    void Fail(std::exception_ptr) noexcept override {}
+
+    std::shared_ptr<RenderingGateState> state = std::make_shared<RenderingGateState>();
+};
+
+void testStallWatchdogOrder() {
+    alignas(8) static std::uint32_t done = 0;
+    auto output = std::make_shared<GatedOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    struct GateRelease {
+        std::shared_ptr<RenderingGateState> state;
+        ~GateRelease() { state->Open(); }
+    } release{output->state};
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        std::vector<std::uint32_t> wait{AgcDriver::RenderingWaitPacketHeader, 7, 0, 0};
+        submitWords(wait);
+        {
+            std::unique_lock lock(output->state->mutex);
+            check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "queue 0 did not reach the rendering wait");
+        }
+        auto words = writeWord(done, 1);
+        submitWords(words, 0x20);
+        awaitRingLine(capture, "[pm4 ring] queue 0x20 order behind queue 0 for event 0x", " has not progressed for 1 s (APS5_STALL_WATCHDOG_SECS): 2 queue(s), up to 16 submissions each, oldest first",
+                      "a compute submission held behind queue 0 past APS5_STALL_WATCHDOG_SECS did not dump the rings");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        check(std::atomic_ref<std::uint32_t>(done).load() == 0, "a compute submission passed queue 0 while it was held");
+        output->state->Open();
+        AgcDriverWaitIdle_nid_postfix();
+        lines = capture.RingLines();
+    }
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+    checkOneStallDump(lines, done);
+}
+
 void testRefusedWorkerPriority() {
     alignas(8) static std::uint32_t result = 0;
     auto words = writeWord(result, 91);
@@ -1266,6 +1648,28 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "priority-refused") {
             testRefusedWorkerPriority();
             std::puts("PM4 refused queue worker priority propagated to idle and shutdown");
+            return 0;
+        }
+        const std::pair<const char*, void (*)()> ringModes[]{
+            {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
+            {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}};
+        if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
+#ifdef _WIN32
+            testSubmissionRingFailureReportHeap();
+            LibcRunShutdown_nid_postfix();
+            std::puts("PM4 ring-report-heap test passed");
+            return 0;
+#else
+            std::puts("the C runtime heap trap needs ucrtbase.dll");
+            return 77;
+#endif
+        }
+        for (const auto& [mode, test] : ringModes) {
+            if (argc != 2 || std::string(argv[1]) != mode) continue;
+            test();
+            LibcRunShutdown_nid_postfix();
+            std::printf("PM4 %s test passed\n", mode);
             return 0;
         }
         testCatalog();

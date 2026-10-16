@@ -11,11 +11,13 @@ int main() {
     constexpr int invalid = static_cast<int>(0x817C0016);
     unsigned char buffer[80];
     Require(sceRandomGetRandomNumber(nullptr, 16) == invalid);
+    Require(sceRandomGetRandomNumber(nullptr, 0) == invalid);
     std::memset(buffer, 0xAA, sizeof(buffer));
     Require(sceRandomGetRandomNumber(buffer, 65) == invalid);
     Require(buffer[0] == 0xAA);
     Require(sceRandomGetRandomNumber(buffer, 0) == 0);
     Require(buffer[0] == 0xAA);
+    Require(sceRandomGetRandomNumber(buffer, 1) == 0);
     Require(sceRandomGetRandomNumber(buffer, 7) == 0);
     Require(buffer[7] == 0xAA);
     unsigned char first[64] = {};

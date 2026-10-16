@@ -184,7 +184,6 @@ struct HostImports {
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
     bool watchPrivateImports = false;
-#ifdef _WIN32
     VkDevice settleDevice = VK_NULL_HANDLE;
     VkBuffer settleTarget = VK_NULL_HANDLE;
     VkDeviceMemory settleMemory = VK_NULL_HANDLE;
@@ -193,7 +192,6 @@ struct HostImports {
     PFN_vkDestroyFence destroyFence = nullptr;
     PFN_vkDestroyBuffer settleDestroyBuffer = nullptr;
     PFN_vkFreeMemory settleFreeMemory = nullptr;
-#endif
     std::uint64_t useCounter = 0;
     std::uint64_t buildFloor = 0;
 };
@@ -272,6 +270,28 @@ bool releaseParkedImports(HostImports& state, std::uint64_t begin, std::uint64_t
     return !released.empty();
 }
 
+#ifndef _WIN32
+struct ImportFamilies {
+    std::array<std::uint32_t, 3> indices{};
+    std::uint32_t count = 0;
+};
+
+// A dma-buf import's buffer is used on the main queue, on the settle queue (settleImport) and, when
+// sparse, on the sparse queue.
+void shareDmaBufImport(const Context& context, VkBufferCreateInfo& info, ImportFamilies& families, bool sparse) {
+    const auto add = [&](std::uint32_t family) {
+        if (std::find(families.indices.begin(), families.indices.begin() + families.count, family) == families.indices.begin() + families.count) families.indices[families.count++] = family;
+    };
+    add(context.queueFamily);
+    if (context.settleQueue != VK_NULL_HANDLE) add(context.settleFamily);
+    if (sparse && context.sparseQueue != VK_NULL_HANDLE) add(context.sparseFamily);
+    const bool concurrent = families.count > 1;
+    info.sharingMode = concurrent ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE;
+    info.queueFamilyIndexCount = concurrent ? families.count : 0u;
+    info.pQueueFamilyIndices = concurrent ? families.indices.data() : nullptr;
+}
+#endif
+
 const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure) {
     const auto failed = [&](const char* step, VkResult result) -> const char* {
         if (entry.buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
@@ -288,6 +308,10 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     // INDIRECT_BUFFER: DISPATCH_INDIRECT group counts are read in place (VulkanDevice::DispatchIndirect).
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+#ifndef _WIN32
+    ImportFamilies families;
+    if (handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) shareDmaBufImport(context, info, families, false);
+#endif
     if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &entry.buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
@@ -466,7 +490,8 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
     VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &external};
     info.size = entry.bytes;
     info.usage = ChunkImportUsage;
-    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ImportFamilies families;
+    shareDmaBufImport(context, info, families, false);
     VkBuffer buffer = VK_NULL_HANDLE;
     if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) {
         failure = result;
@@ -519,11 +544,8 @@ VkMemoryRequirements dmaBufBufferRequirements(const Context& context, const Host
     info.flags = flags;
     info.size = size;
     info.usage = usage;
-    const std::uint32_t families[] = {context.queueFamily, context.sparseFamily};
-    const bool concurrent = (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0 && context.sparseQueue != VK_NULL_HANDLE;
-    info.sharingMode = concurrent ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE;
-    info.queueFamilyIndexCount = concurrent ? 2u : 0u;
-    info.pQueueFamilyIndices = concurrent ? families : nullptr;
+    ImportFamilies families;
+    shareDmaBufImport(context, info, families, (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0);
     VkBuffer buffer = VK_NULL_HANDLE;
     if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
     VkMemoryRequirements requirements{};
@@ -650,8 +672,9 @@ ImportWatchRequest importWatchRequest() {
 }
 #endif
 
-#ifdef _WIN32
 constexpr std::uint64_t settleFloorBytes = 0x100000;
+
+std::atomic<std::uint64_t> settledImports{0};
 
 const char* settleImport(const Context& context, HostImports& state, const HostImport& entry, VkResult& result) {
     std::unique_lock queueLock(*context.settleQueueMutex);
@@ -703,6 +726,7 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
     VkBuffer source = entry.buffer;
     VkBuffer alias = VK_NULL_HANDLE;
     const auto run = [&]() -> const char* {
+#ifdef _WIN32
         if (context.settleFamily != context.queueFamily) {
             VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
             external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
@@ -713,6 +737,7 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
             if ((result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, alias, entry.memory, 0)) != VK_SUCCESS) return "vkBindBufferMemory (settle alias)";
             source = alias;
         }
+#endif
         if ((result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &state.settleFence)) != VK_SUCCESS) return "vkResetFences (settle)";
         if ((result = context.Function<PFN_vkResetCommandBuffer>("vkResetCommandBuffer")(state.settleCommands, 0)) != VK_SUCCESS) return "vkResetCommandBuffer (settle)";
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -731,9 +756,9 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
     const char* step = run();
     if (step != nullptr) context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.settleQueue);
     if (alias != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, alias, nullptr);
+    if (step == nullptr) settledImports.fetch_add(1, std::memory_order_relaxed);
     return step;
 }
-#endif
 
 void decideImportWatch(const Context& context, HostImports& state) {
     if (state.watchDevice == context.device) return;
@@ -1168,6 +1193,18 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             step = createBackingImport(context, entry, backing, result);
             return step == nullptr;
         }, watchedDmaBuf);
+    }
+    if (step == nullptr && entry.dmaBuf && bytes >= settleFloorBytes && context.settleQueue != VK_NULL_HANDLE && context.settleQueueMutex != nullptr) {
+        static const bool traceSettle = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
+        const auto start = std::chrono::steady_clock::now();
+        if ((step = settleImport(context, state, entry, result)) != nullptr) {
+            destroyImport(context, entry);
+            entry.buffer = VK_NULL_HANDLE;
+            entry.memory = VK_NULL_HANDLE;
+            entry.chunk.reset();
+        } else if (traceSettle) {
+            std::fprintf(stderr, "[gpu] settled the dma-buf import of 0x%llx+0x%llx on the settle queue in %.2f ms\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+        }
     }
 #endif
     entry.unwatched = step == nullptr && !(entry.dmaBuf ? watchedDmaBuf : watchedHostPointer);
@@ -2294,7 +2331,6 @@ void ClearHostImports(VkDevice device) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     state.parked.erase(device);
-#ifdef _WIN32
     if (state.settleDevice == device) {
         if (state.settleFence != VK_NULL_HANDLE) state.destroyFence(device, state.settleFence, nullptr);
         if (state.settleTarget != VK_NULL_HANDLE) state.settleDestroyBuffer(device, state.settleTarget, nullptr);
@@ -2305,7 +2341,6 @@ void ClearHostImports(VkDevice device) {
         state.settleCommands = VK_NULL_HANDLE;
         state.settleFence = VK_NULL_HANDLE;
     }
-#endif
     if (state.device != device) return;
     for (const auto& [address, entry] : state.imports) {
         state.destroyBuffer(state.device, entry.buffer, nullptr);
@@ -2555,6 +2590,10 @@ std::uint64_t HostImportLiveBytes() {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     return state.liveBytes;
+}
+
+std::uint64_t HostImportsSettled() {
+    return settledImports.load(std::memory_order_relaxed);
 }
 
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {

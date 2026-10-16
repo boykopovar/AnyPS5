@@ -165,7 +165,7 @@ void DefineInputs(SpirvEmitterState& state) {
     for (const auto& input : state.program.Info().inputs) {
         state.inputs.push_back(SpirvInputBinding {input});
     }
-    if (state.laneCount == 2u) {
+    if (state.laneCount == 2u || state.spannedWave) {
         const auto addBuiltin = [&](StageInputKind kind, std::uint32_t components, const char* name) {
             if (std::none_of(state.inputs.begin(), state.inputs.end(), [kind](const SpirvInputBinding& input) {
                 return input.kind == kind;
@@ -293,6 +293,10 @@ void DefineInputs(SpirvEmitterState& state) {
     if (state.requirements.subgroupLocalInvocationId) {
         const auto variable = DefineInterfaceVariable(state, TypeU32(state), spv::StorageClassInput, "gl_SubgroupInvocationID");
         state.subgroupLocalInvocationIdVariable = variable;
+        if (state.spannedWave) {
+            state.subgroupIdVariable = DefineInterfaceVariable(state, TypeU32(state), spv::StorageClassInput, "gl_SubgroupID");
+            state.module.AddAnnotation(spv::OpDecorate, state.subgroupIdVariable, spv::DecorationBuiltIn, spv::BuiltInSubgroupId);
+        }
         state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBuiltIn, spv::BuiltInSubgroupLocalInvocationId);
         if (state.program.Resources().stage == IrShaderStage::Pixel) {
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationFlat);

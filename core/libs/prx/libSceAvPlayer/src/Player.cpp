@@ -70,7 +70,7 @@ Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
     if (init.default_language) {
         for (std::size_t index = 0; index < 3 && init.default_language[index] != '\0'; ++index) language[index] = init.default_language[index];
     }
-    controller = std::thread([this] { controllerLoop(); });
+    controller = std::thread([this, closed = controllerClosed] { controllerLoop(*closed); });
 }
 
 Player::~Player() {
@@ -79,7 +79,12 @@ Player::~Player() {
         quit = true;
     }
     eventCondition.NotifyAll();
-    controller.join();
+    if (controller.get_id() == std::this_thread::get_id()) {
+        *controllerClosed = true;
+        controller.detach();
+    } else {
+        controller.join();
+    }
     std::lock_guard lock(mutex);
     source.reset();
 }
@@ -100,7 +105,7 @@ void Player::OnError() {
     queue({0, 0, false, true});
 }
 
-void Player::controllerLoop() {
+void Player::controllerLoop(const bool& closed) {
     for (;;) {
         Event event{};
         bool pending = false;
@@ -119,6 +124,7 @@ void Player::controllerLoop() {
         } else {
             checkEndOfFile();
         }
+        if (closed) return;
     }
 }
 

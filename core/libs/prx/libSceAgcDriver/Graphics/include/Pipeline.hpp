@@ -94,14 +94,29 @@ private:
     std::vector<CachedFramebuffer> framebuffers;
 };
 
-// The pipeline for this configuration, shared across draws and frames: keyed by the stages' variant
-// ids (the rect-list tessellation pair by the vertex and fragment ids that generate it), the vertex
-// input layout, the descriptor set layout key, push constant stages and every pipeline state field.
-// A configuration whose stage has no variant id gets a private pipeline. Entries are LRU-bounded and
-// only evicted once no recorded draw holds them. Debug aid: APS5_NO_PIPELINE_CACHE=1 builds one per
-// draw as before.
+// The pipeline for this configuration, shared across draws and frames: keyed by the stages'
+// identities (the rect-list tessellation pair and the geometry stage by the vertex and fragment
+// results that generate them), the vertex input layout, the descriptor set layout key, push constant
+// stages and every pipeline state field. A configuration whose stage has no module gets a private
+// pipeline. A miss builds the pipeline outside the store's mutex (a concurrent build of the same
+// key keeps the first inserted) and records its recipe in the pipeline journal. Entries are
+// LRU-bounded (APS5_PIPELINE_STORE_ENTRIES, 1024) and only evicted once no recorded draw holds
+// them. Debug aid: APS5_NO_PIPELINE_CACHE=1 builds one per draw as before.
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+// `created` reports whether this call built the pipeline (false: served from the store or private).
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, bool* created = nullptr);
+// Cumulative pipeline store outcomes since start-up (the [pipecache] line reports 10 s windows).
+struct PipelineStoreCounters {
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+    std::uint64_t uncached = 0;
+    std::uint64_t evicted = 0;
+    std::uint64_t cached = 0;
+    std::uint64_t bound = 0;
+};
+PipelineStoreCounters PipelineStoreTotals();
+// The pipeline store's key of a configuration (empty when the configuration gets a private pipeline).
+void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout);
 struct DescribedSetLayouts {
     PipelineSetLayouts layouts;
     std::vector<std::uint32_t> mainKey;
@@ -126,7 +141,7 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders);
 bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program);
 void ValidateSampleMask(const Context& context, const State& state, std::span<const CompiledShader> shaders);
 // Returns the color attachment locations the pixel shader writes.
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool shaderClipDistance = false, bool shaderCullDistance = false, bool viewportIndexLayer = false, bool runtimeDescriptorArray = false, bool demoteToHelperInvocation = false);
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing = false, bool imageInt64Atomics = false, bool geometryShader = false, bool sampleRateShading = false, bool bufferInt64Atomics = false, bool shaderClipDistance = false, bool shaderCullDistance = false, bool viewportIndexLayer = false, bool runtimeDescriptorArray = false, bool demoteToHelperInvocation = false, bool shaderTerminateInvocation = false);
 
 }
 

@@ -50,6 +50,13 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "Guest relaunch completed" TIMEOUT 30)
     set_tests_properties(guest_nested_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest nested exit completed" TIMEOUT 30)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_system_load_exec_standard_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLoadExecStandardError.cpp)
+        target_include_directories(guest_system_load_exec_standard_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_system_load_exec_standard_error_tests PRIVATE libSceSystemService libkernel libc)
+        add_test(NAME guest_system_load_exec_standard_error COMMAND guest_system_load_exec_standard_error_tests)
+        set_tests_properties(guest_system_load_exec_standard_error PROPERTIES TIMEOUT 20)
+    endif()
     if(WIN32)
         set_tests_properties(guest_system_exit guest_requested_exit guest_system_exit_parameters guest_immediate_exit guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

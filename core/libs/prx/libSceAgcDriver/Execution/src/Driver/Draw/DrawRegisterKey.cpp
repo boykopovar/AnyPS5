@@ -33,6 +33,20 @@ const auto& registerMasks() {
     return masks;
 }
 
+template <typename TVisit>
+void forEachKeyedUserWord(const QueueState& queue, bool allUserWords, TVisit&& visit) {
+    const auto words = [&](std::uint32_t base, std::uint32_t count) {
+        for (auto it = queue.shader.lower_bound(base); it != queue.shader.end() && it->first < base + count; ++it) visit(it->first, it->second);
+    };
+    for (const auto base : {0x00cu, 0x08cu, 0x10cu}) {
+        const auto resources = queue.shader.find(base - 1);
+        const auto count = resources == queue.shader.end() ? 0u : ((resources->second >> 1u) & 0x1fu) | (((resources->second >> 27u) & 1u) << 5u);
+        words(base, allUserWords ? 32u : std::min(count, 32u));
+    }
+    words(0x082u, 2);
+    words(0x102u, 2);
+}
+
 }
 
 std::uint64_t RegisterStateKey(const QueueState& queue, bool allUserWords, bool incremental, std::uint64_t* shapeKey, RegisterStateKeyParts* parts) {
@@ -86,13 +100,59 @@ std::uint64_t DrawShaderSetKey(const QueueState& queue, const ShaderRegistry& re
     return key;
 }
 
-std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape, std::array<std::uint64_t, 5>* components) {
+std::uint64_t Driver::drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry) {
+    std::uint64_t key = 0x84222325cbf29ce4ull;
+    const auto mix = [&](std::uint64_t value) {
+        key ^= value;
+        key *= 0x100000001b3ull;
+    };
+    for (const auto base : {0x008u, 0x088u, 0x0c8u, 0x108u, 0x148u}) {
+        const auto low = queue.shader.find(base);
+        const auto high = queue.shader.find(base + 1);
+        if (low == queue.shader.end() || high == queue.shader.end()) {
+            mix(0);
+            continue;
+        }
+        mix(low->second);
+        mix(high->second);
+        const auto resources = queue.shader.find(base + 3);
+        mix(resources != queue.shader.end() ? resources->second : 0);
+        const auto address = (static_cast<std::uint64_t>(low->second) << 8u) | (static_cast<std::uint64_t>(high->second & 0xffu) << 40u);
+        auto it = registry.upper_bound(address);
+        if (it == registry.begin()) {
+            mix(1);
+            continue;
+        }
+        --it;
+        for (const auto& snapshot : it->second) mix(reinterpret_cast<std::uintptr_t>(snapshot.get()));
+        mix(address - it->first);
+    }
+    return key == 0 ? 1 : key;
+}
+
+std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t deviceSerial, std::uint64_t* shape, std::array<std::uint64_t, 5>* components, const DrawRelocation* relocation, std::uint64_t* alias) {
+    const bool aliased = alias != nullptr && relocation != nullptr && !relocation->words.empty();
+    bool readable = true;
+    std::uint64_t other = 0x6c62272e07bb0142ull;
+    const auto mixOther = [&](std::uint64_t value) {
+        other ^= value;
+        other *= 0x100000001b3ull;
+    };
     static const bool allUserWords = std::getenv("APS5_DRAW_KEY_ALL_USER_WORDS") != nullptr;
     static const bool verify = std::getenv("APS5_VERIFY_REGISTER_KEYS") != nullptr;
     std::uint64_t shapeKey = 0;
     RegisterStateKeyParts parts;
     auto key = RegisterStateKey(queue, allUserWords, true, &shapeKey, components != nullptr ? &parts : nullptr);
     if (verify && key != RegisterStateKey(queue, allUserWords, false)) throw std::runtime_error("incremental register fingerprint disagrees with full state");
+    if (aliased) {
+        mixOther(shapeKey);
+        forEachKeyedUserWord(queue, allUserWords, [&](std::uint32_t offset, std::uint32_t value) {
+            mixOther(offset);
+            const auto word = std::find_if(relocation->words.begin(), relocation->words.end(), [&](const RelocatableUserWord& candidate) { return candidate.reg == offset; });
+            mixOther(word != relocation->words.end() ? relocatedContentKey(*word, value, readable) : value);
+        });
+        mixOther(deviceSerial);
+    }
     const auto mix = [&](std::uint64_t value) {
         key ^= value;
         key *= 0x100000001b3ull;
@@ -123,8 +183,13 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
         --it;
         for (const auto& snapshot : it->second) mix(reinterpret_cast<std::uintptr_t>(snapshot.get()));
         mix(address - it->first);
+        if (aliased) {
+            for (const auto& snapshot : it->second) mixOther(reinterpret_cast<std::uintptr_t>(snapshot.get()));
+            mixOther(address - it->first);
+        }
     }
     if (shape != nullptr) *shape = shapeKey;
+    if (aliased && readable) *alias = other == 0 ? 1 : other;
     return key;
 }
 
@@ -170,7 +235,7 @@ bool Driver::sameDecode(const DrawDecode& a, const DrawDecode& b) {
     const auto sameMesh = [](const std::optional<ShaderRecompiler::MeshConfiguration>& x, const std::optional<ShaderRecompiler::MeshConfiguration>& y) {
         if (x.has_value() != y.has_value()) return false;
         if (!x) return true;
-        return x->inputPrimitive == y->inputPrimitive && x->primitivesPerGroup == y->primitivesPerGroup && x->verticesPerGroup == y->verticesPerGroup && x->maxVertices == y->maxVertices && x->maxPrimitives == y->maxPrimitives && x->threadsPerGroup == y->threadsPerGroup && x->ldsSizeDwords == y->ldsSizeDwords && x->provokingVertex == y->provokingVertex && x->esgsItemSize == y->esgsItemSize;
+        return x->inputPrimitive == y->inputPrimitive && x->primitivesPerGroup == y->primitivesPerGroup && x->verticesPerGroup == y->verticesPerGroup && x->maxVertices == y->maxVertices && x->maxPrimitives == y->maxPrimitives && x->threadsPerGroup == y->threadsPerGroup && x->ldsSizeDwords == y->ldsSizeDwords && x->provokingVertex == y->provokingVertex && x->esgsItemSize == y->esgsItemSize && x->outputPrimitiveSize == y->outputPrimitiveSize;
     };
     const auto sameTess = [](const std::optional<ShaderRecompiler::TessellationConfiguration>& x, const std::optional<ShaderRecompiler::TessellationConfiguration>& y) {
         if (x.has_value() != y.has_value()) return false;

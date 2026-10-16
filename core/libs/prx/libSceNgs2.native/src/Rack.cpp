@@ -204,7 +204,7 @@ int APS5_VABI sceNgs2RackGetVoiceHandle(uintptr_t rack_handle, uint32_t voice_id
     std::lock_guard lock(Ngs2Mutex());
     auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
-    if (voice_id >= rack->voices.size()) APS5_INVALID_ARG_EX;
+    if (voice_id >= rack->voices.size()) return SCE_NGS2_ERROR_INVALID_VOICE_INDEX;
     *handle = reinterpret_cast<Ngs2Handle>(&rack->voices[voice_id]);
     return SCE_NGS2_OK;
 }

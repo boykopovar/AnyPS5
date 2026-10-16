@@ -25,9 +25,9 @@ inline int FilesystemError(const std::error_code& error) {
 
 std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, bool replacesFile);
 
-inline int ResolvePathError_nid_no_patch(const char* path, std::filesystem::path& resolved, bool module = false) {
+inline int ResolvePathError_nid_no_patch(const char* path, std::filesystem::path& resolved, bool module = false, bool archived = false) {
     try {
-        resolved = module ? ResolvePathOrRelinkedModule_nid_no_patch(path) : ResolvePath_nid_no_patch(path);
+        resolved = archived ? ResolveArchivedPath_nid_no_patch(path, module) : module ? ResolvePathOrRelinkedModule_nid_no_patch(path) : ResolvePath_nid_no_patch(path);
         return 0;
     } catch (const std::filesystem::filesystem_error& error) {
         if (error.code() == std::errc::illegal_byte_sequence) return 2;

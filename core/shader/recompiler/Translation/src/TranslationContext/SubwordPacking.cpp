@@ -165,7 +165,7 @@ void TranslationContext::write16Bits(const RdnaOperand& operand, IrU32 value) {
 }
 
 bool TranslationContext::directedF16Rounding() const {
-    return floatMode.has_value() && ((floatMode->floatMode >> 2u) & 3u) != 0u && ((floatMode->floatMode >> 6u) & 3u) == 3u;
+    return floatMode.has_value() && ((floatMode->floatMode >> 2u) & 3u) != 0u;
 }
 
 IrU32 TranslationContext::flushF16Bits(IrU32 bits, std::uint32_t keepBit) {
@@ -220,12 +220,28 @@ IrU32 TranslationContext::convertF32ToF16Bits(IrF32 value, std::initializer_list
     return IrU32(ir.Select(ir.ULessThan(magnitude.Value(), ir.Constant(0x7f800000u)), result.Value(), native.Value()));
 }
 
+IrU32 TranslationContext::flushTinyF16Conversion(IrF32 value, IrU32 bits) {
+    if (!floatMode.has_value() || (floatMode->floatMode & 0x80u) != 0u) return bits;
+    const std::uint32_t rounding = (floatMode->floatMode >> 2u) & 3u;
+    const IrU32 word(ir.BitCastU32(value.Value()));
+    const IrU32 magnitude(ir.BitwiseAnd(word.Value(), ir.Constant(0x7fffffffu)));
+    const IrU32 sign(ir.BitwiseAnd(ir.ShiftRightLogical(word.Value(), ir.Constant(16u)), ir.Constant(0x8000u)));
+    IrValue* limit = &ir.Constant(rounding == 0u ? 0x387ff000u : 0x38800000u);
+    if (rounding == 1u || rounding == 2u) {
+        const IrU1 away(ir.IEqual(sign.Value(), ir.Constant(rounding == 1u ? 0u : 0x8000u)));
+        limit = &ir.Select(away.Value(), ir.Constant(0x387fe001u), ir.Constant(0x38800000u));
+    }
+    const IrU1 tiny(ir.ULessThan(magnitude.Value(), *limit));
+    return IrU32(ir.Select(tiny.Value(), sign.Value(), bits.Value()));
+}
+
 void TranslationContext::writeF16Conversion(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources) {
-    if (!directedF16Rounding()) {
+    if (!directedF16Rounding() && (!floatMode.has_value() || (floatMode->floatMode & 0x80u) != 0u)) {
         writeF16(operand, value, sources);
         return;
     }
-    write16Bits(operand, convertF32ToF16Bits(applyF16ResultModifiers(operand, value), sources));
+    const IrF32 modified = applyF16ResultModifiers(operand, value);
+    write16Bits(operand, flushTinyF16Conversion(modified, convertF32ToF16Bits(modified, sources)));
 }
 
 void TranslationContext::writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources) {

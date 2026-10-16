@@ -2,10 +2,12 @@
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FileLock.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -105,7 +107,7 @@ static_assert(sizeof(GuestLock) == 32);
 static_assert(offsetof(GuestLock, type) == 20);
 constexpr std::size_t OldGuestLockSize = 24;
 
-enum class Kind { File, Directory, Pipe, Device, RandomDevice };
+enum class Kind { File, Directory, Pipe, Device, RandomDevice, ArchivedFile };
 
 struct Entry {
     bool closeOnExec = false;
@@ -127,6 +129,7 @@ const char* KindName(Kind kind) {
         case Kind::Pipe: return "pipe";
         case Kind::Device: return "character device";
         case Kind::RandomDevice: return "random device";
+        case Kind::ArchivedFile: return "file read from app0.zar";
     }
     return "descriptor";
 }
@@ -140,6 +143,7 @@ std::optional<Kind> Classify(int fd, const char* function) {
     if (fd < 0 || !DescriptorIsOpen_nid_no_patch(fd)) return std::nullopt;
     if (File::DirectoryDescriptorPath(fd)) return Kind::Directory;
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
+    if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
     switch (::GetFileType(WindowsDescriptorHandle_nid_no_patch(fd))) {
         case FILE_TYPE_DISK: return Kind::File;
         case FILE_TYPE_PIPE: return Kind::Pipe;
@@ -259,6 +263,7 @@ std::optional<Kind> Classify(int fd, const char* function) {
         throw std::runtime_error(std::string(function) + ": fstat failed, fd=" + std::to_string(fd) + ", errno=" + std::to_string(errno));
     }
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
+    if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
     if (S_ISREG(status.st_mode)) return Kind::File;
     if (S_ISDIR(status.st_mode)) return Kind::Directory;
     if (S_ISFIFO(status.st_mode)) return Kind::Pipe;
@@ -409,7 +414,7 @@ int RecordLock(int fd, int command, std::intptr_t argument) {
 int ReadAheadControl(int fd, int command, std::intptr_t argument) {
     const auto kind = Classify(fd, "fcntl");
     if (!kind || *kind == Kind::Pipe) return Fail(GuestEbadf);
-    if (*kind != Kind::File) return Fail(GuestEnotty);
+    if (*kind != Kind::File && *kind != Kind::ArchivedFile) return Fail(GuestEnotty);
     std::lock_guard lock(g_mutex);
     auto& status = *Materialize(fd).status;
     if (command == DarwinReadAhead || argument >= 0) status |= ReadAheadFlag;
@@ -521,8 +526,9 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
-        if (*kind != Kind::File && *kind != Kind::Pipe) Unsupported("ioctl", "FIONREAD", *kind, fd);
-        const int available = Readable(fd, *kind, "ioctl");
+        if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
+        const auto archived = File::ArchivedFileRemaining(fd);
+        const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
         if (argument == nullptr) return Fail(GuestEfault);
         const GuestArena::HostWrite destination(argument, sizeof(available));
         if (!destination.Open()) return Fail(GuestEfault);
@@ -544,6 +550,7 @@ void RememberDescriptor(int fd, int openFlags) {
 }
 
 void ShareDescriptor(int from, int to) {
+    File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
     auto status = Materialize(from).status;
     g_entries[to] = Entry{false, std::move(status)};
@@ -554,8 +561,15 @@ void ShareDescriptor(int from, int to) {
 }
 
 void ForgetDescriptor(int fd) {
+    File::ForgetArchivedFile(fd);
     std::lock_guard lock(g_mutex);
     g_entries.erase(fd);
+}
+
+bool Appends(int fd) {
+    std::lock_guard lock(g_mutex);
+    const auto found = g_entries.find(fd);
+    return found != g_entries.end() && found->second.status && (*found->second.status & Append) != 0;
 }
 
 }

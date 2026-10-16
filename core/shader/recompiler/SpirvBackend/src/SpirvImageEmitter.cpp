@@ -741,9 +741,6 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto sint = SintStorageFormat(access.image);
-    if (sint.format != IrBufferFormat::Invalid && mem.dataBits == 16u) {
-        ctx.Fail(access.inst, "stores 16-bit data to an image of a SINT format");
-    }
     std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
     for (std::uint32_t component = 0; component < 4u; component++) {
@@ -766,7 +763,7 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
         }
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
         if (component < sint.componentCount) {
-            values[component] = EmitFormatStoreComponent(state, sint, component, values[component]);
+            values[component] = mem.dataBits == 16u ? EmitD16StoreComponent(state, sint, component, values[component]) : EmitFormatStoreComponent(state, sint, component, values[component]);
         }
     }
     const auto texel = state.module.AllocateId();

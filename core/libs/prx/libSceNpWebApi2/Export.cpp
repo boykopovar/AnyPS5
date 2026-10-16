@@ -119,9 +119,9 @@ int APS5_VABI sceNpWebApi2PushEventCreateHandle(int lib_ctx_id) {
 }
 
 int APS5_VABI sceNpWebApi2PushEventAbortHandle(int libCtxId, int handleId) {
-    (void)libCtxId;
     (void)handleId;
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_poolsMutex);
+    if (!g_pools.contains(libCtxId)) throw std::invalid_argument("sceNpWebApi2PushEventAbortHandle: unknown context");
     return 0;
 }
 

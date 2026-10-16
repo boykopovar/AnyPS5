@@ -18,6 +18,11 @@ int APS5_VABI sceSslSetVerifyCallback(int, int (APS5_VABI *)(int, unsigned int, 
 int APS5_VABI sceSslConnect(int);
 int APS5_VABI sceSslRead(int, void*, std::size_t, int);
 int APS5_VABI sceSslWrite(int, void*, std::size_t, int);
+int APS5_VABI sceSslEnableVerifyOption(int, std::uint32_t);
+int APS5_VABI sceSslDisableVerifyOption(int, std::uint32_t);
+int APS5_VABI sceSslSetMinSslVersion(int, int);
+int APS5_VABI sceSslSetAlpn(int, const char*);
+const char* APS5_VABI sceSslGetAlpnSelected(int);
 }
 
 struct SslMemoryPoolStats {
@@ -103,6 +108,20 @@ int main() {
     Require(connection > 0 && connection != context);
     Require(sceSslSetVerifyCallback(connection, VerifyCallback, &marker) == 0);
     Require(sceSslSetVerifyCallback(connection, nullptr, nullptr) == 0);
+    constexpr std::uint32_t serverVerify = 0x1;
+    constexpr std::uint32_t cnCheck = 0x4;
+    Require(sceSslEnableVerifyOption(connection, serverVerify | cnCheck) == 0);
+    Require(sceSslDisableVerifyOption(connection, cnCheck) == 0);
+    Require(sceSslDisableVerifyOption(connection, serverVerify | cnCheck) == 0);
+    Require(sceSslSetMinSslVersion(connection, 0) == 0);
+    Require(sceSslSetMinSslVersion(connection, 5) == 0);
+    Require(Throws([&] { sceSslSetMinSslVersion(connection, -1); }));
+    Require(Throws([&] { sceSslSetMinSslVersion(connection, 6); }));
+    Require(sceSslGetAlpnSelected(connection) == nullptr);
+    Require(sceSslSetAlpn(connection, "http/1.1") == 0);
+    Require(sceSslSetAlpn(connection, "") == 0);
+    Require(Throws([&] { sceSslSetAlpn(connection, nullptr); }));
+    Require(sceSslGetAlpnSelected(connection) == nullptr);
     char buffer[4]{};
     Require(Throws([&] { sceSslConnect(connection); }));
     Require(Throws([&] { sceSslRead(connection, buffer, sizeof(buffer), 0); }));
@@ -110,10 +129,20 @@ int main() {
 
     const int unknown = connection + 1000;
     Require(Throws([&] { sceSslSetVerifyCallback(unknown, nullptr, nullptr); }));
+    Require(Throws([&] { sceSslEnableVerifyOption(unknown, serverVerify); }));
+    Require(Throws([&] { sceSslDisableVerifyOption(unknown, serverVerify); }));
+    Require(Throws([&] { sceSslSetMinSslVersion(unknown, 5); }));
+    Require(Throws([&] { sceSslSetAlpn(unknown, "http/1.1"); }));
+    Require(Throws([&] { sceSslGetAlpnSelected(unknown); }));
     Require(Throws([&] { sceSslDeleteConnection(unknown); }));
 
     Require(sceSslTerm_nid_postfix(context) == 0);
     Require(Throws([&] { sceSslSetVerifyCallback(connection, nullptr, nullptr); }));
+    Require(Throws([&] { sceSslEnableVerifyOption(connection, serverVerify); }));
+    Require(Throws([&] { sceSslDisableVerifyOption(connection, serverVerify); }));
+    Require(Throws([&] { sceSslSetMinSslVersion(connection, 5); }));
+    Require(Throws([&] { sceSslSetAlpn(connection, "http/1.1"); }));
+    Require(Throws([&] { sceSslGetAlpnSelected(connection); }));
     Require(sceSslCreateConnection(context, 0, "example.com") == invalidId);
     Require(sceSslDeleteConnection(connection) == 0);
     Require(Throws([&] { sceSslDeleteConnection(connection); }));

@@ -196,6 +196,13 @@ namespace ShaderRecompiler
     }
 
     std::uint32_t EmitLocalInvocationIndex(SpirvEmitterState& state) {
+        if (state.spannedWave) {
+            const auto subgroup = state.module.AllocateId();
+            const auto invocation = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), subgroup, state.subgroupIdVariable);
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), invocation, state.subgroupLocalInvocationIdVariable);
+            return EmitAddU32(state, EmitBinaryU32(state, spv::OpShiftLeftLogical, subgroup, ConstantU32(state, 5u)), invocation);
+        }
         const auto variable = InputVariableForKind(state, StageInputKind::LocalInvocationIndex);
         if (variable == 0) {
             FailEmit("LocalInvocationIndex was not declared");

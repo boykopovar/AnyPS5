@@ -13,6 +13,7 @@
 #include <new>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -39,6 +40,13 @@ alignas(256) constexpr std::array<std::uint32_t, 25> FastLaunchCode{
     0x80020601, 0xb07c1003, 0xbf900009, 0xbf8c3f70, 0x7d880083, 0xbefe036a, 0xf80008cf, 0x05040302,
     0xf800020f, 0x09080706, 0x7d840080, 0xbefe036a, 0x7e1402ff, 0x00200400, 0xf8000941, 0x0000000a,
     0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 27> LineStripCode{
+    0xd7650000, 0x000100c1, 0x7e000505, 0x93018300, 0x4a020001, 0xe0382000, 0x80020201, 0xe0382010,
+    0x80020601, 0xb07c2003, 0xbf900009, 0xbf8c3f70, 0x7d880083, 0xbefe036a, 0xf80008cf, 0x05040302,
+    0xf800020f, 0x09080706, 0x7d880082, 0xbefe036a, 0x161400ff, 0x00000401, 0x4a1414ff, 0x00000400,
+    0xf8000941, 0x0000000a, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
@@ -84,6 +92,13 @@ alignas(256) std::array<Vertex, 3 * Triangles> Scrambled{};
 alignas(256) std::array<std::uint16_t, 3 * Triangles> Indices{};
 alignas(256) std::array<Vertex, 3 * Triangles> Ordered{};
 alignas(256) std::array<Vertex, 2 * Columns + 2> Strip{};
+
+constexpr std::uint32_t LineStrips = 4;
+alignas(256) std::array<Vertex, 3 * LineStrips> LineStripVertices{};
+
+std::uint32_t LineStripRow(std::uint32_t strip) {
+    return 16u + 28u * strip;
+}
 
 constexpr std::uint32_t FanRim = 8;
 constexpr float FanStep = 6.28318530718f / FanRim;
@@ -279,6 +294,17 @@ int main() {
             const float y = i % 2u == 0u ? -1.0f : 0.0f;
             Strip[i] = {{x, y, 0.5f, 1.0f}, stripColor};
         }
+        for (std::uint32_t strip = 0; strip < LineStrips; ++strip) {
+            const auto color = TriangleColor(strip);
+            const std::array<float, 4> rgba{color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f};
+            const float top = 1.0f - (static_cast<float>(LineStripRow(strip)) + 0.5f) / (Height / 2.0f);
+            const float bottom = top - 20.0f / (Height / 2.0f);
+            const float left = 24.5f / (Width / 2.0f) - 1.0f;
+            const float right = 168.5f / (Width / 2.0f) - 1.0f;
+            LineStripVertices[3 * strip] = {{left, top, 0.5f, 1.0f}, rgba};
+            LineStripVertices[3 * strip + 1] = {{right, top, 0.5f, 1.0f}, rgba};
+            LineStripVertices[3 * strip + 2] = {{right, bottom, 0.5f, 1.0f}, rgba};
+        }
         Fan[0] = {{0.0f, 0.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
         for (std::uint32_t k = 1; k <= FanRim; ++k) {
             const auto color = TriangleColor(k);
@@ -359,6 +385,24 @@ int main() {
             if (!fastLaunchIndexedRefused) throw;
         }
         Require(fastLaunchIndexedRefused, "an indexed fast-launch draw was drawn");
+
+        ClearPixels();
+        auto lineSubgroup = FastLaunchSubgroup;
+        lineSubgroup.maxPrimitives = 2u;
+        lineSubgroup.outputPrimitiveSize = 2u;
+        DrawMesh(device, {lineSubgroup, {0, LineStrips, 0, 1, 0, false}, VertexBufferDescriptor(LineStripVertices.data(), static_cast<std::uint32_t>(LineStripVertices.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, 32u, VK_CULL_MODE_NONE, LineStripCode, 0x482030u});
+        const auto linePixel = [](std::uint32_t x, std::uint32_t y) { return (static_cast<std::size_t>(y) * Width + x) * 4u; };
+        for (std::uint32_t strip = 0; strip < LineStrips; ++strip) {
+            const auto row = LineStripRow(strip);
+            const auto color = TriangleColor(strip);
+            const auto where = "line strip " + std::to_string(strip) + ": ";
+            for (std::uint32_t x = 32; x <= 160; x += 8) Require(PixelIs(linePixel(x, row), color), where + "horizontal line pixel (" + std::to_string(x) + ", " + std::to_string(row) + ") is " + PixelText(linePixel(x, row)));
+            for (std::uint32_t y = row + 4u; y <= row + 16u; y += 4) Require(PixelIs(linePixel(168, y), color), where + "vertical line pixel (168, " + std::to_string(y) + ") is " + PixelText(linePixel(168, y)));
+            for (const auto& [x, y, what] : {std::tuple{96u, row - 3u, "above the horizontal line"}, std::tuple{96u, row + 3u, "below the horizontal line"}, std::tuple{150u, row + 5u, "inside the triangle of the strip's three vertices"}, std::tuple{96u, row + 10u, "on the edge closing the strip"}, std::tuple{96u, row + 24u, "between this strip and the next"}, std::tuple{8u, row, "left of the strip"}, std::tuple{184u, row + 10u, "right of the strip"}}) {
+                Require(PixelIs(linePixel(x, y), Background), where + "pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") " + what + " is " + PixelText(linePixel(x, y)));
+            }
+        }
+        Require(PixelIs(0, Background) && PixelIs(Pixels.size() - 4u, Background), "line strips: the corners changed");
 
         constexpr std::size_t recordBlockBytes = 65536;
         auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));

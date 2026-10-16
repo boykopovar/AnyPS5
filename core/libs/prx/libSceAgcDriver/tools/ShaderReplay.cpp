@@ -5,6 +5,7 @@
 #include "ControlFlow/Structurizer.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Optimization/RequestMemoryView.hpp"
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
@@ -16,6 +17,7 @@
 #include <exception>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -42,6 +44,7 @@ bool g_assembly = false;
 bool g_memory = false;
 bool g_spirv = false;
 bool g_prepare = false;
+bool g_materialize = false;
 bool g_graph = false;
 bool g_maintenance8 = false;
 bool g_code = false;
@@ -106,21 +109,37 @@ bool Replay(const char* path) {
             return false;
         }
     }
-    try {
-        auto program = ShaderRecompiler::PrepareResourceProgram(request.request);
-        constexpr ShaderRecompiler::ResourceMaterializer materializer;
-        static_cast<void>(materializer.ExtractPlan(program));
-    } catch (const std::exception& error) {
-        std::printf("  resource analysis failed: %s\n", FirstLine(error.what()).c_str());
-        return false;
+    if (g_materialize && g_maintenance8) request.request.target.nonConstantImageOffsets = true;
+    if (!g_materialize) {
+        try {
+            auto program = ShaderRecompiler::PrepareResourceProgram(request.request);
+            constexpr ShaderRecompiler::ResourceMaterializer materializer;
+            static_cast<void>(materializer.ExtractPlan(program));
+        } catch (const std::exception& error) {
+            std::printf("  resource analysis failed: %s\n", FirstLine(error.what()).c_str());
+            return false;
+        }
     }
-    if (g_prepare) {
+    if (g_prepare || g_materialize) {
+        const char* phase = "prepare";
         try {
             const auto handle = ShaderRecompiler::PrepareShader(request.request);
-            std::printf("  prepared: %zu SPIR-V words\n", ShaderRecompiler::GetPreparedArtifact(*handle).spirv.Words().size());
+            std::printf("  prepared: %zu SPIR-V words\n", ShaderRecompiler::GetPreparedArtifact(*handle).spirv.size());
+            if (g_materialize) {
+                phase = "prepared invocation";
+                const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request.request, handle);
+                if (!invocation.has_value()) throw std::runtime_error("request does not match its prepared shader");
+                ShaderRecompiler::RequestMemoryView memory(request.request.context.memory);
+                const auto runtime = memory.MakeRuntime(request.request.context.userData, request.request.shader.codeAddress);
+                phase = "capture";
+                const auto capture = invocation->Capture(runtime);
+                phase = "materialize";
+                const auto result = invocation->Materialize(*capture);
+                std::printf("  materialized: %zu SPIR-V words\n", result->spirv.size());
+            }
             return true;
         } catch (const std::exception& error) {
-            std::printf("  prepare failed: %s\n", FirstLine(error.what()).c_str());
+            std::printf("  %s failed: %s\n", phase, FirstLine(error.what()).c_str());
             return false;
         }
     }
@@ -147,7 +166,7 @@ bool Replay(const char* path) {
         if (g_disassemble) {
             spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_2);
             std::string text;
-            if (tools.Disassemble(result.spirv, &text, SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES)) std::printf("%s\n", text.c_str());
+            if (tools.Disassemble(result.spirv.data(), result.spirv.size(), &text, SPV_BINARY_TO_TEXT_OPTION_FRIENDLY_NAMES)) std::printf("%s\n", text.c_str());
         }
 #else
         if (g_disassemble) std::printf("  (--dis needs ANYPS5_ENABLE_SPIRV_TOOLS=ON)\n");
@@ -163,7 +182,7 @@ bool Replay(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--code] [--maintenance8] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
+        std::fprintf(stderr, "usage: agc_shader_replay [--dis] [--asm] [--cfg] [--mem] [--spv] [--prepare] [--materialize] [--code] [--maintenance8] <shader.req>...\n  the driver writes shader_<address>.req files when APS5_DUMP_SHADERS is set\n");
         return 2;
     }
     int failures = 0;
@@ -194,6 +213,10 @@ int main(int argc, char** argv) {
         }
         if (std::string(argv[i]) == "--prepare") {
             g_prepare = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--materialize") {
+            g_materialize = true;
             continue;
         }
         if (std::string(argv[i]) == "--spv") {

@@ -55,7 +55,7 @@ bool IsNullTextureResource(std::span<const std::uint32_t> words) {
     Require(words.size() == 8, "guest texture descriptor must contain 8 dwords");
     const auto base40 = (static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1]) << 32u)) & 0xffffffffffull;
     const auto type = (words[3] >> 28u) & 0xfu;
-    return base40 == 0 || type == 0;
+    return base40 == 0 || type <= 1;
 }
 
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words) {

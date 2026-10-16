@@ -126,7 +126,7 @@ private:
     void OnWarning(std::int32_t code) override;
     void OnError() override;
     void queue(const Event& event);
-    void controllerLoop();
+    void controllerLoop(const bool& closed);
     void deliver(const Event& event);
     void autoStart();
     void checkEndOfFile();
@@ -154,6 +154,7 @@ private:
     TimedWait::Condition eventCondition;
     std::deque<Event> events;
     bool quit = false;
+    std::shared_ptr<bool> controllerClosed = std::make_shared<bool>(false);
     std::thread controller;
 };
 

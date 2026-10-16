@@ -40,6 +40,7 @@ void Expect(bool condition, const std::string& what) {
 
 constexpr std::uint64_t Alignment = 65536;
 constexpr std::uint64_t ChunkBytes = std::uint64_t{64} << 20u;
+constexpr std::uint64_t LargestTestedLimit = std::uint64_t{1} << 30u;
 
 struct Bind {
     VkDeviceSize resourceOffset;
@@ -290,6 +291,10 @@ int main() {
         return 77;
     }
     close(udmabuf);
+    if (UdmabufLimitBytes() > LargestTestedLimit) {
+        std::printf("skipped, udmabuf size_limit_mb is above %llu: a range above it is too large to map\n", static_cast<unsigned long long>(LargestTestedLimit >> 20u));
+        return 77;
+    }
     setenv("APS5_WRITE_WATCH_IMPORTS", "unwatch", 1);
     GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
     try {

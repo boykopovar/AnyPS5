@@ -18,6 +18,7 @@ char16_t UsCharacter(std::uint16_t keycode) {
     if (keycode == 0x27) return u'0';
     if (keycode == 0x2C) return u' ';
     if (keycode >= 0x2D && keycode <= 0x38) return kPunctuation[keycode - 0x2D];
+    if (keycode == 0x64) return u'\\';
     if (keycode >= 0x54 && keycode <= 0x63) return kKeypad[keycode - 0x54];
     return 0;
 }

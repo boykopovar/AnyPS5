@@ -214,6 +214,20 @@ int APS5_VABI sceReal() { return 0; }
         self.assertEqual(nid_names.collect_unknowns(), {"CCCCCCCCCCC": "core/libs/prx/libSceExample/Export.cpp:exampleUnknown02"})
         self.assertEqual(nid_names.collect_real_names(), {"sceReal"})
 
+    def test_assembly_export_macros_are_real_names(self):
+        self.write_source('''asm(".text\n"
+    APS5_ASM_FUNCTION("sceAsmCall_nid_postfix")
+    "ret\n"
+    APS5_SIGNAL_ASM_FUNCTION("sigAsmCall_nid_postfix")
+    "ret\n");
+// APS5_ASM_FUNCTION("sceCommented_nid_postfix")
+auto example = "APS5_ASM_FUNCTION(\"sceQuoted_nid_postfix\")";
+''')
+        self.assertEqual(nid_names.collect_real_names(), {
+            "sceAsmCall", "sceAsmCall_nid_postfix",
+            "sigAsmCall", "sigAsmCall_nid_postfix",
+        })
+
     def test_formatted_alias_macro_is_detected(self):
         self.write_source('APS5_EXPORT (\n "AAAAAAAAAAA" ,\n exampleUnknown00\n );\n')
         self.assertEqual(nid_names.collect_unknowns(), {"AAAAAAAAAAA": "core/libs/prx/libSceExample/Export.cpp:exampleUnknown00"})

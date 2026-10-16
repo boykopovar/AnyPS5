@@ -93,10 +93,10 @@ int APS5_VABI sceCoredumpGetStopInfoCpu(void* info, size_t size) {
 }
 
 int APS5_VABI sceCoredumpGetThreadContextInfo(void* threadContextInfo, size_t threadContextInfoSize) {
-    (void)threadContextInfo;
-    (void)threadContextInfoSize;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto address = reinterpret_cast<uintptr_t>(threadContextInfo);
+    if (threadContextInfo == nullptr || threadContextInfoSize != 144 || address % alignof(uint64_t) != 0 || threadContextInfoSize > UINTPTR_MAX - address)
+        throw std::runtime_error(std::string(__func__) + ": null, unaligned, wrapping or unsupported thread context buffer outside the core dump handler");
+    return SCE_COREDUMP_ERROR_NOT_IN_COREDUMP_HANDLER;
 }
 
 int APS5_VABI sceCoredumpWriteUserString() {

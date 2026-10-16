@@ -26,6 +26,7 @@ CPP_TOKEN = re.compile(
     r"|(?P<code>(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S)")
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 NID_POSTFIX = "_nid_postfix"
+ASM_FUNCTION_MACROS = {"APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION"}
 
 
 def compute_nid(symbol):
@@ -92,6 +93,22 @@ def source_definitions(text):
     return DEFINITION.finditer(CPP_TOKEN.sub(mask, text.replace("\\\n", "").replace("\\\r\n", "")))
 
 
+def source_assembly_definitions(text):
+    tokens = [match for match in CPP_TOKEN.finditer(text.replace("\\\n", "").replace("\\\r\n", ""))
+              if match.group("comment") is None]
+    for index, token in enumerate(tokens):
+        if token.group("code") is None or token.group() not in ASM_FUNCTION_MACROS:
+            continue
+        if index + 3 >= len(tokens):
+            continue
+        opening, literal, closing = tokens[index + 1:index + 4]
+        if opening.group() != "(" or closing.group() != ")" or literal.group("string") is None:
+            continue
+        match = re.fullmatch(r'"([A-Za-z_][A-Za-z0-9_]*)"', literal.group("string"))
+        if match is not None:
+            yield match.group(1)
+
+
 def collect_unknowns():
     found = {}
     for path in source_files(PRX):
@@ -108,6 +125,10 @@ def collect_real_names():
         text = path.read_text(encoding="utf-8")
         for match in source_definitions(text):
             name = match.group(1)
+            names.add(name)
+            if name.endswith(NID_POSTFIX):
+                names.add(name[:-len(NID_POSTFIX)])
+        for name in source_assembly_definitions(text):
             names.add(name)
             if name.endswith(NID_POSTFIX):
                 names.add(name[:-len(NID_POSTFIX)])

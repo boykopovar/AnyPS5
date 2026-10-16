@@ -194,7 +194,18 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     std::uint64_t low = 0;
     std::uint64_t high = 0;
     std::uint64_t offset = 0;
-    if (!Arg(handle, 0, low) || !Arg(handle, 1, high) || !Arg(inst, 1, offset)) {
+    std::int32_t origin = -1;
+    const auto baseWord = [&] {
+        const TNode source = handle.Argument(0);
+        if (_runtime.userDataUse == nullptr || source.HasImmediate() || source.Opcode() != IrOpcode::GetUserData) return Arg(handle, 0, low);
+        const auto reg = RegIndex(static_cast<ScalarReg>(source.Argument(0).RegisterIndex()));
+        if (reg < _program.userDataBase || reg - _program.userDataBase >= _runtime.userData.size() || reg - _program.userDataBase >= SrtUserDataUse::TrackedWords) return Arg(handle, 0, low);
+        origin = static_cast<std::int32_t>(reg - _program.userDataBase);
+        low = _runtime.userData[reg - _program.userDataBase];
+        _runtime.userDataUse->asBase |= std::uint64_t {1} << origin;
+        return true;
+    };
+    if (!baseWord() || !Arg(handle, 1, high) || !Arg(inst, 1, offset)) {
         return false;
     }
     const auto base = ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
@@ -229,6 +240,7 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
         result = 0;
         return true;
     }
+    if (_runtime.userDataUse != nullptr) _runtime.userDataUse->reads.emplace_back(address, origin);
     if (_inaccessible != nullptr && _runtime.accessible != nullptr && !_runtime.accessible(_runtime.userContext, address, sizeof(std::uint32_t)) && LoadedFromMemory(*handle.Value())) {
         *_inaccessible = {inst.Value(), address};
         return false;
@@ -407,6 +419,7 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             if (reg < _program.userDataBase || reg - _program.userDataBase >= _runtime.userData.size()) {
                 return false;
             }
+            if (_runtime.userDataUse != nullptr) _runtime.userDataUse->asValue |= reg - _program.userDataBase < SrtUserDataUse::TrackedWords ? std::uint64_t {1} << (reg - _program.userDataBase) : ~std::uint64_t {0};
             result = _runtime.userData[reg - _program.userDataBase];
             return true;
         }

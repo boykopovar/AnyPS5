@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include <algorithm>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -115,7 +116,14 @@ void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition) {
         if (OrderedPixelShader(state)) {
             state.module.AddFunction(spv::OpEndInvocationInterlockEXT);
         }
-        state.module.AddFunction(state.program.Resources().stage == IrShaderStage::Pixel ? spv::OpKill : spv::OpReturn);
+        if (state.program.Resources().stage != IrShaderStage::Pixel) {
+            state.module.AddFunction(spv::OpReturn);
+        } else if (std::ranges::find(state.supportedExtensions, "SPV_KHR_terminate_invocation") != state.supportedExtensions.end()) {
+            state.module.EmitExtension("SPV_KHR_terminate_invocation");
+            state.module.AddFunction(spv::OpTerminateInvocation);
+        } else {
+            state.module.AddFunction(spv::OpKill);
+        }
     }
     EmitLabel(state, next);
 }

@@ -24,11 +24,20 @@ int main() {
     return VulkanTestSkipped;
 }
 #else
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
 
 constexpr std::uint64_t ChunkBytes = std::uint64_t{64} << 20u;
+constexpr std::uint64_t LargestTestedLimit = std::uint64_t{1} << 30u;
 
 std::uint8_t* mapping = nullptr;
 std::uint64_t mappingBytes = 0;
@@ -56,6 +65,12 @@ bool Imported(VkDevice device, std::uint64_t address, std::size_t bytes) {
     return AgcDriver::Graphics::HostImportCovers(probe, address, bytes);
 }
 
+bool DmaBufImport(const AgcDriver::VulkanDevice& device, std::uint64_t address, std::size_t bytes) {
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = AgcDriver::Graphics::HostImportFor(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), address, bytes);
+    return import != nullptr && import->dmaBuf;
+}
+
 }
 
 int main() {
@@ -66,6 +81,10 @@ int main() {
             return VulkanTestSkipped;
         }
         close(udmabuf);
+        if (UdmabufLimitBytes() > LargestTestedLimit) {
+            std::printf("skipped, udmabuf size_limit_mb is above %llu: a range above it is too large to map\n", static_cast<unsigned long long>(LargestTestedLimit >> 20u));
+            return VulkanTestSkipped;
+        }
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
 
@@ -107,21 +126,30 @@ int main() {
 
         auto* small = mapping + bytes;
         constexpr std::uint64_t SmallBytes = std::uint64_t{1} << 20u;
+        const bool settles = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).settleQueue != VK_NULL_HANDLE;
+        const auto settledBefore = AgcDriver::Graphics::HostImportsSettled();
         device->ImportGuestMemory(Register(small, SmallBytes), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false);
+        const auto settledAtMap = AgcDriver::Graphics::HostImportsSettled();
         const bool smallImported = Imported(device->Device(), reinterpret_cast<std::uint64_t>(small), static_cast<std::size_t>(SmallBytes));
+        const bool settlesShared = settles && smallImported && DmaBufImport(*device, reinterpret_cast<std::uint64_t>(small), static_cast<std::size_t>(SmallBytes));
         GuestAllocations::Mutation().Remove(small);
         if (!smallImported) {
             std::printf("skipped, the device does not import dma-buf memory\n");
             return VulkanTestSkipped;
         }
+        if (!settles) std::printf("note: the device has no settle queue, so dma-buf imports are not settled\n");
+        else if (!settlesShared) std::printf("note: the device imports shared memory through host pointers, which are not settled\n");
+        Require(!settlesShared || settledAtMap == settledBefore + 1, "sparse import: the 1 MiB dma-buf import made at map time was not settled on the settle queue");
 
         const auto boundary = ChunkBytes;
         std::memset(mapping + boundary - 65536, 0x11, 131072);
         const auto ranges = Register(mapping, bytes);
         const auto address = reinterpret_cast<std::uint64_t>(mapping);
+        const auto settledSmall = AgcDriver::Graphics::HostImportsSettled();
         const bool atMap = device->ImportGuestMemory(ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false);
         Require(Imported(device->Device(), address, static_cast<std::size_t>(bytes)), "sparse import: a range larger than udmabuf's size limit was not imported");
         Require(atMap, "sparse import: the import made without the GPU lock was refused");
+        Require(!settlesShared || AgcDriver::Graphics::HostImportsSettled() == settledSmall + 1, "sparse import: the sparse dma-buf import made at map time was not settled on the settle queue");
 
         bool filled = false;
         {

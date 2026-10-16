@@ -9,10 +9,6 @@
 #include <vector>
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-#ifndef _WIN32
-extern char** environ;
-#endif
-
 namespace {
 struct EnvironmentEntry {
     std::unique_ptr<std::string> owned;
@@ -26,20 +22,7 @@ struct EnvironmentEntry {
 };
 std::mutex environmentMutex;
 std::vector<EnvironmentEntry>& Environment() {
-    // Seed once from the host. Guest mutations remain local to the guest runtime.
-    static std::vector<EnvironmentEntry> entries = [] {
-        std::vector<EnvironmentEntry> result;
-#ifdef _WIN32
-        char** source = _environ;
-#else
-        char** source = environ;
-#endif
-        if (source) for (; *source; ++source) {
-            if (**source && **source != '=' && std::strchr(*source, '='))
-                result.push_back({std::make_unique<std::string>(*source), nullptr});
-        }
-        return result;
-    }();
+    static std::vector<EnvironmentEntry> entries;
     return entries;
 }
 bool ValidEnvironmentName(const char* name) {

@@ -78,6 +78,7 @@ std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect);
 inline bool IndirectDrawOpcode(std::uint32_t opcode) { return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38; }
 inline bool DrawOpcode(std::uint32_t opcode) { return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode); }
 
+std::string_view KnownName(std::uint32_t header);
 std::string Name(std::uint32_t header);
 // A PM4 type-2 packet is a one-dword filler (command-buffer padding); type 3 and type 0 carry a
 // dword count in bits 29:16. Type 1 is undefined.

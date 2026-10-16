@@ -3,7 +3,7 @@
 ### Unknown function info
 
 - [sceVoiceQoSSetConnectionAttribute](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS, NID `KCGOxg8iX7s`) is a throwing stub declared without parameters, like the other endpoint calls of the library: PPSA04159 fails to load without it and its signature is unknown. The name hashes to the imported NID (`tools/nid_names.py`)
-- [sceVoiceQoSInit](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - `0x804E0905` for a second initialization comes from [prosper](https://github.com/mattias800/prosper)'s reading of the module and was not measured: on a PS5 a valid call blocks inside a homebrew payload, so it never returns there. The app type and the block are not used, as no endpoint is implemented
+- [sceVoiceQoSInit](../../../core/libs/prx/libSceVoiceQoS/Export.cpp) (libSceVoiceQoS) - `0x804E0905` for a second initialization comes from [prosper](https://github.com/mattias800/prosper)'s reading of the module and was not measured: on a PS5 a valid call blocks inside a homebrew payload, so it never returns there. PPSA26344's two call sites (`0xE307BF`, `0x151C45D`) pass an allocated pointer, a 0x40000-byte block and app type 0x10000000; the app type and block are not used, as no endpoint is implemented
 
 ### Functional
 

@@ -175,7 +175,7 @@ std::vector<std::byte> copyDataSource(std::span<const std::uint32_t> packet, con
 
 }
 
-std::string Name(std::uint32_t header) {
+std::string_view KnownName(std::uint32_t header) {
     if (FillerPacket(header)) return "PM4_FILLER";
     const auto opcode = (header >> 8u) & 0xffu;
     if (opcode == 0x10 && (header & 0xfcu) != 0) {
@@ -194,9 +194,14 @@ std::string Name(std::uint32_t header) {
             default: return "UNKNOWN_CUSTOM";
         }
     }
-    for (const auto& entry : Opcodes) if (entry.value == opcode) return std::string(entry.name);
+    for (const auto& entry : Opcodes) if (entry.value == opcode) return entry.name;
+    return {};
+}
+
+std::string Name(std::uint32_t header) {
+    if (const auto known = KnownName(header); !known.empty()) return std::string(known);
     char text[24]{};
-    std::snprintf(text, sizeof(text), "UNKNOWN_0x%02x", opcode);
+    std::snprintf(text, sizeof(text), "UNKNOWN_0x%02x", (header >> 8u) & 0xffu);
     return text;
 }
 

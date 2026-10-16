@@ -1,5 +1,6 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
@@ -156,6 +157,7 @@ void FillFileStat(int nativeDescriptor, FileStat* sb) {
 }
 
 bool FillFileStatFromDescriptor(int fd, FileStat* sb) {
+    if (FillArchivedStatFromDescriptor(fd, sb)) return true;
     NativeStat st{};
     if (DoFstat(fd, &st) != 0) return false;
     CopyNativeStat(st, sb);

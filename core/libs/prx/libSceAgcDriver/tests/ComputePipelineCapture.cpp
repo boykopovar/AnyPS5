@@ -62,6 +62,10 @@ void CheckRoundTrip() {
     changed = decoded;
     changed.requiredSubgroupSize = 64;
     Require(changed.Identity() != capture.Identity(), "subgroup size did not affect capture identity");
+    changed = decoded;
+    changed.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
+    Require(AgcDriver::ComputePipelineCapture::Decode(changed.Encode()).stageFlags == changed.stageFlags, "full subgroups were lost in the capture");
+    Require(changed.Identity() != capture.Identity(), "full subgroups did not affect capture identity");
     Directory directory;
     const auto file = capture.Write(directory.path);
     Require(AgcDriver::ComputePipelineCapture::Read(file).Encode() == encoded, "capture file changed pipeline inputs");
@@ -144,7 +148,11 @@ void CheckMalformedRecords() {
     invalid([](auto& copy) { copy.spirv[11] = 4; });
     invalid([](auto& copy) { copy.spirv[13] = 0; });
     invalid([](auto& copy) { copy.flags = VK_PIPELINE_CREATE_DERIVATIVE_BIT; });
-    invalid([](auto& copy) { copy.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT; });
+    invalid([](auto& copy) { copy.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT; });
+    invalid([](auto& copy) {
+        copy.stageFlags = VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT;
+        copy.requiredSubgroupSize = 0;
+    });
     invalid([](auto& copy) { copy.requiredSubgroupSize = 3; });
     invalid([](auto& copy) { copy.specialization.push_back(copy.specialization[0]); });
     invalid([](auto& copy) { copy.pushConstants = {{VK_SHADER_STAGE_VERTEX_BIT, 0, 4}}; });

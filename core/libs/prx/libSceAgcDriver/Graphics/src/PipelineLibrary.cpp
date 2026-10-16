@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include <array>
 #include <condition_variable>
@@ -204,13 +205,16 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             break;
         }
         VkPipeline handle = VK_NULL_HANDLE;
-        if (partsOnly) lock.unlock();
+        // Built without the store's mutex: a draw whose parts are resident is not held behind
+        // another thread's build, and builds from several threads (the registration prebuild, the
+        // journal replay) run at once; a part another thread built meanwhile is kept, this one dropped.
+        lock.unlock();
         VkResult created;
         {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             created = context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &create, nullptr, &handle);
         }
-        if (partsOnly) lock.lock();
+        lock.lock();
         Check(created, "vkCreateGraphicsPipelines library");
         if (const auto raced = cache.find(key); raced != cache.end()) {
             device.destroyPipeline(context.device, handle, nullptr);
@@ -238,10 +242,12 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
     create.layout = info.layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    lock.unlock();
     {
         auto pipelineCacheLock = context.LockPipelineCacheForUse();
         Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &create, nullptr, &pipeline), "vkCreateGraphicsPipelines link");
     }
+    lock.lock();
     ++device.counters.linked;
     if (optimize && optimized != nullptr) {
         auto slot = std::make_shared<OptimizedPipeline>();
@@ -252,7 +258,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         const auto cache = context.pipelineCache;
         const auto cacheSynchronization = context.pipelineCacheSynchronization;
         const auto libraryLayout = fullLayout;
-        enqueue(store, context.device, [slot, createPipelines, cache, cacheSynchronization, libraryLayout, libraries, &store, devicePointer = &device] {
+        std::function<void()> relink = [slot, createPipelines, cache, cacheSynchronization, libraryLayout, libraries, &store, devicePointer = &device] {
             if (slot->released.load()) return;
             VkPipelineLibraryCreateInfoKHR linked{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
             linked.libraryCount = static_cast<std::uint32_t>(libraries.size());
@@ -272,7 +278,13 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             }
             std::lock_guard lock(store.mutex);
             ++devicePointer->counters.optimized;
-        });
+        };
+        if (PipelineJournalReplaying()) {
+            slot->relink = std::move(relink);
+            slot->deferred.store(true, std::memory_order_release);
+        } else {
+            enqueue(store, context.device, std::move(relink));
+        }
     }
     return pipeline;
 }
@@ -280,6 +292,15 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
 void OptimizedPipeline::Release() noexcept {
     released.store(true);
     if (const auto pipeline = handle.exchange(VK_NULL_HANDLE)) destroy(device, pipeline, nullptr);
+}
+
+void OptimizedPipeline::Schedule() {
+    if (!deferred.load(std::memory_order_acquire)) return;
+    auto& store = Libraries();
+    std::lock_guard lock(store.mutex);
+    if (!deferred.exchange(false, std::memory_order_acq_rel)) return;
+    if (relink && !released.load()) enqueue(store, device, std::move(relink));
+    relink = nullptr;
 }
 
 void WaitForOptimizedPipelines(VkDevice device) {

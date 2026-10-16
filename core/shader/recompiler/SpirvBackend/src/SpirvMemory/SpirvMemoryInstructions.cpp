@@ -1365,7 +1365,7 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
     state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, servedMerge, done, body);
     state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, servedMerge, result, body);
     const auto ballot = state.module.AllocateId();
-    EmitSubgroupBallot(state, ballot, Unary(state, spv::OpLogicalNot, TypeBool(state), doneNext));
+    EmitHostSubgroupBallot(state, ballot, Unary(state, spv::OpLogicalNot, TypeBool(state), doneNext));
     std::uint32_t remaining = ConstantU32(state, 0u);
     for (std::uint32_t component = 0; component < 4u; ++component) {
         const auto word = state.module.AllocateId();

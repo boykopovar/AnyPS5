@@ -44,7 +44,7 @@ int CopyOut(const void* value, std::size_t size, void* oldValue, std::size_t* ol
 }
 
 bool IsLeafMib(const int* name) {
-    return (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5)) || (name[0] == 1 && name[1] == 37);
+    return (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && name[1] == 37);
 }
 
 }
@@ -99,6 +99,14 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
     if (name == nullptr) {
         *__error_nid_postfix() = 14;
         return -1;
+    }
+    if (nameLength == 2 && name[0] == 6 && name[1] == 7) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        constexpr int pagesize = PS5_PAGE_SIZE;
+        return CopyOut(&pagesize, sizeof(pagesize), oldValue, oldLength);
     }
     if (nameLength == 2 && name[0] == 6 && name[1] == 3) {
         if (newValue != nullptr) {
@@ -219,6 +227,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         const std::uint64_t frequency = sceKernelGetTscFrequency();
         return CopyOut(&frequency, sizeof(frequency), oldValue, oldLength);
     }
+    if (std::strcmp(name, "hw.pagesize") == 0) {
+        static constexpr int mib[] = {6, 7};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
+    }
     if (std::strcmp(name, "hw.ncpu") == 0) {
         static constexpr int mib[] = {6, 3};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
@@ -257,6 +269,7 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
     static constexpr KnownName known[] = {
         {"hw.model", {6, 2}, 2},
         {"hw.ncpu", {6, 3}, 2},
+        {"hw.pagesize", {6, 7}, 2},
         {"hw.physmem", {6, 5}, 2},
         {"hw.realmem", {6, 12}, 2},
         {"kern.arandom", {1, 37}, 2},

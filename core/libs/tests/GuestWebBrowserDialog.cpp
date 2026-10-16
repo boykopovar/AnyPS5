@@ -6,6 +6,7 @@ extern "C" {
 int APS5_VABI sceWebBrowserDialogInitialize(void);
 int APS5_VABI sceWebBrowserDialogTerminate(void);
 int APS5_VABI sceWebBrowserDialogOpen(const void* param);
+int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param);
 int APS5_VABI sceWebBrowserDialogClose(void);
 int APS5_VABI sceWebBrowserDialogGetStatus(void);
 int APS5_VABI sceWebBrowserDialogUpdateStatus(void);
@@ -62,6 +63,21 @@ int main() {
     Require(sceWebBrowserDialogClose() == 0);
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
+
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogInitialize() == 0);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param) == 0);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
+    Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
+
+    result = 0x5a5a5a5a;
+    Require(sceWebBrowserDialogGetResult(&result) == 0);
+    Require(result == COMMON_DIALOG_RESULT_USER_CANCELED);
+
+    Require(sceWebBrowserDialogClose() == 0);
+    Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
 
     return 0;

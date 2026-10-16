@@ -84,7 +84,7 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 264, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 240, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 200, "ShaderInvocation changed: update the invocation encoder");
 static_assert(sizeof(RecompileResult) == 472, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
@@ -101,7 +101,7 @@ static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info enc
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
 static_assert(sizeof(IrBindingLayout) == 80, "IrBindingLayout changed: update the layout encoder");
 static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: update the layout encoder");
-static_assert(sizeof(BindingAllocationResult) == 160, "BindingAllocationResult changed: update the allocation encoder");
+static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 static_assert(sizeof(IrResourcePlan) == 712, "IrResourcePlan changed: update EncodePlan and DecodePlan");
@@ -486,6 +486,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.vertexOffsetConflict);
     writer.Value(result.instanceOffsetConflict);
     writer.Value(result.hostSubgroupSize);
+    writer.Value(result.fullSubgroups);
     writer.Values(std::span<const std::uint32_t>(result.parameterExports));
     writer.List(result.fragmentParameters, [](Writer& out, const FragmentParameter& parameter) {
         out.Value(parameter.location);
@@ -532,6 +533,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.vertexOffsetConflict);
     reader.Value(result.instanceOffsetConflict);
     reader.Value(result.hostSubgroupSize);
+    reader.Value(result.fullSubgroups);
     reader.Values(result.parameterExports);
     reader.List(result.fragmentParameters, 10, [](Reader& in, FragmentParameter& parameter) {
         in.Value(parameter.location);
@@ -1694,13 +1696,15 @@ void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out) {
     encodeArtifact(writer, result);
     encodeInvocation(writer, result);
     writer.Value(result.workgroupMemoryDwords);
+    writer.Values(std::span<const std::uint32_t>(result.shaderDataUserWords));
 }
 
-bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result) {
-    Reader reader(bytes);
+bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result, std::shared_ptr<const void> owner) {
+    Reader reader(bytes, std::move(owner));
     decodeArtifact(reader, result);
     decodeInvocation(reader, result);
     reader.Value(result.workgroupMemoryDwords);
+    reader.Values(result.shaderDataUserWords);
     result.cacheHit = false;
     return reader.Done() && result.runtimeAbiVersion == RuntimeAbi::Version;
 }

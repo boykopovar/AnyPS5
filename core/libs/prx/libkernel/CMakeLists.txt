@@ -3,6 +3,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Apr/src/Apr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/Equeue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/EventAccessors.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/ArchivedFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/DescriptorControl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/FileEvent.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/Kqueue.cpp
@@ -47,6 +48,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/Udp.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketOptions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/AddressConversion.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketConnect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/EventFlag/src/EventFlag.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Module.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/DynamicLoader.cpp
@@ -81,6 +83,7 @@ target_link_libraries(libkernel PRIVATE ${CMAKE_DL_LIBS})
 target_link_libraries(libkernel PRIVATE libc)
 if(WIN32)
     target_link_libraries(libkernel PRIVATE ws2_32 shell32 advapi32 wbemuuid ole32 oleaut32)
+    target_link_libraries(libkernel PRIVATE iphlpapi)
     target_compile_definitions(libkernel PRIVATE _WIN32_WINNT=0x0602)
 endif()
 configure_windows_unwind(libkernel)
@@ -224,7 +227,7 @@ if(BUILD_TESTING)
         add_dependencies(guest_dynamic_loader_fixed_base_tests guest_module_fixture)
         set_target_properties(guest_dynamic_loader_fixed_base_tests PROPERTIES ENABLE_EXPORTS ON POSITION_INDEPENDENT_CODE OFF)
         target_compile_options(guest_dynamic_loader_fixed_base_tests PRIVATE -fno-pie)
-        target_link_options(guest_dynamic_loader_fixed_base_tests PRIVATE -no-pie)
+        target_link_options(guest_dynamic_loader_fixed_base_tests PRIVATE -no-pie -fuse-ld=bfd)
         add_test(NAME guest_dynamic_loader_fixed_base COMMAND guest_dynamic_loader_fixed_base_tests $<TARGET_FILE_NAME:guest_module_fixture>)
         set_tests_properties(guest_dynamic_loader_fixed_base PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:guest_module_fixture>")
@@ -1169,6 +1172,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_socket_pair PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_app_archive_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelAppArchive.cpp)
+    target_include_directories(guest_kernel_app_archive_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_kernel_app_archive_tests PRIVATE libkernel libc zarchive)
+    configure_windows_unwind(guest_kernel_app_archive_tests)
+    foreach(mode archive plain mmap)
+        add_test(NAME guest_kernel_app_archive_${mode} COMMAND guest_kernel_app_archive_tests ${mode})
+        set_tests_properties(guest_kernel_app_archive_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_kernel_app_archive_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
     add_test_executable(guest_dup_tests ${LIBS_INCLUDE_DIR}/tests/GuestDup.cpp)
     target_include_directories(guest_dup_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_dup_tests PRIVATE libkernel libc)
@@ -1373,6 +1388,16 @@ if(BUILD_TESTING)
         if(MINGW)
             target_compile_options(guest_directory_close_tests PRIVATE -fasynchronous-unwind-tables)
         endif()
+        add_test_executable(guest_positioned_close_tests ${LIBS_INCLUDE_DIR}/tests/GuestPositionedClose.cpp)
+        target_include_directories(guest_positioned_close_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_positioned_close_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_positioned_close_tests)
+        add_test(NAME guest_positioned_close COMMAND guest_positioned_close_tests)
+        set_tests_properties(guest_positioned_close PROPERTIES TIMEOUT 60 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        if(MINGW)
+            target_compile_options(guest_positioned_close_tests PRIVATE -fasynchronous-unwind-tables)
+        endif()
     endif()
     add_test_executable(guest_file_vector_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileVector.cpp)
     target_include_directories(guest_file_vector_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1399,8 +1424,14 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_kernel_fcntl_tests)
     add_test(NAME guest_kernel_fcntl COMMAND guest_kernel_fcntl_tests)
     set_tests_properties(guest_kernel_fcntl PROPERTIES TIMEOUT 15)
+    add_test_executable(guest_append_writes_tests ${LIBS_INCLUDE_DIR}/tests/GuestAppendWrites.cpp)
+    target_include_directories(guest_append_writes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_append_writes_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_append_writes_tests)
+    add_test(NAME guest_append_writes COMMAND guest_append_writes_tests)
+    set_tests_properties(guest_append_writes PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_kernel_fcntl PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kernel_fcntl guest_append_writes PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test_executable(guest_file_lock_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileLock.cpp)
         target_include_directories(guest_file_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})

@@ -96,8 +96,8 @@ void PixelFailure() {
         }
         Close(reader);
     });
-    const std::vector<std::byte> pixels(128 * 128 * 4);
-    const auto failure = AgcDriver::WriteBmpAndClose_nid_no_patch(file, 128, 128, pixels);
+    const std::vector<std::byte> pixels(512 * 512 * 4);
+    const auto failure = AgcDriver::WriteBmpAndClose_nid_no_patch(file, 512, 512, pixels);
     consumer.join();
     Check(received == 54, "pixel failure did not follow a complete BMP header");
     Check(failure && std::strcmp(failure.operation, "pixels") == 0, "closed pipe pixel write was accepted");

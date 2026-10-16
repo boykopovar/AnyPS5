@@ -1,8 +1,11 @@
 # libSceNet technical debt
 
+### Silent stubs
+
+- [sceNetShowIfconfig, sceNetShowNetstat](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - return success without printing anything: the `()` signatures and the success return follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/network/net.cpp), which stubs both the same way. PPSA01530 fails to load without the `sceNetShowIfconfig` export (#3177); PPSA11386 imports `sceNetShowNetstat` but does not call it during start-up. What the console prints and where is unverified
+
 ### Unknown function info
 
-- PPSA01530 and PPSA13356 imports declared without parameters, signatures unknown, added without an implementation because the titles fail to load without them: [sceNetShowIfconfig](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) and [scePadUnknown_n3kSX62fgNo](../../../core/libs/prx/libScePad/Export.cpp) (libScePad), whose real name is unknown. [_sceUltWaitingQueueResourcePoolCreate, _sceUltSemaphoreCreate, _sceUltMutexOptParamInitialize, _sceUltMutexCreate, _sceUltQueueDataResourcePoolCreate and _sceUltQueueCreate](../../../core/libs/prx/libSceUlt/Export.cpp) (libSceUlt) forward to the exports without the underscore; that their argument lists match is inferred from the other underscore Ult exports, not measured.
 - [sceHttp2GetMemoryPoolStats, sceSslGetMemoryPoolStats, sceNetGetMemoryPoolStats](../../../core/libs/prx/libSceNet/Export.cpp) (libSceHttp2, libSceSsl, libSceNet) - the signatures `(int id, stats*)`, the layouts (pool size, peak and current use, and for Http2 and Ssl a 32-bit reserved field) and the error codes were measured on a PS5 (firmware 13.60). The pool size is the one given at init or pool creation. Http2 and Net allocate nothing from these pools. Ssl counts its certificate backend allocations and returned data against its pool; C++ bookkeeping is outside that budget. All three initially report zero use, where the console already reports 0x15C0 bytes for Ssl, 0x1640 for Http2 and 4 for a Net pool. Ssl's allocation sizes and peak usage do not reproduce the console allocator
 - [sceNetShowNetstat](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - imported by PPSA11386 and not called during its start-up; unknown signature, declared without parameters
 - [sceNetClearDnsCache](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - unknown signature

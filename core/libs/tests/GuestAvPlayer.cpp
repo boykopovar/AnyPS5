@@ -1291,10 +1291,69 @@ void TestEofStopLatency() {
     Check(median < std::chrono::milliseconds(10), "eof stop median " + std::to_string(medianMs) + " ms exceeds 10 ms");
 }
 
+struct ClosingEvents {
+    std::mutex mutex;
+    AvPlayerInternal* player = nullptr;
+    AvPlayerInternal* replacement = nullptr;
+    std::int32_t closeEvent;
+    bool closed = false;
+};
+
+void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void*) {
+    auto& events = *static_cast<ClosingEvents*>(object);
+    if (id != events.closeEvent) return;
+    std::lock_guard lock(events.mutex);
+    Check(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
+    events.player = nullptr;
+    AvPlayerInitData init = InitData(nullptr);
+    events.replacement = sceAvPlayerInit(&init);
+    Check(events.replacement != nullptr, "replacement player init from callback failed");
+    events.closed = true;
 }
 
-int main() {
+void TestCloseFromEventCallback(std::int32_t event) {
+    ClosingEvents events;
+    events.closeEvent = event;
+    AvPlayerInitData init = InitData(nullptr);
+    init.event_replacement = {&events, CloseOnEvent};
+    init.auto_start = event == EventStop;
+    {
+        std::lock_guard lock(events.mutex);
+        events.player = sceAvPlayerInit(&init);
+        Check(events.player != nullptr, "callback-close init failed");
+        Check(sceAvPlayerAddSource(events.player, "/app0/avplayer.mp4") == 0, "callback-close source failed");
+    }
+    Check(WaitFor([&] {
+        std::lock_guard lock(events.mutex);
+        if (events.closed) return true;
+        if (event == EventStop) {
+            AvPlayerFrameInfoEx video{};
+            AvPlayerFrameInfo audio{};
+            if (sceAvPlayerGetVideoDataEx(events.player, &video)) CheckVideoFrame(video);
+            if (sceAvPlayerGetAudioData(events.player, &audio)) CheckEnglishAudio(audio);
+        }
+        return false;
+    }), "event callback did not finish closing the player");
+    {
+        std::lock_guard lock(events.mutex);
+        Check(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
+    }
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "callback close leaked media allocations");
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "--callback-close") == 0) {
+            WriteMovie();
+            TestCloseFromEventCallback(EventReady);
+            TestCloseFromEventCallback(EventStop);
+            std::puts("AvPlayer callback close tests passed");
+            return 0;
+        }
+        Check(argc == 1, "unknown AvPlayer test arguments");
         WriteMovie();
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();

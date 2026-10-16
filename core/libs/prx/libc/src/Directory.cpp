@@ -1,6 +1,7 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include <dirent.h>
 #include <cerrno>
 #include <cstring>
@@ -109,6 +110,7 @@ void* APS5_VABI opendir_nid_postfix(const char* path) {
     try {
         auto directory = std::make_unique<Directory>();
         if (const int error = ResolvePathError_nid_no_patch(path, directory->path)) { errno = error; return nullptr; }
+        AppArchiveRefuseMergedListing_nid_no_patch(directory->path, path);
         directory->native = OpenNative(directory->path);
         if (!directory->native) { errno = DirectoryError(errno); return nullptr; }
         return directory.release();

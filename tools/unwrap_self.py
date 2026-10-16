@@ -127,10 +127,11 @@ def place_segments(data, headers, records):
                 header["source"] = segment
                 break
 
-    def load_for(vaddr):
+    def load_for(vaddr, size):
         found = None
         for header in loads:
-            if header["memory"] and header["vaddr"] <= vaddr < header["vaddr"] + header["memory"]:
+            end = header["vaddr"] + header["memory"]
+            if header["memory"] and header["vaddr"] <= vaddr and (vaddr < end or (size == 0 and vaddr == end)):
                 found = header
         return found
 
@@ -139,7 +140,7 @@ def place_segments(data, headers, records):
         if header["type"] == PT_LOAD:
             continue
         if header["vaddr"] != 0:
-            host = load_for(header["vaddr"])
+            host = load_for(header["vaddr"], header["size"])
             if host is None:
                 raise Refused("segment %d vaddr %#x is in no PT_LOAD" % (header["index"], header["vaddr"]))
             header["host"] = host

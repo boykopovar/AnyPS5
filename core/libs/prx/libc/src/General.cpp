@@ -31,6 +31,7 @@
 #include <unistd.h>
 #endif
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
 namespace {
@@ -192,7 +193,7 @@ void RequireHostDirectory(WorkingDirectory& state, const std::filesystem::path& 
 #endif
     throw std::filesystem::filesystem_error("Guest path component is not a directory", host, error);
 }
-std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool module = false) {
+std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool module = false, bool archived = false) {
     std::string text(path);
     for (auto& character : text) if (character == '\\') character = '/';
     std::filesystem::path input(text);
@@ -206,7 +207,7 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool mo
     for (auto part = relative.begin(); part != relative.end(); ++part) {
         if (*part == "..") {
             const auto parent = guest.lexically_normal();
-            if (parent.has_relative_path()) RequireHostDirectory(state, parent);
+            if (parent.has_relative_path() && !(archived && AppArchiveHasDirectory_nid_no_patch(HostPath(state, parent)))) RequireHostDirectory(state, parent);
         }
         guest /= *part;
     }
@@ -424,18 +425,32 @@ extern "C" void BlockPathAlias_nid_no_patch(const char* guestPrefix) {
     aliases.blocked.push_back(prefix);
 }
 
-extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
+static std::filesystem::path ResolveLocked(const char* path, bool module, bool archived) {
     if (!path) { APS5_INVALID_ARG_EX; }
+    if (archived) AppArchiveReady_nid_no_patch();
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
-    return Resolve(state, path);
+    return Resolve(state, path, module, archived);
+}
+
+extern "C" std::filesystem::path ResolveDiskPath_nid_no_patch(const char* path) {
+    return ResolveLocked(path, false, false);
+}
+
+extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module) {
+    return ResolveLocked(path, module, true);
+}
+
+extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
+    auto resolved = ResolveLocked(path, false, true);
+    AppArchiveRefuseOnly_nid_no_patch(resolved, path, "reading");
+    return resolved;
 }
 
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path) {
-    if (!path) { APS5_INVALID_ARG_EX; }
-    auto& state = Directories();
-    std::lock_guard lock(state.mutex);
-    return Resolve(state, path, true);
+    auto resolved = ResolveLocked(path, true, true);
+    AppArchiveRefuseOnly_nid_no_patch(resolved, path, "reading");
+    return resolved;
 }
 
 extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::filesystem::path& path) {
@@ -472,9 +487,11 @@ extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
     if (!*path) { errno = 2; return -1; }
     try {
+        AppArchiveReady_nid_no_patch();
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
-        const auto resolved = Resolve(state, path);
+        const auto resolved = Resolve(state, path, false, true);
+        AppArchiveRefuseOnly_nid_no_patch(resolved, path, "changing the working directory to");
         const int error = SetWorkingDirectory(state, resolved);
         if (error) { errno = error; return -1; }
         return 0;

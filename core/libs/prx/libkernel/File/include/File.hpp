@@ -30,6 +30,9 @@ namespace File {
 int HostStandardError();
 [[nodiscard]] std::unique_lock<std::mutex> LockPositionedTransfer(int descriptor);
 void SharePositionedTransfer(int from, int to);
+#ifdef _WIN32
+std::int64_t WriteAtEnd(int descriptor, const void* buf, std::size_t nbytes);
+#endif
 }
 
 #endif

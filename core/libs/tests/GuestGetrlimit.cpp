@@ -75,6 +75,25 @@ static void CheckOpenFileLimit() {
     Require(host.rlim_cur == RLIM_INFINITY ? limit.rlim_cur == GUEST_RLIM_INFINITY : limit.rlim_cur == static_cast<std::int64_t>(host.rlim_cur));
 #endif
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
+    const ResourceLimit lowered{limit.rlim_max > 1 ? limit.rlim_max - 1 : 1, limit.rlim_max};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &lowered) == 0);
+    const ResourceLimit updated = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(updated.rlim_cur == lowered.rlim_cur);
+    Require(updated.rlim_max == lowered.rlim_max);
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
+    const ResourceLimit restored = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(restored.rlim_cur == limit.rlim_cur);
+    Require(restored.rlim_max == limit.rlim_max);
+    if (limit.rlim_max != GUEST_RLIM_INFINITY) {
+        const ResourceLimit raised{limit.rlim_cur, limit.rlim_max + 1};
+        bool raisedRejected = false;
+        try {
+            setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &raised);
+        } catch (const std::runtime_error&) {
+            raisedRejected = true;
+        }
+        Require(raisedRejected);
+    }
 }
 
 static void RequireError(int resource, ResourceLimit* limit, int error) {

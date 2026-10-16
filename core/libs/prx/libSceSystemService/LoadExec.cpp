@@ -1,4 +1,5 @@
 #include "LoadExec.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <algorithm>
@@ -153,6 +154,8 @@ Handle Duplicate(HANDLE source, DWORD access) {
     pointers.push_back(nullptr);
     LibcRunShutdown_nid_postfix();
     std::fflush(nullptr);
+    if (const int host = HostStandardError_nid_no_patch(); host >= 0 && dup2(host, 2) != 2)
+        throw std::system_error(errno, std::generic_category(), "LoadExec: giving the host standard error back to descriptor 2");
     std::filesystem::current_path(target.parent_path());
     if ((descriptor > 3 && close_range(3, static_cast<unsigned>(descriptor - 1), 0) != 0) ||
         close_range(static_cast<unsigned>(std::max(3, descriptor + 1)), ~0u, 0) != 0)

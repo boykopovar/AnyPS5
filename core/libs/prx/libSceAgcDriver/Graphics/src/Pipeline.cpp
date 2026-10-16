@@ -2,9 +2,11 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -118,7 +120,7 @@ bool ValidateSampleLocations(const Context& context, const State& state) {
     const bool extensionSupportsSamples = (context.sampleLocationSampleCounts & state.samples) != 0;
     Require(!state.customSampleLocations || extensionSupportsSamples, "custom sample locations require VK_EXT_sample_locations support for the draw's sample count");
     Require(!state.sampleLocationGrid || (context.sampleLocationGridSampleCounts & state.samples) != 0, "sample locations varying between pixels require a 2x2 sample location grid for the draw's sample count");
-    const bool enabled = extensionSupportsSamples && (!state.depth || SampleLocationsCompatibleDepth(context, HostDepthFormat(context, state.depth->format), state.depth->samples));
+    const bool enabled = extensionSupportsSamples && (state.samples > 1 || state.customSampleLocations) && (!state.depth || SampleLocationsCompatibleDepth(context, HostDepthFormat(context, state.depth->format), state.depth->samples));
     Require(!state.customSampleLocations || enabled, "custom sample locations require a compatible depth format and sample count");
     return enabled;
 }
@@ -193,10 +195,12 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || SplitsAlternateAlpha(state)) return false;
     keys = {};
     for (const auto& shader : shaders) {
-        if (shader.stage == Stage::Geometry || shader.program->PipelineVariantId() == 0) return false;
+        const auto identity = shader.program->Identity();
+        if (shader.stage == Stage::Geometry || identity.Empty()) return false;
         auto& key = shader.stage == Stage::Fragment ? keys.fragmentShader : keys.preRasterization;
         appendKey(key, shader.stage);
-        appendKey(key, shader.program->PipelineVariantId());
+        appendKey(key, identity.low);
+        appendKey(key, identity.high);
         appendKey(key, shader.pushConstantOffset);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
@@ -711,6 +715,7 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
 }
 
 void Pipeline::Continue(VkCommandBuffer commands, const State& state) const {
+    if (optimized != nullptr) optimized->Schedule();
     const auto best = optimized != nullptr ? optimized->handle.load() : VK_NULL_HANDLE;
     context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, best != VK_NULL_HANDLE ? best : pipeline);
     context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &state.viewport);
@@ -779,25 +784,27 @@ void append(std::vector<std::byte>& key, const TValue& value) {
     key.insert(key.end(), bytes.begin(), bytes.end());
 }
 
-// Everything the Pipeline objects are built from, or empty when a stage's result has no variant id
-// (the recompiler could not identify it, so nothing else may share its pipeline). The rect-list
-// control and evaluation stages are generated from the vertex and fragment results, which the key
-// already names, so they carry no id of their own.
+// Everything the Pipeline objects are built from, or empty when a stage's result has no module
+// (nothing else may share its pipeline). The stage identities and the state fields are the same on
+// every run (CanonicalPipelineState keeps exactly the fields read here), which lets the journal's
+// replay insert an entry a later draw finds; a generated stage (rect-list pair, geometry) is keyed
+// by its identity like the others, so a replayed pipeline built from another device's generated
+// module is missed rather than used.
 void pipelineKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
-    using Stage = ShaderRecompiler::ShaderStage;
     key.clear();
     append(key, context.device);
     append(key, attachmentLayout);
     append(key, shaders.size());
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
-        const bool generated = (state.rectList && (shader.stage == Stage::TessellationControl || shader.stage == Stage::TessellationEvaluation)) || shader.stage == Stage::Geometry;
-        if (!generated && shader.program->PipelineVariantId() == 0) {
+        const auto identity = shader.program->Identity();
+        if (identity.Empty()) {
             key.clear();
             return;
         }
         append(key, shader.stage);
-        append(key, generated ? std::uint64_t{0} : shader.program->PipelineVariantId());
+        append(key, identity.low);
+        append(key, identity.high);
         // Where the stage's push constants sit in the block (AssemblePushConstants).
         append(key, shader.pushConstantOffset);
     }
@@ -840,18 +847,23 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         append(key, state.sampleLocations);
     }
     append(key, state.colors.size());
-    for (const auto& color : state.colors) append(key, color.format);
+    for (const auto& color : state.colors) {
+        append(key, color.format);
+        append(key, color.componentMapping);
+    }
     if (state.blends.size() != state.colors.size()) {
         for (const auto& color : state.colors) append(key, color.exportIndex);
     }
     append(key, state.depth.has_value());
     if (state.depth) {
         append(key, state.depth->format);
+        append(key, state.depth->samples);
         append(key, state.depthTest);
         append(key, state.depthWrite);
         append(key, state.depthCompare);
         append(key, state.depthBoundsTest);
         append(key, state.depthBias);
+        append(key, state.depthBias && state.depthBiasClamp != 0.0f);
         append(key, state.depthBiasPerFace);
         append(key, state.stencilTest);
         auto front = state.stencilFront;
@@ -872,6 +884,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         append(key, mesh.threadsPerGroup);
         append(key, mesh.ldsSizeDwords);
         append(key, mesh.provokingVertex);
+        append(key, mesh.outputPrimitiveSize);
     }
     append(key, state.stages.tessellation.has_value());
     if (state.stages.tessellation) {
@@ -903,7 +916,6 @@ struct PipelineStore {
         std::shared_ptr<Pipeline> pipeline;
     };
     std::mutex mutex;
-    std::vector<std::byte> scratchKey;
     // Least recently used first.
     std::list<Entry> entries;
     std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
@@ -911,6 +923,7 @@ struct PipelineStore {
     std::uint64_t misses = 0;
     std::uint64_t uncached = 0;
     std::uint64_t evicted = 0;
+    PipelineStoreCounters totals;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
@@ -936,6 +949,11 @@ std::list<PipelineStore::Entry>::iterator abandon(PipelineStore& store, std::lis
     return store.entries.erase(it);
 }
 
+std::size_t storeBound() {
+    static const auto bound = static_cast<std::size_t>(std::max<std::uint64_t>(1u, PipelineSwitch("APS5_PIPELINE_STORE_ENTRIES", 1024u)));
+    return bound;
+}
+
 void reportPipelines(PipelineStore& store) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
@@ -953,55 +971,115 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     return CachedPipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout);
 }
 
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
+    if (created != nullptr) *created = false;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
-    std::lock_guard lock(store.mutex);
-    reportPipelines(store);
-    auto& key = store.scratchKey;
+    struct PipelineKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::byte>, PipelineKeyStorage>();
     pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
     if (key.empty()) {
+        std::lock_guard lock(store.mutex);
         ++store.uncached;
+        ++store.totals.uncached;
         return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     }
     const auto hash = hashKey(key);
-    if (const auto found = store.index.find(hash); found != store.index.end()) {
+    // The store's entry of the key, or nullptr with `found` telling a miss (the key is new) from a
+    // collision (another configuration owns the hash, so this one stays private).
+    const auto lookup = [&](bool& collision) -> std::shared_ptr<Pipeline> {
+        collision = false;
+        const auto found = store.index.find(hash);
+        if (found == store.index.end()) return nullptr;
         const auto it = found->second;
-        if (it->key == key) {
-            // The key names the device handle, which the loader may reuse for a device created after
-            // this one was destroyed without ClearCachedPipelines: such an entry is a miss.
-            if (alive(*it, context)) {
-                ++store.hits;
-                store.entries.splice(store.entries.end(), store.entries, it);
-                return it->pipeline;
-            }
-            abandon(store, it);
-        } else {
+        if (it->key != key) {
+            collision = true;
+            return nullptr;
+        }
+        // The key names the device handle, which the loader may reuse for a device created after
+        // this one was destroyed without ClearCachedPipelines: such an entry is a miss.
+        if (alive(*it, context)) {
+            store.entries.splice(store.entries.end(), store.entries, it);
+            return it->pipeline;
+        }
+        abandon(store, it);
+        return nullptr;
+    };
+    {
+        std::lock_guard lock(store.mutex);
+        reportPipelines(store);
+        bool collision = false;
+        if (auto pipeline = lookup(collision)) {
+            ++store.hits;
+            ++store.totals.hits;
+            return pipeline;
+        }
+        if (collision) {
             // A different configuration with the same hash keeps the resident entry; this one stays private.
             ++store.uncached;
+            ++store.totals.uncached;
             return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
         }
+        ++store.misses;
+        ++store.totals.misses;
     }
-    ++store.misses;
-    // Entries of another device belong to one the driver replaced (it does so under the GpuMutex
-    // before any draw reaches the new device), whose objects went with it: forget them.
-    for (auto it = store.entries.begin(); it != store.entries.end();) {
-        it = alive(*it, context) ? std::next(it) : abandon(store, it);
-    }
+    // Built outside the mutex: a draw that finds its pipeline resident is not held behind another
+    // thread's build (the journal replay builds here too), and a device's driver compiles in
+    // parallel when several threads build at once.
     auto pipeline = std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
-    store.entries.push_back({context.device, context.bufferPool, hash, key, pipeline});
-    store.index[hash] = std::prev(store.entries.end());
-    constexpr std::size_t bound = 1024;
-    while (store.entries.size() > bound) {
-        // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
-        const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
-        if (victim == store.entries.end()) break;
-        store.index.erase(victim->hash);
-        store.entries.erase(victim);
-        ++store.evicted;
+    const auto bound = storeBound();
+    const bool replaying = PipelineJournalReplaying();
+    {
+        std::lock_guard lock(store.mutex);
+        bool collision = false;
+        if (auto raced = lookup(collision)) return raced;
+        if (collision) {
+            ++store.uncached;
+            ++store.totals.uncached;
+            return pipeline;
+        }
+        // Entries of another device belong to one the driver replaced (it does so under the GpuMutex
+        // before any draw reaches the new device), whose objects went with it: forget them.
+        for (auto it = store.entries.begin(); it != store.entries.end();) {
+            it = alive(*it, context) ? std::next(it) : abandon(store, it);
+        }
+        // A replayed pipeline enters at the least recently used end and never displaces a draw's:
+        // the title's own pipelines evict it first, and a full store takes none.
+        if (replaying && store.entries.size() >= bound) return pipeline;
+        if (replaying) {
+            store.entries.push_front({context.device, context.bufferPool, hash, std::vector<std::byte>(key), pipeline});
+            store.index[hash] = store.entries.begin();
+        } else {
+            store.entries.push_back({context.device, context.bufferPool, hash, std::vector<std::byte>(key), pipeline});
+            store.index[hash] = std::prev(store.entries.end());
+        }
+        while (store.entries.size() > bound) {
+            // Only an entry no recorded draw still holds may go (Kept keeps its shared_ptr until the fence).
+            const auto victim = std::find_if(store.entries.begin(), store.entries.end(), [](const PipelineStore::Entry& entry) { return entry.pipeline.use_count() == 1; });
+            if (victim == store.entries.end()) break;
+            store.index.erase(victim->hash);
+            store.entries.erase(victim);
+            ++store.evicted;
+            ++store.totals.evicted;
+        }
     }
+    if (created != nullptr) *created = true;
+    if (PipelineJournalEnabled() && !PipelineJournalReplaying()) RecordGraphicsPipeline(MakeGraphicsPipelineRecipe(state, vertexInput, resources, shaders, attachmentLayout), shaders);
     return pipeline;
+}
+
+void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {
+    pipelineKey(key, context, state, vertexInput, resources, shaders, attachmentLayout);
+}
+
+PipelineStoreCounters PipelineStoreTotals() {
+    auto& store = Pipelines();
+    std::lock_guard lock(store.mutex);
+    auto totals = store.totals;
+    totals.cached = store.entries.size();
+    totals.bound = storeBound();
+    return totals;
 }
 
 void ClearCachedPipelines(VkDevice device) {
