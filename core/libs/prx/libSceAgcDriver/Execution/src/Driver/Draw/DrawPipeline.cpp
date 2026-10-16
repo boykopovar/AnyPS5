@@ -166,6 +166,11 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     rethrowFailure();
 }
 
+std::uint64_t DrawPipeline::Drains(DrainReason reason) {
+    std::lock_guard lock(mutex);
+    return drains[static_cast<std::size_t>(reason)];
+}
+
 std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0 || bytes > 8) return std::nullopt;
     const auto end = address + bytes;
