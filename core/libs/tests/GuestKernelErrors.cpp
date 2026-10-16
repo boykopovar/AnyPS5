@@ -69,6 +69,14 @@ static constexpr int POSIX_EDEADLK = 11;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static void WaitForEventFlagWaiters(KernelEventFlag handle, int expected) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (APS5_Test_GetEventFlagWaiterCount(handle) != expected) {
+        if (std::chrono::steady_clock::now() >= deadline) Require(false);
+        std::this_thread::yield();
+    }
+}
+
 int main() {
     constexpr int maximum = std::numeric_limits<int>::max();
     KernelSema semaphore = nullptr;
@@ -261,7 +269,7 @@ int main() {
     std::thread t2([&] {
         t2Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL, &pat2, nullptr);
     });
-    while (APS5_Test_GetEventFlagWaiterCount(ef) != 2) std::this_thread::yield();
+    WaitForEventFlagWaiters(ef, 2);
     Require(sceKernelSetEventFlag(ef, 0x01) == SCE_OK);
     t1.join();
     t2.join();
@@ -273,18 +281,16 @@ int main() {
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
 
     Require(sceKernelCreateEventFlag(&ef, "del_waiters", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
-    std::atomic<int> delWaitersStarted{0};
     std::atomic<int> delRes1{-1};
     std::atomic<int> delRes2{-1};
     std::thread delT1([&] {
-        ++delWaitersStarted;
         delRes1 = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, nullptr, nullptr);
     });
     std::thread delT2([&] {
         ++delWaitersStarted;
         delRes2 = sceKernelWaitEventFlag(ef, 0x02, EVF_WAITMODE_AND, nullptr, nullptr);
     });
-    while (delWaitersStarted < 2 || APS5_Test_GetEventFlagWaiterCount(ef) != 2) std::this_thread::yield();
+    WaitForEventFlagWaiters(ef, 2);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
     delT1.join();
     delT2.join();
