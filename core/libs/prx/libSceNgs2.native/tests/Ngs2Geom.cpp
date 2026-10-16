@@ -142,11 +142,201 @@ static void TestInvalidListener() {
     RejectListener(&param, 0);
 }
 
+static Ngs2GeomSourceParam Source() {
+    Ngs2GeomSourceParam param{};
+    Require(sceNgs2GeomResetSourceParam(&param) == SCE_NGS2_OK);
+    return param;
+}
+
+static Ngs2GeomListenerWork ListenerWork(std::uint32_t flags = 0) {
+    auto param = Listener();
+    Ngs2GeomListenerWork work{};
+    Require(sceNgs2GeomCalcListener(&param, &work, flags) == SCE_NGS2_OK);
+    return work;
+}
+
+static bool Near(float left, float right, float tolerance = 0.00001f) {
+    return std::abs(left - right) < tolerance;
+}
+
+static void RequireZero(const Ngs2GeomAttribute& attribute, std::uint32_t first, std::uint32_t count) {
+    for (std::uint32_t index = first; index < first + count; index++) Require(attribute.level[index] == 0.0f);
+}
+
+static void TestApplyStereo() {
+    const auto work = ListenerWork();
+    auto source = Source();
+    Ngs2GeomAttribute attribute;
+    std::memset(&attribute, 0x5a, sizeof(attribute));
+
+    source.position = {0.0f, 0.0f, 1.0f};
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 1.0f);
+    Require(Near(attribute.level[0], attribute.level[1]));
+    Require(Near(attribute.level[0], 0.7071068f));
+    Require(Near(attribute.level[0] * attribute.level[0] + attribute.level[1] * attribute.level[1], 1.0f));
+    Require(Near(attribute.level[8], attribute.level[0]));
+    Require(Near(attribute.level[9], attribute.level[1]));
+    RequireZero(attribute, 2, 6);
+    RequireZero(attribute, 10, 54);
+    Require(attribute.a3d_attrib.position.x == 0.0f && attribute.a3d_attrib.position.y == 0.0f && attribute.a3d_attrib.position.z == 1.0f);
+    Require(Near(attribute.a3d_attrib.volume, 1.0f));
+    Require(attribute.reserved[0] == 0u && attribute.reserved[3] == 0u);
+
+    source.position = {1.0f, 0.0f, 0.0f};
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.level[0], 0.0f));
+    Require(Near(attribute.level[1], 1.0f));
+    Require(Near(attribute.a3d_attrib.position.x, 1.0f));
+
+    source.position = {0.0f, 5.0f, 0.0f};
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.level[0], attribute.level[1]));
+
+    source.position = {1.0f, 0.0f, 0.0f};
+    source.radius = 2.0f;
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.level[0], 0.7071068f));
+    Require(Near(attribute.level[1], 0.7071068f));
+}
+
+static void TestApplySurround() {
+    const auto work = ListenerWork();
+    auto source = Source();
+    source.num_speakers = 8;
+    source.lfe_level = 0.5f;
+    Ngs2GeomAttribute attribute;
+
+    source.position = {1.0f, 0.0f, 0.0f};
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.level[3], 0.5f));
+    Require(Near(attribute.level[5], 1.0f));
+    Require(Near(attribute.level[8 + 3], 0.5f));
+    Require(Near(attribute.level[8 + 5], 1.0f));
+    for (const std::uint32_t index : {0u, 1u, 2u, 4u, 6u, 7u}) Require(Near(attribute.level[index], 0.0f));
+
+    source.position = {-0.7071068f, 0.0f, -0.7071068f};
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    const float left_surround = attribute.level[4];
+    const float left_back = attribute.level[6];
+    Require(left_surround > 0.0f && left_back > 0.0f && left_back > left_surround);
+    Require(Near(left_surround * left_surround + left_back * left_back, 1.0f));
+}
+
+static void TestApplyDistanceConeDoppler() {
+    const auto work = ListenerWork();
+    auto source = Source();
+    source.position = {0.0f, 0.0f, 10.0f};
+    source.cone = {1.0f, 90.0f, 0.25f, 180.0f};
+    source.rolloff.model = 1;
+    source.rolloff.max_distance = 11.0f;
+    source.rolloff.reference_distance = 1.0f;
+    Ngs2GeomAttribute attribute;
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.a3d_attrib.volume, 0.025f));
+    Require(Near(attribute.level[0], attribute.level[1]));
+
+    source.min_level = 0.5f;
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.a3d_attrib.volume, 0.5f));
+
+    auto doppler = Source();
+    doppler.position = {0.0f, 0.0f, 10.0f};
+    doppler.velocity = {0.0f, 0.0f, -34.3f};
+    Require(sceNgs2GeomApply(&work, &doppler, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.pitch_ratio, 1.1111111f));
+
+    doppler.doppler_factor = 0.0f;
+    Require(sceNgs2GeomApply(&work, &doppler, &attribute, 0) == SCE_NGS2_OK);
+    Require(Near(attribute.pitch_ratio, 1.0f));
+}
+
+template <typename Call>
+static bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+static void RejectApply(const Ngs2GeomListenerWork* work, const Ngs2GeomSourceParam* source, std::uint32_t flags) {
+    Ngs2GeomAttribute attribute;
+    std::memset(&attribute, 0x5a, sizeof(attribute));
+    unsigned char before[sizeof(attribute)];
+    std::memcpy(before, &attribute, sizeof(attribute));
+    Require(Throws([&] { sceNgs2GeomApply(work, source, &attribute, flags); }));
+    Require(std::memcmp(before, &attribute, sizeof(attribute)) == 0);
+}
+
+static void TestInvalidApply() {
+    const auto work = ListenerWork();
+    auto source = Source();
+    Require(sceNgs2GeomApply(&work, &source, nullptr, 0) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    RejectApply(nullptr, &source, 0);
+    RejectApply(&work, nullptr, 0);
+    RejectApply(&work, &source, 0x20u);
+    RejectApply(&work, &source, 0x100u);
+    RejectApply(&work, &source, 0xffffffffu);
+    source.position.x = std::numeric_limits<float>::infinity();
+    RejectApply(&work, &source, 0);
+    source = Source();
+    source.fbw_level = std::numeric_limits<float>::quiet_NaN();
+    RejectApply(&work, &source, 0);
+}
+
+static void TestApplyFlags() {
+    const auto work = ListenerWork();
+    auto source = Source();
+    source.position = {0.0f, 0.0f, 10.0f};
+    source.velocity = {0.0f, 0.0f, -34.3f};
+    Ngs2GeomAttribute attribute;
+
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 0) == SCE_NGS2_OK);
+    Ngs2GeomAttribute defaultAttribute;
+    Require(sceNgs2GeomApply(&work, &source, &defaultAttribute, 15) == SCE_NGS2_OK);
+    Require(std::memcmp(&attribute, &defaultAttribute, sizeof(attribute)) == 0);
+    Require(Near(attribute.pitch_ratio, 1.1111111f));
+    Require(attribute.a3d_attrib.position.z == 10.0f);
+    Require(attribute.level[0] > 0.0f);
+
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 2) == SCE_NGS2_OK);
+    Require(Near(attribute.pitch_ratio, 1.1111111f));
+    Require(attribute.a3d_attrib.position.z == 0.0f);
+    RequireZero(attribute, 0, 64);
+
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 4) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 0.0f);
+    Require(attribute.a3d_attrib.position.z == 0.0f);
+    Require(attribute.level[0] > 0.0f);
+
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 8) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 0.0f);
+    Require(attribute.a3d_attrib.position.z == 10.0f);
+    RequireZero(attribute, 0, 64);
+
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 1) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 0.0f);
+    Require(attribute.a3d_attrib.position.z == 10.0f);
+    Require(attribute.level[0] > 0.0f);
+
+    Require(sceNgs2GeomApply(&work, &source, &attribute, 16) == SCE_NGS2_OK);
+    Require(attribute.pitch_ratio == 0.0f);
+    Require(attribute.a3d_attrib.position.z == 0.0f);
+    RequireZero(attribute, 0, 64);
+}
+
 int main() {
     TestLayouts();
     TestResetListenerParam();
     TestResetSourceParam();
     TestListenerTransform();
     TestInvalidListener();
+    TestApplyStereo();
+    TestApplySurround();
+    TestApplyDistanceConeDoppler();
+    TestApplyFlags();
+    TestInvalidApply();
     return 0;
 }

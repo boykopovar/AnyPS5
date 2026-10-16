@@ -19,6 +19,17 @@ static std::vector<Ngs2System*>& Systems() {
     return *systems;
 }
 
+struct Ngs2ReportRegistration {
+    std::uint32_t type;
+    Ngs2ReportHandler handler;
+    std::uintptr_t userData;
+};
+
+static std::vector<Ngs2ReportRegistration*>& ReportRegistrations() {
+    static auto* const registrations = new std::vector<Ngs2ReportRegistration*>();
+    return *registrations;
+}
+
 std::string Ngs2Hex(std::uint32_t value) {
     char text[16];
     std::snprintf(text, sizeof(text), "0x%x", value);
@@ -248,6 +259,27 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
 int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption* option) {
     if (option == nullptr) APS5_INVALID_ARG_EX;
     *option = DefaultSystemOption();
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2ReportRegisterHandler(uint32_t report_type, Ngs2ReportHandler handler, uintptr_t user_data, Ngs2Handle* out_handle) {
+    if (out_handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    if (handler == nullptr) APS5_INVALID_ARG_EX;
+    std::lock_guard lock(Ngs2Mutex());
+    auto* registration = new Ngs2ReportRegistration{report_type, handler, user_data};
+    ReportRegistrations().push_back(registration);
+    *out_handle = reinterpret_cast<Ngs2Handle>(registration);
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2ReportUnregisterHandler(Ngs2Handle report_handle) {
+    std::lock_guard lock(Ngs2Mutex());
+    auto& registrations = ReportRegistrations();
+    const auto found = std::find(registrations.begin(), registrations.end(), reinterpret_cast<Ngs2ReportRegistration*>(report_handle));
+    if (found == registrations.end()) throw std::runtime_error("NGS2: unregistering a report handler that is not registered");
+    Ngs2ReportRegistration* registration = *found;
+    registrations.erase(found);
+    delete registration;
     return SCE_NGS2_OK;
 }
 
