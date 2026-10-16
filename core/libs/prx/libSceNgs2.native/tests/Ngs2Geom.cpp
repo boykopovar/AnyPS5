@@ -126,11 +126,13 @@ static void TestInvalidListener() {
     param.orient_front = {};
     RejectListener(&param, 0);
     param = Listener();
-    param.orient_up = param.orient_front;
-    RejectListener(&param, 0);
-    param = Listener();
     param.orient_up = {};
     RejectListener(&param, 0);
+    param = Listener();
+    param.orient_up = param.orient_front;
+    Ngs2GeomListenerWork parallelWork{};
+    Require(sceNgs2GeomCalcListener(&param, &parallelWork, 0) == SCE_NGS2_OK);
+    RequireMatrix(parallelWork, {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}});
     param = Listener();
     param.position.x = std::numeric_limits<float>::infinity();
     RejectListener(&param, 0);
