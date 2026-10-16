@@ -287,7 +287,6 @@ int main() {
         delRes1 = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, nullptr, nullptr);
     });
     std::thread delT2([&] {
-        ++delWaitersStarted;
         delRes2 = sceKernelWaitEventFlag(ef, 0x02, EVF_WAITMODE_AND, nullptr, nullptr);
     });
     WaitForEventFlagWaiters(ef, 2);
