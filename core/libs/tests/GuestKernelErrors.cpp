@@ -295,4 +295,32 @@ int main() {
     delT2.join();
     Require(delRes1 == SCE_KERNEL_ERROR_EACCES);
     Require(delRes2 == SCE_KERNEL_ERROR_EACCES);
+
+    for (int iteration = 0; iteration < 64; ++iteration) {
+        Require(sceKernelCreateEventFlag(&ef, "api_delete_race", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+        std::atomic<bool> setterStarted{false};
+        std::atomic<bool> pollerStarted{false};
+        std::thread setter([&] {
+            setterStarted.store(true, std::memory_order_release);
+            for (;;) {
+                const int result = sceKernelSetEventFlag(ef, 0x01);
+                if (result == SCE_KERNEL_ERROR_ESRCH) break;
+                Require(result == SCE_OK);
+            }
+        });
+        std::thread poller([&] {
+            pollerStarted.store(true, std::memory_order_release);
+            std::uint64_t observed = 0;
+            for (;;) {
+                const int result = sceKernelPollEventFlag(ef, 0x01, EVF_WAITMODE_AND, &observed);
+                if (result == SCE_KERNEL_ERROR_ESRCH) break;
+                Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EBUSY);
+            }
+        });
+        while (!setterStarted.load(std::memory_order_acquire) || !pollerStarted.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+        setter.join();
+        poller.join();
+    }
 }
