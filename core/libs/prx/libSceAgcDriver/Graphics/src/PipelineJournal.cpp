@@ -35,7 +35,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 824, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 832, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -172,6 +172,8 @@ void encodeState(Writer& writer, const State& state) {
     writer.U32(static_cast<std::uint32_t>(state.stages.path));
     writer.U32(state.stages.vertexWaveSize);
     writer.U32(state.stages.fragmentWaveSize);
+    writer.U32(state.meshLayerBase);
+    writer.U32(state.meshLayerCount);
     encodeOptional(writer, state.stages.mesh, encodeMesh);
     encodeOptional(writer, state.stages.tessellation, encodeTessellation);
     writer.Bool(state.depth.has_value());
@@ -232,6 +234,8 @@ void decodeState(Reader& reader, State& state) {
     state.stages.path = static_cast<ShaderPath>(reader.U32());
     state.stages.vertexWaveSize = reader.U32();
     state.stages.fragmentWaveSize = reader.U32();
+    state.meshLayerBase = reader.U32();
+    state.meshLayerCount = reader.U32();
     if (reader.Bool()) decodeMesh(reader, state.stages.mesh.emplace());
     if (reader.Bool()) decodeTessellation(reader, state.stages.tessellation.emplace());
     if (reader.Bool()) {
@@ -1016,6 +1020,8 @@ State CanonicalPipelineState(const State& state) {
     canonical.stages.path = state.stages.path;
     canonical.stages.vertexWaveSize = state.stages.vertexWaveSize;
     canonical.stages.fragmentWaveSize = state.stages.fragmentWaveSize;
+    canonical.meshLayerBase = state.meshLayerBase;
+    canonical.meshLayerCount = state.meshLayerCount;
     canonical.stages.mesh = state.stages.mesh;
     canonical.stages.tessellation = state.stages.tessellation;
     if (state.depth) {

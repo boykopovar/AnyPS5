@@ -666,6 +666,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     result.registrationModule = registration;
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
+    result.layerReplaySafe = LayerReplaySafe(program);
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
     result.bdaWrites = program.Info().bdaWrites;
     if (stencilReplay) {
@@ -743,6 +744,7 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
 struct SpecializedModule {
     std::uint64_t specializationId = 0;
     SharedSpirv spirv;
+    std::vector<PipelineSpecializationConstant> specialization;
     std::vector<std::uint32_t> bindings;
     bool pushData = false;
 };
@@ -774,6 +776,11 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
             }
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
+            if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount) {
+                retained.insert(words[cursor + 1u]);
+                cursor += count;
+                continue;
+            }
             auto value = found->second;
             if (!artifact.stencilReferences.empty()) {
                 if (found->first == PipelineSpecialization::StencilReferenceOffset) replaySlotBytes = value / PushData::DwordCount * NativePushSlotSize;
@@ -788,9 +795,7 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
-        if (op == spv::OpSpecConstant && count == 4u && retained.contains(words[cursor + 2u])) {
-            materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count);
-        } else if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId && retained.contains(words[cursor + 1u])) {
+        if ((op == spv::OpSpecConstant && count == 4u && retained.contains(words[cursor + 2u])) || (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId && retained.contains(words[cursor + 1u]))) {
             materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count);
         } else if (op == spv::OpSpecConstant) {
             if (count != 4u || !values.contains(words[cursor + 2u])) throw std::runtime_error("invalid prepared specialization constant");
@@ -806,7 +811,7 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
     }
     materialized = SpecializeFragmentOutputs(SpecializeSpirv(materialized), constants, specializedIds);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-    materialized = ValidateAndOptimizeSpirv(materialized, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, true, true);
+    materialized = ValidateAndOptimizeSpirv(materialized, target.vulkanVersion, target.spirvVersion, target.nonConstantImageOffsets, true, retained.empty());
 #endif
     std::map<std::uint32_t, std::uint32_t> descriptorVariables;
     std::set<std::uint32_t> usedDescriptors;
@@ -849,6 +854,10 @@ std::shared_ptr<const SpecializedModule> buildSpecializedModule(const CompiledSh
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet) functionLdsBuffer.insert(materialized[cursor + 1u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationSpecId) {
+            const auto id = materialized[cursor + 3u];
+            module->specialization.push_back({id, supplied.at(id)});
+        }
         if (op == spv::OpVariable && count >= 4u && !functionLdsBuffer.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
@@ -1038,6 +1047,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .stencilReferences = artifact.stencilReferences,
         .stencilReplaySafe = artifact.stencilReplaySafe,
         .bdaWrites = artifact.bdaWrites,
+        .layerReplaySafe = artifact.layerReplaySafe,
         .stencilReferenceDword = artifact.stencilReferenceDword,
         .variantId = artifact.variantId
     };
@@ -1095,7 +1105,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             if (artifact.registrationModule) runtimeSelectors.at(input.location / RuntimeAbi::VertexSelectorsPerDword) |= (selectors & 0xfffu) << (input.location % RuntimeAbi::VertexSelectorsPerDword * 16u);
         }
     }
-    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel || depthRemap) {
+    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel || depthRemap || request.shader.stage == ShaderStage::Mesh) {
         {
             std::shared_lock lock(plan->mutex);
             if (const auto found = plan->modules.find(moduleKey); found != plan->modules.end()) entry = found->second;
@@ -1107,6 +1117,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         }
         const auto prepare = [&] {
             auto constants = plan->bindings.specialization;
+            constants.push_back({PipelineSpecialization::MeshLayerBase, 0u});
+            constants.push_back({PipelineSpecialization::MeshLayerCount, 0xffffffffu});
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
             if (!artifact.stencilReferences.empty()) constants.push_back({PipelineSpecialization::StencilReferenceOffset, moduleKey[index++]});
@@ -1147,6 +1159,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         const auto& module = entry->module;
         result.specializationId = module->specializationId;
         result.spirv = module->spirv;
+        result.specialization = module->specialization;
         bindingPlan = &entry->bindings;
     } else {
         result.spirv = artifact.spirv;

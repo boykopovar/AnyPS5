@@ -31,10 +31,10 @@ using AgcDriver::Graphics::ColorTileMode;
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Width = 96;
+constexpr std::uint32_t Width = 99;
 constexpr std::uint32_t Height = 16;
-constexpr std::uint32_t Slices = 32;
-constexpr std::uint32_t FirstSlice = 0;
+constexpr std::uint32_t Slices = 34;
+constexpr std::uint32_t FirstSlice = 1;
 constexpr std::uint32_t Layers = Slices - FirstSlice;
 constexpr std::uint32_t BandWidth = Width / Layers;
 constexpr std::uint8_t Kept = 0x40;
@@ -177,6 +177,17 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     if (mesh) geometry.graphics = ShaderRecompiler::GraphicsCompileContext{0, {}, Subgroup, std::nullopt, {draw.indexAddress, draw.indexCount, draw.indexSize, draw.instanceCount}};
     geometry.useCache = false;
     const auto geometryResult = ShaderRecompiler::Recompile(geometry);
+    if (mesh) {
+        for (const auto required : {ShaderRecompiler::PipelineSpecialization::MeshLayerBase, ShaderRecompiler::PipelineSpecialization::MeshLayerCount}) {
+            bool found = false;
+            for (std::size_t at = 5; at < geometryResult.spirv.size();) {
+                const auto length = geometryResult.spirv[at] >> 16u;
+                if ((geometryResult.spirv[at] & 0xffffu) == 71u && length == 4u && geometryResult.spirv[at + 2u] == 1u && geometryResult.spirv[at + 3u] == required) found = true;
+                at += length;
+            }
+            Require(found, "mesh layer specialization was frozen: " + std::to_string(required));
+        }
+    }
     const auto geometryPush = static_cast<std::uint32_t>(geometryResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
@@ -222,12 +233,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     state.blendConstants = {};
     if (mesh) {
         Require(DeclaresLayer(geometryResult.spirv), "the mesh program declares no Layer output");
-        VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
-        subgroup.subgroupSize = target.subgroupSize;
-        subgroup.supportedStages = VK_SHADER_STAGE_ALL;
-        subgroup.supportedOperations = 0xffu;
-        subgroup.quadOperationsInAllStages = VK_TRUE;
-        AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, true);
+
     }
     device.Draw(state, draw, shaders);
     device.WaitIdle();
@@ -285,6 +291,7 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device has no VK_EXT_shader_viewport_index_layer");
             return VulkanTestSkipped;
         }
+        std::printf("graphics pipeline libraries: %s\n", device->GraphicsPipelineLibraries() ? "enabled" : "disabled");
         BuildBands();
         const GuestVolume volume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
         const auto color = VolumeTarget(volume.Data());
@@ -304,6 +311,10 @@ int main(int argc, char** argv) {
             const auto meshColor = VolumeTarget(meshVolume.Data());
             Run(*device, meshColor, true, PixelCode, false);
             Check(meshVolume.Data(), meshColor, "mesh draw", WhiteBands);
+            const GuestVolume meshFieldVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
+            const auto meshFieldColor = VolumeTarget(meshFieldVolume.Data());
+            Run(*device, meshFieldColor, true, LayerFieldPixelCode, true);
+            Check(meshFieldVolume.Data(), meshFieldColor, "mesh fragment layer input", LayerFieldBands);
         }
         else std::puts("mesh case skipped, the device has no VK_EXT_mesh_shader");
         std::puts("layered volume draw tests passed");

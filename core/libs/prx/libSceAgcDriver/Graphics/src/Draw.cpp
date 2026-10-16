@@ -3186,6 +3186,28 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
 }
 
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut) {
+    if (state.stages.mesh && state.layerExports != 0u && state.renderLayers > context.meshLimits.maxMeshOutputLayers) {
+        const auto limit = context.meshLimits.maxMeshOutputLayers;
+        Require(limit != 0u && !state.depth, "mesh layer windows require a nonzero output limit and color-only layered rendering");
+        Require(std::ranges::all_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->layerReplaySafe; }), "mesh layer windows refuse shaders with guest memory writes, clocks or unproven side effects");
+        if (recipeOut != nullptr) recipeOut->reset();
+        for (std::uint32_t base = 0; base < state.renderLayers;) {
+            auto window = state;
+            window.renderLayers = std::min(limit, state.renderLayers - base);
+            window.meshLayerBase = base;
+            window.meshLayerCount = window.renderLayers;
+            for (auto& color : window.colors) {
+                Require(color.layers == state.renderLayers, "mesh layer window targets have different layer counts");
+                if (color.depth > 1u) color.depthSlice += base;
+                else color.arraySlice += base;
+                color.layers = window.renderLayers;
+            }
+            if (!window.colors.empty()) window.color = window.colors.front();
+            Draw(context, window, draw, shaders, snapshots, nullptr);
+            base += window.renderLayers;
+        }
+        return;
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PreparedDraw prepared(profile);
     prepared.recipeOut = recipeOut;

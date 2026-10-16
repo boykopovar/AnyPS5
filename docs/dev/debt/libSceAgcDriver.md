@@ -252,6 +252,8 @@
 
 - [Long Windows pipeline-cache paths](../../../core/libs/prx/libSceAgcDriver/Graphics/src/PipelineCache.cpp): `readHeader` and the failed-read existence check still use ordinary paths. A filename beyond MAX_PATH can prevent header reuse or be reported missing; the shared content reader and journal normalization do not cover these calls.
 - [DB_RENDER_CONTROL.STENCIL_CLEAR_ENABLE without a stencil plane](../../../core/libs/prx/libSceAgcDriver/Graphics/src/State.cpp) (libSceAgcDriver): a stencil clear on a depth target whose `DB_STENCIL_INFO` format is `STENCIL_INVALID` is dropped; the depth clear and color writes proceed. AMD PAL ([`gfx9RsrcProcMgr.cpp`](https://github.com/GPUOpen-Drivers/pal/blob/c5e800072a32/src/core/hw/gfxip/rpm/gfx9/gfx9RsrcProcMgr.cpp)) and radeonsi (`si_clear.c`) never set the bit without a stencil plane, and shadPS4 drops it the same way (`vk_rasterizer.cpp`, `StencilValid`). No source states what the hardware does with the bit then; the console was not measured. A read-only stencil plane still throws
+- [Draw](../../../core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp) partitions layered mesh color draws into attachment windows within the host `maxMeshOutputLayers` limit, remaps output layers and reconstructs the guest layer for fragment ancillary input. Replay requires shaders without guest memory writes, clocks, GDS access or unproven side effects; those draws still throw until mesh output can be captured once and rasterized separately. Layered depth rendering remains unsupported. Vulkan layer-limit semantics follow [Layer](https://docs.vulkan.org/refpages/latest/refpages/source/Layer.html); PS5 console behavior and native title results have not been validated for this path.
+
 
 ### Opt-in draw paths
 

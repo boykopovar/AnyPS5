@@ -691,6 +691,61 @@ bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program) {
     return valid;
 }
 
+bool LayerReplaySafe(const IrProgram& program) {
+    if (program.Info().bdaWrites || program.Info().usesDma) return false;
+    for (const auto& block : program.Blocks()) {
+        for (const auto* instruction : block->Instructions()) {
+            const auto opcode = instruction->Opcode();
+            if (opcode == IrOpcode::ImageBvhIntersectRay || (BufferAccessOf(opcode) == BufferAccess::Write || BufferAccessOf(opcode) == BufferAccess::Atomic) || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
+            if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock) return false;
+            if (SharedAccessOf(opcode) != SharedAccess::None) {
+                const auto memory = instruction->Flags<MemoryFlags>().index;
+                if (memory >= program.Resources().memoryInfo.size() || program.Resources().memoryInfo[memory].kind != ResourceKind::Lds) return false;
+                continue;
+            }
+            if (!instruction->MayHaveSideEffects()) continue;
+            switch (opcode) {
+                case IrOpcode::Barrier:
+                case IrOpcode::MeshAllocate:
+                case IrOpcode::Branch:
+                case IrOpcode::BranchConditional:
+                case IrOpcode::Return:
+                case IrOpcode::Unreachable:
+                case IrOpcode::Discard:
+                case IrOpcode::Reference:
+                case IrOpcode::ReferenceU32:
+                case IrOpcode::SetAttribute:
+                case IrOpcode::InterpolateHostP2:
+                case IrOpcode::SetRegister:
+                case IrOpcode::SetThreadBitScalarRegister:
+                case IrOpcode::SetScalarMaskTag:
+                case IrOpcode::SetScalarRegister:
+                case IrOpcode::SetVectorRegister:
+                case IrOpcode::StoreVectorWindow:
+                case IrOpcode::SetGotoVariable:
+                case IrOpcode::SetScc:
+                case IrOpcode::SetExec:
+                case IrOpcode::SetExecLo:
+                case IrOpcode::SetExecHi:
+                case IrOpcode::SetVcc:
+                case IrOpcode::SetVccLo:
+                case IrOpcode::SetVccHi:
+                case IrOpcode::SetM0:
+                case IrOpcode::Waitcnt:
+                case IrOpcode::InstPrefetch:
+                    break;
+                case IrOpcode::Sendmsg:
+                    if (instruction->ArgumentCount() != 0u) return false;
+                    break;
+                default:
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool StencilReplaySafe(const IrProgram& program) {
     if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;

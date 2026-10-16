@@ -1433,5 +1433,30 @@ int main() {
         return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps;
     });
 
+    passed &= run("layer replay permits local LDS but rejects GDS access", [] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Mesh;
+        MemoryInfo memory{};
+        memory.kind = ResourceKind::Lds;
+        b.program.Resources().memoryInfo.push_back(memory);
+        b.emit(IrOpcode::StoreShared, IrType::Void, {&b.constant(0u), &b.constant(1u)});
+        if (!LayerReplaySafe(b.program)) return false;
+        b.program.Resources().memoryInfo.front().kind = ResourceKind::Gds;
+        return !LayerReplaySafe(b.program);
+    });
+
+    passed &= run("layer replay rejects guest buffer stores and shader clocks", [] {
+        Builder written;
+        auto& buffer = written.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {});
+        written.emit(IrOpcode::StoreBuffer, IrType::Void, {&buffer, &written.constant(0u), &written.constant(1u)});
+        if (LayerReplaySafe(written.program)) return false;
+        for (const auto opcode : {IrOpcode::ShaderClock, IrOpcode::RealtimeClock}) {
+            Builder clock;
+            clock.emit(opcode, IrType::U64, {});
+            if (LayerReplaySafe(clock.program)) return false;
+        }
+        return true;
+    });
+
     return passed ? 0 : 1;
 }
