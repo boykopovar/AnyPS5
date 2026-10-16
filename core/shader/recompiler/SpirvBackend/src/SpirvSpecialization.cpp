@@ -527,6 +527,7 @@ public:
         resultTypes.Reset(bound);
         vectorTypes.Reset(bound);
         removed.Reset(bound);
+        aliases.Reset(bound);
         for (std::size_t cursor = 5; cursor < words.size();) {
             const auto count = words[cursor] >> 16u;
             if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated prepared SPIR-V instruction");
@@ -542,6 +543,7 @@ public:
             if (op == spv::OpTypeVector) vectorTypes.insert(instruction.at(1));
             if (op == spv::OpConstant && types.contains(instruction.at(1)) && types.at(instruction[1]).width <= 32u) values.emplace(instruction.at(2), instruction.at(3));
             if (op == spv::OpConstantTrue || op == spv::OpConstantFalse) values.emplace(instruction.at(2), op == spv::OpConstantTrue ? 1u : 0u);
+            if ((op == spv::OpConstant || op == spv::OpConstantTrue || op == spv::OpConstantFalse) && values.contains(instruction.at(2))) canonical.emplace(std::pair{instruction.at(1), values.at(instruction[2])}, instruction[2]);
             cursor += count;
         }
     }
@@ -553,6 +555,7 @@ public:
             changed |= prune();
             changed |= propagateCopies();
         }
+        shareConstants();
         removeDeadComputations();
         removeUnreachableBlocks();
         removeUnusedConstants();
@@ -575,6 +578,11 @@ private:
     std::optional<std::uint32_t> value(std::uint32_t id) const {
         const auto* found = values.find(id);
         return found != nullptr ? std::optional(*found) : std::nullopt;
+    }
+
+    bool sameType(std::uint32_t id, std::uint32_t type) const {
+        const auto* found = resultTypes.find(id);
+        return found != nullptr && *found == type;
     }
 
     std::optional<std::uint32_t> evaluate(const Instruction& instruction) const {
@@ -628,6 +636,8 @@ private:
         bool function = false;
         IdTable<std::pair<std::uint32_t, std::uint32_t>> extracts;
         extracts.Reset(bound);
+        IdTable<std::uint32_t> bitcasts;
+        bitcasts.Reset(bound);
         for (auto& instruction : instructions) {
             if (instruction.empty()) continue;
             auto op = Opcode(instruction);
@@ -644,6 +654,16 @@ private:
                 if (const auto index = value(instruction[4])) {
                     instruction = Make(spv::OpCompositeExtract, {instruction[1], instruction[2], instruction[3], *index});
                     changed = true;
+                }
+            }
+            if (op == spv::OpBitcast && instruction.size() == 4u) {
+                const auto* chained = bitcasts.find(instruction[3]);
+                const auto source = chained != nullptr && sameType(*chained, instruction[1]) ? *chained : instruction[3];
+                if (sameType(source, instruction[1])) {
+                    instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], source});
+                    changed = true;
+                } else {
+                    bitcasts.emplace(instruction[2], instruction[3]);
                 }
             }
             op = Opcode(instruction);
@@ -669,11 +689,14 @@ private:
                     changed = true;
                 }
             }
+            if (op == spv::OpCopyObject && values.contains(instruction.at(2))) continue;
             const auto result = evaluate(instruction);
             if (!result) continue;
             const auto type = types.at(instruction[1]);
             const auto bits = type.width == 32u ? *result : *result & ((1u << type.width) - 1u);
             values[instruction[2]] = bits;
+            const auto [existing, created] = canonical.emplace(std::pair{instruction[1], bits}, instruction[2]);
+            if (!created) aliases.emplace(instruction[2], existing->second);
             constants.push_back(type.boolean ? Make(bits != 0u ? spv::OpConstantTrue : spv::OpConstantFalse, {instruction[1], instruction[2]}) : Make(spv::OpConstant, {instruction[1], instruction[2], bits}));
             instruction.clear();
             changed = true;
@@ -899,6 +922,22 @@ private:
         instructions = std::move(ordered);
     }
 
+    void shareConstants() {
+        if (aliases.empty()) return;
+        bool function = false;
+        for (auto& instruction : instructions) {
+            if (instruction.empty()) continue;
+            const auto op = Opcode(instruction);
+            if (op == spv::OpFunction) function = true;
+            if (op == spv::OpFunctionEnd) function = false;
+            if (!function) continue;
+            VisitInputs(instruction, [&](std::size_t index) {
+                const auto* found = aliases.find(instruction[index]);
+                if (found != nullptr) instruction[index] = *found;
+            });
+        }
+    }
+
     bool propagateCopies() {
         IdTable<std::uint32_t> copies;
         copies.Reset(bound);
@@ -999,6 +1038,8 @@ private:
     IdTable<std::uint32_t> resultTypes;
     IdSet vectorTypes;
     IdSet removed;
+    IdTable<std::uint32_t> aliases;
+    std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> canonical;
 };
 
 }
