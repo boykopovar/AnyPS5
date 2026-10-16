@@ -648,6 +648,7 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
         add(context.viewportIndexLayer);
         add(context.shaderTerminateInvocation);
         add(state.paClVsOutCntl);
+        add(state.vertexPoints);
         add(state.stages.mesh.has_value());
         if (state.stages.mesh) {
             const auto& mesh = *state.stages.mesh;

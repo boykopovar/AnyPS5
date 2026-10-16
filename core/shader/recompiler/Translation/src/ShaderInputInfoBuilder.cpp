@@ -171,6 +171,10 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage.hostSubgroupSize = hostSubgroupSize;
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;
         vertexStorage.paClVsOutCntl = vertex.paClVsOutCntl;
+        vertexStorage.pointList = vertex.pointList;
+        vertexStorage.pointSize = vertex.pointSize;
+        vertexStorage.pointSizeMin = vertex.pointSizeMin;
+        vertexStorage.pointSizeMax = vertex.pointSizeMax;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);

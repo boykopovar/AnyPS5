@@ -9,6 +9,7 @@
 #include "PipelineSpecialization.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <limits>
 #include <stdexcept>
 
@@ -456,7 +457,12 @@ void EmitAuxPositionExport(SpirvValueEmitContext& ctx, std::uint32_t data, const
         const auto f32 = state.module.AllocateId();
         state.module.AddFunction(spv::OpBitcast, TypeF32(state), f32, raw);
         if (output.pointSize) {
-            state.module.AddFunction(spv::OpStore, state.pointSizeVariable, f32);
+            auto size = f32;
+            if (state.inputInfo.vertex->pointList) {
+                size = state.module.AllocateId();
+                state.module.AddFunction(spv::OpExtInst, TypeF32(state), size, GlslStd450(state), GLSLstd450FClamp, f32, ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSizeMin)), ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSizeMax)));
+            }
+            state.module.AddFunction(spv::OpStore, state.pointSizeVariable, size);
             continue;
         }
         const auto storeDistance = [&](StageOutputKind kind, std::uint32_t variable, std::uint32_t index) {
@@ -1186,6 +1192,7 @@ void EmitProgram(SpirvEmitterState& state) {
         state.module.AddFunction(spv::OpStore, state.pixelValidMaskVariable, ConstantU32(state, 1u));
     }
     if (AlphaToCoverage(state)) StoreCoverage(state, ConstantI32(state, -1));
+    if (state.pointSizeVariable != 0u && state.inputInfo.vertex != nullptr && state.inputInfo.vertex->pointList) state.module.AddFunction(spv::OpStore, state.pointSizeVariable, ConstantF32(state, std::bit_cast<std::uint32_t>(state.inputInfo.vertex->pointSize)));
     if (OrderedPixelShader(state)) {
         state.module.AddFunction(spv::OpBeginInvocationInterlockEXT);
     }

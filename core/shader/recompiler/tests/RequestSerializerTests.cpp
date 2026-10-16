@@ -49,6 +49,11 @@ void InsertPixelDefaultsAfterFrontFace(std::vector<std::uint8_t>& bytes) {
     bytes.insert(bytes.begin() + 261u, {0x0fu, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0xffu, 0xffu, 0u, 0u, 0u, 0u, 0u, 0u});
 }
 
+void AppendVertexTail(std::vector<std::uint8_t>& bytes) {
+    bytes.insert(bytes.end(), sizeof(std::uint64_t) + 1u, 0u);
+    bytes.insert(bytes.end(), {0u, 0u, 0u, 0x80u, 0x3fu, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u});
+}
+
 std::vector<std::uint8_t> DecodeBase64(std::string_view text) {
     constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::vector<std::uint8_t> bytes;
@@ -210,7 +215,7 @@ int main() {
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, {0u, 0u, 0u});
             if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
             if (fixture.tessellation) upgraded.insert(upgraded.end() - 35u, 5u, 0u);
-            upgraded.insert(upgraded.end(), sizeof(std::uint64_t) + 1u, 0u);
+            AppendVertexTail(upgraded);
             Require(serializer.Serialize(request) == EncodeBase64(upgraded));
             auto truncated = bytes;
             truncated.pop_back();
@@ -249,7 +254,7 @@ int main() {
                 layered.insert(layered.begin() + 259u, {0u, 0u});
                 InsertPixelDefaultsAfterFrontFace(layered);
                 if (fixture.tessellation) layered.insert(layered.end() - 35u, 5u, 0u);
-                layered.insert(layered.end(), sizeof(std::uint64_t) + 1u, 0u);
+                AppendVertexTail(layered);
                 Require(serializer.Serialize(layerReplay.request) == EncodeBase64(layered));
             }
         }
@@ -273,7 +278,7 @@ int main() {
             bytes[4] = 32u;
             bytes.insert(bytes.begin() + 259u, {0u, 0u});
             InsertPixelDefaultsAfterFrontFace(bytes);
-            bytes.insert(bytes.end(), sizeof(std::uint64_t) + 1u, 0u);
+            AppendVertexTail(bytes);
             Require(serializer.Serialize(replay.request) == EncodeBase64(bytes));
 
             auto truncated23 = DecodeBase64(encoded23);
@@ -397,7 +402,7 @@ int main() {
                 upgraded[4] = 32u;
                 if (fixture.pixel) upgraded.insert(upgraded.begin() + 259u, {0u, 0u});
                 if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
-                upgraded.insert(upgraded.end(), sizeof(std::uint64_t) + 1u, 0u);
+                AppendVertexTail(upgraded);
                 Require(serializer.Serialize(request) == EncodeBase64(upgraded));
                 for (const bool dither : {false, true}) {
                     if (!fixture.pixel && dither) continue;
@@ -412,7 +417,7 @@ int main() {
                         main25.insert(main25.begin() + 260u, 0u);
                         InsertPixelDefaultsAfterFrontFace(main25);
                     }
-                    main25.insert(main25.end(), sizeof(std::uint64_t) + 1u, 0u);
+                    AppendVertexTail(main25);
                     Require(serializer.Serialize(replay25.request) == EncodeBase64(main25));
                 }
             }
@@ -450,6 +455,27 @@ int main() {
         request.target.spannedWaves = spanned;
         Require(serializer.Deserialize(serializer.Serialize(request)).request.target.spannedWaves == spanned);
     }
+    ShaderRecompiler::RecompileRequest pointRequest{};
+    pointRequest.context.vertex = ShaderRecompiler::ShaderVertexStageInfo{};
+    pointRequest.context.vertex->paClVsOutCntl = 0x01210000u;
+    pointRequest.context.vertex->pointList = true;
+    pointRequest.context.vertex->pointSize = 4.0f;
+    pointRequest.context.vertex->pointSizeMin = 0.5f;
+    pointRequest.context.vertex->pointSizeMax = 8.0f;
+    const auto pointEncoded = serializer.Serialize(pointRequest);
+    const auto pointReplay = serializer.Deserialize(pointEncoded);
+    Require(pointReplay.request.context.vertex.has_value() && pointReplay.request.context.vertex->paClVsOutCntl == 0x01210000u && pointReplay.request.context.vertex->pointList);
+    Require(pointReplay.request.context.vertex->pointSize == 4.0f && pointReplay.request.context.vertex->pointSizeMin == 0.5f && pointReplay.request.context.vertex->pointSizeMax == 8.0f);
+    Require(serializer.Serialize(pointReplay.request) == pointEncoded);
+    auto pointBytes = DecodeBase64(pointEncoded);
+    pointBytes.pop_back();
+    bool pointRejected = false;
+    try {
+        static_cast<void>(serializer.Deserialize(EncodeBase64(pointBytes)));
+    } catch (const std::runtime_error& error) {
+        pointRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
+    }
+    Require(pointRejected);
 
     return 0;
 }
