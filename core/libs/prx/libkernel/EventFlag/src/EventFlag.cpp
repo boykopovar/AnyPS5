@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -9,6 +10,7 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <cstdio>
 #include <cstdlib>
@@ -82,6 +84,15 @@ namespace {
 
 std::mutex eventFlagRegistryMutex;
 std::unordered_map<KernelEventFlag, std::shared_ptr<KernelEventFlagPrivate>> eventFlagRegistry;
+std::atomic<int> eventFlagApiPauseTarget{0};
+std::atomic<int> eventFlagApiPauseEntered{0};
+std::atomic<bool> eventFlagApiPauseReleased{true};
+
+void PauseEventFlagApi(int kind) {
+    if (eventFlagApiPauseTarget.load(std::memory_order_acquire) != kind) return;
+    eventFlagApiPauseEntered.fetch_add(1, std::memory_order_acq_rel);
+    while (!eventFlagApiPauseReleased.load(std::memory_order_acquire)) std::this_thread::yield();
+}
 
 std::shared_ptr<KernelEventFlagPrivate> ResolveEventFlag(KernelEventFlag handle) {
     if (!handle) return {};
@@ -161,6 +172,7 @@ int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern) {
     if (!ef) return SCE_KERNEL_ERROR_ESRCH;
     const auto keepAlive = ResolveEventFlag(ef);
     if (!keepAlive) return SCE_KERNEL_ERROR_ESRCH;
+    PauseEventFlagApi(1);
     std::lock_guard lock(ef->_mutex);
     if (ef->_deleted) return SCE_KERNEL_ERROR_ESRCH;
     ef->_pattern |= bit_pattern;
@@ -215,6 +227,7 @@ int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     const auto keepAlive = ResolveEventFlag(ef);
     if (!keepAlive) return SCE_KERNEL_ERROR_ESRCH;
     if (bit_pattern == 0 || !IsValidWaitMode(wait_mode)) return SCE_KERNEL_ERROR_EINVAL;
+    PauseEventFlagApi(2);
     std::lock_guard lock(ef->_mutex);
     if (ef->_deleted) return SCE_KERNEL_ERROR_ESRCH;
     if (!ef->_multipleWaiters && ef->_waiters != 0) return SCE_KERNEL_ERROR_EPERM;
@@ -282,9 +295,24 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
 
 }
 
-extern "C" int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle) {
+extern "C" int APS5_VABI APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle) {
     const auto keepAlive = ResolveEventFlag(handle);
     if (!keepAlive) return -1;
     std::lock_guard lock(keepAlive->_mutex);
     return keepAlive->_waiters;
+}
+
+extern "C" void APS5_VABI APS5_Test_SetEventFlagApiPause(int kind) {
+    eventFlagApiPauseEntered.store(0, std::memory_order_relaxed);
+    eventFlagApiPauseReleased.store(false, std::memory_order_relaxed);
+    eventFlagApiPauseTarget.store(kind, std::memory_order_release);
+}
+
+extern "C" int APS5_VABI APS5_Test_GetEventFlagApiPauseCount() {
+    return eventFlagApiPauseEntered.load(std::memory_order_acquire);
+}
+
+extern "C" void APS5_VABI APS5_Test_ReleaseEventFlagApiPause() {
+    eventFlagApiPauseReleased.store(true, std::memory_order_release);
+    eventFlagApiPauseTarget.store(0, std::memory_order_release);
 }
