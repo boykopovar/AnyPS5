@@ -13,7 +13,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <thread>
 struct PollDescriptor {
     int descriptor;
@@ -55,6 +57,35 @@ constexpr short Out = 0x4;
 constexpr short Hup = 0x10;
 constexpr short Invalid = 0x20;
 constexpr short ReadNormal = 0x40;
+static void TestRegularFile(int socket) {
+    const std::string path = "anyps5-poll-regular-file-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin";
+    const int file = open_nid_postfix(path.c_str(), 0x602, 0644);
+    Require(file >= 0);
+    PollDescriptor one{file, In, 7};
+    Require(poll_nid_postfix(&one, 1, 0) == 1 && one.revents == In);
+    one = {file, Out, 7};
+    Require(poll_nid_postfix(&one, 1, 0) == 1 && one.revents == Out);
+    one = {file, In | ReadNormal | Out, 7};
+    Require(poll_nid_postfix(&one, 1, 0) == 1 && one.revents == (In | ReadNormal | Out));
+    one = {file, In, 7};
+    const auto readyStart = std::chrono::steady_clock::now();
+    Require(poll_nid_postfix(&one, 1, 2000) == 1 && one.revents == In);
+    Require(std::chrono::steady_clock::now() - readyStart < std::chrono::milliseconds(1000));
+    one = {file, Priority | ReadBand, 7};
+    Require(poll_nid_postfix(&one, 1, 0) == 0 && one.revents == 0);
+    const auto waitStart = std::chrono::steady_clock::now();
+    Require(poll_nid_postfix(&one, 1, 50) == 0 && one.revents == 0);
+    Require(std::chrono::steady_clock::now() - waitStart >= std::chrono::milliseconds(40));
+    PollDescriptor mixed[3]{{socket, In, 7}, {file, In, 7}, {-1, In, 7}};
+    const auto mixedStart = std::chrono::steady_clock::now();
+    Require(poll_nid_postfix(mixed, 3, 2000) == 1);
+    Require(mixed[0].revents == 0 && mixed[1].revents == In && mixed[2].revents == 0);
+    Require(std::chrono::steady_clock::now() - mixedStart < std::chrono::milliseconds(1000));
+    Require(close_nid_postfix(file) == 0);
+    one = {file, In, 0};
+    Require(poll_nid_postfix(&one, 1, 0) == 1 && one.revents == Invalid);
+    std::filesystem::remove(path);
+}
 static void TestPipes(int socket) {
     int ends[2];
     Require(pipe_nid_postfix(ends) == 0);
@@ -217,6 +248,7 @@ int main() {
     Require(poll_nid_postfix(nullptr, 1, 0) == -1 && *__error_nid_postfix() == 14);
     Require(poll_nid_postfix(&single, 1, -2) == -1 && *__error_nid_postfix() == 22);
     TestPipes(listener);
+    TestRegularFile(listener);
     Require(close_nid_postfix(server) == 0);
     const int file = open_nid_postfix("/dev/urandom", 0, 0);
     Require(file >= 0);

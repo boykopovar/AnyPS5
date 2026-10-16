@@ -492,6 +492,17 @@ bool IsPipe(int descriptor, short events) {
     return true;
 }
 #endif
+#ifdef _WIN32
+bool IsDiskFile(int descriptor) {
+    const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
+    return handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_DISK;
+}
+#else
+bool IsDiskFile(int descriptor) {
+    struct stat status{};
+    return ::fstat(descriptor, &status) == 0 && S_ISREG(status.st_mode);
+}
+#endif
 }
 
 #ifdef _WIN32
@@ -1347,6 +1358,11 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
             if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
                 entry.revents = GuestPollInvalid;
                 ++ready;
+                continue;
+            }
+            if (IsDiskFile(entry.descriptor)) {
+                entry.revents = static_cast<short>(entry.events & (GuestPollReadable | GuestPollWritable));
+                if (entry.revents) ++ready;
                 continue;
             }
 #ifdef _WIN32
