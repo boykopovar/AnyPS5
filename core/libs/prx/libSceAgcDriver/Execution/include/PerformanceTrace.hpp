@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -260,6 +261,18 @@ private:
     Clock::duration folded{};
 };
 
+struct TraceHost {
+    std::string cpu;
+    std::uint32_t threads = 0;
+    std::uint64_t memoryMiB = 0;
+};
+
+struct TraceTitle {
+    std::string id;
+    std::string name;
+    std::string contentVersion;
+};
+
 struct TraceSummary {
     std::string commit;
     std::optional<bool> dirty;
@@ -274,6 +287,30 @@ struct TraceSummary {
     double gpuBusyMs = 0;
     std::string trace;
     std::optional<std::pair<double, double>> interval;
+    std::optional<TraceHost> host;
+    std::optional<TraceTitle> title;
+};
+
+struct TraceBenchInterval {
+    double startS = 0;
+    double endS = 0;
+    std::uint64_t firstPresent = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    double gpuBusyMs = 0;
+    std::vector<std::uint32_t> frameUs;
+};
+
+class TraceBench {
+public:
+    static constexpr std::size_t MaximumIntervals = 240;
+
+    static bool Parse(const char* bench, bool summaryEvery) {
+        if (bench == nullptr) return false;
+        if (std::string_view(bench) != "1") throw std::invalid_argument("APS5_TRACE_BENCH=" + std::string(bench) + " is not 1");
+        if (!summaryEvery) throw std::invalid_argument("APS5_TRACE_BENCH=1 needs APS5_TRACE_SUMMARY_EVERY");
+        return true;
+    }
 };
 
 struct TraceGpuRange {
@@ -422,6 +459,7 @@ public:
         AppendString(output, summary.driver);
         output += ",\"os\":";
         AppendString(output, summary.os);
+        AppendMachine(output, summary);
         output += ",\"resolution\":";
         AppendString(output, std::to_string(summary.width) + "x" + std::to_string(summary.height));
         output += ",\"window\":{\"spec\":";
@@ -495,7 +533,71 @@ public:
         return output;
     }
 
+    static std::vector<std::uint32_t> FrameMicroseconds(std::span<const Clock::time_point> presents) {
+        std::vector<std::uint32_t> frames;
+        for (std::size_t index = 1; index < presents.size(); ++index) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(presents[index] - presents[index - 1]).count();
+            frames.push_back(static_cast<std::uint32_t>(std::clamp<std::int64_t>(elapsed, 0, std::numeric_limits<std::uint32_t>::max())));
+        }
+        return frames;
+    }
+
+    static std::string Bench(const TraceSummary& summary, std::span<const TraceBenchInterval> intervals, std::uint64_t intervalsDropped) {
+        std::string output = "{\"format\":\"aps5-bench/1\",\"commit\":";
+        AppendString(output, summary.commit);
+        output += ",\"dirty\":";
+        output += summary.dirty.has_value() ? (*summary.dirty ? "true" : "false") : "null";
+        output += ",\"env\":{";
+        for (std::size_t index = 0; index < summary.environment.size(); ++index) {
+            if (index != 0) output += ',';
+            AppendString(output, summary.environment[index].first);
+            output += ':';
+            AppendString(output, summary.environment[index].second);
+        }
+        output += "},\"gpu\":";
+        AppendString(output, summary.gpu);
+        output += ",\"driver\":";
+        AppendString(output, summary.driver);
+        output += ",\"os\":";
+        AppendString(output, summary.os);
+        AppendMachine(output, summary);
+        output += ",\"intervals_dropped\":" + std::to_string(intervalsDropped) + ",\"intervals\":[";
+        for (std::size_t index = 0; index < intervals.size(); ++index) {
+            const auto& interval = intervals[index];
+            if (index != 0) output += ',';
+            output += "\n{\"start_s\":" + number(interval.startS) + ",\"end_s\":" + number(interval.endS);
+            output += ",\"first_present\":" + std::to_string(interval.firstPresent);
+            output += ",\"resolution\":";
+            AppendString(output, std::to_string(interval.width) + "x" + std::to_string(interval.height));
+            output += ",\"gpu_busy_ms\":" + number(interval.gpuBusyMs) + ",\"frame_us\":[";
+            for (std::size_t frame = 0; frame < interval.frameUs.size(); ++frame) {
+                if (frame != 0) output += ',';
+                output += std::to_string(interval.frameUs[frame]);
+            }
+            output += "]}";
+        }
+        output += "\n]}\n";
+        return output;
+    }
+
 private:
+    static void AppendMachine(std::string& output, const TraceSummary& summary) {
+        if (summary.host) {
+            output += ",\"cpu\":";
+            AppendString(output, summary.host->cpu);
+            output += ",\"cpu_threads\":" + std::to_string(summary.host->threads);
+            output += ",\"memory_mib\":" + std::to_string(summary.host->memoryMiB);
+        }
+        if (summary.title) {
+            output += ",\"title_id\":";
+            AppendString(output, summary.title->id);
+            output += ",\"title\":";
+            AppendString(output, summary.title->name);
+            output += ",\"content_version\":";
+            AppendString(output, summary.title->contentVersion);
+        }
+    }
+
     static double microseconds(Clock::duration elapsed) {
         return std::chrono::duration<double, std::micro>(elapsed).count();
     }
@@ -514,7 +616,7 @@ private:
 class PerformanceTrace {
 public:
     static bool Configured() {
-        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr;
+        static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
         return configured;
     }
 

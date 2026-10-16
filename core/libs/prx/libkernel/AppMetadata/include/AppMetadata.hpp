@@ -11,6 +11,10 @@ struct AppTitleId {
     char value[12];
 };
 
+struct AppContentVersion {
+    char value[16];
+};
+
 struct AppIconData {
     const std::uint8_t* bytes;
     std::uint64_t size;
@@ -20,6 +24,8 @@ extern "C" {
 
 AppTitle GetAppTitle_nid_postfix();
 AppTitleId GetAppTitleId_nid_postfix();
+bool HasAppParamJson_nid_no_patch();
+AppContentVersion GetAppContentVersion_nid_no_patch();
 bool HasAppIcon_nid_postfix();
 AppIconData GetAppIconData_nid_postfix();
 std::uint64_t GetAppDownloadDataSizeMiB_nid_postfix();
