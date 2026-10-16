@@ -451,7 +451,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     };
     if (graphics.rectList) buildRectList();
     if (!programs.empty() && programResults.back() != nullptr && programResults.back()->barycentricEmulation.active && graphics.stages.path == Graphics::ShaderPath::Geometry) {
-        require(localDevice->Target().mesh.has_value(), "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric needs barycentric emulation on the mesh path, which requires VK_EXT_mesh_shader; this device has no mesh shaders");
+        require(localDevice->Target().mesh.has_value(), "a pixel shader on the mesh path reads barycentrics, and this device has neither VK_KHR_fragment_shader_barycentric nor mesh shaders (VK_EXT_mesh_shader), so they cannot be provided or emulated");
         require(!graphics.rectList && graphics.stages.mesh && programs.size() == 2 && programResults[0] != nullptr && programResults[1] != nullptr && stages.size() == 2, "a pixel shader that reads barycentrics needs exactly one mesh program before it to emulate them");
         meshBarycentrics = ShaderRecompiler::MeshBarycentricLayoutOf(*programResults[1]);
         if (programResults[0]->meshBarycentrics != meshBarycentrics) {
