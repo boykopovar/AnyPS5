@@ -2313,7 +2313,15 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadClear, start);
         return;
     }
-    if (const auto* import = uploadedKeys == DccKeys::Uncompressed ? HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : nullptr) {
+    const auto* import = uploadedKeys == DccKeys::Uncompressed ? HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) : nullptr;
+    if (import == nullptr && blockUnits && layers != nullptr && uploadedKeys == DccKeys::Uncompressed && !cpuUploadLayers(*layers).empty()) {
+        const auto runs = unitRuns(*layers);
+        if (runs.size() == 1) {
+            const auto& [begin, end] = runs.front();
+            import = HostImportFor(context, descriptor.baseAddress + begin, static_cast<std::size_t>(end - begin));
+        }
+    }
+    if (import != nullptr) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
             cancelStoredSaves();
