@@ -387,15 +387,17 @@ void Describe(RegisteredStage& stage, const std::array<std::uint32_t, TCount>& c
 void RequireRegisteredStages() {
     const auto low = [](const auto& code) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code.data()) >> 8u); };
     const auto high = [](const auto& code) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code.data()) >> 40u); };
-    RegisteredStage hull;
-    RegisteredStage domain;
-    Describe(hull, MergedHullCode, 3u, {{0x148u, low(MergedHullCode)}, {0x149u, high(MergedHullCode)}, {0x10au, 0u}, {0x10bu, 16u}}, {{0x2dbu, 0x40049u}, {0x286u, 0x42800000u}, {0x287u, 0x3f800000u}, {0x2d6u, 0xc355u}}, 0x105u);
-    Describe(domain, DomainGeometryCode, 2u, {{0xc8u, low(DomainGeometryCode)}, {0xc9u, high(DomainGeometryCode)}, {0x8au, 0u}, {0x8bu, 0x400010u}}, {{0x1ffu, 12u}, {0x2ceu, 3u}, {0x2abu, 8u}}, 0x2028u);
-    for (const auto* stage : {&hull, &domain}) AgcDriverRegisterShader_nid_postfix(&stage->shader);
-    const std::array<const Shader*, 2> stages{&hull.shader, &domain.shader};
-    const std::array<ShaderRegister, 2> context{{{0x2d5u, 0x0000212du}, {0x29bu, 2u}}};
-    const std::array<ShaderRegister, 3> primitive{{{0x25bu, 0x1804u}, {0x262u, 0u}, {0x242u, 9u}}};
-    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+    for (const std::uint32_t hullWave32 : {0u, 0x00200000u}) {
+        RegisteredStage hull;
+        RegisteredStage domain;
+        Describe(hull, MergedHullCode, 3u, {{0x148u, low(MergedHullCode)}, {0x149u, high(MergedHullCode)}, {0x10au, 0u}, {0x10bu, 16u}}, {{0x2dbu, 0x40049u}, {0x286u, 0x42800000u}, {0x287u, 0x3f800000u}, {0x2d6u, 0xc355u}}, 0x105u | hullWave32);
+        Describe(domain, DomainGeometryCode, 2u, {{0xc8u, low(DomainGeometryCode)}, {0xc9u, high(DomainGeometryCode)}, {0x8au, 0u}, {0x8bu, 0x400010u}}, {{0x1ffu, 12u}, {0x2ceu, 3u}, {0x2abu, 8u}}, 0x2028u);
+        for (const auto* stage : {&hull, &domain}) AgcDriverRegisterShader_nid_postfix(&stage->shader);
+        const std::array<const Shader*, 2> stages{&hull.shader, &domain.shader};
+        const std::array<ShaderRegister, 2> context{{{0x2d5u, 0x0000212du | hullWave32}, {0x29bu, 2u}}};
+        const std::array<ShaderRegister, 3> primitive{{{0x25bu, 0x1804u}, {0x262u, 0u}, {0x242u, 9u}}};
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+    }
     AgcDriverShutdown_nid_postfix();
 }
 
