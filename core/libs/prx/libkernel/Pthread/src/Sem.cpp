@@ -16,6 +16,15 @@ constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
 constexpr int sceSemValueMax = 0x7fffffff;
 std::mutex semInitializationMutex;
 std::unordered_map<PthreadSemPrivate*, std::shared_ptr<PthreadSemPrivate>> semRegistry;
+std::atomic<int> semApiPauseTarget{0};
+std::atomic<int> semApiPauseEntered{0};
+std::atomic<bool> semApiPauseReleased{true};
+
+void PauseSemApi(int kind) {
+    if (semApiPauseTarget.load(std::memory_order_acquire) != kind) return;
+    semApiPauseEntered.fetch_add(1, std::memory_order_acq_rel);
+    while (!semApiPauseReleased.load(std::memory_order_acquire)) std::this_thread::yield();
+}
 
 PthreadSem destroyedSem() {
     return reinterpret_cast<PthreadSem>(std::uintptr_t{2});
@@ -74,19 +83,6 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
     (void)name;
     auto replacement = std::make_shared<PthreadSemPrivate>(value);
     std::lock_guard lock(semInitializationMutex);
-    const auto previous = *sem;
-    if (previous && previous != destroyedSem()) {
-        const auto it = semRegistry.find(previous);
-        if (it != semRegistry.end()) {
-            const auto previousOwner = it->second;
-            std::lock_guard semLock(previousOwner->_mutex);
-            if (previousOwner->_waiters != 0)
-                return SCE_KERNEL_ERROR_EBUSY;
-            previousOwner->_destroyed = true;
-            previousOwner->_cv.NotifyAll();
-            semRegistry.erase(it);
-        }
-    }
     semRegistry.emplace(replacement.get(), replacement);
     *sem = replacement.get();
     return 0;
@@ -116,6 +112,7 @@ int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
     const auto owner = resolveSem(sem);
+    PauseSemApi(1);
     std::lock_guard lock(owner->_mutex);
     if (owner->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -218,7 +215,7 @@ int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
     return 0;
 }
 
-int APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
+int APS5_VABI APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
     std::shared_ptr<PthreadSemPrivate> owner;
     try {
         owner = resolveSem(sem);
@@ -227,6 +224,21 @@ int APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
     }
     std::lock_guard lock(owner->_mutex);
     return owner->_destroyed ? -1 : owner->_waiters;
+}
+
+void APS5_VABI APS5_Test_SetPthreadSemApiPause(int kind) {
+    semApiPauseEntered.store(0, std::memory_order_relaxed);
+    semApiPauseReleased.store(false, std::memory_order_relaxed);
+    semApiPauseTarget.store(kind, std::memory_order_release);
+}
+
+int APS5_VABI APS5_Test_GetPthreadSemApiPauseCount() {
+    return semApiPauseEntered.load(std::memory_order_acquire);
+}
+
+void APS5_VABI APS5_Test_ReleasePthreadSemApiPause() {
+    semApiPauseReleased.store(true, std::memory_order_release);
+    semApiPauseTarget.store(0, std::memory_order_release);
 }
 
 }
