@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 
@@ -32,12 +33,14 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     auto& stageCapture = stageCaptures[i];
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
     stageCapture.pushOffset = pushOffset;
-    const auto named = [&](const std::exception& error) {
+    const auto named = [&](const std::exception& error, std::span<const ShaderRecompiler::MemoryRegion> regions) {
         static const bool dumpShaders = std::getenv("APS5_DUMP_SHADERS") != nullptr;
         std::string dump;
         if (dumpShaders) {
             try {
-                dump = dumpRequest(program.binary.codeAddress, request);
+                auto failed = request;
+                failed.context.memory = regions;
+                dump = dumpRequest(program.binary.codeAddress, failed, true);
             } catch (...) {}
         }
         std::ostringstream where;
@@ -51,7 +54,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         try {
             return shaderMemory.Capture(invocation);
         } catch (const std::exception& error) {
-            throw named(error);
+            throw named(error, shaderMemory.Regions());
         }
     }();
 
@@ -98,7 +101,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     try {
         stageCapture.compiled = invocation.Materialize(*capture);
     } catch (const std::exception& error) {
-        throw named(error);
+        throw named(error, request.context.memory);
     }
     stageCapture.capture = capture;
     timing.Mark("materialize");
