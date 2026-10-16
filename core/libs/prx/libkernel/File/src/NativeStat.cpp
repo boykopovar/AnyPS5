@@ -3,12 +3,14 @@
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <stdexcept>
 #include <string>
 
 #ifdef _WIN32
 #include "prx/libkernel/File/include/WindowsFileTime.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
+#include "prx/libc/include/WindowsDescriptor.hpp"
 #include <io.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -43,6 +45,10 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
 }
 static int DoFstat(int fd, NativeStat* st) {
     if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
+    if (WindowsDescriptorHandle_nid_no_patch(fd) == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return -1;
+    }
     if (_fstat64(fd, st) != 0) return -1;
     return ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
 }
