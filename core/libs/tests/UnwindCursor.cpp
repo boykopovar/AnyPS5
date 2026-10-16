@@ -1,6 +1,7 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
 
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -202,6 +203,8 @@ extern "C" std::uintptr_t UnwindCursorCaller(int mode) {
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#else
+    std::signal(SIGABRT, [](int) { std::_Exit(3); });
 #endif
     const std::string mode = argc > 1 ? argv[1] : "";
     if (mode == "get-register") UnwindCursorCaller(GetUnknownRegister);
