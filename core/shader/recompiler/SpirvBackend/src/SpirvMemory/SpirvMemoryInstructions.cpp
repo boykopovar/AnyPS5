@@ -1503,14 +1503,14 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
             const auto guard = static_cast<std::uint32_t>(found - guarded.begin());
             const auto flag = load(ConstantU32(state, resources.srtGuardOffset + guard));
             const auto poisoned = Binary(state, spv::OpINotEqual, TypeBool(state), flag, ConstantU32(state, 0u));
+            const auto records = resources.srtGuardOffset + static_cast<std::uint32_t>(guarded.size());
+            if (records + 3u * guarded.size() >= (1u << BdaAbi::SrtGuardStageShift)) {
+                ctx.Fail(inst, "has more guarded SRT records than the fault buffer's guard word can name");
+            }
             EmitIfCondition(state, poisoned, [&] {
-                const auto records = resources.srtGuardOffset + static_cast<std::uint32_t>(guarded.size());
                 const auto record = Binary(state, spv::OpIAdd, u32, ConstantU32(state, records), Binary(state, spv::OpIMul, u32, Binary(state, spv::OpISub, u32, flag, ConstantU32(state, 1u)), ConstantU32(state, 3u)));
-                const auto word = [&](std::uint32_t offset) { return load(Binary(state, spv::OpIAdd, u32, record, ConstantU32(state, offset))); };
-                const auto pc = word(0u);
-                const auto low = word(1u);
-                const auto high = word(2u);
-                RecordBdaFaultWords(state, low, high, ConstantU32(state, 4u), pc, BdaAbi::FaultReason::Unmapped);
+                const auto stage = ConstantU32(state, static_cast<std::uint32_t>(resources.stage) << BdaAbi::SrtGuardStageShift);
+                state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord)), Binary(state, spv::OpBitwiseOr, u32, record, stage));
             });
             StopBdaInvocationIf(state, poisoned);
         }
