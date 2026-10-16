@@ -52,7 +52,8 @@ public:
     std::uint64_t DispatchesAdoptedAhead() const;
     void CheckFailure();
     void ReportFailure(std::exception_ptr error);
-    void Submit(const Packet* packet, std::uint32_t queue);
+    void Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip = false);
+    void SubmitFlip(const FlipInfo& info);
     void SuspendPoint();
     std::uint32_t ReserveEopFlip(const FlipInfo& info);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
@@ -314,7 +315,7 @@ private:
     std::condition_variable changed;
 
     std::map<std::uint32_t, QueueWorker> workers;
-    std::uint64_t frameSerial = 0;
+    std::atomic<std::uint64_t> frameSerial{0};
     std::shared_ptr<FrameTiming> pendingFrameTiming;
 
     std::atomic<std::uint64_t> flipsCounted{0};
