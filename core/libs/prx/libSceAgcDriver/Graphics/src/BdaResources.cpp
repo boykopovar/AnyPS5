@@ -18,24 +18,6 @@ namespace AgcDriver::Graphics {
 
 namespace {
 
-// The page tables built per device, reused by a build whose ranges (guest ranges, device
-// addresses, permissions) equal one of them: consecutive address-based builds map the same registered
-// set through the same imports and mirrors, so the ~1200-entry table repeats. The shader only reads
-// the table (its lookup keeps its state in function variables), and a batch in flight keeps its
-// BdaResources, so sharing the buffer is safe. The cache holds the tables weakly: they never outlive
-// the builds that own them (a static owner would destroy the buffer after its device, at exit or on
-// device replacement, and would fail the tests' leak check), and with deferred lease release the
-// previous builds are still in flight when the next one asks, which is what makes the hit rate.
-// One table was enough while every build repeated the last one exactly; now the misaligned
-// descriptor sub-ranges the GPU copies out of imports sit in pool staging buffers whose device
-// addresses cycle through the few buffers the batches in flight leave free, and the three
-// address-based programs of one queue interleave with the lease draws, so a table differs from the
-// previous one and comes back a few builds later (69% misses in the wave-8 run, 4% before the GPU
-// copies). Hence several recent tables, most recently used first, matched by a word hash before
-// the byte compare. APS5_BDA_TABLE_CACHE_ENTRIES sets how many (default 8; 1 is the previous
-// behaviour); APS5_NO_BDA_TABLE_CACHE=1 builds every table.
-// A table built for (or found equal to) cached address-space ranges carries their serial and
-// multisample generation, allowing equivalent spaces to bind the table without hashing or comparing.
 struct TableEntry {
     std::uint64_t hash;
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
@@ -54,8 +36,6 @@ struct TableCache {
 
 bool sameRanges(const std::vector<ShaderRecompiler::BdaAbi::Range>& left, const std::vector<ShaderRecompiler::BdaAbi::Range>& right);
 
-// APS5_PROFILE_DRAW: why the most recently used entry did not serve this build (see
-// TableCacheStats). Under the cache mutex.
 void classifyFirstEntry(TableCache& cache, std::uint64_t hash, const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
