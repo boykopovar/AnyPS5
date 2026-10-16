@@ -773,6 +773,69 @@ void DeferredUndecodableRegistration() {
     ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "unsupported MIMG opcode");
 }
 
+void RelocatedHeaders() {
+    alignas(256) static const std::array<std::uint32_t, 11> code{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+        ShaderUserData users{};
+        std::array<ShaderRegister, 1> context{{{0x2d5, 0x2000}}};
+    };
+    static Header registered;
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    const auto fill = [&](Header& header) {
+        header.shader.file_header = 0x34333231u;
+        header.shader.version = 0x18;
+        header.shader.header_size = sizeof(Header);
+        header.shader.shader_size = sizeof(code);
+        header.shader.code = code.data();
+        header.shader.sh_registers = header.registers.data();
+        header.shader.num_sh_registers = header.registers.size();
+        header.shader.cx_registers = header.context.data();
+        header.shader.num_cx_registers = header.context.size();
+        header.shader.specials = &header.specials;
+        header.shader.user_data = &header.users;
+        header.specials.dispatch_modifier = 0x8000;
+        header.shader.type = 2;
+        header.registers = {{{0xc8, static_cast<std::uint32_t>(address >> 8u)}, {0xc9, static_cast<std::uint32_t>(address >> 40u)}, {0x8b, 0}, {0x8a, 0}, {0xca, 0}, {0xcb, 0}, {0xcc, 0}}};
+    };
+    fill(registered);
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    AgcDriverRegisterShader_nid_postfix(&registered.shader);
+    AgcDriverResolveShaderAbi_nid_postfix(&registered.shader, {}, primitive);
+    std::vector<std::uint32_t> commands;
+    for (const auto reg : registered.registers) commands.insert(commands.end(), {0xc0017600u, reg.offset, reg.value});
+    for (const auto reg : registered.context) commands.insert(commands.end(), {0xc0016900u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0017600u, 0x8, 0, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    // A title that relocates a registered header and its arrays into memory of its own resolves the ABI with the copy,
+    // which was never registered. Every array it names holds the registered bytes, so the registered header decodes it.
+    static Header relocated;
+    fill(relocated);
+    AgcDriverResolveShaderAbi_nid_postfix(&relocated.shader, {}, primitive);
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the relocated header's draw was not submitted");
+    AgcDriverWaitIdle_nid_postfix();
+    // A copy that moves only its user data pointer beside the registered arrays keeps resolving.
+    static Header movedUserData;
+    movedUserData = registered;
+    movedUserData.shader.user_data = &movedUserData.users;
+    AgcDriverResolveShaderAbi_nid_postfix(&movedUserData.shader, {}, primitive);
+    // A copy whose registers, specials or semantics differ is still a replaced header.
+    static Header patched;
+    fill(patched);
+    patched.registers[2].value ^= 2u;
+    ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&patched.shader, {}, primitive); }, "replaced shader header");
+    static Header otherSpecials;
+    fill(otherSpecials);
+    otherSpecials.specials.dispatch_modifier = 0x4000;
+    ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&otherSpecials.shader, {}, primitive); }, "replaced shader header");
+    static Header otherContext;
+    fill(otherContext);
+    otherContext.context[0].value = 0x2001;
+    ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&otherContext.shader, {}, primitive); }, "replaced shader header");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -814,6 +877,7 @@ int main(int argc, char** argv) {
         PrepareMultisampledStorage(*device);
         device.reset();
         SharedCodeHeaders();
+        RelocatedHeaders();
         RegistrationWithoutSpecials();
         Registration(argc == 2);
         std::cout << "prepared shader and transactional registration tests passed\n";
