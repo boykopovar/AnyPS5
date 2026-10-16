@@ -34,7 +34,7 @@ std::shared_ptr<PthreadSemPrivate> resolveSem(PthreadSem* sem) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
     std::lock_guard lock(semInitializationMutex);
-    const auto current = *sem;
+    const auto current = std::atomic_ref<PthreadSem>(*sem).load(std::memory_order_acquire);
     if (!current || current == destroyedSem())
         throw std::runtime_error("Semaphore is not initialized or has been destroyed");
     const auto it = semRegistry.find(current);
@@ -84,7 +84,7 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
     auto replacement = std::make_shared<PthreadSemPrivate>(value);
     std::lock_guard lock(semInitializationMutex);
     semRegistry.emplace(replacement.get(), replacement);
-    *sem = replacement.get();
+    std::atomic_ref<PthreadSem>(*sem).store(replacement.get(), std::memory_order_release);
     return 0;
 }
 
@@ -105,7 +105,7 @@ int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) {
     if (owner->_waiters != 0)
         return SCE_KERNEL_ERROR_EBUSY;
     owner->_destroyed = true;
-    *sem = destroyedSem();
+    std::atomic_ref<PthreadSem>(*sem).store(destroyedSem(), std::memory_order_release);
     semRegistry.erase(it);
     return 0;
 }
