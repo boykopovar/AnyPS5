@@ -69,7 +69,7 @@ void Driver::validate(const Submission& submission, const std::uint32_t* guest) 
         require(count <= commands.size() - cursor, "truncated PM4 packet");
         try {
             Pm4::Validate(commands.subspan(cursor, count), queue);
-            if (header == FlipPacketHeader && !guarded.empty()) throw std::runtime_error("a flip inside a conditional execution range (conditional flip reservation) is not implemented");
+            if (IsFlipPacketHeader(header) && !guarded.empty()) throw std::runtime_error("a flip inside a conditional execution range (conditional flip reservation) is not implemented");
             if (((header >> 8u) & 0xffu) == 0x22u) {
                 const auto end = submission.conditionalEnds.find(cursor);
                 if (end == submission.conditionalEnds.end()) throw std::runtime_error("conditional execution range is not made of whole packets of its command buffer");

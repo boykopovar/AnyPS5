@@ -194,15 +194,15 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
         }
     }
 
-    if (header == FlipPacketHeader) {
+    if (IsFlipPacketHeader(header)) {
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         static_cast<void>(Graphics::StorageTexture::StoreSmallPending("flip"));
     }
 
     static const bool syncFlip = std::getenv("APS5_SYNC_FLIP") != nullptr;
-    const bool drains = drainAll ? ((Pm4::AccessesMemory(header) && opcode != 0x16) || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || header == FlipPacketHeader)
-                                 : (!wroteOnGpu && !orderedAlready && (opcode == 0x49 || opcode == 0x37 || opcode == 0x40 || opcode == 0x45 || opcode == 0x50 || opcode == 0x83 || sampleDump || (drawPacket && drawDrain) || (header == FlipPacketHeader && syncFlip)));
+    const bool drains = drainAll ? ((Pm4::AccessesMemory(header) && opcode != 0x16) || opcode == 0x42 || opcode == 0x46 || opcode == 0x58 || IsFlipPacketHeader(header))
+                                 : (!wroteOnGpu && !orderedAlready && (opcode == 0x49 || opcode == 0x37 || opcode == 0x40 || opcode == 0x45 || opcode == 0x50 || opcode == 0x83 || sampleDump || (drawPacket && drawDrain) || (IsFlipPacketHeader(header) && syncFlip)));
     if (drains) {
 
         static const bool unlockedDrain = std::getenv("APS5_NO_UNLOCKED_DRAIN") == nullptr && !drainAll;
@@ -214,7 +214,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
             std::lock_guard gpuLock(GuestMemory::GpuMutex());
             if (profile) {
-                ++drainCounts[header == FlipPacketHeader ? 0xffffu : opcode];
+                ++drainCounts[IsFlipPacketHeader(header) ? 0xffffu : opcode];
                 ++drainTotal;
                 if (std::chrono::steady_clock::now() - lastSyncReport > std::chrono::seconds(10)) {
                     lastSyncReport = std::chrono::steady_clock::now();

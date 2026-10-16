@@ -34,7 +34,7 @@ std::size_t& queuedLabelsNoted() {
 }
 
 bool NeedsRecordedLabels(std::uint32_t header) {
-    if (header == FlipPacketHeader) return true;
+    if (IsFlipPacketHeader(header)) return true;
     switch ((header >> 8u) & 0xffu) {
         case 0x10: case 0x11: case 0x12: case 0x13: case 0x26: case 0x28: case 0x2a: case 0x2f:
         case 0x42: case 0x46: case 0x58: case 0x68: case 0x69: case 0x76: case 0x78: case 0x79: case 0x7a: case 0x81:
@@ -44,7 +44,7 @@ bool NeedsRecordedLabels(std::uint32_t header) {
 }
 
 bool PacketLocksItself(std::uint32_t header) {
-    if (header == FlipPacketHeader) return true;
+    if (IsFlipPacketHeader(header)) return true;
     switch ((header >> 8u) & 0xffu) {
         case 0x15: case 0x16: case 0x27: case 0x2d: case 0x35: case 0x24: case 0x25: case 0x2c: case 0x38: return true;
         default: return false;
