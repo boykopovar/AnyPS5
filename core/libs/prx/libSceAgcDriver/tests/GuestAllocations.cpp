@@ -383,6 +383,34 @@ void RunPageBlockTests() {
     done = true;
     for (auto& reader : readers) reader.join();
     Require(GuestMemory::CommittedRanges(base, bytes, true) == Ranges{{base, base + 700 * page}, {base + 701 * page, base + bytes}}, "a page protected while other threads described its run is still reported writable");
+    protect(700, true);
+    for (std::size_t round = 0; round < 256; ++round) {
+        const auto index = (1 + round % 22) * 64 + (round * 37) % 64;
+        Require(GuestMemory::DescribeCommitted(base, bytes, true).whole, "the pages of a block were not described whole before one of them flipped");
+        std::atomic<bool> stop{false};
+        std::array<std::atomic<std::size_t>, 2> scans{};
+        std::vector<std::thread> scanners;
+        for (auto& scanned : scans) {
+            scanners.emplace_back([&] {
+                while (!stop.load(std::memory_order_relaxed)) {
+                    static_cast<void>(GuestMemory::DescribeCommitted(base, bytes, true));
+                    scanned.fetch_add(1, std::memory_order_release);
+                }
+            });
+        }
+        for (const auto& scanned : scans) {
+            while (scanned.load(std::memory_order_acquire) == 0) std::this_thread::yield();
+        }
+        protect(index, false);
+        for (const auto& scanned : scans) {
+            const auto flipped = scanned.load(std::memory_order_acquire);
+            while (scanned.load(std::memory_order_acquire) < flipped + 2) std::this_thread::yield();
+        }
+        stop = true;
+        for (auto& scanner : scanners) scanner.join();
+        Require(GuestMemory::CommittedRanges(base, bytes, true) == Ranges{{base, base + index * page}, {base + (index + 1) * page, base + bytes}}, "a page flipped in a marked block while other threads ran over the block is still reported writable");
+        protect(index, true);
+    }
     {
         GuestAllocations::Mutation mutation;
         mutation.Unmap(guest, bytes, [](const void* pointer, std::size_t length, const void*, bool) { Require(munmap(const_cast<void*>(pointer), length) == 0, "cannot unmap the page block test pages"); });
