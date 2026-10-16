@@ -107,6 +107,7 @@ struct SpirvEmitterState {
     bool float16DenormPreserve = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
+    bool laneValueShared = false;
     std::uint32_t spirvVersion = 0x00010300u;
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
@@ -143,6 +144,8 @@ struct SpirvEmitterState {
     std::uint32_t bdaPcOverride = 0;
     // False for programs with workgroup barriers: faulting BDA accesses then continue (see BdaInvocationsMayStop).
     bool bdaStopsInvocations = true;
+    bool bdaFaultMasksWrites = false;
+    std::array<std::uint32_t, 2> bdaFaultedVariables {};
     bool continueTarget = false;
     // Execution scope of the barriers that keep one guest wave's LDS accesses in program order across
     // host invocations (see WaveLdsScope); 0 when none are emitted.
