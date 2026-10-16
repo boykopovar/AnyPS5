@@ -1,8 +1,11 @@
 #include "SceTypes.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 
 extern "C" {
 int APS5_VABI sceKernelCreateSema(KernelSema*, const char*, std::uint32_t, int, int, void*);
@@ -236,4 +239,59 @@ int main() {
 
     Require(sceKernelCreateEventFlag(&ef, "single", EVF_ATTR_SINGLE | 0x02u, 0, nullptr) == SCE_OK);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "imm_sat", EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
+    pattern = 0;
+    Require(sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT, &pattern, nullptr) == SCE_OK);
+    Require(pattern == 0x05);
+    Require(sceKernelPollEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pattern) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelPollEventFlag(ef, 0x04, EVF_WAITMODE_AND, &pattern) == SCE_OK);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "multi_race", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+    std::atomic<bool> t1Started{false};
+    std::atomic<bool> t2Started{false};
+    std::atomic<int> t1Res{-1};
+    std::atomic<int> t2Res{-1};
+    std::uint64_t pat1 = 0;
+    std::uint64_t pat2 = 0;
+    std::thread t1([&] {
+        t1Started = true;
+        t1Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pat1, nullptr);
+    });
+    std::thread t2([&] {
+        t2Started = true;
+        t2Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL, &pat2, nullptr);
+    });
+    while (!t1Started || !t2Started) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(sceKernelSetEventFlag(ef, 0x01) == SCE_OK);
+    t1.join();
+    t2.join();
+    Require(t1Res == SCE_OK);
+    Require(t2Res == SCE_OK);
+    Require(pat1 == 0x01);
+    Require(pat2 == 0x01);
+    Require(sceKernelPollEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pattern) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "del_waiters", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+    std::atomic<int> delWaitersStarted{0};
+    std::atomic<int> delRes1{-1};
+    std::atomic<int> delRes2{-1};
+    std::thread delT1([&] {
+        ++delWaitersStarted;
+        delRes1 = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, nullptr, nullptr);
+    });
+    std::thread delT2([&] {
+        ++delWaitersStarted;
+        delRes2 = sceKernelWaitEventFlag(ef, 0x02, EVF_WAITMODE_AND, nullptr, nullptr);
+    });
+    while (delWaitersStarted < 2) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+    delT1.join();
+    delT2.join();
+    Require(delRes1 == SCE_KERNEL_ERROR_EACCES);
+    Require(delRes2 == SCE_KERNEL_ERROR_EACCES);
 }
