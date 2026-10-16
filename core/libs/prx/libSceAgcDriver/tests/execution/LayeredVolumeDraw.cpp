@@ -31,10 +31,10 @@ using AgcDriver::Graphics::ColorTileMode;
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Width = 48;
+constexpr std::uint32_t Width = 96;
 constexpr std::uint32_t Height = 16;
-constexpr std::uint32_t Slices = 4;
-constexpr std::uint32_t FirstSlice = 1;
+constexpr std::uint32_t Slices = 32;
+constexpr std::uint32_t FirstSlice = 0;
 constexpr std::uint32_t Layers = Slices - FirstSlice;
 constexpr std::uint32_t BandWidth = Width / Layers;
 constexpr std::uint8_t Kept = 0x40;
@@ -70,8 +70,16 @@ alignas(256) constexpr std::array<std::uint32_t, 6> LayerFieldPixelCode{
     0x2c020090, 0x7e020d01, 0x100202f0, 0xf800180f, 0x01010101, 0xbf810000,
 };
 
-constexpr std::array<std::uint8_t, Layers> WhiteBands{255, 255, 255};
-constexpr std::array<std::uint8_t, Layers> LayerFieldBands{0, 128, 255};
+constexpr auto WhiteBands = [] {
+    std::array<std::uint8_t, Layers> bands{};
+    bands.fill(255);
+    return bands;
+}();
+constexpr auto LayerFieldBands = [] {
+    std::array<std::uint8_t, Layers> bands{};
+    for (std::uint32_t i = 0; i < Layers; ++i) bands[i] = static_cast<std::uint8_t>(std::min(i * 128u, 255u));
+    return bands;
+}();
 
 struct Vertex {
     std::array<float, 4> position;
@@ -220,7 +228,6 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
         subgroup.supportedOperations = 0xffu;
         subgroup.quadOperationsInAllStages = VK_TRUE;
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, false, true);
-        return;
     }
     device.Draw(state, draw, shaders);
     device.WaitIdle();
@@ -292,7 +299,12 @@ int main(int argc, char** argv) {
         Run(*device, thickColor, false, PixelCode, false);
         Check(thickVolume.Data(), thickColor, "thick SW_4KB_S_X vertex draw and writeback", WhiteBands);
         if (vertexOnly) std::puts("layered volume vertex draw tests passed");
-        else if (target.mesh.has_value()) Run(*device, color, true, PixelCode, false);
+        else if (target.mesh.has_value()) {
+            const GuestVolume meshVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
+            const auto meshColor = VolumeTarget(meshVolume.Data());
+            Run(*device, meshColor, true, PixelCode, false);
+            Check(meshVolume.Data(), meshColor, "mesh draw", WhiteBands);
+        }
         else std::puts("mesh case skipped, the device has no VK_EXT_mesh_shader");
         std::puts("layered volume draw tests passed");
         return 0;
