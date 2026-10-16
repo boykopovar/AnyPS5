@@ -2,7 +2,9 @@
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsDependencyStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsGuestStartup.hpp>
+#include <domain/ImportModule.hpp>
 #include <io/BufferUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -132,8 +134,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     }
 
     std::vector<std::uint32_t> symbolNames;
-    for (const auto& import : imports)
+    std::vector<std::optional<std::uint32_t>> nidNames;
+    for (const auto& import : imports) {
         symbolNames.push_back(addString(import.Name));
+        const bool named = import.Library.empty() && !import.Name.empty() && import.Name.find('#') == std::string::npos;
+        nidNames.push_back(named ? std::optional(addString(Nid::ComputeNid(import.Name, ""))) : std::nullopt);
+    }
 
     std::vector<std::uint32_t> searchTables;
     std::vector<std::uint32_t> searchCounts;
@@ -141,22 +147,23 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     std::vector<bool> imported(libraries.size());
     const bool unscopedImports = std::any_of(imports.begin(), imports.end(), [](const auto& import) { return import.Library.empty(); });
     for (const auto& import : imports) {
+        const auto library = Domain::NeededLibraryName(import.Library);
         std::vector<std::uint32_t> order;
         for (std::size_t index = 0; index < libraries.size(); ++index) {
             auto name = std::filesystem::path(libraries[index]).filename().string();
             if (name.ends_with(".guest.prx")) name.resize(name.size() - 10);
             const bool guestName = index < guestModules.size() &&
                 std::find(guestModules[index].Names.begin(), guestModules[index].Names.end(), import.Library) != guestModules[index].Names.end();
-            if (import.Library.empty() || name == import.Library || guestName) order.push_back(CheckedRva(index));
+            if (import.Library.empty() || name == library || guestName) order.push_back(CheckedRva(index));
         }
         if (order.empty()) throw Domain::RelinkerException("Import module is not a dependency: " + import.Library);
         const bool hostModule = !import.Library.empty() &&
             std::any_of(order.begin(), order.end(), [&](auto index) { return index >= guestModules.size(); });
         if (hostModule) {
             for (std::size_t index = guestModules.size(); index < libraries.size(); ++index) {
-                if (libraries[index] == "libc.prx" && import.Library != "libc.prx") order.push_back(CheckedRva(index));
+                if (libraries[index] == "libc.prx" && library != "libc.prx") order.push_back(CheckedRva(index));
             }
-            if (import.Library == "libSceLibcInternal.prx") {
+            if (library == "libSceLibcInternal.prx") {
                 for (std::size_t index = 0; index < guestModules.size(); ++index) {
                     const auto& names = guestModules[index].Names;
                     if (std::find(names.begin(), names.end(), "libc.prx") != names.end() && !guestModules[index].ZeroReturnExports.contains(import.Name))
@@ -596,9 +603,23 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Emit({0x8b, 0x0f, 0x48, 0x8b, 0x0c, 0xcb, 0x48, 0x89, 0xf2});
         call("GetProcAddress");
         code.Emit({0x48, 0x85, 0xc0});
-        const auto resolved = code.Branch({0x0f, 0x85});
+        std::vector<std::size_t> resolved = {code.Branch({0x0f, 0x85})};
         code.Emit({0x48, 0x83, 0xc7, 4, 0xff, 0xcd});
         code.Rip({0x0f, 0x85}, search);
+        if (nidNames[index]) {
+            code.Rip({0x48, 0x8d, 0x35}, *nidNames[index]);
+            code.Rip({0x48, 0x8d, 0x3d}, searchTables[index]);
+            code.Emit({0xbd});
+            code.U32(searchCounts[index]);
+            const auto nidSearch = code.GetRva();
+            code.Emit({0x8b, 0x0f, 0x48, 0x8b, 0x0c, 0xcb, 0x48, 0x89, 0xf2});
+            call("GetProcAddress");
+            code.Emit({0x48, 0x85, 0xc0});
+            resolved.push_back(code.Branch({0x0f, 0x85}));
+            code.Emit({0x48, 0x83, 0xc7, 4, 0xff, 0xcd});
+            code.Rip({0x0f, 0x85}, nidSearch);
+        }
+        const auto patchResolved = [&] { for (const auto branch : resolved) code.PatchBranch(branch, code.GetRva()); };
         if (imports[index].Weak) {
             code.Emit({0x31, 0xc0});
             const auto writeWeak = code.GetRva();
@@ -609,7 +630,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             }
             guestStartup.WriteImport(code, imports[index], handles);
             const auto weakDone = code.Branch({0xe9});
-            code.PatchBranch(resolved, code.GetRva());
+            patchResolved();
             code.Rip({0xe9}, writeWeak);
             code.PatchBranch(weakDone, code.GetRva());
             continue;
@@ -617,7 +638,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         if (lazyBinding) {
             lazyUnresolvedImports.push_back(index);
             const auto skipGotWrite = code.Branch({0xe9});
-            code.PatchBranch(resolved, code.GetRva());
+            patchResolved();
             if (imports[index].Addend != 0) {
                 code.Emit({0x48, 0xba});
                 code.U64(imports[index].Addend);
@@ -631,7 +652,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         writeString(errorRvas.at(3 + index), true);
         code.Rip({0xff, 0x05}, unresolvedCount);
         const auto nextImport = code.Branch({0xe9});
-        code.PatchBranch(resolved, code.GetRva());
+        patchResolved();
         if (imports[index].RelocationType == 16) code.Emit({0x48, 0x8b, 0x00});
         if (imports[index].RelocationType == 17) code.Emit({0x48, 0x8b, 0x40, 8});
         if (imports[index].Addend != 0) {
