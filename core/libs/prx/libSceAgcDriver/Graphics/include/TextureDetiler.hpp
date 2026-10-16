@@ -83,6 +83,8 @@ namespace AgcDriver::Graphics {
         VkDescriptorSetLayout imageDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout imagePipelineLayout = VK_NULL_HANDLE;
         VkShaderModule imageModule = VK_NULL_HANDLE;
+        VkShaderModule imageWordModule = VK_NULL_HANDLE;
+        VkShaderModule wordModule = VK_NULL_HANDLE;
         DescriptorRing imageDescriptorSets;
     };
 

@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
@@ -8009,6 +8010,234 @@ void Run(Context context) {
 }
 #endif
 
+namespace SmallElementDetileTest {
+
+std::uint32_t equationOffset(const TextureSwizzleEquation& equation, std::uint32_t x, std::uint32_t y) {
+    std::uint32_t offset = 0;
+    for (std::size_t bit = 0; bit < equation.bits.size(); ++bit) {
+        const auto mask = equation.bits[bit];
+        const auto selected = (x & (mask & 0xfffu)) ^ ((y << 12) & (mask & 0xfff000u));
+        offset |= static_cast<std::uint32_t>(std::popcount(selected) & 1u) << bit;
+    }
+    return offset;
+}
+
+std::uint32_t standardOffset(std::uint32_t elementBytes, std::uint32_t blockBytes, std::uint32_t x, std::uint32_t y) {
+    std::uint32_t offset = elementBytes == 1u ? ((y << 4) & 0x1f0u) ^ ((y << 5) & 0x400u) ^ (x & 0x00fu) ^ ((x << 5) & 0x200u) ^ ((x << 6) & 0x800u)
+                                              : ((y << 4) & 0x070u) ^ ((y << 5) & 0x100u) ^ ((y << 6) & 0x400u) ^ ((x << 1) & 0x00eu) ^ ((x << 4) & 0x080u) ^ ((x << 5) & 0x200u) ^ ((x << 6) & 0x800u);
+    if (blockBytes > 4096u) offset ^= elementBytes == 1u ? ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^ ((y << 6) & 0x1000u) ^ ((y << 7) & 0x4000u)
+                                                       : ((x << 7) & 0x2000u) ^ ((x << 8) & 0x8000u) ^ ((y << 7) & 0x1000u) ^ ((y << 8) & 0x4000u);
+    return offset & (blockBytes - 1u);
+}
+
+std::uint32_t tiledOffset(TextureTileMode mode, std::uint32_t elementBytes, const TileMipLayout& mip, std::uint32_t x, std::uint32_t y) {
+    if (mode == TextureTileMode::kLinear) return y * mip.pitchBytes + x * elementBytes;
+    const auto block = ThinBlockLayout(mode, elementBytes);
+    const auto sx = mip.tail ? x + mip.tailX : x;
+    const auto sy = mip.tail ? y + mip.tailY : y;
+    const auto base = mip.tail ? 0u : (y / block[2] * mip.blocksPerRow + x / block[1]) * block[0];
+    if (mode == TextureTileMode::kStandard4KB || mode == TextureTileMode::kStandard64KB) return base + standardOffset(elementBytes, block[0], sx, sy);
+    const auto* equation = FindTextureSwizzleEquation(EquationSwizzleMode(mode), elementBytes);
+    Require(equation != nullptr, "small element detile test: no swizzle equation");
+    return base + equationOffset(*equation, sx, sy);
+}
+
+class StorageImage {
+public:
+    StorageImage(const Context& context, VkFormat format, std::uint32_t width, std::uint32_t height) : context(context) {
+        try {
+            VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = {width, height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage small element detile");
+            VkMemoryRequirements requirements{};
+            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory small element detile");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory small element detile");
+            VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            viewInfo.image = image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView small element detile");
+        } catch (...) {
+            release();
+            throw;
+        }
+    }
+    ~StorageImage() { release(); }
+    StorageImage(const StorageImage&) = delete;
+    StorageImage& operator=(const StorageImage&) = delete;
+    VkImage Image() const { return image; }
+    VkImageView View() const { return view; }
+
+private:
+    void release() noexcept {
+        if (view != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+        if (image != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        if (memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    }
+    Context context;
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
+void fillPattern(std::span<std::byte> bytes, std::uint32_t seed) {
+    for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::byte>((i * 37u + seed) & 0xffu);
+}
+
+void fillSentinel(std::span<std::byte> bytes) {
+    std::fill(bytes.begin(), bytes.end(), std::byte{0xa5});
+}
+
+void requireBytes(std::span<const std::byte> actual, std::span<const std::byte> expected, const std::string& what) {
+    Require(actual.size() >= expected.size(), what + ": readback is shorter than expected");
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (actual[i] != expected[i]) Require(false, what + ": byte " + std::to_string(i) + " is " + std::to_string(static_cast<unsigned>(actual[i])) + ", expected " + std::to_string(static_cast<unsigned>(expected[i])));
+    }
+}
+
+void hostBarrier(const Context& context, VkCommandBuffer commands) {
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+}
+
+}
+
+void smallElementDetileTests(Device& device) {
+    using namespace SmallElementDetileTest;
+    const auto& context = device.GetContext();
+    TextureDetiler detiler(context);
+    struct Case {
+        TextureTileMode mode;
+        const char* name;
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t mips;
+        bool tail;
+    };
+    const std::array<Case, 6> cases{{
+        {TextureTileMode::kStandard64KB, "SW_64KB_S", 37, 21, 1, false},
+        {TextureTileMode::kStandard4KB, "SW_4KB_S", 70, 9, 1, false},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X", 37, 21, 1, false},
+        {TextureTileMode::kLinear, "linear", 37, 5, 1, false},
+        {TextureTileMode::kStandard64KB, "SW_64KB_S tail", 256, 256, 9, true},
+        {TextureTileMode::kR64KBX, "SW_64KB_R_X tail", 256, 256, 9, true},
+    }};
+    for (const auto& testCase : cases) {
+        for (const std::uint32_t elementBytes : {1u, 2u}) {
+            const auto layouts = ComputeElementMipLayout(testCase.mode, elementBytes, testCase.width, testCase.height, testCase.mips);
+            std::size_t level = 0;
+            if (testCase.tail) {
+                while (level < layouts.size() && !layouts[level].tail) ++level;
+                Require(level < layouts.size(), std::string("small element detile test: ") + testCase.name + " has no tail mip");
+            }
+            const auto& mip = layouts[level];
+            const auto tiledBytes = static_cast<std::size_t>(mip.tiledSize);
+            const auto linearBytes = static_cast<std::size_t>(mip.linearSize);
+            struct WindowCase {
+                const char* name;
+                DetileWindow window;
+            };
+            std::vector<WindowCase> windows{{"whole mip", DetileWindow{}}};
+            DetileWindow ranged{};
+            ranged.rangeBegin = 1u;
+            ranged.rangeEnd = static_cast<std::uint32_t>(tiledBytes / 2u + 3u);
+            windows.push_back({"unaligned byte range", ranged});
+            if (mip.width > 9u) {
+                DetileWindow columns{};
+                columns.columnBegin = 3u;
+                columns.columnEnd = mip.width - 2u;
+                windows.push_back({"unaligned columns", columns});
+            }
+            for (const auto& windowCase : windows) {
+                const auto& window = windowCase.window;
+                const auto what = std::string(testCase.name) + " " + std::to_string(elementBytes) + "B " + std::to_string(mip.width) + "x" + std::to_string(mip.height) + ", " + windowCase.name;
+                const auto columnEnd = window.columnEnd != 0 ? std::min(window.columnEnd, mip.width) : mip.width;
+                const auto gridEnd = std::min(mip.width, window.columnBegin + (columnEnd - window.columnBegin + 7u) / 8u * 8u);
+                const auto moved = [&](std::uint32_t x, std::uint32_t offset) { return x >= window.columnBegin && x < gridEnd && offset >= window.rangeBegin && offset < window.rangeEnd; };
+                Buffer linear(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                Buffer tiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                Buffer retiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                Buffer detiled(context, linearBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                fillPattern(linear.Bytes(), 11u);
+                fillPattern(tiled.Bytes(), 29u);
+                fillSentinel(retiled.Bytes());
+                fillSentinel(detiled.Bytes());
+                std::vector<std::byte> expectedRetile(tiledBytes, std::byte{0xa5});
+                std::vector<std::byte> expectedDetile(linearBytes, std::byte{0xa5});
+                for (std::uint32_t y = 0; y < mip.height; ++y) {
+                    for (std::uint32_t x = 0; x < mip.width; ++x) {
+                        const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y);
+                        if (!moved(x, offset)) continue;
+                        const auto linearOffset = y * mip.pitchBytes + x * elementBytes;
+                        for (std::uint32_t byte = 0; byte < elementBytes; ++byte) {
+                            expectedRetile[offset + byte] = linear.Bytes()[linearOffset + byte];
+                            expectedDetile[linearOffset + byte] = tiled.Bytes()[offset + byte];
+                        }
+                    }
+                }
+                detiler.BeginBatch();
+                CommandBatch batch(context);
+                const auto commands = batch.Handle();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                detiler.Dispatch(commands, testCase.mode, elementBytes, linear.Handle(), 0, retiled.Handle(), 0, mip, true, 0, false, window);
+                detiler.Dispatch(commands, testCase.mode, elementBytes, tiled.Handle(), 0, detiled.Handle(), 0, mip, false, 0, false, window);
+                hostBarrier(context, commands);
+                batch.SubmitAndWait();
+                requireBytes(retiled.Bytes(), expectedRetile, what + ", buffer retile");
+                requireBytes(detiled.Bytes(), expectedDetile, what + ", buffer detile");
+                const auto format = TextureDetiler::ImageElementFormat(elementBytes);
+                VkFormatProperties properties{};
+                context.formatProperties(context.physical, format, &properties);
+                if (!context.singlePassStorage || (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) continue;
+                StorageImage image(context, format, mip.width, mip.height);
+                Buffer imageRetiled(context, tiledBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                fillSentinel(imageRetiled.Bytes());
+                std::vector<std::byte> expectedImage(tiledBytes, std::byte{0xa5});
+                for (std::uint32_t y = 0; y < mip.height; ++y) {
+                    for (std::uint32_t x = 0; x < mip.width; ++x) {
+                        const auto offset = tiledOffset(testCase.mode, elementBytes, mip, x, y);
+                        if (!moved(x, offset)) continue;
+                        for (std::uint32_t byte = 0; byte < elementBytes; ++byte) expectedImage[offset + byte] = tiled.Bytes()[offset + byte];
+                    }
+                }
+                detiler.BeginBatch();
+                CommandBatch imageBatch(context);
+                const auto imageCommands = imageBatch.Handle();
+                VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                toGeneral.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toGeneral.image = image.Image();
+                toGeneral.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+                RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, tiled.Handle(), 0, image.View(), mip, false);
+                RecordMemoryBarrier(context, imageCommands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+                detiler.DispatchImage(imageCommands, testCase.mode, elementBytes, imageRetiled.Handle(), 0, image.View(), mip, true, 0, window);
+                hostBarrier(context, imageCommands);
+                imageBatch.SubmitAndWait();
+                requireBytes(imageRetiled.Bytes(), expectedImage, what + ", image retile");
+            }
+        }
+    }
+    std::cout << "small element detile tests passed\n";
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--queued-write-groups-only") {
@@ -8078,6 +8307,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         std::unique_lock gpu(GpuMutex());
+        if (argc == 2 && std::string_view(argv[1]) == "--small-element-detile-only") {
+            smallElementDetileTests(device);
+            return 0;
+        }
 #ifdef _WIN32
         if (argc == 2 && std::string_view(argv[1]) == "--storage-cpu-snapshot-only") {
             if (device.GetContext().hostImportAlignment == 0) {
