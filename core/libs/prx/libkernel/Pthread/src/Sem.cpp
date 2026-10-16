@@ -44,22 +44,22 @@ std::shared_ptr<PthreadSemPrivate> resolveSem(PthreadSem* sem) {
 }
 
 struct SemaphoreWaitCleanupContext {
-    std::shared_ptr<PthreadSemPrivate>* owner;
-    bool waiterRegistered;
+    std::shared_ptr<PthreadSemPrivate> owner;
+    bool waiterRegistered = false;
 };
 
 void APS5_VABI CleanupSemaphoreWait(void* argument) {
     auto* context = static_cast<SemaphoreWaitCleanupContext*>(argument);
-    if (!context || !context->owner || !*context->owner)
+    if (!context || !context->owner)
         return;
-    const auto owner = *context->owner;
+    auto* owner = context->owner.get();
     if (context->waiterRegistered) {
         std::lock_guard lock(owner->_mutex);
         if (owner->_waiters > 0)
             --owner->_waiters;
         context->waiterRegistered = false;
     }
-    context->owner->reset();
+    context->owner.reset();
 }
 
 void finishSemaphoreWait(PthreadSemPrivate* sem, SemaphoreWaitCleanupContext& context, void* cleanupMark) {
@@ -125,13 +125,13 @@ int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemWait(PthreadSem* sem) {
     ThreadCancel::Check();
-    auto owner = resolveSem(sem);
-    auto* current = owner.get();
+    SemaphoreWaitCleanupContext cleanupContext{resolveSem(sem), false};
+    auto* current = cleanupContext.owner.get();
     std::unique_lock lock(current->_mutex);
     if (current->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
     ++current->_waiters;
-    SemaphoreWaitCleanupContext cleanupContext{&owner, true};
+    cleanupContext.waiterRegistered = true;
     CleanupHandler cleanup{};
     void* const cleanupMark = ThreadCancel::CleanupMark();
     __pthread_cleanup_push_imp_nid_postfix(CleanupSemaphoreWait, &cleanupContext, &cleanup);
@@ -169,13 +169,13 @@ int APS5_VABI scePthreadSemTrywait(PthreadSem* sem) {
 
 int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec) {
     ThreadCancel::Check();
-    auto owner = resolveSem(sem);
-    auto* current = owner.get();
+    SemaphoreWaitCleanupContext cleanupContext{resolveSem(sem), false};
+    auto* current = cleanupContext.owner.get();
     std::unique_lock lock(current->_mutex);
     if (current->_destroyed)
         return SCE_KERNEL_ERROR_EINVAL;
     ++current->_waiters;
-    SemaphoreWaitCleanupContext cleanupContext{&owner, true};
+    cleanupContext.waiterRegistered = true;
     CleanupHandler cleanup{};
     void* const cleanupMark = ThreadCancel::CleanupMark();
     __pthread_cleanup_push_imp_nid_postfix(CleanupSemaphoreWait, &cleanupContext, &cleanup);
