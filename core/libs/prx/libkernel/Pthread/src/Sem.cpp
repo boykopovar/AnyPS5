@@ -78,11 +78,12 @@ int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, c
     if (previous && previous != destroyedSem()) {
         const auto it = semRegistry.find(previous);
         if (it != semRegistry.end()) {
-            std::lock_guard semLock(previous->_mutex);
-            if (previous->_waiters != 0)
+            const auto previousOwner = it->second;
+            std::lock_guard semLock(previousOwner->_mutex);
+            if (previousOwner->_waiters != 0)
                 return SCE_KERNEL_ERROR_EBUSY;
-            previous->_destroyed = true;
-            previous->_cv.NotifyAll();
+            previousOwner->_destroyed = true;
+            previousOwner->_cv.NotifyAll();
             semRegistry.erase(it);
         }
     }
