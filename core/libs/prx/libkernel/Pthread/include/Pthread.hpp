@@ -70,6 +70,8 @@ struct PthreadSemPrivate {
     std::mutex _mutex;
     TimedWait::Condition _cv;
     int _count = 0;
+    int _waiters = 0;
+    bool _destroyed = false;
 
     explicit PthreadSemPrivate(unsigned int value) : _count(static_cast<int>(value)) {}
 };
