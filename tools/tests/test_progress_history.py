@@ -50,9 +50,19 @@ class ProgressHistoryTests(unittest.TestCase):
                      **{name: {"done": i, "total": count, "percent": 100 * i / count} for name in ("libraries", "shaders")}}
                     for i in range(count)]
         short, medium, long = (progress_history.chart(series(count)) for count in (20, 100, 400))
-        self.assertEqual((short.count("rotate(60)"), short.count("<circle")), (20, 40))
-        self.assertEqual((medium.count("rotate(60)"), medium.count("<circle")), (14, 0))
-        self.assertEqual((long.count("rotate(60)"), long.count("<circle")), (14, 0))
+        week = progress_history.chart(series(10))
+        self.assertEqual((week.count('class="x"'), week.count("<circle")), (10, 20))
+        self.assertEqual((short.count('class="x"'), short.count("<circle")), (3, 40))
+        self.assertEqual((medium.count('class="x"'), medium.count("<circle")), (14, 0))
+        self.assertEqual((long.count('class="x"'), long.count("<circle")), (14, 0))
+
+    def test_each_panel_shows_its_declared_total(self):
+        point = {"date": "2026-01-01", "libraries": {"done": 3292, "total": 3706, "percent": 88.83},
+                 "shaders": {"done": 1166, "total": 1166, "percent": 100.0}}
+        svg = progress_history.chart([point, {**point, "date": "2026-01-02"}])
+        self.assertIn("Declared 3,706", svg)
+        self.assertIn("Declared 1,166", svg)
+        self.assertIn("Implemented 1,166 (100%)", svg)
 
 
 if __name__ == "__main__":
