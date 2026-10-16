@@ -282,7 +282,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
 
 }
 
-int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle) {
+extern "C" int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle) {
     const auto keepAlive = ResolveEventFlag(handle);
     if (!keepAlive) return -1;
     std::lock_guard lock(keepAlive->_mutex);
