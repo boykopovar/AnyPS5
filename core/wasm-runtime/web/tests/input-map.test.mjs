@@ -17,6 +17,7 @@ test('keyboard buttons follow the native default mapping', () => {
   const state = composePadState(new Set(['Enter', 'ArrowLeft', 'KeyQ', 'AltRight', 'Escape']), null);
   assert.equal(state.buttons, PadButton.Cross | PadButton.Left | PadButton.L1 | PadButton.R1 | PadButton.Options);
   assert.equal(composePadState(new Set(['Space']), null).buttons, PadButton.Cross);
+  assert.equal(composePadState(new Set(['KeyR']), null).buttons, PadButton.Square);
 });
 
 test('keyboard sticks tilt fully and opposite keys cancel', () => {
@@ -67,7 +68,7 @@ test('device kinds come from the gamepad id', () => {
 });
 
 test('game keys are exactly the mapped keys', () => {
-  for (const code of ['Enter', 'Space', 'Tab', 'Backspace', 'ArrowDown', 'KeyW', 'Escape']) assert.ok(GameKeyCodes.has(code), code);
+  for (const code of ['Enter', 'Space', 'KeyR', 'Tab', 'Backspace', 'ArrowDown', 'KeyW', 'Escape']) assert.ok(GameKeyCodes.has(code), code);
   for (const code of ['F5', 'KeyZ', 'Digit1']) assert.ok(!GameKeyCodes.has(code), code);
 });
 

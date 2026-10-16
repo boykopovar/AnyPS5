@@ -56,6 +56,7 @@ Runs a relinked title in a browser with WebGPU.
 | Enter, Space | Cross |
 | C | Circle |
 | I | Triangle |
+| R | Square |
 | Escape | Options |
 | Arrows | D-pad |
 | W A S D | Left stick |

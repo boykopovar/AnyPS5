@@ -10,7 +10,7 @@ export const Device = Object.freeze({ None: 0, DualSense: 1, DualShock4: 2, Othe
 
 const KeyButtons = new Map([
   ['Enter', PadButton.Cross], ['Space', PadButton.Cross], ['Escape', PadButton.Options],
-  ['KeyI', PadButton.Triangle], ['KeyC', PadButton.Circle], ['KeyQ', PadButton.L1], ['KeyE', PadButton.R1],
+  ['KeyI', PadButton.Triangle], ['KeyC', PadButton.Circle], ['KeyR', PadButton.Square], ['KeyQ', PadButton.L1], ['KeyE', PadButton.R1],
   ['AltLeft', PadButton.R1], ['AltRight', PadButton.R1], ['ShiftLeft', PadButton.L3], ['ShiftRight', PadButton.L3],
   ['ControlLeft', PadButton.R3], ['ControlRight', PadButton.R3],
   ['ArrowUp', PadButton.Up], ['ArrowRight', PadButton.Right], ['ArrowDown', PadButton.Down], ['ArrowLeft', PadButton.Left],
