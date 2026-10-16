@@ -4640,6 +4640,134 @@ void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::n
     }
 }
 
+void tableUpdateAfterBindTests() {
+    namespace Abi = ShaderRecompiler::ImageTableAbi;
+    using namespace AgcDriver::Graphics;
+    auto argumentLimits = mockContext();
+    argumentLimits.runtimeDescriptorArray = true;
+    argumentLimits.partiallyBound = true;
+    argumentLimits.variableDescriptorCount = true;
+    argumentLimits.descriptorIndexing = true;
+    argumentLimits.limits.maxPerStageDescriptorSamplers = 16;
+    argumentLimits.limits.maxPerStageDescriptorSampledImages = 256;
+    argumentLimits.limits.maxPerStageResources = 287;
+    argumentLimits.limits.maxDescriptorSetSamplers = 80;
+    argumentLimits.limits.maxDescriptorSetSampledImages = 1280;
+    argumentLimits.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindSamplers = 500000;
+    argumentLimits.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindSampledImages = 1000000;
+    argumentLimits.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 1000000;
+    argumentLimits.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindSamplers = 500000;
+    argumentLimits.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindSampledImages = 1000000;
+    Require(ImageTableCapacity(argumentLimits) == 0u && SamplerTableCapacity(argumentLimits) == 0u && !ImageTableUpdateAfterBind(argumentLimits) && !SamplerTableUpdateAfterBind(argumentLimits), "tables beyond the regular descriptor limits were enabled without update-after-bind sampled images");
+    argumentLimits.sampledImageUpdateAfterBind = true;
+    Require(ImageTableCapacity(argumentLimits) == ShaderRecompiler::RuntimeAbi::StageCount * Abi::ImageElementBudget && ImageTableUpdateAfterBind(argumentLimits), "an image table beyond the regular descriptor limits did not take the update-after-bind limits");
+    Require(SamplerTableCapacity(argumentLimits) == Abi::SamplerElementBudget && SamplerTableUpdateAfterBind(argumentLimits), "a sampler table beyond the regular descriptor limits did not take the update-after-bind limits");
+    auto regularLimits = argumentLimits;
+    regularLimits.limits.maxPerStageDescriptorSamplers = 1048576;
+    regularLimits.limits.maxPerStageDescriptorSampledImages = 1048576;
+    regularLimits.limits.maxPerStageResources = 1048576;
+    regularLimits.limits.maxDescriptorSetSamplers = 1048576;
+    regularLimits.limits.maxDescriptorSetSampledImages = 1048576;
+    Require(ImageTableCapacity(regularLimits) == ShaderRecompiler::RuntimeAbi::StageCount * Abi::ImageElementBudget && !ImageTableUpdateAfterBind(regularLimits), "an image table within the regular descriptor limits took the update-after-bind path");
+    Require(SamplerTableCapacity(regularLimits) == Abi::SamplerElementBudget && !SamplerTableUpdateAfterBind(regularLimits), "a sampler table within the regular descriptor limits took the update-after-bind path");
+
+    const auto tableContext = [] {
+        auto context = mockContext();
+        context.sampledImageUpdateAfterBind = true;
+        context.limits.maxPerStageDescriptorSampledImages = 1;
+        context.limits.maxDescriptorSetSampledImages = 1;
+        context.limits.maxPerStageDescriptorSamplers = 1;
+        context.limits.maxDescriptorSetSamplers = 1;
+        context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindSampledImages = 2;
+        context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindSampledImages = 2;
+        context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindSamplers = 2u * Abi::SamplerEntryElements;
+        context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindSamplers = 2u * Abi::SamplerEntryElements;
+        context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
+        context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 32;
+        context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 16;
+        return context;
+    };
+    const auto requireTableLayout = [](std::uint32_t tableBinding, VkDescriptorBindingFlags tableFlags, std::string_view what) {
+        Require(mock.layoutFlags == VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, std::string(what) + " did not get an update-after-bind layout");
+        Require(mock.layoutBindingFlags.size() == mock.layoutBindings.size(), std::string(what) + " lost its binding flags");
+        for (std::size_t index = 0; index < mock.layoutBindings.size(); ++index) {
+            const auto expected = mock.layoutBindings[index].binding == tableBinding ? tableFlags | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0u;
+            Require(mock.layoutBindingFlags[index] == expected, std::string(what) + " put update-after-bind on the wrong bindings");
+        }
+        Require(mock.poolFlags == VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT, std::string(what) + " did not come from an update-after-bind pool");
+    };
+    for (const bool cached : {false, true}) {
+        mock = MockVulkan{};
+        auto context = tableContext();
+        context.imageTableCapacity = 2;
+        context.imageTableUpdateAfterBind = true;
+        {
+            DescriptorCache cache(context);
+            if (cached) context.descriptorCache = &cache;
+            ShaderRecompiler::RecompileResult program;
+            auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 2u));
+            map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
+            map.guestDescriptor[Abi::HeaderElementCount] = 2u;
+            map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
+            map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords + 2u;
+            program.bindings.push_back(map);
+            auto images = makeBinding(Role::ImageTable, ShaderRecompiler::RuntimeAbi::ImageTableBinding, 2u, std::vector<std::uint32_t>(16u));
+            images.kind = Kind::SampledImage;
+            images.imageShapes.resize(2u);
+            images.imageDepthCompare.resize(2u);
+            images.imageSamplers.resize(2u);
+            program.bindings.push_back(std::move(images));
+            const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+            {
+                ShaderResources resources(context, shader, {}, true);
+                requireTableLayout(ShaderRecompiler::RuntimeAbi::ImageTableBinding, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT, "an image table beyond the regular limits");
+                if (cached) Require(DescribeSetLayouts(context, std::span(&shader, 1)).layouts.main == resources.Layout(), "the described image table layout differs from the built one");
+            }
+        }
+        Require(mock.live == 0, "the update-after-bind image table leaked Vulkan objects");
+    }
+    for (const bool cached : {false, true}) {
+        mock = MockVulkan{};
+        auto context = tableContext();
+        constexpr auto count = 2u * Abi::SamplerEntryElements;
+        context.samplerTableCapacity = count;
+        context.samplerTableUpdateAfterBind = true;
+        context.samplerAnisotropy = true;
+        context.samplerFilterMinmax = true;
+        context.limits.maxSamplerAnisotropy = 2.0f;
+        context.limits.maxSamplerLodBias = 0.5f;
+        {
+            DescriptorCache cache(context);
+            if (cached) context.descriptorCache = &cache;
+            ShaderRecompiler::RecompileResult program;
+            auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords + 2u));
+            map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
+            map.guestDescriptor[Abi::HeaderSamplerCount] = count;
+            map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
+            map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
+            program.bindings.push_back(map);
+            const auto samplerBinding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::SamplerTable);
+            auto samplers = makeBinding(Role::SamplerTable, samplerBinding, count, {});
+            samplers.kind = Kind::Sampler;
+            const std::array<std::uint32_t, 4> valid{0x92u, (4u * 256u) << 12u, 0u, 0u};
+            for (std::uint32_t element = 0; element < count; ++element) {
+                samplers.guestDescriptor.insert(samplers.guestDescriptor.end(), valid.begin(), valid.end());
+                samplers.samplerDepthCompare.push_back(false);
+            }
+            program.bindings.push_back(std::move(samplers));
+            const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+            {
+                ShaderResources resources(context, shader, {}, true);
+                resources.Complete();
+                requireTableLayout(samplerBinding, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, "a sampler table beyond the regular limits");
+                Require(findWrite(samplerBinding).count == count, "the update-after-bind sampler table did not write its samplers");
+                if (cached) Require(DescribeSetLayouts(context, std::span(&shader, 1)).layouts.main == resources.Layout(), "the described sampler table layout differs from the built one");
+            }
+        }
+        Require(mock.live == 0 && mock.samplerFlags.empty(), "the update-after-bind sampler table leaked Vulkan objects");
+    }
+}
+
 void textureCacheBudgetTests() {
     using AgcDriver::Graphics::TextureCacheBudget;
     constexpr std::uint64_t GiB = 1ull << 30u;
@@ -7443,6 +7571,7 @@ int main(int argc, char** argv) {
         imageTableSnapshotAllocationTests();
         samplerTableNonSeamlessCubeTests();
         samplerTableDeviceLimitTests();
+        tableUpdateAfterBindTests();
         misalignedShaderDataTests();
         debugBranchTests();
         textureCacheBudgetTests();
