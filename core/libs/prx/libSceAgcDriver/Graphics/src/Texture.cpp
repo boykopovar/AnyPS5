@@ -236,10 +236,98 @@ std::atomic<std::uint64_t>& SampledMemoryCounter() {
     return bytes;
 }
 
+template<typename TMake>
+auto ownTextureMemory(TMake&& make) {
+    try {
+        return make();
+    } catch (const VulkanError& error) {
+        if (error.result != VK_ERROR_OUT_OF_HOST_MEMORY && error.result != VK_ERROR_OUT_OF_DEVICE_MEMORY) throw;
+        throw TextureMemoryExhausted(error.result, error.what());
+    }
+}
+
 }
 
 std::uint64_t SampledTextureMemory() {
     return SampledMemoryCounter().load(std::memory_order_relaxed);
+}
+
+namespace {
+
+const char* dimensionName(TextureDimension dimension) {
+    switch (dimension) {
+        case TextureDimension::k1D: return "1D";
+        case TextureDimension::k2D: return "2D";
+        case TextureDimension::k2DArray: return "2D array";
+        case TextureDimension::kCube: return "cube";
+        case TextureDimension::k3D: return "3D";
+        case TextureDimension::k1DArray: return "1D array";
+        case TextureDimension::k2DMsaa: return "2D multisampled";
+    }
+    throw std::runtime_error("AGC graphics: unknown guest texture dimension " + std::to_string(static_cast<int>(dimension)));
+}
+
+std::optional<VkImageFormatProperties> sampledImageFormatLimits(const Context& context, VkFormat format, VkImageType type, VkImageCreateFlags flags) {
+    static std::mutex mutex;
+    static std::map<std::tuple<VkPhysicalDevice, VkFormat, VkImageType, VkImageCreateFlags>, std::optional<VkImageFormatProperties>> limits;
+    const auto key = std::make_tuple(context.physical, format, type, flags);
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = limits.find(key); found != limits.end()) return found->second;
+    }
+    Require(context.imageFormatProperties != nullptr, "the device has no vkGetPhysicalDeviceImageFormatProperties");
+    VkImageFormatProperties properties{};
+    const auto result = context.imageFormatProperties(context.physical, format, type, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, flags, &properties);
+    std::optional<VkImageFormatProperties> supported;
+    if (result != VK_ERROR_FORMAT_NOT_SUPPORTED) {
+        Check(result, "vkGetPhysicalDeviceImageFormatProperties sampled texture");
+        supported = properties;
+    }
+    std::lock_guard lock(mutex);
+    limits.emplace(key, supported);
+    return supported;
+}
+
+}
+
+void RequireSampledImageWithinDeviceLimits(const Context& context, const GuestTextureResource& descriptor, const SurfaceGeometry& geometry, bool depthCompare) {
+    const auto colorFormat = SampledTextureFormat(context, descriptor.format);
+    const auto format = !depthCompare ? colorFormat : colorFormat == VK_FORMAT_R32_SFLOAT ? VK_FORMAT_D32_SFLOAT : colorFormat == VK_FORMAT_R16_UNORM ? VK_FORMAT_D16_UNORM : colorFormat;
+    const auto type = ImageTypeFor(descriptor.dimension);
+    const bool cube = descriptor.dimension == TextureDimension::kCube;
+    const VkImageCreateFlags flags = (cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | (SrgbTwinFormat(context, format) != VK_FORMAT_UNDEFINED ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0u);
+    const VkExtent3D extent{descriptor.width, descriptor.height, geometry.imageDepth};
+    const auto supported = sampledImageFormatLimits(context, format, type, flags);
+    const auto blockWidth = static_cast<std::uint64_t>(BlockWidth(descriptor.format));
+    const auto leastBytes = (extent.width + blockWidth - 1u) / blockWidth * ((extent.height + blockWidth - 1u) / blockWidth) * BytesPerElement(descriptor.format) * extent.depth * geometry.imageLayers;
+    const bool extentFits = supported && extent.width <= supported->maxExtent.width && extent.height <= supported->maxExtent.height && extent.depth <= supported->maxExtent.depth;
+    const bool layersFit = supported && geometry.imageLayers <= supported->maxArrayLayers;
+    const bool bytesFit = supported && leastBytes <= supported->maxResourceSize;
+    std::uint32_t largestHeap = 0;
+    VkDeviceSize heapBytes = 0;
+    for (std::uint32_t memoryType = 0; memoryType < std::min<std::uint32_t>(context.memory.memoryTypeCount, VK_MAX_MEMORY_TYPES); ++memoryType) {
+        const auto heap = context.memory.memoryTypes[memoryType].heapIndex;
+        if (heap >= VK_MAX_MEMORY_HEAPS || context.memory.memoryHeaps[heap].size <= heapBytes) continue;
+        largestHeap = heap;
+        heapBytes = context.memory.memoryHeaps[heap].size;
+    }
+    const bool heapFits = leastBytes <= heapBytes;
+    if (extentFits && layersFit && bytesFit && heapFits) return;
+    char fields[224];
+    std::snprintf(fields, sizeof(fields), "guest texture 0x%llx (%ux%u, %s, depth or last array slice %u, base array %u, format %u, mips %u)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, dimensionName(descriptor.dimension), descriptor.depthOrLastArray, descriptor.baseArray, descriptor.format, descriptor.mipCount);
+    char text[448];
+    if (!supported) {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs a sampled VkFormat %d image of type %d with create flags 0x%x, which vkGetPhysicalDeviceImageFormatProperties reports unsupported", fields, static_cast<int>(format), static_cast<int>(type), static_cast<unsigned>(flags));
+    } else if (!layersFit) {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs %u array layers, more than the %u of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, geometry.imageLayers, supported->maxArrayLayers, static_cast<int>(format));
+    } else if (!extentFits) {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs an extent of %ux%ux%u, more than the %ux%ux%u of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, extent.width, extent.height, extent.depth, supported->maxExtent.width, supported->maxExtent.height, supported->maxExtent.depth, static_cast<int>(format));
+    } else if (!bytesFit) {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs at least %llu bytes, more than the maxResourceSize of %llu of VkFormat %d images (vkGetPhysicalDeviceImageFormatProperties)", fields, static_cast<unsigned long long>(leastBytes), static_cast<unsigned long long>(supported->maxResourceSize), static_cast<int>(format));
+    } else {
+        std::snprintf(text, sizeof(text), "AGC graphics: %s needs at least %llu bytes, more than the %llu bytes of memory heap %u, the largest a memory type allocates from", fields, static_cast<unsigned long long>(leastBytes), static_cast<unsigned long long>(heapBytes), largestHeap);
+    }
+    throw std::runtime_error(text);
 }
 
 Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare) : context(context) {
@@ -283,7 +371,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage");
+        ownTextureMemory([&] { Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage"); });
         owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
 
         VkMemoryRequirements requirements{};
@@ -292,8 +380,10 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         allocation.allocationSize = requirements.size;
         allocationBytes = requirements.size;
         allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "texture");
-        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &owned->memory), "vkAllocateMemory texture");
-        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory");
+        ownTextureMemory([&] {
+            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &owned->memory), "vkAllocateMemory texture");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory");
+        });
 
         {
             // Debug aid: APS5_DUMP_TEXTURE=<hex addresses, comma separated> saves the detiled first mip
@@ -309,10 +399,10 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 // Entries may also be extents ("3840x2160"), since heap addresses change between runs.
                 dumpWanted = dumpList.find(address) != std::string::npos || dumpList.find(extent) != std::string::npos;
             }
-            auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            auto staging = ownTextureMemory([&] { return std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT); });
             std::memcpy(staging->Bytes().data(), snapshot.data(), snapshot.size());
-            auto tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            auto tiled = ownTextureMemory([&] { return std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT); });
+            auto linear = ownTextureMemory([&] { return std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT); });
             if (profile) Profile().allocate += timer.lap();
             if (profile) Profile().read += timer.lap();
 

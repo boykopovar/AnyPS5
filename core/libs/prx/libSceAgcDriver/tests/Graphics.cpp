@@ -8054,6 +8054,10 @@ int main(int argc, char** argv) {
             std::cout << "address-space device teardown releases cached guest allocations\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--image-table-entry-validation") {
+            RunImageTableEntryValidationTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--buffer-budget-placement") {
             bufferBudgetPlacementTests();
             return 0;
@@ -8280,6 +8284,7 @@ int main(int argc, char** argv) {
         RunGuestTextureResourceTests();
         RunDepthSurfaceReuseTests();
         RunGuestSamplerResourceTests();
+        RunImageTableEntryValidationTests();
         mock = MockVulkan{};
         auto textureDetilerContext = mockContext();
         textureDetilerContext.limits.minStorageBufferOffsetAlignment = 16;

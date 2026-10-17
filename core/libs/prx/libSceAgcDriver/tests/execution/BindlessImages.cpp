@@ -2,6 +2,7 @@
 #include "Recompiler.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -29,6 +30,12 @@ std::array<std::uint32_t, 4> Buffer(const void* pointer, std::uint32_t stride, s
 }
 
 void Run(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        Registration() { GuestAllocations::Mutation().Add(textures.data(), sizeof(textures), true, true, false); }
+        Registration(const Registration&) = delete;
+        Registration& operator=(const Registration&) = delete;
+        ~Registration() { GuestAllocations::Mutation().Remove(textures.data()); }
+    } registered;
     textures[0].fill(0x40000000u);
     textures[1].fill(0x40400000u);
     const auto threads = std::min(32u, device.Target().subgroupSize);

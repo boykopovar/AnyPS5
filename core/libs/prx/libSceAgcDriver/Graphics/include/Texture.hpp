@@ -37,6 +37,10 @@ bool StorageFormatAvailable(const Context& context, std::uint32_t guestFormat);
 VkFormat HostStorageFormat(const Context& context, VkFormat format);
 bool StorageClearAvailable(const Context& context, std::uint32_t guestFormat, DccKeys keys);
 std::uint64_t SampledTextureMemory();
+void RequireSampledImageWithinDeviceLimits(const Context& context, const GuestTextureResource& descriptor, const SurfaceGeometry& geometry, bool depthCompare);
+struct TextureMemoryExhausted : VulkanError {
+    using VulkanError::VulkanError;
+};
 bool ClearKeepsDenormals(const Context& context, VkFormat format);
 bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear);
 
