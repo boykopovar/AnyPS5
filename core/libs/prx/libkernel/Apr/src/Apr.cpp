@@ -260,8 +260,10 @@ TCommand _read(const Apr::CommandBufferObject& buffer, std::uint32_t cursor) {
     return command;
 }
 
-constexpr std::uint64_t AmmRangeBytes = 32ull << 30;
-constexpr std::uint64_t AmmRangeAlignment = 2ull << 20;
+constexpr std::uint64_t AmmRangeBytes = 256ull << 30;
+constexpr std::uint64_t AmmMultimapRangeBytes = 32ull << 30;
+constexpr std::uint64_t AmmReservedBytes = AmmRangeBytes + AmmMultimapRangeBytes;
+constexpr std::uint64_t AmmRangeAlignment = 64ull << 30;
 constexpr int GuestMapFixed = 0x10;
 constexpr int GuestMapNoOverwrite = 0x80;
 
@@ -292,11 +294,11 @@ std::uintptr_t _ammBase(AmmState& state) {
         std::uintptr_t arenaBase = 0;
         std::size_t arenaBytes = 0;
         GuestArena::GuestArenaRange_nid_postfix(&arenaBase, &arenaBytes);
-        if (arenaBase == 0 || arenaBytes < 2 * AmmRangeBytes) throw std::runtime_error("AMM: the guest address space arena cannot hold the virtual address range");
-        const auto top = GuestArena::GuestArenaHighestFree_nid_no_patch(2 * AmmRangeBytes, AmmRangeAlignment);
+        if (arenaBase == 0 || arenaBytes < AmmReservedBytes) throw std::runtime_error("AMM: the guest address space arena cannot hold the virtual address range");
+        const auto top = GuestArena::GuestArenaHighestFree_nid_no_patch(AmmReservedBytes, AmmRangeAlignment);
         if (top == 0) throw std::runtime_error("AMM: the guest address space arena has no free virtual address range");
         void* address = reinterpret_cast<void*>(top);
-        if (DoReserveVirtual(&address, 2 * AmmRangeBytes, GuestMapFixed | GuestMapNoOverwrite, 0) != 0) throw std::runtime_error("AMM: cannot reserve the virtual address range");
+        if (DoReserveVirtual(&address, AmmReservedBytes, GuestMapFixed | GuestMapNoOverwrite, 0) != 0) throw std::runtime_error("AMM: cannot reserve the virtual address range");
         state.base = reinterpret_cast<std::uintptr_t>(address);
     }
     return state.base;
@@ -304,7 +306,7 @@ std::uintptr_t _ammBase(AmmState& state) {
 
 void _ammCheckRange(AmmState& state, std::uint64_t address, std::uint64_t size) {
     const auto base = _ammBase(state);
-    if (address < base || size > 2 * AmmRangeBytes || address - base > 2 * AmmRangeBytes - size) throw std::runtime_error("AMM: range outside the AMM virtual address range");
+    if (address < base || size > AmmReservedBytes || address - base > AmmReservedBytes - size) throw std::runtime_error("AMM: range outside the AMM virtual address range");
 }
 
 int _ammHostProtection(std::int32_t protection) {
@@ -704,7 +706,7 @@ void AmmVirtualAddressRanges_nid_no_patch(std::uint64_t* start, std::uint64_t* e
     if (start) *start = base;
     if (end) *end = base + AmmRangeBytes;
     if (multimapStart) *multimapStart = base + AmmRangeBytes;
-    if (multimapEnd) *multimapEnd = base + 2 * AmmRangeBytes;
+    if (multimapEnd) *multimapEnd = base + AmmReservedBytes;
 }
 
 struct AprQueue {
