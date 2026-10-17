@@ -1,16 +1,28 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#include <cerrno>
+#endif
+
 #include "SslTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 
 #include <mbedtls/asn1.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/error.h>
+#include <mbedtls/net_sockets.h>
 #include <mbedtls/oid.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/platform.h>
 #include <mbedtls/platform_util.h>
+#include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -27,10 +39,11 @@ namespace {
 constexpr int ErrorNotFound = static_cast<int>(0x8095f004);
 constexpr int ErrorInvalidArg = static_cast<int>(0x8095177a);
 constexpr int ErrorInvalidId = static_cast<int>(0x8095f006);
+constexpr int ReadPartial = 0x1;
 
 struct Pool {
     std::size_t size, current = 0, peak = 0;
-    bool exhausted = false;
+    std::mutex mutex;
 };
 
 struct alignas(std::max_align_t) Allocation {
@@ -39,21 +52,23 @@ struct alignas(std::max_align_t) Allocation {
 };
 
 thread_local Pool* currentPool = nullptr;
+thread_local bool currentPoolExhausted = false;
 
 void* PoolCalloc(std::size_t count, std::size_t size) noexcept {
     if (!currentPool) return nullptr;
     if (size && count > std::numeric_limits<std::size_t>::max() / size) {
-        currentPool->exhausted = true;
+        currentPoolExhausted = true;
         return nullptr;
     }
     const auto bytes = count * size;
+    std::lock_guard lock(currentPool->mutex);
     if (bytes > currentPool->size - currentPool->current || bytes > std::numeric_limits<std::size_t>::max() - sizeof(Allocation)) {
-        currentPool->exhausted = true;
+        currentPoolExhausted = true;
         return nullptr;
     }
     auto* allocation = static_cast<Allocation*>(std::calloc(1, sizeof(Allocation) + bytes));
     if (!allocation) {
-        currentPool->exhausted = true;
+        currentPoolExhausted = true;
         return nullptr;
     }
     allocation->pool = currentPool;
@@ -66,15 +81,23 @@ void* PoolCalloc(std::size_t count, std::size_t size) noexcept {
 void PoolFree(void* pointer) noexcept {
     if (!pointer) return;
     auto* allocation = static_cast<Allocation*>(pointer) - 1;
-    allocation->pool->current -= allocation->size;
+    {
+        std::lock_guard lock(allocation->pool->mutex);
+        allocation->pool->current -= allocation->size;
+    }
     mbedtls_platform_zeroize(pointer, allocation->size);
     std::free(allocation);
 }
 
 struct PoolScope {
     Pool* previous;
-    explicit PoolScope(Pool& pool) : previous(std::exchange(currentPool, &pool)) { pool.exhausted = false; }
-    ~PoolScope() { currentPool = previous; }
+    bool previousExhausted;
+    explicit PoolScope(Pool& pool)
+        : previous(std::exchange(currentPool, &pool)), previousExhausted(std::exchange(currentPoolExhausted, false)) {}
+    ~PoolScope() {
+        currentPool = previous;
+        currentPoolExhausted = previousExhausted;
+    }
 };
 
 struct PoolDeleter {
@@ -96,7 +119,7 @@ std::size_t Add(std::size_t left, std::size_t right) {
 
 void CheckBackend(int error, const char* message) {
     if (error == 0) return;
-    if (currentPool && currentPool->exhausted) throw std::bad_alloc();
+    if (currentPool && currentPoolExhausted) throw std::bad_alloc();
     throw std::invalid_argument(message);
 }
 
@@ -164,7 +187,126 @@ struct Context {
     std::unordered_map<void*, Snapshot> caLists;
     std::unordered_map<void*, Snapshot> caCerts;
     std::unordered_map<void*, std::unique_ptr<CertName>> certNames;
-    explicit Context(std::size_t size) : pool{size} {}
+    explicit Context(std::size_t size) : pool{size, 0, 0, {}} {}
+};
+
+int HostError() {
+#ifdef _WIN32
+    return WSAGetLastError();
+#else
+    return errno;
+#endif
+}
+
+bool HostWouldBlock(int error) {
+#ifdef _WIN32
+    return error == WSAEWOULDBLOCK;
+#else
+    return error == EAGAIN || error == EWOULDBLOCK;
+#endif
+}
+
+bool HostInterrupted(int error) {
+#ifdef _WIN32
+    return error == WSAEINTR;
+#else
+    return error == EINTR;
+#endif
+}
+
+struct Session {
+    std::shared_ptr<Context> context;
+    std::shared_ptr<Identity> identity;
+    std::shared_ptr<void> socketOwner;
+    std::uintptr_t socket;
+    std::mutex mutex;
+    int hostError = 0;
+    Random random;
+    mbedtls_x509_crt authorities;
+    mbedtls_ssl_config config;
+    mbedtls_ssl_context ssl;
+
+    Session(std::shared_ptr<Context> owner, std::shared_ptr<void> socketHolder, std::uintptr_t native)
+        : context(std::move(owner)), identity(context->identity), socketOwner(std::move(socketHolder)), socket(native) {
+        mbedtls_x509_crt_init(&authorities);
+        mbedtls_ssl_config_init(&config);
+        mbedtls_ssl_init(&ssl);
+    }
+
+    ~Session() {
+        PoolScope scope(context->pool);
+        mbedtls_ssl_free(&ssl);
+        mbedtls_ssl_config_free(&config);
+        mbedtls_x509_crt_free(&authorities);
+    }
+
+    void Configure(const std::string& host) {
+        random.Seed();
+        for (const auto& chain : context->authorities)
+            for (const auto* entry = &chain->root; entry; entry = entry->next)
+                CheckBackend(mbedtls_x509_crt_parse_der(&authorities, entry->raw.p, entry->raw.len), "SSL CA certificate copy failed");
+        CheckBackend(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT),
+            "SSL client configuration failed");
+        mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_REQUIRED);
+        mbedtls_ssl_conf_ca_chain(&config, &authorities, nullptr);
+        mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random.drbg);
+        if (identity)
+            CheckBackend(mbedtls_ssl_conf_own_cert(&config, &identity->chain->root, &identity->key.key), "SSL client certificate setup failed");
+        CheckBackend(mbedtls_ssl_setup(&ssl, &config), "SSL connection setup failed");
+        CheckBackend(mbedtls_ssl_set_hostname(&ssl, host.c_str()), "SSL host name setup failed");
+        mbedtls_ssl_set_bio(&ssl, this, Send, Receive, nullptr);
+    }
+
+    static int Send(void* argument, const unsigned char* buffer, std::size_t length) {
+        auto& session = *static_cast<Session*>(argument);
+        const auto chunk = static_cast<int>(std::min<std::size_t>(length, INT_MAX));
+        for (;;) {
+#ifdef _WIN32
+            const auto sent = ::send(static_cast<SOCKET>(session.socket), reinterpret_cast<const char*>(buffer), chunk, 0);
+#else
+            const auto sent = ::send(static_cast<int>(session.socket), buffer, static_cast<std::size_t>(chunk), MSG_NOSIGNAL);
+#endif
+            if (sent >= 0) return static_cast<int>(sent);
+            const int error = HostError();
+            if (HostInterrupted(error)) continue;
+            if (HostWouldBlock(error)) return MBEDTLS_ERR_SSL_WANT_WRITE;
+            session.hostError = error;
+            return MBEDTLS_ERR_NET_SEND_FAILED;
+        }
+    }
+
+    static int Receive(void* argument, unsigned char* buffer, std::size_t length) {
+        auto& session = *static_cast<Session*>(argument);
+        const auto chunk = static_cast<int>(std::min<std::size_t>(length, INT_MAX));
+        for (;;) {
+#ifdef _WIN32
+            const auto received = ::recv(static_cast<SOCKET>(session.socket), reinterpret_cast<char*>(buffer), chunk, 0);
+#else
+            const auto received = ::recv(static_cast<int>(session.socket), buffer, static_cast<std::size_t>(chunk), 0);
+#endif
+            if (received >= 0) return static_cast<int>(received);
+            const int error = HostError();
+            if (HostInterrupted(error)) continue;
+            if (HostWouldBlock(error)) return MBEDTLS_ERR_SSL_WANT_READ;
+            session.hostError = error;
+            return MBEDTLS_ERR_NET_RECV_FAILED;
+        }
+    }
+
+    [[noreturn]] void Fail(const char* function, int error) const {
+        if (currentPoolExhausted || error == MBEDTLS_ERR_SSL_ALLOC_FAILED) throw std::bad_alloc();
+        if (error == MBEDTLS_ERR_SSL_WANT_READ || error == MBEDTLS_ERR_SSL_WANT_WRITE)
+            throw std::runtime_error(std::string(function) + ": the socket would block or its timeout expired; the console's error code is unknown");
+        char text[160];
+        mbedtls_strerror(error, text, sizeof(text));
+        auto message = std::string(function) + ": " + text;
+        if (hostError) message += ", host socket error " + std::to_string(hostError);
+        if (error == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+            char detail[512];
+            if (mbedtls_x509_crt_verify_info(detail, sizeof(detail), "", mbedtls_ssl_get_verify_result(&ssl)) > 0) message += ", " + std::string(detail);
+        }
+        throw std::runtime_error(message + "; the console's error code is unknown");
+    }
 };
 
 using SslVerifyCallback = int (APS5_VABI *)(int, unsigned int, void**, int, void*);
@@ -181,11 +323,12 @@ struct SslConnection {
     std::uint32_t verifyOptions = 0;
     int minimumVersion = SslVersionNone;
     std::string alpn;
+    std::shared_ptr<Session> session;
 };
 
 struct Runtime {
     std::mutex mutex;
-    std::unordered_map<int, std::unique_ptr<Context>> contexts;
+    std::unordered_map<int, std::shared_ptr<Context>> contexts;
     std::unordered_map<int, SslConnection> connections;
     unsigned nextHandle = 1;
     Runtime() {
@@ -212,6 +355,13 @@ SslConnection& RequireConnection(const char* function, int sslConnectionId) {
         throw std::invalid_argument(std::string(function) + ": the connection's context was terminated");
     }
     return connection->second;
+}
+
+std::shared_ptr<Session> RequireSession(const char* function, int sslConnectionId) {
+    std::lock_guard lock(State().mutex);
+    auto& connection = RequireConnection(function, sslConnectionId);
+    if (!connection.session) throw std::logic_error(std::string(function) + ": the connection is not connected");
+    return connection.session;
 }
 
 struct Input {
@@ -305,7 +455,7 @@ int APS5_VABI sceSslInit_nid_postfix(std::uint64_t poolSize) {
     std::lock_guard lock(state.mutex);
     if (state.nextHandle > static_cast<unsigned>(std::numeric_limits<int>::max())) throw std::overflow_error("SSL context handles exhausted");
     const auto handle = static_cast<int>(state.nextHandle);
-    state.contexts.emplace(handle, std::make_unique<Context>(poolSize));
+    state.contexts.emplace(handle, std::make_shared<Context>(poolSize));
     ++state.nextHandle;
     return handle;
 }
@@ -326,7 +476,8 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
         std::memset(stats, 0, sizeof(*stats));
         return static_cast<int>(0x8095F006);
     }
-    const auto& pool = found->second->pool;
+    auto& pool = found->second->pool;
+    std::lock_guard poolLock(pool.mutex);
     *stats = {pool.size, pool.peak, pool.current, 0};
     return 0;
 }
@@ -475,14 +626,18 @@ int APS5_VABI sceSslCreateConnection(int sslCtxId, int sockId, const char* host)
     auto& state = State();
     if (state.nextHandle > static_cast<unsigned>(std::numeric_limits<int>::max())) throw std::overflow_error("SSL connection handles exhausted");
     const auto id = static_cast<int>(state.nextHandle);
-    state.connections.emplace(id, SslConnection{sslCtxId, sockId, host, nullptr, nullptr});
+    state.connections.emplace(id, SslConnection{sslCtxId, sockId, host, nullptr, nullptr, {}});
     ++state.nextHandle;
     return id;
 }
 
 int APS5_VABI sceSslDeleteConnection(int sslConnectionId) {
+    std::shared_ptr<Session> session;
     std::lock_guard lock(State().mutex);
-    if (!State().connections.erase(sslConnectionId)) throw std::invalid_argument("sceSslDeleteConnection: unknown connection");
+    const auto found = State().connections.find(sslConnectionId);
+    if (found == State().connections.end()) throw std::invalid_argument("sceSslDeleteConnection: unknown connection");
+    session = std::move(found->second.session);
+    State().connections.erase(found);
     return 0;
 }
 
@@ -495,27 +650,64 @@ int APS5_VABI sceSslSetVerifyCallback(int sslConnectionId, SslVerifyCallback cbf
 }
 
 int APS5_VABI sceSslConnect(int sslConnectionId) {
-    (void)sslConnectionId;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::shared_ptr<Session> session;
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        auto& connection = RequireConnection(__func__, sslConnectionId);
+        if (connection.session) throw std::logic_error("sceSslConnect: the connection is already connected");
+        if (connection.verifyCallback) throw std::invalid_argument("sceSslConnect: how the console invokes the verify callback is unknown");
+        auto context = state.contexts.at(connection.context);
+        if (context->authorities.empty())
+            throw std::runtime_error("sceSslConnect: no CA certificate is loaded, and the console's root certificates are not shipped");
+        std::shared_ptr<void> owner;
+        std::uintptr_t native = 0;
+        if (!KernelLookupSocketNative_nid_no_patch(connection.socket, &owner, &native))
+            throw std::invalid_argument("sceSslConnect: descriptor " + std::to_string(connection.socket) + " is not a socket");
+        PoolScope scope(context->pool);
+        session = std::make_shared<Session>(std::move(context), std::move(owner), native);
+        session->Configure(connection.host);
+        connection.session = session;
+    }
+    std::unique_lock sessionLock(session->mutex);
+    PoolScope scope(session->context->pool);
+    const int result = mbedtls_ssl_handshake(&session->ssl);
+    if (result == 0) return 0;
+    {
+        std::lock_guard lock(State().mutex);
+        const auto found = State().connections.find(sslConnectionId);
+        if (found != State().connections.end() && found->second.session == session) found->second.session.reset();
+    }
+    session->Fail(__func__, result);
 }
 
 int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) {
-    (void)sslConnectionId;
-    (void)buf;
-    (void)len;
-    (void)flags;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (flags != 0 && flags != ReadPartial) throw std::invalid_argument("sceSslRead: unsupported flags " + std::to_string(flags));
+    if (!buf && len) throw std::invalid_argument("sceSslRead: null buffer");
+    const auto session = RequireSession(__func__, sslConnectionId);
+    std::lock_guard sessionLock(session->mutex);
+    PoolScope scope(session->context->pool);
+    const int result = mbedtls_ssl_read(&session->ssl, static_cast<unsigned char*>(buf), std::min<std::size_t>(len, INT_MAX));
+    if (result >= 0) return result;
+    if (result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 0;
+    session->Fail(__func__, result);
 }
 
 int APS5_VABI sceSslWrite(int sslConnectionId, void* buf, size_t len, int flags) {
-    (void)sslConnectionId;
-    (void)buf;
-    (void)len;
-    (void)flags;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (flags != 0) throw std::invalid_argument("sceSslWrite: unsupported flags " + std::to_string(flags));
+    if (!buf && len) throw std::invalid_argument("sceSslWrite: null buffer");
+    const auto session = RequireSession(__func__, sslConnectionId);
+    std::lock_guard sessionLock(session->mutex);
+    PoolScope scope(session->context->pool);
+    const auto* bytes = static_cast<const unsigned char*>(buf);
+    const auto total = std::min<std::size_t>(len, INT_MAX);
+    std::size_t written = 0;
+    while (written < total) {
+        const int result = mbedtls_ssl_write(&session->ssl, bytes + written, total - written);
+        if (result < 0) session->Fail(__func__, result);
+        written += static_cast<std::size_t>(result);
+    }
+    return static_cast<int>(written);
 }
 
 int APS5_VABI sceSslClose() {
