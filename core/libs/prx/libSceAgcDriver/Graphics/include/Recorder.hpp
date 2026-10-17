@@ -75,7 +75,7 @@ public:
     // that know their ranges). `seed` (kept) supplies an
     // unaligned head or tail; [begin, end) is the guest range. Debug aid: APS5_DCC_KEYS_EACH=1
     // records every store at once, as before (QueueKeyStore then records and returns).
-    void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end);
+    void QueueKeyStore(VkBuffer buffer, VkDeviceSize first, VkDeviceSize last, std::shared_ptr<void> seed, std::uint64_t begin, std::uint64_t end, VkDeviceAddress target = 0);
     bool HasQueuedKeyStores() const { return open != nullptr && !open->keyStores.empty(); }
     bool QueuedKeyStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether `overlaps(begin, end)` holds for a queued store's range.
@@ -114,7 +114,8 @@ public:
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
-    void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    static constexpr int ShadowPublishWrite = -2;
+    void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, int value = -1);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether no unfinished batch writes the range any more: no open-batch overlap, and every
     // overlapping in-flight batch's fence has signaled (its in-place GPU stores are final in host
@@ -200,6 +201,7 @@ public:
     void Sync();
     void CountSamples();
     bool RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress record, VkDeviceAddress arguments, std::span<const std::uint32_t, 7> rules);
+    bool RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter = 0);
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
@@ -438,7 +440,7 @@ public:
         std::uint64_t stores, runs, joined, replaced, wawBarriers, joinsRefused, queuedNoted, queuedOverRecorded, queuedHits, queuedHookRecords, queuedHookInCompletion;
         // DCC key stores queued, the runs that recorded them (at Submit, or before a writer of a
         // queued range), and the queued stores a duplicate range joined.
-        std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined;
+        std::uint64_t keyStores, keyStoreRuns, keyStoreRunsForWriter, keyStoresJoined, keyStoresGuarded, keyBlocksLeftToCpu;
         // Store runs recorded at Submit, and in place before a later writer or reader of a queued
         // store's bytes (FlushStores).
         std::uint64_t runsAtSubmit, runsForced;
@@ -651,6 +653,9 @@ private:
             std::shared_ptr<void> seed;
             std::uint64_t begin;
             std::uint64_t end;
+            std::shared_ptr<Buffer> snapshot;
+            VkDeviceAddress target = 0;
+            std::uint64_t cpuGeneration = 0;
         };
         std::vector<KeyStore> keyStores;
     };
@@ -695,6 +700,10 @@ private:
     int meshArgumentState = 0;
     VkPipelineLayout meshArgumentLayout = VK_NULL_HANDLE;
     VkPipeline meshArgumentPipeline = VK_NULL_HANDLE;
+    int changedCopyState = 0;
+    std::shared_ptr<Buffer> onesBuffer;
+    VkPipelineLayout changedCopyLayout = VK_NULL_HANDLE;
+    VkPipeline changedCopyPipeline = VK_NULL_HANDLE;
     int sampleCounterState = 0;
     std::unique_ptr<Buffer> sampleCounter;
     VkPipelineLayout sampleLayout = VK_NULL_HANDLE;

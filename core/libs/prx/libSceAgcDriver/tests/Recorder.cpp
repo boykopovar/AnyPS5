@@ -639,6 +639,41 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
 }
 
+void changedCopyTests(const Device& device, Recorder& recorder) {
+    Require(recorder.Idle(), "the changed copy test needs an idle recorder");
+    constexpr std::uint32_t words = 70000;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    auto result = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    auto snapshot = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    auto target = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    if (result->DeviceAddress() == 0 || snapshot->DeviceAddress() == 0 || target->DeviceAddress() == 0) {
+        std::cout << "changed copy tests skipped: no buffer device addresses\n";
+        return;
+    }
+    std::vector<std::uint32_t> uploaded(words), shader(words), held(words);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        uploaded[i] = i * 2654435761u;
+        shader[i] = i % 7 == 0 ? uploaded[i] ^ 0x5a5a5a5au : uploaded[i];
+        held[i] = i % 5 == 0 ? 0xc0ffee00u + i : uploaded[i];
+    }
+    std::memcpy(snapshot->Bytes().data(), uploaded.data(), words * 4u);
+    std::memcpy(result->Bytes().data(), shader.data(), words * 4u);
+    std::memcpy(target->Bytes().data(), held.data(), words * 4u);
+    Require(recorder.RecordChangedCopy(recorder.Commands(), result->DeviceAddress(), snapshot->DeviceAddress(), target->DeviceAddress(), words), "the changed copy kernel is unavailable");
+    recorder.Keep(result);
+    recorder.Keep(snapshot);
+    recorder.Keep(target);
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    std::vector<std::uint32_t> stored(words);
+    std::memcpy(stored.data(), target->Bytes().data(), words * 4u);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        const auto expected = i % 7 == 0 && i % 5 != 0 ? shader[i] : held[i];
+        Require(stored[i] == expected, "changed copy word " + std::to_string(i) + ": " + std::to_string(stored[i]) + ", expected " + std::to_string(expected) + (i % 7 == 0 && i % 5 != 0 ? " (the shader's result)" : " (the target's own word)"));
+    }
+}
+
 void readTrackingTests(const Device& device, Recorder& recorder) {
     Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x10000, 16), "a fresh recorder reports a read");
@@ -7695,6 +7730,105 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void guardedKeyStoreTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress) {
+        std::cout << "host imports or buffer device addresses unavailable: guarded key stores not tested\n";
+        return;
+    }
+    constexpr std::size_t surfaceBytes = 65536 * 4;
+    constexpr std::size_t keyCount = surfaceBytes / 256;
+    constexpr std::size_t bytes = surfaceBytes + 2 * 65536;
+    constexpr std::size_t keysOffset = surfaceBytes + 65536 - keyCount / 2;
+    const bool watched = AgcDriver::GuestMemory::WriteWatched();
+    void* block = nullptr;
+    if (watched) {
+        block = AllocateWatched(bytes, 65536);
+    } else {
+#ifdef _WIN32
+        block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        block = std::aligned_alloc(65536, bytes);
+#endif
+    }
+    Require(block != nullptr, "cannot allocate the key store block");
+    auto* keys = static_cast<std::uint8_t*>(block) + keysOffset;
+    std::memset(block, 0x00, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto keysAddress = address + keysOffset;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        std::uint64_t address;
+        bool watched;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+            if (!watched) return;
+            recorder.Sync();
+            ReleaseWatched(block, bytes);
+        }
+    } unregister{context, recorder, block, address, watched};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of the key store block refused: guarded key stores not tested\n";
+        return;
+    }
+    recorder.Sync();
+    const auto* import = HostImportFor(context, address, bytes);
+    Require(import != nullptr, "the key store block lost its import");
+    const bool guarded = std::getenv("APS5_NO_GUARDED_KEY_STORE") == nullptr;
+    {
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, keysAddress - import->base, keyCount, 0x11111111u);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        recorder.NotePendingFill(keysAddress, keyCount, 0x11);
+    }
+    MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
+    Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "the key store was not recorded on the GPU");
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(keys[0] == 0xff && keys[400] == 0xff && keys[keyCount - 1] == 0xff, "a key store behind a pending key fill did not store the keys");
+    const auto guardedAfterFill = Recorder::StoreCounts().keyStoresGuarded;
+    Require(!guarded || guardedAfterFill >= 1, "the key store behind a pending fill was not guarded");
+    const auto lateStore = [&](std::uint32_t value) {
+        std::memset(keys, 0x00, keyCount);
+        static_cast<void>(AgcDriver::GuestMemory::CollectWritesUncached(keysAddress, keyCount));
+        MarkDccUncompressed(context, keysAddress, surfaceBytes, keyCount);
+        Require(recorder.PendingWriteOverlaps(keysAddress, keyCount), "a later key store was not recorded on the GPU");
+        auto* late = static_cast<volatile std::uint32_t*>(static_cast<void*>(keys + 400));
+        *late = value;
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        return static_cast<std::uint32_t>(*late);
+    };
+    const auto leftBefore = Recorder::StoreCounts().keyBlocksLeftToCpu;
+    const auto late = lateStore(0x12345678u);
+    const std::uint8_t lateBlock = guarded && watched ? 0x00 : 0xff;
+    Require(keys[0] == lateBlock && keys[396] == lateBlock && keys[404] == lateBlock, guarded && watched ? "a guarded key store wrote into a block the CPU wrote after it was recorded" : "the key store did not store the keys");
+    Require(keys[keyCount / 2] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys of a block the CPU left alone");
+    Require(late == (guarded ? 0x12345678u : 0xffffffffu), guarded ? "a guarded key store overwrote a CPU store made after it was recorded" : "an unguarded key store kept a CPU store made after it was recorded");
+    Require(!guarded || Recorder::StoreCounts().keyStoresGuarded > guardedAfterFill, "the second key store was not counted as guarded");
+    Require(!guarded || !watched || Recorder::StoreCounts().keyBlocksLeftToCpu > leftBefore, "the block the CPU wrote was not counted as left to it");
+    if (!guarded) return;
+    if (!watched) {
+        std::cout << "write watching unavailable: a late CPU store of the value the keys held not tested\n";
+        return;
+    }
+    Require(lateStore(0u) == 0u, "a guarded key store overwrote a late CPU store of the value the keys held");
+    Require(keys[keyCount / 2] == 0xff && keys[keyCount - 1] == 0xff, "the key store did not store the keys of a block the CPU left alone after a same-value store");
+}
+
 void integerClearTests(const Device& device) {
     const auto& context = device.GetContext();
     std::size_t tested = 0;
@@ -8243,6 +8377,14 @@ int main(int argc, char** argv) {
             parkedImportUnmapTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--changed-copy-only") {
+            changedCopyTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--guarded-key-store-only") {
+            guardedKeyStoreTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
             if (!AgcDriver::Graphics::UnitShadowEnabled() || device.GetContext().hostImportAlignment == 0) {
                 std::cout << "skipped, unit shadows or host imports are unavailable\n";
@@ -8345,6 +8487,7 @@ int main(int argc, char** argv) {
         readListTests(device, recorder);
         overlappedRangeTests(recorder);
         spaceWriteSyncTests(device, recorder);
+        changedCopyTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
         afterRecordedWorkTests(device, recorder);
@@ -8384,6 +8527,7 @@ int main(int argc, char** argv) {
         movedMetadataTests(device, recorder);
         viewPastLastMipTests(device, recorder);
         keysFillTests(device, recorder);
+        guardedKeyStoreTests(device, recorder);
         integerClearTests(device);
         denormalClearTests(device, recorder);
         unitShadowTests(device, recorder);
