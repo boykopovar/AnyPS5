@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VramBudget.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using namespace AgcDriver::Graphics;
@@ -44,6 +46,9 @@ struct MockDevice {
     VkDeviceSize limit = 0;
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     std::uint64_t attempts = 0;
+    VkDeviceSize heapBudget = 0;
+    VkDeviceSize otherUsage = 0;
+    std::uint64_t budgetQueries = 0;
 };
 
 MockDevice mock;
@@ -114,6 +119,16 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
     return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
 }
 
+VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    ++mock.budgetQueries;
+    for (auto* next = static_cast<VkBaseOutStructure*>(properties->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) continue;
+        auto* reported = reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(next);
+        reported->heapBudget[0] = mock.heapBudget;
+        reported->heapUsage[0] = mock.otherUsage + mock.liveBytes;
+    }
+}
+
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
@@ -149,15 +164,6 @@ Context mockContext() {
     return context;
 }
 
-VkDeviceSize reportedBudget = 0;
-VkDeviceSize reportedUsage = 0;
-
-VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
-    auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
-    reported->heapBudget[0] = reportedBudget;
-    reported->heapUsage[0] = reportedUsage;
-}
-
 void HostPlacement() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -169,8 +175,8 @@ void HostPlacement() {
     context.memory.memoryTypes[0].heapIndex = 0;
     context.memory.memoryTypes[1].heapIndex = 1;
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    reportedBudget = 1620 * MiB;
-    reportedUsage = 1600 * MiB;
+    mock.heapBudget = 1620 * MiB;
+    mock.otherUsage = 1600 * MiB;
     VkDeviceMemory placed = VK_NULL_HANDLE;
     {
         DeviceBuffer large(context, 176 * MiB, usage);
@@ -178,7 +184,7 @@ void HostPlacement() {
         Expect(mock.memoryTypes.at(placed) == 1, "a device buffer over the device-local budget was not placed in the host memory type");
     }
     Expect(!mock.memoryBytes.contains(placed) && mock.liveBuffers.empty(), "a device buffer placed in host memory was kept in the device pool after its release");
-    reportedUsage = 200 * MiB;
+    mock.otherUsage = 200 * MiB;
     VkDeviceMemory device = VK_NULL_HANDLE;
     {
         DeviceBuffer large(context, 176 * MiB, usage);
@@ -188,6 +194,115 @@ void HostPlacement() {
     Expect(mock.memoryBytes.contains(device), "a device-local buffer was not kept in the device pool after its release");
     DeviceBuffer again(context, 176 * MiB, usage);
     Expect(MemoryOf(again.Handle()) == device, "a retained device-local buffer was not reused");
+}
+
+constexpr VkDeviceSize HeapBytes = VkDeviceSize{8} << 30u;
+constexpr VkDeviceSize HeapTarget = HeapBytes;
+constexpr VkBufferUsageFlags BudgetUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+Context budgetContext(bool integrated = false) {
+    auto context = mockContext();
+    context.memory.memoryHeapCount = 2;
+    context.memory.memoryHeaps[0] = {HeapBytes, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    context.memory.memoryHeaps[1] = {HeapBytes * 2, 0};
+    context.memory.memoryTypes[1].heapIndex = 1;
+    context.physical = reinterpret_cast<VkPhysicalDevice>(std::uintptr_t{1});
+    context.memoryProperties2 = mockMemoryProperties2;
+    context.integratedGpu = integrated;
+    return context;
+}
+
+void releaseFour(const Context& context) {
+    std::vector<std::unique_ptr<DeviceBuffer>> live;
+    for (int i = 0; i < 4; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, 64 * MiB, BudgetUsage));
+    live.clear();
+}
+
+void VramTargets() {
+    Expect(VramBudget::TargetFor(HeapBytes, HeapBytes) == HeapBytes, "the target is not the budget");
+    Expect(VramBudget::TargetFor(HeapBytes, 1024 * MiB) == 1024 * MiB, "a small budget took the target of an 8 GiB heap below 1 GiB");
+    Expect(VramBudget::TargetFor(VkDeviceSize{2} << 30u, 256 * MiB) == 512 * MiB, "the target fell below a quarter of a 2 GiB heap");
+}
+
+void waitOutDemand() {
+    std::this_thread::sleep_for(BufferPool::DemandWindow + std::chrono::milliseconds(200));
+}
+
+void VramUnderTargetPools() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = 1024 * MiB;
+    auto context = budgetContext();
+    releaseFour(context);
+    Expect(mock.budgetQueries != 0, "the pool did not read the device-local heap's budget");
+    Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "released device buffers under the budget target were not pooled (" + std::to_string(mock.frees) + " freed)");
+}
+
+std::vector<std::unique_ptr<DeviceBuffer>> takeFourUnderTarget(const Context& context) {
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    std::vector<std::unique_ptr<DeviceBuffer>> live;
+    for (int i = 0; i < 4; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, 64 * MiB, BudgetUsage));
+    mock.otherUsage = HeapTarget;
+    GetBufferPool(context)->Vram().Refresh();
+    return live;
+}
+
+void VramOverTargetKeepsDemand() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    auto context = budgetContext();
+    waitOutDemand();
+    auto live = takeFourUnderTarget(context);
+    live.clear();
+    Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "over the budget target the pool did not keep the device buffers taken in the last second (" + std::to_string(mock.frees) + " freed)");
+    const auto made = mock.allocations;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    DeviceBuffer again(context, 64 * MiB, BudgetUsage);
+    Expect(mock.allocations == made, "a device buffer kept by the demand floor was not reused");
+}
+
+void VramOverTargetReleases() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    auto context = budgetContext();
+    auto live = takeFourUnderTarget(context);
+    waitOutDemand();
+    GetBufferPool(context)->Vram().Refresh();
+    live.clear();
+    Expect(mock.frees == 4 && mock.liveBytes == 0, "released device buffers nobody asked for in the last second were pooled over the budget target (" + std::to_string(mock.liveBytes / MiB) + " MiB retained)");
+    const auto made = mock.allocations;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    DeviceBuffer again(context, 64 * MiB, BudgetUsage);
+    Expect(mock.allocations == made + 1, "a device buffer was served from a pool that released everything over the target");
+}
+
+void VramTrimsPool() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = HeapTarget - 512 * MiB;
+    auto context = budgetContext();
+    releaseFour(context);
+    Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "released device buffers under the budget target were not pooled");
+    mock.otherUsage = HeapTarget - 64 * MiB;
+    GetBufferPool(context)->Vram().Refresh();
+    waitOutDemand();
+    const auto made = mock.allocations;
+    {
+        DeviceBuffer reused(context, 64 * MiB, BudgetUsage);
+        Expect(mock.allocations == made, "a pooled device buffer was not reused");
+    }
+    Expect(mock.frees == 3 && mock.liveBytes == 64 * MiB, "the pool did not release its oldest device buffers down to the target (" + std::to_string(mock.frees) + " freed, " + std::to_string(mock.liveBytes / MiB) + " MiB left)");
+}
+
+void VramIntegratedKeepsPool() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    auto context = budgetContext(true);
+    Expect(!GetBufferPool(context)->Vram().Enabled(), "an integrated GPU's pool followed the device-local heap's budget");
+    waitOutDemand();
+    releaseFour(context);
+    Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "an integrated GPU's pool did not keep its released device buffers");
 }
 
 void SizeClassesAndDirections() {
@@ -552,6 +667,12 @@ int main() {
         SuccessfulAllocationKeepsPool();
         PartialSlabDoesNotRetry();
         HostPlacement();
+        VramTargets();
+        VramUnderTargetPools();
+        VramOverTargetKeepsDemand();
+        VramOverTargetReleases();
+        VramTrimsPool();
+        VramIntegratedKeepsPool();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
