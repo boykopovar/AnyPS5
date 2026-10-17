@@ -136,16 +136,19 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         request.shader.code = code;
         request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
         auto input = BufferDescriptor(Input.data(), InputBytes);
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
+        const auto baselineResult = ShaderRecompiler::Recompile(request);
+        device.Dispatch(baselineResult, 1, 1, 1);
+        device.WaitIdle();
+        const auto baseline = Output;
         input[1] |= 0x40000000u;
         std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
         const auto result = ShaderRecompiler::Recompile(request);
-        try {
-            device.Dispatch(result, 1, 1, 1);
-        } catch (const std::runtime_error& error) {
-            Require(std::string(error.what()).find("buffer descriptor has reserved bits set") != std::string::npos, "vector or mixed buffer descriptor failed for another reason");
-            continue;
-        }
-        throw std::runtime_error("a vector or mixed buffer access accepted reserved descriptor bits");
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        Require(Output == baseline, "vector or mixed buffer read changed with reserved bit 30 set");
     }
 }
 
