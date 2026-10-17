@@ -875,6 +875,20 @@ private:
             removed.insert(id);
             return true;
         });
+        for (bool changed = true; changed;) {
+            changed = false;
+            const auto live = referencedIds();
+            for (auto& instruction : instructions) {
+                if (instruction.empty()) continue;
+                const auto op = Opcode(instruction);
+                if (op != spv::OpConstant && op != spv::OpConstantTrue && op != spv::OpConstantFalse && op != spv::OpConstantComposite && op != spv::OpConstantNull) continue;
+                const auto id = Result(instruction);
+                if (live.contains(id)) continue;
+                removed.insert(id);
+                instruction.clear();
+                changed = true;
+            }
+        }
     }
 
     void orderPhis() {

@@ -1328,6 +1328,68 @@ void verifySpecializationLiveness() {
     require(SpecializeSpirv(specialized) == specialized, "dead computation removal is not stable");
 }
 
+void verifySpecializationDropsDeadConstants() {
+    const auto module = [](std::uint32_t selector) {
+        std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010300u, 0u, 64u, 0u};
+        const auto emit = [&](spv::Op op, std::initializer_list<std::uint32_t> operands) {
+            words.push_back((static_cast<std::uint32_t>(operands.size() + 1u) << 16u) | op);
+            words.insert(words.end(), operands);
+        };
+        emit(spv::OpCapability, {spv::CapabilityShader});
+        emit(spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
+        emit(spv::OpEntryPoint, {spv::ExecutionModelGLCompute, 10u, 0x6e69616du, 0u});
+        emit(spv::OpExecutionMode, {10u, spv::ExecutionModeLocalSize, 1u, 1u, 1u});
+        emit(spv::OpName, {6u, 0x00006c73u});
+        emit(spv::OpTypeVoid, {1u});
+        emit(spv::OpTypeBool, {2u});
+        emit(spv::OpTypeInt, {3u, 32u, 0u});
+        emit(spv::OpTypePointer, {4u, spv::StorageClassPrivate, 3u});
+        emit(spv::OpTypeFunction, {5u, 1u});
+        emit(spv::OpConstant, {3u, 6u, selector});
+        emit(spv::OpConstant, {3u, 7u, 4u});
+        emit(spv::OpConstant, {3u, 9u, 1u});
+        emit(spv::OpConstant, {3u, 21u, 3u});
+        emit(spv::OpTypeArray, {22u, 3u, 21u});
+        emit(spv::OpTypePointer, {23u, spv::StorageClassPrivate, 22u});
+        emit(spv::OpVariable, {4u, 8u, spv::StorageClassPrivate});
+        emit(spv::OpVariable, {23u, 24u, spv::StorageClassPrivate});
+        emit(spv::OpFunction, {1u, 10u, spv::FunctionControlMaskNone, 5u});
+        emit(spv::OpLabel, {11u});
+        emit(spv::OpIEqual, {2u, 12u, 6u, 6u});
+        emit(spv::OpSelect, {3u, 13u, 12u, 7u, 9u});
+        emit(spv::OpStore, {8u, 13u});
+        emit(spv::OpReturn, {});
+        emit(spv::OpFunctionEnd, {});
+        return words;
+    };
+    struct Contents {
+        std::map<std::uint32_t, std::uint32_t> constants;
+        std::size_t names = 0;
+        std::uint32_t stored = 0;
+    };
+    const auto contents = [](const std::vector<std::uint32_t>& words) {
+        Contents result;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            require(count != 0u && count <= words.size() - cursor, "dead constant removal truncated an instruction");
+            if (op == spv::OpConstant && count == 4u) result.constants.emplace(words[cursor + 2u], words[cursor + 3u]);
+            if (op == spv::OpName && words[cursor + 1u] == 6u) ++result.names;
+            if (op == spv::OpStore && words[cursor + 1u] == 8u) result.stored = words[cursor + 2u];
+            cursor += count;
+        }
+        return result;
+    };
+    const auto rgba = SpecializeSpirv(module(4u));
+    const auto bgra = SpecializeSpirv(module(6u));
+    require(rgba == bgra, "variants that differ only in a folded constant specialized to different SPIR-V");
+    const auto result = contents(rgba);
+    require(!result.constants.contains(6u) && result.names == 0u, "specialization kept a constant the folding consumed, or its name");
+    require(result.constants.contains(21u), "specialization removed the constant an array type's length still uses");
+    require(result.constants.contains(result.stored) && result.constants.at(result.stored) == 4u, "the store no longer reads the selected value");
+    require(SpecializeSpirv(rgba) == rgba, "dead constant removal is not stable");
+}
+
 constexpr std::uint64_t PlanSrtAddress = 0x7f0000010000ull;
 constexpr std::uint64_t PlanTableAddress = 0x7f0000020000ull;
 constexpr std::uint64_t PlanMaterialAddress = 0x7f0000030000ull;
@@ -2131,6 +2193,7 @@ int main(int argc, char** argv) {
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();
+        verifySpecializationDropsDeadConstants();
         ShaderRecompiler::ShaderDiskCache::Flush();
         std::error_code error;
         std::filesystem::remove_all(directory, error);
