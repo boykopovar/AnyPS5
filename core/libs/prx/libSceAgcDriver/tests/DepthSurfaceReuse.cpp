@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <map>
@@ -47,6 +48,7 @@ VkImageUsageFlags lastImageUsage = 0;
 std::uint32_t imagesDestroyed = 0;
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageReads;
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageWrites;
+std::vector<VkImage> destroyedImages;
 
 VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) {
     lastImageFormat = info->format;
@@ -108,7 +110,10 @@ VKAPI_ATTR VkResult VKAPI_CALL getFenceStatus(VkDevice, VkFence) {
 VKAPI_ATTR void VKAPI_CALL freeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t, const VkCommandBuffer*) {}
 VKAPI_ATTR void VKAPI_CALL destroyFence(VkDevice, VkFence, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL destroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*) {}
-VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice, VkImage, const VkAllocationCallbacks*) { ++imagesDestroyed; }
+VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) {
+    ++imagesDestroyed;
+    destroyedImages.push_back(image);
+}
 VKAPI_ATTR void VKAPI_CALL freeMemory(VkDevice, VkDeviceMemory, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL cmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
 VKAPI_ATTR void VKAPI_CALL cmdClearDepthStencilImage(VkCommandBuffer, VkImage image, VkImageLayout, const VkClearDepthStencilValue*, std::uint32_t, const VkImageSubresourceRange*) {
@@ -374,6 +379,44 @@ void TestMultisampleStencilAliases(Context context) {
 
 }
 
+void TestRetiredSurfaceRelease(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{256, 256};
+    const auto bytes = DepthSliceBytes(extent, 4u);
+    const auto destroyed = [](VkImage image) { return std::find(destroyedImages.begin(), destroyedImages.end(), image) != destroyedImages.end(); };
+    constexpr std::uint64_t moving = 0x90000000;
+    std::vector<VkImage> images;
+    for (std::uint64_t frame = 0; frame < 4; ++frame) {
+        DepthSurfaceView(context, {moving + frame * 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+        images.push_back(lastImage);
+        RetireDepthSurfaces(context.device, moving + frame * 0x100000u, bytes);
+    }
+    const auto released = DepthSurfacesReleased();
+    DepthSurfaceView(context, {moving + 4u * 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(std::all_of(images.begin(), images.end(), destroyed), "a retired depth surface must free its image once a new surface is created");
+    Require(!destroyed(lastImage), "the new depth surface must keep its image");
+    Require(DepthSurfacesReleased() > released, "freeing retired depth surfaces must be counted for the framebuffer cache");
+
+    constexpr std::uint64_t sampled = 0x98000000;
+    DepthSurfaceView(context, {sampled, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    const auto sampledImage = lastImage;
+    auto view = lookup(context, {sampled, FormatR32Float, 256, 256});
+    Require(view != nullptr, "an R32F view of a D32 surface's own extent must sample its depth plane");
+    RetireDepthSurfaces(context.device, sampled, bytes);
+    DepthSurfaceView(context, {sampled + 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(!destroyed(sampledImage), "a retired depth surface must keep its image while its sampled view is held");
+    view.reset();
+    DepthSurfaceView(context, {sampled + 0x200000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(destroyed(sampledImage), "a retired depth surface must free its image once its sampled view is released");
+
+    constexpr std::uint64_t kept = 0x9c000000;
+    DepthSurfaceView(context, {kept, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    const auto keptImage = lastImage;
+    DepthSurfaceView(context, {kept + 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(!destroyed(keptImage), "a depth surface that was not retired must keep its image");
+    ClearDepthSurfaces(context.device);
+}
+
 void RunDepthSurfaceReuseTests() {
     static int deviceTag = 0;
     Context context{};
@@ -480,6 +523,7 @@ void RunDepthSurfaceReuseTests() {
         Require(clearsAfter(sliceHtile) == std::vector<VkImage>{firstImage}, "an HTILE clear of the first slice must clear that slice alone");
         Require(clearsAfter(2u * sliceHtile) == std::vector<VkImage>{firstImage, secondImage}, "an HTILE clear over both slices must clear both");
     }
+    TestRetiredSurfaceRelease(context);
 
     ClearDepthSurfaces(context.device);
 }
