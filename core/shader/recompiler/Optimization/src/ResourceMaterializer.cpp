@@ -1254,7 +1254,8 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
         }
-        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        const bool cubeFaceStorage = image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
+        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto face = mode;
             face.dimension = RdnaImageDimension::Dim2DArray;
             face.cube = true;

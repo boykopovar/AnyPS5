@@ -1505,7 +1505,8 @@ private:
         image.constantSwizzleCompatible = image.constantSwizzleCompatible && (op == IrOpcode::ImageSampleRaw || op == IrOpcode::ImageGatherRaw);
         const bool cubeFaceLoad = op == IrOpcode::ImageRead && !memory.imageHasMip && memory.imageSampleFlags == 0u;
         const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags == 0u || memory.imageSampleFlags == RdnaImageSampleFlagLevelZero || memory.imageSampleFlags == RdnaImageSampleFlagLod);
-        image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample) && !memory.imagePacked && memory.imageByElements == 0u;
+        const bool cubeFaceStore = op == IrOpcode::ImageWrite && !memory.imageHasMip;
+        image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore) && !memory.imagePacked && memory.imageByElements == 0u;
         const bool flatVolumeLoad = op == IrOpcode::ImageRead && memory.imageSampleFlags == 0u;
         const bool flatVolumeSample = op == IrOpcode::ImageSampleRaw && memory.imageSampleFlags == RdnaImageSampleFlagLevelZero;
         const bool flatVolumeQuery = op == IrOpcode::ImageQueryDimensions;
