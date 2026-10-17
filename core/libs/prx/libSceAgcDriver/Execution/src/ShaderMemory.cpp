@@ -189,6 +189,7 @@ ShaderMemory::Page& ShaderMemory::page(std::uint64_t base) {
             return page;
         }
         const auto started = CaptureProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        GuestMemory::GuardRead(base, PageBytes);
         GuestMemory::FlushGpuWrites(base, PageBytes);
         if (CaptureProfiled()) CaptureTotals().pageReadNanoseconds += NanosecondsSince(started);
         page.lazy = true;
@@ -249,6 +250,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
                 word = waited;
             }
         } else if (policy == PendingWrite::Raw || policy == PendingWrite::VerifyRaw) {
+            GuestMemory::GuardRead(address, sizeof(word));
             std::memcpy(&word, reinterpret_cast<const void*>(address), sizeof(word));
             ++CaptureTotals().wordsRaw;
             if (policy == PendingWrite::VerifyRaw) {
