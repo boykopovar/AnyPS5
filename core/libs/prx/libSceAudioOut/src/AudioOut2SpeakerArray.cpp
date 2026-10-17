@@ -121,13 +121,15 @@ size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, ui
 int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t flags) {
     (void)flags;
     if (!info) return static_cast<int>(0x80260502);
-    constexpr std::uint8_t SpeakerTypeStereo = 0;
+    constexpr std::uint8_t SpeakerTypeTelevision = 0;
     constexpr std::uint32_t FrontLeftAndRight = 0x3;
+    constexpr AudioOut2SpeakerAngle NoSpeaker = {-360, -360};
     *info = AudioOut2SpeakerInfo{};
-    info->type = SpeakerTypeStereo;
+    info->type = SpeakerTypeTelevision;
     info->available_bits = FrontLeftAndRight;
-    info->speaker_angle[0] = {-30, 0};
-    info->speaker_angle[1] = {30, 0};
+    for (auto& angle : info->speaker_angle) angle = NoSpeaker;
+    info->speaker_angle[0] = {30, 0};
+    info->speaker_angle[1] = {-30, 0};
     return 0;
 }
 
