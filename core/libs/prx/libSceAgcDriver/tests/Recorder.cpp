@@ -4654,6 +4654,123 @@ private:
     static inline StorageUploadProbe* active = nullptr;
 };
 
+bool selectedStorageImportTests(const Device& device, Recorder& recorder, bool preimport) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) return false;
+    constexpr std::size_t layerBytes = 65536;
+    constexpr std::size_t bytes = 3 * layerBytes;
+    SetHostImportWindow(layerBytes);
+    struct WindowReset { ~WindowReset() { SetHostImportWindow(0); } } windowReset;
+    for (const bool registerUnused : {true, false}) {
+        for (const std::uint32_t selected : {0u, 1u}) {
+            void* block = AllocateWatched(bytes, layerBytes);
+            if (block == nullptr) return false;
+            auto* memory = static_cast<std::uint8_t*>(block);
+            std::memset(memory, 0x11, bytes);
+            const auto address = reinterpret_cast<std::uint64_t>(block);
+            std::array<bool, 2> registered{registerUnused || selected == 0, registerUnused || selected == 1};
+            for (std::uint32_t layer = 0; layer < 2; ++layer) {
+                if (registered[layer]) GuestAllocations::Mutation().Add(memory + layer * layerBytes, layerBytes, true, true, true);
+            }
+            struct Cleanup {
+                const Context& context;
+                Recorder& recorder;
+                std::uint8_t* memory;
+                std::uint64_t address;
+                std::array<bool, 2>& registered;
+                ~Cleanup() {
+                    recorder.Sync();
+                    for (std::uint32_t layer = 0; layer < 2; ++layer) {
+                        if (registered[layer]) GuestAllocations::Mutation().Remove(memory + layer * layerBytes);
+                    }
+                    HostImportFor(context, address, bytes);
+                    ReleaseWatched(memory, bytes);
+                }
+            } cleanup{base, recorder, memory, address, registered};
+            const auto active = address + selected * layerBytes;
+            Require(HostImportFor(base, address, 2 * layerBytes) == nullptr, "the selected-import fixture imported the whole array");
+            if (preimport && HostImportFor(base, active, layerBytes) == nullptr) return false;
+            TextureDetiler detiler(base);
+            auto context = base;
+            context.detiler = &detiler;
+            GuestTextureResource resource{};
+            resource.baseAddress = address;
+            resource.width = resource.height = 128;
+            resource.depthOrLastArray = 1;
+            resource.mipCount = 1;
+            resource.tileMode = TextureTileMode::kR64KBX;
+            resource.dimension = TextureDimension::k2DArray;
+            resource.format = 56;
+            resource.dstSelX = 4;
+            resource.dstSelY = 5;
+            resource.dstSelZ = 6;
+            resource.dstSelW = 7;
+            const auto geometry = DescribeSurface(resource);
+            Require(geometry.layerBytes == layerBytes && geometry.guestBytes == 2 * layerBytes, "selected-import fixture has unexpected physical layers");
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            recorder.Sync();
+            const auto other = 1u - selected;
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            const VkClearColorValue green{{0.0f, 1.0f, 0.0f, 1.0f}};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, other, 1};
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &green, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            if (registerUnused) image->MarkSliceDirty(other);
+            recorder.Sync();
+            const auto readImage = [&] {
+                Buffer result(context, 2 * layerBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                const auto copyCommands = recorder.Commands();
+                RecordMemoryBarrier(context, copyCommands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 2};
+                copy.imageExtent = {128, 128, 1};
+                context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(copyCommands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, result.Handle(), 1, &copy);
+                RecordMemoryBarrier(context, copyCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                recorder.Sync();
+                return std::vector<std::byte>(result.Bytes().begin(), result.Bytes().end());
+            };
+            const auto check = [&](std::uint8_t value) {
+                const auto texels = readImage();
+                for (std::size_t at = 0; at < layerBytes; ++at) {
+                    Require(texels[selected * layerBytes + at] == static_cast<std::byte>(value), "selected import did not preserve the CPU-written texels");
+                    constexpr std::array<std::uint8_t, 4> expected{0, 255, 0, 255};
+                    Require(texels[other * layerBytes + at] == static_cast<std::byte>(expected[at % 4]), "selected import replaced a neighboring GPU result");
+                }
+            };
+            for (const auto value : {0x22u, 0x33u}) {
+                std::memset(memory + selected * layerBytes, value, layerBytes);
+                AgcDriver::GuestMemory::BumpCollectEpoch();
+                static_cast<void>(image->RefreshLayers(selected, 1));
+                Require(recorder.PendingReadOverlaps(active, layerBytes), "a valid selected layer did not record its GPU import");
+                Require(!recorder.PendingReadOverlaps(address + other * layerBytes, layerBytes), "selected import read the unused array layer");
+                if (registerUnused) {
+                    const std::pair<std::uint64_t, std::uint64_t> neighbor{address + other * layerBytes, address + (other + 1u) * layerBytes};
+                    Require(StorageTexture::AnyPendingOverlaps(std::span(&neighbor, 1)), "selected import settled the neighboring pending result");
+                    Require(std::all_of(memory + other * layerBytes, memory + (other + 1u) * layerBytes, [](std::uint8_t byte) { return byte == 0x11; }), "selected import wrote a neighboring GPU result to guest memory");
+                }
+                check(static_cast<std::uint8_t>(value));
+            }
+            std::memset(memory + selected * layerBytes, 0x44, layerBytes);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            static_cast<void>(image->RefreshLayers(selected, 1));
+            Require(recorder.PendingReadOverlaps(active, layerBytes), "retirement fixture did not queue the selected import");
+            GuestAllocations::Mutation().Remove(memory + selected * layerBytes);
+            registered[selected] = false;
+            HostImportFor(base, active, layerBytes);
+            Require(!recorder.PendingReadOverlaps(active, layerBytes), "retirement left a read of the removed import pending");
+            std::memset(memory + selected * layerBytes, 0x99, layerBytes);
+            check(0x44);
+            if (registerUnused) image->WriteBack();
+            recorder.Sync();
+            Require(std::all_of(memory + 2 * layerBytes, memory + bytes, [](std::uint8_t byte) { return byte == 0x11; }), "selected import changed adjacent memory");
+        }
+    }
+    std::cout << "Selected physical-layer GPU imports passed\n";
+    return true;
+}
+
 void storageUploadLifetimeTests(const Device& device, Recorder& previous, bool failView) {
     auto context = device.GetContext();
     context.hostImportAlignment = 0;
@@ -8199,6 +8316,9 @@ int main(int argc, char** argv) {
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-selected-import-only") {
+            return selectedStorageImportTests(device, recorder, true) && selectedStorageImportTests(device, recorder, false) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--copied-direct-only") {
             copiedDirectOrderingTests(device, recorder);
             return 0;
