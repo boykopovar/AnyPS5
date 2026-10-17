@@ -13,6 +13,7 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/File/include/Seek.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "SceTypes.hpp"
@@ -301,10 +302,14 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
 
 std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
     if (GuestSockets::IsOpen(d)) return SCE_KERNEL_ERROR_ESPIPE;
-    if (whence < 0 || whence > 2) {
-        throw std::invalid_argument(std::string(__func__) + ": invalid whence=" + std::to_string(whence));
-    }
+    if (whence < 0 || whence > File::GuestSeekHole) return SceIoErrorFromErrno(File::UnknownWhenceError(d));
     if (const auto archived = File::SeekArchivedFile(d, offset, whence)) return *archived < 0 ? SceIoErrorFromErrno(-*archived) : *archived;
+    if (whence >= File::GuestSeekData) {
+        const auto region = File::ResolveSeekRegion(d, offset, whence);
+        if (region.error != 0) return SceIoErrorFromErrno(region.error);
+        const std::int64_t found = NativeLseek(d, region.offset, region.whence);
+        return found < 0 ? SceIoErrorFromErrno(errno) : found;
+    }
 #ifdef _WIN32
     if (const auto directory = File::SeekDirectoryDescriptor(d, offset, whence)) {
         if (*directory < 0) return SceIoErrorFromErrno(errno);

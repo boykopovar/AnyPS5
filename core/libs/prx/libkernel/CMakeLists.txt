@@ -15,6 +15,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/OpenFileLimit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SharedMemory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/RandomDevice.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Seek.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/HostStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SandboxCertificates.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
@@ -254,6 +255,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_file_timestamps PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_lseek_whence_tests ${LIBS_INCLUDE_DIR}/tests/GuestLseekWhence.cpp)
+    target_include_directories(guest_lseek_whence_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_lseek_whence_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_lseek_whence_tests)
+    add_test(NAME guest_lseek_whence COMMAND guest_lseek_whence_tests)
+    set_tests_properties(guest_lseek_whence PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_lseek_whence PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_filesystem_tests ${LIBS_INCLUDE_DIR}/tests/GuestFilesystem.cpp)
     target_include_directories(guest_filesystem_tests PRIVATE ${LIBS_INCLUDE_DIR})

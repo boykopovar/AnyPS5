@@ -802,7 +802,6 @@ int APS5_VABI sceKernelFtruncate(int d, int64_t length) {
 }
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
-    if (whence < 0 || whence > 2) return PosixFailure(GUEST_EINVAL);
     return PosixResult(sceKernelLseek(d, offset, whence));
 }
 

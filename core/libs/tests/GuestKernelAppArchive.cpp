@@ -135,6 +135,13 @@ void Reads() {
     Check(sceKernelRead(fd, buffer.data(), 100) == 7 && std::equal(buffer.begin(), buffer.begin() + 7, expected.end() - 7));
     Check(sceKernelRead(fd, buffer.data(), 100) == 0);
     Check(sceKernelLseek(fd, -1, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Check(sceKernelLseek(fd, 100, 3) == 100 && sceKernelLseek(fd, 0, 1) == 100);
+    Check(sceKernelLseek(fd, 100, 4) == static_cast<std::int64_t>(BigSize));
+    Check(sceKernelLseek(fd, static_cast<std::int64_t>(BigSize), 3) == SCE_KERNEL_ERROR_ENXIO);
+    Check(sceKernelLseek(fd, static_cast<std::int64_t>(BigSize), 4) == SCE_KERNEL_ERROR_ENXIO);
+    Check(sceKernelLseek(fd, 0, 1) == static_cast<std::int64_t>(BigSize));
+    Check(NotImplemented([fd] { (void)sceKernelLseek(fd, -1, 3); }));
+    Check(sceKernelLseek(fd, 0, 9) == SCE_KERNEL_ERROR_EINVAL);
     Check(sceKernelLseek(fd, 0, 1) == static_cast<std::int64_t>(BigSize));
     Check(sceKernelWrite(fd, "x", 1) == SCE_KERNEL_ERROR_EBADF);
 

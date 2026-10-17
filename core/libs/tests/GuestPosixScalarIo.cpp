@@ -117,7 +117,7 @@ int main() {
     RequirePosixFailure([&] { return _write_nid_postfix(-1, payload, 1); }, EBADF);
     RequirePosixFailure([&] { return lseek_nid_postfix(-1, 0, SEEK_SET); }, EBADF);
     RequirePosixFailure([&] { return lseek_nid_postfix(descriptor, 0, -1); }, EINVAL);
-    RequirePosixFailure([&] { return lseek_nid_postfix(descriptor, 0, 3); }, EINVAL);
+    RequirePosixFailure([&] { return lseek_nid_postfix(descriptor, 0, 5); }, EINVAL);
     RequirePosixFailure([&] { return read_nid_postfix(descriptor, nullptr, 1); }, EFAULT);
     RequirePosixFailure([&] { return _read_nid_postfix(descriptor, nullptr, 1); }, EFAULT);
     RequirePosixFailure([&] { return write_nid_postfix(descriptor, nullptr, 1); }, EFAULT);

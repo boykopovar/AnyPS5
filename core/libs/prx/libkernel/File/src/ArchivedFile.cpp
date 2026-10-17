@@ -1,6 +1,7 @@
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
+#include "prx/libkernel/File/include/Seek.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -84,6 +85,14 @@ std::optional<std::int64_t> ReadArchivedIovecs(int fd, const void* iov, int iovc
 
 std::optional<std::int64_t> SeekArchivedFile(int fd, std::int64_t offset, int whence) {
     std::int64_t position = 0;
+    if (whence == GuestSeekData || whence == GuestSeekHole) {
+        AppArchiveNode node{};
+        if (!AppArchiveDescriptor_nid_no_patch(fd, &node, nullptr)) return std::nullopt;
+        if (offset < 0) NotImplemented_nid_no_patch("lseek SEEK_DATA or SEEK_HOLE with a negative offset");
+        if (static_cast<std::uint64_t>(offset) >= node.Size) return -ENXIO;
+        offset = whence == GuestSeekData ? offset : static_cast<std::int64_t>(node.Size);
+        whence = 0;
+    }
     if (!AppArchiveDescriptorSeek_nid_no_patch(fd, offset, whence, &position)) return std::nullopt;
     return position < 0 ? -EINVAL : position;
 }
