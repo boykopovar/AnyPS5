@@ -397,6 +397,39 @@ void verifyEntryRoundTrip() {
     require(ShaderDiskCache::DecodeEntry(incompatibleFile, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with an incompatible runtime ABI loads");
 }
 
+void verifyOfflineEntryHelpers() {
+    SampleRequest sample;
+    const auto key = sample.Key();
+    const auto variant = sampleVariant();
+    const auto file = ShaderDiskCache::EncodeEntry(key, variant);
+    const auto entryKey = ShaderDiskCache::EntryKey(file);
+    require(entryKey.size() == key.size() && std::equal(entryKey.begin(), entryKey.end(), key.begin()), "the encoded entry key does not round trip");
+    require(ShaderDiskCache::EntryKey(std::span(file).first(ShaderDiskCache::EntryHeaderBytes)).empty(), "a header-only entry yields a key");
+    auto damagedKey = file;
+    damagedKey[ShaderDiskCache::EntryHeaderBytes] ^= std::byte{1};
+    require(ShaderDiskCache::EntryKey(damagedKey).empty(), "an entry with a damaged key yields a key");
+    if ((ShaderDiskCache::EntryHeaderBytes + key.size()) % 8 != 0) {
+        auto damagedPadding = file;
+        damagedPadding[ShaderDiskCache::EntryHeaderBytes + key.size()] ^= std::byte{1};
+        require(ShaderDiskCache::EntryKey(damagedPadding).empty(), "an entry with nonzero padding yields a key");
+        CompiledVariant partial;
+        require(ShaderDiskCache::DecodeEntry(damagedPadding, key, partial) == ShaderDiskCache::LoadStatus::Rejected, "an entry with nonzero padding decodes");
+    }
+    require(ShaderDiskCache::IsCurrentEntryHeader(std::span(file).first(ShaderDiskCache::EntryHeaderBytes), file.size()), "a current entry header is not recognized");
+    require(!ShaderDiskCache::IsCurrentEntryHeader(std::span(file).first(ShaderDiskCache::EntryHeaderBytes), file.size() - 1), "a header with the wrong file size is recognized");
+    require(!ShaderDiskCache::IsCurrentEntryHeader(std::span(file).first(8), file.size()), "a short header is recognized");
+
+    const auto before = ShaderDiskCache::Totals();
+    OfflineCompileTimings timings;
+    const auto first = CompileShaderUncached(sample.request, nullptr, &timings);
+    const auto second = CompileShaderUncached(sample.request);
+    require(first && second, "the uncached compile entry point returned no variant");
+    require(timings.frontendSeconds >= 0 && timings.backendSeconds >= 0, "the uncached compile timings were not filled");
+    require(ShaderDiskCache::EncodeEntry(key, *first) == ShaderDiskCache::EncodeEntry(key, *second), "the uncached compile entry point is not deterministic");
+    const auto after = ShaderDiskCache::Totals();
+    require(after.hits == before.hits && after.misses == before.misses && after.writes == before.writes && after.bytesRead == before.bytesRead && after.bytesWritten == before.bytesWritten, "the uncached compile entry point used the disk cache");
+}
+
 std::vector<std::byte> packBytes(const std::vector<std::pair<std::vector<std::byte>, std::vector<std::byte>>>& entries) {
     using namespace ShaderRecompiler::ShaderDiskCache;
     std::vector<PackRecord> records;
@@ -2112,6 +2145,7 @@ int main(int argc, char** argv) {
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
         verifyEntryRoundTrip();
+        verifyOfflineEntryHelpers();
         verifyPrebuiltPack(directory / "packs");
         verifyArtifactStorageIsolation();
         verifyKeySensitivity();
