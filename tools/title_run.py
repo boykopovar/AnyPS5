@@ -248,7 +248,7 @@ class Session:
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
             self.job = kernel32.CreateJobObjectW(None, None)
-            if not self.job or not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)):
+            if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
                 error = ctypes.get_last_error()
                 self.process.kill()
                 raise ctypes.WinError(error)
