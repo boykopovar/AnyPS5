@@ -41,6 +41,7 @@ public:
     bool Overlaps(std::uint64_t address, std::size_t bytes);
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes);
     static bool HeldReads(std::uint64_t address, std::size_t bytes);
+    static std::uint64_t ReleasedStores();
 
 private:
     struct Item {
@@ -54,11 +55,14 @@ private:
     void run();
     void rethrowFailure();
     void report(std::chrono::steady_clock::time_point now);
+    bool readHeld(std::uint64_t address, std::size_t bytes);
+    void storeDeferred(std::vector<Range>& ranges);
 
     std::mutex mutex;
     std::condition_variable wake;
     std::condition_variable idle;
     std::deque<Item> items;
+    std::vector<Range> deferredStores;
     std::exception_ptr failure;
     std::atomic<std::size_t> outstanding{0};
     std::uint32_t idleWaiters = 0;
