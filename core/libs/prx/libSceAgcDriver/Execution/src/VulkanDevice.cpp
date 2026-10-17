@@ -4556,9 +4556,14 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->destroyModule = state->DeviceFunction<PFN_vkDestroyShaderModule>("vkDestroyShaderModule");
     objects->destroyLayout = state->DeviceFunction<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout");
     objects->destroyPipeline = state->DeviceFunction<PFN_vkDestroyPipeline>("vkDestroyPipeline");
+    std::vector<std::uint32_t> keyed;
+    if (!state->graphicsPipelineLibrary && shader.spirv.size() > 2) {
+        keyed.assign(shader.spirv.data(), shader.spirv.data() + shader.spirv.size());
+        keyed[2] ^= 0x8000u;
+    }
     VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     moduleInfo.codeSize = shader.spirv.size() * sizeof(std::uint32_t);
-    moduleInfo.pCode = shader.spirv.data();
+    moduleInfo.pCode = keyed.empty() ? shader.spirv.data() : keyed.data();
     check(state->DeviceFunction<PFN_vkCreateShaderModule>("vkCreateShaderModule")(state->device, &moduleInfo, nullptr, &objects->module), "vkCreateShaderModule");
     objects->resourcesLayout = setLayout;
     const std::array<VkDescriptorSetLayout, 2> setLayouts{setLayout, shader.workgroupMemoryDwords != 0 ? state->workgroupMemoryLayout : VK_NULL_HANDLE};

@@ -19,6 +19,12 @@
 
 namespace AgcDriver::Graphics {
 
+inline std::vector<std::uint32_t> CacheKeyedSpirv(bool graphicsPipelineLibrary, const std::uint32_t* code, std::size_t bytes) {
+    std::vector<std::uint32_t> keyed(code, code + bytes / sizeof(std::uint32_t));
+    if (!graphicsPipelineLibrary && keyed.size() > 2) keyed[2] ^= 0x8000u;
+    return keyed;
+}
+
 class TextureDetiler;
 class GpuColorTransfer;
 class BufferPool;

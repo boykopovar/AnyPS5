@@ -1996,8 +1996,9 @@ bool Recorder::gpuSampleCounter() {
         layoutInfo.pPushConstantRanges = &push;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &sampleLayout), "vkCreatePipelineLayout sample counter");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(SAMPLE_COUNTER_SPV);
-        moduleInfo.pCode = SAMPLE_COUNTER_SPV;
+        const auto sampleCounterCode = CacheKeyedSpirv(context.graphicsPipelineLibrary, SAMPLE_COUNTER_SPV, sizeof(SAMPLE_COUNTER_SPV));
+        moduleInfo.codeSize = sampleCounterCode.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = sampleCounterCode.data();
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule sample counter");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
@@ -2014,8 +2015,9 @@ bool Recorder::gpuSampleCounter() {
         const VkPushConstantRange dumpPush{VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes};
         layoutInfo.pPushConstantRanges = &dumpPush;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &dumpLayout), "vkCreatePipelineLayout sample dumps");
-        moduleInfo.codeSize = sizeof(SAMPLE_DUMPS_SPV);
-        moduleInfo.pCode = SAMPLE_DUMPS_SPV;
+        const auto sampleDumpsCode = CacheKeyedSpirv(context.graphicsPipelineLibrary, SAMPLE_DUMPS_SPV, sizeof(SAMPLE_DUMPS_SPV));
+        moduleInfo.codeSize = sampleDumpsCode.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = sampleDumpsCode.data();
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule sample dumps");
         pipelineInfo.stage.module = module;
         pipelineInfo.layout = dumpLayout;
@@ -2312,8 +2314,9 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
             layoutInfo.pPushConstantRanges = &push;
             Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &meshArgumentLayout), "vkCreatePipelineLayout mesh arguments");
             VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-            moduleInfo.codeSize = sizeof(MESH_ARGUMENTS_SPV);
-            moduleInfo.pCode = MESH_ARGUMENTS_SPV;
+            const auto meshArgumentsCode = CacheKeyedSpirv(context.graphicsPipelineLibrary, MESH_ARGUMENTS_SPV, sizeof(MESH_ARGUMENTS_SPV));
+            moduleInfo.codeSize = meshArgumentsCode.size() * sizeof(std::uint32_t);
+            moduleInfo.pCode = meshArgumentsCode.data();
             Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule mesh arguments");
             VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
             pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
