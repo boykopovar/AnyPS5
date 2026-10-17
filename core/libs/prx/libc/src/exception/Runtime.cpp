@@ -117,7 +117,7 @@ void Release(void* object) {
     }
 }
 
-void Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
+void APS5_VABI Cleanup(_Unwind_Reason_Code reason, _Unwind_Exception* exception) {
     if (reason != _URC_FOREIGN_EXCEPTION_CAUGHT) Terminate();
     auto* header = FromUnwind(exception);
     if (exception->exception_class == DependentClass) {

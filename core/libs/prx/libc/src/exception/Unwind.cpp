@@ -92,6 +92,9 @@ const std::uintptr_t* UnwindCursorSlots_nid_no_patch() {
 
 extern "C" _Unwind_Reason_Code __gxx_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
 extern "C" _Unwind_Reason_Code __gcc_personality_v0(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
+#ifdef _WIN32
+extern "C" void _Unwind_DeleteException(_Unwind_Exception*);
+#endif
 
 namespace LibcUnwind {
 _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context) {
@@ -520,6 +523,12 @@ _Unwind_Reason_Code APS5_VABI _Unwind_Resume_or_Rethrow_nid_postfix(_Unwind_Exce
 }
 
 void APS5_VABI _Unwind_DeleteException_nid_postfix(_Unwind_Exception* exception) {
+#ifdef _WIN32
+    if (exception && LibcException::Gnu(exception->exception_class)) {
+        _Unwind_DeleteException(exception);
+        return;
+    }
+#endif
     if (exception && exception->exception_cleanup) exception->exception_cleanup(_URC_FOREIGN_EXCEPTION_CAUGHT, exception);
 }
 
