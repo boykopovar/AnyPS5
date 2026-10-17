@@ -75,6 +75,23 @@ void settingsReject() {
     require(rejects("MouseSensitivity = 1\nMouseSensitivity = 2\n"), "a setting given twice is rejected");
 }
 
+void performanceOverlayBinding() {
+    useConfig("Cross = KEY:F\n");
+    bool onF10 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) onF10 = onF10 || (binding.control == Pad::InputControl::TogglePerformanceOverlay && binding.key == SDL_SCANCODE_F10);
+    require(onF10, "F10 toggles the performance overlay by default");
+    useConfig("togglePerformanceOverlay = KEY:F9\n");
+    bool onF9 = false;
+    bool stillOnF10 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::TogglePerformanceOverlay) continue;
+        onF9 = onF9 || binding.key == SDL_SCANCODE_F9;
+        stillOnF10 = stillOnF10 || binding.key == SDL_SCANCODE_F10;
+    }
+    require(onF9 && !stillOnF10, "the performance overlay toggle moves to another key");
+    require(rejects("TogglePerformanceOverlay = MOUSE:Left\n"), "the performance overlay toggle refuses a mouse button");
+}
+
 void mouseLookDefault() {
     useConfig("Cross = KEY:F\n");
     const auto settings = Pad::LoadInputMapping().settings;
@@ -180,6 +197,7 @@ int main() try {
     settingsDefault();
     settingsParse();
     settingsReject();
+    performanceOverlayBinding();
     mouseLookDefault();
     mouseLookParse();
     mouseLookReject();

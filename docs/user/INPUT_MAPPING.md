@@ -16,7 +16,7 @@ While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS
 
 Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file.
 
-Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `ToggleMouse`, and `ToggleFullscreen`.
+Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `ToggleMouse`, `ToggleFullscreen` (F11), and `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)). `ToggleFullscreen` and `TogglePerformanceOverlay` accept only keyboard keys.
 
 ### Default bindings
 

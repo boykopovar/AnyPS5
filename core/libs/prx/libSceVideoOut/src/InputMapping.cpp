@@ -52,7 +52,8 @@ constexpr auto actions = std::array{
     InputAction{"TouchLeft", Pad::InputControl::TouchLeft, Pad::PadButton::None},
     InputAction{"TouchRight", Pad::InputControl::TouchRight, Pad::PadButton::None},
     InputAction{"ToggleMouse", Pad::InputControl::ToggleMouse, Pad::PadButton::None},
-    InputAction{"ToggleFullscreen", Pad::InputControl::ToggleFullscreen, Pad::PadButton::None}
+    InputAction{"ToggleFullscreen", Pad::InputControl::ToggleFullscreen, Pad::PadButton::None},
+    InputAction{"TogglePerformanceOverlay", Pad::InputControl::TogglePerformanceOverlay, Pad::PadButton::None}
 };
 
 std::string upper(std::string_view value) {
@@ -110,6 +111,9 @@ Pad::InputBinding parseBinding(const InputAction& action, std::string_view sourc
     if (type == "MOUSE") {
         if (action.control == Pad::InputControl::ToggleFullscreen) {
             throw std::runtime_error("ToggleFullscreen can only use a keyboard key");
+        }
+        if (action.control == Pad::InputControl::TogglePerformanceOverlay) {
+            throw std::runtime_error("TogglePerformanceOverlay can only use a keyboard key");
         }
         return {SDL_SCANCODE_UNKNOWN, parseMouseButton(value), action.control, action.button, 0};
     }

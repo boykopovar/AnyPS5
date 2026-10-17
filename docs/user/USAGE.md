@@ -210,6 +210,27 @@ most called traced imports (1 calls in total):
 
 Limits are listed in the [libc](../dev/debt/libc.md) and [relinker](../dev/debt/relinker.md) technical debt.
 
+### Performance overlay
+
+F10 shows or hides a performance overlay over the presented image; `ANYPS5_OVERLAY=1` shows it from the first frame. `ANYPS5_OVERLAY_POS` puts it in a corner of the window: `tl` (top left, the default), `tr`, `bl` or `br`. For either variable an empty value is the same as an unset one, and any other value stops the game at its first frame with an error that names the variable. The key can be moved with `TogglePerformanceOverlay` in the [input mapping](INPUT_MAPPING.md). The text scales with the window height, at a whole multiple of its 5x7 pixel font; on an HDR10 swapchain the overlay is drawn at 203 nits.
+
+| Line | Meaning |
+|------|---------|
+| `PROFILED` | The first line while `APS5_PROFILE_GPU=1` or `APS5_PROFILE_DRAW=1` is set. Those switches add timestamp queries to every batch and timers to every packet, so the numbers of such a run aren't comparable with an unprofiled one. |
+| `FPS` | Frames presented per second, over the last second. When the last second holds fewer than two presents (below 1 fps), the rate of the last frame instead, 1000 divided by its time in ms: a frame every 2 s shows `0.50`. Every present counts, including frames a title presents cleared, for example while it loads. |
+| `FRAME` | Time between the last two presented frames, in ms. |
+| graph | The last 120 frame times, the newest on the right. The full height is the longest of them or twice their average, whichever is larger. |
+| `MIN/AVG/MAX` | The shortest, average and longest of the 120 frame times, in ms. |
+| `GPU` | GPU time per frame over the last second, or of the last frame below 1 fps, in ms: the span of each recorded batch from its first to its last command, from the timestamp queries of `APS5_PROFILE_GPU=1`. Shown only with that variable. Batches are counted when they complete, so the line trails a sudden change by up to a second, or by a frame below 1 fps. Batches that overlap on different queues each count in full, so the line can exceed `FRAME`. |
+| `DRIVER` | CPU time per frame over the last second, or of the last frame below 1 fps, in ms, that the packet workers spent in dispatch and draw packets (the `dispatch` and `draw` time of the `[gpu] worker` line of `APS5_PROFILE_DRAW=1`). Shown only with that variable. Every worker's time counts in full, so with several workers busy at once the line can exceed `FRAME`. |
+| `DRAWS` | Draw packets per frame over the last second, or of the last frame below 1 fps, then dispatch packets per frame (`DISPATCH`), as the packet workers execute them; packets that predication skips are not counted. Shown once the title has submitted either. |
+| `SHADERS` | Pipelines created in the last second, or during the last frame below 1 fps, then since the start (`TOTAL`): a graphics pipeline for each draw state the pipeline cache had not seen and a compute pipeline for each new dispatch shader. A rise while the game stutters points at pipeline compilation. Shown once a pipeline was created. |
+| `VRAM` | Usage and budget of the GPU's largest device-local memory heap from `VK_EXT_memory_budget`, read once a second. Not shown when the driver lacks the extension. |
+| `RAM` | The process's private memory, read once a second: `PrivateUsage` of `GetProcessMemoryInfo` on Windows, `RssAnon` plus `VmSwap` of `/proc/self/status` on Linux. The title's direct memory is shared memory on both systems and is not included. |
+| `RES` | The display buffer's size, then the window's swapchain size, for example `RES: 1920X1080 / 2560X1440`. Not shown for frames without a display buffer. |
+
+Times are shown with one decimal below 100 and as whole numbers above; anything above 9999 shows as 9999, so `FRAME` and `MIN/AVG/MAX` read 9999 for frames of 10 s or more. `FPS` has the same format, with two decimals below 1. Counts are whole numbers, in thousands (`12K`) from 10000 and in millions (`3M`) from a million. Memory is in GB of 2^30 bytes. While the overlay is hidden the presentation records nothing for it and the presented image is unchanged; while it is shown, one small render pass draws it over each presented frame. Each draw and dispatch packet and each pipeline creation is counted also while the overlay is hidden, with one increment of a counter that belongs to the packet worker or, for pipelines, a shared one; the memory and the counters are read only while the overlay is shown.
+
 ### Windows crash diagnostics
 
 When a register points at readable memory that starts with at least four printable ASCII characters, either as UTF-16LE or as single bytes, the crash report prints that text after the register memory dump, as `[r13] u"..."` for UTF-16LE or `[rdi] "..."` for single bytes. The text ends at a NUL, at the first character that is not printable ASCII, a tab, a line feed or a carriage return, after 512 characters or at the end of readable memory. Tabs, line breaks, quotes and backslashes are escaped, and `...` after the closing quote means that no NUL ended the text within those limits.
