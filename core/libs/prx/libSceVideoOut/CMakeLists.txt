@@ -71,6 +71,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_high_frame_rate PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_video_out_cursor_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutCursor.cpp)
+    target_include_directories(guest_video_out_cursor_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_cursor_tests PRIVATE libSceVideoOut libkernel libc)
+    configure_windows_unwind(guest_video_out_cursor_tests)
+    add_test(NAME guest_video_out_cursor COMMAND guest_video_out_cursor_tests)
+    set_tests_properties(guest_video_out_cursor PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_video_out_cursor PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set(ANYPS5_VIDEO_OUT_TEST_DRIVER "offscreen" CACHE STRING
         "SDL video driver for VideoOut flip tests")
 
