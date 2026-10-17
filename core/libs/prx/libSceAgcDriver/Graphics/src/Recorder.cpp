@@ -2842,6 +2842,17 @@ bool Recorder::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const
     return bytes != 0 && open != nullptr && overlaps(*open, address, address + bytes);
 }
 
+std::uint64_t Recorder::PendingWriterSerial(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return 0;
+    const auto end = address + bytes;
+    const auto writes = [&](const Batch& batch) { return overlaps(batch, address, end) || readOverlap(batch, address, end, ReadKind::AddressBased).has_value(); };
+    if (open != nullptr && writes(*open)) return OpenSerial();
+    for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it) {
+        if (writes(**it)) return (*it)->serial;
+    }
+    return 0;
+}
+
 bool Recorder::signaled(const Batch& batch) const {
     return batch.submitted && fenceStatus(batch.fence) == VK_SUCCESS;
 }
@@ -2940,8 +2951,9 @@ void Recorder::NotePendingReadList(std::shared_ptr<const ReadList> ranges, ReadK
     open->readLists.push_back({std::move(ranges), open->reads.size(), kind});
 }
 
-std::optional<Recorder::ReadKind> Recorder::readOverlap(const Batch& batch, std::uint64_t address, std::uint64_t end) {
+std::optional<Recorder::ReadKind> Recorder::readOverlap(const Batch& batch, std::uint64_t address, std::uint64_t end, std::optional<ReadKind> only) {
     const auto listOverlaps = [&](const Batch::ReadListNote& note) {
+        if (only.has_value() && note.kind != *only) return false;
         const auto& list = *note.ranges;
         const auto found = std::partition_point(list.begin(), list.end(), [&](const auto& range) { return range.second <= address; });
         return found != list.end() && found->first < end;
@@ -2952,7 +2964,7 @@ std::optional<Recorder::ReadKind> Recorder::readOverlap(const Batch& batch, std:
             if (listOverlaps(batch.readLists[next])) return batch.readLists[next].kind;
         }
         const auto& read = batch.reads[index];
-        if (address < read.end && read.begin < end) return read.kind;
+        if ((!only.has_value() || read.kind == *only) && address < read.end && read.begin < end) return read.kind;
     }
     for (; next < batch.readLists.size(); ++next) {
         if (listOverlaps(batch.readLists[next])) return batch.readLists[next].kind;
