@@ -453,6 +453,20 @@ int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
 #endif
 }
 
+int APS5_VABI timespec_get_nid_postfix(timespec* ts, int base) {
+    if (ts == nullptr || base != TIME_UTC) return 0;
+#ifdef _WIN32
+    FILETIME ft{};
+    GetSystemTimePreciseAsFileTime(&ft);
+    const uint64_t hundredNs = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
+    ts->tv_sec = static_cast<decltype(ts->tv_sec)>(hundredNs / 10000000ULL);
+    ts->tv_nsec = static_cast<decltype(ts->tv_nsec)>((hundredNs % 10000000ULL) * 100ULL);
+#else
+    if (clock_gettime(CLOCK_REALTIME, ts) != 0) return 0;
+#endif
+    return TIME_UTC;
+}
+
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0) {
     if (time1 >= time0) return static_cast<double>(static_cast<uint64_t>(time1) - static_cast<uint64_t>(time0));
     return -static_cast<double>(static_cast<uint64_t>(time0) - static_cast<uint64_t>(time1));
