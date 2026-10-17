@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -51,6 +52,22 @@ Bytes Fixture() {
     const char strings[] = "\0.text\0.shstrtab";
     Write<std::uint64_t>(bytes, 288, sizeof(strings));
     std::memcpy(bytes.data() + 0x200, strings, sizeof(strings));
+    return bytes;
+}
+
+Bytes TlsFixture(const std::uint64_t address, const std::uint64_t fileSize, const std::uint64_t memorySize, const std::uint64_t alignment) {
+    auto bytes = Fixture();
+    std::memcpy(bytes.data() + 0x260, bytes.data() + 64, 56);
+    Write<std::uint64_t>(bytes, 32, 0x260);
+    Write<std::uint16_t>(bytes, 56, 2);
+    Write<std::uint32_t>(bytes, 0x298, 7);
+    Write<std::uint32_t>(bytes, 0x29c, 4);
+    Write<std::uint64_t>(bytes, 0x2a0, 0x248);
+    Write(bytes, 0x2a8, address);
+    Write(bytes, 0x2b0, address);
+    Write(bytes, 0x2b8, fileSize);
+    Write(bytes, 0x2c0, memorySize);
+    Write(bytes, 0x2c8, alignment);
     return bytes;
 }
 
@@ -117,6 +134,31 @@ int main() {
             Write<std::uint32_t>(bytes, 64, 0x61000010);
             Write<std::uint64_t>(bytes, 96, 0xd0);
             Write<std::uint64_t>(bytes, 104, 0xd0);
+            RejectProgramHeaders(std::move(bytes));
+        }},
+        {"TLS image inside load memory and empty TLS placeholders", [] {
+            for (const auto& [address, fileSize, memorySize, alignment] : {std::tuple<std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>{0x1008, 8, 16, 8}, {0x1030, 16, 16, 16}, {0x9000, 0, 0, 0}, {0x9000, 0, 16, 16}}) {
+                const auto headers = Relinker::ElfReader(TlsFixture(address, fileSize, memorySize, alignment)).ReadProgramHeaders();
+                Require(headers.size() == 2 && headers[1].Type == 7 && headers[1].MappedAddress == address);
+            }
+        }},
+        {"TLS image outside load memory", [] {
+            constexpr std::uint64_t addresses[] = {0x0ff8, 0x103c, 0x2000, std::numeric_limits<std::uint64_t>::max() - 3};
+            for (const std::uint64_t address : addresses) {
+                RejectProgramHeaders(TlsFixture(address, 8, 8, 1));
+            }
+        }},
+        {"TLS file size exceeds memory size", [] {
+            RejectProgramHeaders(TlsFixture(0x1008, 16, 8, 8));
+        }},
+        {"TLS alignment is not a power of two", [] {
+            RejectProgramHeaders(TlsFixture(0x1008, 8, 8, 3));
+        }},
+        {"second TLS segment", [] {
+            auto bytes = TlsFixture(0x1008, 8, 16, 8);
+            bytes.resize(0x308);
+            std::memcpy(bytes.data() + 0x2d0, bytes.data() + 0x298, 56);
+            Write<std::uint16_t>(bytes, 56, 3);
             RejectProgramHeaders(std::move(bytes));
         }},
         {"section entry size field", [] {

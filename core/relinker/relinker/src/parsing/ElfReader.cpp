@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <relinker/domain/Types.hpp>
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <utility>
 
@@ -163,6 +164,23 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             relro.Type = PT_LOAD;
             relro.Flags = PF_R | PF_W;
         }
+    }
+
+    bool hasTls = false;
+    for (const auto& tls : headers) {
+        if (tls.Type != PT_TLS) continue;
+        if (hasTls)
+            throw RelinkerException("Multiple ELF TLS segments", tls.Offset);
+        hasTls = true;
+        if (tls.FileSize > tls.MemorySize || (tls.Alignment > 1 && !std::has_single_bit(tls.Alignment)))
+            throw RelinkerException("Invalid or unsupported ELF TLS layout", tls.Offset);
+        if (tls.FileSize == 0) continue;
+        const bool covered = std::any_of(headers.begin(), headers.end(), [&](const ProgramHeader& load) {
+            return load.Type == PT_LOAD && tls.MappedAddress >= load.MappedAddress && tls.MappedAddress - load.MappedAddress <= load.MemorySize
+                && tls.FileSize <= load.MemorySize - (tls.MappedAddress - load.MappedAddress);
+        });
+        if (!covered)
+            throw RelinkerException("PT_TLS initialization image is outside PT_LOAD memory", tls.Offset);
     }
 
     return headers;
