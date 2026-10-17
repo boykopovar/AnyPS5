@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -154,15 +155,13 @@ void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, con
     Require(actual == expected, std::string(Ieee ? "f64 arithmetic, IEEE mode: lane " : "f64 arithmetic: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::optional<ShaderRecompiler::ShaderFloatMode> mode) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -172,7 +171,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    if (Ieee) request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false};
+    request.context.floatMode = mode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -190,6 +189,80 @@ void Check() {
     }
 }
 
+std::uint64_t MinMaxReference(std::uint64_t lhs, std::uint64_t rhs, bool maximum, bool ieee) {
+    constexpr std::uint64_t magnitude = 0x7fffffffffffffffull;
+    constexpr std::uint64_t infinity = 0x7ff0000000000000ull;
+    constexpr std::uint64_t quiet = 0x0008000000000000ull;
+    const bool lhsNan = (lhs & magnitude) > infinity;
+    const bool rhsNan = (rhs & magnitude) > infinity;
+    if (ieee && lhsNan && (lhs & quiet) == 0u) return lhs | quiet;
+    if (ieee && rhsNan && (rhs & quiet) == 0u) return rhs | quiet;
+    if (rhsNan) return lhs;
+    if (lhsNan) return rhs;
+    if ((lhs & magnitude) == 0u && (rhs & magnitude) == 0u) return maximum ? lhs & rhs : lhs | rhs;
+    return maximum ? (std::bit_cast<double>(lhs) > std::bit_cast<double>(rhs) ? lhs : rhs) : (std::bit_cast<double>(lhs) < std::bit_cast<double>(rhs) ? lhs : rhs);
+}
+
+void CheckMinMaxDenormals(AgcDriver::VulkanDevice& device) {
+    constexpr std::array<std::array<std::uint64_t, 2>, Threads> rows{{
+        {0x0000000000000001ull, 0x0000000000000000ull}, {0x0000000000000000ull, 0x0000000000000001ull},
+        {0x8000000000000001ull, 0x0000000000000000ull}, {0x0000000000000000ull, 0x8000000000000001ull},
+        {0x0000000000000001ull, 0x8000000000000001ull}, {0x8000000000000001ull, 0x0000000000000001ull},
+        {0x000fffffffffffffull, 0x800fffffffffffffull}, {0x800fffffffffffffull, 0x000fffffffffffffull},
+        {0x000fffffffffffffull, 0x0010000000000000ull}, {0x0010000000000000ull, 0x000fffffffffffffull},
+        {0x800fffffffffffffull, 0x8010000000000000ull}, {0x8010000000000000ull, 0x800fffffffffffffull},
+        {0x0000000000000001ull, 0x000fffffffffffffull}, {0x000fffffffffffffull, 0x0000000000000001ull},
+        {0x8000000000000001ull, 0x800fffffffffffffull}, {0x800fffffffffffffull, 0x8000000000000001ull},
+        {0x7ff8000000000123ull, 0x0000000000000001ull}, {0x0000000000000001ull, 0x7ff8000000000123ull},
+        {0xfff8000000000123ull, 0x800fffffffffffffull}, {0x800fffffffffffffull, 0xfff8000000000123ull},
+        {0x7ff0000000000123ull, 0x0000000000000001ull}, {0x0000000000000001ull, 0x7ff0000000000123ull},
+        {0xfff0000000000123ull, 0x800fffffffffffffull}, {0x800fffffffffffffull, 0xfff0000000000123ull},
+        {0x7ff0000000000000ull, 0x000fffffffffffffull}, {0x000fffffffffffffull, 0x7ff0000000000000ull},
+        {0xfff0000000000000ull, 0x800fffffffffffffull}, {0x800fffffffffffffull, 0xfff0000000000000ull},
+        {0x0000000000000000ull, 0x8000000000000000ull}, {0x8000000000000000ull, 0x0000000000000000ull},
+        {0x0010000000000000ull, 0x8010000000000000ull}, {0x8010000000000000ull, 0x0010000000000000ull},
+    }};
+    constexpr std::array<std::array<std::uint32_t, 2>, 4> modifiers{{{0u, 0u}, {1u, 2u}, {2u, 1u}, {3u, 3u}}};
+    for (const auto& modifier : modifiers) {
+        alignas(256) auto code = Code;
+        for (const auto word : {13u, 15u}) {
+            code[word] |= modifier[0] << 8u;
+            code[word + 1u] |= modifier[1] << 29u;
+        }
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            for (std::uint32_t source = 0; source < 2u; ++source) {
+                Input[tid * Inputs + source * 2u] = static_cast<std::uint32_t>(rows[tid][source]);
+                Input[tid * Inputs + source * 2u + 1u] = static_cast<std::uint32_t>(rows[tid][source] >> 32u);
+            }
+        }
+        for (const int denormals : {-1, 0, 2, 3}) {
+            for (const bool ieee : {false, true}) {
+                if (denormals < 0 && ieee) continue;
+                std::optional<ShaderRecompiler::ShaderFloatMode> mode;
+                if (denormals >= 0) mode = ShaderRecompiler::ShaderFloatMode{0x30u | (static_cast<std::uint32_t>(denormals) << 6u), true, ieee, false};
+                Run(device, code, mode);
+                for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+                    auto pair = rows[tid];
+                    for (std::uint32_t source = 0; source < 2u; ++source) {
+                        if (((modifier[0] >> source) & 1u) != 0u) pair[source] &= 0x7fffffffffffffffull;
+                        if (((modifier[1] >> source) & 1u) != 0u) pair[source] ^= 0x8000000000000000ull;
+                        if ((denormals == 0 || denormals == 2) && (pair[source] & 0x7ff0000000000000ull) == 0u) pair[source] &= 0x8000000000000000ull;
+                    }
+                    for (std::uint32_t operation = 0; operation < 2u; ++operation) {
+                        const auto expected = MinMaxReference(pair[0], pair[1], operation != 0u, ieee);
+                        for (std::uint32_t word = 0; word < 2u; ++word) {
+                            const auto actual = Output[tid * Results + 8u + operation * 2u + word];
+                            const auto expectedWord = static_cast<std::uint32_t>(expected >> (word * 32u));
+                            Require(actual == expectedWord, "f64 min/max denormal mode " + std::to_string(denormals) + " IEEE " + std::to_string(ieee) + " abs " + std::to_string(modifier[0]) + " neg " + std::to_string(modifier[1]) + " lane " + std::to_string(tid) + " " + Names[8u + operation * 2u + word] + " is " + Hex(actual) + ", expected " + Hex(expectedWord));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::puts("f64 min/max denormal input cases passed");
+}
+
 }
 
 int main() {
@@ -202,9 +275,11 @@ int main() {
         }
         for (const bool ieee : {false, true}) {
             Ieee = ieee;
-            Run(*device);
+            for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+            Run(*device, Code, ieee ? std::optional{ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}} : std::nullopt);
             Check();
         }
+        CheckMinMaxDenormals(*device);
         std::puts("f64 arithmetic tests passed");
         return 0;
     } catch (const std::exception& error) {

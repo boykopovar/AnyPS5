@@ -234,7 +234,7 @@ private:
     bool vMullitF32(const RdnaInstruction& inst);
     void emitFloat16ClassCompare(const RdnaInstruction& inst, bool cmpx);
     bool float64Operation(const RdnaInstruction& inst, IrOpcode opcode);
-    bool nonIeeeMinMaxF64(const RdnaInstruction& inst, IrOpcode opcode);
+    bool minMaxF64(const RdnaInstruction& inst, IrOpcode opcode);
     bool float64Unary(const RdnaInstruction& inst, IrOpcode opcode);
     bool vCvtF64F32(const RdnaInstruction& inst);
     void writeF64Result(const RdnaOperand& operand, IrValue& value);

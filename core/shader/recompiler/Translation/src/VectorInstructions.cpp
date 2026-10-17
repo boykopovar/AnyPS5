@@ -947,9 +947,9 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
     case RdnaOpcode::VFmaF64:
         return float64Operation(inst, IrOpcode::FPFma64);
     case RdnaOpcode::VMinF64:
-        return ieeeMode ? float64Operation(inst, IrOpcode::FPMin64) : nonIeeeMinMaxF64(inst, IrOpcode::FPMin64);
+        return minMaxF64(inst, IrOpcode::FPMin64);
     case RdnaOpcode::VMaxF64:
-        return ieeeMode ? float64Operation(inst, IrOpcode::FPMax64) : nonIeeeMinMaxF64(inst, IrOpcode::FPMax64);
+        return minMaxF64(inst, IrOpcode::FPMax64);
     case RdnaOpcode::VLdexpF64:
         return float64Unary(inst, IrOpcode::FPLdexp64);
     case RdnaOpcode::VTruncF64:
