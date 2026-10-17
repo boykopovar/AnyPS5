@@ -205,8 +205,13 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             const auto index = info >> 32;
             const auto addend = Io::ReadU64(bytes, offset + 16);
             if (type == 8) {
-                const auto zeroSectionSymbol = index != 0 && index < symbolCount && (bytes[symbols + index * 24 + 4] & 15) == 3 && Io::ReadU64(bytes, symbols + index * 24 + 8) == 0;
-                if ((index != 0 && !zeroSectionSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                const auto hasSymbol = index != 0 && index < symbolCount;
+                const auto symbol = hasSymbol ? symbols + index * 24 : 0;
+                const auto zeroSectionSymbol = hasSymbol && (bytes[symbol + 4] & 15) == 3 && Io::ReadU64(bytes, symbol + 8) == 0;
+                const auto matchingDefinedSymbol = hasSymbol && Io::ReadU16(bytes, symbol + 6) != 0
+                    && addend <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
+                    && Io::ReadU64(bytes, symbol + 8) == addend;
+                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
                 addRoot(addend);
             } else if (type == 1 || type == 6 || type == 7) {
                 if (index == 0 || index >= symbolCount) throw Domain::RelinkerException("Code analysis: invalid relocation symbol", slot);
