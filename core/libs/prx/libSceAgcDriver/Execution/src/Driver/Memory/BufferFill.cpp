@@ -99,6 +99,21 @@ std::optional<DwordPatternFill> MatchConstantDwordFill(std::span<const std::uint
     return fill;
 }
 
+std::optional<DwordPatternFill> MatchClampedGlobalFill(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
+    static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
+    if (!enabled || userData.size() != 6 || packet.size() < 5 || !compute.groupIdEnable[0] || compute.numThreads != std::array<std::uint32_t, 3>{64, 1, 1} || compute.threadIdComponentCount != 1) return std::nullopt;
+    static constexpr std::array<std::uint32_t, 11> kernel{0xd7460000u, 0x04010c06u, 0x7e080205u, 0x7e0a0205u, 0x7e0c0205u, 0x7e0e0205u, 0x34000084u, 0x26000004u, 0xdc788000u, 0x00020400u, 0xbf810000u};
+    if (code.size() < kernel.size() || !std::equal(kernel.begin(), kernel.end(), code.begin())) return std::nullopt;
+    if ((packet[4] & 0x20u) != 0 || packet[2] != 1 || packet[3] != 1) return std::nullopt;
+    const auto base = userData[2] | (static_cast<std::uint64_t>(userData[3]) << 32u);
+    const auto maxOffset = userData[4];
+    const auto bytes = std::min<std::uint64_t>(static_cast<std::uint64_t>(packet[1]) * 64u * 16u, static_cast<std::uint64_t>(maxOffset) + 16u);
+    if (bytes == 0 || base % 16u != 0 || maxOffset % 16u != 0) return std::nullopt;
+    DwordPatternFill fill{base, static_cast<std::size_t>(bytes), {}};
+    fill.pattern.fill(userData[5]);
+    return fill;
+}
+
 std::optional<Graphics::MemoryValueFill> MatchMemoryValueBufferFill(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
     static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
     if (!enabled || userData.size() != 8 || packet.size() < 5 || (packet[4] & 0x20u) != 0 || !compute.groupIdEnable[0]) return std::nullopt;
@@ -206,6 +221,7 @@ void drainPendingInputWrites(std::uint32_t queueId, std::initializer_list<std::p
 bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::shared_ptr<VulkanDevice>& localDevice) {
     auto dwordFill = MatchDwordPatternFill(packet, code, userData, compute);
     if (!dwordFill) dwordFill = MatchConstantDwordFill(packet, code, userData, compute);
+    if (!dwordFill) dwordFill = MatchClampedGlobalFill(packet, code, userData, compute);
     std::optional<Graphics::MemoryValueFill> memoryFill;
     if (!dwordFill) memoryFill = MatchMemoryValueBufferFill(packet, code, userData, compute);
     if (!dwordFill && !memoryFill && !matchesFillKernel(code, userData, compute)) return false;
