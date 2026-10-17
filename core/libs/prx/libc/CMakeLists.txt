@@ -38,6 +38,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FormattingWide.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ScanningWide.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Hostname.cpp
@@ -218,6 +219,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_random_state COMMAND guest_random_state_tests)
     if(WIN32)
         set_tests_properties(guest_random_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_integer_builtins_tests ${LIBS_INCLUDE_DIR}/tests/GuestIntegerBuiltins.cpp)
+    target_include_directories(guest_integer_builtins_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_integer_builtins_tests PRIVATE libc)
+    configure_windows_unwind(guest_integer_builtins_tests)
+    add_test(NAME guest_integer_builtins COMMAND guest_integer_builtins_tests)
+    if(WIN32)
+        set_tests_properties(guest_integer_builtins PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_execute_once_tests ${LIBS_INCLUDE_DIR}/tests/GuestExecuteOnce.cpp)
