@@ -36,6 +36,7 @@ constexpr char TrailerMagic[8] = {'b', 'a', 'r', 'e', 'f', 'o', 'o', 't'};
 constexpr std::size_t TrailerCodeBytesOffset = sizeof(TrailerMagic) + 3 * sizeof(std::uint32_t);
 constexpr std::uint32_t Rsrc1VgprMask = 0x3fu;
 constexpr std::uint32_t Rsrc1SgprMask = 0xfu << 6u;
+constexpr std::uint32_t Rsrc2OffchipLdsEnable = 1u << 18u;
 constexpr std::uint32_t Rsrc2UserSgprMask = (0x1fu << 1u) | (1u << 27u);
 
 bool ValidHalves(const Shader* front, const Shader* back) {
@@ -127,8 +128,8 @@ std::uint32_t MergeRsrc1(std::uint32_t back, std::uint32_t front) {
 }
 
 std::uint32_t MergeRsrc2(const char* function, std::uint32_t back, std::uint32_t front) {
-    if ((front & ~Rsrc2UserSgprMask & ~back) != 0) Fail(function, "front half requires hardware state the back half does not enable");
-    return (back & ~Rsrc2UserSgprMask) | (front & Rsrc2UserSgprMask);
+    if ((front & ~(Rsrc2UserSgprMask | Rsrc2OffchipLdsEnable) & ~back) != 0) Fail(function, "front half requires hardware state the back half does not enable");
+    return (back & ~Rsrc2UserSgprMask) | (front & (Rsrc2UserSgprMask | Rsrc2OffchipLdsEnable));
 }
 
 const ShaderRegister* FindHalfRegister(const Shader* shader, std::uint32_t offset) {

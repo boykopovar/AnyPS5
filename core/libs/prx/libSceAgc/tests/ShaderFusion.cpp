@@ -195,6 +195,33 @@ void testScratchReuse() {
     check(reinterpret_cast<std::uintptr_t>(changed.code) != firstCode && word(reinterpret_cast<const void*>(firstCode), 64) == SMovS0, "changed halves reused the earlier fused program");
 }
 
+void testOffchipLdsEnable() {
+    constexpr std::uint32_t offchip = 1u << 18u;
+    for (const auto frontEnable : {0u, offchip}) {
+        for (const auto backEnable : {0u, offchip}) {
+            Halves halves;
+            halves.frontSh[2].value |= frontEnable;
+            halves.backSh[3].value |= backEnable;
+            SizeAlign size{};
+            check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "offchip LDS enable rejected by the size query");
+            std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
+            Shader fused{};
+            check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, aligned(storage, 256)) == 0, "offchip LDS enable rejected by fusion");
+            const auto* resource = find(fused, 0x08bu);
+            check(resource != nullptr && resource->value == ((6u << 1u) | (1u << 7u) | (1u << 15u) | frontEnable | backEnable), "fusion lost offchip LDS enable or changed the back-half state or front user SGPRs");
+        }
+    }
+    Halves reported;
+    reported.frontSh[2].value = 0x00070004u;
+    reported.backSh[3].value = 0x00ab0020u;
+    SizeAlign size{};
+    check(sceAgcGetFusedShaderSize_0080(&size, &reported.front, &reported.back) == 0, "reported shader resources rejected by size query");
+    std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
+    Shader fused{};
+    check(sceAgcFuseShaderHalves_0200(&fused, &reported.front, &reported.back, aligned(storage, 256)) == 0, "reported shader resources rejected by fusion");
+    check(find(fused, 0x08bu)->value == 0x00af0004u, "reported shader resources did not retain the front offchip LDS enable");
+}
+
 void testRejections() {
     Halves halves;
     SizeAlign size{};
@@ -277,6 +304,7 @@ int main() {
         testFusion(4);
         testFusion(0, SSwappcNullS6);
         testScratchReuse();
+        testOffchipLdsEnable();
         testRejections();
         testHullHalves();
         LibcRunShutdown_nid_postfix();
