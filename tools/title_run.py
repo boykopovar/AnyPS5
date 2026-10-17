@@ -60,7 +60,12 @@ def warning_counts(text):
 
 
 def read_summary(path):
-    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] if path.is_file() else []
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+        try:
+            lines.append(json.loads(line))
+        except ValueError:
+            pass
     presents = sum(line.get("presents", 0) for line in lines)
     seconds = sum(line.get("window", {}).get("ms", 0) for line in lines) / 1000
     last = lines[-1] if lines else {}
@@ -70,10 +75,15 @@ def read_summary(path):
 
 def frame_is_uniform(path, tolerance=8):
     data = path.read_bytes()
-    offset = struct.unpack_from("<I", data, 10)[0]
-    width, height = struct.unpack_from("<ii", data, 18)
-    channels = struct.unpack_from("<H", data, 28)[0] // 8
+    try:
+        offset = struct.unpack_from("<I", data, 10)[0]
+        width, height = struct.unpack_from("<ii", data, 18)
+        channels = struct.unpack_from("<H", data, 28)[0] // 8
+    except struct.error:
+        return None
     stride = (width * channels + 3) & ~3
+    if channels < 3 or len(data) < offset + stride * abs(height) - (stride - width * channels):
+        return None
     first = data[offset:offset + 3]
     for row in range(abs(height)):
         pixels = data[offset + row * stride:offset + row * stride + width * channels]
@@ -375,18 +385,33 @@ def git(*args):
     return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True).stdout.strip()
 
 
+def positive(text):
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a positive integer")
+    return value
+
+
+def last_line(text):
+    return next((line.strip() for line in reversed(text.splitlines()) if line.strip()), "")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
     parser.add_argument("--build", type=Path, default=ROOT / "build")
     parser.add_argument("--out", type=Path, default=Path("title-runs"))
-    parser.add_argument("--runs", type=int, default=2)
-    parser.add_argument("--seconds", type=int, help="run length for every title (default: the title's, else 60)")
+    parser.add_argument("--runs", type=positive, default=2)
+    parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
     parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     args = parser.parse_args(argv)
+    previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
     found = discover(args.games)
@@ -407,8 +432,9 @@ def main(argv=None):
         runs = []
         for number in range(1, args.runs + 1):
             if executable is None:
+                log = (work / "relink.log").read_text(encoding="utf-8", errors="replace")
                 result = {"outcome": "relink-failed", "exit_code": None, "seconds": 0, "presents": 0, "fps": 0.0,
-                          "first_error": first_error((work / "relink.log").read_text(encoding="utf-8", errors="replace")),
+                          "first_error": first_error(log) or last_line(log),
                           "warnings": {}, "frames": []}
             else:
                 result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}))
@@ -417,8 +443,7 @@ def main(argv=None):
                     summary["machine"][key] = summary["machine"][key] or value
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
             print(f"{title_id} run{number}: {result['outcome']}", flush=True)
-        summary["titles"][title_id] = {"name": entry.get("name", found[title_id]["name"]), "version": found[title_id]["version"], "runs": runs}
-    previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+        summary["titles"][title_id] = {"name": entry.get("name", found[title_id]["name"]), "version": found[title_id]["version"], "seconds": seconds, "runs": runs}
     (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     report = render_markdown(summary, previous)
     (output / "summary.md").write_text(report, encoding="utf-8")

@@ -85,6 +85,8 @@ class AnalysisTests(unittest.TestCase):
                  {"presents": 200, "window": {"ms": 10000}, "gpu": "B", "driver": "2", "os": "W"}]
         path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
         self.assertEqual(title_run.read_summary(path), {"presents": 500, "fps": 25.0, "gpu": "B", "driver": "2", "os": "W"})
+        path.write_text(path.read_text(encoding="utf-8") + '{"presents": 3', encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path)["presents"], 500)
         self.assertEqual(title_run.read_summary(self.root / "missing.jsonl")["presents"], 0)
 
     def test_frame_is_uniform(self):
@@ -94,6 +96,12 @@ class AnalysisTests(unittest.TestCase):
         self.assertTrue(title_run.frame_is_uniform(black))
         self.assertFalse(title_run.frame_is_uniform(noisy))
         self.assertTrue(title_run.frame_is_uniform(nearly))
+        truncated = self.root / "truncated.bmp"
+        truncated.write_bytes(black.read_bytes()[:40])
+        self.assertIsNone(title_run.frame_is_uniform(truncated))
+        cut = self.root / "cut.bmp"
+        cut.write_bytes(noisy.read_bytes()[:-20])
+        self.assertIsNone(title_run.frame_is_uniform(cut))
 
     def test_classify(self):
         cases = [
