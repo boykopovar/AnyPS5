@@ -262,6 +262,12 @@ jobs:
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
       - run: cmake --build build-relinker --parallel 3
       - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
+      - if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build-relinker-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DANYPS5_ENABLE_ASAN=ON -DBUILD_TESTING=ON
+          cmake --build build-relinker-asan --parallel 3
+          ctest --test-dir build-relinker-asan -L tls_function_coverage --output-on-failure --no-tests=error --timeout 120
+
 
   register-context:
     needs: eligibility
