@@ -93,6 +93,56 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
     return rebased;
 }
 
+void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::ProgramHeader& load) {
+    if (load.Offset > buf.size() || load.FileSize > buf.size() - load.Offset)
+        throw Domain::RelinkerException("PT_LOAD at " + Hex(load.MappedAddress) + " has file bytes outside the input");
+}
+
+void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
+    std::vector<std::size_t> loads;
+    for (std::size_t index = 0; index < headers.size(); ++index) {
+        if (headers[index].Type == PT_LOAD && headers[index].MemorySize != 0) {
+            RequireFileRange(buf, headers[index]);
+            loads.push_back(index);
+        }
+    }
+    std::stable_sort(loads.begin(), loads.end(), [&headers](const std::size_t left, const std::size_t right) {
+        return headers[left].MappedAddress < headers[right].MappedAddress;
+    });
+    for (std::size_t position = 0; position < loads.size(); ++position) {
+        auto& load = headers[loads[position]];
+        const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
+        if (prefix == 0 || load.FileSize == 0 || load.Offset % kDefaultLoadAlignment != prefix)
+            continue;
+        const auto pageStart = load.MappedAddress - prefix;
+        std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
+        std::vector<bool> covered(static_cast<std::size_t>(prefix), false);
+        for (std::size_t below = 0; below < position; ++below) {
+            const auto& other = headers[loads[below]];
+            const auto end = std::min(other.MappedAddress + other.MemorySize, load.MappedAddress);
+            for (auto address = std::max(other.MappedAddress, pageStart); address < end; ++address) {
+                const auto relative = address - other.MappedAddress;
+                covered[static_cast<std::size_t>(address - pageStart)] = true;
+                image[static_cast<std::size_t>(address - pageStart)] = relative < other.FileSize ? buf[static_cast<std::size_t>(other.Offset + relative)] : 0;
+            }
+        }
+        const auto mapped = load.Offset - prefix;
+        bool differs = false;
+        for (std::size_t index = 0; index < image.size() && !differs; ++index)
+            differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
+        if (!differs)
+            continue;
+        const auto alignment = std::max<std::uint64_t>(load.Alignment, kDefaultLoadAlignment);
+        while ((buf.size() + prefix) % alignment != load.MappedAddress % alignment)
+            buf.push_back(0);
+        buf.insert(buf.end(), image.begin(), image.end());
+        const auto offset = static_cast<std::uint64_t>(buf.size());
+        buf.resize(static_cast<std::size_t>(offset + load.FileSize));
+        std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
+        load.Offset = offset;
+    }
+}
+
 void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t tableOffset, const std::uint16_t entrySize, const std::uint16_t count, const std::uint64_t base) {
     for (std::uint16_t index = 0; index < count; ++index) {
         const auto header = static_cast<std::size_t>(tableOffset + static_cast<std::uint64_t>(index) * entrySize);
@@ -320,11 +370,14 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 
+    auto headers = originalHeaders;
+    SeparateSharedLoadPages(buf, headers);
+
     ProgramHeaderLayoutRequest layoutRequest{};
     layoutRequest.PhOff = tableOff;
     layoutRequest.PhEntSize = phEntSize;
     layoutRequest.PhNum = tableSlots;
-    layoutRequest.OriginalHeaders = originalHeaders;
+    layoutRequest.OriginalHeaders = headers;
     layoutRequest.ExtraBlockOffset = extraBlockOff;
     layoutRequest.ExtraBlockVaddr = extraBlockVaddr;
     layoutRequest.ExtraBlockSize = extraBlockSize;
