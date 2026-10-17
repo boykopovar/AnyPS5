@@ -25,7 +25,7 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
-static constexpr int ErrorEnotdir = static_cast<int>(0x80020014u);
+static constexpr int ErrorEinval = static_cast<int>(0x80020016u);
 
 static void VerifyCloseReuse(const std::filesystem::path& root, const char* scenario,
                              bool useUnderscoreClose) {
@@ -49,7 +49,7 @@ static void VerifyCloseReuse(const std::filesystem::path& root, const char* scen
     Require(file == directory);
 
     std::array<char, 256> entries{};
-    Require(sceKernelGetdents(file, entries.data(), static_cast<int>(entries.size())) == ErrorEnotdir);
+    Require(sceKernelGetdents(file, entries.data(), static_cast<int>(entries.size())) == ErrorEinval);
     Require((useUnderscoreClose ? _close_nid_postfix(file) : close_nid_postfix(file)) == 0);
 }
 

@@ -66,7 +66,7 @@ static void CheckName(const std::u8string& utf8Name) {
     Require(sceKernelGetdents(directory, buffer.data(), 8) == 0);
     Require(sceKernelGetdents(directory, buffer.data(), 256) == 0);
     Require(sceKernelClose(directory) == 0);
-    Require(sceKernelGetdents(-1, buffer.data(), 256) == SCE_KERNEL_ERROR_ENOTDIR);
+    Require(sceKernelGetdents(-1, buffer.data(), 256) == SCE_KERNEL_ERROR_EBADF);
     std::filesystem::remove_all(root);
 }
 
