@@ -13,10 +13,12 @@
 #include <exception>
 #include <functional>
 #include <initializer_list>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct Shader;
@@ -32,7 +34,94 @@ class VulkanDevice;
 namespace AgcDriver::DriverDetail {
 
 struct ShaderSnapshot;
-using ShaderRegistry = std::map<std::uint64_t, std::vector<std::shared_ptr<const ShaderSnapshot>>>;
+
+class ShaderRegistry {
+    using Chunk = std::map<std::uint64_t, std::vector<std::shared_ptr<const ShaderSnapshot>>>;
+    using Chunks = std::vector<std::shared_ptr<Chunk>>;
+
+public:
+    using key_type = std::uint64_t;
+    using mapped_type = Chunk::mapped_type;
+    using value_type = Chunk::value_type;
+
+    class const_iterator {
+    public:
+        using iterator_category = std::bidirectional_iterator_tag;
+        using value_type = ShaderRegistry::value_type;
+        using difference_type = std::ptrdiff_t;
+        using pointer = const value_type*;
+        using reference = const value_type&;
+
+        const_iterator() = default;
+        reference operator*() const { return *entry; }
+        pointer operator->() const { return &*entry; }
+        const_iterator& operator++() {
+            if (++entry == (*chunk)->end()) {
+                ++chunk;
+                entry = chunk == last ? Chunk::const_iterator{} : (*chunk)->cbegin();
+            }
+            return *this;
+        }
+        const_iterator operator++(int) {
+            auto previous = *this;
+            ++*this;
+            return previous;
+        }
+        const_iterator& operator--() {
+            if (chunk == last || entry == (*chunk)->cbegin()) {
+                --chunk;
+                entry = std::prev((*chunk)->cend());
+            } else {
+                --entry;
+            }
+            return *this;
+        }
+        const_iterator operator--(int) {
+            auto previous = *this;
+            --*this;
+            return previous;
+        }
+        bool operator==(const const_iterator& other) const { return chunk == other.chunk && entry == other.entry; }
+
+    private:
+        friend class ShaderRegistry;
+        const_iterator(Chunks::const_iterator chunk, Chunks::const_iterator last, Chunk::const_iterator entry) : chunk(chunk), last(last), entry(entry) {}
+        Chunks::const_iterator chunk{};
+        Chunks::const_iterator last{};
+        Chunk::const_iterator entry{};
+    };
+    using iterator = const_iterator;
+
+    ShaderRegistry() = default;
+    ShaderRegistry(std::initializer_list<value_type> entries) {
+        for (const auto& [address, headers] : entries) emplace(address, headers);
+    }
+
+    const_iterator begin() const { return chunks.empty() ? end() : const_iterator(chunks.cbegin(), chunks.cend(), chunks.front()->cbegin()); }
+    const_iterator end() const { return const_iterator(chunks.cend(), chunks.cend(), {}); }
+    const_iterator find(std::uint64_t address) const;
+    const_iterator upper_bound(std::uint64_t address) const;
+    bool contains(std::uint64_t address) const { return find(address) != end(); }
+    const mapped_type& at(std::uint64_t address) const;
+    std::size_t size() const { return count; }
+    bool empty() const { return count == 0; }
+    mapped_type& operator[](std::uint64_t address);
+    std::pair<const_iterator, bool> emplace(std::uint64_t address, mapped_type headers);
+    std::size_t erase(std::uint64_t address);
+    void clear() {
+        chunks.clear();
+        count = 0;
+    }
+
+private:
+    static constexpr std::size_t ChunkEntries = 64;
+
+    std::size_t chunkFor(std::uint64_t address) const;
+    Chunk& writable(std::size_t index);
+
+    Chunks chunks;
+    std::size_t count = 0;
+};
 
 struct PreparedShaderState {
     struct Entry {

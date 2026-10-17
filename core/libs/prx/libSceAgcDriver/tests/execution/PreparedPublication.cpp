@@ -12,6 +12,7 @@
 #include <cstring>
 #include <iostream>
 #include <latch>
+#include <map>
 #include <optional>
 #include <semaphore>
 #include <thread>
@@ -150,6 +151,73 @@ void HeaderSelection() {
     const auto geometry = makeSnapshot(0x60000, 4);
     PublishRegisteredShader(registry, geometry);
     Reject([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {2, 4})); });
+}
+
+void RegistryVersions() {
+    using Expected = std::map<std::uint64_t, std::shared_ptr<const ShaderSnapshot>>;
+    const auto matches = [](const ShaderRegistry& current, const Expected& expected) {
+        const auto same = [](const auto& entry, const auto& wanted) { return entry.first == wanted.first && entry.second.size() == 1u && entry.second.front() == wanted.second; };
+        if (current.size() != expected.size() || !std::equal(current.begin(), current.end(), expected.begin(), expected.end(), same)) return false;
+        auto backward = current.end();
+        for (auto wanted = expected.rbegin(); wanted != expected.rend(); ++wanted) {
+            if (backward == current.begin() || !same(*--backward, *wanted)) return false;
+        }
+        if (backward != current.begin()) return false;
+        for (const auto& entry : expected) {
+            for (const auto probe : {std::uint64_t{0}, entry.first - 1u, entry.first, entry.first + 4u, ~std::uint64_t{0}}) {
+                const auto found = current.upper_bound(probe);
+                const auto wanted = expected.upper_bound(probe);
+                if ((found == current.end()) != (wanted == expected.end()) || (found != current.end() && found->first != wanted->first)) return false;
+                if (current.contains(probe) != expected.contains(probe) || (current.find(probe) == current.end()) == expected.contains(probe)) return false;
+            }
+        }
+        return true;
+    };
+    const auto makeSnapshot = [](std::uint64_t codeAddress) {
+        auto snapshot = std::make_shared<ShaderSnapshot>();
+        snapshot->codeAddress = codeAddress;
+        snapshot->headerAddress = codeAddress + 0x80u;
+        snapshot->code = {0xbf810000u};
+        return snapshot;
+    };
+    std::vector<std::shared_ptr<const ShaderSnapshot>> snapshots;
+    Expected expected;
+    std::shared_ptr<ShaderRegistry> registry;
+    std::uint64_t state = 1;
+    while (snapshots.size() < 4096u) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        const auto address = 0x100000u + ((state >> 33u) % 0x100000u) * 0x100u;
+        if (expected.contains(address)) continue;
+        const auto snapshot = makeSnapshot(address);
+        expected.emplace(address, snapshot);
+        snapshots.push_back(snapshot);
+        PublishRegisteredShader(registry, snapshot);
+    }
+    Require(matches(*registry, expected), "the shader registry did not keep its code addresses in order");
+    std::shared_ptr<const ShaderRegistry> earlier = registry;
+    const auto previous = expected;
+    const auto added = makeSnapshot(0x100040u);
+    expected.emplace(added->codeAddress, added);
+    std::vector<long> uses;
+    for (const auto& snapshot : snapshots) uses.push_back(snapshot.use_count());
+    PublishRegisteredShader(registry, added);
+    std::size_t copied = 0;
+    for (std::size_t index = 0; index < snapshots.size(); ++index) copied += snapshots[index].use_count() != uses[index] ? 1u : 0u;
+    Require(copied <= 128u, "publishing a shader copied the registry's entries for other code addresses");
+    Require(matches(*registry, expected) && matches(*earlier, previous), "publishing a shader changed an earlier registry or lost an entry");
+    ShaderRegistry edited = *registry;
+    auto remaining = expected;
+    std::size_t index = 0;
+    for (const auto& entry : expected) {
+        if (index++ % 3u != 0u) continue;
+        Require(edited.erase(entry.first) == 1u && edited.erase(entry.first) == 0u, "the shader registry did not erase a code address once");
+        remaining.erase(entry.first);
+    }
+    Require(matches(edited, remaining) && matches(*registry, expected), "erasing from a copy of the registry changed the original or lost an entry");
+    for (const auto& entry : remaining) edited.erase(entry.first);
+    Require(edited.empty() && edited.begin() == edited.end() && edited.upper_bound(0) == edited.end(), "an emptied shader registry kept entries");
+    Require(edited.emplace(added->codeAddress, ShaderRegistry::mapped_type{added}).second && !edited.emplace(added->codeAddress, ShaderRegistry::mapped_type{}).second, "an emptied shader registry did not take a new entry once");
+    Require(edited.size() == 1u && edited.at(added->codeAddress).size() == 1u && edited.at(added->codeAddress).front() == added, "an emptied shader registry lost its new entry");
 }
 
 void FusedHullHeaderSelection() {
@@ -344,6 +412,7 @@ int main() {
     try {
         Transactions();
         HeaderSelection();
+        RegistryVersions();
         FusedHullHeaderSelection();
         TransactionLock();
         PreparationPriority(false);
