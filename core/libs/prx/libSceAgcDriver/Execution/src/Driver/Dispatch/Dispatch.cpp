@@ -424,7 +424,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 words += text;
             }
         }
-        std::fprintf(stderr, "[dispatch-io] shader 0x%llx%s\n", static_cast<unsigned long long>(address), words.c_str());
+        std::fprintf(stderr, "[dispatch-io] queue=0x%x submission=%llu shader 0x%llx%s\n", submission.queue, static_cast<unsigned long long>(submission.serial), static_cast<unsigned long long>(address), words.c_str());
     }
 
     const auto rethrow = [&](const std::exception& error) {
