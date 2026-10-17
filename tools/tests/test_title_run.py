@@ -224,6 +224,11 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 3)
 
+    def test_instant_exit_is_reported(self):
+        session = self.start("import sys; sys.exit(5)")
+        self.assertTrue(wait_until(lambda: not session.alive()))
+        self.assertEqual(session.exit_code(), 5)
+
     def test_children_keep_it_alive_and_are_killed(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])")
         self.assertTrue(wait_until(lambda: session.exit_code() == 0))
