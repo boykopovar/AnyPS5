@@ -1327,6 +1327,17 @@ void verifyImageTables() {
     const auto wholeCodes = TableCodes(TableMap(*whole.result), 0);
     require(wholeCodes.size() == 4u && wholeCodes[0] == wholeCodes[3] && wholeCodes[2] == Abi::NullCode && wholeCodes[1] != wholeCodes[0], "image tables: the whole table map is wrong");
 
+    const auto original = heap[1];
+    heap[1] = heap[0];
+    const auto changed = CompileTable(TableRequest(TableWholeCode, userData));
+    const auto& changedTables = changed.capture->snapshot.tables;
+    require(changedTables.tables.at(0).codes.at(1) == changedTables.tables.at(0).codes.at(0) && std::none_of(changedTables.words.begin(), changedTables.words.end(), [&](const DescriptorValue& value) { return value.dwords == original; }), "image tables: a column reused a record whose words changed");
+    heap[1] = original;
+    const auto restored = CompileTable(TableRequest(TableWholeCode, userData));
+    require(restored.capture->snapshot.tables == whole.capture->snapshot.tables && TableCodes(TableMap(*restored.result), 0) == wholeCodes, "image tables: a column read again after a change differs from its first read");
+    const auto repeated = CompileTable(TableRequest(TableWholeCode, userData));
+    require(repeated.capture->snapshot.tables == restored.capture->snapshot.tables, "image tables: an unchanged column read twice differs");
+
     for (std::uint32_t entry = 4; entry < 100u; entry++) heap[entry] = TableT(textures[entry % 2u].bytes.data(), entry % 3u == 0u ? TableFormat32UInt : TableFormat8888UNorm, TableType2D, entry);
     FillTableSrt(guest, heap.data(), 32u, 100u);
     const auto wide = CompileTable(TableRequest(TableWholeCode, userData));
@@ -1825,6 +1836,173 @@ void verifyPointerTableOffsetCarry() {
     VirtualFree(block, 0, MEM_RELEASE);
 #else
     munmap(block, Reserved);
+#endif
+}
+
+void TableProtect(void* page, bool readable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    require(VirtualProtect(page, 4096u, readable ? PAGE_READWRITE : PAGE_NOACCESS, &previous) != 0, "image table column memo: cannot change a page's access");
+#else
+    require(mprotect(page, 4096u, readable ? PROT_READ | PROT_WRITE : PROT_NONE) == 0, "image table column memo: cannot change a page's access");
+#endif
+}
+
+std::vector<std::array<std::uint32_t, 8>> TableRecordWords(const TableCompiled& compiled) {
+    const auto& tables = compiled.capture->snapshot.tables;
+    std::vector<std::array<std::uint32_t, 8>> words;
+    for (const auto code : tables.tables.at(0).codes) words.push_back((code & ShaderRecompiler::ImageTableAbi::PoisonFlag) != 0u ? std::array<std::uint32_t, 8>{} : tables.words.at(code).dwords);
+    return words;
+}
+
+enum class TableMemoUse { Hit, LayoutReused, Miss };
+
+TableCompiled CompileTableCounted(const ShaderRecompiler::RecompileRequest& request, TableMemoUse expected, const char* message) {
+    using ShaderRecompiler::ResourceMaterializer;
+    const auto before = ResourceMaterializer::ColumnMemoCounts();
+    auto compiled = CompileTable(request);
+    const auto after = ResourceMaterializer::ColumnMemoCounts();
+    const auto hits = after.hits - before.hits;
+    const auto layouts = after.layoutsReused - before.layoutsReused;
+    const auto misses = after.misses - before.misses;
+    require(hits == (expected == TableMemoUse::Hit ? 1u : 0u) && layouts == (expected == TableMemoUse::LayoutReused ? 1u : 0u) && misses == (expected == TableMemoUse::Miss ? 1u : 0u), message);
+    return compiled;
+}
+
+void verifyImageTableColumnMemo() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    constexpr std::size_t Page = 4096;
+    constexpr std::size_t Pages = 3;
+    constexpr std::uint32_t Palette = 0x40;
+    static TableTexture textures[3];
+    alignas(4096) static TableGuest guest;
+    const auto userData = TableUserData(guest);
+    const auto unmapped = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped));
+    const auto image = [&](std::uint32_t index) {
+        return TableT(textures[index % 3u].bytes.data(), index % 2u == 0u ? TableFormat8888UNorm : TableFormat32UInt, TableType2D, 1u + index % 7u);
+    };
+    void* block = nullptr;
+#ifdef _WIN32
+    block = VirtualAlloc(nullptr, Pages * Page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    block = mmap(nullptr, Pages * Page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (block == MAP_FAILED) block = nullptr;
+#endif
+    require(block != nullptr, "image table column memo: cannot map the pages");
+    auto* bytes = static_cast<std::byte*>(block);
+
+    auto* records = reinterpret_cast<std::array<std::uint32_t, 8>*>(bytes + Page - 64u);
+    for (std::uint32_t record = 0; record < 4u; record++) records[record] = image(record);
+    FillTableSrt(guest, records, 32u, 4u);
+    const auto wholeRequest = TableRequest(TableWholeCode, userData);
+    const auto mapped = CompileTableCounted(wholeRequest, TableMemoUse::Miss, "image table column memo: a table seen for the first time was not a miss");
+    require(TableRecordWords(mapped) == std::vector<std::array<std::uint32_t, 8>>(records, records + 4), "image table column memo: a table across two pages was not read");
+    const auto mappedSeen = CompileTableCounted(wholeRequest, TableMemoUse::Miss, "image table column memo: a table seen for the second time was not a miss that keeps its memo");
+    const auto mappedAgain = CompileTableCounted(wholeRequest, TableMemoUse::Hit, "image table column memo: an unchanged table across two pages was not a hit");
+    require(mappedSeen.capture->snapshot.tables == mapped.capture->snapshot.tables && mappedAgain.capture->snapshot.tables == mapped.capture->snapshot.tables, "image table column memo: a hit differs from the first read");
+    TableProtect(bytes + Page, false);
+    const auto cut = CompileTableCounted(wholeRequest, TableMemoUse::Miss, "image table column memo: a page that became inaccessible under the same key kept the layout");
+    const auto cutAgain = CompileTableCounted(wholeRequest, TableMemoUse::Hit, "image table column memo: a table with a page still inaccessible was not a hit");
+    TableProtect(bytes + Page, true);
+    const auto& cutCodes = cut.capture->snapshot.tables.tables.at(0).codes;
+    const auto cutWords = TableRecordWords(cut);
+    require(cutCodes.size() == 4u && cutWords[0] == records[0] && cutWords[1] == records[1] && cutCodes[2] == unmapped && cutCodes[3] == unmapped, "image table column memo: records on a page that became inaccessible under the same key were not Unmapped poison");
+    require(cutAgain.capture->snapshot.tables == cut.capture->snapshot.tables, "image table column memo: a hit with a page still inaccessible differs from its first read");
+    const auto remapped = CompileTableCounted(wholeRequest, TableMemoUse::Miss, "image table column memo: a page accessible again kept the layout");
+    require(remapped.capture->snapshot.tables == mapped.capture->snapshot.tables, "image table column memo: a page accessible again did not read as the first read");
+
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    for (std::uint32_t record = 0; record < 8u; record++) guest.heap[record] = image(record);
+    FillTableSrt(guest, guest.heap.data(), 0u, 100u);
+    const auto partial = CompileTableCounted(wholeRequest, TableMemoUse::Miss, "image table column memo: a partial table seen for the first time was not a miss");
+    static_cast<void>(CompileTableCounted(wholeRequest, TableMemoUse::Miss, "image table column memo: a partial table seen for the second time was not a miss that keeps its memo"));
+    const auto partialAgain = CompileTableCounted(wholeRequest, TableMemoUse::Hit, "image table column memo: an unchanged partial table was not a hit");
+    const auto& partialTables = partialAgain.capture->snapshot.tables;
+    const auto& tail = partialTables.words.at(partialTables.tables.at(0).codes.at(3));
+    require(partialAgain.capture->snapshot.tables == partial.capture->snapshot.tables && tail.availableDwordMask == 1u && tail.dwords[0] == guest.heap[3][0], "image table column memo: a hit lost a cut record's available dwords");
+
+    FillTableSrt(guest, guest.heap.data(), 32u, 8u);
+    std::vector<std::uint32_t> narrowCode(TableWholeCode);
+    const auto shift = std::find(narrowCode.begin(), narrowCode.end(), 0x8f108510u);
+    require(shift != narrowCode.end(), "image table column memo: the program has no s_lshl_b32");
+    narrowCode.insert(shift, 0x87108310u);
+    auto wideCode = narrowCode;
+    *std::find(wideCode.begin(), wideCode.end(), 0x8f108510u) = 0x8f108610u;
+    const auto narrowRequest = TableRequest(narrowCode, userData);
+    auto wideRequest = TableRequest(wideCode, userData);
+    wideRequest.shader.codeAddress = narrowRequest.shader.codeAddress;
+    const auto narrowPlan = GetResourcePlan(narrowRequest);
+    const auto widePlan = GetResourcePlan(wideRequest);
+    require(narrowPlan->info.images.size() == 1u && widePlan->info.images.size() == 1u && narrowPlan->info.images[0].table == 0u && widePlan->info.images[0].table == 0u && narrowPlan->info.images[0].source == widePlan->info.images[0].source, "image table column memo: the two programs do not read their table through one source");
+    const auto& narrowColumn = *narrowPlan->descriptorSources.at(narrowPlan->info.images[0].source).tableColumn;
+    const auto& wideColumn = *widePlan->descriptorSources.at(widePlan->info.images[0].source).tableColumn;
+    require(narrowColumn.stride == 32u && wideColumn.stride == 64u && narrowColumn.maxKey == 3u && wideColumn.maxKey == 3u && narrowColumn.keyDomains.empty() && wideColumn.keyDomains.empty(), "image table column memo: the two columns are wrong");
+    const auto byNarrow = CompileTableCounted(narrowRequest, TableMemoUse::Miss, "image table column memo: the first shader's column seen for the first time was not a miss");
+    static_cast<void>(CompileTableCounted(narrowRequest, TableMemoUse::Miss, "image table column memo: the first shader's column seen for the second time was not a miss that keeps its memo"));
+    const auto byNarrowHit = CompileTableCounted(narrowRequest, TableMemoUse::Hit, "image table column memo: the first shader's unchanged column was not a hit");
+    const auto byWide = CompileTableCounted(wideRequest, TableMemoUse::Miss, "image table column memo: another shader's column at the same code address used the first shader's memo");
+    const auto byNarrowAgain = CompileTableCounted(narrowRequest, TableMemoUse::Miss, "image table column memo: the first shader's column used the second shader's memo");
+    const auto& narrowSnapshot = byNarrow.capture->snapshot.tables.tables.at(0);
+    const auto& wideSnapshot = byWide.capture->snapshot.tables.tables.at(0);
+    require(narrowSnapshot.base == wideSnapshot.base && narrowSnapshot.size == wideSnapshot.size && narrowSnapshot.keys == 4u && wideSnapshot.keys == 4u, "image table column memo: the two columns do not share a base, a size and a key count");
+    require(TableRecordWords(byNarrow) == std::vector<std::array<std::uint32_t, 8>>{guest.heap[0], guest.heap[1], guest.heap[2], guest.heap[3]}, "image table column memo: the stride-32 column read the wrong records");
+    require(TableRecordWords(byWide) == std::vector<std::array<std::uint32_t, 8>>{guest.heap[0], guest.heap[2], guest.heap[4], guest.heap[6]}, "image table column memo: another shader's column at the same code address took the first shader's records");
+    require(byNarrowHit.capture->snapshot.tables == byNarrow.capture->snapshot.tables && byNarrowAgain.capture->snapshot.tables == byNarrow.capture->snapshot.tables, "image table column memo: the first shader's column read differently after the second shader's");
+
+    auto* root = reinterpret_cast<std::uint32_t*>(bytes);
+    std::fill_n(root, Pages * Page / sizeof(std::uint32_t), 0u);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root));
+    static std::array<std::uint32_t, 8> keys{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto keysV = TableV(keys.data(), 0u, static_cast<std::uint32_t>(sizeof(keys)));
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(keysV.begin(), keysV.end(), root);
+    std::copy(outputV.begin(), outputV.end(), root + 4);
+    const auto place = [&](std::uint32_t index, const std::array<std::uint32_t, 8>& words) {
+        std::copy(words.begin(), words.end(), root + (Palette + index * 32u) / 4u);
+    };
+    const auto held = [&] {
+        std::vector<std::array<std::uint32_t, 8>> words(256u);
+        for (std::uint32_t index = 0; index < 256u; index++) std::copy_n(root + (Palette + index * 32u) / 4u, 8u, words[index].begin());
+        return words;
+    };
+    for (const auto index : {0u, 1u, 2u, 125u, 126u, 127u, 253u, 254u, 255u}) place(index, image(index));
+    const std::array<std::uint32_t, 2> pointerUserData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const std::vector<std::uint32_t> pointerCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u,
+        0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    const auto pointerRequest = TableRequest(pointerCode, pointerUserData);
+    const auto first = CompileTableCounted(pointerRequest, TableMemoUse::Miss, "image table column memo: a pointer column seen for the first time was not a miss");
+    static_cast<void>(CompileTableCounted(pointerRequest, TableMemoUse::Miss, "image table column memo: a pointer column seen for the second time was not a miss that keeps its memo"));
+    const auto& firstSnapshot = first.capture->snapshot.tables.tables.at(0);
+    require(firstSnapshot.base == base && firstSnapshot.keys == 256u && TableRecordWords(first) == held(), "image table column memo: the pointer column's first read is wrong");
+    const auto repeated = CompileTableCounted(pointerRequest, TableMemoUse::Hit, "image table column memo: an unchanged pointer column was not a hit");
+    require(repeated.capture->snapshot.tables == first.capture->snapshot.tables, "image table column memo: an unchanged pointer column read twice differs");
+    const auto original = held()[126];
+    place(126u, image(200u));
+    const auto changed = CompileTableCounted(pointerRequest, TableMemoUse::LayoutReused, "image table column memo: a changed record of a pointer column did not reuse the layout and read the words again");
+    require(image(200u) != original && TableRecordWords(changed) == held(), "image table column memo: a changed record of a pointer column was not read again");
+    place(126u, original);
+    const auto restored = CompileTableCounted(pointerRequest, TableMemoUse::LayoutReused, "image table column memo: a restored record of a pointer column did not reuse the layout and read the words again");
+    require(restored.capture->snapshot.tables == first.capture->snapshot.tables, "image table column memo: a pointer column restored after a change differs from its first read");
+    TableProtect(bytes + Page, false);
+    const auto pointerCut = CompileTableCounted(pointerRequest, TableMemoUse::Miss, "image table column memo: a pointer column page that became inaccessible kept the layout");
+    TableProtect(bytes + Page, true);
+    const auto& pointerCutCodes = pointerCut.capture->snapshot.tables.tables.at(0).codes;
+    const auto pointerCutWords = TableRecordWords(pointerCut);
+    const auto firstWords = TableRecordWords(first);
+    bool cutRight = pointerCutCodes.size() == 256u;
+    for (std::uint32_t index = 0; cutRight && index < 256u; index++) {
+        const auto offset = Palette + index * 32u;
+        cutRight = offset >= Page && offset < 2u * Page ? pointerCutCodes[index] == unmapped : pointerCutWords[index] == firstWords[index];
+    }
+    require(cutRight, "image table column memo: a pointer column's records on a page that became inaccessible were not Unmapped poison");
+    const auto pointerRemapped = CompileTableCounted(pointerRequest, TableMemoUse::Miss, "image table column memo: a pointer column page accessible again kept the layout");
+    require(pointerRemapped.capture->snapshot.tables == first.capture->snapshot.tables, "image table column memo: a pointer column's page accessible again did not read as the first read");
+#ifdef _WIN32
+    VirtualFree(block, 0, MEM_RELEASE);
+#else
+    munmap(block, Pages * Page);
 #endif
 }
 
@@ -5177,6 +5355,7 @@ int main(int argc, char** argv) {
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableOffsetCarry();
+            verifyImageTableColumnMemo();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
@@ -5208,6 +5387,7 @@ int main(int argc, char** argv) {
         verifyScalarAddressRule();
         verifyPointerImageTable();
         verifyPointerTableOffsetCarry();
+        verifyImageTableColumnMemo();
         verifyDescriptorPhis();
         verifyUniformTableImage();
         verifyLaneSelectedDescriptors();
