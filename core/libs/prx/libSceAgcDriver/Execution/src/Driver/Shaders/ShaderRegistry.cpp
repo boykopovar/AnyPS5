@@ -757,6 +757,7 @@ void BuildRegisteredAbiKey(const QueueState& state, const VulkanDevice& device, 
 
 struct RegisteredPreparation {
     std::size_t codeOffset = 0;
+    bool registration = false;
     ShaderRecompiler::SwappcInfo swappc{};
     std::vector<std::uint32_t> userData;
     std::array<ShaderRecompiler::MemoryRegion, 2> memory{};
@@ -802,6 +803,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     auto plan = std::make_unique<RegisteredPreparation>();
     plan->codeOffset = codeOffset;
     ShaderRecompiler::RdnaProgram decoded;
+    plan->registration = registration;
     try {
         decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
     } catch (const ShaderRecompiler::UnsupportedInstructionError& error) {
@@ -911,6 +913,11 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
     } else if (request.context.pixel) {
         request.layout.pushConstantSizeBytes = 0;
         append();
+    }
+    if (plan.registration) {
+        for (const auto& entry : entries) {
+            if (entry.handle != nullptr) ShaderRecompiler::ReleaseUndrawnResourcePlan(*entry.handle);
+        }
     }
     return entries;
 }
