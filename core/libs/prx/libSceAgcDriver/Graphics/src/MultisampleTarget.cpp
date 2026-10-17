@@ -402,14 +402,18 @@ void guardReads(std::uint64_t address, std::size_t bytes) {
 void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
     RetireUnmappedDepth_nid_no_patch(address, bytes);
     std::unique_lock lock(guardedMutex());
+    bool metadataChanged = false;
     const auto invalidated = std::erase_if(guarded(), [&](const auto& range) {
-        if (range.metadataValid && address < range.address + range.bytes && range.address < address + bytes) range.metadataValid->store(false, std::memory_order_release);
+        if (range.metadataValid && address < range.address + range.bytes && range.address < address + bytes) {
+            range.metadataValid->store(false, std::memory_order_release);
+            metadataChanged = true;
+        }
         if (range.address < address || range.address - address > bytes || range.bytes > bytes - (range.address - address)) return false;
         if (!range.metadataValid) range.active->store(false, std::memory_order_release);
         return true;
     });
     const auto staleMetadata = std::erase_if(guarded(), [](const auto& range) { return range.metadataValid && !range.active->load(std::memory_order_acquire); });
-    if (invalidated != 0 || staleMetadata != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
+    if (metadataChanged || invalidated != 0 || staleMetadata != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
