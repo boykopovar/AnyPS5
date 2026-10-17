@@ -234,6 +234,30 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dynamic_loader_fixed_base PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:guest_module_fixture>")
     endif()
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/variant_names")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/variant_names/guest_module_fixture.sprx.elf.GUEST.PRX" "not a module\n")
+    add_custom_command(TARGET guest_module_fixture POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:guest_module_fixture>"
+            "${CMAKE_CURRENT_BINARY_DIR}/variant_names/guest_module_fixture.elf.GUEST.PRX"
+        VERBATIM)
+    if(NOT WIN32)
+        add_custom_command(TARGET guest_module_fixture POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E create_symlink missing.guest.prx
+                "${CMAKE_CURRENT_BINARY_DIR}/variant_names/guest_module_fixture.zprx.elf.GUEST.PRX"
+            VERBATIM)
+    endif()
+    add_test_executable(guest_dynamic_loader_variants_tests ${LIBS_INCLUDE_DIR}/tests/GuestDynamicLoaderVariants.cpp)
+    target_include_directories(guest_dynamic_loader_variants_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_dynamic_loader_variants_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_dynamic_loader_variants_tests)
+    add_dependencies(guest_dynamic_loader_variants_tests guest_module_fixture)
+    add_test(NAME guest_dynamic_loader_variant_names COMMAND guest_dynamic_loader_variants_tests)
+    set_tests_properties(guest_dynamic_loader_variant_names PROPERTIES TIMEOUT 15
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/variant_names")
+    if(WIN32)
+        set_tests_properties(guest_dynamic_loader_variant_names PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_module_info_tests ${LIBS_INCLUDE_DIR}/tests/GuestModuleInfo.cpp)
     target_include_directories(guest_module_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_module_info_tests PRIVATE libkernel libc)

@@ -83,7 +83,18 @@ struct NameMatch {
     std::string name;
     std::optional<std::filesystem::path> path;
     bool ambiguous = false;
+    bool stem = false;
 };
+
+std::string_view NameStem(std::string_view name) {
+    return name.substr(0, name.find('.'));
+}
+
+bool SameRelinkedStem(std::string_view filename, std::string_view name) {
+    constexpr std::string_view suffix = ".guest.prx";
+    if (filename.size() <= suffix.size() || !SameName(filename.substr(filename.size() - suffix.size()), suffix)) return false;
+    return SameName(NameStem(filename.substr(0, filename.size() - suffix.size())), NameStem(name));
+}
 
 std::error_code MatchNames(const std::filesystem::path& directory, std::span<NameMatch> names) {
     std::error_code error;
@@ -91,6 +102,12 @@ std::error_code MatchNames(const std::filesystem::path& directory, std::span<Nam
     for (; !error && entry != end; entry.increment(error)) {
         const auto filename = entry->path().filename().string();
         for (auto& name : names) {
+            if (name.stem) {
+                std::error_code status;
+                if (!SameRelinkedStem(filename, name.name) || !entry->is_regular_file(status) || status) continue;
+                if (!name.path || filename.size() < name.path->filename().string().size()) name.path = entry->path();
+                continue;
+            }
             if (!SameName(filename, name.name)) continue;
             name.ambiguous = name.ambiguous || name.path.has_value();
             name.path = entry->path();
@@ -494,9 +511,10 @@ extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::file
     const auto relinked = RelinkedModuleName(path);
     std::error_code error;
     if (std::filesystem::is_regular_file(relinked, error)) return relinked;
-    NameMatch names[] = {{relinked.filename().string()}};
+    NameMatch names[] = {{relinked.filename().string()}, {path.filename().string(), std::nullopt, false, true}};
     MatchNames(relinked.parent_path().empty() ? "." : relinked.parent_path(), names);
-    return MatchedModuleOrPath(path, relinked, names[0]);
+    if (names[0].ambiguous || names[0].path) return MatchedModuleOrPath(path, relinked, names[0]);
+    return names[1].path ? *names[1].path : path;
 }
 
 extern "C" int SetWorkingDirectory_nid_no_patch(const char* resolved) {
