@@ -855,6 +855,17 @@ static void CheckStreamAddressLengths() {
     for (const int descriptor : {accepted, client, listener}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
+static void CheckKernelSocketOption() {
+    const int kernel = socket_nid_postfix(2, 1, 0);
+    Require(kernel >= 0);
+    const int size = 65536;
+    Require(sceNetSetsockopt(kernel, 0xffff, 0x1001, &size, sizeof(size)) == 0);
+    const int one = 1;
+    Require(sceNetSetsockopt(kernel, 6, 1, &one, sizeof(one)) == 0);
+    Require(close_nid_postfix(kernel) == 0);
+    Require(Failed(sceNetSetsockopt(kernel, 0xffff, 0x1001, &size, sizeof(size)), 9));
+}
+
 static void CheckBufferSizes() {
     const int socket = sceNetSocket("buffer-sizes", 2, 2, 17);
     Require(socket >= 0);
@@ -1106,6 +1117,7 @@ int main() {
     CheckStreamAddressLengths();
     CheckBufferSizes();
     CheckOnesBroadcast();
+    CheckKernelSocketOption();
 
     const int epoll = sceNetEpollCreate("guest-sce-net", 0);
     Require(epoll >= 0);
