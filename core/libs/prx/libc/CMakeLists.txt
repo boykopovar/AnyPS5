@@ -20,6 +20,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CallTrace.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HotReload.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
@@ -87,7 +88,6 @@ if(BUILD_TESTING)
         add_test(NAME guest_fopen_errors COMMAND guest_fopen_errors_tests)
         set_tests_properties(guest_fopen_errors PROPERTIES TIMEOUT 20)
     endif()
-
     add_test_executable(guest_allocating_strings_tests ${LIBS_INCLUDE_DIR}/tests/GuestAllocatingStrings.cpp)
     target_include_directories(guest_allocating_strings_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_allocating_strings_tests PRIVATE libc)
