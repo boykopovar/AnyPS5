@@ -163,7 +163,7 @@ def check_internal_guest_libc(convert, work, relinker):
                 assert run.returncode == expected, (run.returncode, run.stdout, run.stderr)
 
 
-def consumer(owner, symbol='shared#A#B', expected=22, module_name=None):
+def consumer(owner, symbol='shared#A#B', expected=22, module_name=None, needed_module_tag=0x61000045):
     image = module_with_symbol(False)
     strings = b'\0' + symbol.encode() + b'\0' + owner.encode() + b'\0'
     owner_offset = len(symbol) + 2
@@ -174,7 +174,7 @@ def consumer(owner, symbol='shared#A#B', expected=22, module_name=None):
     image[0x800:0x800 + len(strings)] = strings
     tags = [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
             (4, 0x2240), (7, 0x2300), (8, 24), (9, 24), (12, 0x1010),
-            (1, owner_offset), (0x61000045, (1 << 48) | module_offset)]
+            (1, owner_offset), (needed_module_tag, (1 << 48) | module_offset)]
     dynamic(image, 0x600, 176, tags)
     code = b'\xff\x15' + struct.pack('<i', 0x2320 - 0x1016) + bytes([0x83, 0xf8, expected, 0x74, 2, 0x0f, 0x0b, 0xc3])
     image[0x410:0x410 + len(code)] = code

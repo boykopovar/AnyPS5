@@ -140,6 +140,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     std::map<std::uint64_t, std::uint64_t> tags;
     std::vector<std::uint64_t> needed;
     std::vector<std::uint64_t> moduleImports;
+    std::vector<std::uint64_t> ps4ModuleImports;
     std::vector<std::uint64_t> moduleExports;
     bool terminated = false;
     for (std::uint64_t offset = dynamic->Offset; offset < dynamic->Offset + dynamic->FileSize; offset += 16) {
@@ -148,6 +149,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (tag == 0) { terminated = true; break; }
         if (tag == 1) needed.push_back(value);
         else if (tag == 0x61000045) moduleImports.push_back(value);
+        else if (tag == 0x6100000f) ps4ModuleImports.push_back(value);
         else if (tag == 0x6100000d || tag == 0x61000043) moduleExports.push_back(value);
         else if (tag < 0x60000000 || tag == 0x6ffffef5 || tag == 0x6100003f || (tag >= 0x61000027 && tag <= 0x6100003b)) {
             if (!tags.emplace(tag, value).second) fail("Duplicate dynamic tag " + std::to_string(tag));
@@ -229,7 +231,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     image.Dynamic.DynSymData.assign(bytes.begin() + symOffset, bytes.begin() + symOffset + symSize);
     image.Dynamic.DynStrData.push_back(0);
     std::map<std::uint64_t, std::string> importModules;
-    for (const auto value : moduleImports)
+    if (!moduleImports.empty() && !ps4ModuleImports.empty()) fail("Guest module mixes PS4 and PS5 needed-module tags");
+    for (const auto value : moduleImports.empty() ? ps4ModuleImports : moduleImports)
         if (!importModules.emplace(value >> 48, string(value & 0xffffffffu)).second) fail("Duplicate import module ID");
     std::vector<std::string> neededLibraries;
     for (const auto offset : needed) neededLibraries.push_back(string(offset));
