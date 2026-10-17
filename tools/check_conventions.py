@@ -15,7 +15,7 @@ from nid_names import CPP_TOKEN
 RULES = {
     "comment": ("error", "docs/dev/CONVENTIONS.md", "Comments are only for technical debt, so they need a change to docs/dev/TechnicalDebt.md or docs/dev/debt/ in the same pull request; #endif and namespace ends are always allowed"),
     "silent-stub": ("error", "CONTRIBUTING.md#code", "Unimplemented exports call NotImplemented_nid_no_patch(__func__); silent stubs are listed under Silent stubs in docs/dev/debt/<library>.md, by their file or by name with a path in their library"),
-    "debt-file": ("error", "CONTRIBUTING.md#documentation", "Technical debt about one library or component goes in docs/dev/debt/<name>.md, named after the first core/ path it links: <library> for core/libs/prx/<library>, otherwise <component> for core/<component>"),
+    "debt-file": ("error", "CONTRIBUTING.md#documentation", "Technical debt about one library or component goes in docs/dev/debt/<name>.md, named after the first core/ path it links: <library> for core/libs/prx/<library>, otherwise <component> for core/<component>; entries that link neither stay in docs/dev/TechnicalDebt.md"),
     "duplicate-export": ("error", "CONTRIBUTING.md#code", "Already exported by another library: remove the copy, or use APS5_DUMMY_FUN if nothing is left"),
     "system-dependency": ("error", "CONTRIBUTING.md#code", "Third-party code is a submodule under 3rdparty/ built from source, not found on the system"),
     "title-specific": ("error", "CONTRIBUTING.md#code", "Implement the general behaviour, not what one title needs; title-specific code belongs in its sce_module"),
@@ -233,9 +233,11 @@ class Check:
         for path, lines in files.items():
             fenced = fenced_lines(self.show(path))
             for number, text in lines:
-                name = debt_name(text) if is_debt(path) and text.startswith("- ") else None
-                if name and path != f"{DEBT_DIR}{name}.md":
-                    self.report("debt-file", path, number, f"{DEBT_DIR}{name}.md")
+                if is_debt(path) and text.startswith("- "):
+                    name = debt_name(text)
+                    expected = f"{DEBT_DIR}{name}.md" if name else DEBT
+                    if path != expected:
+                        self.report("debt-file", path, number, expected)
                 if number in fenced:
                     continue
                 for target, resolved in links(path, text):

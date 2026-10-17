@@ -343,6 +343,12 @@ class SilentStubSectionTests(unittest.TestCase):
         result = self.check_stub("# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n", "docs/dev/TechnicalDebt.md")
         self.assertNotIn("[debt-file]", result.stdout + result.stderr)
 
+    def test_entry_without_a_core_link_in_a_library_file_is_rejected(self):
+        result = self.check_stub("# libSceExample technical debt\n\n### Functional\n\n- A driver limitation.\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/dev/debt/libSceExample.md:5: error: [debt-file]", result.stdout)
+        self.assertIn("docs/dev/TechnicalDebt.md", result.stdout)
+
 
 class TestFixtureExportTests(unittest.TestCase):
     def check(self, path, text):
