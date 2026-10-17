@@ -145,7 +145,12 @@ public:
 
         const auto x = load(floatType, access(ptrInputFloat, tessCoord, intConstant(0)));
         const auto y = load(floatType, access(ptrInputFloat, tessCoord, intConstant(1)));
-        const auto index = result(spv::OpIAdd, intType, result(spv::OpIMul, intType, result(spv::OpConvertFToS, intType, y), intConstant(2)), result(spv::OpConvertFToS, intType, x));
+        const auto half = constant(floatType, std::bit_cast<std::uint32_t>(0.5f));
+        const auto xHalf = result(spv::OpFAdd, floatType, x, half);
+        const auto yHalf = result(spv::OpFAdd, floatType, y, half);
+        const auto xInt = result(spv::OpConvertFToS, intType, xHalf);
+        const auto yInt = result(spv::OpConvertFToS, intType, yHalf);
+        const auto index = result(spv::OpIAdd, intType, result(spv::OpIMul, intType, yInt, intConstant(2)), xInt);
 
         const auto position = load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0)));
         store(access(ptrOutputVec4Float, glOut, intConstant(0)), position);
