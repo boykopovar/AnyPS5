@@ -4,10 +4,26 @@
 #ifdef _WIN32
 #include <io.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
-namespace { FileStream input{stdin}; }
+namespace {
+#ifndef _WIN32
+const bool standardDescriptorsOpen = [] {
+    for (int descriptor = 0; descriptor <= 2; ++descriptor) {
+        if (::fcntl(descriptor, F_GETFD) != -1 || errno != EBADF) continue;
+        const int opened = ::open("/dev/null", descriptor == 0 ? O_RDONLY : O_WRONLY);
+        if (opened > descriptor) {
+            ::dup2(opened, descriptor);
+            ::close(opened);
+        }
+    }
+    return true;
+}();
+#endif
+FileStream input{stdin};
+}
 extern "C" {
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
