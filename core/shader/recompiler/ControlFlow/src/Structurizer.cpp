@@ -530,12 +530,27 @@ std::uint32_t mergeBesideReturns(const ControlFlowGraph& graph, const BasicBlock
         }
     }
     const auto count = static_cast<std::uint32_t>(graph.blocks.size());
-    const auto returns = [&](std::uint32_t blockId) {
-        if (!graph.Dominates(header.id, blockId) || !hasLinearPathToTerminal(graph, blockId)) {
-            return false;
+    enum class Returning : std::uint8_t { Unknown, Visiting, No, Yes };
+    std::vector<Returning> returning(count, Returning::Unknown);
+    const auto returns = [&](std::uint32_t start) {
+        std::vector<std::uint32_t> pending{start};
+        while (!pending.empty()) {
+            const auto blockId = pending.back();
+            const auto& block = graph.FindBlock(blockId);
+            if (returning[blockId] == Returning::Unknown) {
+                if (block.predecessors.size() == 1u && graph.Dominates(header.id, blockId)) {
+                    returning[blockId] = Returning::Visiting;
+                    std::copy_if(block.successors.begin(), block.successors.end(), std::back_inserter(pending), [&](std::uint32_t successor) { return returning[successor] == Returning::Unknown; });
+                    continue;
+                }
+                returning[blockId] = Returning::No;
+            } else if (returning[blockId] == Returning::Visiting) {
+                const bool privateReturn = std::all_of(block.successors.begin(), block.successors.end(), [&](std::uint32_t successor) { return returning[successor] == Returning::Yes; });
+                returning[blockId] = privateReturn ? Returning::Yes : Returning::No;
+            }
+            pending.pop_back();
         }
-        const auto tail = linearTail(graph, blockId);
-        return std::all_of(tail.begin(), tail.end(), [&](std::uint32_t member) { return graph.FindBlock(member).predecessors.size() == 1u; });
+        return returning[start] == Returning::Yes;
     };
     std::vector<std::vector<std::uint32_t>> kept(count);
     for (const auto& block : graph.blocks) {
