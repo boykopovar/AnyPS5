@@ -114,6 +114,64 @@ class SelectTests(unittest.TestCase):
         self.assertEqual(built, {"alpha_tests"})
 
 
+@unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
+class FixtureBuildTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        cls.source, cls.build, cls.graph = root / "source", root / "build", root / "graph.json"
+        project = dict(PROJECT)
+        project["CMakeLists.txt"] += "add_subdirectory(cleanup)\n"
+        project["cleanup/CMakeLists.txt"] = (
+            "add_executable(cleanup_tests main.c)\nadd_test(NAME beta_cleanup COMMAND cleanup_tests)\n"
+            "set_tests_properties(beta_cleanup PROPERTIES FIXTURES_CLEANUP beta_fixture)\n")
+        project["cleanup/main.c"] = ('#include <stdio.h>\nint main(void) { FILE *f = fopen("cleanup.ran", "w"); '
+                                     'if (!f) return 1; return fclose(f) != 0; }\n')
+        for name, content in project.items():
+            (cls.source / name).parent.mkdir(parents=True, exist_ok=True)
+            (cls.source / name).write_text(content, encoding="utf-8")
+        compiler = shutil.which("gcc") or shutil.which("cc")
+        subprocess.run(["cmake", "-S", str(cls.source), "-B", str(cls.build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
+                       check=True, capture_output=True)
+        subprocess.run(["cmake", "--build", str(cls.build)], check=True, capture_output=True)
+        SelectTests.tool("dump", cls.build, cls.graph)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def run_selected(self, changed, graph):
+        subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+        marker = self.build / "cleanup/cleanup.ran"
+        marker.unlink(missing_ok=True)
+        listed = self.build / "changed.txt"
+        listed.write_text(changed + "\n", encoding="utf-8")
+        SelectTests.tool("select", self.build, graph, listed)
+        subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+        subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+        result = subprocess.run([sys.executable, str(TOOL), "ctest", str(self.build), "--output-on-failure"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(marker.is_file(), "CTest did not execute the fixture cleanup")
+        return result.stdout
+
+    def test_cleanup_executable_is_built_when_ctest_adds_it(self):
+        output = self.run_selected("beta/main.c", self.graph)
+        self.assertIn("beta_cleanup", output)
+        self.assertNotIn("alpha", output)
+        self.assertFalse(any(path.is_file() for path in (self.build / "alpha").glob("alpha_tests*")))
+
+    def test_new_test_gets_its_current_setup_and_cleanup(self):
+        graph = json.loads(self.graph.read_text(encoding="utf-8"))
+        del graph["tests"]["beta"]
+        older = self.build / "older.json"
+        older.write_text(json.dumps(graph), encoding="utf-8")
+        output = self.run_selected("alpha/main.c", older)
+        for name in ("alpha", "alpha_data", "beta", "beta_setup", "beta_cleanup"):
+            self.assertIn(name, output)
+
+
 class CaseInsensitivePathTests(unittest.TestCase):
     def build(self):
         build = object.__new__(select_tests.Build)

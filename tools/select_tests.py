@@ -84,8 +84,8 @@ class Build:
                 leaves.add(name)
         return sorted(leaves)
 
-    def tests(self):
-        listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1"],
+    def tests(self, *arguments):
+        listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
                                             capture_output=True, text=True, check=True).stdout)
         return listing, listing["tests"]
 
@@ -197,7 +197,9 @@ def select(graph, changed):
 def plan(build, graph, picked):
     _, listed = build.tests()
     run = [i for i, t in enumerate(listed, 1) if t["name"] in picked or t["name"] not in graph["tests"]]
-    names = {listed[i - 1]["name"] for i in run}
+    _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
+    names = {t["name"] for t in selected}
+    run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
     keep = {build.output(a) for t in listed if t["name"] in names for a in t.get("command") or [] if os.path.isabs(a)}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
     return run, [t for t in build.leaves() if t not in skip], len(listed)
