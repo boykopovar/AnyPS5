@@ -56,6 +56,7 @@ public:
     void AddMemoryModel(std::uint32_t addressingModel, std::uint32_t memoryModel);
     void AddName(std::uint32_t target, const std::string& name);
     void AddFunction(std::span<const std::uint32_t> words);
+    void AddSubgroupBallot(std::uint32_t type, std::uint32_t result, std::uint32_t scope, std::uint32_t predicate);
     void BeginHelperFunction();
     void EndHelperFunction();
     [[nodiscard]] SpirvDeferredPhi AddDeferredPhi(std::uint32_t type, std::uint32_t result, std::size_t incomingCount);
@@ -257,6 +258,12 @@ private:
     std::vector<std::uint32_t> globalVariables;
     std::vector<std::uint32_t> functionInstructions;
     std::vector<std::uint32_t> helperFunctionInstructions;
+    struct BlockBallots {
+        std::map<std::array<std::uint32_t, 3>, std::uint32_t> results;
+        std::size_t scanned = 0;
+    };
+    BlockBallots ballots;
+    BlockBallots helperBallots;
     bool inHelperFunction = false;
 };
 
