@@ -2701,9 +2701,9 @@ void multisampleTests() {
     for (std::size_t index = 0; index < expectedCheckerboard.size(); ++index) Require(checkerboard[index].x == expectedCheckerboard[index].x && checkerboard[index].y == expectedCheckerboard[index].y, "grid sample locations are not in Vulkan's (x + y * width) * samples + sample order");
     AgcDriver::Graphics::Context gridContext{};
     gridContext.sampleLocationSampleCounts = VK_SAMPLE_COUNT_2_BIT;
-    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(gridContext, state); }, "2x2 sample location grid");
+    Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "a pattern varying between pixels was refused on a device without a 2x2 sample location grid");
     gridContext.sampleLocationGridSampleCounts = VK_SAMPLE_COUNT_4_BIT;
-    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(gridContext, state); }, "2x2 sample location grid");
+    Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "a 2x pattern varying between pixels was refused on a device with a 2x2 grid for 4 samples only");
     gridContext.sampleLocationGridSampleCounts |= VK_SAMPLE_COUNT_2_BIT;
     Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "a supported 2x2 sample location grid was refused");
     queue.context[0x31d] = 0;
@@ -2716,7 +2716,7 @@ void multisampleTests() {
     gridContext.sampleLocationGridSampleCounts = VK_SAMPLE_COUNT_2_BIT;
     expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(gridContext, state); }, "VK_EXT_sample_locations");
     gridContext.sampleLocationSampleCounts |= VK_SAMPLE_COUNT_1_BIT;
-    expectFailure([&] { AgcDriver::Graphics::ValidateSampleLocations(gridContext, state); }, "2x2 sample location grid");
+    Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "a one-sample pattern varying between pixels was refused on a device without a one-sample 2x2 grid");
     gridContext.sampleLocationGridSampleCounts |= VK_SAMPLE_COUNT_1_BIT;
     Require(AgcDriver::Graphics::ValidateSampleLocations(gridContext, state), "one-sample grid locations were refused on a device that supports them");
     for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
@@ -5342,6 +5342,159 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     words.insert(words.end(), declarations.begin(), declarations.end());
     words.insert(words.end(), function.begin(), function.end());
     return words;
+}
+
+struct SampleLocationsUse {
+    VkExtent2D grid{};
+    std::vector<VkSampleLocationEXT> locations;
+};
+
+std::vector<SampleLocationsUse> pipelineSampleLocations;
+std::vector<SampleLocationsUse> passSampleLocations;
+
+void recordSampleLocations(std::vector<SampleLocationsUse>& uses, const VkSampleLocationsInfoEXT& info) {
+    uses.push_back({info.sampleLocationGridSize, {info.pSampleLocations, info.pSampleLocations + info.sampleLocationsCount}});
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL sampleLocationCreateGraphicsPipelines(VkDevice, VkPipelineCache, std::uint32_t count, const VkGraphicsPipelineCreateInfo* infos, const VkAllocationCallbacks*, VkPipeline* pipelines) {
+    Require(count == 1, "the sample location mock expects one pipeline per call");
+    const auto* locations = infos[0].pMultisampleState != nullptr ? static_cast<const VkPipelineSampleLocationsStateCreateInfoEXT*>(infos[0].pMultisampleState->pNext) : nullptr;
+    if (locations != nullptr && locations->sType == VK_STRUCTURE_TYPE_PIPELINE_SAMPLE_LOCATIONS_STATE_CREATE_INFO_EXT && locations->sampleLocationsEnable) recordSampleLocations(pipelineSampleLocations, locations->sampleLocationsInfo);
+    *pipelines = makeHandle<VkPipeline>();
+    ++mock.live;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL sampleLocationCreateRenderPass(VkDevice, const VkRenderPassCreateInfo*, const VkAllocationCallbacks*, VkRenderPass* pass) {
+    *pass = makeHandle<VkRenderPass>();
+    ++mock.live;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL sampleLocationCreateFramebuffer(VkDevice, const VkFramebufferCreateInfo*, const VkAllocationCallbacks*, VkFramebuffer* framebuffer) {
+    *framebuffer = makeHandle<VkFramebuffer>();
+    ++mock.live;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL sampleLocationDestroyRenderPass(VkDevice, VkRenderPass, const VkAllocationCallbacks*) { --mock.live; }
+VKAPI_ATTR void VKAPI_CALL sampleLocationDestroyFramebuffer(VkDevice, VkFramebuffer, const VkAllocationCallbacks*) { --mock.live; }
+VKAPI_ATTR void VKAPI_CALL sampleLocationSetViewport(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkViewport*) {}
+VKAPI_ATTR void VKAPI_CALL sampleLocationSetScissor(VkCommandBuffer, std::uint32_t, std::uint32_t, const VkRect2D*) {}
+
+VKAPI_ATTR void VKAPI_CALL sampleLocationBeginRenderPass(VkCommandBuffer, const VkRenderPassBeginInfo* begin, VkSubpassContents) {
+    const auto* locations = static_cast<const VkRenderPassSampleLocationsBeginInfoEXT*>(begin->pNext);
+    if (locations == nullptr || locations->sType != VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT) return;
+    for (std::uint32_t index = 0; index < locations->attachmentInitialSampleLocationsCount; ++index) recordSampleLocations(passSampleLocations, locations->pAttachmentInitialSampleLocations[index].sampleLocationsInfo);
+    for (std::uint32_t index = 0; index < locations->postSubpassSampleLocationsCount; ++index) recordSampleLocations(passSampleLocations, locations->pPostSubpassSampleLocations[index].sampleLocationsInfo);
+}
+
+PFN_vkVoidFunction VKAPI_CALL sampleLocationProc(VkDevice device, const char* name) {
+    static const std::map<std::string_view, PFN_vkVoidFunction> table{
+        {"vkCreateGraphicsPipelines", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationCreateGraphicsPipelines)},
+        {"vkCreateRenderPass", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationCreateRenderPass)},
+        {"vkDestroyRenderPass", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationDestroyRenderPass)},
+        {"vkCreateFramebuffer", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationCreateFramebuffer)},
+        {"vkDestroyFramebuffer", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationDestroyFramebuffer)},
+        {"vkCmdBeginRenderPass", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationBeginRenderPass)},
+        {"vkCmdSetViewport", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationSetViewport)},
+        {"vkCmdSetScissor", reinterpret_cast<PFN_vkVoidFunction>(sampleLocationSetScissor)}
+    };
+    const auto it = table.find(name);
+    return it != table.end() ? it->second : mockProc(device, name);
+}
+
+void sampleLocationGridFallbackTests() {
+    using namespace AgcDriver::Graphics;
+    auto queue = makeState();
+    queue.context[0x2f8] = 0x00100001;
+    queue.context[0x292] = 3;
+    queue.context[0x3b8] = 0x0dc00000u;
+    queue.context[0x31d] = 0x9000;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    for (const auto [pixel, word] : {std::pair{0u, 0x0c04u}, std::pair{1u, 0x0c04u}, std::pair{2u, 0x040cu}, std::pair{3u, 0x040cu}}) queue.context[0x2fe + pixel * 4u] = word;
+    const auto checkerboard = DecodeState(queue);
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x0c04u;
+    const auto uniform = DecodeState(queue);
+    Require(checkerboard.samples == 2 && checkerboard.customSampleLocations && checkerboard.sampleLocationGrid && uniform.samples == 2 && uniform.customSampleLocations && !uniform.sampleLocationGrid, "the 2x checkerboard (PPSA01556) or the uniform pattern of its pixel (0,0) did not decode");
+    auto sampleZero = checkerboard;
+    sampleZero.samples = 1;
+    sampleZero.sampleLocations = {};
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) sampleZero.sampleLocations[pixel * 8u] = checkerboard.sampleLocations[pixel * 8u];
+    const auto previousDepthSamples = depthSampleCounts;
+    depthSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 1;
+    fragment.variantId = 2;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    const std::array<std::uint32_t, 1> mainKey{41};
+    const auto draw = [&](const State& decoded, VkSampleCountFlags gridSamples, bool libraries, bool depth) {
+        mock = MockVulkan{};
+        pipelineSampleLocations.clear();
+        passSampleLocations.clear();
+        auto context = mockContext();
+        context.deviceProc = sampleLocationProc;
+        context.device = makeHandle<VkDevice>();
+        context.graphicsPipelineLibrary = libraries;
+        context.sampleLocationSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT;
+        context.sampleLocationGridSampleCounts = gridSamples;
+        context.imageFormatProperties = sampleLocationDepthProperties;
+        context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT;
+        context.limits.framebufferDepthSampleCounts = VK_SAMPLE_COUNT_2_BIT;
+        context.limits.maxFramebufferWidth = 64;
+        context.limits.maxFramebufferHeight = 64;
+        context.limits.maxFramebufferLayers = 1;
+        State state{};
+        state.samples = decoded.samples;
+        state.sampleLocations = decoded.sampleLocations;
+        state.customSampleLocations = decoded.customSampleLocations;
+        state.sampleLocationGrid = decoded.sampleLocationGrid;
+        if (depth) {
+            state.depth = DepthTarget{0, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+            state.depth->samples = state.samples;
+            state.depthTest = true;
+            state.depthCompare = VK_COMPARE_OP_LESS;
+        }
+        const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, mainKey, {}};
+        if (libraries) {
+            Require(Pipeline::Prebuild(context, state, VertexInputLayout{}, resources, shaders), "the sample location pipeline's libraries were not prebuilt");
+        } else {
+            Pipeline pipeline(context, state, VertexInputLayout{}, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+            const std::array<VkImageView, 1> depthView{makeHandle<VkImageView>()};
+            const auto framebuffer = pipeline.AcquireFramebuffer(std::span(depthView).first(depth ? 1u : 0u), {}, {64, 64});
+            pipeline.Begin(makeHandle<VkCommandBuffer>(), *framebuffer, {64, 64}, state);
+        }
+        ClearPipelineLibraries(context.device);
+        Require(mock.live == 0, "sample location grid fallback tests leaked Vulkan objects");
+        Require(pipelineSampleLocations.size() == (libraries ? 2u : 1u) && passSampleLocations.size() == (libraries ? 0u : depth ? 2u : 1u), "the pipeline or render pass did not take its sample locations once per library or attachment");
+        auto uses = pipelineSampleLocations;
+        uses.insert(uses.end(), passSampleLocations.begin(), passSampleLocations.end());
+        return uses;
+    };
+    const auto expect = [](const std::vector<SampleLocationsUse>& uses, VkExtent2D grid, std::span<const VkSampleLocationEXT> locations, const std::string& what) {
+        for (const auto& use : uses) {
+            Require(use.grid.width == grid.width && use.grid.height == grid.height && use.locations.size() == locations.size(), what + " took the wrong sample location grid");
+            for (std::size_t index = 0; index < locations.size(); ++index) Require(use.locations[index].x == locations[index].x && use.locations[index].y == locations[index].y, what + " took the wrong sample locations");
+        }
+    };
+    const std::array<VkSampleLocationEXT, 2> pixelZero{{{0.75f, 0.5f}, {0.25f, 0.5f}}};
+    const std::array<VkSampleLocationEXT, 8> grid{{{0.75f, 0.5f}, {0.25f, 0.5f}, {0.75f, 0.5f}, {0.25f, 0.5f}, {0.25f, 0.5f}, {0.75f, 0.5f}, {0.25f, 0.5f}, {0.75f, 0.5f}}};
+    const std::array<VkSampleLocationEXT, 1> sampleZeroPixelZero{{{0.75f, 0.5f}}};
+    const std::array<VkSampleLocationEXT, 4> sampleZeroGrid{{{0.75f, 0.5f}, {0.75f, 0.5f}, {0.25f, 0.5f}, {0.25f, 0.5f}}};
+    for (const bool libraries : {true, false}) {
+        for (const bool depth : {false, true}) {
+            for (const VkSampleCountFlags gridSamples : {VkSampleCountFlags{0}, VkSampleCountFlags{VK_SAMPLE_COUNT_4_BIT}}) expect(draw(checkerboard, gridSamples, libraries, depth), {1, 1}, pixelZero, "a 2x checkerboard on a device without a 2x2 grid for 2 samples");
+            expect(draw(checkerboard, VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT, libraries, depth), {2, 2}, grid, "a 2x checkerboard on a device with a 2x2 grid for 2 samples");
+            for (const VkSampleCountFlags gridSamples : {VkSampleCountFlags{0}, VkSampleCountFlags{VK_SAMPLE_COUNT_2_BIT}}) expect(draw(uniform, gridSamples, libraries, depth), {1, 1}, pixelZero, "a uniform 2x pattern");
+        }
+        expect(draw(sampleZero, VK_SAMPLE_COUNT_2_BIT, libraries, false), {1, 1}, sampleZeroPixelZero, "one sample at sample 0's checkerboard locations on a device without a one-sample grid");
+        expect(draw(sampleZero, VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT, libraries, false), {2, 2}, sampleZeroGrid, "one sample at sample 0's checkerboard locations on a device with a one-sample grid");
+    }
+    depthSampleCounts = previousDepthSamples;
+    mock = MockVulkan{};
 }
 
 void pipelineLibrarySetTests() {
@@ -8030,6 +8183,11 @@ int main(int argc, char** argv) {
             bufferBudgetPlacementTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--sample-location-grid-fallback") {
+            sampleLocationGridFallbackTests();
+            std::cout << "Sample location grid fallback checks passed\n";
+            return 0;
+        }
         {
             AgcDriver::Graphics::PipelineCacheSynchronization synchronization;
             auto pipelineUse = synchronization.LockForPipelineUse();
@@ -8169,6 +8327,7 @@ int main(int argc, char** argv) {
         clipDistanceTests();
         framebufferLayerTests();
         UnwrittenSampleLocationTests();
+        sampleLocationGridFallbackTests();
         depthCopyFormatTests();
         quadPixelMaskTests();
         ShaderStageTests();
