@@ -48,11 +48,48 @@ def case_sensitive(directory):
     return sensitive
 
 
+def filesystem_aliases(relinker, work):
+    if os.name == "nt":
+        return
+    for windows in (False, True):
+        for upper, lower in (("A", "a"), ("\u00c4", "\u00e4"), ("\u03a9", "\u03c9"), ("\u0416", "\u0436"),
+                             ("\u00e9", "e\u0301"), ("\u00c4", "a")):
+            case = work / f"alias-{windows}-{ord(upper)}-{ord(lower[0])}-{len(lower)}"
+            command, paths, _ = prepare(case, windows)
+            probe = case / (upper + ".probe")
+            probe.write_bytes(b"identity probe")
+            alternate = case / (lower + ".probe")
+            collide = alternate.exists() and os.path.samefile(probe, alternate)
+            probe.unlink()
+            source = case / lower / "b.bin"
+            source.parent.mkdir()
+            source.write_bytes(main_fixture())
+            suffix = paths["executable"].suffix
+            output = case / (upper + ".b.bin" + suffix)
+            secondary = case / (lower + ".b.bin" + suffix)
+            inputs = {path: path.read_bytes() for path in case.rglob("*") if path.is_file()}
+            result = subprocess.run([str(relinker), *command[:-2], "--executable", f"{lower}/b.bin",
+                                     command[-2], str(output)], cwd=case,
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
+            for path, original in inputs.items():
+                assert path.read_bytes() == original, path
+            if collide:
+                assert result.returncode == 2 and "Output paths collide" in result.stderr, (
+                    windows, upper, lower, result.stdout, result.stderr)
+                assert {path for path in case.rglob("*") if path.is_file()} == set(inputs)
+            else:
+                assert result.returncode == 0 and output.exists() and secondary.exists(), (
+                    windows, upper, lower, result.stdout, result.stderr)
+                assert not os.path.samefile(output, secondary)
+            assert not list(case.rglob(".anyps5-output-identity-*"))
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     checked = 0
     with tempfile.TemporaryDirectory(prefix="anyps5-output-collisions-") as directory:
         work = Path(directory)
+        filesystem_aliases(relinker, work)
         for windows in (False, True):
             command, paths, inputs = prepare(work / f"{windows}-control", windows)
             links = paths["executable"].parent / "separate-links"
@@ -90,7 +127,7 @@ def main():
                 assert not list(case.rglob(".anyps5-output-identity-*"))
                 checked += 1
         names = ["windows-diagnostics-imports.txt"]
-        if os.name == "nt" and not case_sensitive(work):
+        if not case_sensitive(work):
             names.append("WINDOWS-DIAGNOSTICS-IMPORTS.TXT")
         for index, name in enumerate(names):
             for existing in (False, True):
