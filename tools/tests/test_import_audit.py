@@ -207,6 +207,18 @@ class Workspace:
 
 
 class ImportAuditTests(unittest.TestCase):
+    def test_cli_error_paths_are_utf8_under_an_ascii_environment(self):
+        registry = self.work.root / "\u65e5\u672c\u8a9e.json"
+        result = subprocess.run(
+            [sys.executable, str(Path(import_audit.__file__)), str(registry),
+             "--libs", str(self.work.libs), "--source", str(self.work.source)],
+            env=dict(os.environ, PYTHONIOENCODING="ascii"), capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(str(registry), result.stderr.decode("utf-8"))
+        self.assertNotIn(b"Traceback", result.stderr)
+        self.assertEqual(result.stdout, b"")
+
+
     def test_registry_weak_flags_are_booleans(self):
         registry = self.work.root / "game.json"
         output = self.work.root / "audit.json"
