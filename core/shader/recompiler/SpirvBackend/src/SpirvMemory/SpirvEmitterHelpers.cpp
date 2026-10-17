@@ -77,6 +77,7 @@ std::uint32_t BuiltInForInput(StageInputKind kind) {
     case StageInputKind::HelperInvocation: return spv::BuiltInHelperInvocation;
     case StageInputKind::Layer: return spv::BuiltInLayer;
     case StageInputKind::SampleId: return spv::BuiltInSampleId;
+    case StageInputKind::SampleMask: return spv::BuiltInSampleMask;
     case StageInputKind::BaryCoordSmooth: return spv::BuiltInBaryCoordKHR;
     case StageInputKind::BaryCoordNoPerspective: return spv::BuiltInBaryCoordNoPerspKHR;
     case StageInputKind::WorkgroupId: return spv::BuiltInWorkgroupId;
@@ -241,6 +242,9 @@ void DefineInputs(SpirvEmitterState& state) {
         case StageInputKind::HelperInvocation:
             type = TypeBool(state);
             break;
+        case StageInputKind::SampleMask:
+            type = SampleMaskArrayType(state);
+            break;
         case StageInputKind::Parameter:
             if (state.program.Resources().stage == IrShaderStage::Vertex || state.program.Resources().stage == IrShaderStage::Local) {
                 type = VertexParameterScalarType(state, VertexParameterScalarKind(state, input.location));
@@ -258,7 +262,7 @@ void DefineInputs(SpirvEmitterState& state) {
             break;
         }
         input.variableId = DefineInterfaceVariable(state, type, spv::StorageClassInput, input.debugName.c_str());
-        if (input.kind == StageInputKind::Layer || input.kind == StageInputKind::SampleId) {
+        if (input.kind == StageInputKind::Layer || input.kind == StageInputKind::SampleId || input.kind == StageInputKind::SampleMask) {
             state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationFlat);
         }
         if (input.kind == StageInputKind::Parameter) {
@@ -303,9 +307,14 @@ void DefineInputs(SpirvEmitterState& state) {
         }
     }
     if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->QuadSampleMaskPartial()) {
-        state.sampleMaskInputVariable = DefineInterfaceVariable(state, SampleMaskArrayType(state), spv::StorageClassInput, "gl_SampleMaskIn");
-        state.module.AddAnnotation(spv::OpDecorate, state.sampleMaskInputVariable, spv::DecorationBuiltIn, spv::BuiltInSampleMask);
-        state.module.AddAnnotation(spv::OpDecorate, state.sampleMaskInputVariable, spv::DecorationFlat);
+        const auto read = std::find_if(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) { return input.kind == StageInputKind::SampleMask && input.variableId != 0u; });
+        if (read != state.inputs.end()) {
+            state.sampleMaskInputVariable = read->variableId;
+        } else {
+            state.sampleMaskInputVariable = DefineInterfaceVariable(state, SampleMaskArrayType(state), spv::StorageClassInput, "gl_SampleMaskIn");
+            state.module.AddAnnotation(spv::OpDecorate, state.sampleMaskInputVariable, spv::DecorationBuiltIn, spv::BuiltInSampleMask);
+            state.module.AddAnnotation(spv::OpDecorate, state.sampleMaskInputVariable, spv::DecorationFlat);
+        }
     }
 }
 

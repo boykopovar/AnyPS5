@@ -143,6 +143,7 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                         }
                         case StageInputKind::Layer:
                         case StageInputKind::SampleId:
+                        case StageInputKind::SampleMask:
                         case StageInputKind::RasterPrimitive:
                         case StageInputKind::LayerExported:
                             if (program.Resources().stage != IrShaderStage::Pixel || component != 0u) {
@@ -370,6 +371,9 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::SampleId:
                     AddInput(info, kind, 0, 1, "gl_SampleID");
+                    break;
+                case StageInputKind::SampleMask:
+                    AddInput(info, kind, 0, 1, "gl_SampleMaskIn");
                     break;
                 case StageInputKind::BaryCoordSmooth:
                     AddInput(info, kind, 0, 3, "gl_BaryCoordKHR");
