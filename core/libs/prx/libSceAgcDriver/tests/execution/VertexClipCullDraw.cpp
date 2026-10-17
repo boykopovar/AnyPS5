@@ -201,6 +201,8 @@ void PositionExportLayoutTests() {
     for (int use = 0; use < 2; ++use) Require(PositionExportLayout(&snapshot, 0, snapshot.code, 0x0040000fu) == 0u, "a cached pos0-only program kept the position export bits");
     snapshot.code.assign(VertexCode.begin(), VertexCode.end());
     Require(PositionExportLayout(&snapshot, 2, std::span(snapshot.code).subspan(2), 0x0040000fu) == 0x0040000fu, "a program at an offset was answered from the cache of its snapshot");
+    constexpr std::array<std::uint32_t, 1> PaddedTail{0u};
+    Require(PositionExportLayout(nullptr, 0, PaddedTail, 0x0040000fu) == 0x0040000fu, "an undecodable registered tail lost the guest's position export bits");
 }
 
 }

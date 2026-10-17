@@ -229,10 +229,15 @@ std::uint32_t PositionExportLayout(const ShaderSnapshot* snapshot, std::size_t c
         const auto use = snapshot->positionVectorUse->load(std::memory_order_acquire);
         if (use != Unknown) return use == Used ? bits : 0;
     }
-    const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
-    const bool used = std::any_of(decoded.instructions.begin(), decoded.instructions.end(), [](const auto& instruction) {
-        return instruction.family == ShaderRecompiler::RdnaInstructionFamily::EXP && instruction.exportTarget >= 0x0du && instruction.exportTarget <= 0x0fu && instruction.exportEnableMask != 0;
-    });
+    bool used = true;
+    try {
+        const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        used = std::any_of(decoded.instructions.begin(), decoded.instructions.end(), [](const auto& instruction) {
+            return instruction.family == ShaderRecompiler::RdnaInstructionFamily::EXP && instruction.exportTarget >= 0x0du && instruction.exportTarget <= 0x0fu && instruction.exportEnableMask != 0;
+        });
+    } catch (const std::invalid_argument& error) {
+        if (std::strstr(error.what(), "opcode is not implemented") == nullptr) throw;
+    }
     if (cached) snapshot->positionVectorUse->store(used ? Used : Unused, std::memory_order_release);
     return used ? bits : 0;
 }
