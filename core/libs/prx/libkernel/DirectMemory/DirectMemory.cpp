@@ -829,11 +829,18 @@ void RecordReservation(const void* addr, size_t len) {
     g_reservations.emplace(start, start + len);
 }
 
+int ReportedProtection(int prot) {
+    if ((prot & 0x2) != 0) prot |= 0x1;
+    if ((prot & 0x80) != 0) prot |= 0x40;
+    if ((prot & 0x200) != 0) prot |= 0x100;
+    return prot;
+}
+
 void RecordProtection(const void* addr, size_t len, int prot) {
     const auto start = reinterpret_cast<std::uintptr_t>(addr);
     std::lock_guard lock(g_protectionLock);
     EraseProtections(start, start + len);
-    if (prot >= 0) g_protections.emplace(start, ProtectedRange{start + len, prot});
+    if (prot >= 0) g_protections.emplace(start, ProtectedRange{start + len, ReportedProtection(prot)});
 }
 
 void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) {
