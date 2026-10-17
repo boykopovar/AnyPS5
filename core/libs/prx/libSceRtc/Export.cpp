@@ -451,6 +451,90 @@ int APS5_VABI sceRtcSetDosTime(RtcDateTime* time, uint32_t dos_time) {
     return 0;
 }
 
+int APS5_VABI sceRtcGetYear(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->year);
+}
+
+int APS5_VABI sceRtcSetYear(RtcDateTime* time, int year) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (year < 1 || year > 9999) return SCE_RTC_ERROR_INVALID_YEAR;
+    time->year = static_cast<std::uint16_t>(year);
+    return 0;
+}
+
+int APS5_VABI sceRtcGetMonth(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->month);
+}
+
+int APS5_VABI sceRtcSetMonth(RtcDateTime* time, int month) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (month < 1 || month > 12) return SCE_RTC_ERROR_INVALID_MONTH;
+    time->month = static_cast<std::uint16_t>(month);
+    return 0;
+}
+
+int APS5_VABI sceRtcGetDay(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->day);
+}
+
+int APS5_VABI sceRtcSetDay(RtcDateTime* time, int day) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (day < 1 || day > 31) return SCE_RTC_ERROR_INVALID_DAY;
+    time->day = static_cast<std::uint16_t>(day);
+    return 0;
+}
+
+int APS5_VABI sceRtcGetHour(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->hour);
+}
+
+int APS5_VABI sceRtcSetHour(RtcDateTime* time, int hour) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (hour < 0 || hour > 23) return SCE_RTC_ERROR_INVALID_HOUR;
+    time->hour = static_cast<std::uint16_t>(hour);
+    return 0;
+}
+
+int APS5_VABI sceRtcGetMinute(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->minute);
+}
+
+int APS5_VABI sceRtcSetMinute(RtcDateTime* time, int minute) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (minute < 0 || minute > 59) return SCE_RTC_ERROR_INVALID_MINUTE;
+    time->minute = static_cast<std::uint16_t>(minute);
+    return 0;
+}
+
+int APS5_VABI sceRtcGetSecond(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->second);
+}
+
+int APS5_VABI sceRtcSetSecond(RtcDateTime* time, int second) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (second < 0 || second > 59) return SCE_RTC_ERROR_INVALID_SECOND;
+    time->second = static_cast<std::uint16_t>(second);
+    return 0;
+}
+
+int APS5_VABI sceRtcGetMicrosecond(const RtcDateTime* time) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    return static_cast<int>(time->microsecond);
+}
+
+int APS5_VABI sceRtcSetMicrosecond(RtcDateTime* time, int microsecond) {
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (microsecond < 0 || static_cast<std::int64_t>(microsecond) >= TICKS_PER_SECOND) return SCE_RTC_ERROR_INVALID_MICROSECOND;
+    time->microsecond = static_cast<std::uint32_t>(microsecond);
+    return 0;
+}
+
 int APS5_VABI sceRtcFormatRFC3339(char* date_time, const RtcTick* utc, int time_zone_minutes) {
     if (!date_time || !utc) return SCE_RTC_ERROR_INVALID_POINTER;
     if (time_zone_minutes < -1439 || time_zone_minutes > 1439) return SCE_RTC_ERROR_INVALID_VALUE;
