@@ -122,6 +122,12 @@ struct ImageTableReuseCounts {
 };
 ImageTableReuseCounts ImageTableReuses();
 
+struct PresyncSurface {
+    std::uint64_t address;
+    std::uint64_t bytes;
+    bool dccKeys;
+};
+
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
@@ -280,7 +286,7 @@ public:
     // Usable right after the deferred constructor, for address-based builds too (it decodes the
     // compiled shader's bindings itself when stage A has not run), and on a completed object from
     // the resource cache (its Revalidate repeats the same lookups), without the device lock.
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> PresyncSurfaces() const;
+    std::vector<PresyncSurface> PresyncSurfaces() const;
 
 private:
     friend class AgcDriver::VulkanDevice;

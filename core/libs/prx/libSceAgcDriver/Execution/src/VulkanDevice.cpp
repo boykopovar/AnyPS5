@@ -3785,6 +3785,8 @@ struct PresyncCounters {
     std::atomic<std::uint64_t> checked{0};
     std::atomic<std::uint64_t> presyncs{0};
     std::atomic<std::uint64_t> waitedUs{0};
+    std::atomic<std::uint64_t> keyChecks{0};
+    std::atomic<std::uint64_t> keyWaits{0};
     std::atomic<std::int64_t> lastReport{0};
 };
 
@@ -4167,23 +4169,31 @@ RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, cons
     return RecipeOutcome::Recorded;
 }
 
-std::uint64_t VulkanDevice::presync(std::span<const std::pair<std::uint64_t, std::uint64_t>> surfaces) {
+std::uint64_t VulkanDevice::presync(std::span<const Graphics::PresyncSurface> surfaces) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& counters = Presyncs();
     bool overlaps = false;
-    for (const auto& [address, bytes] : surfaces) overlaps = overlaps || Graphics::Recorder::SnapshotWriteOverlaps(address, static_cast<std::size_t>(bytes));
+    for (const auto& surface : surfaces) {
+        const auto bytes = static_cast<std::size_t>(surface.bytes);
+        if (surface.dccKeys) counters.keyChecks.fetch_add(1, std::memory_order_relaxed);
+        overlaps = overlaps || (surface.dccKeys ? Graphics::DccKeyWritersPending(surface.address, bytes) : Graphics::Recorder::SnapshotWriteOverlaps(surface.address, bytes));
+    }
     std::uint64_t serial = 0;
+    bool texelsPending = false;
     if (overlaps) {
         // No reap here (SubmitAndEpoch's would run completions, which a compute worker must not do
         // on queue 0's behalf, see SubmitRecorded): the dispatch reaps after the wait.
         std::lock_guard lock(GuestMemory::GpuMutex());
         if (state->recorder) {
             bool open = false;
-            for (const auto& [address, bytes] : surfaces) {
-                const auto info = state->recorder->DescribePendingWrite(address, static_cast<std::size_t>(bytes));
+            for (const auto& surface : surfaces) {
+                const auto bytes = static_cast<std::size_t>(surface.bytes);
+                if (surface.dccKeys && !Graphics::DccKeyWriterNeedsSync(surface.address, bytes)) continue;
+                const auto info = state->recorder->DescribePendingWrite(surface.address, bytes);
                 if (!info.has_value()) continue;
                 open = open || info->open;
                 serial = std::max(serial, info->serial);
+                texelsPending = texelsPending || !surface.dccKeys;
             }
             if (open) serial = state->recorder->SubmitAndEpoch();
         }
@@ -4192,14 +4202,23 @@ std::uint64_t VulkanDevice::presync(std::span<const std::pair<std::uint64_t, std
         const auto waitStart = std::chrono::steady_clock::now();
         WaitRecorded(serial);
         counters.presyncs.fetch_add(1, std::memory_order_relaxed);
+        if (!texelsPending) counters.keyWaits.fetch_add(1, std::memory_order_relaxed);
         counters.waitedUs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - waitStart).count()), std::memory_order_relaxed);
     }
     if (profile) {
         const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         auto last = counters.lastReport.load();
-        if (nowMs - last >= 10000 && counters.lastReport.compare_exchange_strong(last, nowMs)) AgcDriver::ProfilePrint_nid_no_patch("[presync] %llu dispatches checked, %llu pre-syncs waited %.0f ms (cumulative)\n", static_cast<unsigned long long>(counters.checked.load()), static_cast<unsigned long long>(counters.presyncs.load()), counters.waitedUs.load() / 1000.0);
+        if (nowMs - last >= 10000 && counters.lastReport.compare_exchange_strong(last, nowMs)) {
+            const auto keyWaitCounts = Graphics::KeyWaitCounts();
+            AgcDriver::ProfilePrint_nid_no_patch("[presync] %llu dispatches checked, %llu pre-syncs waited %.0f ms (cumulative); key ranges %llu checked, %llu pre-syncs that only the keys required; WaitForKeyWriters %llu calls: %llu without a pending writer, %llu known keys, %llu fills leaving uncompressed, %llu synced\n", static_cast<unsigned long long>(counters.checked.load()), static_cast<unsigned long long>(counters.presyncs.load()), counters.waitedUs.load() / 1000.0, static_cast<unsigned long long>(counters.keyChecks.load()), static_cast<unsigned long long>(counters.keyWaits.load()), static_cast<unsigned long long>(keyWaitCounts.calls), static_cast<unsigned long long>(keyWaitCounts.noPending), static_cast<unsigned long long>(keyWaitCounts.known), static_cast<unsigned long long>(keyWaitCounts.fillsUncompressed), static_cast<unsigned long long>(keyWaitCounts.synced));
+        }
     }
     return serial;
+}
+
+VulkanDevice::PresyncStatistics VulkanDevice::PresyncCounts() {
+    const auto& counters = Presyncs();
+    return {counters.checked.load(std::memory_order_relaxed), counters.presyncs.load(std::memory_order_relaxed), counters.keyChecks.load(std::memory_order_relaxed), counters.keyWaits.load(std::memory_order_relaxed)};
 }
 
 std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads, std::uint64_t programAddress) {

@@ -761,13 +761,62 @@ bool PendingFillsLeaveUncompressed(const Recorder& recorder, const GuestTextureR
 
 }
 
+namespace {
+
+struct KeyWaitTotals {
+    std::atomic<std::uint64_t> calls{0};
+    std::atomic<std::uint64_t> noPending{0};
+    std::atomic<std::uint64_t> known{0};
+    std::atomic<std::uint64_t> fillsUncompressed{0};
+    std::atomic<std::uint64_t> synced{0};
+};
+
+KeyWaitTotals& KeyWaits() {
+    static KeyWaitTotals totals;
+    return totals;
+}
+
+}
+
+DccKeyWaitCounts KeyWaitCounts() {
+    const auto& totals = KeyWaits();
+    return {totals.calls.load(std::memory_order_relaxed), totals.noPending.load(std::memory_order_relaxed), totals.known.load(std::memory_order_relaxed), totals.fillsUncompressed.load(std::memory_order_relaxed), totals.synced.load(std::memory_order_relaxed)};
+}
+
+bool DccKeyWritersPending(std::uint64_t metaAddress, std::size_t count) {
+    if (metaAddress == 0 || count == 0 || !Recorder::SnapshotWriteOverlaps(metaAddress, count)) return false;
+    auto& memo = Memo();
+    std::lock_guard lock(memo.mutex);
+    MemoRecorder(memo);
+    return std::none_of(memo.entries.begin(), memo.entries.end(), [&](const GpuKeyStore& store) { return store.note != 0 && store.begin <= metaAddress && metaAddress + count <= store.end; });
+}
+
+bool DccKeyWriterNeedsSync(std::uint64_t metaAddress, std::size_t count) {
+    if (metaAddress == 0 || count == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
+    auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->PendingWriteOverlaps(metaAddress, count) && !PendingStoreKeys(*recorder, metaAddress, count).has_value();
+}
+
 std::optional<DccKeys> WaitForKeyWriters(const GuestTextureResource& resource, std::uint64_t guestBytes) {
     const auto count = static_cast<std::size_t>(guestBytes / KeyBytes);
     const auto metaAddress = resource.dccAddress;
     if (metaAddress == 0 || count == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return std::nullopt;
+    auto& waits = KeyWaits();
+    waits.calls.fetch_add(1, std::memory_order_relaxed);
     auto* recorder = Recorder::Active();
-    if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, count) || PendingStoreKeys(*recorder, metaAddress, count).has_value()) return std::nullopt;
-    if (PendingFillsLeaveUncompressed(*recorder, resource, count)) return DccKeys::Uncompressed;
+    if (recorder == nullptr || !recorder->PendingWriteOverlaps(metaAddress, count)) {
+        waits.noPending.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    if (PendingStoreKeys(*recorder, metaAddress, count).has_value()) {
+        waits.known.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    if (PendingFillsLeaveUncompressed(*recorder, resource, count)) {
+        waits.fillsUncompressed.fetch_add(1, std::memory_order_relaxed);
+        return DccKeys::Uncompressed;
+    }
+    waits.synced.fetch_add(1, std::memory_order_relaxed);
     Recorder::CountSync(2);
     recorder->SyncThrough(metaAddress, count);
     return std::nullopt;

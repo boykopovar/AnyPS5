@@ -47,7 +47,7 @@ struct Recipe {
     std::uint64_t dataWordsHash = 0;
     // The template's PresyncSurfaces() as of the attach and the host-import identity they were
     // computed under (a surface is CPU-read only while its memory has no import).
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> presyncSurfaces;
+    std::vector<Graphics::PresyncSurface> presyncSurfaces;
     Graphics::HostImportsProof presyncProof;
     // Both false for every recipe (only reusable objects get one); kept for the asserts.
     bool needsCompletion = false;
