@@ -215,7 +215,9 @@ def wait_until(condition, seconds=10):
 
 class SessionTests(unittest.TestCase):
     def start(self, code):
-        return title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL)
+        session = title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL)
+        self.addCleanup(session.kill)
+        return session
 
     def test_exit_code(self):
         session = self.start("import sys; sys.exit(3)")

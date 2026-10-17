@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -247,7 +248,10 @@ class Session:
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
             self.job = kernel32.CreateJobObjectW(None, None)
-            kernel32.AssignProcessToJobObject(self.job, int(self.process._handle))
+            if not self.job or not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)):
+                error = ctypes.get_last_error()
+                self.process.kill()
+                raise ctypes.WinError(error)
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
