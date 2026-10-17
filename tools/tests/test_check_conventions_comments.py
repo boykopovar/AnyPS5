@@ -157,6 +157,54 @@ class RawLiteralCommentTests(unittest.TestCase):
                 self.assertEqual(self.findings(comment, [1]), [("comment", self.path, 1, "")])
 
 
+class HashCommentTests(unittest.TestCase):
+    def findings(self, path, source, added):
+        check = Check.__new__(Check)
+        check.tree = set()
+        check.status = {}
+        check.findings = []
+        lines = source.split("\n")
+        check.added = {path: [(number, lines[number - 1]) for number in added]}
+        with patch.object(check, "show", return_value=source), patch.object(check, "duplicates"):
+            check.code()
+        return check.findings
+
+    def test_hash_inside_python_multiline_string_is_not_a_comment(self):
+        for quote in ('"""', "'''"):
+            with self.subTest(quote=quote):
+                source = f'TEMPLATE = {quote}\n#include <cstdint>\n{quote}\nprint("#ok")\n'
+                self.assertEqual(self.findings("tools/generate.py", source, [1, 2, 3, 4]), [])
+
+    def test_python_comment_after_a_multiline_string_is_reported(self):
+        source = 'TEMPLATE = """\n#include <cstdint>\n"""  # pending\nvalue = 1 # pending\n'
+        self.assertEqual(self.findings("tools/generate.py", source, [2, 3, 4]),
+                         [("comment", "tools/generate.py", 3, ""), ("comment", "tools/generate.py", 4, "")])
+
+    def test_python_shebang_is_not_a_comment(self):
+        for source in ("#!/usr/bin/env python3\nprint(1)\n", "\ufeff#!/usr/bin/env python3\nprint(1)\n"):
+            with self.subTest(source=source):
+                self.assertEqual(self.findings("tools/generate.py", source, [1, 2]), [])
+
+    def test_unparsable_python_falls_back_to_the_line_check(self):
+        source = 'TEMPLATE = """\n#include <cstdint>\n'
+        self.assertEqual(self.findings("tools/generate.py", source, [2]), [("comment", "tools/generate.py", 2, "")])
+
+    def test_hash_inside_cmake_quoted_and_bracket_arguments_is_not_a_comment(self):
+        for source in ('set(content "#ifndef GUARD\n#define GUARD\n#endif\n")\n',
+                       'set(patch [=[\n#include <utility>\n]=])\n',
+                       'set(patch [[\n#include <utility>\n]])\n',
+                       'message(STATUS "a\\"#b")\n',
+                       'string(REPLACE \\# x out "${in}")\n'):
+            with self.subTest(source=source):
+                added = list(range(1, source.count("\n") + 1))
+                self.assertEqual(self.findings("cmake/Generate.cmake", source, added), [])
+
+    def test_cmake_line_and_bracket_comments_are_reported(self):
+        source = 'set(value 1) # pending\n#[[\npending\n]]\nset(patch [=[\n#include <utility>\n]=]) # pending\n'
+        self.assertEqual(self.findings("CMakeLists.txt", source, [1, 2, 3, 4, 6, 7]),
+                         [("comment", "CMakeLists.txt", number, "") for number in (1, 2, 3, 4, 7)])
+
+
 class SilentStubTests(unittest.TestCase):
     def test_commented_stub_is_reported_when_debt_change_allows_comments(self):
         checker = Path(__file__).resolve().parents[1] / "check_conventions.py"
