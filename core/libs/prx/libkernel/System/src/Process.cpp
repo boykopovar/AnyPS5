@@ -9,6 +9,10 @@
 #include <sched.h>
 #include <unistd.h>
 #endif
+#if defined(__linux__) && defined(__x86_64__)
+#include <asm/prctl.h>
+#include <sys/syscall.h>
+#endif
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -463,6 +467,39 @@ int APS5_VABI sched_get_priority_min_nid_postfix(int policy) {
         return -1;
     }
     return 256;
+}
+
+int APS5_VABI sysarch(int operation, void* parameters) {
+    constexpr int getFsBase = 128;
+    constexpr int getGsBase = 130;
+    constexpr int setGsBase = 131;
+    constexpr std::uint64_t userAddressEnd = 0x0000800000000000ull;
+    if (operation != getFsBase && operation != getGsBase && operation != setGsBase)
+        NotImplemented_nid_no_patch(("sysarch: operation " + std::to_string(operation)).c_str());
+#if defined(__linux__) && defined(__x86_64__)
+    if (parameters == nullptr) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
+    std::uint64_t base = 0;
+    if (operation == setGsBase) {
+        std::memcpy(&base, parameters, sizeof(base));
+        if (base >= userAddressEnd) {
+            *__error_nid_postfix() = guestInvalid;
+            return -1;
+        }
+        if (::syscall(SYS_arch_prctl, ARCH_SET_GS, base) != 0) throw std::system_error(errno, std::generic_category(), "sysarch: setting the GS base");
+        return 0;
+    }
+    if (::syscall(SYS_arch_prctl, operation == getFsBase ? ARCH_GET_FS : ARCH_GET_GS, &base) != 0)
+        throw std::system_error(errno, std::generic_category(), "sysarch: reading a segment base");
+    std::memcpy(parameters, &base, sizeof(base));
+    return 0;
+#else
+    static_cast<void>(parameters);
+    NotImplemented_nid_no_patch("sysarch: segment bases on this host");
+    return 0;
+#endif
 }
 
 int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
