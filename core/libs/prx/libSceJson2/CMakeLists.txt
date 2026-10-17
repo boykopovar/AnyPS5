@@ -8,8 +8,10 @@ if(BUILD_TESTING)
     target_link_libraries(guest_json_tests PRIVATE libSceJson2 libc)
     configure_windows_unwind(guest_json_tests)
     add_test(NAME guest_json COMMAND guest_json_tests)
+    add_test(NAME guest_json_numeric_locale COMMAND guest_json_tests --numeric-locale)
+    set_tests_properties(guest_json_numeric_locale PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(guest_json PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_json guest_json_numeric_locale PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJson2>")
     endif()
 endif()

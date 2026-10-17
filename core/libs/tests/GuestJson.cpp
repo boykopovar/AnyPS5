@@ -1,5 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#include <clocale>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -7,6 +9,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct Value { void* node; };
@@ -762,7 +765,77 @@ static void StaticNullAccess() {
     _ZN3sce4Json5ValueD1Ev(&fallback);
 }
 
-int main() {
+static int NumericLocale() {
+    const std::string previous = std::setlocale(LC_NUMERIC, nullptr);
+    const char* selected = nullptr;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de-DE", "German_Germany.1252", "fr_FR.UTF-8"}) {
+        if (std::setlocale(LC_NUMERIC, name) && std::strcmp(std::localeconv()->decimal_point, ",") == 0) {
+            selected = name;
+            break;
+        }
+    }
+    if (!selected) {
+        std::setlocale(LC_NUMERIC, previous.c_str());
+        std::fprintf(stderr, "No decimal-comma numeric locale is installed\n");
+        return 77;
+    }
+    std::printf("JSON numeric locale: %s\n", selected);
+    int failures = 0;
+    const auto check = [&](bool success, const char* operation, const char* actual) {
+        if (!success) {
+            std::fprintf(stderr, "%s failed: %s\n", operation, actual);
+            ++failures;
+        }
+    };
+    for (const auto number : {1.5, -0.125, 1.25e30, std::numeric_limits<double>::max(),
+                              std::numeric_limits<double>::min(), std::numeric_limits<double>::denorm_min()}) {
+        Value value{};
+        _ZN3sce4Json5ValueC1Ed(&value, number);
+        const auto text = Serialize(value);
+        check(text.find(',') == std::string::npos, "Decimal-point serialization", text.c_str());
+        Value parsed{};
+        _ZN3sce4Json5ValueC1Ev(&parsed);
+        const int result = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&parsed, text.c_str(), text.size());
+        check(result == 0 && *_ZNK3sce4Json5Value7getRealEv(&parsed) == number, "Numeric round trip", text.c_str());
+        _ZN3sce4Json5ValueD1Ev(&parsed);
+        _ZN3sce4Json5ValueD1Ev(&value);
+    }
+    for (const auto [text, number] : {std::pair{"1.5", 1.5}, {"-1.25e2", -125.0},
+                                    {"4.9406564584124654e-324", std::numeric_limits<double>::denorm_min()},
+                                    {"2.4703282292062327e-324", 0.0},
+                                    {"2.4703282292062328e-324", std::numeric_limits<double>::denorm_min()},
+                                    {"18446744073709551616", 18446744073709551616.0},
+                                    {"1e-999", 0.0}, {"-1e-999", -0.0}}) {
+        Value value{};
+        _ZN3sce4Json5ValueC1Ev(&value);
+        const int result = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, text, std::strlen(text));
+        const auto parsed = *_ZNK3sce4Json5Value7getRealEv(&value);
+        check(result == 0 && parsed == number && std::signbit(parsed) == std::signbit(number), "Decimal-point parsing", text);
+        _ZN3sce4Json5ValueD1Ev(&value);
+    }
+    Value root{};
+    _ZN3sce4Json5ValueC1Ev(&root);
+    constexpr char document[] = "{\"value\":1.5,\"list\":[2.5,-0.125]}";
+    check(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, document, sizeof(document) - 1) == 0,
+          "Nested numeric parsing", document);
+    const auto serialized = Serialize(root);
+    check(serialized == document, "Nested numeric serialization", serialized.c_str());
+    check(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1,5", 3) != 0, "Reject decimal comma", "1,5");
+    bool overflow = false;
+    try {
+        _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1e309", 5);
+    } catch (const std::runtime_error&) {
+        overflow = true;
+    }
+    check(overflow, "Retain overflow rejection", "1e309");
+    _ZN3sce4Json5ValueD1Ev(&root);
+    check(std::strcmp(std::localeconv()->decimal_point, ",") == 0, "Preserve host locale", selected);
+    std::setlocale(LC_NUMERIC, previous.c_str());
+    return failures ? 1 : 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--numeric-locale") == 0) return NumericLocale();
     ParseAndRoundTrip();
     NestingDepth();
     ObjectsAndArrays();
