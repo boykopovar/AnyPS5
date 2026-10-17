@@ -17,7 +17,11 @@ FETCH_REFS = 100
 
 
 def git(*args):
-    return subprocess.run(["git", "-c", "core.quotePath=false", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
+    result = subprocess.run(["git", "-c", "core.quotePath=false", *args], capture_output=True)
+    result.stdout = result.stdout.decode("utf-8", errors="replace")
+    result.stderr = result.stderr.decode("utf-8", errors="replace")
+    result.check_returncode()
+    return result.stdout
 
 
 def own(prs, sha):
@@ -79,11 +83,12 @@ def fetch(base, prs):
 
 
 def merge(*args):
-    result = subprocess.run(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", *args],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
-    lines = result.stdout.splitlines()
-    if result.returncode not in (0, 1) or not lines:
-        raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {result.stderr.strip()}")
+    result = subprocess.run(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
+                            capture_output=True)
+    lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
+    if result.returncode not in (0, 1) or not lines[0]:
+        error = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {error}")
     return lines[0], set(lines[1:]) if result.returncode else set()
 
 
@@ -115,8 +120,8 @@ def scan(pr):
     pr["tree"] = None if conflicted else commit(tree)
     old, new = (git("merge-base", "refs/pr/base", pr["ref"]).strip(), pr["ref"]) if conflicted else ("refs/pr/base", pr["tree"])
     pr["files"], pr["added"] = set(), set()
-    for line in git("diff", "--name-status", "--no-renames", old, new).splitlines():
-        status, path = line.split("\t", 1)
+    changes = git("diff", "--name-status", "--no-renames", "-z", old, new).split("\0")
+    for status, path in zip(changes[::2], changes[1::2]):
         pr["files"].add(path)
         if status == "A":
             pr["added"].add(path)

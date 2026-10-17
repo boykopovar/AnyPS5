@@ -228,6 +228,45 @@ class ConflictTests(unittest.TestCase):
 
 
 class UnicodePathTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX filenames containing control characters")
+    def test_control_characters_keep_exact_paths_in_scans_and_conflicts(self):
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", *args], cwd=root,
+                    capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
+            filenames = {"core/libs/prx/libExample/return\r.cpp", "core/libs/prx/libExample/tab\t.cpp", "core/libs/prx/libExample/line\n.cpp",
+                         "core/libs/prx/libExample/quote\".cpp"}
+            for filename in filenames:
+                source = root / filename
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("int value = 0;\n", encoding="utf-8")
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-qm", "test: create base")
+            base = git("rev-parse", "HEAD")
+            git("update-ref", "refs/pr/base", base)
+            for branch, value in (("left", 1), ("right", 2)):
+                git("checkout", "-qb", branch, base)
+                for filename in filenames:
+                    (root / filename).write_text(f"int value = {value};\n", encoding="utf-8")
+                git("add", ".")
+                git("commit", "-qm", "fix: change value")
+            try:
+                os.chdir(root)
+                left, right = {"ref": "left"}, {"ref": "right"}
+                pr_overlap.scan(left)
+                pr_overlap.scan(right)
+                self.assertEqual(left["files"], filenames)
+                self.assertEqual(right["files"], filenames)
+                self.assertEqual(pr_overlap.conflicts(left, right), {name: [(1, 1)] for name in filenames})
+            finally:
+                os.chdir(previous)
+
+
     def test_scans_and_reports_conflicts_with_git_path_quoting_enabled(self):
         previous = os.getcwd()
         with tempfile.TemporaryDirectory() as directory:
