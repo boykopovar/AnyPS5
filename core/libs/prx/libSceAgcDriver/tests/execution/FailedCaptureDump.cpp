@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <random>
 #include <span>
 #include <sstream>
 #include <string>
@@ -114,7 +115,7 @@ void Run() {
 }
 
 int main() {
-    const auto directory = std::filesystem::temp_directory_path() / "agc_failed_capture_dump";
+    const auto directory = std::filesystem::temp_directory_path() / ("agc_failed_capture_dump-" + std::to_string(std::random_device{}()));
     try {
         {
             const auto device = OpenVulkanTestDevice();
