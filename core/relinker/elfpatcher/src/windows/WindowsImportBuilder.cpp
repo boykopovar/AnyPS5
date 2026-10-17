@@ -1,4 +1,5 @@
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
+#include <domain/ImportModule.hpp>
 #include <io/BufferUtils.hpp>
 #include <set>
 
@@ -43,7 +44,7 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
         const auto nameOffset = Io::ReadU64(bytes, offset + 8);
         if (nameOffset >= dynamicSection.DynStrData.size())
             throw Domain::RelinkerException("DT_NEEDED string offset is out of bounds", nameOffset);
-        auto name = ReadString(dynamicSection.DynStrData, static_cast<std::size_t>(nameOffset));
+        auto name = Domain::NeededLibraryName(ReadString(dynamicSection.DynStrData, static_cast<std::size_t>(nameOffset)));
         if (name.empty() || name.find_first_of("/\\:") != std::string::npos)
             throw Domain::RelinkerException("Invalid DT_NEEDED library: " + name);
         if (unique.insert(name).second)
@@ -54,6 +55,8 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
     // Keep the requested module first, then make its shared runtime visible.
     if ((unique.contains("libSceLibcInternal.prx") || unique.contains("libkernel.prx")) && !unique.contains("libc.prx"))
         result.push_back("libc.prx");
+    if (unique.contains("libkernel_web.prx") && !unique.contains("libkernel.prx"))
+        result.push_back("libkernel.prx");
     return result;
 }
 
