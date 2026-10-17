@@ -12,11 +12,11 @@
 #include <mutex>
 
 extern "C" void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error) {
-    SonyIgnoreHandlerS(message, pointer, error);
+    SonyIgnoreHandlerS_nid_no_patch(message, pointer, error);
 }
 
 extern "C" void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler) {
-    return SonySetConstraintHandlerS(handler);
+    return SonySetConstraintHandlerS_nid_no_patch(handler);
 }
 
 extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity) {
