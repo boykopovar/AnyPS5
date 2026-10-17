@@ -4095,17 +4095,21 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
         std::uint32_t height;
         std::uint32_t mipCount;
         std::uint64_t offset;
+        bool direct = false;
     };
     constexpr Case cases[] = {
         {"64 KiB R_X 200x150", TextureTileMode::kR64KBX, 200, 150, 1, 0},
         {"64 KiB R_X 200x150, 3 mips", TextureTileMode::kR64KBX, 200, 150, 3, 0},
-        {"64 KiB R_X 520x260, 6 mips", TextureTileMode::kR64KBX, 520, 260, 6, 0},
+        {"64 KiB R_X 520x260, 6 mips", TextureTileMode::kR64KBX, 520, 260, 6, 0, true},
         {"64 KiB R_X 200x150 off a 64 KiB boundary, 3 mips", TextureTileMode::kR64KBX, 200, 150, 3, 4096},
         {"4 KiB S 100x70, 2 mips", TextureTileMode::kStandard4KB, 100, 70, 2, 0},
         {"linear 200x150", TextureTileMode::kLinear, 200, 150, 1, 0},
+        {"64 KiB R_X 512x512, 3 mips, no padding below the tail", TextureTileMode::kR64KBX, 512, 512, 3, 0, true},
+        {"64 KiB R_X 1000x700", TextureTileMode::kR64KBX, 1000, 700, 1, 0, true},
+        {"64 KiB R_X 1900x1100, across two 8 MiB slabs", TextureTileMode::kR64KBX, 1900, 1100, 1, 0, true},
     };
     const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
-    constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    constexpr std::array<std::array<std::uint8_t, 4>, 2> colours{{{255, 0, 0, 255}, {0, 255, 0, 255}}};
     std::string failures;
     for (const auto& test : cases) {
         const std::string what = std::string(watched ? "(watched) " : "") + test.name;
@@ -4175,34 +4179,40 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
         {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
             const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, test.mipCount, 0, 1};
-            const auto commands = recorder.Commands();
-            recorder.Keep(image);
-            const VkClearColorValue value{{1.0f, 0.0f, 0.0f, 1.0f}};
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-            image->MarkDirty();
-            image->WriteBack();
-            recorder.Submit();
-            device.WaitQueue();
-            recorder.Sync();
-            std::vector<std::byte> read(bytes);
-            if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
-            else std::memcpy(read.data(), memory, bytes);
-            std::size_t texels = 0, garbage = 0, outside = 0;
-            for (std::size_t i = 0; i < bytes; i += 4) {
-                const bool inside = i >= test.offset && i < test.offset + surfaceBytes;
-                bool isTexel = inside, isPattern = true;
-                for (std::size_t c = 0; c < 4; ++c) {
-                    const auto byte = std::to_integer<std::uint8_t>(read[i + c]);
-                    isTexel = isTexel && byte == red[c];
-                    isPattern = isPattern && byte == pattern(i + c);
+            for (std::size_t pass = 0; pass < (test.direct ? colours.size() : 1u); ++pass) {
+                const auto& colour = colours[pass];
+                const auto commands = recorder.Commands();
+                recorder.Keep(image);
+                const VkClearColorValue value{{colour[0] / 255.0f, colour[1] / 255.0f, colour[2] / 255.0f, colour[3] / 255.0f}};
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                image->MarkDirty();
+                const auto slabRetilesBefore = StorageTexture::SlabRetiles();
+                image->WriteBack();
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+                const auto slabRetiled = StorageTexture::SlabRetiles() - slabRetilesBefore;
+                if (test.direct && watched && UnitShadowEnabled() && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
+                std::vector<std::byte> read(bytes);
+                if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
+                else std::memcpy(read.data(), memory, bytes);
+                std::size_t texels = 0, garbage = 0, outside = 0;
+                for (std::size_t i = 0; i < bytes; i += 4) {
+                    const bool inside = i >= test.offset && i < test.offset + surfaceBytes;
+                    bool isTexel = inside, isPattern = true;
+                    for (std::size_t c = 0; c < 4; ++c) {
+                        const auto byte = std::to_integer<std::uint8_t>(read[i + c]);
+                        isTexel = isTexel && byte == colour[c];
+                        isPattern = isPattern && byte == pattern(i + c);
+                    }
+                    if (isTexel) ++texels;
+                    else if (!isPattern) ++(inside ? garbage : outside);
                 }
-                if (isTexel) ++texels;
-                else if (!isPattern) ++(inside ? garbage : outside);
-            }
-            if (garbage != 0 || outside != 0 || texels != texelCount) {
-                failures += what + ": the write-back stored " + std::to_string(texels) + " texels of " + std::to_string(texelCount) + " and changed " + std::to_string(garbage) + " words no texel holds (" + std::to_string(outside) + " past the surface)\n";
+                if (garbage != 0 || outside != 0 || texels != texelCount) {
+                    failures += what + ", write-back " + std::to_string(pass + 1) + ": stored " + std::to_string(texels) + " texels of " + std::to_string(texelCount) + " and changed " + std::to_string(garbage) + " words no texel holds (" + std::to_string(outside) + " past the surface)\n";
+                }
             }
         }
         recorder.Sync();
@@ -8257,6 +8267,19 @@ int main(int argc, char** argv) {
                 return 77;
             }
             splitWriteBackTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-write-back-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            storageRefreshTests(device, recorder, false);
+            storageRefreshTests(device, recorder, true);
+            writeBackPaddingTests(device, recorder, false);
+            writeBackPaddingTests(device, recorder, true);
+            singlePassTests(device, recorder, false);
+            singlePassTests(device, recorder, true);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--cmask-only") {

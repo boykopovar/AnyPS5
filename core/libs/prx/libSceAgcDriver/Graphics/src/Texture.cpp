@@ -80,7 +80,7 @@ thread_local const char* uploadReason = "first";
 // selections widened to every pending unit (the hysteresis in writeBack), units dropped as dead
 // (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
 // reported only.
-std::atomic<std::uint64_t> singlePassMoves{0};
+std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0};
 std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0};
 // FlushPending listings skipped because no pending unit of the image lay inside the range, images
 // whose selected pending units were dropped because their memory is no longer registered (see
@@ -2007,6 +2007,10 @@ std::uint64_t StorageTexture::SinglePassMoves() {
     return singlePassMoves.load(std::memory_order_relaxed);
 }
 
+std::uint64_t StorageTexture::SlabRetiles() {
+    return slabRetiles.load(std::memory_order_relaxed);
+}
+
 bool StorageTexture::otherPendingOverlaps() const {
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
@@ -2853,6 +2857,15 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     std::vector<SlabPieces> slabPieces;
     std::vector<std::vector<VkBufferCopy>> importCopies(segments.size());
     std::vector<SeedUnit> seeds;
+    struct AddedPiece {
+        std::size_t pieces;
+        std::size_t copy;
+        std::uint64_t begin;
+        std::uint64_t end;
+        bool slab;
+        bool seeded;
+    };
+    std::vector<AddedPiece> added;
     const auto addPiece = [&](std::uint64_t scratchOffset, std::uint64_t guestBegin, std::uint64_t guestEnd) {
         while (guestBegin < guestEnd) {
             std::size_t segment = 0;
@@ -2868,9 +2881,11 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
                 for (const auto& [seedBegin, seedEnd] : destination->seedUnits) {
                     if (std::none_of(seeds.begin(), seeds.end(), [&](const SeedUnit& seed) { return seed.begin == seedBegin; })) seeds.push_back({seedBegin, seedEnd, destination->slab, &import});
                 }
+                added.push_back({slabPieces.size() - 1, slabPieces.back().copies.size() - 1, guestBegin - descriptor.baseAddress, pieceEnd - descriptor.baseAddress, true, !destination->seedUnits.empty()});
                 if (!shadowed.empty() && shadowed.back().end == guestBegin && shadowed.back().slab == destination->slab) shadowed.back().end = pieceEnd;
                 else shadowed.push_back({guestBegin, pieceEnd, destination->slab});
             } else {
+                added.push_back({0, 0, guestBegin - descriptor.baseAddress, pieceEnd - descriptor.baseAddress, false, false});
                 importCopies[segment].push_back({scratchOffset, guestBegin - import.base, pieceEnd - guestBegin});
                 if (!imported.empty() && imported.back().second == guestBegin) imported.back().second = pieceEnd;
                 else imported.emplace_back(guestBegin, pieceEnd);
@@ -2879,16 +2894,37 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             guestBegin = pieceEnd;
         }
     };
+    struct SlabRetile {
+        std::size_t window;
+        std::size_t first;
+        std::size_t last;
+    };
+    std::vector<SlabRetile> slabRetiled;
+    const auto blockBytes = ThinBlockLayout(descriptor.tileMode, elementBytes)[0];
     for (std::size_t i = 0; i < windows.size(); ++i) {
         const auto& window = windows[i];
         // The tail levels follow each other, sharing the previous one's region.
         if (i != 0 && scratchPositions[i] == scratchPositions[i - 1]) continue;
+        const auto first = added.size();
+        std::size_t kept = 0;
+        bool whole = false;
         for (const auto& [from, to] : runs) {
             const auto begin = std::max(from, window.tiledBegin);
             const auto end = std::min(to, window.tiledEnd);
             if (begin >= end) continue;
+            ++kept;
             addPiece(scratchPositions[i] + (begin - window.tiledBegin), descriptor.baseAddress + begin, descriptor.baseAddress + end);
+            whole = begin == window.tiledBegin && end == window.tiledEnd;
         }
+        if (save != nullptr || geometry.thick || mips[window.level].tail || std::count(scratchPositions.begin(), scratchPositions.end(), scratchPositions[i]) != 1 || kept != 1 || !whole) continue;
+        const auto last = added.size();
+        const auto parts = std::span<const AddedPiece>(added).subspan(first, last - first);
+        const auto sliceBegin = window.tiledBegin - window.window.rangeBegin;
+        const auto intoSlabs = std::all_of(parts.begin(), parts.end(), [&](const AddedPiece& part) {
+            const auto& copy = slabPieces[part.pieces].copies[part.copy];
+            return part.slab && !part.seeded && copy.dstOffset % 4 == 0 && copy.size % 4 == 0 && (part.begin - sliceBegin) % blockBytes == 0 && (part.end - sliceBegin) % blockBytes == 0;
+        });
+        if (intoSlabs) slabRetiled.push_back({i, first, last});
     }
     std::sort(seeds.begin(), seeds.end(), [](const SeedUnit& a, const SeedUnit& b) { return a.begin < b.begin; });
     std::vector<CopiedBytes> copied;
@@ -2905,7 +2941,88 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     if (save != nullptr) {
         for (const auto& piece : copied) saves.push_back({piece.scratch, piece.begin, piece.end - piece.begin});
     }
-    const auto padding = paddingSeeds(segments, copied);
+    auto padding = paddingSeeds(segments, copied);
+    struct DirectPiece {
+        VkBuffer slab;
+        VkDeviceSize offset;
+        DetileWindow window;
+        std::uint64_t linearOffset;
+    };
+    std::vector<DirectPiece> directPieces;
+    std::vector<std::pair<std::size_t, std::size_t>> directRanges(windows.size(), {0, 0});
+    struct HoleCopies {
+        VkBuffer source;
+        VkBuffer slab;
+        std::vector<VkBufferCopy> copies;
+    };
+    std::vector<HoleCopies> holeCopies;
+    if (!slabRetiled.empty()) {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+        for (const auto& retiled : slabRetiled) ranges.emplace_back(windows[retiled.window].tiledBegin, windows[retiled.window].tiledEnd);
+        const auto holes = uncoveredBytes(ranges);
+        for (const auto& retiled : slabRetiled) {
+            const auto& window = windows[retiled.window];
+            const auto parts = std::span<const AddedPiece>(added).subspan(retiled.first, retiled.last - retiled.first);
+            const auto position = scratchPositions[retiled.window];
+            const auto length = window.tiledEnd - window.tiledBegin;
+            const auto inside = [&](const VkBufferCopy& hole) { return hole.size != 0 && hole.dstOffset >= position && hole.dstOffset + hole.size <= position + length; };
+            const auto partCopy = [&](const AddedPiece& part) -> VkBufferCopy& { return slabPieces[part.pieces].copies[part.copy]; };
+            const auto partSlab = [&](const AddedPiece& part) { return slabPieces[part.pieces].slab->buffer; };
+            std::uint64_t holeBytes = 0, sourcedBytes = 0;
+            for (const auto& [first, last] : holes) {
+                const auto begin = std::max(first, window.tiledBegin);
+                const auto end = std::min(last, window.tiledEnd);
+                if (begin < end) holeBytes += end - begin;
+            }
+            bool sameSlabMoved = false;
+            for (const auto& [source, copies] : padding.copies) {
+                for (const auto& hole : copies) {
+                    if (!inside(hole)) continue;
+                    sourcedBytes += hole.size;
+                    const auto holeBegin = window.tiledBegin + (hole.dstOffset - position);
+                    for (const auto& part : parts) {
+                        const auto from = std::max(holeBegin, part.begin);
+                        const auto to = std::min(holeBegin + hole.size, part.end);
+                        if (from < to && source == partSlab(part) && hole.srcOffset + (from - holeBegin) != partCopy(part).dstOffset + (from - part.begin)) sameSlabMoved = true;
+                    }
+                }
+            }
+            if (sourcedBytes != holeBytes || sameSlabMoved) continue;
+            for (auto& [source, copies] : padding.copies) {
+                for (auto& hole : copies) {
+                    if (!inside(hole)) continue;
+                    const auto holeBegin = window.tiledBegin + (hole.dstOffset - position);
+                    for (const auto& part : parts) {
+                        const auto from = std::max(holeBegin, part.begin);
+                        const auto to = std::min(holeBegin + hole.size, part.end);
+                        if (from >= to || source == partSlab(part)) continue;
+                        const auto slab = partSlab(part);
+                        auto entry = std::find_if(holeCopies.begin(), holeCopies.end(), [&](const HoleCopies& entry) { return entry.source == source && entry.slab == slab; });
+                        if (entry == holeCopies.end()) entry = holeCopies.insert(holeCopies.end(), {source, slab, {}});
+                        entry->copies.push_back({hole.srcOffset + (from - holeBegin), partCopy(part).dstOffset + (from - part.begin), to - from});
+                    }
+                    hole.size = 0;
+                }
+            }
+            directRanges[retiled.window] = {directPieces.size(), directPieces.size() + parts.size()};
+            for (const auto& part : parts) {
+                auto& copy = partCopy(part);
+                if (parts.size() == 1) {
+                    directPieces.push_back({partSlab(part), copy.dstOffset, window.window, 0});
+                } else {
+                    const std::pair<std::uint64_t, std::uint64_t> run{part.begin, part.end};
+                    const auto narrowed = sliceWindows(std::span(&run, 1));
+                    Require(narrowed.size() == 1, "a storage write-back slab piece is not one window");
+                    directPieces.push_back({partSlab(part), copy.dstOffset, narrowed.front().window, narrowed.front().window.linearBase - window.window.linearBase});
+                }
+                copy.size = 0;
+            }
+            slabRetiles.fetch_add(1, std::memory_order_relaxed);
+        }
+        for (auto& pieces : slabPieces) std::erase_if(pieces.copies, [](const VkBufferCopy& copy) { return copy.size == 0; });
+        for (auto& entry : padding.copies) std::erase_if(entry.second, [](const VkBufferCopy& copy) { return copy.size == 0; });
+        std::erase_if(padding.copies, [](const auto& entry) { return entry.second.empty(); });
+    }
     // A queued label or key store inside a seeded unit lands before the seed copies the import.
     auto flushBegin = firstStored;
     auto flushEnd = lastStored;
@@ -2915,7 +3032,8 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     }
     const bool direct = singlePass();
     auto linear = direct ? nullptr : std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearTotal), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    auto tiledScratch = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(scratchTotal), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const bool scratchUsed = std::any_of(directRanges.begin(), directRanges.end(), [](const auto& range) { return range.first == range.second; }) || std::any_of(slabPieces.begin(), slabPieces.end(), [](const SlabPieces& pieces) { return !pieces.copies.empty(); }) || std::any_of(importCopies.begin(), importCopies.end(), [](const auto& copies) { return !copies.empty(); }) || !saves.empty() || !padding.copies.empty() || !seeds.empty();
+    auto tiledScratch = scratchUsed ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(scratchTotal), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
     detiler.BeginBatch();
     auto* recorder = Recorder::Active();
     std::unique_ptr<CommandBatch> batch;
@@ -2928,11 +3046,11 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         commands = recorder->Commands(&covered);
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
         if (linear) recorder->Keep(linear, linear->Size());
-        recorder->Keep(tiledScratch, tiledScratch->Size());
+        if (tiledScratch) recorder->Keep(tiledScratch, tiledScratch->Size());
         for (const auto& pieces : slabPieces) recorder->Keep(pieces.slab);
         for (const auto& slab : padding.slabs) recorder->Keep(slab);
         if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
-        Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, direct ? 3 : 4);
+        Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, (direct ? 3 : 4) - (tiledScratch ? 0 : 1));
         if (Recorder::BarrierValidate()) {
             const std::pair<VkImage, bool> read{image, false};
             std::vector<std::pair<std::uint64_t, std::uint64_t>> seedReads;
@@ -2954,7 +3072,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     toSource.image = image;
     toSource.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
     if (!direct) context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSource);
-    if (!seeds.empty() || !padding.copies.empty()) {
+    if (!seeds.empty() || !padding.copies.empty() || !holeCopies.empty()) {
         // The seeded units' import bytes (every earlier writer of them, host stores included)
         // precede the seed copies; the previous command's trailing barrier may have covered that.
         constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -2973,6 +3091,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         // The padding's current bytes, under the retile that follows (the import-ready barrier
         // orders the scratch writes).
         for (const auto& [source, copies] : padding.copies) context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, source, tiledScratch->Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
+        for (const auto& [source, slab, copies] : holeCopies) context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, source, slab, static_cast<std::uint32_t>(copies.size()), copies.data());
     }
     const VkMemoryBarrier importReady{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT};
     if (direct) {
@@ -2985,7 +3104,12 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             const auto& window = windows[i];
             auto retile = window.window;
             retile.pipeBankXor = descriptor.pipeBankXor;
-            detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, tiledScratch->Handle(), scratchPositions[i], elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, retile);
+            for (auto k = directRanges[i].first; k < directRanges[i].second; ++k) {
+                auto piece = directPieces[k].window;
+                piece.pipeBankXor = descriptor.pipeBankXor;
+                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, directPieces[k].slab, directPieces[k].offset, elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, piece);
+            }
+            if (directRanges[i].first == directRanges[i].second) detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, tiledScratch->Handle(), scratchPositions[i], elementLayerView(window.level, window.layer), mips[window.level], true, window.layer, retile);
         }
         singlePassMoves.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -3003,16 +3127,23 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             const auto& window = windows[i];
             auto retile = window.window;
             retile.pipeBankXor = descriptor.pipeBankXor;
-            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), linearPositions[i], tiledScratch->Handle(), scratchPositions[i], mips[window.level], true, window.layer, false, retile);
+            for (auto k = directRanges[i].first; k < directRanges[i].second; ++k) {
+                auto piece = directPieces[k].window;
+                piece.pipeBankXor = descriptor.pipeBankXor;
+                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), linearPositions[i] + directPieces[k].linearOffset, directPieces[k].slab, directPieces[k].offset, mips[window.level], true, window.layer, false, piece);
+            }
+            if (directRanges[i].first == directRanges[i].second) detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), linearPositions[i], tiledScratch->Handle(), scratchPositions[i], mips[window.level], true, window.layer, false, retile);
         }
     }
-    {
+    if (tiledScratch) {
         // The retiled scratch (and a seed's slab bytes, which the scratch copies overwrite in
         // part) precede the copies into the slabs and the import.
         const VkMemoryBarrier scratchDone{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &scratchDone, 0, nullptr, 0, nullptr);
         const auto copyBuffer = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
-        for (const auto& pieces : slabPieces) copyBuffer(commands, tiledScratch->Handle(), pieces.slab->buffer, static_cast<std::uint32_t>(pieces.copies.size()), pieces.copies.data());
+        for (const auto& pieces : slabPieces) {
+            if (!pieces.copies.empty()) copyBuffer(commands, tiledScratch->Handle(), pieces.slab->buffer, static_cast<std::uint32_t>(pieces.copies.size()), pieces.copies.data());
+        }
         for (std::size_t segment = 0; segment < segments.size(); ++segment) {
             if (!importCopies[segment].empty()) copyBuffer(commands, tiledScratch->Handle(), segments[segment].import->buffer, static_cast<std::uint32_t>(importCopies[segment].size()), importCopies[segment].data());
         }
