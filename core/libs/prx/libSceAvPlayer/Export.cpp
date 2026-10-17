@@ -8,6 +8,7 @@
 #include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libc/include/General.hpp"
 
 using namespace AvPlayer;
 
@@ -189,6 +190,51 @@ int APS5_VABI sceAvPlayerStop(AvPlayerInternal* h) {
 int APS5_VABI sceAvPlayerStreamCount(AvPlayerInternal* h) {
     if (!h) return SCE_AVPLAYER_ERROR_INVALID_PARAMS;
     return ToPlayer(h)->StreamCount();
+}
+
+int APS5_VABI sceAvPlayerPrintf() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerVprintf() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerGetAvailableBW() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerGetStreamBitrate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerInitImpl() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerJumpTimeOffset() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerSetAvailableBW() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerStreamingRegisterVprinf() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAvPlayerVPrintf() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

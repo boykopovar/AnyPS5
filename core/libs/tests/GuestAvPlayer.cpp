@@ -50,6 +50,9 @@ Bool APS5_VABI sceAvPlayerGetAudioData(AvPlayerInternal*, AvPlayerFrameInfo*);
 Bool APS5_VABI sceAvPlayerIsActive(AvPlayerInternal*);
 std::uint64_t APS5_VABI sceAvPlayerCurrentTime(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerClose(AvPlayerInternal*);
+int APS5_VABI sceAvPlayerPrintf();
+int APS5_VABI sceAvPlayerGetAvailableBW();
+int APS5_VABI sceAvPlayerJumpTimeOffset();
 }
 
 namespace {
@@ -1436,6 +1439,31 @@ int main(int argc, char** argv) {
         TestNoSyncVideoCanLeadAudioClock();
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
+
+        bool threw = false;
+        try {
+            sceAvPlayerPrintf();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Check(threw, "sceAvPlayerPrintf did not throw");
+
+        threw = false;
+        try {
+            sceAvPlayerGetAvailableBW();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Check(threw, "sceAvPlayerGetAvailableBW did not throw");
+
+        threw = false;
+        try {
+            sceAvPlayerJumpTimeOffset();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Check(threw, "sceAvPlayerJumpTimeOffset did not throw");
+
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {
