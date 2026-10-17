@@ -275,6 +275,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
       - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
       - run: cmake --build build/register-context --parallel
       - run: ctest --test-dir build/register-context --output-on-failure --repeat until-fail:3 --no-tests=error
@@ -290,6 +309,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.eligibility.outputs.sha }}
+          persist-credentials: false
+      - name: Merge the pull request into main
+        if: ${{ needs.eligibility.outputs.head != '' }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.eligibility.outputs.pr }}
+          PR_HEAD: ${{ needs.eligibility.outputs.head }}
+        run: |
+          read -ra numbers <<< "$PR_NUMBER"
+          read -ra heads <<< "$PR_HEAD"
+          refspecs=()
+          for number in "${numbers[@]}"; do refspecs+=("+refs/pull/$number/head:refs/remotes/pull/$number"); done
+          git fetch --no-tags --unshallow origin "${refspecs[@]}"
+          for i in "${!numbers[@]}"; do
+            if [ "$(git rev-parse "refs/remotes/pull/${numbers[i]}")" != "${heads[i]}" ]; then echo "::error::Pull request #${numbers[i]} has newer commits; start a new build"; exit 1; fi
+            if ! git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-edit "refs/remotes/pull/${numbers[i]}"; then echo "::error::Pull request #${numbers[i]} does not merge cleanly into main and the pull requests before it; rebase it first"; exit 1; fi
+          done
       - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/write-watch --parallel
       - run: ctest --test-dir build/write-watch --output-on-failure --repeat until-fail:3 --no-tests=error
