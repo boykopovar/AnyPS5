@@ -31,8 +31,12 @@ int APS5_VABI sceRtcFormatRFC3339(char*, const RtcTick*, int);
 int APS5_VABI sceRtcParseRFC3339(RtcTick*, const char*);
 int APS5_VABI sceRtcParseDateTime(RtcTick*, const char*);
 int APS5_VABI sceRtcTickAddTicks(RtcTick*, const RtcTick*, std::int64_t);
+int APS5_VABI sceRtcTickAddMicroseconds(RtcTick*, const RtcTick*, std::int64_t);
 int APS5_VABI sceRtcTickAddSeconds(RtcTick*, const RtcTick*, std::int64_t);
+int APS5_VABI sceRtcTickAddMinutes(RtcTick*, const RtcTick*, std::int64_t);
+int APS5_VABI sceRtcTickAddHours(RtcTick*, const RtcTick*, std::int32_t);
 int APS5_VABI sceRtcTickAddDays(RtcTick*, const RtcTick*, std::int32_t);
+int APS5_VABI sceRtcTickAddWeeks(RtcTick*, const RtcTick*, std::int32_t);
 int APS5_VABI sceRtcTickAddMonths(RtcTick*, const RtcTick*, std::int32_t);
 int APS5_VABI sceRtcTickAddYears(RtcTick*, const RtcTick*, std::int16_t);
 int APS5_VABI sceRtcFormatRFC3339LocalTime(char*, const RtcTick*);
@@ -362,6 +366,23 @@ int main() {
     source.tick = maxTick;
     Require(sceRtcTickAddTicks(&result, &source, 1) == invalidValue);
     Require(sceRtcTickAddTicks(nullptr, &source, 1) == invalidPointer);
+    source.tick = leapDayTick;
+    result.tick = 123;
+    Require(sceRtcTickAddMicroseconds(&result, &source, 1500) == 0 && result.tick == leapDayTick + 1500);
+    Require(sceRtcTickAddMinutes(&result, &source, 90) == 0 && result.tick == leapDayTick + 5400000000ull);
+    Require(sceRtcTickAddHours(&result, &source, -2) == 0 && result.tick == leapDayTick - 7200000000ull);
+    Require(sceRtcTickAddWeeks(&result, &source, 1) == 0 && result.tick == leapDayTick + 604800000000ull);
+    Require(sceRtcSetTick(&converted, &result) == 0 && converted.month == 3 && converted.day == 7);
+    result.tick = 123;
+    Require(sceRtcTickAddMinutes(&result, &source, std::numeric_limits<std::int64_t>::max()) == invalidValue && result.tick == 123);
+    Require(sceRtcTickAddWeeks(&result, &source, std::numeric_limits<std::int32_t>::max()) == invalidValue && result.tick == 123);
+    Require(sceRtcTickAddHours(nullptr, &source, 1) == invalidPointer);
+    Require(sceRtcTickAddMicroseconds(&result, nullptr, 1) == invalidPointer);
+    source.tick = maxTick;
+    Require(sceRtcTickAddHours(&result, &source, 1) == invalidValue && result.tick == 123);
+    Require(sceRtcTickAddMicroseconds(&result, &source, 1) == invalidValue && result.tick == 123);
+    source.tick = 0;
+    Require(sceRtcTickAddMinutes(&result, &source, -1) == invalidValue && result.tick == 123);
 
     const std::uint64_t invalidTicks[] = {maxTick + 1, std::numeric_limits<std::uint64_t>::max()};
     for (std::uint64_t invalidTick : invalidTicks) {
