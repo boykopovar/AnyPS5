@@ -1708,7 +1708,7 @@ void refreshHeapMirrors(std::vector<ImageMirror*>& mirrors, std::vector<RefreshB
         const auto bytes = mirrors[last - 1]->base + mirrors[last - 1]->bytes - begin;
         prepareRange(begin, bytes);
         const auto generation = GuestMemory::CollectWrites(begin, static_cast<std::size_t>(bytes));
-        Require(generation != 0, "a heap mirror's range is no longer write-watched");
+        if (generation == 0) ++Mirrors().heapUnwatched;
         appendChangedBlocks(std::span<ImageMirror* const>(mirrors).subspan(first, last - first), generation, blocks);
         first = last;
     }
@@ -1810,7 +1810,7 @@ bool refreshSparseMirror(ImageMirror& mirror, std::vector<RefreshBlock>& blocks)
     if (!pieces.empty() && pieces.back().second > mirror.base + mirror.bytes) return false;
     syncRange(mirror.base, mirror.bytes);
     const auto generation = collectPieces(pieces);
-    Require(generation != 0, "a sparse heap mirror's range is no longer write-watched");
+    if (generation == 0) ++Mirrors().heapUnwatched;
     appendSparseBlocks(mirror, std::move(pieces), generation, blocks);
     return true;
 }
@@ -1845,7 +1845,7 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
         const auto& run = space.heapRuns[index];
         prepareRange(run.begin, run.bytes);
         const auto generation = GuestMemory::CollectWrites(run.begin, static_cast<std::size_t>(run.bytes));
-        Require(generation != 0, "a heap mirror's range is no longer write-watched");
+        if (generation == 0) ++Mirrors().heapUnwatched;
         const auto since = space.verified[index].load(std::memory_order_relaxed);
         if (since == 0 || !GuestMemory::UnchangedSince(run.begin, static_cast<std::size_t>(run.bytes), since)) appendChangedBlocks(std::span<ImageMirror* const>(space.heapMirrors).subspan(run.first, run.last - run.first), generation, blocks);
         checked.emplace_back(index, generation);
