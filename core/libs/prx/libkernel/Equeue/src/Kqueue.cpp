@@ -222,9 +222,6 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if ((change.filter == EVFILT_READ || change.filter == EVFILT_WRITE) && (change.fflags & NOTE_LOWAT) != 0) {
         NotImplemented_nid_no_patch("kevent: NOTE_LOWAT");
     }
-    if (change.filter == EVFILT_VNODE) {
-        RequireVnodeNotes(change.fflags);
-    }
     return GuestErrno(queue->EditEvent(change.ident, change.filter, [&change](KernelEqueueEvent& event) {
         event.event.udata = change.udata;
         if ((change.flags & EV_ENABLE) != 0) {
