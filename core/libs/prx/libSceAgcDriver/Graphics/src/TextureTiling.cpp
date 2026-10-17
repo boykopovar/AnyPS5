@@ -405,6 +405,26 @@ SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
         geometry.layerBytes = thick.slabBytes;
         return geometry;
     }
+    if (descriptor.dimension == TextureDimension::k2DMsaa) {
+        Require(descriptor.samples > 1u && std::has_single_bit(descriptor.samples), "multisampled texture has an invalid sample count");
+        const auto bytesPerElement = BytesPerElement(descriptor.format);
+        Require(std::has_single_bit(bytesPerElement), "multisampled texture format has an unsupported element size");
+        const auto block = GetBlockLayout(descriptor.tileMode, bytesPerElement);
+        const auto log2Samples = static_cast<std::uint32_t>(std::countr_zero(descriptor.samples));
+        const auto log2Pixels = static_cast<std::uint32_t>(std::countr_zero(block.blockSize)) - static_cast<std::uint32_t>(std::countr_zero(bytesPerElement)) - log2Samples;
+        const auto log2Width = (log2Pixels + ((log2Samples & 1u) == 0u ? 1u : 0u)) / 2u;
+        const auto blockWidth = 1u << log2Width;
+        const auto blockHeight = 1u << (log2Pixels - log2Width);
+        const auto align = [](std::uint32_t extent, std::uint32_t blockDimension) {
+            return (static_cast<std::uint64_t>(extent) + blockDimension - 1u) / blockDimension * blockDimension;
+        };
+        geometry.guestBytes = align(descriptor.width, blockWidth) * align(descriptor.height, blockHeight) * bytesPerElement * descriptor.samples;
+        geometry.layerBytes = geometry.guestBytes;
+        geometry.layers = 1;
+        geometry.imageLayers = 1;
+        geometry.imageDepth = 1;
+        return geometry;
+    }
     geometry.mips = ComputeMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.mipCount);
     const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;

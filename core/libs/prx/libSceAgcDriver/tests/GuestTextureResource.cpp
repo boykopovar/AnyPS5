@@ -270,6 +270,7 @@ void RunGuestTextureResourceTests() {
     const std::array<std::uint32_t, 8> canvas{0x021f2000u, 0x03800000u, 0x804a004au, 0xe1b20facu, 0x00000000u, 0x00400020u, 0x00000000u, 0x00000000u};
     result = DecodeTextureResource(canvas);
     Require(result.dimension == TextureDimension::k2DMsaa && result.samples == 4 && result.baseAddress == 0x21f200000ull && result.width == 297 && result.height == 297 && result.format == 56 && result.tileMode == TextureTileMode::kR64KBX, "the 4x canvas descriptor of PPSA99006 decoded incorrectly");
+    Require(DescribeSurface(result).guestBytes == 0x190000, "4x render-target geometry must include fragment-aware padding for the PPSA99006 canvas");
     Fields fewerFragments = multisampled;
     fewerFragments.maxMip = 1;
     rejectFields(fewerFragments, "same sample count");
