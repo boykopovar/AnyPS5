@@ -140,9 +140,8 @@ int APS5_VABI sceVoiceQoSSetLocalEndpointAttribute(int32_t localId, int32_t attr
     return Locked([&](QoS& qos) { return SetAttribute(qos.locals, localId, attributeId, value, size); });
 }
 
-int APS5_VABI sceVoiceQoSSetRemoteEndpointAttribute() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI sceVoiceQoSSetRemoteEndpointAttribute(int32_t remoteId, int32_t attributeId, const void* value, int32_t size) {
+    return Locked([&](QoS& qos) { return SetAttribute(qos.remotes, remoteId, attributeId, value, size); });
 }
 
 int APS5_VABI sceVoiceQoSReadPacket() {
