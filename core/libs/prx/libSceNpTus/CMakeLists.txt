@@ -1,0 +1,16 @@
+add_library(libSceNpTus SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpTus PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpTus)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_tus_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpTus.cpp)
+    target_include_directories(guest_np_tus_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_tus_tests PRIVATE libSceNpTus)
+    configure_windows_unwind(guest_np_tus_tests)
+    add_test(NAME guest_np_tus COMMAND guest_np_tus_tests)
+    set_tests_properties(guest_np_tus PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_tus PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpTus>")
+    endif()
+endif()
