@@ -360,7 +360,11 @@ private:
     // Uploads the surface, or only the tracked layers `layers` selects (the direct path; the others
     // upload everything).
     void upload(const std::vector<bool>* layers = nullptr);
-    void captureGuestBytes(const std::vector<bool>* layers);
+    void captureGuestBytes(const std::vector<bool>* layers, bool keepWritten = false);
+    bool keepWrittenSince(std::uint32_t unit);
+    bool guestMatchesUpload(std::uint32_t unit) const;
+    std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit, bool flushGpuWrites) const;
+    void forgetUploadHash(std::uint32_t first, std::uint32_t count);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
@@ -532,6 +536,7 @@ private:
     std::vector<std::byte> original;
     mutable std::array<std::uint64_t, 5> comparedGuestBytes{};
     std::vector<std::byte> generationBaseline;
+    std::vector<std::array<std::uint64_t, 2>> uploadHash;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
