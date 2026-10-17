@@ -1,5 +1,6 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 
@@ -52,7 +53,7 @@ constexpr std::uint32_t MAPPED_NOTES = NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | 
 
 class VnodeWatch {
 public:
-    VnodeWatch(const KernelEqueueRef& owner, std::uintptr_t descriptor, std::uint32_t notes) : queue(owner), ident(descriptor), interest(notes) {
+    VnodeWatch(const KernelEqueueRef& owner, std::uintptr_t descriptor, std::int16_t filter, std::uint32_t notes) : queue(owner), ident(descriptor), filter(filter), interest(notes) {
 #ifdef _WIN32
         stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (stopEvent == nullptr) {
@@ -118,6 +119,7 @@ public:
 private:
     std::weak_ptr<KernelEqueuePrivate> queue;
     std::uintptr_t ident;
+    std::int16_t filter;
     std::atomic<std::uint32_t> interest;
     std::atomic<bool> stopped{false};
 #ifdef _WIN32
@@ -144,7 +146,7 @@ void VnodeWatch::Deliver(std::uint32_t hint) {
         return;
     }
     VnodeHint message{this, hint};
-    owner->TriggerEvent(ident, EVFILT_VNODE, &message);
+    owner->TriggerEvent(ident, filter, &message);
 }
 
 #ifdef _WIN32
@@ -682,6 +684,45 @@ void StopVnode(KernelEqueue, KernelEqueueEvent* event) {
     static_cast<VnodeWatch*>(event->filter.data)->Stop();
 }
 
+constexpr std::uint32_t NOTE_FILE_POLL = 0x0002;
+constexpr int GUEST_SEEK_CUR = 1;
+
+struct FileDataNote {
+    std::atomic<std::uint32_t> notes;
+    std::shared_ptr<VnodeWatch> watch;
+};
+
+bool PollFileRead(KernelEqueueEvent* event) {
+    const int descriptor = static_cast<int>(event->event.ident);
+    FileStat status{};
+    if (sceKernelFstat(descriptor, &status) != 0) {
+        return false;
+    }
+    const std::int64_t offset = sceKernelLseek(descriptor, 0, GUEST_SEEK_CUR);
+    if (offset < 0) {
+        return false;
+    }
+    event->event.data = static_cast<std::intptr_t>(status.st_size - offset);
+    const auto* note = static_cast<const FileDataNote*>(event->filter.data);
+    return (note->notes.load() & NOTE_FILE_POLL) != 0 || event->event.data != 0;
+}
+
+bool PollFileWrite(KernelEqueueEvent* event) {
+    event->event.data = 0;
+    return true;
+}
+
+void TriggerFileRead(KernelEqueueEvent* event, void*) {
+    event->triggered = PollFileRead(event);
+}
+
+void StopFileData(KernelEqueue, KernelEqueueEvent* event) {
+    const auto* note = static_cast<const FileDataNote*>(event->filter.data);
+    if (note->watch) {
+        note->watch->Stop();
+    }
+}
+
 int VnodeDescriptorError(int descriptor) {
     if (descriptor < 0) {
         return GUEST_EBADF;
@@ -718,7 +759,7 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
     }
     std::shared_ptr<VnodeWatch> watch;
     try {
-        watch = std::make_shared<VnodeWatch>(queue, static_cast<std::uintptr_t>(descriptor), fflags);
+        watch = std::make_shared<VnodeWatch>(queue, static_cast<std::uintptr_t>(descriptor), EVFILT_VNODE, fflags);
     } catch (...) {
         CloseHostWatch(host);
         throw;
@@ -744,6 +785,59 @@ int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, std::uint32_t ff
         return result == EQUEUE_OK ? 0 : result & 0xffff;
     }
     std::thread(RunHostWatch, watch, std::move(host)).detach();
+    return 0;
+}
+
+bool IsFileDataEvent(const KernelEqueueEvent& event) {
+    return event.filter.deleteEventFunc == StopFileData;
+}
+
+void SetFileDataNotes(KernelEqueueEvent& event, std::uint32_t fflags) {
+    static_cast<FileDataNote*>(event.filter.data)->notes.store(fflags);
+}
+
+int AddFileDataEvent(const KernelEqueueRef& queue, int descriptor, std::int16_t filter, std::uint32_t fflags, std::uint16_t flags, void* udata) {
+    auto note = std::make_shared<FileDataNote>();
+    note->notes.store(fflags);
+    KernelEqueueEvent event{};
+    event.event.ident = static_cast<std::uintptr_t>(descriptor);
+    event.event.filter = filter;
+    event.event.flags = flags;
+    event.event.udata = udata;
+    event.filter.data = note.get();
+    event.filter.owner = note;
+    event.filter.deleteEventFunc = StopFileData;
+    if (filter == EVFILT_WRITE) {
+        event.filter.pollFunc = PollFileWrite;
+        return queue->AddEvent(event) & 0xffff;
+    }
+    event.filter.pollFunc = PollFileRead;
+    event.filter.triggerFunc = TriggerFileRead;
+    if (File::IsArchivedFile(descriptor)) {
+        return queue->AddEvent(event) & 0xffff;
+    }
+    HostWatch host;
+    if (const int error = OpenHostWatch(descriptor, MAPPED_NOTES, host)) {
+        return error;
+    }
+    try {
+        note->watch = std::make_shared<VnodeWatch>(queue, static_cast<std::uintptr_t>(descriptor), EVFILT_READ, MAPPED_NOTES);
+    } catch (...) {
+        CloseHostWatch(host);
+        throw;
+    }
+    const int result = queue->AddEvent(event);
+    bool registered = false;
+    if (result == EQUEUE_OK) {
+        queue->EditEvent(event.event.ident, EVFILT_READ, [&registered, &note](KernelEqueueEvent& added) {
+            registered = added.filter.data == note.get();
+        });
+    }
+    if (!registered) {
+        CloseHostWatch(host);
+        return result == EQUEUE_OK ? 0 : result & 0xffff;
+    }
+    std::thread(RunHostWatch, note->watch, std::move(host)).detach();
     return 0;
 }
 

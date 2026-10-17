@@ -116,6 +116,9 @@ KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t
 void RequireVnodeNotes(uint32_t fflags);
 void SetVnodeNotes(KernelEqueueEvent& event, uint32_t fflags);
 int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, uint32_t fflags, uint16_t flags, void* udata);
+bool IsFileDataEvent(const KernelEqueueEvent& event);
+void SetFileDataNotes(KernelEqueueEvent& event, uint32_t fflags);
+int AddFileDataEvent(const KernelEqueueRef& queue, int descriptor, int16_t filter, uint32_t fflags, uint16_t flags, void* udata);
 extern "C" {
 
 KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq);

@@ -127,6 +127,11 @@ int DescriptorFilterError(int kqueueDescriptor, std::uintptr_t ident) {
     return descriptor == kqueueDescriptor ? GUEST_EINVAL : 0;
 }
 
+bool IsRegularFile(int descriptor) {
+    FileStat status{};
+    return !GuestSockets::IsOpen(descriptor) && sceKernelFstat(descriptor, &status) == 0 && (status.st_mode & 0170000) == 0100000;
+}
+
 int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     const int descriptor = static_cast<int>(change.ident);
     if (IsKqueueDescriptor(descriptor)) {
@@ -134,6 +139,15 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
             return GUEST_EINVAL;
         }
         NotImplemented_nid_no_patch("kevent: EVFILT_READ on a kqueue descriptor");
+    }
+    if (IsRegularFile(descriptor)) {
+        if ((flags & EV_CLEAR) != 0) {
+            NotImplemented_nid_no_patch("kevent: EV_CLEAR on a regular file");
+        }
+        const std::uint32_t notes = change.fflags;
+        change.fflags = 0;
+        change.data = 0;
+        return AddFileDataEvent(queue, descriptor, change.filter, notes, flags, change.udata);
     }
     const bool socket = GuestSockets::IsOpen(descriptor);
     std::int64_t data = 0;
@@ -219,7 +233,8 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if (change.filter == EVFILT_TIMER) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
     }
-    if ((change.filter == EVFILT_READ || change.filter == EVFILT_WRITE) && (change.fflags & NOTE_LOWAT) != 0) {
+    const bool file = (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE) && IsRegularFile(static_cast<int>(change.ident));
+    if (!file && (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE) && (change.fflags & NOTE_LOWAT) != 0) {
         NotImplemented_nid_no_patch("kevent: NOTE_LOWAT");
     }
     if (change.filter == EVFILT_VNODE) {
@@ -241,6 +256,8 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
             TouchUserKnote(event, change);
         } else if (change.filter == EVFILT_VNODE) {
             SetVnodeNotes(event, change.fflags);
+        } else if (IsFileDataEvent(event)) {
+            SetFileDataNotes(event, change.fflags);
         }
     }));
 }

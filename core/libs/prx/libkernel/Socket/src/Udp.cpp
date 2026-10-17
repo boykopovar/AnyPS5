@@ -356,9 +356,11 @@ bool GuestSockets::WaitAny(const std::vector<Interest>& interests, std::uint64_t
             const auto found = sockets.find(interest.descriptor);
             if (found == sockets.end()) {
 #ifdef _WIN32
-                pipes = true;
+                const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(interest.descriptor));
+                if (handle != INVALID_HANDLE_VALUE && GetFileType(handle) == FILE_TYPE_PIPE) pipes = true;
 #else
-                entries.push_back({interest.descriptor, ReadMask, 0});
+                struct stat status{};
+                if (::fstat(interest.descriptor, &status) == 0 && S_ISFIFO(status.st_mode)) entries.push_back({interest.descriptor, interest.write ? WriteMask : ReadMask, 0});
 #endif
                 continue;
             }
