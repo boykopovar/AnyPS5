@@ -172,6 +172,16 @@ void noteUncached(const std::shared_ptr<StorageTexture>& image) {
     uncached.any.store(true, std::memory_order_release);
 }
 
+std::atomic<bool>& TexturesReleased() {
+    static std::atomic<bool> released{false};
+    return released;
+}
+
+void noteReleased(const std::shared_ptr<Texture>& texture) {
+    texture->MarkReleased();
+    TexturesReleased().store(true, std::memory_order_release);
+}
+
 bool SamplerCacheDisabled() {
     static const bool disabled = std::getenv("APS5_NO_SAMPLER_CACHE") != nullptr;
     return disabled;
@@ -203,6 +213,7 @@ void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
             }
         }
     }
+    if (it->texture.use_count() > 1) noteReleased(it->texture);
     cache.index.erase(it->key);
     cache.entries.erase(it);
     ++cache.erasures;
@@ -797,6 +808,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
     if (!admitTexture(cache, key, entry.accounted, budget)) {
+        noteReleased(texture);
         logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
@@ -3271,7 +3283,8 @@ void ResourceCache::noteMiss(const Key& key) {
 
 void ResourceCache::Insert(const Key& key, std::shared_ptr<ShaderResources> resources, std::vector<std::shared_ptr<ShaderResources>>* evicted) {
     std::lock_guard lock(mutex);
-    if (!resources->HasCachedStorageImages()) return;
+    dropReleasedTextures(evicted);
+    if (!resources->HasCachedStorageImages() || resources->HoldsReleasedTexture()) return;
     if (const auto found = index.find(key); found != index.end()) {
         if (evicted != nullptr) evicted->push_back(std::move(found->second->second));
         entries.erase(found->second);
@@ -3318,6 +3331,19 @@ void ResourceCache::RemoveImage(const StorageTexture* image, std::vector<std::sh
     std::lock_guard lock(mutex);
     for (auto it = entries.begin(); it != entries.end();) {
         if (!it->second->ReadsImage(image)) {
+            ++it;
+            continue;
+        }
+        if (evicted != nullptr) evicted->push_back(std::move(it->second));
+        index.erase(it->first);
+        it = entries.erase(it);
+    }
+}
+
+void ResourceCache::dropReleasedTextures(std::vector<std::shared_ptr<ShaderResources>>* evicted) {
+    if (!TexturesReleased().exchange(false, std::memory_order_acq_rel)) return;
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (!it->second->HoldsReleasedTexture()) {
             ++it;
             continue;
         }
@@ -4748,6 +4774,10 @@ std::vector<std::pair<VkImage, bool>> ShaderResources::StorageImages() const {
 bool ShaderResources::HasCachedStorageImages() const {
     if (std::any_of(storageTextures.begin(), storageTextures.end(), [](const auto& image) { return image != nullptr && !image->Cached(); })) return false;
     return std::none_of(textures.begin(), textures.end(), [](const auto& texture) { return texture != nullptr && texture->StorageSource() != nullptr && !texture->StorageSource()->Cached(); });
+}
+
+bool ShaderResources::HoldsReleasedTexture() const {
+    return std::any_of(textures.begin(), textures.end(), [](const auto& texture) { return texture != nullptr && texture->Released(); });
 }
 
 bool ShaderResources::ReadsImage(const StorageTexture* image) const {

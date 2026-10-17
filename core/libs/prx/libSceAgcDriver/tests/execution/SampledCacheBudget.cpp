@@ -468,6 +468,48 @@ void heldTests(const Context& context) {
     Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "released textures were not evicted down to the budget");
 }
 
+void releasedTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    ClearCachedTextures(context.device);
+    auto& cache = SharedResourceCache();
+    cache.Clear();
+    try {
+        Block block(context);
+        auto pinned = ImageResources(context, block, 0, 1, true);
+        Require(pinned->SampledTextures().size() == 1 && !pinned->SampledTextures().front()->ViewsStorageImage(), "the pinned descriptor set does not hold a sampled snapshot");
+        const std::weak_ptr<Texture> texture = pinned->SampledTextures().front();
+        const std::weak_ptr<ShaderResources> pinnedSet = pinned;
+        cache.Insert({1}, pinned);
+        Require(cache.Find({1}) == pinned, "the resource cache rejected a descriptor set whose texture is cached");
+        pinned.reset();
+        ClearCachedTextures(context.device);
+        Require(!texture.expired() && texture.lock()->Released(), "the sampled texture cache dropped a texture the resource cache holds without marking it released");
+        auto live = ImageResources(context, block, 1, 1, true);
+        std::vector<std::shared_ptr<ShaderResources>> displaced;
+        cache.Insert({2}, live, &displaced);
+        Require(cache.Find({1}) == nullptr && cache.Find({2}) == live && cache.Size() == 1, "the resource cache kept an entry holding a released texture");
+        Require(displaced.size() == 1 && displaced.front() == pinnedSet.lock(), "the entry holding a released texture was not handed back to the caller");
+        displaced.clear();
+        Require(pinnedSet.expired() && texture.expired(), "the resource cache kept a released texture alive");
+        auto stale = ImageResources(context, block, 2, 1, true);
+        ClearCachedTextures(context.device);
+        Require(stale->SampledTextures().front()->Released(), "a held texture the sampled cache dropped is not marked released");
+        cache.Insert({3}, stale, &displaced);
+        Require(cache.Find({3}) == nullptr, "a descriptor set holding a released texture entered the resource cache");
+        Require(cache.Size() == 0 && displaced.size() == 1 && displaced.front() == live, "the live entry whose texture was released stayed in the resource cache");
+        displaced.clear();
+    } catch (...) {
+        cache.Clear();
+        throw;
+    }
+    cache.Clear();
+    ClearCachedTextures(context.device);
+    std::puts("resource cache released texture tests passed");
+}
+
 void rescanTests(const Context& context) {
     constexpr std::uint32_t SmallSide = 128;
     constexpr std::size_t SmallBytes = std::size_t{SmallSide} * SmallSide * 4u;
@@ -682,6 +724,7 @@ int main(int argc, char** argv) {
             reportedBudgetTests(context);
             snapshotTests(context);
             heldTests(context);
+            releasedTests(context);
             rescanTests(context);
             viewEvictionTests(context);
             viewTests(context);

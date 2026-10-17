@@ -196,6 +196,7 @@ public:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const { return guestMemory.DeviceReads(); }
     bool ReadsImage(const StorageTexture* image) const;
     bool HasCachedStorageImages() const;
+    bool HoldsReleasedTexture() const;
     std::uint32_t TableElements() const { return tableElements[0] + tableElements[1]; }
     const std::vector<std::uint32_t>& LayoutKey() const { return layoutKey; }
     const std::vector<std::uint32_t>& FragmentLayoutKey() const { return fragmentLayoutKey; }
@@ -635,6 +636,7 @@ public:
 private:
     void erase(const Key& key);
     void noteMiss(const Key& key);
+    void dropReleasedTextures(std::vector<std::shared_ptr<ShaderResources>>* evicted);
     struct KeyHash {
         std::size_t operator()(const Key& key) const noexcept {
             std::uint64_t hash = 14695981039346656037ull;
