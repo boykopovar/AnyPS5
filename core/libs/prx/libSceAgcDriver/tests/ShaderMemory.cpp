@@ -14,6 +14,7 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SavedExecMaskLoop.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -2311,6 +2312,18 @@ void verifyHalfWaveReduction() {
         {0u, 0x38000000u, 0x88000000u, spv::OpGroupNonUniformBitwiseOr, "half-wave reduction: the wave64 OR scan did not read lane 31 as a subgroup OR on 32 lanes"},
     }};
     for (const auto& reduction : scans) require(reductions(pixel(scan(reduction.identity, reduction.vector, reduction.scalar), 32u, true), reduction.reduce) == 1u, reduction.message);
+    auto loopScan = scan(0xffffffffu, 0x26000000u, 0x83800000u);
+    const auto savedMaskLoop = AgcTest::SavedExecMaskLoop(3u);
+    loopScan.insert(loopScan.begin(), savedMaskLoop.begin(), savedMaskLoop.end());
+    auto helperLoop = loopScan;
+    helperLoop[0] = 0xbea204c1u;
+    expectFailure([&] { static_cast<void>(pixel(helperLoop, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: a loop initialized with helper lanes was proven to exclude them");
+    auto upperHelperLoop = loopScan;
+    upperHelperLoop[0] = 0xbea2037eu;
+    upperHelperLoop.insert(upperHelperLoop.begin() + 1, 0xbea303c1u);
+    expectFailure([&] { static_cast<void>(pixel(upperHelperLoop, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: the low-word loop proof was reused for helper-inclusive upper lanes");
+    require(reductions(pixel(loopScan, 32u, true), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: a loop-carried saved EXEC mask exhausted the entry-lane proof on 32 lanes");
+    require(halves(pixel(loopScan, 64u, true), spv::OpGroupNonUniformUMin, 0xffffffffu), "half-wave reduction: a loop-carried saved EXEC mask did not preserve the two half-wave UMin reductions");
     auto comparedScan = scan(0u, 0x38000000u, 0x88000000u);
     *std::find(comparedScan.begin(), comparedScan.end(), 0xbe98047eu) = 0x8a986a7eu;
     comparedScan.insert(comparedScan.begin(), 0x7c080080u);
