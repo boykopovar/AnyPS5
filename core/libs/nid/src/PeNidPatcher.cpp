@@ -8,6 +8,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Nid {
@@ -116,7 +117,45 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     if (stringsRegionStart == std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("could not determine strings region start");
 
-    const std::uint32_t rawLimit = ((edataSection.SizeOfRawData + fileAlignment - 1u) / fileAlignment) * fileAlignment;
+    std::uint32_t rawLimit = ((edataSection.SizeOfRawData + fileAlignment - 1u) / fileAlignment) * fileAlignment;
+    const auto dllName = ReadCStr(pe, RvaToOffset(pe, exportTable.Name, peHeaderOffset, numberOfSections, sizeOfOptionalHeader));
+    const bool repackDllName = exportTable.Name >= edataSection.VirtualAddress &&
+        exportTable.Name - edataSection.VirtualAddress < rawLimit;
+    if (repackDllName) stringsRegionStart = std::min(stringsRegionStart, exportTable.Name - edataSection.VirtualAddress);
+    struct Forwarder {
+        std::size_t EntryOffset;
+        std::string Target;
+    };
+    std::vector<Forwarder> forwarders;
+    std::vector<std::uint32_t> directRvas;
+    const auto functionsArrayOffset = RvaToOffset(pe, exportTable.AddressOfFunctions, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+    for (std::uint32_t index = 0u; index < exportTable.NumberOfFunctions; ++index) {
+        const auto entryOffset = functionsArrayOffset + index * sizeof(std::uint32_t);
+        const auto rva = Read<std::uint32_t>(pe, entryOffset);
+        if (rva < exportDir.VirtualAddress || std::uint64_t{rva} - exportDir.VirtualAddress >= exportDir.Size) {
+            directRvas.push_back(rva);
+            continue;
+        }
+        const auto target = ReadCStr(pe, RvaToOffset(pe, rva, peHeaderOffset, numberOfSections, sizeOfOptionalHeader));
+        if (target.size() + 1u > exportDir.Size - (rva - exportDir.VirtualAddress))
+            throw std::runtime_error("forwarder string outside export directory");
+        forwarders.push_back({entryOffset, target});
+        stringsRegionStart = std::min(stringsRegionStart, rva - edataSection.VirtualAddress);
+    }
+    for (const auto rva : directRvas) {
+        if (rva >= edataSection.VirtualAddress && rva - edataSection.VirtualAddress >= stringsRegionStart)
+            rawLimit = std::min(rawLimit, rva - edataSection.VirtualAddress);
+    }
+    const auto reserveTable = [&](std::uint32_t rva, std::uint64_t size) {
+        if (rva < edataSection.VirtualAddress || rva - edataSection.VirtualAddress >= rawLimit) return;
+        const auto end = std::uint64_t{rva - edataSection.VirtualAddress} + size;
+        if (end > rawLimit) throw std::runtime_error("export table outside edata section");
+        stringsRegionStart = std::max(stringsRegionStart, static_cast<std::uint32_t>(end));
+    };
+    reserveTable(exportDir.VirtualAddress, sizeof(PeExportDirectory));
+    reserveTable(exportTable.AddressOfFunctions, std::uint64_t{exportTable.NumberOfFunctions} * 4u);
+    reserveTable(exportTable.AddressOfNames, std::uint64_t{exportTable.NumberOfNames} * 4u);
+    reserveTable(exportTable.AddressOfNameOrdinals, std::uint64_t{exportTable.NumberOfNames} * 2u);
 
     std::vector<std::string> finalNames(exportTable.NumberOfNames);
     for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
@@ -125,28 +164,48 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         finalNames[i] = it->second;
     }
 
-    std::uint32_t requiredSize = stringsRegionStart;
-    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i)
-        requiredSize += static_cast<std::uint32_t>(finalNames[i].size()) + 1u;
-
+    std::vector<std::uint8_t> strings;
+    std::unordered_map<std::string, std::uint32_t> stringRvas;
+    const auto storeString = [&](const std::string& name) {
+        const auto existing = stringRvas.find(name);
+        if (existing != stringRvas.end()) return existing->second;
+        const auto rva = edataSection.VirtualAddress + stringsRegionStart + static_cast<std::uint32_t>(strings.size());
+        stringRvas.emplace(name, rva);
+        strings.insert(strings.end(), name.begin(), name.end());
+        strings.push_back(0u);
+        return rva;
+    };
+    std::vector<std::uint32_t> forwarderRvas;
+    for (const auto& forwarder : forwarders) forwarderRvas.push_back(storeString(forwarder.Target));
+    if (!forwarders.empty() && (std::uint64_t{edataSection.VirtualAddress} + stringsRegionStart < exportDir.VirtualAddress ||
+        std::uint64_t{edataSection.VirtualAddress} + stringsRegionStart + strings.size() > std::uint64_t{exportDir.VirtualAddress} + exportDir.Size))
+        throw std::runtime_error("not enough export directory space to repack forwarders");
+    const auto dllNameRva = repackDllName ? storeString(dllName) : exportTable.Name;
+    std::vector<std::uint32_t> finalNameRvas;
+    for (const auto& name : finalNames) finalNameRvas.push_back(storeString(name));
+    const auto requiredSize = std::uint64_t{stringsRegionStart} + strings.size();
     if (requiredSize > rawLimit)
         throw std::runtime_error("not enough raw space in edata section to repack export names");
-
-    std::uint32_t writeOffset = stringsRegionStart;
-    for (std::uint32_t i = 0u; i < exportTable.NumberOfNames; ++i) {
-        const std::uint32_t newNameRva = edataSection.VirtualAddress + writeOffset;
-        const std::size_t newNameFileOffset = static_cast<std::size_t>(edataSection.PointerToRawData) + writeOffset;
-
-        if (newNameFileOffset + finalNames[i].size() + 1u > pe.size())
-            throw std::runtime_error("repack write out of file bounds");
-
-        std::memcpy(pe.data() + newNameFileOffset, finalNames[i].data(), finalNames[i].size());
-        pe[newNameFileOffset + finalNames[i].size()] = 0u;
-        Write(pe, namesArrayOffset + i * 4u, newNameRva);
-        writeOffset += static_cast<std::uint32_t>(finalNames[i].size()) + 1u;
+    const auto directoryEnd = std::max(std::uint64_t{exportDir.VirtualAddress} + exportDir.Size,
+        std::uint64_t{edataSection.VirtualAddress} + requiredSize);
+    for (const auto rva : directRvas) {
+        if (rva != 0u && rva >= exportDir.VirtualAddress && std::uint64_t{rva} < directoryEnd)
+            throw std::runtime_error("repacked export directory would cover a direct export");
     }
+    const auto directorySize = directoryEnd - exportDir.VirtualAddress;
+    if (directorySize > std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("export directory too large");
+    const auto stringFileOffset = static_cast<std::size_t>(edataSection.PointerToRawData) + stringsRegionStart;
+    if (stringFileOffset > pe.size() || strings.size() > pe.size() - stringFileOffset)
+        throw std::runtime_error("repack write out of file bounds");
+    std::memcpy(pe.data() + stringFileOffset, strings.data(), strings.size());
+    for (std::size_t index = 0u; index < finalNameRvas.size(); ++index)
+        Write(pe, namesArrayOffset + index * 4u, finalNameRvas[index]);
+    for (std::size_t index = 0u; index < forwarders.size(); ++index)
+        Write(pe, forwarders[index].EntryOffset, forwarderRvas[index]);
+    Write(pe, exportDirOffset + offsetof(PeExportDirectory, Name), dllNameRva);
+    Write(pe, dataDirectoryOffset + offsetof(PeDataDirectory, Size), static_cast<std::uint32_t>(directorySize));
 
-    const std::uint32_t newVirtualSize = std::max(edataSection.VirtualSize, writeOffset);
+    const std::uint32_t newVirtualSize = std::max(edataSection.VirtualSize, static_cast<std::uint32_t>(requiredSize));
     auto patchedSection = edataSection;
     patchedSection.VirtualSize = newVirtualSize;
     Write(pe, edataSectionOffset, patchedSection);
