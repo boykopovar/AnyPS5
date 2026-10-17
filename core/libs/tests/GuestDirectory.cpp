@@ -1,6 +1,7 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -14,6 +15,8 @@ GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void*);
 int APS5_VABI readdir_r_nid_postfix(void*, GuestDirectoryEntry*, GuestDirectoryEntry**);
 int APS5_VABI closedir_nid_postfix(void*);
 void APS5_VABI rewinddir_nid_postfix(void*);
+std::int64_t APS5_VABI telldir_nid_postfix(void*);
+void APS5_VABI seekdir_nid_postfix(void*, std::int64_t);
 int* APS5_VABI __error_nid_postfix();
 }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -85,6 +88,22 @@ int main() {
         nullResultThrows = true;
     }
     Require(nullResultThrows);
+    rewinddir_nid_postfix(directory);
+    Require(readdir_nid_postfix(directory) != nullptr);
+    const std::int64_t second = telldir_nid_postfix(directory);
+    Require(second != -1);
+    auto* entryAfterTell = readdir_nid_postfix(directory);
+    Require(entryAfterTell != nullptr);
+    const std::string secondName = entryAfterTell->name;
+    while (readdir_nid_postfix(directory)) {}
+    seekdir_nid_postfix(directory, second);
+    auto* entryAfterSeek = readdir_nid_postfix(directory);
+    Require(entryAfterSeek != nullptr && secondName == entryAfterSeek->name);
+    *__error_nid_postfix() = 0;
+    Require(telldir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    seekdir_nid_postfix(nullptr, second);
+    Require(*__error_nid_postfix() == 9);
     Require(closedir_nid_postfix(directory) == 0);
     Require(opendir_nid_postfix((root / "missing").string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 2);
