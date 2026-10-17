@@ -49,6 +49,7 @@ struct DepthGuard {
     std::size_t bytes;
     std::shared_ptr<std::atomic<bool>> active;
     std::vector<GuestMemory::UnchangedQuery> live;
+    std::shared_ptr<std::atomic<bool>> hostWritten;
 };
 
 std::shared_mutex& depthGuardMutex() {
@@ -91,7 +92,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     if ((target.pipeBankXor & ~0xcf00u) != 0u) return refuse("unsupported native multisample depth XOR");
     if (target.address == 0u || (target.address & 65535u) != 0u) return refuse("native multisample depth base is not aligned");
     if (target.stencilAddress != 0u || target.htileStencil) return refuse("native multisample stencil import is not implemented");
-    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || !target.iterate256 || !target.htilePipeAligned || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned ITERATE_256 HTILE without VRS");
+    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || !target.htilePipeAligned || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned HTILE without VRS");
     if (target.clearDepth != 0.0f && target.clearDepth != 1.0f) return refuse("native multisample depth initial clear value is not implemented");
     state.initial = {{{target.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(target.extent, target.format == VK_FORMAT_D16_UNORM ? 2u : 4u, target.samples)), 0u}, {target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(target.extent)), 0u}}};
     for (const auto& range : state.initial) {
@@ -324,6 +325,7 @@ public:
 
     void CopyAspectFrom(const DepthSurface& source, VkImageAspectFlagBits aspect) {
         pendingClear &= ~static_cast<VkImageAspectFlags>(aspect);
+        NoteHostWrite();
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
@@ -345,7 +347,12 @@ public:
         return std::any_of(textures.begin(), textures.end(), held) || std::any_of(stencilCopy.textures.begin(), stencilCopy.textures.end(), held);
     }
 
+    void NoteHostWrite() {
+        hostWritten->store(true, std::memory_order_release);
+    }
+
     std::uint64_t written = ++depthWrites;
+    std::shared_ptr<std::atomic<bool>> hostWritten = std::make_shared<std::atomic<bool>>(false);
     bool retired = false;
 
     bool Overlaps(std::uint64_t address, std::uint64_t bytes) const {
@@ -417,6 +424,7 @@ public:
             if (plane.storage.get() == &candidate) {
                 copyPlane(plane, plane.storage, stencil, false);
                 written = ++depthWrites;
+                NoteHostWrite();
                 return true;
             }
             if (std::none_of(plane.replaced.begin(), plane.replaced.end(), [&](const auto& old) { return old.lock().get() == &candidate; })) continue;
@@ -434,6 +442,7 @@ public:
             const auto source = std::const_pointer_cast<StorageTexture>(candidate.shared_from_this());
             copyPlane(plane, source, stencil, false);
             written = ++depthWrites;
+            NoteHostWrite();
             return true;
         }
         return false;
@@ -1098,8 +1107,27 @@ std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0u || !anyDepthGuard().load(std::memory_order_acquire)) return;
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth read range overflows");
-    std::shared_lock lock(depthGuardMutex());
-    for (const auto& range : depthGuards()) Require(address >= range.address + range.bytes || range.address >= address + bytes, "sample-preserving guest publication of native multisample depth is not implemented");
+    const auto overlaps = [&](const DepthGuard& range) { return address < range.address + range.bytes && range.address < address + bytes; };
+    {
+        std::shared_lock lock(depthGuardMutex());
+        if (std::ranges::none_of(depthGuards(), overlaps)) return;
+    }
+    std::unique_lock lock(depthGuardMutex());
+    for (const auto& range : depthGuards()) {
+        if (overlaps(range)) Require(!range.hostWritten->load(std::memory_order_acquire), "sample-preserving guest publication of native multisample depth is not implemented");
+    }
+    for (const auto& range : depthGuards()) {
+        if (overlaps(range)) range.active->store(false, std::memory_order_release);
+    }
+    std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
+    anyDepthGuard().store(!depthGuards().empty(), std::memory_order_release);
+}
+
+void NoteDepthSurfaceWrite(const Context& context, const DepthTarget& target) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (surface->active->load(std::memory_order_acquire) && surface->context.device == context.device && sameSurface(surface->target, target)) surface->NoteHostWrite();
+    }
 }
 
 bool HasResidentDepthGuards_nid_no_patch() {
@@ -1206,7 +1234,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target) 
         auto& fresh = *surfaces().back();
         if (target.samples != 1u && fresh.sampleable && fresh.sampling.refusal.empty()) {
             std::unique_lock guardLock(depthGuardMutex());
-            for (const auto& range : fresh.sampling.initial) depthGuards().push_back({context.device, range.address, range.bytes, fresh.active, {{range.address, range.bytes, 0u}}});
+            for (const auto& range : fresh.sampling.initial) depthGuards().push_back({context.device, range.address, range.bytes, fresh.active, {{range.address, range.bytes, 0u}}, fresh.hostWritten});
             anyDepthGuard().store(true, std::memory_order_release);
             InstallResidentImageReadGuard_nid_no_patch();
             fresh.samplingActive = true;
@@ -1502,7 +1530,10 @@ bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage
         if (std::get<0>(key) != context.device || entry->storage.get() != &storage) continue;
         const auto slices = layeredSlices(context, *entry);
         entry->Copy(slices, false);
-        for (const auto& slice : slices) slice.surface->written = ++depthWrites;
+        for (const auto& slice : slices) {
+            slice.surface->written = ++depthWrites;
+            slice.surface->NoteHostWrite();
+        }
         return true;
     }
     for (const auto& surface : surfaces()) {
