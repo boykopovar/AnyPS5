@@ -2605,12 +2605,10 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
         }
         outcome.syncMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - syncStart).count();
     }
-    // A whole surface copied into another: a device copy between their images, whose results reach
-    // the destination's memory through the image's deferred write-back (nothing crosses to host
-    // memory for the copy itself).
     if (AliasCopy(context, destination, source, bytes)) {
         noteWriter({}, 0);
         recorder.NotePendingWrite(destination, bytes);
+        Graphics::StorageTexture::FlushPending(destination, bytes, nullptr, "buffer copy destination", Graphics::PublishScope::Whole);
         outcome.path = 3;
         return outcome;
     }
