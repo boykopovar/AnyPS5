@@ -197,6 +197,84 @@ void CheckStoredAllSince() {
     }
 }
 
+void CheckSharedBlockProofs() {
+    constexpr std::size_t page = 4096;
+    void* memory = AllocateWatched(2 * Block);
+    auto* guest = static_cast<volatile std::uint8_t*>(memory);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto range = base + Block + 8 * page;
+    constexpr std::size_t rangeBytes = 4 * page;
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWrites(base, 2 * Block);
+    Require(synced != 0, "the proof blocks are not collected");
+
+    Require(MarkWritten(base + Block, 64) != 0, "a driver store into watched memory is not stamped");
+    guest[Block + 2 * page + 5] = 0x22;
+    CollectWritesUncached(base, 2 * Block);
+    Require(UnchangedSince(range, rangeBytes, synced), "stores beside the range in its 64 KiB block count for it");
+    const std::array<UnchangedQuery, 2> beside{{{range, rangeBytes, synced}, {base + Block + 4 * page, page, synced}}};
+    Require(UnchangedSinceAll(beside), "a batch over ranges beside the stores reads as changed");
+
+    const auto beforeCpu = TrackerGeneration();
+    guest[Block + 9 * page + 5] = 0x33;
+    CollectWritesUncached(base, 2 * Block);
+    Require(!UnchangedSince(range, rangeBytes, beforeCpu), "a CPU store inside the range is not seen");
+    const std::array<UnchangedQuery, 2> mixed{{{base + Block + 4 * page, page, beforeCpu}, {range, rangeBytes, beforeCpu}}};
+    Require(!UnchangedSinceAll(mixed), "a batch with a range written by the CPU reads as unchanged");
+
+    const auto beforeDriver = TrackerGeneration();
+    MarkWritten(range + 100, 4);
+    Require(!UnchangedSince(range, rangeBytes, beforeDriver), "a driver store inside the range is not seen");
+
+    const auto beforeWhole = TrackerGeneration();
+    MarkWritten(base + Block, Block);
+    Require(!UnchangedSince(range, rangeBytes, beforeWhole), "a store over the whole block is not seen");
+
+    const auto beforeOwn = TrackerGeneration();
+    const auto stored = base + Block + 12 * page + 0x100;
+    StoreOwnBytes(stored, 64, [&] {
+        std::memset(reinterpret_cast<void*>(stored), 0x55, 64);
+        guest[Block + 12 * page + 0x800] = 0x66;
+    });
+    Require(!UnchangedSince(base + Block + 12 * page + 0x800, 16, beforeOwn), "a guest store beside a driver store in its page during the store is not seen");
+    Require(UnchangedSince(base + Block + 4 * page, page, beforeOwn), "a driver store counts for another page of its block");
+
+    const auto beforeNoRecord = TrackerGeneration();
+    guest[2 * page + 5] = 0x44;
+    CollectWritesUncached(base, 2 * Block);
+    Require(UnchangedSince(base + 8 * page, page, beforeNoRecord), "a CPU store beside the range in a block without driver stores counts for it");
+
+    const auto beforeFirstWhole = TrackerGeneration();
+    MarkWritten(base, Block);
+    Require(!UnchangedSince(base + 8 * page, page, beforeFirstWhole), "a whole-block store in a block without earlier driver stores is not seen");
+    MarkWritten(base, 64);
+    Require(!UnchangedSince(base + 8 * page, page, beforeFirstWhole), "a partial store after a whole-block store hides it");
+
+    const auto beforeSpan = TrackerGeneration();
+    const std::vector<std::byte> span(6 * page, std::byte{0x77});
+    Write(base + 2 * page, span);
+    Require(!UnchangedSince(base + 4 * page, page, beforeSpan), "a store over several pages of a block is not seen");
+    Require(UnchangedSince(base + 12 * page, page, beforeSpan), "a store over several pages of a block counts for the rest of it");
+
+    const auto beforeExact = TrackerGeneration();
+    const std::vector<std::byte> nearlyWhole(Block - 512, std::byte{0x5a});
+    Write(base + Block + 256, nearlyWhole);
+    Require(StoredAllSince_nid_no_patch(base + Block + 256, nearlyWhole.size(), beforeExact), "an own store lost its exact coverage");
+    Require(!StoredAllSince_nid_no_patch(base + Block, Block, beforeExact), "the dirty pages of an own store prove its whole block stored");
+    Require(!StoredAllSince_nid_no_patch(base + Block, 256, beforeExact), "the dirty first page of an own store proves the bytes before the store stored");
+
+    const auto beforeClear = TrackerGeneration();
+    MarkWritten(base + Block + 0x100, 64);
+    const std::array<std::byte, 64> label{};
+    for (const std::uint64_t at : {4u, 6u, 10u}) Write(base + Block + at * page + 0x200, label);
+    Require(StoredAllSince_nid_no_patch(base + Block + 0x100, 64, beforeClear), "own stores elsewhere in the block forget a driver store's complete coverage");
+
+    const auto beforeNeighbour = TrackerGeneration();
+    Write(base + Block + 14 * page + 0x100, label);
+    Require(!StoredOver(base + Block + 14 * page + 0x800, 16, beforeNeighbour), "a neighbour in the page of an own store reads as stored over");
+    Require(!UnchangedSince(base + Block + 14 * page + 0x800, 16, beforeNeighbour), "a range in the page an own store dirtied reads as unchanged");
+}
+
 void CheckOwnStore() {
     void* memory = AllocateWatched(2 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -545,28 +623,43 @@ void CheckVersionRanges() {
     std::memset(memory, 17, bytes);
     const auto initial = CollectWritesUncached(base, bytes);
     Require(initial != 0, "version ranges could not be collected");
-    struct Write { std::size_t block; std::uint64_t generation; };
+    struct Write { std::size_t block; std::uint64_t generation; std::size_t begin; std::size_t end; };
     std::vector<Write> history;
     std::vector<std::uint64_t> checkpoints{initial};
     std::uint32_t random = 0x61387a29;
     const auto next = [&] { random = random * 1664525u + 1013904223u; return random; };
-    const auto expected = [&](const UnchangedQuery& query) {
-        if (query.generation == 0) return false;
+    const auto blocksUnchanged = [&](const UnchangedQuery& query) {
         for (const auto& write : history) {
             const auto begin = base + write.block * Block;
             if (write.generation > query.generation && begin < query.address + query.bytes && query.address < begin + Block) return false;
         }
         return true;
     };
+    const auto bytesUnchanged = [&](const UnchangedQuery& query) {
+        for (const auto& write : history) {
+            const auto begin = base + write.block * Block + write.begin;
+            const auto end = base + write.block * Block + write.end;
+            if (write.generation > query.generation && begin < query.address + query.bytes && query.address < end) return false;
+        }
+        return true;
+    };
     for (unsigned step = 0; step < 512; ++step) {
         const auto block = step < 3 ? step : next() % count;
         std::uint64_t generation;
+        Write write{block, 0, 13, 17};
         if (step % 3 == 0) {
             memory[block * Block + 9] ^= 1;
             generation = CollectWritesUncached(base + block * Block, Block);
+            write.begin = 0;
+            write.end = 4096;
+        } else if (step % 7 == 1) {
+            generation = MarkWritten(base + block * Block, Block);
+            write.begin = 0;
+            write.end = Block;
         } else generation = MarkWritten(base + block * Block + 13, 4);
         Require(generation > checkpoints.back(), "version range write did not advance the tracker");
-        history.push_back({block, generation});
+        write.generation = generation;
+        history.push_back(write);
         checkpoints.push_back(generation);
         for (unsigned check = 0; check < 16; ++check) {
             std::array<UnchangedQuery, 3> queries;
@@ -574,11 +667,12 @@ void CheckVersionRanges() {
             for (auto& query : queries) {
                 const auto offset = next() % bytes;
                 query = {base + offset, 1 + next() % (bytes - offset), checkpoints[next() % checkpoints.size()]};
-                const auto same = expected(query);
-                Require(UnchangedSince(query.address, query.bytes, query.generation) == same, "version range disagrees with write history");
+                const auto same = UnchangedSince(query.address, query.bytes, query.generation);
+                Require(!same || bytesUnchanged(query), "version range reads as unchanged over a newer write in it");
+                Require(same || !blocksUnchanged(query), "version range reads as changed while its blocks are unchanged");
                 all = all && same;
             }
-            Require(UnchangedSinceAll(queries) == all, "batched version ranges disagree with write history");
+            Require(UnchangedSinceAll(queries) == all, "batched version ranges disagree with the single ranges");
         }
     }
     Require(!UnchangedSince(base, bytes, 0), "an unknown generation was accepted");
@@ -932,6 +1026,7 @@ int main() {
 #endif
         CheckSharedBlock();
         CheckStoredAllSince();
+        CheckSharedBlockProofs();
         CheckOwnStore();
         CheckUnwatch();
         CheckNewestStamp();
