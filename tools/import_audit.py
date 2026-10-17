@@ -17,6 +17,7 @@ PRX = ROOT / "core" / "libs" / "prx"
 NID = re.compile(r"[A-Za-z0-9+\-]{11}")
 NID_POSTFIX = "_nid_postfix"
 MODULE_SUFFIX = "#"
+MODULE_EXTENSIONS = (".prx", ".sprx", ".suprx", ".debug_prx")
 CLASSES = ("implemented", "stub", "absent", "module")
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 
@@ -60,7 +61,18 @@ def elf_sections(path, data):
     return [unpack("<IIQQQQIIQQ", data, section_offset + index * 64, path, f"section header {index}") for index in range(section_count)]
 
 
-def elf_program_dynamic_symbols(path, data):
+def add_module_name(path, data, offset, size, tag, value, names):
+    if names is None or tag not in (14, 0x6100000d, 0x61000043):
+        return
+    position = value if tag == 14 else value & 0xffffffff
+    name = cstring(data, offset + position, offset + size, path, "module name")
+    forbidden = "\\:$\r\n" if tag == 14 else "/\\:$\r\n"
+    if not name or any(character in name for character in forbidden):
+        raise AuditError(f"{path}: invalid module name {name!r}")
+    names["sonames" if tag == 14 else "identities"].add(name)
+
+
+def elf_program_dynamic_symbols(path, data, module_names=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     ident, program_offset, program_size, program_count = header[0], header[5], header[9], header[10]
     if ident[6] != 1 or header[3] != 1:
@@ -88,6 +100,7 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
     dynamic = {}
     needed_offsets = []
+    named_entries = []
     for position in range(0, dynamic_size, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
@@ -96,6 +109,8 @@ def elf_program_dynamic_symbols(path, data):
             needed_offsets.append(value)
         else:
             dynamic[tag] = value
+        if tag in (14, 0x6100000d, 0x61000043):
+            named_entries.append((tag, value))
     string_address = dynamic.get(5)
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
@@ -103,6 +118,8 @@ def elf_program_dynamic_symbols(path, data):
     if None in (string_address, string_size, symbol_address, symbol_size) or symbol_size != 24 or string_size == 0:
         raise AuditError(f"{path}: incomplete dynamic string or symbol table")
     string_offset = file_offset(string_address, string_size, "dynamic string table")
+    for tag, value in named_entries:
+        add_module_name(path, data, string_offset, string_size, tag, value, module_names)
 
     symbol_count = None
     if 4 in dynamic:
@@ -186,10 +203,10 @@ def elf_exports(path, data):
     return names
 
 
-def elf_imports(path, data):
+def elf_imports(path, data, module_names=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     if not header[6] or header[6] >= len(data):
-        imports, _, needed = elf_program_dynamic_symbols(path, data)
+        imports, _, needed = elf_program_dynamic_symbols(path, data, module_names)
         return imports, needed
     sections = elf_sections(path, data)
     symbols = set()
@@ -217,6 +234,7 @@ def elf_imports(path, data):
                     break
                 if tag == 1:
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
+                add_module_name(path, data, strings_offset, strings_size, tag, value, module_names)
     return symbols, needed
 
 
@@ -338,10 +356,12 @@ def module_files(directory):
             raise AuditError(f"{file}: expected ELF module (first bytes {magic!r})")
 
 
-def read_modules(directories):
+def read_modules(directories, needed_names=()):
     imports = {}
     exports = defaultdict(set)
     images = {}
+    aliases = {}
+    identities = defaultdict(set)
     for directory in directories:
         for file in module_files(directory):
             data = file.read_bytes()
@@ -352,12 +372,30 @@ def read_modules(directories):
                     raise AuditError(f"ambiguous guest module {file.name}: {previous} and {file} have different contents")
                 continue
             images[file.name] = (file, digest)
-            own = elf_imports(file, data)
+            names = {"sonames": set(), "identities": set()}
+            own = elf_imports(file, data, names)
             symbols, needed = own
             imports[file.name] = (sorted(symbols), sorted(needed))
+            for name in {file.name} | names["sonames"]:
+                if name in aliases and aliases[name] != file:
+                    raise AuditError(f"ambiguous guest module name {name}: {aliases[name]} and {file}")
+                aliases[name] = file
+            for name in names["identities"]:
+                identities[name].add(file)
             for name in elf_exports(file, data):
                 exports[name].add(file.name)
-    return imports, {name: sorted(files) for name, files in exports.items()}
+    requested = set(needed_names) | {name for _, needed in imports.values() for name in needed}
+    for name in sorted(requested):
+        if name in aliases:
+            continue
+        suffix = next((extension for extension in MODULE_EXTENSIONS if name.endswith(extension)), "")
+        stem = name[:-len(suffix)] if suffix else name
+        providers = identities.get(name, set()) | identities.get(stem, set())
+        if len(providers) > 1:
+            raise AuditError(f"ambiguous guest module identity {name}: " + ", ".join(str(file) for file in sorted(providers)))
+        if providers:
+            aliases[name] = next(iter(providers))
+    return imports, {name: sorted(files) for name, files in exports.items()}, set(aliases)
 
 
 def nid_of(name, aliases):
@@ -618,8 +656,8 @@ def main(argv=None):
         imports = [entry for _, entries in registries for entry in entries]
         needed = sorted({library for path in dependency_registries for library in read_needed_registry(path)})
         exports, libraries = built_libraries(args.libs)
-        module_imports, module_exports = read_modules(args.modules)
-        records, missing = audit(imports, exports, source_stubs(args.source), libraries, set(module_imports), module_imports, module_exports, needed_libraries=needed)
+        module_imports, module_exports, modules = read_modules(args.modules, set(needed) | {library for _, library, _ in imports if library})
+        records, missing = audit(imports, exports, source_stubs(args.source), libraries, modules, module_imports, module_exports, needed_libraries=needed)
         if args.names:
             attach_names(records, load_names(args.names))
         summary = summarize(records, sum(record["references"] for record in records), missing)

@@ -23,7 +23,7 @@ MESSAGE_NID = "wTpfglkmv34"
 MESSAGE_NAME = "sceMsgDialogProgressBarSetValue"
 
 
-def build_elf(symbols, needed=()):
+def build_elf(symbols, needed=(), module_names=()):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
     for name, index, info in symbols:
@@ -33,12 +33,16 @@ def build_elf(symbols, needed=()):
     for library in needed:
         libraries.append(len(strings))
         strings += library.encode() + b"\0"
+    names = []
+    for tag, name in module_names:
+        names.append((tag, len(strings) | (0x10100000000 if tag != 14 else 0)))
+        strings += name.encode() + b"\0"
     table = b"".join(entries)
     table_offset = 64 + len(strings)
     table_offset += -table_offset % 8
     dynamic_offset = table_offset + len(table)
     dynamic_offset += -dynamic_offset % 8
-    pairs = [(1, offset) for offset in libraries]
+    pairs = [(1, offset) for offset in libraries] + names
     if pairs:
         pairs.append((0, 0))
     dynamic = b"".join(struct.pack("<qQ", tag, value) for tag, value in pairs)
@@ -56,7 +60,7 @@ def build_elf(symbols, needed=()):
     return bytes(image)
 
 
-def build_sectionless_elf(symbols, needed=(), gnu_hash=False):
+def build_sectionless_elf(symbols, needed=(), gnu_hash=False, module_names=()):
     strings = b"\0"
     entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
     for name, index, info in symbols:
@@ -66,6 +70,10 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False):
     for library in needed:
         libraries.append(len(strings))
         strings += library.encode() + b"\0"
+    names = []
+    for tag, name in module_names:
+        names.append((tag, len(strings) | (0x10100000000 if tag != 14 else 0)))
+        strings += name.encode() + b"\0"
     program_offset = 64
     content_offset = program_offset + 2 * 56
     strings_offset = content_offset
@@ -81,6 +89,7 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False):
         hash_tag = 4
     dynamic_offset = (hash_offset + len(hash_table) + 7) & ~7
     dynamic = b"".join(struct.pack("<qQ", 1, value) for value in libraries)
+    dynamic += b"".join(struct.pack("<qQ", tag, value) for tag, value in names)
     dynamic += b"".join(struct.pack("<qQ", tag, value) for tag, value in (
         (5, 0x400000 + strings_offset),
         (10, len(strings)),
@@ -499,6 +508,121 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((data["references"], data["imports"]), (0, []))
         self.assertEqual(data["missing_libraries"], {"libSceMissing.prx": 1})
         self.assertIn("libSceMissing.prx", out)
+
+    def test_declared_module_names_resolve_imports_and_dependencies(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting("CCCCCCCCCCC"))
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        for format in ("sections", "sysv", "gnu", "out_of_file_sysv", "out_of_file_gnu"):
+            for tag in (14, 0x6100000d, 0x61000043):
+                suffixes = ("",) if tag == 14 else ("", ".prx", ".sprx", ".suprx", ".debug_prx")
+                for suffix in suffixes:
+                    with self.subTest(format=format, tag=hex(tag), suffix=suffix):
+                        alias = "Declared.prx" if tag == 14 else "Declared" + suffix
+                        name = "Declared.prx" if tag == 14 else "Declared"
+                        provider = [("AAAAAAAAAAA", 1, GLOBAL_FUNCTION), ("CCCCCCCCCCC", 0, GLOBAL_FUNCTION)]
+                        consumer = [("AAAAAAAAAAA", 0, GLOBAL_FUNCTION)]
+                        if format == "sections":
+                            image = build_elf(provider, module_names=[(tag, name)])
+                            dependency = build_elf(consumer, [alias])
+                        else:
+                            image = build_sectionless_elf(provider, gnu_hash=format.endswith("gnu"), module_names=[(tag, name)])
+                            dependency = build_sectionless_elf(consumer, [alias], gnu_hash=format.endswith("gnu"))
+                            if format.startswith("out_of_file"):
+                                image, dependency = bytearray(image), bytearray(dependency)
+                                for module in (image, dependency):
+                                    struct.pack_into("<Q", module, 40, len(module) + 64)
+                                    struct.pack_into("<H", module, 60, 38)
+                        (work.modules / "Different.prx").write_bytes(image)
+                        (work.modules / "consumer.prx").write_bytes(dependency)
+                        write_registry(registry, [("AAAAAAAAAAA", alias), ("AAAAAAAAAAA", "Different.prx")])
+                        (work.root / "game.needed.json").write_text(json.dumps([alias]))
+                        code, _, err = work.run(registry, "--json", str(result))
+                        self.assertEqual((code, err), (0, ""))
+                        data = json.loads(result.read_text())
+                        self.assertEqual(data["missing_libraries"], {})
+                        self.assertEqual(data["references"], 4)
+                        self.assertEqual(data["unique_by_class"], {"implemented": 2, "stub": 0, "absent": 0, "module": 2})
+                        self.assertIsNone(data["stops"][0]["nid"])
+
+    def test_module_identity_does_not_fold_undeclared_filename_case(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / "Provider.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", "provider.prx")])
+        code, _, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (1, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["missing_libraries"], {"provider.prx": 1})
+        self.assertEqual(data["imports"][0]["class"], "absent")
+
+    def test_ambiguous_module_names_preserve_report(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        previous = b'{"previous":"complete report"}\n'
+        for tag in (14, 0x6100000d, 0x61000043):
+            with self.subTest(tag=hex(tag)):
+                name = "Declared.prx" if tag == 14 else "Declared"
+                for file in ("first.prx", "second.prx"):
+                    (work.modules / file).write_bytes(build_elf([], module_names=[(tag, name)]))
+                write_registry(registry, [("AAAAAAAAAAA", "Declared.prx")])
+                result.write_bytes(previous)
+                code, out, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("ambiguous guest module", err)
+                self.assertEqual(result.read_bytes(), previous)
+
+    def test_exact_module_filename_precedes_other_module_identities(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / "Declared.prx").write_bytes(exporting())
+        for file in ("first.prx", "second.prx"):
+            (work.modules / file).write_bytes(build_elf([], module_names=[(0x61000043, "Declared")]))
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "Declared.prx")])
+        code, _, err = work.run(registry)
+        self.assertEqual((code, err), (0, ""))
+
+    def test_multiple_module_names_and_identical_files_do_not_repeat_imports(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting("CCCCCCCCCCC"))
+        other = work.root / "other-modules"
+        other.mkdir()
+        image = build_elf([("CCCCCCCCCCC", 0, GLOBAL_FUNCTION)], module_names=[
+            (14, "Declared.prx"), (0x6100000d, "Original"), (0x61000043, "Alternate")])
+        for directory in (work.modules, other):
+            (directory / "provider.prx").write_bytes(image)
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [("AAAAAAAAAAA", name) for name in ("Declared.prx", "Original.prx", "Alternate.sprx")])
+        code, _, err = work.run(registry, "--modules", str(other), "--strict-providers", "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["references"], 4)
+        self.assertEqual(data["unique_by_class"], {"implemented": 1, "stub": 0, "absent": 0, "module": 3})
+
+    def test_invalid_declared_module_name_preserves_report(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        previous = b'{"previous":"complete report"}\n'
+        for format in ("sections", "sysv", "gnu"):
+            for tag in (14, 0x6100000d, 0x61000043):
+                for name in ("", "bad\\name"):
+                    with self.subTest(format=format, tag=hex(tag), name=name):
+                        symbols = [("AAAAAAAAAAA", 1, GLOBAL_FUNCTION)]
+                        if format == "sections":
+                            image = build_elf(symbols, module_names=[(tag, name)])
+                        else:
+                            image = build_sectionless_elf(symbols, gnu_hash=format == "gnu", module_names=[(tag, name)])
+                        (work.modules / "provider.prx").write_bytes(image)
+                        result.write_bytes(previous)
+                        code, out, err = work.run(registry, "--json", str(result))
+                        self.assertEqual((code, out), (2, ""))
+                        self.assertIn("invalid module name", err)
+                        self.assertEqual(result.read_bytes(), previous)
 
     def test_conflicting_module_files_preserve_or_leave_no_json_report(self):
         work = self.work
