@@ -2,6 +2,7 @@
 import argparse
 import os
 import re
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -194,6 +195,10 @@ def write_outputs(outputs):
                 temporary.chmod(path.stat().st_mode & 0o7777)
             else:
                 temporary.chmod(0o666 & ~umask)
+        if os.name == "nt":
+            for _, path in staged:
+                if path.exists() and path.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+                    raise PermissionError(f"Output is read-only: {path}")
         for temporary, path in staged:
             temporary.replace(path)
     finally:

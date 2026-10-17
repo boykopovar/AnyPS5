@@ -41,6 +41,31 @@ class StubgenTests(unittest.TestCase):
 
 
 class StubGeneratorTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows denies replacing read-only output files")
+    def test_readonly_second_output_preserves_both_outputs(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids = root / "nids.txt"
+            code = root / "Export.cpp"
+            debt = root / "debt.md"
+            nids.write_text("AC1FtjqMCL0\n", encoding="utf-8")
+            code.write_bytes(b"original code\n")
+            debt.write_bytes(b"original debt\n")
+            debt.chmod(stat.S_IREAD)
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(Path(stubgen.__file__)), "--module", "libSceTest",
+                     "--nids", str(nids), "--out", str(code), "--td-out", str(debt)],
+                    capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(code.read_bytes(), b"original code\n")
+                self.assertEqual(debt.read_bytes(), b"original debt\n")
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ["Export.cpp", "debt.md", "nids.txt"])
+            finally:
+                debt.chmod(stat.S_IREAD | stat.S_IWRITE)
+
     def test_default_stdout_contains_only_cpp(self):
         with tempfile.TemporaryDirectory() as directory:
             nids = Path(directory) / "nids.txt"
