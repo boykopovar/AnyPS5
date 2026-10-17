@@ -851,7 +851,7 @@ struct WriteTracker {
         if (first >= stop) return;
         bool started = false;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) {
-            if (!coverage.Covers(blockBegin(block), 1)) continue;
+            if (!coverage.Covers(blockBegin(block), static_cast<std::size_t>(std::min<std::uint64_t>(WriteBlockBytes, base + size - blockBegin(block))))) continue;
             if (!started) ++generation;
             started = true;
             hintBlocks[block] = generation;
@@ -861,7 +861,7 @@ struct WriteTracker {
     bool hinted(std::uint64_t first, std::uint64_t stop) const {
         if (first >= stop || first < base || stop > base + size) return false;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) {
-            if (hintBlocks[block] == 0 || coverage.Covers(blockBegin(block), 1)) return false;
+            if (hintBlocks[block] == 0 || coverage.Covers(blockBegin(block), static_cast<std::size_t>(std::min<std::uint64_t>(WriteBlockBytes, base + size - blockBegin(block))))) return false;
         }
         return !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
     }
@@ -1048,6 +1048,7 @@ void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_
     ++tracker.generation;
     tracker.noteCpuStore(address, address + bytes, tracker.generation);
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+        tracker.hintBlocks[block] = 0;
         tracker.driverPieces.erase(block);
         tracker.stamp(block, tracker.generation, StampKind::Cpu);
     }
