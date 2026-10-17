@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -21,6 +23,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <mutex>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -181,6 +184,29 @@ void DrawAfterFastClearExpandsHtile(AgcDriver::VulkanDevice& device, const Shade
     }
 }
 
+void PendingFillClearsWithoutWait(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
+    for (const bool stencil : {false, true}) {
+        auto& htile = NewBlock();
+        const Surface surface{NewBlock().Address(), stencil ? NewBlock().Address() : 0, htile.Address(), stencil, stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT};
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
+        Require(Draw(device, shaders, surface, {}) == 0u, "a draw at depth 0.5 passed LESS against the 0.5 written before it");
+        const std::uint32_t word = stencil ? 0xf0u : 0u;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Require(device.FillBuffer(htile.Address(), HtileFillBytes, std::array<std::uint32_t, 4>{word, word, word, word}), "the HTILE fill was not recorded on the GPU");
+            AgcDriver::Graphics::NoteDepthMetadataFill(htile.Address(), HtileFillBytes, word);
+        }
+        const auto waits = AgcDriver::Graphics::Recorder::ThreadHookWaits();
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a fast clear by an HTILE fill still pending did not clear the depth to DB_DEPTH_CLEAR (1.0)");
+        Require(AgcDriver::Graphics::Recorder::ThreadHookWaits() == waits, "the bind read the HTILE under its pending fill: it waited for the batch");
+        std::vector<std::uint32_t> words(HtileFillBytes / 4u);
+        AgcDriver::GuestMemory::Read(htile.Address(), std::as_writable_bytes(std::span(words)), 4);
+        const auto expanded = stencil ? 0xfffff3ffu : 0xfffc000fu;
+        for (const auto value : words) Require(value == expanded, "the HTILE under a pending fill was not expanded behind it");
+        Require(Draw(device, shaders, surface, {}) == 0u, "the depth drawn after the pending fill's clear was cleared again");
+    }
+}
+
 void UnknownKernelClearsTwice(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
     const auto& htile = NewBlock();
     auto& code = NewBlock();
@@ -256,6 +282,7 @@ int main() {
         NonUniformSliceIsRefused(*device, shaders);
         UniformSliceDecodes(*device, shaders);
         if (computeRan) {
+            PendingFillClearsWithoutWait(*device, shaders);
             DispatchFillClearsDepth(*device, shaders);
             DispatchBufferPatternFillClearsDepth(*device, shaders);
             UnknownKernelClearsTwice(*device, shaders);
