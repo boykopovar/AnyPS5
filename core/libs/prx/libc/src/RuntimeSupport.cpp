@@ -196,8 +196,4 @@ __int128 APS5_VABI __modti3_nid_postfix(__int128 dividend, __int128 divisor) {
     return SonyModti3(dividend, divisor);
 }
 
-void APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(void*) {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }
