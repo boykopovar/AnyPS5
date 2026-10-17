@@ -72,13 +72,14 @@ std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, 
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t videoOutHandle, std::int32_t displayBufferIndex, std::uint32_t flipMode, std::int64_t flipArg) {
-    (void)buf;
-    (void)videoOutHandle;
-    (void)displayBufferIndex;
-    (void)flipMode;
-    (void)flipArg;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    auto* packet = Agc::Command::Allocate(buf, AgcDriver::FlipPacketWords, __func__);
+    packet[0] = AgcDriver::FlipPacketHeader;
+    packet[1] = videoOutHandle;
+    packet[2] = static_cast<std::uint32_t>(displayBufferIndex);
+    packet[3] = flipMode;
+    packet[4] = static_cast<std::uint32_t>(static_cast<std::uint64_t>(flipArg));
+    packet[5] = static_cast<std::uint32_t>(static_cast<std::uint64_t>(flipArg) >> 32u);
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount) {

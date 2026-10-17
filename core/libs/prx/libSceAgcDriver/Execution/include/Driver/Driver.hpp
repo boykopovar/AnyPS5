@@ -324,7 +324,7 @@ private:
     std::condition_variable changed;
 
     std::map<std::uint32_t, QueueWorker> workers;
-    std::uint64_t frameSerial = 0;
+    std::atomic<std::uint64_t> frameSerial{0};
     std::shared_ptr<FrameTiming> pendingFrameTiming;
 
     std::atomic<std::uint64_t> flipsCounted{0};

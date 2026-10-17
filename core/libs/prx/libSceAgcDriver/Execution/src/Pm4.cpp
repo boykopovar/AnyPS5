@@ -276,7 +276,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                 break;
             }
             case 0x0c: break;
-            case 0x17: graphics(); size(6); break;
+            case 0x17: size(6); break;
             case 0x1a:
                 graphics();
                 require(packet.size() == 3 || packet.size() == 5, "invalid context-state packet size");
