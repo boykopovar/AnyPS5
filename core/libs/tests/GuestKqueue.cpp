@@ -64,6 +64,7 @@ static constexpr std::uint32_t NoteFfor = 0x80000000;
 static constexpr std::uint32_t NoteMseconds = 0x0002;
 static constexpr std::uint32_t NoteUseconds = 0x0004;
 static constexpr std::uint32_t NoteNseconds = 0x0008;
+static constexpr std::uint32_t NoteFilePoll = 0x0002;
 static constexpr std::uint32_t NoteDelete = 0x0001;
 static constexpr std::uint32_t NoteWrite = 0x0002;
 static constexpr std::uint32_t NoteExtend = 0x0004;
@@ -1032,6 +1033,56 @@ static void ProcdescOnFiles() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void RegularFile() {
+    const auto path = TemporaryName("data");
+    const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
+    Require(file >= 0);
+    Require(write_nid_postfix(file, "abcd", 4) == 4);
+    Require(lseek_nid_postfix(file, 1, 0) == 1);
+    const int kq = kqueue_nid_postfix();
+    const auto ident = static_cast<std::uintptr_t>(file);
+    int marker = 0;
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(ident, EvfiltRead, EvAdd, 0, 0, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == ident && events[0].filter == EvfiltRead && events[0].flags == 0 && events[0].fflags == 0);
+    Require(events[0].data == 3 && events[0].udata == &marker);
+    char buffer[4]{};
+    Require(read_nid_postfix(file, buffer, 3) == 3);
+    Require(Poll(kq, events, 4) == 0);
+    Require(lseek_nid_postfix(file, 6, 0) == 6);
+    Require(Poll(kq, events, 4) == 1 && events[0].data == -2);
+    Require(lseek_nid_postfix(file, 4, 0) == 4);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(ident, EvfiltRead, EvAdd, NoteFilePoll)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && events[0].udata == nullptr);
+    Require(Apply(kq, Change(ident, EvfiltRead, EvAdd, NoteLowat, 100, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    const int appender = open_nid_postfix(path.c_str(), ReadWrite, 0);
+    Require(appender >= 0 && lseek_nid_postfix(appender, 0, 2) == 4);
+    const auto start = std::chrono::steady_clock::now();
+    std::thread writer([appender] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(write_nid_postfix(appender, "ef", 2) == 2);
+    });
+    const KernelTimespec limit{5, 0};
+    Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &limit) == 1);
+    const auto waited = std::chrono::steady_clock::now() - start;
+    writer.join();
+    Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+    Require(events[0].ident == ident && events[0].data == 2 && events[0].udata == &marker);
+    Require(ftruncate_nid_postfix(appender, 4) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Throws([kq, ident] { Apply(kq, Change(ident, EvfiltWrite, EvAdd | EvClear)); }));
+    Require(Apply(kq, Change(ident, EvfiltWrite, EvAdd)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].filter == EvfiltWrite && events[0].data == 0);
+    Require(close_nid_postfix(appender) == 0);
+    Require(close_nid_postfix(file) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(unlink_nid_postfix(path.c_str()) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 static void FileWatch() {
     const auto path = TemporaryName("file");
     const int file = open_nid_postfix(path.c_str(), ReadWrite | Create, 0644);
@@ -1498,6 +1549,7 @@ int main() {
     Errors();
     LowWaterMarks();
     FileWatch();
+    RegularFile();
 #ifndef _WIN32
     RenameAndDeleteWatchedFile();
     VnodeOneshotWatchStops();
