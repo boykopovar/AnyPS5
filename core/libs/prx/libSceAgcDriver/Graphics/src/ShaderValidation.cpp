@@ -627,12 +627,13 @@ bool DeclaresEarlyFragmentTests(const ShaderRecompiler::RecompileResult& program
     return false;
 }
 
-std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation) {
+std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders, const State& state, const VkPhysicalDeviceSubgroupProperties& subgroup, bool fragmentShaderBarycentric, bool descriptorIndexing, bool imageInt64Atomics, bool geometryShader, bool sampleRateShading, bool bufferInt64Atomics, bool shaderClipDistance, bool shaderCullDistance, bool viewportIndexLayer, bool runtimeDescriptorArray, bool demoteToHelperInvocation, bool shaderTerminateInvocation, bool meshShader) {
     using Stage = ShaderRecompiler::ShaderStage;
     const bool tessellation = state.stages.path == ShaderPath::Tessellation;
     const bool mesh = state.stages.path == ShaderPath::Geometry;
     Require(state.stages.path == ShaderPath::Vertex || tessellation || mesh, "unsupported graphics shader path");
     Require(state.stages.mesh.has_value() == mesh && state.stages.tessellation.has_value() == tessellation, "graphics stage configuration disagrees with its path");
+    Require(!mesh || meshShader, "device does not support mesh shaders");
     Require(!state.rectList || (state.stages.path == ShaderPath::Vertex && state.topology == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST && state.cullMode == VK_CULL_MODE_NONE), "invalid rect-list pipeline state");
     const bool geometry = state.stages.path == ShaderPath::Vertex && !state.rectList && shaders.size() == 3u;
     Require(geometry || shaders.size() == (tessellation || state.rectList ? 4u : 2u), "incorrect graphics stage count");
