@@ -39,7 +39,7 @@ struct TextureCacheUse {
 };
 TextureCacheUse TextureCacheUsage();
 std::uint64_t SampledTextureCacheBudget(const Context& context);
-std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words);
+std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D);
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 
@@ -376,6 +376,8 @@ private:
     // is its bufferAtomic (see GuestBufferMemory::AddWritable).
     std::size_t addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read);
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
+    void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
+    void synchronizeGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
@@ -410,6 +412,7 @@ private:
     struct PreviousSampled {
         std::array<std::uint32_t, 8> words{};
         bool depthCompare = false;
+        VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;

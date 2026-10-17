@@ -6257,7 +6257,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         std::cout << "4x color targets or nullDescriptor unavailable: multisampled target guest access not tested\n";
         return;
     }
-    constexpr std::uint32_t side = 64;
+    constexpr std::uint32_t side = 128;
     constexpr std::size_t targetBytes = 65536u;
     constexpr std::size_t bytes = 5u * 65536u;
 #ifdef _WIN32
@@ -6316,6 +6316,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     target.extent = {side, side};
     target.surfaceExtent = target.extent;
     target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
     target.bytes = targetBytes;
     target.samples = 4;
     {
@@ -6368,12 +6369,12 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
             0u,
         };
     };
-    const auto sampledProgram = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words) {
+    const auto sampledProgram = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words, ShaderRecompiler::DescriptorImageShape shape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample) {
         ShaderRecompiler::RecompileResult result;
         auto element = binding;
         element.kind = kind;
         if (kind == ShaderRecompiler::DescriptorKind::StorageImage) element.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
-        element.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample;
+        element.imageShape = shape;
         element.guestDescriptor = std::move(words);
         result.bindings.push_back(std::move(element));
         return result;
@@ -6392,20 +6393,36 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     };
     {
         const auto sampled = sampledProgram(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
+        const auto sampledArray = sampledProgram(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address), ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray);
+        auto bothShapes = sampled;
+        auto arrayBinding = sampledArray.bindings.front();
+        arrayBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding + 1u;
+        bothShapes.bindings.push_back(std::move(arrayBinding));
         const CompiledShader sampledCompute{ShaderRecompiler::ShaderStage::Compute, &sampled, 0};
+        const CompiledShader sampledArrayCompute{ShaderRecompiler::ShaderStage::Compute, &sampledArray, 0};
+        const CompiledShader bothShapesCompute{ShaderRecompiler::ShaderStage::Compute, &bothShapes, 0};
         std::lock_guard gpu(GpuMutex());
         ShaderResources first(context, sampledCompute);
         ShaderResources second(context, sampledCompute);
+        ShaderResources arrayFirst(context, sampledArrayCompute);
+        ShaderResources arraySecond(context, sampledArrayCompute);
+        ShaderResources combined(context, bothShapesCompute);
         Require(first.SampledTextures().size() == 1 && first.SampledTextures().front() != nullptr, "the multisampled target was not bound as a sampled texture");
-        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_GENERAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a view of the target's image in its layout");
+        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a read-only view of the target's image");
+        Require(first.SampledTextures().front()->SampledViewRange(false).type == VK_IMAGE_VIEW_TYPE_2D, "Image2DMultisample did not bind a 2D image view");
         Require(second.SampledTextures().front() == first.SampledTextures().front(), "a second lookup of the multisampled target made another texture");
+        Require(arrayFirst.SampledTextures().size() == 1 && arrayFirst.SampledTextures().front() != nullptr, "the multisampled array target was not bound as a sampled texture");
+        Require(arrayFirst.SampledTextures().front()->SampledViewRange(false).type == VK_IMAGE_VIEW_TYPE_2D_ARRAY, "Image2DMultisampleArray did not bind a 2D array image view");
+        Require(arrayFirst.SampledTextures().front()->View() != first.SampledTextures().front()->View(), "Image2DMultisampleArray reused the non-arrayed multisampled image view");
+        Require(arraySecond.SampledTextures().front() == arrayFirst.SampledTextures().front(), "a second lookup of the multisampled array target made another texture");
+        Require(combined.SampledTextures().size() == 2 && combined.SampledTextures()[0] == first.SampledTextures().front() && combined.SampledTextures()[1] == arrayFirst.SampledTextures().front(), "consecutive multisampled bindings of different shapes did not preserve their distinct views");
         Require(first.MultisampleSources() == std::vector<std::uint64_t>{address} && !first.Reusable(), "resources sampling a multisampled target are kept for reuse without the barrier their lookup records");
         recorder.Submit();
         device.WaitQueue();
         recorder.Sync();
     }
-    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 3u, address), "as a 64x64 texture of 8 samples", "sampling a 4x target as an 8x texture");
-    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side / 2u, 2u, address), "as a 32x64 texture of 4 samples", "sampling a 4x target as a narrower texture");
+    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 3u, address), "as a 128x128 texture of 8 samples", "sampling a 4x target as an 8x texture");
+    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side / 2u, 2u, address), "as a 64x128 texture of 4 samples", "sampling a 4x target as a narrower texture");
     refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address + 4u * 65536u), "which no draw rendered to and whose tile mode 0 has no modeled multisampled color footprint", "sampling a linear multisampled texture no draw rendered to");
     if (context.storageImageMultisample) {
         const auto stored = sampledProgram(ShaderRecompiler::DescriptorKind::StorageImage, multisampledWords(side, 2u, address));
@@ -6421,10 +6438,11 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     } else {
         refusedSample(ShaderRecompiler::DescriptorKind::StorageImage, multisampledWords(side, 2u, address), "as a storage image at its sample count", "storage access to a multisampled target without shaderStorageImageMultisample");
     }
-    refused([&] { AgcDriver::GuestMemory::Read(address + 3u * 65536u + 256u, texels); }, "a CPU read", "a CPU read in the padding of a later sample plane");
+    refused([&] { AgcDriver::GuestMemory::Read(address + 3u * 65536u + 256u, texels); }, "a CPU read", "a CPU read in the last block of the 4x target");
     AgcDriver::GuestMemory::Read(address + 4u * 65536u, texels);
     clearTargets();
-    target.tileMode = ColorTileMode::RenderTarget;
+    target.extent = {side / 2u, side / 2u};
+    target.surfaceExtent = target.extent;
     {
         std::lock_guard gpu(GpuMutex());
         Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the tiled multisampled target has no view");
