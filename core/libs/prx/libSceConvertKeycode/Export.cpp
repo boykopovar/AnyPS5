@@ -38,8 +38,11 @@ int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint64_t a0, std::uint64_t
  return kErrInvalidAddress;
 }
 
-int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(std::uint16_t keycode, std::uint32_t state, std::uint32_t type, char16_t* character) {
+    if (character == nullptr) return kErrInvalidAddress;
+    if ((state & ~kIgnoredStateBits) != 0) throw std::runtime_error("sceConvertKeycodeGetCharacterFromKeyboardData: unsupported state " + std::to_string(state));
+    if (type != 0) throw std::runtime_error("sceConvertKeycodeGetCharacterFromKeyboardData: unsupported keyboard type " + std::to_string(type));
+    *character = UsCharacter(keycode);
     return 0;
 }
 
