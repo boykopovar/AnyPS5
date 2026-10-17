@@ -638,8 +638,20 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_semaphore_tests)
     add_test(NAME guest_semaphore COMMAND guest_semaphore_tests)
     set_tests_properties(guest_semaphore PROPERTIES TIMEOUT 20)
+    if(Python3_Interpreter_FOUND)
+        add_test_executable(semaphore_trace_tests
+            ${LIBS_INCLUDE_DIR}/tests/SemaphoreTrace.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp)
+        target_include_directories(semaphore_trace_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        find_package(Threads REQUIRED)
+        target_link_libraries(semaphore_trace_tests PRIVATE Threads::Threads)
+        add_test(NAME guest_semaphore_trace COMMAND ${Python3_EXECUTABLE}
+            ${LIBS_INCLUDE_DIR}/tests/test_semaphore_trace.py $<TARGET_FILE:semaphore_trace_tests>)
+        set_tests_properties(guest_semaphore_trace PROPERTIES TIMEOUT 20)
+    endif()
     if(WIN32)
-        set_tests_properties(guest_semaphore PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_semaphore guest_semaphore_trace PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_pthread_rwlock_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadRwlock.cpp)
