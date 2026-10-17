@@ -218,16 +218,19 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
             scan.Tls = &header;
         }
         if (header.Type != 1 || (header.Flags & 1) == 0) continue;
+        std::uint64_t decodedEnd = 0;
         for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
+            const bool insidePrevious = *instruction < decodedEnd;
+            decodedEnd = std::max(decodedEnd, *instruction + info.Length);
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
                 if (target >= 0 && target <= std::numeric_limits<std::uint32_t>::max()) scan.BranchTargets.insert(static_cast<std::uint32_t>(target));
             }
-            if (info.SegmentPrefix == 0) continue;
+            if (info.SegmentPrefix == 0 || (insidePrevious && info.SegmentPrefix != 0x64)) continue;
             const auto position = info.OpcodeOffset;
             bool hasOperandSizePrefix = false;
             bool supportedPrefixes = info.SegmentPrefix == 0x64;
