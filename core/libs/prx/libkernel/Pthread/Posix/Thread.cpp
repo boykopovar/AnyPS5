@@ -9,7 +9,7 @@
 #include "Common.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <atomic>
-#include <chrono>
+#include <mutex>
 #include <cstring>
 #include <thread>
 
@@ -305,7 +305,15 @@ void APS5_VABI pthread_yield_nid_postfix(void) {
 
 unsigned int APS5_VABI sleep_nid_postfix(unsigned int seconds) {
     ThreadCancel::Check();
-    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+    {
+        const auto deadline = TimedWait::DeadlineNanos(static_cast<std::uint64_t>(seconds) * 1000000ULL);
+        std::mutex mutex;
+        TimedWait::Condition condition;
+        std::unique_lock lock(mutex);
+        while (!ThreadCancel::Requested()) {
+            if (!ThreadCancel::Wait(condition, lock, deadline)) break;
+        }
+    }
     ThreadCancel::Check();
     return 0;
 }
