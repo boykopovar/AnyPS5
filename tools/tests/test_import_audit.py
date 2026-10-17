@@ -563,13 +563,15 @@ class ImportAuditTests(unittest.TestCase):
     def test_module_files_must_be_elf(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
-        (work.modules / "guest.prx").write_bytes(build_pe(["alpha"]))
+        (work.modules / "libc.prx.guest.prx").write_bytes(build_pe(["alpha"]))
         registry = work.root / "game.json"
         write_registry(registry, [])
         code, out, err = work.run(registry)
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("guest.prx", err)
-        self.assertIn("ELF", err)
+        self.assertIn("libc.prx.guest.prx", err)
+        self.assertIn("original ELF modules", err)
+        self.assertIn("converted PE", err)
+        self.assertIn("registry JSON", err)
 
     def test_sectionless_module_imports_and_exports_are_audited(self):
         work = self.work

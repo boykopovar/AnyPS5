@@ -237,6 +237,8 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 
 `--registry` writes `app.registry.json` for the executable and one `app.<module>.registry.json` for each converted bundled module; pass all of them. `--libs` is the directory the `libs` target fills ([build instructions](../dev/BUILD.md)); the exports are read from the built `.prx` files, so the result matches what the loader finds. Imports are counted once per NID and library, and every reference lands in exactly one class:
 
+Pass the original ELF files from `source/sce_module` to `--modules`. Converted `.guest.prx` files are PE outputs and are not module inputs; their PS5 imports are already in the per-module registry JSON files passed positionally.
+
 | Class | Meaning |
 |-------|---------|
 | `implemented` | A built library exports the NID and its function is not a throwing stub. |

@@ -333,8 +333,10 @@ def module_files(directory):
             magic = handle.read(4)
         if magic == b"\x7fELF":
             yield file
+        elif magic.startswith(b"MZ"):
+            raise AuditError(f"{file}: --modules expects original ELF modules, not converted PE files; pass their relinker registry JSON to audit imports")
         elif (file.suffix.lower() in (".prx", ".sprx", ".suprx", ".debug_prx", ".elf")
-              or magic.startswith(b"MZ") or magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")):
+              or magic in (b"\x4f\x15\x3d\x1d", b"\x54\x14\xf5\xee")):
             raise AuditError(f"{file}: expected ELF module (first bytes {magic!r})")
 
 
@@ -597,7 +599,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="classify the imports of a converted game against the built system libraries")
     parser.add_argument("registries", nargs="+", type=Path, help="JSON written by 'relinker --registry'")
     parser.add_argument("--libs", action="append", required=True, help="directory of built .prx files; repeat for several")
-    parser.add_argument("--modules", action="append", default=[], help="directory of the title's own modules; each module's own imports are audited")
+    parser.add_argument("--modules", action="append", default=[], help="directory of the title's original ELF modules; pass converted-module registry JSON as positional input")
     parser.add_argument("--source", default=str(PRX), help="core/libs/prx tree used to find throwing stubs (default: this repository's)")
     parser.add_argument("--names", help="aerolib.csv style file (NID, name per line) used to name absent imports")
     parser.add_argument("--json", type=Path, help="write the full result to this file")
