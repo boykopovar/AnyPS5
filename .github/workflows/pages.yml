@@ -1,11 +1,6 @@
 name: Pages
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-  release:
-    types: [published]
   workflow_run:
     workflows: [Release]
     types: [completed]
@@ -29,23 +24,34 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
-          fetch-depth: 0
-      - name: Build web converter
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Download WebAssembly from the matching release
+        id: release
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
-          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.3
-          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.3
-          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
-          emcmake cmake -S . -B build-wasm -DANYPS5_BUILD_WASM=ON -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-wasm --target relinker_web --parallel 2
-      - name: Test web converter
-        run: python3 tools/test_web.py --build build-wasm
-      - name: Download latest release libraries
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          git fetch --depth=1 origin "refs/tags/$tag"
+          tag_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
+          if [[ "$tag_sha" != "$RELEASE_WORKFLOW_SHA" ]]; then
+            echo "::error::Latest release $tag does not match the completed Release workflow commit"
+            exit 1
+          fi
+          mkdir -p build-wasm/web/native
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'relinker_wasm.mjs' --pattern 'relinker_wasm.wasm' \
+            --dir build-wasm/web/native
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Package the matching release libraries and web files
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 tools/build_web.py --build build-wasm --libraries
+        run: python3 tools/build_web.py --build build-wasm --libraries --release-tag "${{ steps.release.outputs.tag }}"
+      - name: Test web converter
+        run: python3 tools/test_web.py --build build-wasm
+      - name: Verify packaged release manifest
+        run: test -s build-wasm/web/release.json
       - run: python3 tools/progress.py build-wasm/web
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5

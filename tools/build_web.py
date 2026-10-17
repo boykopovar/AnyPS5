@@ -28,8 +28,13 @@ def request(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60)
 
 
-def publish_libraries(output):
-    with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
+def publish_libraries(output, release_tag=None):
+    release_url = "https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"
+    if release_tag is not None:
+        if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", release_tag):
+            raise ValueError("Invalid release tag")
+        release_url = f"https://api.github.com/repos/boykopovar/AnyPS5/releases/tags/{release_tag}"
+    with request(release_url) as response:
         release = json.load(response)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag):
@@ -90,14 +95,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--libraries", action="store_true")
+    parser.add_argument("--release-tag")
     args = parser.parse_args()
+    if args.release_tag is not None and not args.libraries:
+        parser.error("--release-tag requires --libraries")
     output = args.build.resolve() / "web"
     for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
         if not (output / "native" / name).is_file():
             raise ValueError(f"Build relinker_wasm first: missing {name}")
     copy_sources(output)
     if args.libraries:
-        publish_libraries(output)
+        publish_libraries(output, args.release_tag)
     print(output)
 
 
