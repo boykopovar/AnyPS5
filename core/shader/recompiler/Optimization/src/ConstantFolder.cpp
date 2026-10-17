@@ -200,17 +200,25 @@ bool replaceBinaryIdentity(IrValue& inst, IrType type, std::uint64_t identity) {
 
 bool foldSelect(IrValue& inst) {
     auto& condition = resolveArg(inst, 0);
-    auto& trueValue = resolveArg(inst, 1);
-    auto& falseValue = resolveArg(inst, 2);
     if (isImmediate(condition, IrType::U1)) {
-        replaceWith(inst, condition.ImmediateBool() ? trueValue : falseValue);
+        replaceWith(inst, resolveArg(inst, condition.ImmediateBool() ? 1 : 2));
         return true;
     }
+    bool folded = false;
+    for (std::size_t arm = 1; arm <= 2; arm++) {
+        auto& nested = resolveArg(inst, arm);
+        if (nested.Opcode() == inst.Opcode() && nested.ArgumentCount() == 3u && &resolveArg(nested, 0) == &condition) {
+            inst.ReplaceArgument(arm, &resolveArg(nested, arm));
+            folded = true;
+        }
+    }
+    auto& trueValue = resolveArg(inst, 1);
+    auto& falseValue = resolveArg(inst, 2);
     if (trueValue == falseValue) {
         replaceWith(inst, trueValue);
         return true;
     }
-    return false;
+    return folded;
 }
 
 bool foldPhi(IrValue& inst) {
