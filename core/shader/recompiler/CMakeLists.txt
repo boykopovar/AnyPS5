@@ -227,6 +227,8 @@ function(add_shader_recompiler target runtimeTarget)
             DebugProbeActive
             DepthBitsTextureWidth
             HashBytes
+            LayoutBarycentricEmulation
+            MeshBarycentricLayoutOf
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
             ImageTableAbi::TableHeader

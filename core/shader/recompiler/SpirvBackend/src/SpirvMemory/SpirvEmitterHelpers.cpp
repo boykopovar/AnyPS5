@@ -197,7 +197,14 @@ void DefineInputs(SpirvEmitterState& state) {
         const auto reads = [&](StageInputKind kind) {
             return std::any_of(state.inputs.begin(), state.inputs.end(), [&](const SpirvInputBinding& input) { return input.kind == kind; });
         };
-        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective)});
+        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective)}, state.meshBarycentricPixel);
+        if (state.meshBarycentricPixel && emulation.positionsLocation != BarycentricEmulationLayout::NoLocation) {
+            state.pixelFlatPositions = DefineInterfaceVariable(state, state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u)), spv::StorageClassInput, "meshBarycentricPositions");
+            state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationLocation, emulation.positionsLocation);
+            state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationPerPrimitiveEXT);
+            state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
+            state.module.EmitExtension("SPV_EXT_mesh_shader");
+        }
     }
     for (auto& input : state.inputs) {
         if (pixelStage && input.kind == StageInputKind::Parameter) {
@@ -270,7 +277,7 @@ void DefineInputs(SpirvEmitterState& state) {
                     throw std::runtime_error("SPIR-V module emission failed: per-vertex parameter " + std::to_string(location) + " has no emulated location");
                 }
                 location = relocated->second;
-                state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationFlat);
+                state.module.AddAnnotation(spv::OpDecorate, input.variableId, state.meshBarycentricPixel ? spv::DecorationPerPrimitiveEXT : spv::DecorationFlat);
             } else if (input.perVertex) {
                 state.module.AddAnnotation(spv::OpDecorate, input.variableId, spv::DecorationPerVertexKHR);
             } else if (flat) {

@@ -84,9 +84,9 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 240, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 280, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 200, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 472, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 512, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -500,6 +500,17 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.barycentricEmulation.active);
     writer.Value(result.barycentricEmulation.smooth);
     writer.Value(result.barycentricEmulation.linear);
+    writer.Value(result.meshBarycentrics.has_value());
+    if (result.meshBarycentrics) {
+        writer.Value(result.meshBarycentrics->emulation.active);
+        writer.Value(result.meshBarycentrics->emulation.smooth);
+        writer.Value(result.meshBarycentrics->emulation.linear);
+        writer.List(result.meshBarycentrics->parameters, [](Writer& out, const FragmentParameter& parameter) {
+            out.Value(parameter.location);
+            out.Value(parameter.sourceLocation);
+            out.Value(parameter.perVertex);
+        });
+    }
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
     writer.Value(result.stencilReferenceDword);
@@ -547,6 +558,21 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.barycentricEmulation.active);
     reader.Value(result.barycentricEmulation.smooth);
     reader.Value(result.barycentricEmulation.linear);
+    bool hasMeshBarycentrics = false;
+    reader.Value(hasMeshBarycentrics);
+    result.meshBarycentrics.reset();
+    if (hasMeshBarycentrics) {
+        MeshBarycentricLayout layout;
+        reader.Value(layout.emulation.active);
+        reader.Value(layout.emulation.smooth);
+        reader.Value(layout.emulation.linear);
+        reader.List(layout.parameters, 9, [](Reader& in, FragmentParameter& parameter) {
+            in.Value(parameter.location);
+            in.Value(parameter.sourceLocation);
+            in.Value(parameter.perVertex);
+        });
+        result.meshBarycentrics = std::move(layout);
+    }
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
     reader.Value(result.stencilReferenceDword);
