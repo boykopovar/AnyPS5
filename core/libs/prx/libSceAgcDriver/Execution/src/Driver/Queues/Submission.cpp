@@ -131,7 +131,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                 require(!copySegment(submission, target, targetWords, budget), "a REWIND inside a predicated command buffer is not implemented");
                 for (auto inner = start + count; inner < submission.commands.size(); inner += Pm4::PacketWords(submission.commands[inner])) {
                     const auto innerHeader = submission.commands[inner];
-                    require(innerHeader != FlipPacketHeader && innerHeader != RenderingWaitPacketHeader, "flips and rendering waits in predicated command buffers are not implemented");
+                    require(!IsFlipPacketHeader(innerHeader) && innerHeader != RenderingWaitPacketHeader, "flips and rendering waits in predicated command buffers are not implemented");
                 }
                 submission.conditionalEnds.emplace(start, submission.commands.size());
                 cursor += count;
@@ -175,7 +175,7 @@ void Driver::readRegisterLists(Submission& submission) {
 
 void Driver::waitForFlipRoom(const Submission& submission) {
     for (std::size_t cursor = 0; cursor < submission.commands.size(); cursor += Pm4::PacketWords(submission.commands[cursor])) {
-        if (submission.commands[cursor] != FlipPacketHeader) continue;
+        if (!IsFlipPacketHeader(submission.commands[cursor])) continue;
         std::shared_ptr<IVideoOutput> output;
         {
             std::lock_guard lock(mutex);
@@ -203,14 +203,14 @@ void Driver::holdFlipBehindWorker(const Submission& submission) {
     bool candidate = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !candidate; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
-        candidate = words[0] == FlipPacketHeader || EopRelease(words);
+        candidate = IsFlipPacketHeader(words[0]) || EopRelease(words);
     }
     if (!candidate) return;
     std::unique_lock lock(mutex);
     bool flips = false;
     for (std::size_t cursor = 0; cursor < submission.commands.size() && !flips; cursor += Pm4::PacketWords(submission.commands[cursor])) {
         const auto words = std::span(submission.commands).subspan(cursor);
-        flips = words[0] == FlipPacketHeader || (EopRelease(words) && eopFlips.contains(words[7]));
+        flips = IsFlipPacketHeader(words[0]) || (EopRelease(words) && eopFlips.contains(words[7]));
     }
     if (!flips) return;
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
@@ -245,7 +245,7 @@ void Driver::reserveOutputs(Submission& submission) {
             }
         }
         noteHeldAtSubmit(submission, cursor);
-        if (words[0] == FlipPacketHeader) {
+        if (IsFlipPacketHeader(words[0])) {
             const auto output = outputs.find(words[1]);
             require(output != outputs.end(), "flip references an unregistered video output");
             const FlipInfo info{words[1], std::bit_cast<std::int32_t>(words[2]), words[3], std::bit_cast<std::int64_t>(static_cast<std::uint64_t>(words[4]) | (static_cast<std::uint64_t>(words[5]) << 32u))};

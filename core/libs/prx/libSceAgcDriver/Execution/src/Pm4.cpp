@@ -191,6 +191,7 @@ std::string_view KnownName(std::uint32_t header) {
             case 0x18: return "RELEASE_MEM_CUSTOM";
             case 0x19: return "DMA_DATA_CUSTOM";
             case 0x1a: return "CONTEXT_STATE";
+            case 0x1b: return "VIDEO_OUT_FLIP";
             default: return "UNKNOWN_CUSTOM";
         }
     }
@@ -209,7 +210,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
     const auto opcode = (header >> 8u) & 0xffu;
     if (opcode == 0x10) {
         switch ((header >> 2u) & 0x3fu) {
-            case 0: case 0x06: case 0x09: case 0x0b: case 0x0c: case 0x17: case 0x1a: return {};
+            case 0: case 0x06: case 0x09: case 0x0b: case 0x0c: case 0x17: case 0x1a: case 0x1b: return {};
             case 0x14: case 0x18: return "guest cache actions and GPU release events are not implemented";
             default: return "custom packet has no implemented contract in the reference dispatch table";
         }
@@ -276,7 +277,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                 break;
             }
             case 0x0c: break;
-            case 0x17: graphics(); size(6); break;
+            case 0x17: case 0x1b: graphics(); size(6); break;
             case 0x1a:
                 graphics();
                 require(packet.size() == 3 || packet.size() == 5, "invalid context-state packet size");

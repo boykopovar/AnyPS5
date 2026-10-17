@@ -14,7 +14,12 @@ inline constexpr std::uint32_t EopFlipTokenBase = 0x04000000u;
 inline constexpr std::uint32_t EopFlipTokenLimit = 0x07ffffffu;
 
 inline constexpr std::uint32_t FlipPacketHeader = 0xc004105cu;
+inline constexpr std::uint32_t VideoOutFlipPacketHeader = 0xc004106cu;
 inline constexpr std::uint32_t FlipPacketWords = 6;
+
+inline bool IsFlipPacketHeader(std::uint32_t header) {
+    return header == FlipPacketHeader || header == VideoOutFlipPacketHeader;
+}
 // AnyPS5's internal encoding for the driver-generated rendering wait.
 inline constexpr std::uint32_t RenderingWaitPacketHeader = 0xc0021018u;
 inline constexpr std::uint32_t RenderingWaitPacketWords = 4;
