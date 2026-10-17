@@ -354,6 +354,12 @@ void stateTests() {
     queue.context[0x90] = 0x10003;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.scissor.offset.x == 3 && state.scissor.offset.y == 1 && state.scissor.extent.width == 29 && state.scissor.extent.height == 2, "a scissor that applies the zero window offset changed");
+    queue.context[0x90] = 0x80040003;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.scissor.extent.height == 0, "a scissor whose top is below its bottom passes pixels");
+    queue.context[0x90] = 0x80010021;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.scissor.extent.width == 0, "a scissor whose left edge is right of its right edge passes pixels");
     queue.context[0x90] = 0x80008000;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "scissor reserved bits");
     queue.context[0x90] = 0x80010003;

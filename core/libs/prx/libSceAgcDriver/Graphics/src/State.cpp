@@ -837,7 +837,6 @@ void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offse
     const auto y = (tl >> 16u) & (screen ? 0xffffu : 0x7fffu);
     const auto right = br & 0xffffu;
     const auto bottom = br >> 16u;
-    Require(x <= right && y <= bottom, "inverted scissor rectangle");
     const auto oldRight = static_cast<std::uint32_t>(result.offset.x) + result.extent.width;
     const auto oldBottom = static_cast<std::uint32_t>(result.offset.y) + result.extent.height;
     const auto left = std::max(static_cast<std::uint32_t>(result.offset.x), x);
