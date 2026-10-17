@@ -73,6 +73,35 @@ void ValidateOptions(const IrProgram& program, ShaderStageInputInfo inputInfo) {
     }
 }
 
+void EnsurePixelInterpolatorCoverage(const IrProgram& program, ShaderPixelInputInfo& pixel) {
+    std::uint32_t needed = pixel.inputNum;
+    const auto consider = [&](std::uint32_t attribute) {
+        if (attribute < 32u && attribute + 1u > needed) needed = attribute + 1u;
+    };
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            switch (inst->Opcode()) {
+                case IrOpcode::GetAttribute:
+                case IrOpcode::GetInterpolationParameter:
+                case IrOpcode::GetInterpolationParameterF16:
+                case IrOpcode::InterpolateHostP1:
+                case IrOpcode::InterpolateHostP2: {
+                    const IrValue* attribute = inst->Argument(0)->Resolve();
+                    if (attribute->HasImmediate() && attribute->Type() == IrType::U32) consider(attribute->ImmediateU32());
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+    if (needed <= pixel.inputNum) return;
+    for (std::uint32_t input = pixel.inputNum; input < needed; ++input) {
+        pixel.interpolatorSettings[input] = 0x20u;
+    }
+    pixel.inputNum = needed;
+}
+
 void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inputInfo) {
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
@@ -524,6 +553,9 @@ void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {
 void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo& inputInfo) const {
     if (!program.Resources().resourceTrackingComplete || program.Metadata().shaderInfoComplete) {
         return Fail(!program.Resources().resourceTrackingComplete ? "shader resources were not tracked" : "shader info already collected");
+    }
+    if (program.Resources().stage == IrShaderStage::Pixel && inputInfo.pixel != nullptr) {
+        EnsurePixelInterpolatorCoverage(program, const_cast<ShaderPixelInputInfo&>(*inputInfo.pixel));
     }
     ValidateOptions(program, inputInfo);
     ValidateValueReferences(program, inputInfo);
