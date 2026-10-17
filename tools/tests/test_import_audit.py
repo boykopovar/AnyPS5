@@ -1222,6 +1222,18 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<qQ", image, dynamic + 16, 0, 0)
         self.assertEqual(import_audit.elf_imports("module.prx", image)[1], {"libc.prx"})
 
+    def test_read_modules_uses_pe_exports_and_no_host_imports(self):
+        module = self.work.modules / "libc.prx.guest.prx"
+        module.write_bytes(build_pe(["sceKernelGettimeofday#guest", "sceKernelSleep"]))
+
+        imports, exports = import_audit.read_modules([self.work.modules])
+
+        self.assertEqual(imports, {module.name: ([], [])})
+        self.assertEqual(exports, {
+            "sceKernelGettimeofday": [module.name],
+            "sceKernelSleep": [module.name],
+        })
+
     def test_pe32_uses_its_own_directory_layout(self):
         image = bytearray(build_pe(["alpha"]))
         struct.pack_into("<H", image, 0x58, 0x10b)
