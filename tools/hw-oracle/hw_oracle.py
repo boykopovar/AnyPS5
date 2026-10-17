@@ -44,7 +44,9 @@ def oracle():
     root = rocm_root()
     if root is not None:
         root = root.resolve()
-    configuration = repr((compiler, str(root))).encode("utf-8")
+    executable = shutil.which(compiler[0])
+    selected = str(Path(executable).resolve()) if executable is not None else None
+    configuration = repr((compiler, selected, str(root))).encode("utf-8")
     key = hashlib.sha256(source.read_bytes() + configuration).hexdigest()
     directory = CACHE / key
     binary = directory / "oracle"

@@ -354,6 +354,30 @@ class TargetOverrideTests(unittest.TestCase):
 
 
 class OracleConfigurationTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX executable compiler fixture")
+    def test_path_selecting_another_compiler_invalidates_the_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("first", "second"):
+                compiler = root / name / "fixture-cc"
+                compiler.parent.mkdir()
+                compiler.write_text(
+                    "#!" + sys.executable + "\nimport sys\nfrom pathlib import Path\n"
+                    "Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(" + repr(name.encode()) + ")\n",
+                    encoding="utf-8")
+                compiler.chmod(0o755)
+            with patch.object(hw_oracle, "CACHE", root / "cache"), \
+                    patch.object(hw_oracle, "rocm_root", return_value=None):
+                with patch.dict(os.environ, {"CC": "fixture-cc", "PATH": str(root / "first")}):
+                    first = hw_oracle.oracle()
+                    self.assertEqual(first.read_bytes(), b"first")
+                    self.assertEqual(hw_oracle.oracle(), first)
+                with patch.dict(os.environ, {"CC": "fixture-cc", "PATH": str(root / "second")}):
+                    second = hw_oracle.oracle()
+                    self.assertEqual(second.read_bytes(), b"second")
+                    self.assertNotEqual(first, second)
+
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux compiler and shared-library fixture")
     def test_cache_and_compiler_command_with_host_toolchain(self):
         compiler = shutil.which("cc")
