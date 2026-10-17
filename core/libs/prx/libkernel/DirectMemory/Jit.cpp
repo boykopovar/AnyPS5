@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -21,7 +22,6 @@
 #include <fcntl.h>
 #include <io.h>
 #include <atomic>
-#include <filesystem>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -140,7 +140,13 @@ int DuplicateDescriptor(int descriptor) {
 }
 #else
 int CreateBacking(std::size_t bytes, int* descriptor, std::shared_ptr<JitObject>* object) {
+#ifdef __APPLE__
+    auto path = (std::filesystem::temp_directory_path() / "anyps5-jit-XXXXXX").string();
+    const int file = mkostemp(path.data(), O_CLOEXEC);
+    if (file >= 0) ::unlink(path.c_str());
+#else
     const int file = memfd_create("anyps5 jit shared memory", MFD_CLOEXEC);
+#endif
     if (file < 0) return HostFailure("create JIT shared memory", errno);
     const bool representable = bytes <= static_cast<std::uint64_t>(std::numeric_limits<off_t>::max());
     if (!representable || ftruncate(file, static_cast<off_t>(bytes)) != 0) {
