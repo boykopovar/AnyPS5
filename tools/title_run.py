@@ -1,3 +1,5 @@
+import argparse
+import datetime
 import json
 import os
 import re
@@ -6,6 +8,7 @@ import signal
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -310,3 +313,116 @@ class Session:
             except ProcessLookupError:
                 pass
         self.process.wait()
+
+
+CLOSE_SECONDS = 15
+FRAME_ENV = {"APS5_DUMP_FRAMES": "100000", "APS5_DUMP_FRAMES_EVERY": "30", "APS5_DUMP_SCALE": "8"}
+
+
+def collect_frames(work, destination):
+    frames = sorted(work.glob("frame_*.bmp"), key=lambda path: int(path.stem.split("_")[1]))
+    keep = {frames[0], frames[len(frames) // 2], frames[-1]} if frames else set()
+    destination.mkdir(parents=True, exist_ok=True)
+    kept = []
+    for frame in frames:
+        if frame in keep:
+            shutil.move(frame, destination / frame.name)
+            kept.append(frame.name)
+        else:
+            frame.unlink()
+    return kept
+
+
+def run_title(executable, work, run_dir, seconds, extra_env):
+    run_dir.mkdir(parents=True)
+    env = {**os.environ, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
+           "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
+           "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
+    started = time.monotonic()
+    with (run_dir / "stdout.log").open("wb") as stdout, (run_dir / "stderr.log").open("wb") as stderr:
+        session = Session([str(executable)], work, env, stdout, stderr)
+        try:
+            while session.alive() and time.monotonic() - started < seconds:
+                session.lower_windows()
+                time.sleep(0.5)
+            elapsed = round(time.monotonic() - started, 1)
+            alive, ended = session.alive(), time.time()
+            exit_code = None if alive else session.exit_code()
+            if alive:
+                session.close()
+                deadline = time.monotonic() + CLOSE_SECONDS
+                while session.alive() and time.monotonic() < deadline:
+                    time.sleep(0.5)
+        finally:
+            session.kill()
+    text = "".join((run_dir / name).read_text(encoding="utf-8", errors="replace") for name in ("stdout.log", "stderr.log"))
+    summary_path = run_dir / "aps5-summary.jsonl"
+    summary = read_summary(summary_path)
+    frames = collect_frames(work, run_dir / "frames")
+    uniform = frame_is_uniform(run_dir / "frames" / frames[-1]) if frames else None
+    age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
+    cpu = re.search(r"host CPU (.+?): has", text)
+    return {"outcome": classify(True, exit_code, age, uniform), "exit_code": exit_code, "seconds": elapsed,
+            "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
+            "warnings": warning_counts(text), "frames": frames, "gpu": summary["gpu"], "driver": summary["driver"],
+            "os": summary["os"], "cpu": cpu.group(1) if cpu else ""}
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True).stdout.strip()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
+    parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
+    parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
+    parser.add_argument("--build", type=Path, default=ROOT / "build")
+    parser.add_argument("--out", type=Path, default=Path("title-runs"))
+    parser.add_argument("--runs", type=int, default=2)
+    parser.add_argument("--seconds", type=int, help="run length for every title (default: the title's, else 60)")
+    parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
+    parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
+    parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
+    args = parser.parse_args(argv)
+    platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+    titles = load_titles(args.titles)
+    found = discover(args.games)
+    ids = args.ids or sorted(found)
+    missing = [title_id for title_id in ids if title_id not in found]
+    if missing:
+        raise SystemExit(f"not found under --games: {', '.join(missing)}")
+    commit = git("rev-parse", "--short", "HEAD")
+    output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    summary = {"build": {"commit": commit, "dirty": bool(git("status", "--porcelain", "--untracked-files=no")), "note": args.note},
+               "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
+               "driver_cache": "shared (not isolated)" if platform == "windows" else "isolated", "titles": {}}
+    for title_id in ids:
+        entry = titles.get(title_id, {})
+        seconds = args.seconds or entry.get("seconds", 60)
+        work = output / title_id / "work"
+        executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
+        runs = []
+        for number in range(1, args.runs + 1):
+            if executable is None:
+                result = {"outcome": "relink-failed", "exit_code": None, "seconds": 0, "presents": 0, "fps": 0.0,
+                          "first_error": first_error((work / "relink.log").read_text(encoding="utf-8", errors="replace")),
+                          "warnings": {}, "frames": []}
+            else:
+                result = run_title(executable, work, output / title_id / f"run{number}", seconds, entry.get("env", {}))
+                for key in ("os", "gpu", "driver", "cpu"):
+                    value = result.pop(key)
+                    summary["machine"][key] = summary["machine"][key] or value
+            runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
+            print(f"{title_id} run{number}: {result['outcome']}", flush=True)
+        summary["titles"][title_id] = {"name": entry.get("name", found[title_id]["name"]), "version": found[title_id]["version"], "runs": runs}
+    previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    report = render_markdown(summary, previous)
+    (output / "summary.md").write_text(report, encoding="utf-8")
+    print(report)
+    print(f"written to {output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
