@@ -163,6 +163,13 @@ static int SceErrorFromErrno(int error) {
     return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
 }
 
+static int SceStatErrorFromErrno(int error) {
+#ifdef ELOOP
+    if (error == ELOOP) return SCE_KERNEL_ERROR_ELOOP;
+#endif
+    return SceErrorFromErrno(error);
+}
+
 static int SceIoErrorFromErrno(int error) {
     int guest = SceErrorFromErrno(error) & 0xffff;
     if (error == EAGAIN) guest = 35;
@@ -334,13 +341,14 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     }
     const auto status = std::filesystem::status(native, error);
     if (error == std::errc::not_a_directory) return SceErrorFromErrno(GuestEnotdir);
+    if (error == std::errc::too_many_symbolic_link_levels) return SceStatErrorFromErrno(ELOOP);
     if (!std::filesystem::exists(status)) {
         return SceErrorFromErrno(2);
     }
     const std::string_view guestPath(path);
     if (!guestPath.empty() && guestPath.back() == '/' && !std::filesystem::is_directory(status)) return SceErrorFromErrno(GuestEnotdir);
     if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-    File::FillFileStat(native, sb);
+    if (!File::TryFillFileStat(native, sb)) return SceStatErrorFromErrno(errno);
     return 0;
 }
 
