@@ -41,6 +41,8 @@ int APS5_VABI sceKernelLseek(int, std::int64_t, int);
 std::int64_t APS5_VABI sceKernelReadv(int, const GuestIovec*, int);
 std::int64_t APS5_VABI readv_nid_postfix(int, const GuestIovec*, int);
 std::int64_t APS5_VABI writev_nid_postfix(int, const GuestIovec*, int);
+std::int64_t APS5_VABI _readv_nid_postfix(int, const GuestIovec*, int);
+std::int64_t APS5_VABI _writev_nid_postfix(int, const GuestIovec*, int);
 int* APS5_VABI __error_nid_postfix();
 std::int64_t APS5_VABI sceKernelWritev(int, const GuestIovec*, int);
 std::int64_t APS5_VABI sceKernelPreadv(int, const GuestIovec*, int, std::int64_t);
@@ -200,6 +202,8 @@ int main() {
     Require(sceKernelLseek(file, 0, 1) == 7);
     Require(readv_nid_postfix(file, reads, 2) == 3);
     Require(readv_nid_postfix(file, reads, 2) == 0);
+    Require(sceKernelLseek(file, 3, 0) == 3 && _readv_nid_postfix(file, reads, 2) == 7);
+    Require(std::memcmp(first, "345", 3) == 0 && std::memcmp(second, "6789", 4) == 0);
     Require(readv_nid_postfix(file, reads, -1) == -1 && *__error_nid_postfix() == 22);
     Require(writev_nid_postfix(file, nullptr, 1) == -1 && *__error_nid_postfix() == 14);
 
@@ -224,6 +228,9 @@ int main() {
     Require(sceKernelLseek(file, 0, 1) == 13 && Contents(path) == "01ABCDE7CDEAB");
     Require(sceKernelLseek(file, 8, 0) == 8 && writev_nid_postfix(file, writes, 2) == 5);
     Require(Contents(path) == "01ABCDE7ABCDE");
+    Require(sceKernelLseek(file, 8, 0) == 8 && _writev_nid_postfix(file, swapped, 2) == 5);
+    Require(sceKernelLseek(file, 0, 1) == 13 && Contents(path) == "01ABCDE7CDEAB");
+    Require(sceKernelLseek(file, 8, 0) == 8 && writev_nid_postfix(file, writes, 2) == 5);
 
     GuestIovec gapped[3] = {{first, 2}, {nullptr, 0}, {second, 3}};
     Require(sceKernelPreadv(file, gapped, 3, 0) == 5);

@@ -891,6 +891,20 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
     socket->options.nonblocking = enabled != 0;
     return 0;
 }
+int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, command);
+    const auto argument = __builtin_va_arg(arguments, std::uint64_t);
+    __builtin_sysv_va_end(arguments);
+#else
+    std::va_list arguments;
+    va_start(arguments, command);
+    const auto argument = va_arg(arguments, std::uint64_t);
+    va_end(arguments);
+#endif
+    return fcntl_nid_postfix(descriptor, command, argument);
+}
 int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
                                     const void* value, std::uint32_t length) {
     int netError = 0;
@@ -948,6 +962,10 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     } catch (const std::bad_alloc&) {
         return Fail(12);
     }
+}
+int APS5_VABI __sys_socketex_nid_postfix(const char* name, int family, int type, int protocol) {
+    static_cast<void>(name);
+    return socket_nid_postfix(family, type, protocol);
 }
 int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* descriptors) {
     const bool nonblocking = (type & GuestNonBlocking) != 0;
