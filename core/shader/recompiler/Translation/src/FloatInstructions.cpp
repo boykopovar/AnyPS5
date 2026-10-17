@@ -281,7 +281,7 @@ bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode op
     if (opcode == IrOpcode::FPFma32 && !mix) {
         IrF32 result = fmaF16RoundedToOdd(IrF32(*args[0]), IrF32(*args[1]), IrF32(*args[2]));
         if (measured && (floatMode->floatMode & 0x80u) == 0u) result = flushTinyF16Value(result, 0x387ff000u);
-        writeF16(inst.destination, result, {args[0], args[1], args[2]});
+        writeF16(inst.destination, result, {args[0], args[1], args[2]}, &invalidOperationF32({args[0], args[1], args[2]}, invalidProductF32(args[0], args[1])));
         return true;
     }
     if (mix) {
@@ -638,6 +638,12 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
     if (opcode == IrOpcode::FPFma32) result = &flushTinyProduct(args[0], args[1], result, args[2]).Value();
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
     if (opcode == IrOpcode::FPFma32 && f32Sources) result = nanResultF32({args[0], args[1], args[2]}, result, &invalidProductF32(args[0], args[1]));
+    if (opcode == IrOpcode::FPFma32 && !f32Sources) {
+        IrValue& bits = ir.BitCastU32(*result);
+        IrValue& nan = ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u));
+        IrValue& invalid = invalidOperationF32({args[0], args[1], args[2]}, invalidProductF32(args[0], args[1]));
+        result = &ir.BitCastF32(ir.Select(ir.LogicalAnd(nan, invalid), ir.Constant(0xffc00000u), bits));
+    }
     writeOperand(inst.destination, result);
     return true;
 }
