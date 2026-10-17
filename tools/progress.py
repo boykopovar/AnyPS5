@@ -204,6 +204,21 @@ def collect_libraries():
     return summarize([scan_library(p) for p in sorted(PRX.iterdir()) if p.is_dir()])
 
 
+def select_libraries(libraries, modules):
+    if not modules:
+        return libraries
+    known = {group["name"] for group in libraries["groups"]}
+    missing = []
+    for name in modules:
+        if name not in known and name not in missing:
+            missing.append(name)
+    if missing:
+        label = "library" if len(missing) == 1 else "libraries"
+        raise ValueError(f"unknown {label}: {', '.join(missing)}")
+    chosen = set(modules)
+    return summarize([group for group in libraries["groups"] if group["name"] in chosen])
+
+
 def camel(name):
     return "".join(part.capitalize() for part in name.split("_"))
 
@@ -432,31 +447,58 @@ def report(base, head):
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+def write_site(output, libraries, shaders):
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
+    (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
+    (output / "badge-shaders.svg").write_text(badge("shaders", shaders), encoding="utf-8")
+    (output / "progress.svg").write_text(render(libraries, shaders), encoding="utf-8")
+    (output / "progress.html").write_text(summary(libraries, shaders), encoding="utf-8")
+
+
+def main(argv=None):
+    global PRX, OPCODES
+    previous = PRX, OPCODES
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--root", type=Path, help="source tree to measure instead of the one containing this script")
     parser.add_argument("--compare", type=Path, nargs=2, metavar=("BASE", "HEAD"),
                         help="print a markdown report of the changes between two progress.json files")
-    args = parser.parse_args()
-    if args.compare:
-        base, head = (json.loads(path.read_text(encoding="utf-8")) for path in args.compare)
-        print(report(base, head), end="")
-        raise SystemExit
-    if not args.output:
-        parser.error("the output directory is required")
-    if args.root:
-        PRX = args.root / "core" / "libs" / "prx"
-        OPCODES = args.root / OPCODES.relative_to(ROOT)
-    output = args.output
-    output.mkdir(parents=True, exist_ok=True)
-    libraries, shaders = collect_libraries(), collect_shaders()
-    (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
-    (output / "badge-libraries.svg").write_text(badge("libraries*", libraries))
-    (output / "badge-shaders.svg").write_text(badge("shaders", shaders))
-    (output / "progress.svg").write_text(render(libraries, shaders))
-    (output / "progress.html").write_text(summary(libraries, shaders))
-    print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
-    print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
+    parser.add_argument("--module", action="append", metavar="NAME",
+                        help="limit library counts to these core/libs/prx directories; repeat to include several. Shader counts stay complete")
+    parser.add_argument("--json", action="store_true",
+                        help="print the progress.json object to stdout instead of the summary lines")
+    try:
+        args = parser.parse_args(argv)
+        if args.compare:
+            if args.module or args.json:
+                parser.error("--compare does not combine with --module or --json")
+            base, head = (json.loads(path.read_text(encoding="utf-8")) for path in args.compare)
+            print(report(base, head), end="")
+            return 0
+        if not args.output and not (args.module or args.json):
+            parser.error("the output directory is required")
+        if args.root:
+            PRX = args.root / "core" / "libs" / "prx"
+            OPCODES = args.root / previous[1].relative_to(ROOT)
+        libraries, shaders = collect_libraries(), collect_shaders()
+        try:
+            libraries = select_libraries(libraries, args.module or [])
+        except ValueError as error:
+            parser.error(str(error))
+        if args.output:
+            write_site(args.output, libraries, shaders)
+        if args.json:
+            print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
+        else:
+            print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
+            print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
+        return 0
+    finally:
+        PRX, OPCODES = previous
+
+
+if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    raise SystemExit(main())

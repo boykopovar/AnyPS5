@@ -1,3 +1,5 @@
+import io
+import json
 import sys
 import tempfile
 import unittest
@@ -292,6 +294,97 @@ class ProgressTests(unittest.TestCase):
                 (library / "Export.cpp").write_text(wrapper + "int APS5_VABI Run(Obj* obj) { " + call + " return 0; }\n")
                 group = progress.scan_library(library)
                 self.assertEqual(group[expected + "_names"], ["Run"])
+
+    def library_snapshot(self):
+        libraries = progress.summarize([
+            {"name": "libScePad", "label": "Pad", "done": 1, "todo": 1,
+             "done_names": ["Ready"], "todo_names": ["Pending"], "inert_names": []},
+            {"name": "libSceVideoOut", "label": "VideoOut", "done": 3, "todo": 1,
+             "done_names": ["A", "B", "C"], "todo_names": ["D"], "inert_names": []},
+            {"name": "libScePad.native", "label": "Pad.native", "done": 0, "todo": 0,
+             "done_names": [], "todo_names": [], "inert_names": [], "shared_sources": "libScePad"},
+        ])
+        shaders = {"done": 2, "total": 4, "percent": 50.0, "groups": [], "extra": []}
+        return libraries, shaders
+
+    def run_main(self, argv, libraries, shaders):
+        stdout = io.StringIO()
+        with patch.object(progress, "collect_libraries", return_value=libraries), \
+             patch.object(progress, "collect_shaders", return_value=shaders), \
+             patch("sys.stdout", stdout):
+            code = progress.main(argv)
+        return code, stdout.getvalue()
+
+    def test_module_filter_recomputes_library_totals(self):
+        libraries, shaders = self.library_snapshot()
+        selected = progress.select_libraries(libraries, ["libSceVideoOut", "libScePad", "libScePad"])
+        self.assertEqual([group["name"] for group in selected["groups"]], ["libScePad", "libSceVideoOut"])
+        self.assertEqual((selected["done"], selected["total"], selected["percent"]), (4, 6, 66.67))
+        self.assertEqual(shaders["total"], 4)
+        wrapper = progress.select_libraries(libraries, ["libScePad.native"])
+        self.assertEqual(wrapper["groups"][0]["shared_sources"], "libScePad")
+        self.assertEqual((wrapper["done"], wrapper["total"]), (0, 0))
+        with self.assertRaisesRegex(ValueError, "unknown libraries: libSceNope, libSceMissing"):
+            progress.select_libraries(libraries, ["libScePad", "libSceNope", "libSceMissing", "libSceNope"])
+
+    def test_json_and_module_do_not_require_an_output_directory(self):
+        libraries, shaders = self.library_snapshot()
+        code, output = self.run_main(["--json", "--module", "libScePad"], libraries, shaders)
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["libraries"]["groups"][0]["name"], "libScePad")
+        self.assertEqual((payload["libraries"]["done"], payload["libraries"]["total"]), (1, 2))
+        self.assertEqual(payload["shaders"], shaders)
+        self.assertNotIn("libraries 1/2", output)
+        code, output = self.run_main(["--module", "libScePad"], libraries, shaders)
+        self.assertEqual(output, "libraries 1/2 (50.0%)\nshaders 2/4 (50.0%)\n")
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+            progress.main([])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("the output directory is required", stderr.getvalue())
+
+    def test_module_filter_is_what_the_site_writes(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            code, text = self.run_main(["--json", "--module", "libScePad", str(output)], libraries, shaders)
+            self.assertEqual(code, 0)
+            written = json.loads((output / "progress.json").read_text(encoding="utf-8"))
+            self.assertEqual(written, json.loads(text))
+            self.assertEqual(written["libraries"]["groups"][0]["name"], "libScePad")
+            self.assertEqual(written["shaders"]["done"], 2)
+            page = (output / "progress.html").read_text(encoding="utf-8")
+            self.assertIn("libScePad", page)
+            self.assertNotIn("libSceVideoOut", page)
+            for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html"):
+                self.assertTrue((output / name).is_file())
+        original = progress.PRX
+        with tempfile.TemporaryDirectory() as directory:
+            self.run_main(["--root", directory, "--json"], libraries, shaders)
+        self.assertEqual(progress.PRX, original)
+
+    def test_compare_stays_a_report_of_two_snapshots(self):
+        def snapshot(names):
+            return {"libraries": progress.summarize([
+                        {"name": "libScePad", "label": "Pad", "done": len(names), "todo": 0,
+                         "done_names": names, "todo_names": [], "inert_names": []}]),
+                    "shaders": {"done": 0, "total": 0, "percent": 0, "groups": [], "extra": []}}
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "base.json"
+            head = Path(directory) / "head.json"
+            base.write_text(json.dumps(snapshot([])), encoding="utf-8")
+            head.write_text(json.dumps(snapshot(["Ready"])), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                code = progress.main(["--compare", str(base), str(head)])
+            self.assertEqual(code, 0)
+            self.assertIn("implemented", stdout.getvalue())
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                progress.main(["--compare", str(base), str(head), "--json"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("--compare does not combine with --module or --json", stderr.getvalue())
 
 
 if __name__ == "__main__":
