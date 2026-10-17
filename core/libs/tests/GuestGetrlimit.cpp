@@ -8,6 +8,9 @@
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 
 struct ResourceLimit {
     std::int64_t rlim_cur;
@@ -50,12 +53,9 @@ static ResourceLimit GuestLimit(int resource) {
     return limit;
 }
 
-static void CheckOpenFileLimit() {
+#if defined(_WIN32) || defined(__APPLE__)
+static void RequireDescriptorsEndAt(const ResourceLimit& limit) {
     constexpr int GUEST_EMFILE = 24;
-    const ResourceLimit limit = GuestLimit(GUEST_RLIMIT_NOFILE);
-    Require(limit.rlim_cur == limit.rlim_max);
-#ifdef _WIN32
-    Require(limit.rlim_cur == 8192);
     std::vector<int> descriptors;
     int pair[2]{-1, -1};
     *__error_nid_postfix() = 0;
@@ -68,11 +68,27 @@ static void CheckOpenFileLimit() {
     Require(*__error_nid_postfix() == GUEST_EMFILE);
     Require(descriptors.size() + 64 >= static_cast<std::size_t>(limit.rlim_cur));
     for (const int descriptor : descriptors) Require(close_nid_postfix(descriptor) == 0);
+}
+#endif
+
+static void CheckOpenFileLimit() {
+    const ResourceLimit limit = GuestLimit(GUEST_RLIMIT_NOFILE);
+    Require(limit.rlim_cur == limit.rlim_max);
+#ifdef _WIN32
+    Require(limit.rlim_cur == 8192);
+    RequireDescriptorsEndAt(limit);
 #else
     rlimit host{};
     Require(getrlimit(RLIMIT_NOFILE, &host) == 0);
     Require(host.rlim_cur == host.rlim_max);
     Require(host.rlim_cur == RLIM_INFINITY ? limit.rlim_cur == GUEST_RLIM_INFINITY : limit.rlim_cur == static_cast<std::int64_t>(host.rlim_cur));
+#endif
+#ifdef __APPLE__
+    int perProcess = 0;
+    std::size_t size = sizeof(perProcess);
+    Require(sysctlbyname("kern.maxfilesperproc", &perProcess, &size, nullptr, 0) == 0);
+    Require(perProcess > 0 && limit.rlim_cur <= perProcess);
+    RequireDescriptorsEndAt(limit);
 #endif
     Require(setrlimit_nid_postfix(GUEST_RLIMIT_NOFILE, &limit) == 0);
     const ResourceLimit lowered{limit.rlim_max > 1 ? limit.rlim_max - 1 : 1, limit.rlim_max};
