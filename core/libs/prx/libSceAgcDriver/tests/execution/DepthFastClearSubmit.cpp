@@ -198,7 +198,7 @@ std::uint32_t* WordsAt(GuestBlock& block, std::size_t offset) { return reinterpr
 
 bool AllWords(const std::uint32_t* words, std::uint32_t value) { return std::all_of(words, words + HtileFillBytes / 4u, [&](std::uint32_t word) { return word == value; }); }
 
-void NonUniformSliceIsRefused(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
+void ExpandedTileKeepsSlice(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
     auto& htile = NewBlock();
     const Surface first{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT, 0};
     const Surface second{NewBlock().Address(), 0, htile.Address() + HtileFillBytes, false, VK_FORMAT_D32_SFLOAT, 1};
@@ -208,8 +208,8 @@ void NonUniformSliceIsRefused(AgcDriver::VulkanDevice& device, const Shaders& sh
     std::fill(sliceOne, sliceOne + HtileFillBytes / 4u, 0u);
     sliceOne[0] = 0xffffffffu;
     AgcDriver::GuestMemory::MarkWritten(htile.Address() + HtileFillBytes, HtileFillBytes);
-    Require(Draw(device, shaders, second, {}) == 0u, "slice 1 took a clear from HTILE words that are not all equal");
-    Require(sliceOne[0] == 0xffffffffu && std::all_of(sliceOne + 1, sliceOne + HtileFillBytes / 4u, [](std::uint32_t word) { return word == 0u; }), "a bind of slice 1 stored back HTILE words that are not all equal");
+    Require(Draw(device, shaders, second, {}) == 0u, "slice 1 took a clear from HTILE words with one tile left expanded");
+    Require(sliceOne[0] == 0xffffffffu && std::all_of(sliceOne + 1, sliceOne + HtileFillBytes / 4u, [](std::uint32_t word) { return word == 0u; }), "a bind of slice 1 stored back HTILE words with one tile left expanded");
     Require(AllWords(WordsAt(htile, 0), 0xfffc000fu), "a bind of slice 1 changed slice 0's HTILE");
 }
 
@@ -225,6 +225,22 @@ void UniformSliceDecodes(AgcDriver::VulkanDevice& device, const Shaders& shaders
     AgcDriver::GuestMemory::MarkWritten(htile.Address() + HtileFillBytes, HtileFillBytes);
     Require(Draw(device, shaders, second, {.depthWrite = true}) == Covered, "slice 1 did not take the clear from HTILE words that are all equal");
     Require(AllWords(sliceOne, 0xfffc000fu), "slice 1's bind did not store its cleared HTILE back as expanded");
+    Require(Draw(device, shaders, second, {}) == 0u, "the depth drawn into slice 1 after the clear was lost");
+}
+
+void MixedClearedSliceClears(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
+    auto& htile = NewBlock();
+    const Surface first{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT, 0};
+    const Surface second{NewBlock().Address(), 0, htile.Address() + HtileFillBytes, false, VK_FORMAT_D32_SFLOAT, 1};
+    Require(Draw(device, shaders, first, {.depthWrite = true}) == Covered, "slice 0 was not cleared to DB_DEPTH_CLEAR (1.0)");
+    Require(Draw(device, shaders, second, {.depthWrite = true}) == Covered, "slice 1 was not cleared to DB_DEPTH_CLEAR (1.0)");
+    Require(Draw(device, shaders, second, {}) == 0u, "the depth drawn into slice 1 was lost");
+    auto* sliceOne = WordsAt(htile, HtileFillBytes);
+    for (std::uint32_t word = 0; word < HtileFillBytes / 4u; ++word) sliceOne[word] = (word / 7u) % 2u == 0u ? 0u : 0xfffffff0u;
+    AgcDriver::GuestMemory::MarkWritten(htile.Address() + HtileFillBytes, HtileFillBytes);
+    Require(Draw(device, shaders, second, {.depthWrite = true}) == Covered, "slice 1 did not take the clear from HTILE words that all have ZMask 0 but different Min/Max Z");
+    Require(AllWords(sliceOne, 0xfffc000fu), "slice 1's bind did not store its cleared HTILE back as expanded");
+    Require(AllWords(WordsAt(htile, 0), 0xfffc000fu), "a bind of slice 1 changed slice 0's HTILE");
     Require(Draw(device, shaders, second, {}) == 0u, "the depth drawn into slice 1 after the clear was lost");
 }
 
@@ -253,8 +269,9 @@ int main() {
         DepthOnlyFillKeepsStencil(*device, shaders);
         DrawAfterFastClearExpandsHtile(*device, shaders);
         const bool computeRan = StoresFills(*device, NewBlock());
-        NonUniformSliceIsRefused(*device, shaders);
+        ExpandedTileKeepsSlice(*device, shaders);
         UniformSliceDecodes(*device, shaders);
+        MixedClearedSliceClears(*device, shaders);
         if (computeRan) {
             DispatchFillClearsDepth(*device, shaders);
             DispatchBufferPatternFillClearsDepth(*device, shaders);
