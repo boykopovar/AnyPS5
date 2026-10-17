@@ -134,6 +134,12 @@ void _releaseFlexible(uintptr_t start, size_t len) {
     }
 }
 
+int _mapDirect(void** addr, size_t len, int prot, int flags, int64_t physical, size_t alignment) {
+    const int result = DoMapDirect(addr, len, prot, flags, physical, alignment);
+    if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
+    return result;
+}
+
 std::mutex g_lockedRangesLock;
 std::map<uintptr_t, size_t> g_lockedRanges;
 
@@ -224,12 +230,12 @@ int APS5_VABI sceKernelEnableDmemAliasing(void) {
 
 int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  (void)alignment;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ return _mapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
 int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
  (void)type;
- return DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ return _mapDirect(addr, len, prot, flags, direct_memory_start, alignment);
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
@@ -240,7 +246,7 @@ int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int pro
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name);
 
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
- const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
+ const int result = _mapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0 && name) sceKernelSetVirtualRangeName(*addr, len, name);
  return result;
 }
@@ -498,7 +504,7 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
   }
   switch (entry.operation) {
   case OpMapDirect:
-   result = DoMapDirect(&entry.start, entry.length, static_cast<uint8_t>(entry.protection), flags, static_cast<int64_t>(entry.offset), 0);
+   result = _mapDirect(&entry.start, entry.length, static_cast<uint8_t>(entry.protection), flags, static_cast<int64_t>(entry.offset), 0);
    break;
   case OpUnmap:
    result = sceKernelMunmap(reinterpret_cast<uint64_t>(entry.start), entry.length);
