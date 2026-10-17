@@ -104,7 +104,10 @@ def main():
             assert after == (*before[:3], before[3] + shift, before[4] + shift, *before[5:]), (before, after)
         assert min(header[3] for header in fixed_headers if header[0] == PT_LOAD) == BASE, "image does not start at the base"
 
-        for (tag, value), (fixed_tag, fixed_value) in zip(dynamic_tags(plain), dynamic_tags(fixed), strict=True):
+        plain_tags = dynamic_tags(plain)
+        fixed_tags = dynamic_tags(fixed)
+        assert len(plain_tags) == len(fixed_tags)
+        for (tag, value), (fixed_tag, fixed_value) in zip(plain_tags, fixed_tags):
             assert tag == fixed_tag and fixed_value == value + (BASE if tag in ADDRESS_TAGS else 0), (tag, value, fixed_value)
 
         plain_relocations = relocations(plain)
