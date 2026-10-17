@@ -1,5 +1,6 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
@@ -244,7 +245,7 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
 
 static void CancellableSleep(std::uint64_t nanos) {
     ThreadCancel::Check();
-    TimedWait::SleepNanos(nanos);
+    SleepWake::Sleep(nanos);
     ThreadCancel::Check();
 }
 

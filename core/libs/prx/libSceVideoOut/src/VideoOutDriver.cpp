@@ -19,6 +19,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #if APS5_ENABLE_TIMING_LOG
 #include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
@@ -622,6 +623,7 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     }
     req.terminal = true;
     req.cfg->vblankCond.notify_all();
+    KernelWakeSleepers_nid_no_patch();
     timing.Mark("notify_game");
 }
 

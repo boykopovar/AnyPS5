@@ -72,6 +72,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SignalSets.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Notification.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/UserContext.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Time/SleepWake.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/AppMetadata.cpp
@@ -625,6 +626,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test(NAME guest_nanosleep_timer_self_test COMMAND guest_nanosleep_tests)
         set_tests_properties(guest_nanosleep_timer_self_test PROPERTIES TIMEOUT 30 ENVIRONMENT "APS5_TRACE_TIMERS=1" ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_sleep_wake_tests ${LIBS_INCLUDE_DIR}/tests/GuestSleepWake.cpp)
+    target_include_directories(guest_sleep_wake_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sleep_wake_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_sleep_wake_tests)
+    add_test(NAME guest_sleep_wake COMMAND guest_sleep_wake_tests)
+    set_tests_properties(guest_sleep_wake PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sleep_wake PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_pthread_sem_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadSem.cpp)

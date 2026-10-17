@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -1073,6 +1074,60 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
 
 }
 
+struct Recorder::ProgressWatcher {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::uint64_t submitted = 0;
+    bool stop = false;
+    std::thread thread;
+
+    ProgressWatcher(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, PFN_vkGetSemaphoreCounterValueKHR counterValue) {
+        thread = std::thread([this, device, timeline, waitSemaphores, counterValue] {
+            CpuTopology::PinHelperThread("GPU progress watcher");
+            std::uint64_t seen = 0;
+            for (;;) {
+                {
+                    std::unique_lock lock(mutex);
+                    wake.wait(lock, [&] { return stop || submitted > seen; });
+                    if (stop) return;
+                }
+                const std::uint64_t target = seen + 1;
+                VkSemaphoreWaitInfoKHR info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
+                info.semaphoreCount = 1;
+                info.pSemaphores = &timeline;
+                info.pValues = &target;
+                const auto result = waitSemaphores(device, &info, 50'000'000ull);
+                if (result == VK_TIMEOUT) continue;
+                if (result != VK_SUCCESS) {
+                    std::fprintf(stderr, "[gpu] progress watcher: vkWaitSemaphoresKHR failed (%d), watcher stops\n", static_cast<int>(result));
+                    return;
+                }
+                std::uint64_t value = target;
+                if (counterValue(device, timeline, &value) != VK_SUCCESS) value = target;
+                seen = std::max(target, value);
+                KernelWakeSleepers_nid_no_patch();
+            }
+        });
+    }
+
+    void Submitted(std::uint64_t serial) {
+        {
+            std::lock_guard lock(mutex);
+            submitted = serial;
+        }
+        wake.notify_one();
+    }
+
+    ~ProgressWatcher() {
+        {
+            std::lock_guard lock(mutex);
+            stop = true;
+        }
+        wake.notify_one();
+        thread.join();
+    }
+};
+
 Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(context), id(nextRecorderId.fetch_add(1)) {
     {
         std::lock_guard lock(liveRecordersMutex);
@@ -1119,6 +1174,7 @@ Recorder::~Recorder() {
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
     }
+    progressWatcher.reset();
     holdKept.clear();
     if (activeRecorder == this) {
         activeRecorder = nullptr;
@@ -3360,6 +3416,13 @@ void Recorder::Submit() {
         newestSubmitted = batch->serial;
         newestSubmittedAt = batch->submittedAt;
     }
+    if (timeline != VK_NULL_HANDLE) {
+        if (!progressWatcher) {
+            progressWatcher = std::make_unique<ProgressWatcher>(context.device, timeline, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"),
+                                                                context.Function<PFN_vkGetSemaphoreCounterValueKHR>("vkGetSemaphoreCounterValueKHR"));
+        }
+        progressWatcher->Submitted(batch->serial);
+    }
     inFlight.push_back(std::move(batch));
     inFlightKeptBytes += inFlight.back()->keptBytes;
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
@@ -3845,6 +3908,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             }
         }
     }
+    if (!batch->completions.empty()) KernelWakeSleepers_nid_no_patch();
     if (profile) holdCounters.completions += batch->completions.size();
     const auto keptStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // Deferred only from inside a hold: the unlock that releases the list is this thread's own, and
