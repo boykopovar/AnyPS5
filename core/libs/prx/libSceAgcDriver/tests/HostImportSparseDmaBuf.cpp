@@ -54,6 +54,7 @@ struct MockDevice {
     std::set<VkBuffer> buffers;
     std::set<VkBuffer> sparse;
     std::map<VkBuffer, VkDeviceSize> sizes;
+    std::map<VkBuffer, VkBufferUsageFlags> usages;
     std::map<VkDeviceMemory, VkDeviceSize> memories;
     std::vector<Bind> binds;
     VkResult bindResult = VK_SUCCESS;
@@ -87,6 +88,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateBuffer(VkDevice, const VkBufferCreateIn
     mock.buffers.insert(*buffer);
     if ((info->flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0) mock.sparse.insert(*buffer);
     mock.sizes[*buffer] = info->size;
+    mock.usages[*buffer] = info->usage;
     return VK_SUCCESS;
 }
 
@@ -228,6 +230,20 @@ std::uint64_t RangeBytes() {
     return (UdmabufLimitBytes() / ChunkBytes + 1) * ChunkBytes + (std::uint64_t{1} << 20u);
 }
 
+void ImportsASmallRangeForVertexAndIndexInput() {
+    constexpr std::uint64_t bytes = 8u << 20u;
+    SharedRange range(bytes, 0, true);
+    const auto context = mockContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = HostImportFor(context, range.Address(), bytes);
+    Expect(import != nullptr && import->dmaBuf, "a small shared range was not imported as a dma-buf");
+    if (import == nullptr) return;
+    Expect(!mock.sparse.contains(import->buffer), "the small import unexpectedly took the sparse path");
+    const auto usage = mock.usages.at(import->buffer);
+    Expect((usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as a vertex buffer");
+    Expect((usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0, "a chunked import cannot be bound as an index buffer");
+}
+
 void ImportsALargeRangeAsOneSparseBuffer() {
     const auto bytes = RangeBytes();
     SharedRange range(bytes, 0, true);
@@ -299,6 +315,7 @@ int main() {
     SetHostImportBudget(~std::uint64_t{0});
     GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
     try {
+        ImportsASmallRangeForVertexAndIndexInput();
         ImportsALargeRangeAsOneSparseBuffer();
         UnalignedOffsetIsDecidedBeforeImporting();
         FailureAfterTheDecisionThrows(false, VK_SUCCESS, "UDMABUF_CREATE");
