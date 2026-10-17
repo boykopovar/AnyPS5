@@ -28,6 +28,10 @@ std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords() {
     return AgcDriver::RenderingWaitPacketWords;
 }
 
+std::uint32_t APS5_VABI sceAgcDriverGetSetFlipPacketSizeInDwords() {
+    return AgcDriver::FlipPacketWords;
+}
+
 std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t** command,
     std::uint32_t capacity, std::uint32_t mode, std::uint32_t handle, int index) {
     if (!command || capacity < AgcDriver::RenderingWaitPacketWords || mode != 0 || index < 0)

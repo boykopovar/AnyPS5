@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <mutex>
 extern "C" std::uint32_t APS5_VABI sceAgcDriverGetWaitRenderingPacketSizeInDwords();
+extern "C" std::uint32_t APS5_VABI sceAgcDriverGetSetFlipPacketSizeInDwords();
 extern "C" std::uint32_t APS5_VABI sceAgcDriverWaitUntilSafeForRendering(std::uint32_t**, std::uint32_t, std::uint32_t, std::uint32_t, int);
 static void Require(bool value) { if (!value) std::abort(); }
 class Output final : public AgcDriver::IVideoOutput, public AgcDriver::IRenderingWait,
@@ -54,6 +55,9 @@ int main() {
     auto* cursor = words.data();
     const auto size = sceAgcDriverGetWaitRenderingPacketSizeInDwords();
     Require(size == AgcDriver::RenderingWaitPacketWords);
+    const auto flipPacketSize = sceAgcDriverGetSetFlipPacketSizeInDwords();
+    Require(flipPacketSize == AgcDriver::FlipPacketWords);
+    Require(flipPacketSize == 6);
     bool rejected = false;
     try { sceAgcDriverWaitUntilSafeForRendering(&cursor, size - 1, 0, 7, 0); }
     catch (const std::invalid_argument&) { rejected = true; }
@@ -62,6 +66,7 @@ int main() {
     Require(cursor == words.data() + size);
     Require(words[0] == AgcDriver::RenderingWaitPacketHeader && words[1] == 7 && words[2] == 0 && words[3] == 0);
     const std::uint32_t flip[] = {AgcDriver::FlipPacketHeader, 7, 0, 1, 0, 0};
+    Require(sizeof(flip) / sizeof(flip[0]) == flipPacketSize);
     for (auto word : flip) *cursor++ = word;
     Require(words.back() == 0x12345678);
     Packet packet{words.data(), 10, 0, {}};
