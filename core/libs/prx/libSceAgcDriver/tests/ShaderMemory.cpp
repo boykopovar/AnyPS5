@@ -4272,6 +4272,26 @@ void verifyUnnormalizedSamplers() {
     pixel.context.userData = normalizedPixelData;
     const auto pixelNormalized = Recompile(pixel);
     require(proven(pixelNormalized, false) && implicitSamples(pixelNormalized.spirv.Words()) == 1u, "unnormalized samplers: a pixel image_sample through a normalized S# is not an implicit-LOD sample");
+    const std::array<std::uint32_t, 7> pixelOffsetCode{0x7e0202ffu, 0x00000201u, 0xf0c00f08u, 0x00400801u, 0xf800180fu, 0x0b0a0908u, 0xbf810000u};
+    pixel.shader = {ShaderStage::Fragment, 0x50000u, pixelOffsetCode, 0, {}};
+    pixel.context.userData = pixelData;
+    pixel.target.supportedCapabilities = capabilities;
+    pixel.target.nonConstantImageOffsets = true;
+    const auto pixelOffsetUnnormalized = Recompile(pixel);
+    require(proven(pixelOffsetUnnormalized, true), "unnormalized texel offsets: a pixel image_sample_o through an unnormalized S# was not flagged");
+    auditSpirv(pixelOffsetUnnormalized.spirv.Words());
+    require(foldedSamples(pixelOffsetUnnormalized.spirv.Words()), "unnormalized texel offsets: a pixel image_sample_o offset was not added to the base-level coordinates");
+    pixel.context.userData = normalizedPixelData;
+    const auto pixelOffsetNormalized = Recompile(pixel);
+    std::vector<std::uint32_t> implicitMasks;
+    const auto offsetWords = pixelOffsetNormalized.spirv.Words();
+    for (std::size_t cursor = 5; cursor < offsetWords.size();) {
+        const auto count = offsetWords[cursor] >> 16u;
+        require(count != 0 && count <= offsetWords.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
+        if ((offsetWords[cursor] & 0xffffu) == spv::OpImageSampleImplicitLod && count > 5u) implicitMasks.push_back(offsetWords[cursor + 5]);
+        cursor += count;
+    }
+    require(proven(pixelOffsetNormalized, false) && implicitMasks.size() == 1u && (implicitMasks[0] & (spv::ImageOperandsConstOffsetMask | spv::ImageOperandsOffsetMask)) != 0u, "unnormalized texel offsets: a normalized pixel image_sample_o is not an implicit-LOD sample with its offset");
 }
 
 void verifyUnusedUnnormalizedSampler() {
