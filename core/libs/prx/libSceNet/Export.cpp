@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <map>
 #include <mutex>
@@ -1080,6 +1081,14 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
+    }
+    const GuestArena::HostWrite messageOutput(msg, sizeof(*msg));
+    if (!messageOutput.Open()) return fail(NET_EFAULT);
+    std::deque<GuestArena::HostWrite> destinations;
+    for (int i = 0; i < msg->iov_length; ++i) {
+        const auto& entry = msg->iov[i];
+        if (entry.length == 0) continue;
+        if (!destinations.emplace_back(entry.base, static_cast<std::size_t>(entry.length)).Open()) return fail(NET_EFAULT);
     }
     const bool datagram = socket.type != NET_SOCK_STREAM;
 #ifdef _WIN32

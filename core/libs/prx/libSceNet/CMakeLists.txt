@@ -30,7 +30,7 @@ if(BUILD_TESTING)
         target_include_directories(guest_socket_host_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_socket_host_write_tests PRIVATE libSceNet libkernel libc)
         configure_windows_unwind(guest_socket_host_write_tests)
-        foreach(api IN ITEMS recv recvfrom read sceKernelRead sceNetRecv sceNetRecvfrom)
+        foreach(api IN ITEMS recv recvfrom read sceKernelRead sceNetRecv sceNetRecvfrom sceNetRecvmsg)
             add_test(NAME guest_socket_host_write_${api}_udp COMMAND guest_socket_host_write_tests ${api})
             add_test(NAME guest_socket_host_write_${api}_tcp COMMAND guest_socket_host_write_tests ${api} tcp)
             set_tests_properties(guest_socket_host_write_${api}_udp guest_socket_host_write_${api}_tcp
