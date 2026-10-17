@@ -27,6 +27,7 @@ RULES = {
     "commit-subject": ("error", "docs/dev/CONVENTIONS.md", "Commit subject is not Conventional Commits"),
     "pr-title": ("error", "docs/dev/CONVENTIONS.md", "Pull request title is not Conventional Commits"),
     "pr-template": ("error", ".github/pull_request_template.md", "Fill in the pull request template"),
+    "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name the code reads has a row in docs/dev/ENVIRONMENT.md, and every row is a name the code still reads"),
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
@@ -54,6 +55,15 @@ FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
 KEY = re.compile(r"^( *)([A-Za-z0-9_-]+|'[^']*'|\"[^\"]*\"):(?:\s+(.*?))?\s*$")
+ENV_PREFIX = r"(?:APS5|ANYPS5)_[A-Za-z0-9_]+"
+ENV_GREP = (r'(std::)?getenv\([[:space:]]*"(APS5|ANYPS5)_[A-Za-z0-9_]+"'
+            r'|IsEnvironmentSet\([[:space:]]*"(APS5|ANYPS5)_[A-Za-z0-9_]+"'
+            r'|kibSetting\([[:space:]]*"(APS5|ANYPS5)_[A-Za-z0-9_]+"'
+            r'|MaskFromEnvironment\([[:space:]]*"(APS5|ANYPS5)_[A-Za-z0-9_]+"'
+            r'|EnvInt\([[:space:]]*"(APS5|ANYPS5)_[A-Za-z0-9_]+"'
+            r'|GetEnvironmentVariableA\([[:space:]]*"(APS5|ANYPS5)_[A-Za-z0-9_]+"')
+ENV_READER = re.compile(r'(?:(?:std::)?getenv|IsEnvironmentSet|kibSetting|MaskFromEnvironment|EnvInt|GetEnvironmentVariableA)\(\s*"(' + ENV_PREFIX + r')"')
+ENV_NAME = re.compile(r"`(" + ENV_PREFIX + r")`")
 
 
 def git(*args, text=True):
@@ -261,6 +271,21 @@ class Check:
             sha, subject = line.split(" ", 1)
             if not CONVENTIONAL.match(subject):
                 self.report("commit-subject", "", 0, f"{sha} {subject}")
+
+    def env_reference(self):
+        doc = "docs/dev/ENVIRONMENT.md"
+        if doc not in self.tree:
+            return
+        result = subprocess.run(["git", "grep", "-nE", ENV_GREP, self.head, "--", "core"],
+                                capture_output=True, encoding="utf-8", errors="replace")
+        reads = set()
+        for line in result.stdout.splitlines():
+            reads.update(match.group(1) for match in ENV_READER.finditer(line))
+        documented = set(ENV_NAME.findall(self.show(doc)))
+        for name in sorted(reads - documented):
+            self.report("env-reference", doc, 0, f"{name} is read by the code but has no row")
+        for name in sorted(documented - reads):
+            self.report("env-reference", doc, 0, f"{name} has a row but the code no longer reads it")
 
     def pull_request(self, title, body):
         if not CONVENTIONAL.match(title):
@@ -473,6 +498,7 @@ if __name__ == "__main__":
     check.docs()
     check.workflows()
     check.commits()
+    check.env_reference()
     pr = json.load(open(args.event, encoding="utf-8")).get("pull_request") if args.event else None
     if pr:
         check.pull_request(pr["title"], pr["body"])
