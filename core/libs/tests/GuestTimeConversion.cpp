@@ -297,6 +297,33 @@ static void CheckLocalRange() {
     Require(localtime_s_nid_postfix(&overflow, &scratch) == nullptr, "Unrepresentable negative local time was accepted");
 }
 
+#ifndef _WIN32
+static void CheckRegionZones() {
+    constexpr std::array<const char*, 4> zones{"America/Los_Angeles", "Europe/Berlin", "Asia/Kolkata", "America/Argentina/Buenos_Aires"};
+    constexpr std::array<std::int64_t, 9> timers{-62135553600, -12609691200, -5016340800, -5000011200, -2732356800, -2209032000, -2208988800, -2208945600, -631108800};
+    for (const char* zone : zones) {
+        setenv("TZ", zone, 1);
+        tzset_nid_postfix();
+        for (const std::int64_t timer : timers) {
+            GuestTm local{};
+            Require(localtime_s_nid_postfix(&timer, &local) == &local, "Local conversion in a region zone failed");
+            GuestTm normalized = local;
+            normalized.tm_wday = -1;
+            normalized.tm_yday = -1;
+            if (mktime_nid_postfix(&normalized) != timer || !Equal(normalized, local)) {
+                std::fprintf(stderr, "mktime did not invert localtime in %s at %lld (offset %ld): got %lld\n", zone, static_cast<long long>(timer), static_cast<long>(local.tm_gmtoff), static_cast<long long>(mktime_nid_postfix(&local)));
+                std::abort();
+            }
+            GuestTm unknown = local;
+            unknown.tm_isdst = -1;
+            Require(mktime_nid_postfix(&unknown) == timer && unknown.tm_isdst == local.tm_isdst, "mktime with an unknown daylight flag did not invert localtime in a region zone");
+        }
+    }
+    setenv("TZ", "UTC-2", 1);
+    tzset_nid_postfix();
+}
+#endif
+
 int main() {
 #ifdef _WIN32
     _putenv_s("TZ", "UTC-2");
@@ -386,6 +413,9 @@ int main() {
 
     CheckFreeBsdConversions();
     CheckLocalRange();
+#ifndef _WIN32
+    CheckRegionZones();
+#endif
     CheckLiteralConversions();
 
     CheckConcurrent(libc_gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
