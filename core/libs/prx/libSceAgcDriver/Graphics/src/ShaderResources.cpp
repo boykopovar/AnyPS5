@@ -740,7 +740,8 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             };
             const auto unchanged = [&] {
                 if (it->committed != committed) return false;
-                return committed.has_value() ? !Recorder::SnapshotWriteOverlaps(address, it->bytes.size()) && GuestMemory::UnchangedCommittedSince(*committed, it->generation) : GuestMemory::UnchangedSince(address, it->bytes.size(), it->generation);
+                if (Recorder::SnapshotWriteOverlaps(address, it->bytes.size())) return false;
+                return committed.has_value() ? GuestMemory::UnchangedCommittedSince(*committed, it->generation) : GuestMemory::UnchangedSince(address, it->bytes.size(), it->generation);
             };
             const auto kept = [&] {
                 if (untracked[0] == 0) return false;
@@ -1454,6 +1455,10 @@ ReusedTable* FindReusedTable(VkDevice device, const ShaderRecompiler::Descriptor
 }
 
 bool TableCurrent(ReusedTable& table) {
+    const auto writes = Recorder::PendingWriteSnapshot();
+    if (std::any_of(table.queries.begin(), table.queries.end(), [&](const auto& query) {
+        return Recorder::SnapshotOverlaps(writes.get(), query.address, static_cast<std::size_t>(query.bytes));
+    })) return false;
     const auto serial = StorageTexture::PendingSerial();
     if (serial != table.pendingSerial) {
         if (StorageTexture::AnyPendingOverlaps(table.ranges) || StorageTexture::PendingSerial() != serial) return false;

@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
 #ifdef _WIN32
@@ -28,6 +29,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <span>
+#include <algorithm>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -50,7 +53,7 @@ constexpr std::uint64_t Ceiling = Budget + Budget / 4u;
 
 class Device {
 public:
-    explicit Device(bool resourceImages = false) {
+    explicit Device(bool resourceImages = false, bool selectGpu = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #else
@@ -72,6 +75,23 @@ public:
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             context.physical = devices.front();
+            if (selectGpu) {
+                const char* selected = std::getenv("ANYPS5_GPU");
+                if (selected != nullptr) {
+                    const std::uint32_t vendor = std::string(selected) == "AMD" ? 0x1002u : std::string(selected) == "NVIDIA" ? 0x10deu : 0u;
+                    Require(vendor != 0, "ANYPS5_GPU must be AMD or NVIDIA for this fixture");
+                    context.physical = VK_NULL_HANDLE;
+                    for (const auto candidate : devices) {
+                        VkPhysicalDeviceProperties properties{};
+                        function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(candidate, &properties);
+                        if (properties.vendorID == vendor) { context.physical = candidate; break; }
+                    }
+                    Require(context.physical != VK_NULL_HANDLE, "requested fixture GPU is unavailable");
+                }
+                VkPhysicalDeviceProperties selectedProperties{};
+                function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &selectedProperties);
+                std::printf("fixture GPU=%s vendor=0x%x device=0x%x\n", selectedProperties.deviceName, selectedProperties.vendorID, selectedProperties.deviceID);
+            }
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -274,6 +294,121 @@ void recorderEvictionTests(const Context& context, const Block& block) {
     Require(resources.expired() && view.expired() && image.expired(), "an evicted image outlived its completed recorder");
     std::puts("storage eviction recorder lifetime and pixel readback passed");
 }
+
+
+#ifdef _WIN32
+void CheckSnapshotWords(std::span<const std::byte> bytes, std::uint32_t expected, const char* label) {
+    Require(bytes.size() % 4 == 0, "word oracle has nonword extent");
+    for (std::size_t offset = 0; offset < bytes.size(); offset += 4) {
+        std::uint32_t actual;
+        std::memcpy(&actual, bytes.data() + offset, 4);
+        if (actual != expected) {
+            char detail[180];
+            std::snprintf(detail, sizeof(detail), "%s word=%zu expected=0x%08x actual=0x%08x", label, offset / 4, expected, actual);
+            throw std::runtime_error(detail);
+        }
+    }
+}
+
+class PendingSnapshotBlock {
+public:
+    static constexpr std::size_t GuardBytes = 65536;
+    static constexpr std::size_t Bytes = 2 * SurfaceBytes + 3 * GuardBytes;
+    static constexpr std::uint32_t Initial = 0x15263748u, Guard = 0x6d29c853u;
+    explicit PendingSnapshotBlock(const Context& context) : context(context) {
+        base = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Bytes, GuardBytes));
+        Require(base != nullptr, "pending snapshot: guest allocation failed");
+        GuestArena::GuestArenaCommit_nid_postfix(base, Bytes, PAGE_READWRITE, GuardBytes);
+        GuestAllocations::Mutation().Add(base, Bytes - 256, true, true, true);
+        std::fill_n(reinterpret_cast<std::uint32_t*>(base), Bytes / 4, Guard);
+        for (const auto address : {Sample(), Disjoint()})
+            std::fill_n(reinterpret_cast<std::uint32_t*>(address), SurfaceBytes / 4, Initial);
+    }
+    ~PendingSnapshotBlock() {
+        ClearCachedTextures(context.device);
+        GuestAllocations::Mutation().Remove(base);
+        GuestArena::GuestArenaReset_nid_postfix(base, Bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(base, Bytes);
+    }
+    std::uint64_t Sample() const { return reinterpret_cast<std::uint64_t>(base) + GuardBytes; }
+    std::uint64_t Disjoint() const { return Sample() + SurfaceBytes + GuardBytes; }
+    void Check(std::uint32_t sample, std::uint32_t disjoint) const {
+        CheckSnapshotWords({reinterpret_cast<const std::byte*>(Sample()), SurfaceBytes}, sample, "sampled guest backing");
+        CheckSnapshotWords({reinterpret_cast<const std::byte*>(Disjoint()), SurfaceBytes}, disjoint, "disjoint guest backing");
+        for (const auto offset : {std::size_t{0}, GuardBytes + SurfaceBytes, 2 * GuardBytes + 2 * SurfaceBytes})
+            CheckSnapshotWords({base + offset, GuardBytes}, Guard, "pending snapshot guard");
+    }
+private:
+    Context context;
+    std::byte* base = nullptr;
+};
+
+void pendingSnapshotTests(const Context& context, bool disjoint) {
+    namespace GM = AgcDriver::GuestMemory;
+    for (const char* name : {"APS5_NO_TEXTURE_CACHE", "APS5_GPU_NO_WRITEBACK"})
+        Require(std::getenv(name) == nullptr, std::string("pending snapshot fixture requires unset ") + name);
+    PendingSnapshotBlock memory(context);
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto address = memory.Sample();
+    const auto words = Descriptor(address);
+    Require(DescribeSurface(DecodeTextureResource(words)).guestBytes == SurfaceBytes, "pending snapshot: unexpected descriptor extent");
+    GM::BumpCollectEpoch();
+    Require(GM::WriteWatched() && GM::CollectWrites(address, SurfaceBytes) != 0, "pending snapshot: full watched proof unavailable");
+    auto previous = CachedSampledTexture(context, words);
+    Require(previous != nullptr && !previous->ViewsStorageImage(), "pending snapshot: lookup did not create an owned snapshot");
+    recorder.Sync();
+    Require(CachedSampledTexture(context, words) == previous, "pending snapshot: initial unchanged lookup did not reuse");
+    Require(GM::Watched(address, SurfaceBytes), "pending snapshot: snapshot setup removed write watching");
+    memory.Check(PendingSnapshotBlock::Initial, PendingSnapshotBlock::Initial);
+    std::uint32_t sampleExpected = PendingSnapshotBlock::Initial, disjointExpected = PendingSnapshotBlock::Initial;
+    for (const bool submitted : {false, true}) {
+        const auto destination = disjoint ? memory.Disjoint() : address;
+        const std::uint32_t value = submitted ? 0x392b17a5u : 0x725c183eu;
+        const auto copied = std::make_shared<Buffer>(context, SurfaceBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        std::fill(copied->Bytes().begin(), copied->Bytes().end(), std::byte{0xa6});
+        const auto landed = std::make_shared<bool>(false);
+        const auto epoch = GM::ThreadCollectEpoch();
+        const auto commands = recorder.Commands();
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, copied->Handle(), 0, SurfaceBytes, value);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.OnComplete([copied, landed, destination, value] {
+            copied->Invalidate();
+            CheckSnapshotWords(copied->Bytes(), value, "GPU copied-buffer output");
+            GM::StoreOwnBytes(destination, copied->Bytes());
+            *landed = true;
+        });
+        recorder.Keep(copied);
+        recorder.NotePendingWrite(destination, SurfaceBytes);
+        if (submitted) recorder.Submit();
+        Require(!*landed && Recorder::SnapshotWriteOverlaps(destination, SurfaceBytes), "pending snapshot: copied writer was not pending");
+        Require(Recorder::SnapshotWriteOverlaps(address, SurfaceBytes) != disjoint, "pending snapshot: overlap geometry differs");
+        const auto next = CachedSampledTexture(context, words);
+        Require(GM::ThreadCollectEpoch() == epoch, "pending snapshot: lookup changed packet epoch");
+        if (disjoint) {
+            Require(next == previous && !*landed && Recorder::SnapshotWriteOverlaps(destination, SurfaceBytes),
+                    "pending snapshot: disjoint lookup waited or replaced its unchanged snapshot");
+            memory.Check(sampleExpected, disjointExpected);
+            recorder.Sync();
+            disjointExpected = value;
+        } else {
+            Require(*landed && !Recorder::SnapshotWriteOverlaps(destination, SurfaceBytes),
+                    "pending snapshot: overlapping lookup returned before copied write publication");
+            Require(next != previous && !next->ViewsStorageImage(), "pending snapshot: overlapping lookup reused stale snapshot");
+            sampleExpected = value;
+            recorder.Sync();
+        }
+        Require(*landed && !Recorder::SnapshotWriteOverlaps(destination, SurfaceBytes), "pending snapshot: explicit completion did not publish");
+        memory.Check(sampleExpected, disjointExpected);
+        Require(CachedSampledTexture(context, words) == next, "pending snapshot: completed snapshot was not reused");
+        previous = next;
+        std::printf("snapshot_pending_write_case=PASS disjoint=%u submitted=%u full_gpu_and_guest_words=%zu guards=%zu\n",
+                    static_cast<unsigned>(disjoint), static_cast<unsigned>(submitted), SurfaceBytes / 4, 3 * PendingSnapshotBlock::GuardBytes / 4);
+    }
+    recorder.Sync();
+}
+#endif
 
 bool resourceCacheTests(Context context, const std::string& mode) {
     PlaceholderImages placeholders(context);
@@ -647,6 +782,7 @@ int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
+        const bool pendingSnapshot = mode == "snapshot-pending-write" || mode == "snapshot-pending-write-disjoint";
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
 #ifdef _WIN32
         if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", "1");
@@ -655,7 +791,7 @@ int main(int argc, char** argv) {
 #endif
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>(resources);
+            device = std::make_unique<Device>(resources, pendingSnapshot);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
@@ -664,6 +800,17 @@ int main(int argc, char** argv) {
         auto context = device->GetContext();
         TextureDetiler detiler(context);
         context.detiler = &detiler;
+        if (pendingSnapshot) {
+#ifdef _WIN32
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            pendingSnapshotTests(context, mode == "snapshot-pending-write-disjoint");
+            std::puts("direct sampled snapshot pending write tests passed");
+            return 0;
+#else
+            std::puts("skipped, pending snapshot write-watch control requires Windows");
+            return VulkanTestSkipped;
+#endif
+        }
         if (resources) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!resourceCacheTests(context, mode)) return VulkanTestSkipped;

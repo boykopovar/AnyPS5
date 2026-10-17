@@ -2,6 +2,10 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -24,6 +28,8 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -319,10 +325,213 @@ void RunTests(AgcDriver::VulkanDevice& device, const GuestBlock& block, const Gu
     RunImageStore(device, stores);
 }
 
+#ifdef _WIN32
+namespace TrackedPending {
+alignas(256) constexpr std::array<std::uint32_t, 30> PendingTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0x8f108202u, 0xf4200444u,
+    0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0xf4280a02u, 0x24000020u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu,
+    0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u, 0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u,
+    0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+constexpr std::size_t PendingOutputWords = Lanes * 4 + 2;
+constexpr std::size_t PPage = 65536, PBytes = 2 * PPage, PReservationBytes = 4 * PPage;
+constexpr std::uint32_t PHeight = 512, PWords = PBytes / 4, PGuard = 0x6a39c5e7u;
+alignas(256) const auto PCodeLow = [] { auto code = PendingTableCode; code[20] = std::bit_cast<std::uint32_t>(0.5f / PHeight); return code; }();
+alignas(256) const auto PCodeHigh = [] { auto code = PendingTableCode; code[20] = std::bit_cast<std::uint32_t>(256.5f / PHeight); return code; }();
+
+class Surface {
+public:
+    Surface() {
+        base = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(PReservationBytes, PPage));
+        Require(base != nullptr, "tracked pending: reserve failed");
+        GuestArena::GuestArenaCommit_nid_postfix(base, PReservationBytes, PAGE_READWRITE, PPage);
+        GuestAllocations::Mutation().Add(base, PReservationBytes - 256, true, true, true);
+        std::fill_n(reinterpret_cast<std::uint32_t*>(base), PPage / 4, PGuard);
+        std::fill_n(reinterpret_cast<std::uint32_t*>(base + 3 * PPage), PPage / 4, PGuard);
+    }
+    ~Surface() {
+        GuestAllocations::Mutation().Remove(base);
+        GuestArena::GuestArenaReset_nid_postfix(base, PReservationBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(base, PReservationBytes);
+    }
+    Surface(const Surface&) = delete;
+    Surface& operator=(const Surface&) = delete;
+    float* Data() const { return reinterpret_cast<float*>(base + PPage); }
+    void Check(const std::vector<float>& expected) const {
+        for (std::size_t word = 0; word < PWords; ++word)
+            Require(std::bit_cast<std::uint32_t>(Data()[word]) == std::bit_cast<std::uint32_t>(expected[word]), "tracked pending: complete surface word mismatch");
+        for (std::size_t word = 0; word < PPage / 4; ++word)
+            Require(reinterpret_cast<const std::uint32_t*>(base)[word] == PGuard && reinterpret_cast<const std::uint32_t*>(base + 3 * PPage)[word] == PGuard,
+                    "tracked pending: outer surface guard changed");
+    }
+private:
+    std::uint8_t* base = nullptr;
+};
+
+std::array<std::uint32_t, 8> Descriptor(const Surface& surface) {
+    std::array<std::uint32_t, 8> words{};
+    const auto image = Image(surface.Data());
+    std::copy(image.begin(), image.end(), words.begin());
+    words[2] = ((Width - 1u) >> 2u) | ((PHeight - 1u) << 14u) | (1u << 31u);
+    const auto decoded = AgcDriver::Graphics::DecodeTextureResource(words);
+    Require(decoded.baseAddress == AddressOf(surface.Data()) && decoded.width == Width && decoded.height == PHeight,
+            "tracked pending: address or dimensions did not round-trip through descriptor");
+    Require(AgcDriver::Graphics::DescribeSurface(decoded).guestBytes == PBytes,
+            "tracked pending: descriptor size differs from independent geometry");
+    return words;
 }
 
-int main() {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const GuestBlock& table,
+    std::span<const std::uint32_t> code, std::span<const std::uint32_t> keys) {
+    const auto srtAddress = AddressOf(Srt.data());
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const auto descriptors = std::span(table.Table(), Records * Stride / 4u);
+    const std::array<ShaderRecompiler::MemoryRegion, 4> memory{{
+        {AddressOf(code.data()), std::as_bytes(code)}, {srtAddress, std::as_bytes(std::span(Srt))},
+        {AddressOf(descriptors.data()), std::as_bytes(descriptors)}, {AddressOf(keys.data()), std::as_bytes(keys)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Lanes, 1, 1}, 0u, {true, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{{ShaderStage::Compute, AddressOf(code.data()), code, 0, {}},
+        {64, 0, userData, compute, std::nullopt, std::nullopt, memory}, device.Target(), {0, 0, 0, 128}};
+    request.useCache = false;
+    auto result = ShaderRecompiler::Recompile(request);
+    const auto binding = std::find_if(result.bindings.begin(), result.bindings.end(), [](const auto& candidate) {
+        return candidate.role == ShaderRecompiler::DescriptorRole::ImageTable;
+    });
+    Require(binding != result.bindings.end() && binding->guestDescriptor.size() == Records * 8, "tracked pending: all48 descriptors were not materialized");
+    for (unsigned record = 0; record < Records; ++record) for (unsigned word = 0; word < 8; ++word)
+        Require(binding->guestDescriptor[record * 8 + word] == table.Table()[record * (Stride / 4) + 4 + word], "tracked pending: descriptor word changed");
+    return result;
+}
+
+int RunTrackedPendingTable(bool mixedProof, bool disjoint) {
+    Require(!(mixedProof && disjoint), "tracked pending: cases must remain distinct");
+    Require(std::getenv("APS5_NO_RESOURCE_CACHE") != nullptr,
+            "tracked pending: forced-resource-build diagnostic flags required");
+    GuestBlock table, io;
+    std::fill_n(table.Table(), BlockBytes / 4, PGuard);
+    std::fill_n(io.Table(), BlockBytes / 4, PGuard);
+    std::vector<std::unique_ptr<Surface>> surfaces;
+    std::vector<std::vector<float>> expected(Records + (disjoint ? 1u : 0u), std::vector<float>(PWords, 0.0f));
+    for (unsigned record = 0; record < expected.size(); ++record) {
+        surfaces.push_back(std::make_unique<Surface>());
+        for (unsigned i = 0; i < PWords; ++i)
+            surfaces.back()->Data()[i] = expected[record][i] = 0.25f + record * 32768.0f + i;
+        if (record == Records) continue;
+        auto* descriptor = table.Table() + record * (Stride / 4);
+        std::fill_n(descriptor, Stride / 4, 0u);
+        std::copy(PointClamp.begin(), PointClamp.end(), descriptor);
+        const auto image = Descriptor(*surfaces.back());
+        std::copy(image.begin(), image.end(), descriptor + 4);
+    }
+    auto* output = io.Table(); auto* keys = io.Table() + 1024; auto* writerKeys = io.Table() + 2048;
+    for (unsigned i = 0; i < Records; ++i) keys[i] = writerKeys[i] = i;
+    const auto tableView = Buffer(table.Table(), Records * Stride), keyView = Buffer(keys, Records * 4), writerKeyView = Buffer(writerKeys, Records * 4);
+    std::copy(tableView.begin(), tableView.end(), Srt.begin());
+    std::copy(keyView.begin(), keyView.end(), Srt.begin() + 4); SetOutput(output);
+    const auto descriptors = std::vector<std::uint32_t>(table.Table(), table.Table() + Records * Stride / 4);
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return VulkanTestSkipped;
+    Require(AgcDriver::GuestMemory::WriteWatched(), "tracked pending: write watch unavailable");
+    const auto low = Compile(*device, table, PCodeLow, {keys, Records});
+    const auto high = Compile(*device, table, PCodeHigh, {keys, Records});
+    constexpr unsigned Queued = 13;
+    const unsigned destination = disjoint ? Records : Queued;
+    std::copy(writerKeyView.begin(), writerKeyView.end(), Srt.begin() + 4); SetOutput(surfaces[destination]->Data());
+    const auto writer = Compile(*device, table, PCodeLow, {writerKeys, Records});
+    std::copy(keyView.begin(), keyView.end(), Srt.begin() + 4); SetOutput(output);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    if (mixedProof) AgcDriver::GuestMemory::Unwatch(AddressOf(surfaces.back()->Data()), PBytes);
+    for (unsigned record = 0; record < expected.size(); ++record) {
+        const auto address = AddressOf(surfaces[record]->Data());
+        const auto topology = AgcDriver::GuestMemory::CommittedRanges(address, PBytes);
+        Require(topology.size() == 1 && topology[0] == std::pair{address, address + PBytes}, "tracked pending: committed topology mismatch");
+        const auto whole = AgcDriver::GuestMemory::CollectWrites(address, PBytes);
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+        const auto committed = AgcDriver::GuestMemory::CollectCommittedWrites(address, PBytes, ranges);
+        if (mixedProof && record == Records - 1) {
+            Require(whole == 0 && committed == 0 && !AgcDriver::GuestMemory::Watched(address, PBytes) &&
+                    AgcDriver::GuestMemory::UntrackedHint(address, PBytes) != 0, "tracked pending: partial table lacks its hinted control");
+        } else {
+            Require(whole != 0 && committed != 0 && AgcDriver::GuestMemory::Watched(address, PPage) &&
+                    AgcDriver::GuestMemory::Watched(address + PPage, PPage), "tracked pending: whole surface is not tracked");
+        }
+    }
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto check = [&] {
+        Require(std::equal(descriptors.begin(), descriptors.end(), table.Table()), "tracked pending: descriptor input changed");
+        for (unsigned record = 0; record < expected.size(); ++record) surfaces[record]->Check(expected[record]);
+        for (std::size_t word = descriptors.size(); word < BlockBytes / 4; ++word) Require(table.Table()[word] == PGuard, "tracked pending: table guard changed");
+        for (std::size_t word = 0; word < BlockBytes / 4; ++word) {
+            if (word < PendingOutputWords || (word >= 1024 && word < 1024 + Records) || (word >= 2048 && word < 2048 + Records)) continue;
+            Require(io.Table()[word] == PGuard, "tracked pending: IO guard changed");
+        }
+        for (unsigned i = 1; i < Records; ++i) Require(keys[i] == i, "tracked pending: consumer key changed");
+        for (unsigned i = 0; i < Records; ++i) Require(writerKeys[i] == i, "tracked pending: immutable writer key changed");
+    };
+    const auto sample = [&](unsigned record, bool upper, const char* phase) {
+        keys[0] = record; std::fill_n(output, PendingOutputWords, 0xdeadbeefu);
+        const auto& program = upper ? high : low;
+        device->Dispatch(program, 1, 1, 1, {}, AddressOf(upper ? PCodeHigh.data() : PCodeLow.data()));
+        if (disjoint && std::string_view(phase) == "queued-consumer")
+            Require(AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(AddressOf(surfaces[destination]->Data()), PBytes),
+                    "tracked pending: disjoint consumer unnecessarily published the pending writer");
+        device->WaitIdle();
+        for (unsigned lane = 0; lane < Lanes; ++lane) {
+            const auto index = (upper ? PPage / 4 : 0) + lane;
+            const std::array words{std::bit_cast<std::uint32_t>(expected[record][index]), 0u, 0u, 0x3f800000u};
+            for (unsigned channel = 0; channel < 4; ++channel)
+                Require(output[lane * 4 + channel] == words[channel], "tracked pending: independent RGBA mismatch " + std::string(phase) + " lane=" + std::to_string(lane));
+        }
+        Require(output[Lanes * 4] == 0xdeadbeefu && output[Lanes * 4 + 1] == 0xdeadbeefu && keys[0] == record, "tracked pending: output/key sentinel changed");
+        std::printf("tracked_pending_sample=PASS phase=%s record=%u row=%u\n", phase, record, upper ? 256u : 0u);
+    };
+    sample(0, false, "cold-low"); sample(0, true, "known-upper"); sample(Records - 1, false, "last-low");
+    sample(Records - 1, true, "last-known-upper");
+    for (unsigned i = 0; i < 4; ++i) sample(i, false, "stable");
+    check();
+    for (unsigned i = 0; i < Width; ++i) surfaces[3]->Data()[i] = expected[3][i] = -3000.5f - i;
+    AgcDriver::GuestMemory::BumpCollectEpoch(); sample(3, false, "cpu-write"); check();
+    for (unsigned i = 0; i < Width; ++i) expected[7][i] = 70000.25f + i;
+    AgcDriver::GuestMemory::Write(AddressOf(surfaces[7]->Data()), std::as_bytes(std::span(expected[7]).first(Width)));
+    sample(7, false, "driver-write"); check();
+    sample(Queued, false, "queued-warm");
+    const auto epoch = AgcDriver::GuestMemory::ThreadCollectEpoch();
+    const auto ownership = std::array<std::uint64_t, 5>{epoch, AgcDriver::GuestMemory::UnwatchSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), AgcDriver::Graphics::DepthSurfacesSerial(), AgcDriver::GuestMemory::ForgetSerial()};
+    device->Dispatch(writer, 1, 1, 1, {}, AddressOf(PCodeLow.data()));
+    Require(AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(AddressOf(surfaces[destination]->Data()), PBytes), "tracked pending: queued buffer write not observed");
+    Require(AgcDriver::GuestMemory::ThreadCollectEpoch() == epoch, "tracked pending: queued writer changed epoch");
+    for (unsigned lane = 0; lane < Lanes; ++lane) {
+        expected[destination][lane * 4] = expected[0][lane]; expected[destination][lane * 4 + 1] = 0.0f;
+        expected[destination][lane * 4 + 2] = 0.0f; expected[destination][lane * 4 + 3] = 1.0f;
+    }
+    Require(std::array<std::uint64_t, 5>{AgcDriver::GuestMemory::ThreadCollectEpoch(), AgcDriver::GuestMemory::UnwatchSerial(), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), AgcDriver::Graphics::DepthSurfacesSerial(), AgcDriver::GuestMemory::ForgetSerial()} == ownership,
+            "tracked pending: queued writer changed ownership proof state");
+    const auto beforeConsumer = AgcDriver::Graphics::ImageTableReuses();
+    sample(Queued, false, "queued-consumer");
+    if (disjoint) Expect(beforeConsumer, 1, 0, "disjoint queued writer leaves table reusable");
+    else Require(Since(beforeConsumer).resolved != 0, "tracked pending: overlapping write was reused without resolution");
+    Require(!AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(AddressOf(surfaces[destination]->Data()), PBytes), "tracked pending: queued writer remained unpublished");
+    check();
+    AgcDriver::Graphics::ClearCachedTextures(device->Device());
+    sample(Queued, false, "retired"); sample(5, true, "retired-upper"); check();
+    std::printf("tracked_pending_table=PASS mixed=%u disjoint=%u full_RGBA_sources_guards_mutations_retirement=PASS\n", mixedProof ? 1u : 0u, disjoint ? 1u : 0u);
+    return 0;
+}
+}
+#endif
+
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && (std::string_view(argv[1]) == "--tracked-pending-write" || std::string_view(argv[1]) == "--tracked-pending-write-mixed" || std::string_view(argv[1]) == "--tracked-pending-write-disjoint")) {
+#ifdef _WIN32
+            return TrackedPending::RunTrackedPendingTable(std::string_view(argv[1]) == "--tracked-pending-write-mixed", std::string_view(argv[1]) == "--tracked-pending-write-disjoint");
+#else
+            std::puts("skipped, tracked pending snapshot control requires Windows write watching");
+            return VulkanTestSkipped;
+#endif
+        }
         GuestBlock block;
         GuestBlock stores(UnimportableBytes);
         const auto device = OpenVulkanTestDevice();

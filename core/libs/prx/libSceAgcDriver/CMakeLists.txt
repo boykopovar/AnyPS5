@@ -1724,6 +1724,20 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     set_tests_properties(agc_driver_storage_cache_budget PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        foreach(pendingMode IN ITEMS write write-mixed write-disjoint)
+            string(REPLACE "-" "_" pendingTest "agc_driver_image_table_tracked_pending_${pendingMode}")
+            add_test(NAME ${pendingTest} COMMAND agc_driver_image_table_reuse_tests --tracked-pending-${pendingMode})
+            set_tests_properties(${pendingTest} PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_RESOURCE_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30 SKIP_RETURN_CODE 77
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_PROFILE_DRAW=unset:")
+        endforeach()
+        add_test(NAME agc_driver_sampled_snapshot_pending_write COMMAND agc_driver_sampled_cache_budget_tests snapshot-pending-write)
+        add_test(NAME agc_driver_sampled_snapshot_pending_write_disjoint COMMAND agc_driver_sampled_cache_budget_tests snapshot-pending-write-disjoint)
+        set_tests_properties(agc_driver_sampled_snapshot_pending_write agc_driver_sampled_snapshot_pending_write_disjoint PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30 SKIP_RETURN_CODE 77
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_PROFILE_DRAW=unset:")
+    endif()
     add_test(NAME agc_driver_sampled_cache_budget_memory COMMAND agc_driver_sampled_cache_budget_tests memory)
     set_tests_properties(agc_driver_sampled_cache_budget_memory PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77)
     add_test(NAME agc_driver_resource_cache_storage_admission COMMAND agc_driver_sampled_cache_budget_tests resource-admission)
