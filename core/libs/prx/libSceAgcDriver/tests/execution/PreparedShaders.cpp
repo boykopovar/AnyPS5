@@ -4,8 +4,11 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
-#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "../NarrowConstantStoreFixture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
@@ -35,6 +38,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace {
@@ -709,7 +715,12 @@ void LazyRegistration() {
     header.registers[0].value = static_cast<std::uint32_t>(invalidAddress >> 8u);
     header.registers[1].value = static_cast<std::uint32_t>(invalidAddress >> 40u);
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, {}); }, "s_code_end");
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, {});
+    {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        const auto& state = transaction.Read(*registered());
+        Require(state.deferred && state.entries.empty(), "the pipeline ABI of a lazily registered shader it cannot prepare did not leave it to its dispatch");
+    }
     commands[2] = header.registers[0].value;
     commands[5] = header.registers[1].value;
     sceAgcDriverSubmitAcb(0x20, &packet);
@@ -773,11 +784,429 @@ void DeferredUndecodableRegistration() {
     ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "unsupported MIMG opcode");
 }
 
+class StderrCapture {
+public:
+    StderrCapture() {
+        AgcDriver::FlushAsyncLog_nid_no_patch();
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        AgcDriver::FlushAsyncLog_nid_no_patch();
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
+
+template<typename TAction>
+std::string Logged(TAction action) {
+    StderrCapture capture;
+    try {
+        action();
+    } catch (...) {
+        static_cast<void>(capture.Finish());
+        throw;
+    }
+    return capture.Finish();
+}
+
+std::size_t Deferrals(const std::string& log) {
+    constexpr std::string_view line = "could not be prepared when the title created its pipeline";
+    std::size_t count = 0;
+    for (auto found = log.find(line); found != std::string::npos; found = log.find(line, found + line.size())) ++count;
+    return count;
+}
+
+struct AbiHeader {
+    Shader shader{};
+    std::array<ShaderRegister, 8> registers{};
+    std::array<ShaderRegister, 8> context{};
+    ShaderSpecialRegs specials{};
+    ShaderUserData users{};
+};
+
+std::uint32_t ProgramLow(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 8u);
+}
+
+std::uint32_t ProgramHigh(const void* code) {
+    return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code) >> 40u);
+}
+
+template<std::size_t TCount>
+void DescribeAbi(AbiHeader& header, const std::array<std::uint32_t, TCount>& code, std::uint8_t type, std::initializer_list<ShaderRegister> registers, std::initializer_list<ShaderRegister> context) {
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(AbiHeader);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.type = type;
+    header.shader.user_data = &header.users;
+    std::copy(registers.begin(), registers.end(), header.registers.begin());
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = static_cast<std::uint8_t>(registers.size());
+    std::copy(context.begin(), context.end(), header.context.begin());
+    header.shader.cx_registers = header.context.data();
+    header.shader.num_cx_registers = static_cast<std::uint8_t>(context.size());
+}
+
+alignas(256) constexpr std::array<std::uint32_t, 64> UserDataCaller{
+    0x7e020280u, 0xbe940383u, 0xbe8e0300u, 0xbe8f0301u, 0xbe8e210eu, 0xbe8e0302u, 0xbe8f0303u, 0xbe8e210eu,
+    0x80948114u, 0xbf078014u, 0xbf85fff7u, 0x34040082u, 0xe0701000u, 0x80010102u, 0xbf810000u, 0xbf9f0000u,
+    0x30306c73u, 0x00000040u, 0x00000008u};
+alignas(256) constexpr std::array<std::uint32_t, 2> AddFiveCallee{0x4a020285u, 0xbe80200eu};
+alignas(256) constexpr std::array<std::uint32_t, 2> AddSixtyFourCallee{0x4a0202c0u, 0xbe80200eu};
+alignas(256) std::array<std::uint32_t, 64> CallerOutput{};
+alignas(256) constexpr std::array<std::uint32_t, 64> WaterfallStoreCode{
+    0x7e020280u, 0x7e040280u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0x7e0e0280u, 0xbe86047eu, 0xf40c0200u,
+    0xfa000000u, 0xd4c10000u, 0x00020083u, 0xbf8cc07fu, 0xf0200f08u, 0x00020401u, 0x8afe007eu, 0xbf89fff7u,
+    0xbefe0406u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> WaterfallPixelCode{
+    0xc80a0002u, 0x7e000280u, 0x7e020280u, 0xbe86047eu, 0xf40c0200u, 0xfa000000u, 0xd4c10000u, 0x00020483u,
+    0xbf8cc07fu, 0xf0000f08u, 0x00020400u, 0x8afe007eu, 0xbf89fff7u, 0xbefe0406u, 0xbf8c3f70u, 0xf800180fu,
+    0x07060504u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> WaterfallVertexCode{
+    0x7e020280u, 0x7e040280u, 0xbe86037eu, 0xf40c0404u, 0xfa000000u, 0xd4c10008u, 0x00020083u, 0xbf8cc07fu,
+    0xf0000f08u, 0x00040401u, 0x8a7e087eu, 0xbf89fff7u, 0xbefe0306u, 0xbf8a0000u, 0xbf8c3f70u, 0xf80008cfu,
+    0x07060504u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> OtherWaterfallVertexCode = WaterfallVertexCode;
+alignas(256) constexpr std::array<std::uint32_t, 64> BarrierFreeWaterfallVertexCode{
+    0x7e020280u, 0x7e040280u, 0xbe86037eu, 0xf40c0404u, 0xfa000000u, 0xd4c10008u, 0x00020083u, 0xbf8cc07fu,
+    0xf0000f08u, 0x00040401u, 0x8a7e087eu, 0xbf89fff7u, 0xbefe0306u, 0xbf800000u, 0xbf8c3f70u, 0xf80008cfu,
+    0x07060504u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 11> FrontCode{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> UndecodablePixelCode{0xf1949f05u, 0x00060018u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 64> PassthroughPixelCode{0xc8020002u, 0xf800180fu, 0x00000000u, 0xbf810000u};
+
+void DescribeWaterfallPixel(AbiHeader& pixel) {
+    DescribeAbi(pixel, WaterfallPixelCode, 1, {{0x8, ProgramLow(WaterfallPixelCode.data())}, {0x9, ProgramHigh(WaterfallPixelCode.data())}, {0xa, 0}, {0xb, 2u << 1u}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0}, {0x1c5, 4}});
+}
+
+void DescribeFront(AbiHeader& vertex) {
+    DescribeAbi(vertex, FrontCode, 2, {{0xc8, ProgramLow(FrontCode.data())}, {0xc9, ProgramHigh(FrontCode.data())}, {0x8b, 0}, {0x8a, 0}, {0xca, 0}, {0xcb, 0}, {0xcc, 0}}, {{0x2d5, 0x2000}});
+    vertex.shader.specials = &vertex.specials;
+    vertex.specials.dispatch_modifier = 0x8000;
+}
+
+void DescribeWaterfallVertex(AbiHeader& vertex, const std::array<std::uint32_t, 64>& code) {
+    DescribeAbi(vertex, code, 2, {{0xc8, ProgramLow(code.data())}, {0xc9, ProgramHigh(code.data())}, {0x8a, 0}, {0x8b, 2u << 1u}}, {{0x1ff, 64}, {0x2ab, 4}, {0x2ce, 0}});
+    vertex.shader.specials = &vertex.specials;
+    vertex.specials = {{0x25b, 0x8040}, {0x2d5, 0x00402000}, 0, {}, {}, {0x29b, 2}, {0x260, 0}};
+}
+
+struct FetchingHeader {
+    AbiHeader abi;
+    std::array<std::uint16_t, 11> directOffsets{};
+    ShaderSemantic semantic{};
+};
+
+void DescribeStaticFetch(FetchingHeader& vertex) {
+    vertex.abi.shader.header_size = sizeof(FetchingHeader);
+    for (auto& reg : vertex.abi.registers) {
+        if (reg.offset == 0x8b) reg.value = 4u << 1u;
+    }
+    vertex.directOffsets.fill(0xffffu);
+    vertex.directOffsets[8] = 0;
+    vertex.directOffsets[10] = 2;
+    vertex.abi.users.direct_resource_offset = vertex.directOffsets.data();
+    vertex.abi.users.direct_resource_count = static_cast<std::uint16_t>(vertex.directOffsets.size());
+    vertex.semantic.size_in_elements = 4;
+    vertex.semantic.static_vb_index = 1;
+    vertex.abi.shader.input_semantics = &vertex.semantic;
+    vertex.abi.shader.num_input_semantics = 1;
+}
+
+void AbiDeferredCompute() {
+    static AbiHeader caller;
+    DescribeAbi(caller, UserDataCaller, 0, {{0x20c, ProgramLow(UserDataCaller.data())}, {0x20d, ProgramHigh(UserDataCaller.data())}, {0x207, 64}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 8u << 1u}}, {});
+    caller.shader.specials = &caller.specials;
+    caller.specials.dispatch_modifier = 0x8000u;
+    AgcDriverRegisterShader_nid_postfix(&caller.shader);
+    const auto before = ShaderRecompiler::FrontEndBuilds();
+    AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
+    const auto attempted = ShaderRecompiler::FrontEndBuilds();
+    AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
+    Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI deferred to its dispatch was prepared again for the same state");
+    const auto first = reinterpret_cast<std::uintptr_t>(AddFiveCallee.data());
+    const auto second = reinterpret_cast<std::uintptr_t>(AddSixtyFourCallee.data());
+    const auto output = reinterpret_cast<std::uintptr_t>(CallerOutput.data());
+    const std::array<std::uint32_t, 8> users{static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(first >> 32u), static_cast<std::uint32_t>(second), static_cast<std::uint32_t>(second >> 32u),
+        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>((output >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(CallerOutput)), 0x31016facu};
+    std::vector<std::uint32_t> commands;
+    for (std::size_t index = 0; index < caller.shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, caller.registers[index].offset, caller.registers[index].value});
+    for (std::uint32_t index = 0; index < users.size(); ++index) commands.insert(commands.end(), {0xc0017600u, 0x240u + index, users[index]});
+    commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
+    CallerOutput.fill(0xcafebabeu);
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    sceAgcDriverSubmitAcb(0x20, &packet);
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriver::GuestMemory::FlushGpuWrites(output, sizeof(CallerOutput));
+    Require(std::ranges::all_of(CallerOutput, [](std::uint32_t lane) { return lane == 3u * (5u + 64u); }), "a compute shader its static ABI deferred did not run its user-data callees at its dispatch");
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiDeferredRegistrationFailure() {
+    static AbiHeader store;
+    DescribeAbi(store, WaterfallStoreCode, 0, {{0x20c, ProgramLow(WaterfallStoreCode.data())}, {0x20d, ProgramHigh(WaterfallStoreCode.data())}, {0x207, 64}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 2u << 1u}}, {});
+    store.shader.specials = &store.specials;
+    static AbiHeader front;
+    DescribeFront(front);
+    static AbiHeader pixel;
+    DescribeWaterfallPixel(pixel);
+    pixel.context[0] = {0x1b6, 0};
+    static AbiHeader vertex;
+    DescribeWaterfallVertex(vertex, BarrierFreeWaterfallVertexCode);
+    static AbiHeader interpolated;
+    DescribeWaterfallPixel(interpolated);
+    for (auto* header : {&store, &front, &pixel, &vertex, &interpolated}) AgcDriverRegisterShader_nid_postfix(&header->shader);
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    const std::array<const Shader*, 2> frontStages{&front.shader, &pixel.shader};
+    const std::array<const Shader*, 2> vertexStages{&vertex.shader, &interpolated.shader};
+    const auto resolve = [&] {
+        AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader, &vertex.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&store.shader, {}, {});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(frontStages, {}, primitive);
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(vertexStages, {}, primitive);
+        AgcDriverResolveGraphicsAbi_nid_postfix(&vertex.shader, &interpolated.shader, 17);
+        scope.Commit();
+    };
+    auto log = Logged(resolve);
+    Require(Deferrals(log) == 3 && log.find("is not a valid runtime value") != std::string::npos, "stages whose registration preparation failed were not deferred once each, with the stored reason, when the title created their pipelines");
+    log = Logged(resolve);
+    Require(Deferrals(log) == 0, "stages whose registration preparation failed were logged again for the same pipelines");
+    std::vector<std::uint32_t> commands;
+    for (std::size_t index = 0; index < store.shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, store.registers[index].offset, store.registers[index].value});
+    commands.insert(commands.end(), {0xc0031500u, 1, 1, 1, 0x8041u});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    sceAgcDriverSubmitAcb(0x20, &packet);
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "is not a valid runtime value");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "is not a valid runtime value");
+}
+
+void AbiDeferredPixel() {
+    static AbiHeader pixel;
+    DescribeWaterfallPixel(pixel);
+    AgcDriverRegisterShader_nid_postfix(&pixel.shader);
+    const auto before = ShaderRecompiler::FrontEndBuilds();
+    auto log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); });
+    const auto attempted = ShaderRecompiler::FrontEndBuilds();
+    log += Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); });
+    Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a pixel static ABI deferred to its draw was prepared again for the same state");
+    Require(Deferrals(log) == 1 && log.find("is not a valid runtime value") != std::string::npos, "a pixel shader its static ABI cannot prepare was not logged once with its reason");
+    {
+        AgcDriver::ShaderPreparationScope scope({&pixel.shader});
+        const std::array<ShaderRegister, 1> interpolant{{{0x191, 0x20}}};
+        log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, interpolant, {}); });
+        scope.Commit();
+    }
+    Require(ShaderRecompiler::FrontEndBuilds() > attempted && Deferrals(log) == 0, "a deferred pixel shader was not prepared once more for another state, or was logged again");
+    static AbiHeader front;
+    DescribeFront(front);
+    AgcDriverRegisterShader_nid_postfix(&front.shader);
+    std::vector<std::uint32_t> commands;
+    for (const auto* header : {&front, &pixel}) {
+        for (std::size_t index = 0; index < header->shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, header->registers[index].offset, header->registers[index].value});
+        for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
+    }
+    commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw of a deferred pixel shader was not submitted");
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "is not a valid runtime value");
+    ExpectFailure([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); }, "is not a valid runtime value");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "is not a valid runtime value");
+}
+
+void AbiDeferredStages() {
+    static AbiHeader nested;
+    static AbiHeader direct;
+    DescribeWaterfallVertex(nested, WaterfallVertexCode);
+    DescribeWaterfallVertex(direct, OtherWaterfallVertexCode);
+    AgcDriverRegisterShader_nid_postfix(&nested.shader);
+    AgcDriverRegisterShader_nid_postfix(&direct.shader);
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    const auto before = ShaderRecompiler::FrontEndBuilds();
+    std::string log;
+    {
+        AgcDriver::ShaderPreparationScope scope({&nested.shader});
+        log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&nested.shader, {}, primitive); });
+        scope.Commit();
+    }
+    const auto nestedAttempt = ShaderRecompiler::FrontEndBuilds();
+    Require(nestedAttempt > before && Deferrals(log) == 1, "a vertex shader the static ABI resolves through its graphics stages was not deferred to its draw");
+    log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&nested.shader, {}, primitive); });
+    Require(ShaderRecompiler::FrontEndBuilds() == nestedAttempt && Deferrals(log) == 0, "a deferred vertex static ABI was prepared or logged again for the same state");
+    const std::array<const Shader*, 1> stages{&direct.shader};
+    log = Logged([&] { AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, {}, primitive); });
+    const auto directAttempt = ShaderRecompiler::FrontEndBuilds();
+    Require(directAttempt > nestedAttempt && Deferrals(log) == 1, "a graphics stage its ABI cannot prepare was not deferred to its draw");
+    log = Logged([&] { AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, {}, primitive); });
+    Require(ShaderRecompiler::FrontEndBuilds() == directAttempt && Deferrals(log) == 0, "a deferred graphics stage ABI was prepared or logged again for the same state");
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiDeferredRectangle() {
+    static AbiHeader front;
+    static AbiHeader undecodable;
+    static AbiHeader pixel;
+    DescribeFront(front);
+    DescribeAbi(undecodable, UndecodablePixelCode, 1, {{0x8, ProgramLow(UndecodablePixelCode.data())}, {0x9, ProgramHigh(UndecodablePixelCode.data())}, {0xa, 0}, {0xb, 0}}, {});
+    DescribeWaterfallPixel(pixel);
+    for (auto* header : {&front, &undecodable, &pixel}) AgcDriverRegisterShader_nid_postfix(&header->shader);
+    AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &undecodable.shader, 17);
+    AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+    {
+        AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader});
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
+        scope.Commit();
+    }
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiDeferredUndecodableState() {
+    static AbiHeader front;
+    DescribeFront(front);
+    front.context[0] = {0x2ce, 3};
+    front.specials = {{0x25b, 0x8040}, {0x2d5, 0x2030}, 0x8000, {}, {}, {0x29b, 1}, {0x262, 0}};
+    AgcDriverRegisterShader_nid_postfix(&front.shader);
+    const std::array<const Shader*, 1> stages{&front.shader};
+    const std::array<ShaderRegister, 2> context{front.specials.vgt_shader_stages_en, front.specials.vgt_gs_out_prim_type};
+    const std::array<ShaderRegister, 3> primitive{front.specials.ge_cntl, front.specials.ge_user_vgpr_en, ShaderRegister{0x242, 4}};
+    const auto before = ShaderRecompiler::FrontEndBuilds();
+    auto log = Logged([&] { AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive); });
+    Require(Deferrals(log) == 1 && log.find("VGT_SHADER_STAGES_EN=0x2030: ") != std::string::npos, "a graphics stage whose pipeline state does not decode was not deferred with the decode's reason");
+    log = Logged([&] { AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive); });
+    Require(ShaderRecompiler::FrontEndBuilds() == before && Deferrals(log) == 0, "a graphics stage deferred for a pipeline state that does not decode was prepared or logged again");
+    std::vector<std::uint32_t> commands;
+    for (std::size_t index = 0; index < front.shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, front.registers[index].offset, front.registers[index].value});
+    commands.insert(commands.end(), {0xc0016900u, 0x2d5, 0x2000u, 0xc0017600u, 0x8, 0, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    log = Logged([&] {
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw of a graphics stage deferred at its pipeline ABI was not submitted");
+        AgcDriverWaitIdle_nid_postfix();
+    });
+    Require(ShaderRecompiler::FrontEndBuilds() > before && log.find("has no artifact prepared at registration") == std::string::npos, "a graphics stage deferred at its pipeline ABI was not prepared at its first draw, or was reported there as missing a registration artifact");
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiDeferredVertexInputs() {
+    static FetchingHeader fetching;
+    DescribeWaterfallVertex(fetching.abi, WaterfallVertexCode);
+    DescribeStaticFetch(fetching);
+    AgcDriverRegisterShader_nid_postfix(&fetching.abi.shader);
+    const std::array<const Shader*, 1> stages{&fetching.abi.shader};
+    const std::array<ShaderRegister, 1> primitive{{{0x242, 4}}};
+    const auto resolve = [&] {
+        AgcDriver::ShaderPreparationScope scope({&fetching.abi.shader});
+        AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, {}, primitive);
+        scope.Commit();
+    };
+    const auto before = ShaderRecompiler::FrontEndBuilds();
+    auto log = Logged(resolve);
+    Require(Deferrals(log) == 1 && log.find("statically bound vertex attributes are not implemented") != std::string::npos, "a graphics stage whose vertex inputs its pipeline ABI cannot decode was not deferred with the decode's reason");
+    log = Logged(resolve);
+    Require(ShaderRecompiler::FrontEndBuilds() == before && Deferrals(log) == 0, "a graphics stage deferred for vertex inputs that do not decode was prepared or logged again");
+    alignas(16) static std::array<std::uint32_t, 16> tables{};
+    const auto address = reinterpret_cast<std::uintptr_t>(tables.data());
+    std::vector<std::uint32_t> commands;
+    for (std::size_t index = 0; index < fetching.abi.shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, fetching.abi.registers[index].offset, fetching.abi.registers[index].value});
+    for (std::uint32_t index = 0; index < 4; ++index) commands.insert(commands.end(), {0xc0017600u, 0x8cu + index, static_cast<std::uint32_t>(index % 2u == 0u ? address : address >> 32u)});
+    for (std::size_t index = 0; index < fetching.abi.shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, fetching.abi.context[index].offset, fetching.abi.context[index].value});
+    for (const auto reg : {fetching.abi.specials.vgt_shader_stages_en, fetching.abi.specials.vgt_gs_out_prim_type}) commands.insert(commands.end(), {0xc0016900u, reg.offset, reg.value});
+    for (const auto reg : {fetching.abi.specials.ge_cntl, fetching.abi.specials.ge_user_vgpr_en}) commands.insert(commands.end(), {0xc0017900u, reg.offset, reg.value});
+    commands.insert(commands.end(), {0xc0017600u, 0x8, 0, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 4, 0xc0012d00u, 3, 2});
+    Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw of a graphics stage deferred for its vertex inputs was not submitted");
+    ExpectFailure([] { AgcDriverWaitIdle_nid_postfix(); }, "statically bound vertex attributes are not implemented");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "statically bound vertex attributes are not implemented");
+}
+
+void AbiDeferredRectanglePairs() {
+    static AbiHeader front;
+    DescribeFront(front);
+    static AbiHeader pixel;
+    DescribeAbi(pixel, PassthroughPixelCode, 1, {{0x8, ProgramLow(PassthroughPixelCode.data())}, {0x9, ProgramHigh(PassthroughPixelCode.data())}, {0xa, 0}, {0xb, 0}}, {{0x1b6, 1}, {0x1b3, 2}, {0x1b4, 2}, {0x191, 0x420}, {0x1c5, 4}});
+    static AbiHeader unresolved;
+    DescribeWaterfallPixel(unresolved);
+    for (auto* header : {&front, &pixel, &unresolved}) AgcDriverRegisterShader_nid_postfix(&header->shader);
+    const std::array<ShaderRegister, 1> passthrough{pixel.context[3]};
+    const auto resolve = [&] {
+        AgcDriver::ShaderPreparationScope scope({&front.shader, &pixel.shader});
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, nullptr, 17);
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &unresolved.shader, 17);
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
+        scope.Commit();
+    };
+    auto log = Logged(resolve);
+    Require(Deferrals(log) == 1 && log.find("custom per-vertex interpolation is unsupported") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
+    log = Logged(resolve);
+    Require(Deferrals(log) == 0, "a rectangle pair deferred at its pipeline ABI was logged again");
+    const auto draw = [&](bool withPixel) {
+        std::vector<std::uint32_t> commands;
+        for (const auto* header : {&front, &pixel}) {
+            if (header == &pixel && !withPixel) continue;
+            for (std::size_t index = 0; index < header->shader.num_sh_registers; ++index) commands.insert(commands.end(), {0xc0017600u, header->registers[index].offset, header->registers[index].value});
+            for (std::size_t index = 0; index < header->shader.num_cx_registers; ++index) commands.insert(commands.end(), {0xc0016900u, header->context[index].offset, header->context[index].value});
+        }
+        if (!withPixel) commands.insert(commands.end(), {0xc0017600u, 0x8, 0});
+        commands.insert(commands.end(), {0xc0016900u, 0x8e, 0xfu, 0xc0016900u, 0x8f, 0xfu, 0xc0016900u, 0xd, 0x00100010u, 0xc0016900u, 0x204, 0x80000u, 0xc0016900u, 0x1c3, 4, 0xc0017900u, 0x242, 17, 0xc0012d00u, 3, 2});
+        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "a rect-list draw was not submitted");
+        AgcDriverWaitIdle_nid_postfix();
+    };
+    draw(false);
+    ExpectFailure([&] { draw(true); }, "custom per-vertex interpolation is unsupported");
+    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 1 || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
+        const std::string_view abiMode = argc == 2 ? argv[1] : "";
+        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
+        Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
+        if (abiDeferred) {
+            if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
+            if (abiMode == "--abi-deferred-compute") AbiDeferredCompute();
+            else if (abiMode == "--abi-deferred-pixel") AbiDeferredPixel();
+            else if (abiMode == "--abi-deferred-stages") AbiDeferredStages();
+            else if (abiMode == "--abi-deferred-undecodable-state") AbiDeferredUndecodableState();
+            else if (abiMode == "--abi-deferred-registration-failure") AbiDeferredRegistrationFailure();
+            else if (abiMode == "--abi-deferred-vertex-inputs") AbiDeferredVertexInputs();
+            else if (abiMode == "--abi-deferred-rectangle-pairs") AbiDeferredRectanglePairs();
+            else AbiDeferredRectangle();
+            std::cout << "shader ABI deferral tests passed: " << abiMode << '\n';
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--lazy") {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             LazyRegistration();

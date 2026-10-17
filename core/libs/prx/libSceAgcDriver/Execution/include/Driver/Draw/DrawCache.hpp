@@ -53,7 +53,7 @@ struct PreparedGraphicsStage {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
 };
 
-std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target);
+std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared = false);
 
 struct DrawRecipeRecord {
     std::vector<std::weak_ptr<const DispatchVariant>> stages;
