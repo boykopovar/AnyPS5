@@ -149,6 +149,22 @@ python3 tools/pad_input.py /tmp/anyps5-pad touch-right
 
 Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. `touch-left` and `touch-right` press the touchpad with a finger on its left or right half, as the `TouchLeft` and `TouchRight` keys do; in the command file they are bits `0x200000` and `0x400000` of the button field. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
 
+### Controller timelines
+
+Queue an entire button sequence after the application begins reading its controller. Save a JSON file such as `menu.json`:
+
+```json
+{"version":1,"events":[{"at_ms":200,"hold_ms":300,"buttons":["cross","r1"]},{"at_ms":1000,"hold_ms":300,"buttons":["down"]}]}
+```
+
+```sh
+python3 tools/pad_timeline.py menu.json /tmp/anyps5-pad --repeat 3 --gap-ms 500
+```
+
+Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition. The helper validates the entire sequence before atomically replacing the command file.
+
+The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
+
 ### System fonts
 
 Games that open the console's system font sets (`sceFontOpenFontSet`) need font files in an `anyps5-fonts/` directory beside the output executable; set `ANYPS5_SYSTEM_FONTS` to use another directory. Files dumped from the console are used under their own names (`SST-Roman.otf`, `SST-Bold.otf`, `SSTJpPro-Regular.otf`, ...). Without them, these openly licensed substitutes are used when present: `NotoSans-{Light,Regular,Medium,Bold}.ttf` and `NotoSans-{LightItalic,Italic,MediumItalic,BoldItalic}.ttf` (Latin and Vietnamese), `NotoSansMono-{Light,Regular,Medium,Bold}.ttf` (typewriter), `NotoSansThai-{Light,Regular,Medium,Bold}.ttf` (Thai) and `NotoSansCJK-{Light,Regular,Medium,Bold}.ttc` (Japanese and Chinese). Without either, opening a system font set fails and the game shows no text in those fonts.
