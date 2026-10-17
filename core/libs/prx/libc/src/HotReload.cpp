@@ -157,6 +157,26 @@ bool RestoreFunction(void* target) {
     return true;
 }
 
+bool ApplyRawPatch(void* target, const void* bytes, const std::size_t size) {
+    if (target == nullptr || bytes == nullptr || size == 0) return false;
+    std::lock_guard lock(g_patchMutex);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    if (!SetMemoryProtection(target, size, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    std::memcpy(target, bytes, size);
+    SetMemoryProtection(target, size, oldProtect, &oldProtect);
+    FlushInstructionCacheFor(target, size);
+    return true;
+#else
+    int oldProtect = 0;
+    if (!SetMemoryProtection(target, size, PROT_READ | PROT_WRITE | PROT_EXEC, &oldProtect)) return false;
+    std::memcpy(target, bytes, size);
+    SetMemoryProtection(target, size, oldProtect, &oldProtect);
+    FlushInstructionCacheFor(target, size);
+    return true;
+#endif
+}
+
 std::size_t LoadPatchModules(const std::filesystem::path& patchDirectory) {
     std::error_code ec;
     if (!std::filesystem::exists(patchDirectory, ec) || !std::filesystem::is_directory(patchDirectory, ec)) return 0;
@@ -286,6 +306,57 @@ void SetRenderStateOverride(const RenderStateOverride& overrideState) {
     g_renderStateOverride = overrideState;
 }
 
+std::filesystem::file_time_type g_lastPatchesFileWriteTime{};
+
+std::size_t CheckRawPatches() {
+    EnsureInitialized();
+    if (!g_enabled.load()) return 0;
+    const std::filesystem::path patchesPath("hotreload/patches.txt");
+    std::error_code ec;
+    if (!std::filesystem::exists(patchesPath, ec)) return 0;
+    const auto writeTime = std::filesystem::last_write_time(patchesPath, ec);
+    if (ec) return 0;
+    {
+        std::lock_guard lock(g_patchMutex);
+        if (writeTime == g_lastPatchesFileWriteTime) return 0;
+        g_lastPatchesFileWriteTime = writeTime;
+    }
+    FILE* file = std::fopen(patchesPath.string().c_str(), "r");
+    if (file == nullptr) return 0;
+    char line[512];
+    std::size_t applied = 0;
+    while (std::fgets(line, sizeof(line), file) != nullptr) {
+        char* colon = std::strchr(line, ':');
+        if (colon == nullptr) continue;
+        *colon = '\0';
+        char* endPtr = nullptr;
+        const auto addr = std::strtoull(line, &endPtr, 16);
+        if (addr == 0 || endPtr == line) continue;
+        void* target = reinterpret_cast<void*>(addr);
+        char* bytesStr = colon + 1;
+        std::vector<std::uint8_t> patchBytes;
+        while (*bytesStr != '\0') {
+            while (*bytesStr == ' ' || *bytesStr == '\t') ++bytesStr;
+            if (*bytesStr == '\0' || *bytesStr == '\r' || *bytesStr == '\n' || *bytesStr == '#') break;
+            unsigned int b = 0;
+            if (std::sscanf(bytesStr, "%02x", &b) == 1) {
+                patchBytes.push_back(static_cast<std::uint8_t>(b));
+                bytesStr += 2;
+            } else {
+                break;
+            }
+        }
+        if (!patchBytes.empty()) {
+            if (ApplyRawPatch(target, patchBytes.data(), patchBytes.size())) {
+                std::fprintf(stderr, "[HOT-RELOAD] Applied raw patch at %p (%zu bytes)\n", target, patchBytes.size());
+                ++applied;
+            }
+        }
+    }
+    std::fclose(file);
+    return applied;
+}
+
 bool CheckRenderStateReload() {
     EnsureInitialized();
     if (!g_enabled.load()) return false;
@@ -342,6 +413,7 @@ HotReload::RenderStateOverride HotReloadGetRenderStateOverride_nid_no_patch() {
 }
 
 bool HotReloadCheckRenderStateReload_nid_no_patch() {
+    HotReload::CheckRawPatches();
     return HotReload::CheckRenderStateReload();
 }
 }

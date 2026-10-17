@@ -13,6 +13,8 @@ void SetEnabled(bool enabled);
 bool PatchFunction(void* target, void* replacement);
 void* GetOriginalFunction(void* target);
 bool RestoreFunction(void* target);
+bool ApplyRawPatch(void* target, const void* bytes, std::size_t size);
+std::size_t CheckRawPatches();
 std::size_t LoadPatchModules(const std::filesystem::path& patchDirectory);
 bool HandleNotImplemented(const char* funcName, void* callerAddress);
 struct RenderStateOverride {
