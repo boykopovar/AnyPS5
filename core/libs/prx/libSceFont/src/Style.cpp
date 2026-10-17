@@ -101,6 +101,23 @@ float ClampWeightDelta(float scale) {
 
 extern "C" {
 
+int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* oldAttribute) {
+    return AccessFontSettings(fontHandle, [&](FontState& state) {
+        if (oldAttribute) *oldAttribute = state.attribute;
+        state.attribute = attribute;
+        return SCE_FONT_OK;
+    });
+}
+
+int APS5_VABI sceFontGetAttribute(FontHandle fontHandle, int attribute, int* nowAttribute) {
+    (void)attribute;
+    if (!nowAttribute) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return AccessFontSettings(fontHandle, [&](FontState& state) {
+        *nowAttribute = state.attribute;
+        return SCE_FONT_OK;
+    });
+}
+
 int APS5_VABI sceFontSetScriptLanguage(FontHandle fontHandle, int fontScript, int fontLanguage) {
     return SetFontSetting(fontHandle, &FontState::scriptLanguages, fontScript, fontLanguage);
 }
