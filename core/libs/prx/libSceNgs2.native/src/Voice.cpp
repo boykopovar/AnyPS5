@@ -387,20 +387,16 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     throw std::runtime_error("NGS2: voice param " + Ngs2Hex(param.id) + " is not implemented");
 }
 
-static Ngs2Voice& CheckedVoice(Ngs2Handle handle) {
-    auto* voice = Ngs2FindVoice(handle);
-    if (voice == nullptr) throw std::invalid_argument("NGS2: invalid voice handle");
-    return *voice;
-}
-
 #pragma GCC visibility push(default)
 
 extern "C" {
 
 int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHeader* param_list) {
+    if (param_list == nullptr) return SCE_NGS2_ERROR_NULL_PARAM_LIST;
     std::lock_guard lock(Ngs2Mutex());
-    auto& voice = CheckedVoice(voice_handle);
-    if (param_list == nullptr) APS5_INVALID_ARG_EX;
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    auto& voice = *found;
     for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
         ApplyParam(voice, *param);
         if (param->next == 0) break;
@@ -410,7 +406,9 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
 
 int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCommand* commands, size_t num_commands) {
     std::lock_guard lock(Ngs2Mutex());
-    auto& voice = CheckedVoice(voice_handle);
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    auto& voice = *found;
     if (commands == nullptr && num_commands != 0) APS5_INVALID_ARG_EX;
     for (std::size_t i = 0; i < num_commands; i++) {
         const auto& command = commands[i];
@@ -431,9 +429,12 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
 }
 
 int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t state_size) {
-    if (state == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     std::lock_guard lock(Ngs2Mutex());
-    const auto& voice = CheckedVoice(voice_handle);
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    if (state_size < sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
+    if (state == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    const auto& voice = *found;
     switch (voice.rack->rackId) {
         case SCE_NGS2_RACK_ID_SAMPLER: {
             if (state_size != sizeof(Ngs2SamplerVoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
@@ -476,7 +477,9 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     if (info_size != sizeof(Ngs2VoicePortInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
     std::lock_guard lock(Ngs2Mutex());
-    auto& voice = CheckedVoice(voice_handle);
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    auto& voice = *found;
     const auto& source = PortAt(voice, port);
     *info = {};
     info->matrix_id = source.matrix;
@@ -488,7 +491,9 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
 int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t voice_handle, uint32_t info_id, void* info, size_t info_size) {
     if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     std::lock_guard lock(Ngs2Mutex());
-    const auto& voice = CheckedVoice(voice_handle);
+    auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    const auto& voice = *found;
     switch (info_id) {
         case SCE_NGS2_VOICE_INFO_CHANNELS: {
             if (info_size != sizeof(Ngs2VoiceChannelsInfo)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
@@ -502,7 +507,9 @@ int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t voice_handle, uint32_t info_id, vo
 int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_flags) {
     if (state_flags == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     std::lock_guard lock(Ngs2Mutex());
-    *state_flags = CheckedVoice(voice_handle).stateFlags;
+    const auto* found = Ngs2FindVoice(voice_handle);
+    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    *state_flags = found->stateFlags;
     return SCE_NGS2_OK;
 }
 
