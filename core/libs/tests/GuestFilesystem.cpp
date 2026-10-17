@@ -944,6 +944,25 @@ int main() {
     const auto longLeaf = rootName + "/" + std::string(300, 'n');
     Require(sceKernelMkdir(longLeaf.c_str(), 0700) == static_cast<int>(0x8002003fu));
     Require(mkdir_nid_postfix(longLeaf.c_str(), 0700) == -1 && *__error_nid_postfix() == 63);
+    FileStat unreachable{};
+    Require(sceKernelOpen(longLeaf.c_str(), 0, 0) == static_cast<int>(0x8002003fu));
+    Require(sceKernelOpen(longLeaf.c_str(), 0x201, 0600) == static_cast<int>(0x8002003fu));
+    Require(open_nid_postfix(longLeaf.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 63);
+    Require(sceKernelUnlink(longLeaf.c_str()) == static_cast<int>(0x8002003fu));
+    Require(unlink_nid_postfix(longLeaf.c_str()) == -1 && *__error_nid_postfix() == 63);
+    Require(sceKernelStat(longLeaf.c_str(), &unreachable) == static_cast<int>(0x8002003fu));
+    Require(stat_nid_postfix(longLeaf.c_str(), &unreachable) == -1 && *__error_nid_postfix() == 63);
+    const auto loop = root / "loop";
+    std::filesystem::create_symlink("loop", loop);
+    const auto loopName = loop.string();
+    const auto underLoop = loopName + "/leaf";
+    Require(sceKernelOpen(loopName.c_str(), 0, 0) == static_cast<int>(0x8002003eu));
+    Require(open_nid_postfix(loopName.c_str(), 0, 0) == -1 && *__error_nid_postfix() == 62);
+    Require(sceKernelStat(loopName.c_str(), &unreachable) == static_cast<int>(0x8002003eu));
+    Require(stat_nid_postfix(loopName.c_str(), &unreachable) == -1 && *__error_nid_postfix() == 62);
+    Require(sceKernelUnlink(underLoop.c_str()) == static_cast<int>(0x8002003eu));
+    Require(unlink_nid_postfix(underLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
+    Require(unlink_nid_postfix(loopName.c_str()) == 0 && !std::filesystem::is_symlink(loop));
 #endif
     const auto invalidNameUnderFile = presentName + "/a:b/x";
     Require(mkdir_nid_postfix(invalidNameUnderFile.c_str(), 0700) == -1 && *__error_nid_postfix() == 20);
