@@ -1030,6 +1030,7 @@ struct TableGuest {
     std::array<std::uint32_t, 20> srt{};
 };
 
+constexpr std::uint32_t TableFormat16UNorm = 7;
 constexpr std::uint32_t TableFormat8888UNorm = 56;
 constexpr std::uint32_t TableFormat32UInt = 20;
 constexpr std::uint32_t TableFormat16SInt = 12;
@@ -1107,6 +1108,13 @@ TableCompiled CompileTable(ShaderRecompiler::RecompileRequest request) {
     out.result = Recompile(request, *out.capture);
     ShaderRecompiler::ShaderDiskCache::BuildKey(request, request.target.subgroupSize, out.key);
     return out;
+}
+
+std::array<std::uint32_t, 8> TableSelected(const ShaderRecompiler::ImageTableSnapshot& tables, std::uint32_t table, const char* message) {
+    namespace Abi = ShaderRecompiler::ImageTableAbi;
+    const auto& column = tables.tables.at(table);
+    require(column.records == 1u && column.keys == 1u && column.codes.size() == 1u && (column.codes[0] & Abi::PoisonFlag) == 0u, message);
+    return tables.words.at(column.codes[0]).dwords;
 }
 
 void verifyImageTableKeys() {
@@ -1421,7 +1429,6 @@ void verifyImageTables() {
 
 void verifyImageTableKeyUnion() {
     using namespace ShaderRecompiler;
-    namespace Abi = ImageTableAbi;
     static TableTexture textures[3];
     alignas(4096) static TableGuest guest;
     auto& heap = guest.heap;
@@ -1436,24 +1443,25 @@ void verifyImageTableKeyUnion() {
     const auto userData = TableUserData(guest);
     const auto request = TableRequest(TableTwoKeyCode, userData);
     const auto plan = GetResourcePlan(request);
-    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table key union: two keyed reads of one table were not planned as one image of one column");
-    const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.has_value() && column->keyDomains.size() == 2u && column->keyDomains[0].value && column->keyDomains[1].value && column->keyDomains[0].source != column->keyDomains[1].source, "image table key union: the column does not carry both value key domains");
+    require(plan->info.images.size() == 2u && plan->info.images[0].table == 0u && plan->info.images[1].table == 1u, "image table key union: two keyed reads of one heap were not planned as two tables");
+    const auto& first = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    const auto& second = plan->descriptorSources.at(plan->info.images[1].source).tableColumn;
+    require(first.has_value() && second.has_value() && first->selected && second->selected && first->heapSource == second->heapSource && first->selection != second->selection, "image table key union: the two keys do not each select a record of the one heap");
+    const auto held = [](const ImageTableSnapshot& tables, std::uint32_t table) { return TableSelected(tables, table, "image table key union: a table does not hold one readable selected record"); };
     const auto compiled = CompileTable(request);
-    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
-    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
-    require(compiled.capture->snapshot.tables.tables.size() == 1u && snapshot.keys == 4u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && (snapshot.codes[1] & Abi::PoisonFlag) == 0u && snapshot.codes[2] == outside && (snapshot.codes[3] & Abi::PoisonFlag) == 0u, "image table key union: the snapshot does not hold the union of the two keys' records");
+    const auto& tables = compiled.capture->snapshot.tables;
+    require(tables.tables.size() == 2u && held(tables, 0u) == heap[1] && held(tables, 1u) == heap[3], "image table key union: the tables do not hold the two keys' records");
+    require(TableCovered(compiled.regions, &heap[1], sizeof(heap[1])) && TableCovered(compiled.regions, &heap[3], sizeof(heap[3])) && !TableCovered(compiled.regions, &heap[0], sizeof(std::uint32_t)) && !TableCovered(compiled.regions, &heap[2], sizeof(std::uint32_t)), "image table key union: records no key selects were captured");
     const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
-    require(images != nullptr && images->count == 3u, "image table key union: the binding does not hold the three distinct images of the selected records");
+    require(images != nullptr && images->count == 2u, "image table key union: the binding does not hold the two distinct images of the selected records");
     guest.srt[17] = 2u;
     const auto moved = CompileTable(request);
-    const auto& movedSnapshot = moved.capture->snapshot.tables.tables.at(0);
-    require((movedSnapshot.codes[2] & Abi::PoisonFlag) == 0u && movedSnapshot.codes[3] == outside && (movedSnapshot.codes[1] & Abi::PoisonFlag) == 0u && moved.result->spirv == compiled.result->spirv, "image table key union: a changed second key did not move the union or changed the module");
+    const auto& movedTables = moved.capture->snapshot.tables;
+    require(held(movedTables, 0u) == heap[1] && held(movedTables, 1u) == heap[2] && TableCovered(moved.regions, &heap[2], sizeof(heap[2])) && !TableCovered(moved.regions, &heap[3], sizeof(std::uint32_t)) && moved.result->spirv == compiled.result->spirv, "image table key union: a changed second key did not move its record alone or changed the module");
 }
 
 void verifyImageTableLateKey() {
     using namespace ShaderRecompiler;
-    namespace Abi = ImageTableAbi;
     static TableTexture textures[3];
     alignas(4096) static TableGuest guest;
     auto& heap = guest.heap;
@@ -1468,15 +1476,16 @@ void verifyImageTableLateKey() {
     const auto userData = TableUserData(guest);
     const auto request = TableRequest(TableLateKeyCode, userData);
     const auto plan = GetResourcePlan(request);
-    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table late key: two keyed reads of one table were not planned as one image of one column");
-    const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.has_value() && column->keyDomains.size() == 2u && column->keyDomains[0].value && column->keyDomains[1].value && column->keyDomains[0].source != column->keyDomains[1].source, "image table late key: the column does not carry both value key domains");
+    require(plan->info.images.size() == 2u && plan->info.images[0].table == 0u && plan->info.images[1].table == 1u, "image table late key: two keyed reads of one heap were not planned as two tables");
+    const auto& first = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    const auto& second = plan->descriptorSources.at(plan->info.images[1].source).tableColumn;
+    require(first.has_value() && second.has_value() && first->selected && second->selected && first->selection != second->selection, "image table late key: a key read after the first image operation does not select its own record");
+    const auto held = [](const ImageTableSnapshot& tables, std::uint32_t table) { return TableSelected(tables, table, "image table late key: a table does not hold one readable selected record"); };
     const auto compiled = CompileTable(request);
-    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
-    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
-    require(compiled.capture->snapshot.tables.tables.size() == 1u && snapshot.keys == 4u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && (snapshot.codes[1] & Abi::PoisonFlag) == 0u && snapshot.codes[2] == outside && (snapshot.codes[3] & Abi::PoisonFlag) == 0u, "image table late key: the snapshot does not hold the union of the two keys' records");
+    const auto& tables = compiled.capture->snapshot.tables;
+    require(tables.tables.size() == 2u && held(tables, 0u) == heap[1] && held(tables, 1u) == heap[3], "image table late key: the tables do not hold the two keys' records");
     const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
-    require(images != nullptr && images->count == 3u, "image table late key: the binding does not hold the three distinct images of the selected records");
+    require(images != nullptr && images->count == 2u, "image table late key: the binding does not hold the two distinct images of the selected records");
 }
 
 void verifyImageTableUnkeyedAccess() {
@@ -1499,13 +1508,19 @@ void verifyImageTableUnkeyedAccess() {
         const auto userData = TableUserData(guest);
         const auto request = TableRequest(*code, userData);
         const auto plan = GetResourcePlan(request);
-        require(!plan->info.images.empty() && std::all_of(plan->info.images.begin(), plan->info.images.end(), [](const ImageResource& image) { return image.table == 0u; }), "image table unkeyed access: the two reads were not planned as one table");
-        const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-        require(column.has_value() && column->unkeyed && column->keyDomains.empty(), "image table unkeyed access: a column shared with a read that has no key domain kept a key domain");
+        const auto& planned = plan->info.images;
+        require(planned.size() == 2u && std::all_of(planned.begin(), planned.end(), [](const ImageResource& image) { return image.table != NoTable; }), "image table unkeyed access: the two reads were not planned as two tables");
+        const auto columnOf = [&](const ImageResource& image) { return *plan->descriptorSources.at(image.source).tableColumn; };
+        const auto selected = std::find_if(planned.begin(), planned.end(), [&](const ImageResource& image) { return columnOf(image).selected; });
+        const auto whole = std::find_if(planned.begin(), planned.end(), [&](const ImageResource& image) { return !columnOf(image).selected; });
+        require(selected != planned.end() && whole != planned.end(), "image table unkeyed access: the read keyed through the SRT does not select its record beside the read keyed per lane");
+        require(columnOf(*whole).unkeyed && columnOf(*whole).keyDomains.empty(), "image table unkeyed access: the read keyed per lane kept a key domain");
         const auto compiled = CompileTable(request);
-        const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+        const auto& tables = compiled.capture->snapshot.tables;
+        require(TableSelected(tables, selected->table, "image table unkeyed access: a table does not hold one readable selected record") == heap[2], "image table unkeyed access: the read keyed through the SRT does not hold its record");
+        const auto& snapshot = tables.tables.at(whole->table);
         const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
-        require(snapshot.keys == 4u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [&](std::uint32_t code) { return code == outside; }), "image table unkeyed access: the shared column was narrowed by the keyed read");
+        require(snapshot.keys == 4u && std::none_of(snapshot.codes.begin(), snapshot.codes.end(), [&](std::uint32_t entry) { return entry == outside; }), "image table unkeyed access: the table keyed per lane was narrowed");
         const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
         require(images != nullptr && images->count == 4u, "image table unkeyed access: the binding does not hold the whole domain");
     }
@@ -1529,18 +1544,19 @@ void verifyImageTableSrtKey() {
     const auto plan = GetResourcePlan(request);
     require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "image table SRT key: the T# was not planned as a table");
     const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
-    require(column.has_value() && !column->keyDomains.empty(), "image table SRT key: a key read through the SRT has no key domain");
+    require(column.has_value() && column->selected && column->selection < plan->descriptorSources.size(), "image table SRT key: a T# whose key is read through the SRT does not select its record");
     const auto compiled = CompileTable(request);
-    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
-    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
-    require(snapshot.records == 4u && snapshot.keys == 4u && snapshot.codes.size() == 4u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && snapshot.codes[1] == outside && (snapshot.codes[2] & Abi::PoisonFlag) == 0u && snapshot.codes[3] == outside, "image table SRT key: the snapshot was not narrowed to the key read through the SRT");
+    const auto& tables = compiled.capture->snapshot.tables;
+    const auto& snapshot = tables.tables.at(0);
+    require(snapshot.records == 1u && snapshot.keys == 1u && snapshot.codes.size() == 1u && (snapshot.codes[0] & Abi::PoisonFlag) == 0u && tables.words.at(snapshot.codes[0]).dwords == heap[2], "image table SRT key: the snapshot does not hold the selected record alone");
     const auto* images = TableBinding(*compiled.result, DescriptorRole::ImageTable);
-    require(images != nullptr && images->count == 2u, "image table SRT key: the binding holds other entries than the selected one and the first");
-    require(TableCovered(compiled.regions, &guest.srt[16], sizeof(std::uint32_t)), "image table SRT key: the key was not captured");
+    require(images != nullptr && images->count == 1u, "image table SRT key: the binding holds other entries than the selected one");
+    require(TableCovered(compiled.regions, &guest.srt[16], sizeof(std::uint32_t)) && TableCovered(compiled.regions, &heap[2], sizeof(heap[2])), "image table SRT key: the key or the selected record was not captured");
+    require(!TableCovered(compiled.regions, &heap[0], sizeof(std::uint32_t)) && !TableCovered(compiled.regions, &heap[1], sizeof(std::uint32_t)) && !TableCovered(compiled.regions, &heap[3], sizeof(std::uint32_t)), "image table SRT key: records the key does not select were captured");
     guest.srt[16] = 3u;
     const auto moved = CompileTable(request);
-    const auto& movedSnapshot = moved.capture->snapshot.tables.tables.at(0);
-    require((movedSnapshot.codes[3] & Abi::PoisonFlag) == 0u && movedSnapshot.codes[2] == outside && movedSnapshot.codes[1] == outside && moved.result->spirv == compiled.result->spirv && moved.key == compiled.key, "image table SRT key: a changed key did not move the snapshot alone");
+    const auto& movedTables = moved.capture->snapshot.tables;
+    require(movedTables.words.at(movedTables.tables.at(0).codes.at(0)).dwords == heap[3] && TableCovered(moved.regions, &heap[3], sizeof(heap[3])) && !TableCovered(moved.regions, &heap[2], sizeof(std::uint32_t)) && moved.result->spirv == compiled.result->spirv && moved.key == compiled.key, "image table SRT key: a changed key did not move the selected record alone");
 }
 
 void verifyImageTableMaskedOffset() {
@@ -1828,6 +1844,247 @@ void verifyPointerTableOffsetCarry() {
 #endif
 }
 
+void verifySelectedRecordFallbacks() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.materials = {};
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableSrtKeyCode, userData);
+    const auto valid = CompileTable(request);
+
+    heap[2][3] &= 0x0fffffffu;
+    const auto invalid = CompileTable(request);
+    const auto& invalidMap = TableMap(*invalid.result);
+    const auto invalidCodes = TableCodes(invalidMap, 0);
+    require(invalidCodes.size() == 1u && invalidCodes[0] != Abi::NullCode && (invalidCodes[0] & Abi::PoisonFlag) == 0u, "selected record fallbacks: an invalid selected T# has no entry");
+    const auto invalidFlags = invalidMap.at(invalidCodes[0] + Abi::ImageRecordFlags);
+    require((invalidFlags & Abi::PoisonFlag) != 0u, "selected record fallbacks: an invalid selected T# was bound");
+    const auto& poison = invalid.result->imageTablePoison.at(invalidFlags & ~Abi::PoisonFlag);
+    require(poison.reason == static_cast<std::uint32_t>(Abi::PoisonReason::NotImage) && poison.dwordCount == 8u && poison.words[3] == heap[2][3] && invalid.result->imageTableFaults != 0u, "selected record fallbacks: an invalid selected T# was not poisoned with its words");
+    require(invalid.result->variantId == valid.result->variantId, "selected record fallbacks: an invalid selected T# changed the artifact");
+    heap[2] = heap[1];
+
+    guest.srt[16] = 200u;
+    const auto beyond = CompileTable(request);
+    const auto beyondCodes = TableCodes(TableMap(*beyond.result), 0);
+    require(beyondCodes.size() == 1u && beyondCodes[0] == Abi::NullCode && beyond.result->imageTableFaults == 0u && !TableTouched(beyond.regions, heap.data(), sizeof(heap)), "selected record fallbacks: a key past the heap did not select a null image without reading the heap");
+    guest.srt[16] = 2u;
+
+    void* reserved = nullptr;
+#ifdef _WIN32
+    reserved = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+#else
+    reserved = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reserved == MAP_FAILED) reserved = nullptr;
+#endif
+    require(reserved != nullptr, "selected record fallbacks: cannot reserve an inaccessible page");
+    FillTableSrt(guest, reserved, 32u, 4u);
+    const auto unmapped = CompileTable(request);
+    const auto& unmappedTable = unmapped.capture->snapshot.tables.tables.at(0);
+    require(unmappedTable.keys == 1u && unmappedTable.codes.at(0) == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)) && !TableTouched(unmapped.regions, reserved, 4096u), "selected record fallbacks: an unmapped selected record is not Unmapped poison or was read");
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+
+    std::vector<std::uint32_t> loadedKey(TableSrtKeyCode);
+    const auto shift = std::find(loadedKey.begin(), loadedKey.end(), 0x8f108510u);
+    require(shift != loadedKey.end(), "selected record fallbacks: the program has no s_lshl_b32");
+    loadedKey.insert(shift, {0xf4200406u, 0x20000000u});
+    guest.materials[0][1] = 3u;
+    guest.srt[16] = 4u;
+    const auto loadedRequest = TableRequest(loadedKey, userData);
+    const auto loadedPlan = GetResourcePlan(loadedRequest);
+    require(loadedPlan->info.images.size() == 1u && loadedPlan->descriptorSources.at(loadedPlan->info.images[0].source).tableColumn->selected, "selected record fallbacks: a key loaded from a constant buffer at an SRT offset does not select its record");
+    const auto loaded = CompileTable(loadedRequest);
+    require(TableSelected(loaded.capture->snapshot.tables, 0u, "selected record fallbacks: a loaded key does not hold one readable selected record") == heap[3] && TableCovered(loaded.regions, &guest.materials[0][1], sizeof(std::uint32_t)), "selected record fallbacks: the record of a loaded key was not selected or its key was not captured");
+    const auto materials = TableV(guest.materials.data(), 16u, 3u);
+    const auto unreadable = TableV(reserved, 16u, 3u);
+    std::copy(unreadable.begin(), unreadable.end(), guest.srt.begin() + 8);
+    const auto lost = CompileTable(loadedRequest);
+    const auto& lostTable = lost.capture->snapshot.tables.tables.at(0);
+    require(lostTable.keys == 0u && lostTable.fault == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::Unmapped)) && lost.result->imageTableFaults != 0u && lost.result->variantId == loaded.result->variantId, "selected record fallbacks: a key that cannot be read did not fault its table");
+    std::copy(materials.begin(), materials.end(), guest.srt.begin() + 8);
+#ifdef _WIN32
+    VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+    munmap(reserved, 4096);
+#endif
+
+    auto writtenKey = loadedKey;
+    const auto store = std::find(writtenKey.begin(), writtenKey.end(), 0x80070000u);
+    require(store != writtenKey.end(), "selected record fallbacks: the program has no buffer_store_dword");
+    *store = 0x80030000u;
+    const auto writtenRequest = TableRequest(writtenKey, userData);
+    const auto writtenPlan = GetResourcePlan(writtenRequest);
+    const auto& writtenColumn = writtenPlan->descriptorSources.at(writtenPlan->info.images.at(0).source).tableColumn;
+    require(writtenColumn.has_value() && !writtenColumn->selected && writtenColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a buffer the shader writes selected its record");
+    const auto written = CompileTable(writtenRequest);
+    require(written.capture->snapshot.tables.tables.at(0).keys == 4u, "selected record fallbacks: a key loaded from a buffer the shader writes did not keep the whole table");
+    require(!loadedPlan->descriptorSources.at(loadedPlan->info.images[0].source).tableColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a constant buffer has no key domain");
+    auto pointerWritten = loadedKey;
+    const auto end = std::find(pointerWritten.begin(), pointerWritten.end(), 0xbf810000u);
+    require(end != pointerWritten.end(), "selected record fallbacks: the program has no s_endpgm");
+    pointerWritten.insert(end, {0xdc708000u, 0x001c0100u});
+    const auto pointerPlan = GetResourcePlan(TableRequest(pointerWritten, userData));
+    const auto& pointerColumn = pointerPlan->descriptorSources.at(pointerPlan->info.images.at(0).source).tableColumn;
+    require(pointerPlan->info.bdaWrites && pointerColumn.has_value() && !pointerColumn->selected && pointerColumn->keyDomains.empty(), "selected record fallbacks: a key loaded from a constant buffer in a shader that stores through a pointer selected its record or kept its key domain");
+
+    const auto lanePlan = GetResourcePlan(TableRequest(TableWholeCode, userData));
+    require(!lanePlan->info.images.empty() && !lanePlan->descriptorSources.at(lanePlan->info.images[0].source).tableColumn->selected, "selected record fallbacks: a T# selected per lane left the table");
+
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, 70000> large{};
+    large.back() = heap[1];
+    FillTableSrt(guest, large.data(), 32u, static_cast<std::uint32_t>(large.size()));
+    guest.srt[16] = static_cast<std::uint32_t>(large.size() - 1u);
+    const auto pastCap = CompileTable(request);
+    require(TableSelected(pastCap.capture->snapshot.tables, 0u, "selected record fallbacks: a record past the key cap does not hold one readable selected record") == heap[1] && !pastCap.capture->snapshot.tables.tables[0].outside && pastCap.result->imageTableFaults == 0u, "selected record fallbacks: a record past the key cap was not selected");
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+}
+
+void verifySelectedRecordOffsetCarry() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture texture;
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    const auto image = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D);
+    auto* words = guest.heap.front().data();
+    std::copy(image.begin(), image.end(), words + 0x50u / 4u);
+    FillTableSrt(guest, guest.heap.data(), 0u, static_cast<std::uint32_t>(sizeof(guest.heap)));
+    const auto userData = TableUserData(guest);
+    const std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000030u, 0xf4080800u, 0xfa000010u, 0xf4000440u, 0xfa000040u, 0x8711ff11u,
+        0x000000ffu, 0x8f128511u, 0x8113ff12u, 0xffffff10u, 0x8114ff12u, 0xffffff20u, 0xf4280902u, 0x26000040u, 0xf4280a02u, 0x28000040u, 0xf09c0f08u,
+        0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    const auto request = TableRequest(code, userData);
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "selected record offset carry: a T# read by two loads of its record was not planned as a table");
+    const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.selected && !column.address && column.stride == 32u && column.addend == 0xffffff10u && column.offset == 0x40u && column.foldedAddend == 0xffffff10u && column.foldedCarry == 16u, "selected record offset carry: the column is wrong");
+    guest.srt[16] = 7u;
+    const auto carried = CompileTable(request);
+    const auto& carriedTable = carried.capture->snapshot.tables.tables.at(0);
+    require(carriedTable.keys == 1u && carriedTable.codes.at(0) == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OffsetCarry)) && !TableTouched(carried.regions, guest.heap.data(), sizeof(guest.heap)), "selected record offset carry: the record whose second load wraps past 32 bits is not OffsetCarry poison or was read");
+    guest.srt[16] = 8u;
+    const auto wrapped = CompileTable(request);
+    require(TableSelected(wrapped.capture->snapshot.tables, 0u, "selected record offset carry: the record past the wrap does not hold one readable selected record") == image && TableCovered(wrapped.regions, words + 0x50u / 4u, sizeof(image)), "selected record offset carry: the record past the wrap was not selected");
+}
+
+std::vector<std::uint32_t> WithImageOperation(std::vector<std::uint32_t> code, std::uint32_t word0, bool keepSample) {
+    const auto sample = std::find(code.begin(), code.end(), 0xf09c0f08u);
+    require(sample != code.end() && sample + 1 != code.end(), "image operation variant: the program has no image_sample_lz");
+    if (keepSample) {
+        code.insert(sample + 2, {word0, 0x00050000u});
+    } else {
+        sample[0] = word0;
+        sample[1] = 0x00050000u;
+    }
+    return code;
+}
+
+void verifySelectedRecordDirectOperations() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 4> operations{{{"image_store", 0xf0200f08u, TableFormat32UInt}, {"image_atomic_add", 0xf0440108u, TableFormat32UInt}, {"image_load_pck", 0xf0080f08u, TableFormat32UInt}, {"image_load_by2", 0xf1080308u, TableFormat16UNorm}}};
+    for (const auto& [name, word0, format] : operations) {
+        const auto what = std::string("selected record direct operations: ") + name;
+        heap[2] = TableT(textures[1].bytes.data(), format, TableType2D);
+        const auto code = WithImageOperation(TableSrtKeyCode, word0, false);
+        const auto request = TableRequest(code, userData);
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.images.size() == 1u && plan->info.images[0].table == NoTable && !plan->descriptorSources.at(plan->info.images[0].source).tableColumn.has_value(), (what + " through a T# whose record the CPU evaluates was planned through an image table").c_str());
+        const auto compiled = CompileTable(request);
+        require(TableBinding(*compiled.result, DescriptorRole::ImageTable) == nullptr && compiled.result->imageTableFaults == 0u && TableCovered(compiled.regions, &heap[2], sizeof(heap[2])), (what + " through a T# whose record the CPU evaluates was not bound from its record").c_str());
+        const auto wholeCode = WithImageOperation(TableWholeCode, word0, false);
+        const auto whole = GetResourcePlan(TableRequest(wholeCode, userData));
+        require(whole->info.images.size() == 1u && whole->info.images[0].table == 0u && whole->info.images[0].tableOperation == TableOperation::Unsupported, (what + " through a T# keyed per lane left the image table or lost its unsupported mark").c_str());
+    }
+    const auto mixedCode = WithImageOperation(TableSrtKeyCode, 0xf0200f08u, true);
+    const auto mixed = GetResourcePlan(TableRequest(mixedCode, userData));
+    require(mixed->info.images.size() == 2u && std::ranges::all_of(mixed->info.images, [&](const ImageResource& image) { return image.table == NoTable && !mixed->descriptorSources.at(image.source).tableColumn.has_value(); }), "selected record direct operations: a T# sampled and stored was planned through an image table for one of its operations");
+    const auto sampled = GetResourcePlan(TableRequest(TableSrtKeyCode, userData));
+    require(sampled->info.images.size() == 1u && sampled->info.images[0].table == 0u && sampled->descriptorSources.at(sampled->info.images[0].source).tableColumn->selected, "selected record direct operations: a T# that is only sampled no longer selects its record");
+}
+
+void verifyEvaluableHeapSamplerDirect() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto heapSampler = [](std::vector<std::uint32_t> code) {
+        const auto direct = std::find(code.begin(), code.end(), 0xf4080200u);
+        require(direct != code.end() && direct[1] == 0xfa000010u, "evaluable heap sampler: the program has no S# load from the SRT");
+        code.erase(direct, direct + 2);
+        const auto shift = std::find(code.begin(), code.end(), 0x8f108510u);
+        require(shift != code.end(), "evaluable heap sampler: the program has no key shift");
+        code.insert(shift + 1, {0xf4280202u, 0x20000000u});
+        return code;
+    };
+    const auto evaluatedCode = heapSampler(TableSrtKeyCode);
+    const auto evaluated = GetResourcePlan(TableRequest(evaluatedCode, userData));
+    require(evaluated->info.samplers.size() == 1u && evaluated->info.samplers[0].table == NoTable && !evaluated->descriptorSources.at(evaluated->info.samplers[0].source).tableColumn.has_value(), "evaluable heap sampler: an S# read from a heap at an offset the SRT walker evaluates was planned through a sampler table");
+    const auto perLaneCode = heapSampler(TableWholeCode);
+    const auto perLane = GetResourcePlan(TableRequest(perLaneCode, userData));
+    require(perLane->info.samplers.size() == 1u && perLane->info.samplers[0].table != NoTable && perLane->descriptorSources.at(perLane->info.samplers[0].source).tableColumn.has_value(), "evaluable heap sampler: an S# read from a heap at an offset keyed per lane was not planned through a sampler table");
+}
+
+void verifySelectedRecordUniformIndex() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    auto& heap = guest.heap;
+    std::fill(heap.begin(), heap.end(), std::array<std::uint32_t, 8>{});
+    heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    heap[2] = heap[1];
+    heap[3] = heap[0];
+    FillTableSrt(guest, heap.data(), 32u, 4u);
+    guest.srt[16] = 2u;
+    const auto userData = TableUserData(guest);
+    const auto twoWaves = [&](const std::vector<std::uint32_t>& code) {
+        auto request = TableRequest(code, userData);
+        request.context.compute->numThreads = {128u, 1u, 1u};
+        return CompileTable(request);
+    };
+    const auto nonUniform = [](const TableCompiled& compiled) {
+        const auto spirv = compiled.result->spirv.Words();
+        std::uint32_t count = 0;
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == spv::OpDecorate && (spirv[cursor] >> 16u) == 3u && spirv[cursor + 2u] == spv::DecorationNonUniform) ++count;
+        }
+        return count;
+    };
+    const auto selected = twoWaves(TableSrtKeyCode);
+    require(TableBinding(*selected.result, DescriptorRole::ImageTable) != nullptr && nonUniform(selected) == 0u, "selected record uniform index: the image table index of a selected record in a two-wave workgroup is decorated NonUniform");
+    const auto whole = twoWaves(TableWholeCode);
+    require(nonUniform(whole) != 0u, "selected record uniform index: the image table index of a table keyed per lane in a two-wave workgroup is not decorated NonUniform");
+}
+
 void verifyDescriptorPhis() {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
@@ -2049,15 +2306,15 @@ void verifyUniformTableImage() {
     request.layout.pushConstantSizeBytes = 128;
     const auto plan = GetResourcePlan(request);
     const auto& column = plan->descriptorSources.at(plan->info.images.at(0).source).tableColumn;
-    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && column.has_value() && column->stride == 48u && column->dwordCount == 8u, "uniform table image: the T# read from a constant buffer at a user data offset was not planned as one table column");
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u && column.has_value() && column->stride == 48u && column->dwordCount == 8u && column->selected, "uniform table image: the T# read from a constant buffer at a user data offset does not select its record");
     for (const auto& [key, expected] : {std::pair{2u, second}, std::pair{1u, first}}) {
         userData[2] = key;
         AgcDriver::ShaderMemory memory({});
         const auto capture = memory.Capture(request);
         const auto& tables = capture->snapshot.tables;
-        require(tables.tables.size() == 1u && key < tables.tables[0].codes.size(), "uniform table image: the capture has no table for the user data key");
-        const auto code = tables.tables[0].codes[key];
-        require((code & ImageTableAbi::PoisonFlag) == 0u && std::equal(expected.begin(), expected.end(), tables.words.at(code).dwords.begin()), "uniform table image: the T# of the record the user data selects was not read");
+        require(tables.tables.size() == 1u && TableSelected(tables, 0u, "uniform table image: a table does not hold one readable selected record") == expected, "uniform table image: the T# of the record the user data selects was not read");
+        const auto regions = memory.Regions();
+        require(TableCovered(regions, guest.table[key].data() + 4, sizeof(expected)) && !TableCovered(regions, guest.table[3u - key].data() + 4, sizeof(std::uint32_t)), "uniform table image: the record the user data does not select was read");
     }
 }
 
@@ -5177,6 +5434,11 @@ int main(int argc, char** argv) {
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableOffsetCarry();
+            verifySelectedRecordFallbacks();
+            verifySelectedRecordOffsetCarry();
+            verifySelectedRecordDirectOperations();
+            verifyEvaluableHeapSamplerDirect();
+            verifySelectedRecordUniformIndex();
             std::cout << "Image table keys, maps, records and registration passed\n";
             return 0;
         }
