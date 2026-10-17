@@ -1,7 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -24,7 +23,6 @@ std::uint64_t elapsedNs(std::chrono::steady_clock::time_point since) {
 std::atomic<std::uint64_t> heldReadRanges{0};
 std::atomic<std::uint64_t> heldReadQueries{0};
 std::atomic<std::uint64_t> heldReadHits{0};
-std::atomic<std::uint64_t> releasedStores{0};
 
 }
 
@@ -171,19 +169,14 @@ void DrawPipeline::run() {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
         }
-        std::vector<Range> deferred;
-        {
-            std::lock_guard lock(mutex);
-            items.pop_front();
-            ++commits;
-            commitNs += spent;
-            if (failed) ++commitErrors;
-            if (fatal != nullptr && failure == nullptr) failure = fatal;
-            outstanding.fetch_sub(1, std::memory_order_release);
-            if (idleWaiters != 0) idle.notify_all();
-            deferred.swap(deferredStores);
-        }
-        storeDeferred(deferred);
+        std::lock_guard lock(mutex);
+        items.pop_front();
+        ++commits;
+        commitNs += spent;
+        if (failed) ++commitErrors;
+        if (fatal != nullptr && failure == nullptr) failure = fatal;
+        outstanding.fetch_sub(1, std::memory_order_release);
+        if (idleWaiters != 0) idle.notify_all();
     }
     runningCommitters.fetch_sub(1, std::memory_order_acq_rel);
 }
@@ -199,36 +192,6 @@ void DrawPipeline::Stop() {
     if (!committer.joinable()) return;
     if (committer.get_id() == std::this_thread::get_id()) committer.detach();
     else committer.join();
-}
-
-void DrawPipeline::storeDeferred(std::vector<Range>& ranges) {
-    std::vector<Range> held;
-    for (const auto& range : ranges) {
-        const auto bytes = static_cast<std::size_t>(range.second - range.first);
-        if (readHeld(range.first, bytes)) {
-            held.push_back(range);
-            continue;
-        }
-        try {
-            Graphics::StorageTexture::FlushPending(range.first, bytes, nullptr, "queued draw read committed", Graphics::PublishScope::PartialUnits);
-            releasedStores.fetch_add(1, std::memory_order_relaxed);
-        } catch (const std::exception&) {
-            const auto error = std::current_exception();
-            {
-                std::lock_guard lock(mutex);
-                stopped = true;
-                if (failure == nullptr) failure = error;
-            }
-            Driver::Get().ReportFailure(error);
-        }
-    }
-    if (held.empty()) return;
-    std::lock_guard lock(mutex);
-    deferredStores.insert(deferredStores.end(), held.begin(), held.end());
-}
-
-std::uint64_t DrawPipeline::ReleasedStores() {
-    return releasedStores.exchange(0, std::memory_order_relaxed);
 }
 
 void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
@@ -251,11 +214,13 @@ std::uint64_t DrawPipeline::DrainRequestsByOpcode(std::uint32_t opcode) {
     return Queue0().drainRequests[std::min<std::uint32_t>(opcode, 0x100)].load(std::memory_order_relaxed);
 }
 
-bool DrawPipeline::readHeld(std::uint64_t address, std::size_t bytes) {
+bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || std::getenv("APS5_NO_QUEUED_DRAW_READ_ORDER") != nullptr) return false;
     const auto end = address + bytes;
-    std::lock_guard lock(mutex);
+    auto& pipeline = Queue0();
+    std::lock_guard lock(pipeline.mutex);
     heldReadQueries.fetch_add(1, std::memory_order_relaxed);
-    for (const auto& item : items) {
+    for (const auto& item : pipeline.items) {
         for (const auto& [begin, limit] : item.reads) {
             if (address >= limit || begin >= end) continue;
             heldReadHits.fetch_add(1, std::memory_order_relaxed);
@@ -263,17 +228,6 @@ bool DrawPipeline::readHeld(std::uint64_t address, std::size_t bytes) {
         }
     }
     return false;
-}
-
-bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 0 || std::getenv("APS5_NO_QUEUED_DRAW_READ_ORDER") != nullptr) return false;
-    auto& pipeline = Queue0();
-    if (!pipeline.readHeld(address, bytes)) return false;
-    {
-        std::lock_guard lock(pipeline.mutex);
-        pipeline.deferredStores.emplace_back(address, address + bytes);
-    }
-    return true;
 }
 
 std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, std::size_t bytes) {
