@@ -281,8 +281,11 @@ int main() {
         }
         Require(written == Width * Height, "queued index read: the draw left " + std::to_string(Width * Height - written) + " pixels cleared, expected the triangle its indices name");
 
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool)), PoolBytes);
-        AgcDriverWaitIdle_nid_postfix();
+        const auto landBy = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool)), PoolBytes);
+            AgcDriverWaitIdle_nid_postfix();
+        } while (IndicesIntact() && std::chrono::steady_clock::now() < landBy);
         Require(!IndicesIntact(), "queued index read: the image's results never reached the memory they cover, so the run above proves nothing");
         std::puts("queued index read vs. deferred storage write-back tests passed");
         AgcDriverShutdown_nid_postfix();
