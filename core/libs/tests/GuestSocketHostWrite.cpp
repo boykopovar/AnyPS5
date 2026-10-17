@@ -243,6 +243,51 @@ int main(int argc, char** argv) {
             if (mask & 1) Require(Protection(address) == PAGE_READONLY, "sender address rearmed");
             if (mask & 2) Require(Protection(length) == PAGE_READONLY, "sender length rearmed");
         }
+        if (api == 5) {
+            for (const bool readOnlyAddress : {true, false}) {
+                auto* address = static_cast<unsigned char*>(outputMapping) + 16;
+                auto* length = reinterpret_cast<std::uint32_t*>(static_cast<unsigned char*>(outputMapping) + page + 16);
+                {
+                    const GuestArena::HostWrite addressDestination(address, 32);
+                    const GuestArena::HostWrite lengthDestination(length, sizeof(*length));
+                    Require(addressDestination.Open() && lengthDestination.Open(), "initialize refused sender outputs");
+                    std::memset(address, 0xa5, 32);
+                    *length = 32;
+                }
+                void* refused = static_cast<char*>(outputMapping) + (readOnlyAddress ? 0 : page);
+                Require(sceKernelMprotect(refused, page, 1) == 0, "make one sender output read-only");
+                send();
+                waitForPacket();
+                std::array<char, capacity> recovery{};
+                Require(receive(recovery.data(), recovery.size(), 0, address, length) == static_cast<int>(0x8041010eu) && *error == 14,
+                    "read-only sender output fails with EFAULT");
+                Require(*length == 32 && std::all_of(address, address + 32, [](unsigned char value) { return value == 0xa5; }),
+                    "refused sender outputs remain unchanged");
+                Require(receive(recovery.data(), recovery.size(), 0, nullptr, nullptr) == sizeof(payload) &&
+                    std::memcmp(recovery.data(), payload, sizeof(payload)) == 0, "refused sender output preserves queued data");
+                Require(sceKernelMprotect(refused, page, 3) == 0, "restore sender output permission");
+            }
+            auto* address = static_cast<unsigned char*>(outputMapping) + 16;
+            Require(sceKernelMprotect(outputMapping, page, 1) == 0, "make an unused sender address read-only");
+            std::uint32_t zero = 0;
+            std::array<char, capacity> recovery{};
+            send();
+            waitForPacket();
+            Require(receive(recovery.data(), recovery.size(), 0, address, &zero) == sizeof(payload) && zero == 0 &&
+                std::memcmp(recovery.data(), payload, sizeof(payload)) == 0, "zero-capacity sender address needs no write access");
+            Require(sceKernelMprotect(outputMapping, page, 3) == 0, "restore unused sender address permission");
+            address = static_cast<unsigned char*>(outputMapping) + page - senderAddress.size();
+            Require(sceKernelMprotect(static_cast<char*>(outputMapping) + page, page, 1) == 0,
+                "make bytes beyond the sender address read-only");
+            std::uint32_t oversized = 32;
+            send();
+            waitForPacket();
+            Require(receive(recovery.data(), recovery.size(), 0, address, &oversized) == sizeof(payload) &&
+                oversized == senderAddress.size() && std::memcmp(address, senderAddress.data(), oversized) == 0,
+                "guard only the sender address bytes the receive writes");
+            Require(sceKernelMprotect(static_cast<char*>(outputMapping) + page, page, 3) == 0,
+                "restore bytes beyond the sender address");
+        }
         Require(sceKernelMunmap(outputTwin, page * 2) == 0, "unmap the second sender output mapping");
         Require(sceKernelMunmap(outputMapping, page * 2) == 0, "unmap sender outputs");
         Require(sceKernelReleaseDirectMemory(outputPhysical, page * 2) == 0, "release sender output memory");
