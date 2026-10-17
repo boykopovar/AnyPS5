@@ -271,11 +271,21 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15-intel]
         configuration: [Debug, Release]
+        architectures: ['']
+        include:
+          - os: macos-15
+            configuration: Debug
+            architectures: x86_64
+          - os: macos-15
+            configuration: Release
+            architectures: x86_64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+      - if: ${{ matrix.architectures == 'x86_64' }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cmake -S core/libs/tests/register_context -B build/register-context -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build/register-context --parallel
       - run: ctest --test-dir build/register-context --output-on-failure --repeat until-fail:3 --no-tests=error
 
@@ -286,11 +296,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-15]
+        architectures: ['']
+        include:
+          - os: macos-15
+            architectures: x86_64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release
+      - if: ${{ matrix.architectures == 'x86_64' }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cmake -S core/libs/tests/write_watch -B build/write-watch -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architectures }}
       - run: cmake --build build/write-watch --parallel
       - run: ctest --test-dir build/write-watch --output-on-failure --repeat until-fail:3 --no-tests=error
 
