@@ -299,6 +299,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
+    if (request.context.convertedSamples) {
+        for (auto& image : program.Resources().info.images) image.convertedSamples = true;
+    }
 
     return program;
 }
@@ -1109,7 +1112,7 @@ RecompileResult materializeVariant(SourceEntry& source, const RecompileRequest& 
     return result;
 }
 
-RecompileResult RecompileImpl(const RecompileRequest& request) {
+RecompileResult recompileOnce(const RecompileRequest& request) {
     static_cast<void>(RequestInputInfo(request));
     RequestMemoryView memory(request.context.memory);
     const auto runtime = memory.MakeRuntime(request.context.userData, request.shader.codeAddress);
@@ -1125,6 +1128,17 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
     const auto source = getSource(request);
     materializer.Materialize(*source->plan, runtime, snapshot);
     return materializeVariant(*source, request, snapshot);
+}
+
+RecompileResult RecompileImpl(const RecompileRequest& request) {
+    try {
+        return recompileOnce(request);
+    } catch (const ConvertedSampleRequired&) {
+        if (request.context.convertedSamples) throw;
+    }
+    auto converted = request;
+    converted.context.convertedSamples = true;
+    return recompileOnce(converted);
 }
 
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.

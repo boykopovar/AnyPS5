@@ -13,8 +13,8 @@ void Driver::verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffse
         std::abort();
     };
     auto verifyMemory = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter());
-    const auto invocation = InvocationFor(snapshot, codeOffset, request);
-    const auto capture = verifyMemory->Capture(invocation);
+    auto invocation = InvocationFor(snapshot, codeOffset, request);
+    const auto capture = CaptureInvocation(*verifyMemory, snapshot, codeOffset, request, invocation);
     const auto regions = verifyMemory->Regions();
     request.context.memory = regions;
     const auto result = invocation.Materialize(*capture);
