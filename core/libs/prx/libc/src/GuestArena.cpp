@@ -13,6 +13,7 @@
 #endif
 #include <cstdio>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -26,6 +27,8 @@
 
 namespace GuestArena {
 namespace {
+
+std::atomic<void (*)(std::uintptr_t, std::size_t)> hostReadHook{nullptr};
 
 #ifdef _WIN32
 std::atomic<std::uint64_t> commitGeneration{1};
@@ -476,6 +479,16 @@ void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
 
 bool GuestArenaWriteWatched_nid_postfix() {
     return Arena::Get().WriteWatched();
+}
+
+void GuestArenaSetHostReadHook_nid_no_patch(void (*hook)(std::uintptr_t, std::size_t)) {
+    hostReadHook.store(hook, std::memory_order_release);
+}
+
+void GuestArenaPrepareHostRead_nid_no_patch(const void* pointer, std::size_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+    if (address == 0 || bytes == 0 || bytes > std::numeric_limits<std::uintptr_t>::max() - address) return;
+    if (const auto hook = hostReadHook.load(std::memory_order_acquire)) hook(address, bytes);
 }
 
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {

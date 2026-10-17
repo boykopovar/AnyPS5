@@ -80,11 +80,12 @@ std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int
 }
 
 std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, std::int64_t offset) {
-#ifdef _WIN32
     if (offset < 0) {
         errno = EINVAL;
         return -1;
     }
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbyte);
+#ifdef _WIN32
     return NativePositioned_nid_no_patch(fd, const_cast<void*>(buf), nbyte, offset, true);
 #else
     const auto result = File::PwriteSharedMemory_nid_no_patch(fd, buf, nbyte, offset);
