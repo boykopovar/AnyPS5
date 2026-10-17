@@ -18,6 +18,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <vector>
+#endif
 extern "C" int APS5_VABI sceSystemServiceLoadExec(const char*, const char* const*);
 extern "C" int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
 extern "C" void APS5_VABI _Exit_nid_postfix(int);
@@ -79,6 +83,12 @@ std::filesystem::path OwnExecutable() {
     std::wstring executable(32768, L'\0');
     executable.resize(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())));
     return executable;
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    Require(_NSGetExecutablePath(executable.data(), &size) == 0);
+    return std::filesystem::canonical(executable.data());
 #else
     return std::filesystem::read_symlink("/proc/self/exe");
 #endif

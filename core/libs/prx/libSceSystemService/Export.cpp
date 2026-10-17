@@ -17,6 +17,9 @@
 #include <windows.h>
 #elif defined(__linux__)
 #include <unistd.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <unistd.h>
 #endif
 #include "prx/libc/include/Shutdown.hpp"
 #include "SceTypes.hpp"
@@ -179,16 +182,30 @@ void StartHostExecutable(HostLaunch& launch) {
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
 }
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
 struct HostLaunch {
     std::string executable;
     std::vector<std::string> arguments;
 };
 
-HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
+std::filesystem::path OwnExecutable() {
     std::error_code error;
+#ifdef __APPLE__
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::filesystem::path own;
+    if (_NSGetExecutablePath(executable.data(), &size) == 0) own = std::filesystem::canonical(executable.data(), error);
+    if (own.empty()) throw std::runtime_error("sceSystemServiceLoadExec: cannot locate the executable");
+#else
     const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
     if (error) throw std::runtime_error("sceSystemServiceLoadExec: cannot read /proc/self/exe: " + error.message());
+#endif
+    return own;
+}
+
+HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
+    const auto own = OwnExecutable();
     HostLaunch launch;
     if (std::strcmp(path, MainExecutable) == 0) {
         const char* main = std::getenv(MainExecutableVariable);
@@ -237,7 +254,7 @@ int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* argu
     if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;
     if (std::strcmp(path, "exit") == 0) LibcExitWithoutHandlers_nid_no_patch(0);
     auto launch = PrepareLaunch(path, arguments);
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     LoadConvertedExecutable_nid_no_patch(std::filesystem::path(launch.executable), arguments);
 #endif
     LibcRunShutdown_nid_postfix();
