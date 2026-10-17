@@ -234,7 +234,7 @@ void TraceKeyStore(const char* path, std::uint64_t begin, std::size_t count) {
 bool StoreUncompressedOnGpu(const Context& context, Recorder& recorder, std::uint64_t begin, std::size_t count) {
     const auto* import = HostImportFor(context, begin, count);
     if (import == nullptr) return false;
-    const VkDeviceSize first = begin - import->base;
+    const VkDeviceSize first = HostImportOffset(*import, begin);
     const VkDeviceSize last = first + count;
     const VkDeviceSize fillBegin = std::min((first + 3) & ~VkDeviceSize{3}, last);
     const VkDeviceSize fillEnd = std::max(last & ~VkDeviceSize{3}, fillBegin);

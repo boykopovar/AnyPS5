@@ -58,6 +58,7 @@ struct MockDevice {
     std::vector<Bind> binds;
     VkResult bindResult = VK_SUCCESS;
     std::uint64_t nextAddress = 0x500000000ull;
+    VkDeviceSize sparseAlignment = Alignment;
 };
 
 MockDevice mock;
@@ -95,8 +96,9 @@ VKAPI_ATTR void VKAPI_CALL mockDestroyBuffer(VkDevice, VkBuffer buffer, const Vk
 }
 
 VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer buffer, VkMemoryRequirements* requirements) {
-    requirements->size = (mock.sizes.at(buffer) + Alignment - 1) / Alignment * Alignment;
-    requirements->alignment = Alignment;
+    const auto alignment = mock.sparse.contains(buffer) ? mock.sparseAlignment : Alignment;
+    requirements->size = (mock.sizes.at(buffer) + alignment - 1) / alignment * alignment;
+    requirements->alignment = alignment;
     requirements->memoryTypeBits = 1;
 }
 
@@ -252,14 +254,35 @@ void ImportsALargeRangeAsOneSparseBuffer() {
     Expect(memories.size() == chunks, "two parts of the range are bound to the same chunk import");
 }
 
-void UnalignedOffsetIsDecidedBeforeImporting() {
+void UnalignedOffsetStartsAtTheBlockBelow() {
     const auto bytes = RangeBytes();
-    SharedRange range(bytes, 4096, true);
+    constexpr std::uint64_t lead = 4096;
+    SharedRange range(bytes, lead, true);
     const auto context = mockContext();
     mock.binds.clear();
+    const auto address = mock.nextAddress;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* import = HostImportFor(context, range.Address(), static_cast<std::size_t>(bytes));
+    Expect(import != nullptr, "a range whose backing offset is not 64 KiB aligned was not imported above udmabuf's size limit");
+    if (import == nullptr) return;
+    Expect(mock.sparse.contains(import->buffer) && import->lead == lead, "the import does not start its sparse buffer at the 64 KiB block below the range");
+    Expect(import->address == address + lead && HostImportOffset(*import, range.Address()) == lead, "the import's device address or buffer offset does not point at the range itself");
+    Expect(!mock.binds.empty() && mock.binds.front().resourceOffset == 0 && mock.binds.front().memoryOffset == 0, "the first bind does not map the block below the range");
+    VkDeviceSize bound = 0;
+    for (const auto& bind : mock.binds) bound += bind.size;
+    Expect(bound >= lead + bytes, "the binds do not cover the range after its lead");
+}
+
+void LargerSparseBlockIsDecidedBeforeImporting() {
+    const auto bytes = RangeBytes();
+    SharedRange range(bytes, Alignment, true);
+    const auto context = mockContext();
+    mock.binds.clear();
+    mock.sparseAlignment = 2 * Alignment;
     const auto memories = mock.memories.size();
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     const auto* import = HostImportFor(context, range.Address(), static_cast<std::size_t>(bytes));
+    mock.sparseAlignment = Alignment;
     Expect(import == nullptr, "a range whose backing offset is not on the sparse block size was imported above udmabuf's size limit");
     Expect(mock.memories.size() == memories && mock.binds.empty(), "a chunk was imported or bound for a range that does not take the sparse path");
 }
@@ -300,7 +323,8 @@ int main() {
     GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
     try {
         ImportsALargeRangeAsOneSparseBuffer();
-        UnalignedOffsetIsDecidedBeforeImporting();
+        UnalignedOffsetStartsAtTheBlockBelow();
+        LargerSparseBlockIsDecidedBeforeImporting();
         FailureAfterTheDecisionThrows(false, VK_SUCCESS, "UDMABUF_CREATE");
         FailureAfterTheDecisionThrows(true, VK_ERROR_DEVICE_LOST, "vkQueueBindSparse");
     } catch (const std::exception& error) {

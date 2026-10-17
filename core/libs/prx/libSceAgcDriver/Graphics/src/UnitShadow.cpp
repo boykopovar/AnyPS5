@@ -67,11 +67,12 @@ Statistics& Stats() {
 
 struct UnitShadow {
     Context context;
-    // The import's range and buffer (taken at creation: a publish under the import table's mutex
-    // must not look them up), and the unit base (the import's base rounded down to a unit).
+    // The import's range, buffer and lead (taken at creation: a publish under the import table's
+    // mutex must not look them up), and the unit base (the import's base rounded down to a unit).
     std::uint64_t importBase = 0;
     std::uint64_t importBytes = 0;
     VkBuffer importBuffer = VK_NULL_HANDLE;
+    std::uint64_t importLead = 0;
     std::uint64_t base = 0;
     // Per unit: 0 = never shadowed, else the tracker generation the slab bytes are current at;
     // whether a slab -> import copy was recorded at that generation.
@@ -162,6 +163,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
     shadow->importBase = import.base;
     shadow->importBytes = import.bytes;
     shadow->importBuffer = import.buffer;
+    shadow->importLead = import.lead;
     shadow->base = import.base & ~(UnitBytes - 1);
     const auto units = (import.base + import.bytes - shadow->base + UnitBytes - 1) / UnitBytes;
     shadow->generation.assign(static_cast<std::size_t>(units), 0);
@@ -279,7 +281,7 @@ void verifyPublished(const UnitShadow& shadow, const std::vector<SlabCopies>& co
             RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
             batch.SubmitAndWait();
             host.Invalidate();
-            const auto address = shadow.importBase + region.dstOffset;
+            const auto address = shadow.importBase + region.dstOffset - shadow.importLead;
             Stats().verified.fetch_add(1, std::memory_order_relaxed);
             if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), static_cast<std::size_t>(region.size)) || std::memcmp(reinterpret_cast<const void*>(address), host.Bytes().data(), static_cast<std::size_t>(region.size)) != 0) {
                 Stats().mismatches.fetch_add(1, std::memory_order_relaxed);
@@ -336,7 +338,7 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
             }
             const auto [begin, end] = shadow->UnitRange(unit);
             if (end <= begin) continue;
-            const VkBufferCopy region{(unit - slab->firstUnit) * UnitBytes + (begin - shadow->UnitBegin(unit)), begin - shadow->importBase, end - begin};
+            const VkBufferCopy region{(unit - slab->firstUnit) * UnitBytes + (begin - shadow->UnitBegin(unit)), begin - shadow->importBase + shadow->importLead, end - begin};
             if (!copies.empty() && copies.back().slab == slab && copies.back().regions.back().dstOffset + copies.back().regions.back().size == region.dstOffset) {
                 copies.back().regions.back().size += region.size;
                 ranges.back().second = end;
@@ -606,7 +608,7 @@ std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& i
     std::vector<ShadowRun> result;
     if (runs.empty()) return result;
     const auto importPiece = [&](std::uint64_t begin, std::uint64_t end) {
-        result.push_back({begin, end, import.buffer, surfaceBase + begin - import.base, false, nullptr});
+        result.push_back({begin, end, import.buffer, HostImportOffset(import, surfaceBase + begin), false, nullptr});
         if (countReads) Stats().detiledImportBytes.fetch_add(end - begin, std::memory_order_relaxed);
     };
     std::shared_ptr<UnitShadow> shadow;
@@ -668,7 +670,7 @@ std::vector<ShadowRun> ShadowSources(const Context& context, const HostImport& i
                 slab->lastUse = present;
                 result.push_back({pieceBegin, pieceEnd, slab->buffer, SlabOffset(import, *slab, surfaceBase + pieceBegin), true, slab});
             } else {
-                result.push_back({pieceBegin, pieceEnd, import.buffer, surfaceBase + pieceBegin - import.base, false, nullptr});
+                result.push_back({pieceBegin, pieceEnd, import.buffer, HostImportOffset(import, surfaceBase + pieceBegin), false, nullptr});
             }
             (isFresh ? shadowBytes : importBytes) += pieceEnd - pieceBegin;
         }
