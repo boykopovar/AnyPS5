@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/include/PadAudioHapticQueue.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -16,6 +17,8 @@ namespace {
     PadInputState state;
     PadOutputState output;
     std::chrono::steady_clock::time_point audioHapticEnd;
+    std::array<std::uint8_t, 2> audioHapticRumble{};
+    PadAudioHapticQueue legacyHaptics;
     std::uint64_t timestamp = 0;
 
     struct QueuedInput {
@@ -37,6 +40,17 @@ namespace {
     std::uint8_t nextTouchId = 0;
     bool prevTouchActive[2] = {false, false};
     std::uint8_t touchIds[2] = {0, 0};
+
+    bool RefreshAudioHaptics() {
+        if (std::chrono::steady_clock::now() >= audioHapticEnd) audioHapticRumble = {};
+        const auto legacy = legacyHaptics.Read(sceKernelGetProcessTime());
+        const auto large = std::max(audioHapticRumble[0], legacy[0]);
+        const auto small = std::max(audioHapticRumble[1], legacy[1]);
+        if (output.audioVibrationLarge == large && output.audioVibrationSmall == small) return false;
+        output.audioVibrationLarge = large;
+        output.audioVibrationSmall = small;
+        return true;
+    }
 
     void normalize(Quat& q) {
         const float n = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
@@ -371,10 +385,7 @@ extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
 
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out) {
     std::lock_guard lock(stateMutex);
-    if ((output.audioVibrationLarge || output.audioVibrationSmall) && std::chrono::steady_clock::now() >= audioHapticEnd) {
-        output.audioVibrationLarge = output.audioVibrationSmall = 0;
-        ++output.sequence;
-    }
+    if (RefreshAudioHaptics()) ++output.sequence;
     if (seenSequence == nullptr || out == nullptr || *seenSequence == output.sequence) return false;
     *seenSequence = output.sequence;
     *out = output;
@@ -385,9 +396,22 @@ extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8
     std::lock_guard lock(stateMutex);
     if (large == 0 && small == 0) return;
     const auto now = std::chrono::steady_clock::now();
-    if (now >= audioHapticEnd) output.audioVibrationLarge = output.audioVibrationSmall = 0;
-    output.audioVibrationLarge = std::max(output.audioVibrationLarge, large);
-    output.audioVibrationSmall = std::max(output.audioVibrationSmall, small);
+    if (now >= audioHapticEnd) audioHapticRumble = {};
+    audioHapticRumble[0] = std::max(audioHapticRumble[0], large);
+    audioHapticRumble[1] = std::max(audioHapticRumble[1], small);
     audioHapticEnd = now + std::chrono::milliseconds(80);
+    static_cast<void>(RefreshAudioHaptics());
     ++output.sequence;
+}
+
+extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small) {
+    std::lock_guard lock(stateMutex);
+    legacyHaptics.Queue(source, begin, end, large, small);
+    if (RefreshAudioHaptics()) ++output.sequence;
+}
+
+extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source) {
+    std::lock_guard lock(stateMutex);
+    legacyHaptics.Clear(source);
+    if (RefreshAudioHaptics()) ++output.sequence;
 }

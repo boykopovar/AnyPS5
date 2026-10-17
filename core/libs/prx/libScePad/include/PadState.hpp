@@ -69,5 +69,7 @@ extern "C" void PadPublishInput_nid_postfix(const PadInputState& input);
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error);
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out);
 extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8_t small);
+extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small);
+extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source);
 
 #endif
