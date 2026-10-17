@@ -2205,18 +2205,19 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         std::size_t at = 0;
         for (; at + 16 <= size; at += 16) {
             const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(current.data() + at));
-            const auto same = _mm_cmpeq_epi8(bytes, _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at)));
-            const auto equal = static_cast<std::uint32_t>(_mm_movemask_epi8(same));
-            if (equal == 0xffffu) continue;
-            if (equal == 0) _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + at), bytes);
-            else _mm_maskmoveu_si128(bytes, _mm_xor_si128(same, _mm_set1_epi8(-1)), reinterpret_cast<char*>(destination + at));
-            const auto changed = ~equal & 0xffffu;
+            const auto uploaded = _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at));
+            const auto held = _mm_loadu_si128(reinterpret_cast<const __m128i*>(destination + at));
+            const auto store = _mm_andnot_si128(_mm_cmpeq_epi8(bytes, uploaded), _mm_cmpeq_epi8(held, uploaded));
+            const auto changed = static_cast<std::uint32_t>(_mm_movemask_epi8(store));
+            if (changed == 0) continue;
+            if (changed == 0xffffu) _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + at), bytes);
+            else _mm_maskmoveu_si128(bytes, store, reinterpret_cast<char*>(destination + at));
             firstChanged = std::min(firstChanged, at + static_cast<std::size_t>(std::countr_zero(changed)));
             lastChanged = std::max(lastChanged, at + 32 - static_cast<std::size_t>(std::countl_zero(changed)));
         }
         _mm_sfence();
         for (; at < size; ++at) {
-            if (current[at] == original[at]) continue;
+            if (current[at] == original[at] || static_cast<std::byte>(destination[at]) != original[at]) continue;
             destination[at] = current[at];
             firstChanged = std::min(firstChanged, at);
             lastChanged = std::max(lastChanged, at + 1);

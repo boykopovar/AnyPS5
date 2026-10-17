@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/MeshArguments_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/StagingCopyBack_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleCounter_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/SampleDumps_spv.h"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -1159,6 +1160,8 @@ Recorder::~Recorder() {
     }
     if (meshArgumentPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, meshArgumentPipeline, nullptr);
     if (meshArgumentLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, meshArgumentLayout, nullptr);
+    if (changedCopyPipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, changedCopyPipeline, nullptr);
+    if (changedCopyLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, changedCopyLayout, nullptr);
     if (sampleCounterState > 0) {
         samplesPassed.store(SamplesTotal(), std::memory_order_release);
         if (samplePools != nullptr) std::static_pointer_cast<SamplePoolCache>(samplePools)->close();
@@ -2345,6 +2348,58 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
     function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
     CountBarriers(CommandClass::Draw, 2);
+    return true;
+}
+
+bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress result, VkDeviceAddress snapshot, VkDeviceAddress target, std::uint32_t dwords, VkDeviceAddress counter) {
+    constexpr std::uint32_t PushBytes = 40;
+    constexpr std::uint32_t GroupSize = 64;
+    if (changedCopyState == 0) {
+        changedCopyState = -1;
+        VkShaderModule module = VK_NULL_HANDLE;
+        try {
+            const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes};
+            VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layoutInfo.pushConstantRangeCount = 1;
+            layoutInfo.pPushConstantRanges = &push;
+            Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &changedCopyLayout), "vkCreatePipelineLayout changed copy");
+            VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            moduleInfo.codeSize = sizeof(STAGING_COPY_BACK_SPV);
+            moduleInfo.pCode = STAGING_COPY_BACK_SPV;
+            Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule changed copy");
+            VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+            pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            pipelineInfo.stage.module = module;
+            pipelineInfo.stage.pName = "main";
+            pipelineInfo.layout = changedCopyLayout;
+            Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &changedCopyPipeline), "vkCreateComputePipelines changed copy");
+            context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+            changedCopyState = 1;
+        } catch (const std::exception& error) {
+            if (module != VK_NULL_HANDLE) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+            std::fprintf(stderr, "[gpu] staged write-backs copy their whole ranges: %s\n", error.what());
+        }
+    }
+    if (changedCopyState < 0) return false;
+    static const bool alwaysCopy = std::getenv("APS5_CHANGED_COPY_ALWAYS") != nullptr;
+    function(cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, changedCopyPipeline);
+    const auto perDispatch = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t{context.limits.maxComputeWorkGroupCount[0]} * GroupSize, std::numeric_limits<std::uint32_t>::max() - GroupSize));
+    for (std::uint32_t done = 0; done < dwords;) {
+        const auto count = std::min(dwords - done, perDispatch);
+        struct {
+            VkDeviceAddress result;
+            VkDeviceAddress snapshot;
+            VkDeviceAddress target;
+            VkDeviceAddress counter;
+            std::uint32_t count;
+            std::uint32_t always;
+        } parameters{result + VkDeviceAddress{done} * 4u, snapshot + VkDeviceAddress{done} * 4u, target + VkDeviceAddress{done} * 4u, counter, count, alwaysCopy ? 1u : 0u};
+        static_assert(sizeof(parameters) == PushBytes);
+        function(cmdPushConstants, "vkCmdPushConstants")(commands, changedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+        function(cmdDispatch, "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
+        done += count;
+    }
     return true;
 }
 
