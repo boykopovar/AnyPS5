@@ -783,7 +783,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
     }
 }
 
-Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer, std::shared_ptr<OwnedImage> owner) : context(context), owned(std::move(owner)) {
+Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType, std::uint32_t baseLayer, std::shared_ptr<OwnedImage> owner, std::uint32_t layerCount) : context(context), owned(std::move(owner)) {
     Require(owned == nullptr || (owned->image == depthImage && owned->context.device == context.device), "a depth sampled view must retain its own device and image");
     layout = VK_IMAGE_LAYOUT_GENERAL;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -792,7 +792,7 @@ Texture::Texture(const Context& context, VkImage depthImage, VkFormat depthForma
     viewInfo.format = depthFormat;
     viewFormat = depthFormat;
     viewInfo.components = components;
-    viewInfo.subresourceRange = {aspect, 0, 1, baseLayer, viewType == VK_IMAGE_VIEW_TYPE_2D ? 1u : VK_REMAINING_ARRAY_LAYERS};
+    viewInfo.subresourceRange = {aspect, 0, 1, baseLayer, viewType == VK_IMAGE_VIEW_TYPE_2D ? 1u : layerCount};
     Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView depth plane");
     viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
     if (viewType != VK_IMAGE_VIEW_TYPE_2D_ARRAY) return;
@@ -1537,8 +1537,9 @@ VkImageView StorageTexture::AttachmentView(VkFormat format, std::uint32_t mip, s
     Require(attachable, "storage image cannot be a color attachment");
     Require(mip < descriptor.mipCount, "attachment mip exceeds the storage image");
     const bool volume = descriptor.dimension == TextureDimension::k3D;
-    Require((depthSlice == 0 && layers == 1) || (volume && mip == 0 && layers != 0 && depthSlice + layers - 1u <= descriptor.depthOrLastArray), "attachment slice is outside the storage image");
-    Require(layer == 0 || (!volume && descriptor.dimension == TextureDimension::k2DArray && descriptor.baseArray + layer <= descriptor.depthOrLastArray), "attachment layer is outside the storage image");
+    const bool array = !volume && descriptor.dimension == TextureDimension::k2DArray;
+    Require((depthSlice == 0 && layers == 1) || (volume && mip == 0 && layers != 0 && depthSlice + layers - 1u <= descriptor.depthOrLastArray) || (array && depthSlice == 0 && layers != 0), "attachment slice is outside the storage image");
+    Require((layer == 0 && layers == 1) || (volume && layer == 0) || (array && descriptor.baseArray + layer + layers - 1u <= descriptor.depthOrLastArray), "attachment layer is outside the storage image");
     const auto found = attachmentViews.find({format, mip, depthSlice, layers, layer});
     if (found != attachmentViews.end()) return found->second;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
@@ -3097,14 +3098,14 @@ void StorageTexture::MarkDirty() {
     markLayersPending(0, trackedLayers);
 }
 
-void StorageTexture::MarkSliceDirty(std::uint32_t slice) {
-    if (geometry.thick || geometry.imageLayers <= 1 || slice >= geometry.imageLayers || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) {
+void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
+    if (geometry.thick || geometry.imageLayers <= 1 || count == 0 || slice >= geometry.imageLayers || count > geometry.imageLayers - slice || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) {
         MarkDirty();
         return;
     }
     const auto begin = geometry.GuestLayerOffset(slice);
     const auto first = static_cast<std::uint32_t>(begin / trackedLayerBytes);
-    const auto last = static_cast<std::uint32_t>(std::min<std::uint64_t>((begin + geometry.layerBytes + trackedLayerBytes - 1) / trackedLayerBytes, trackedLayers));
+    const auto last = static_cast<std::uint32_t>(std::min<std::uint64_t>((begin + geometry.layerBytes * count + trackedLayerBytes - 1) / trackedLayerBytes, trackedLayers));
     if (first >= last) {
         MarkDirty();
         return;

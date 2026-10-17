@@ -84,6 +84,7 @@ struct DepthTarget {
     std::uint32_t pipeBankXor = 0;
     std::uint32_t firstSlice = 0;
     std::uint32_t lastSlice = 0;
+    std::uint32_t layers = 1;
     bool iterate256 = false;
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;

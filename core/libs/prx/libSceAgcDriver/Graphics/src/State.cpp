@@ -1186,12 +1186,20 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         result.renderLayers = result.color.layers;
         for (const auto& color : result.colors) Require(color.layers == result.renderLayers, "color targets with different layer counts are unsupported");
         if (result.renderLayers > 1) {
-            Require(!result.depth, "layered rendering with a depth target is unsupported");
             result.layerExports = read(cx, 0x207) & (1u << 18u);
+            if (result.depth) {
+                Require(result.depth->lastSlice >= result.depth->firstSlice && result.depth->lastSlice - result.depth->firstSlice + 1u == result.renderLayers, "layered rendering with a depth view of another slice count than its color views is unsupported");
+                result.depth->layers = result.renderLayers;
+            }
         }
         if (result.depth) result.renderExtent = {std::min(result.renderExtent.width, result.depth->extent.width), std::min(result.renderExtent.height, result.depth->extent.height)};
     } else if (result.depth) {
         result.renderExtent = result.depth->extent;
+        if ((read(cx, 0x207) & (1u << 18u)) != 0 && result.depth->lastSlice > result.depth->firstSlice) {
+            result.renderLayers = result.depth->lastSlice - result.depth->firstSlice + 1u;
+            result.layerExports = 1u << 18u;
+            result.depth->layers = result.renderLayers;
+        }
     } else {
         const auto screenBottomRight = read(cx, 0xd);
         APS5_LOG_OUT_DEBUG("No color target, screen BR register=0x%x", screenBottomRight);
@@ -1508,7 +1516,13 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     }
     if (!volume && lastSlice != slice) {
         const auto exports = find(cx, 0x207);
-        Require(exports == cx.end() || (exports->second & (1u << 18u)) == 0, "layered draws into a color view of several array slices are unsupported");
+        if (exports != cx.end() && (exports->second & (1u << 18u)) != 0) {
+            if (color.arrayLastSlice == 0) {
+                color.arrayLastSlice = lastSlice;
+                color.arraySlice = slice;
+            }
+            color.layers = lastSlice + 1u - slice;
+        }
     }
     color.extent = {((attrib2 >> 14u) & 0x3fffu) + 1u, (attrib2 & 0x3fffu) + 1u};
     color.elementBytes = decoded.elementBytes;

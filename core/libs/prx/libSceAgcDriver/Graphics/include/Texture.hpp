@@ -63,7 +63,7 @@ public:
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
     // CanCopyFrom says whether the two descriptors address the same surface compatibly.
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
-    Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, std::uint32_t baseLayer = 0, std::shared_ptr<OwnedImage> owner = {});
+    Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, std::uint32_t baseLayer = 0, std::shared_ptr<OwnedImage> owner = {}, std::uint32_t layerCount = VK_REMAINING_ARRAY_LAYERS);
     struct DepthCopyTag {};
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, DepthCopyTag);
     static VkFormat DepthCopyFormat(VkFormat colorFormat);
@@ -184,7 +184,7 @@ public:
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
-    void MarkSliceDirty(std::uint32_t slice);
+    void MarkSliceDirty(std::uint32_t slice, std::uint32_t count = 1);
     void Flush();
     bool Dirty() const;
     // Stores every pending image overlapping the range, except `except`; returns whether any was.

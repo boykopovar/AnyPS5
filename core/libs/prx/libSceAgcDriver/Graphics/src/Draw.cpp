@@ -1516,7 +1516,7 @@ struct Kept {
 // The completion side of a recorded draw: the kept objects, the record check, the lease outcome,
 // the GPU write notes, the copied-buffer write-back (listed in DrawCopiedWriters or run as a
 // completion action) and the targets marked dirty.
-void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::uint32_t> slices, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome) {
+void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::pair<std::uint32_t, std::uint32_t>> slices, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome) {
     auto kept = std::make_shared<Kept>();
     kept->resources = resources;
     kept->pipeline = std::move(pipeline);
@@ -1553,7 +1553,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     }
     for (std::size_t index = 0; index < residents.size(); ++index) {
         if (residents[index] == nullptr) continue;
-        if (index < slices.size()) residents[index]->MarkSliceDirty(slices[index]);
+        if (index < slices.size()) residents[index]->MarkSliceDirty(slices[index].first, slices[index].second);
         else residents[index]->MarkDirty();
     }
     for (const auto& resident : residents) {
@@ -1573,7 +1573,7 @@ struct RecordedDraw {
     std::shared_ptr<Framebuffer> framebuffer;
     std::span<const VkImageView> targetViews;
     std::vector<std::shared_ptr<StorageTexture>> targets;
-    std::vector<std::uint32_t> targetSlices;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> targetSlices;
     std::vector<std::shared_ptr<StorageTexture>> proxies;
     const IndirectRecord* indirect = nullptr;
     std::span<const ShaderResources::MovedBuffer> moved;
@@ -2029,7 +2029,11 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
                 if (color.arrayLastSlice != 0) {
                     Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
                     const auto array = ArraySurfaceForTarget(color);
-                    Require(color.surfaceAddress == color.arrayAddress + color.arraySlice * DescribeSurface(array).layerBytes, "the array image's layer pitch differs from the color view's slice offset");
+                    // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
+                    const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+                    const auto geometry = DescribeSurface(array);
+                    for (std::uint32_t slice = 0; slice <= color.arrayLastSlice; ++slice) Require(geometry.GuestLayerOffset(slice) == slice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
+                    Require(color.surfaceAddress == color.arrayAddress + color.arraySlice * sliceBytes, "the array image's layer pitch differs from the color view's slice offset");
                     auto resident = CachedStorageSurface(context, array);
                     Require(resident->Attachable(), "storage format cannot be a color attachment");
                     return resident;
@@ -2049,6 +2053,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         materializeCmaskClear(context, color, nullptr);
         Require(!color.mipTail || binding.gpuTiling, "rendering into a packed mip tail requires the GPU tiled fallback");
         Require(color.depth == 1, "rendering into a 3D color target needs the resident image of its surface");
+        Require(color.layers == 1, "layered rendering into a 2D array color target needs the resident image of its array");
         Require(color.arraySlice == 0 || !ColorTileModeIsXor(color.tileMode), "rendering into a slice of a 2D array color target with an XOR tile mode needs the resident image of its array");
         if (binding.gpuTiling) {
             binding.mip = color.mipTail ? ComputeColorTargetMipLayout(color.tileMode, color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount, color.mip) : ColorTargetMip(color, colorLayout);
@@ -2100,7 +2105,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             Require(!imageRead && !resources->ReadsImage(target.resident.get()) && !resources->ReadsOverlap(target.color.address, static_cast<std::size_t>(target.color.bytes)) && !inputOverlaps(target.color.address, target.color.bytes), "stencil replay refuses attachment feedback reads");
         }
         if (state.depth) {
-            const auto bytes = static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u;
+            const auto bytes = state.depth->layers == 1u ? static_cast<std::size_t>(state.depth->extent.width) * state.depth->extent.height * 4u : static_cast<std::size_t>(DepthSliceBytes(state.depth->extent, 4u) * state.depth->layers);
             Require(!resources->ReadsOverlap(state.depth->address, bytes) && !resources->ReadsOverlap(state.depth->stencilAddress, bytes) && !inputOverlaps(state.depth->address, bytes) && !inputOverlaps(state.depth->stencilAddress, bytes), "stencil replay refuses depth or stencil feedback reads");
             for (const auto& shader : shaders) {
                 for (const auto& binding : shader.program->bindings) {
@@ -2282,7 +2287,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         record.framebuffer = framebuffer;
         record.targetViews = targetViews;
         record.targets = owners;
-        for (const auto& binding : targets) record.targetSlices.push_back(binding.color.arraySlice);
+        for (const auto& binding : targets) record.targetSlices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
         for (const auto& binding : targets) {
             if (binding.proxied) record.proxies.push_back(binding.resident);
         }
@@ -2492,7 +2497,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);
     if (recorded) {
-        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::uint32_t> slices; for (const auto& binding : targets) slices.push_back(binding.color.arraySlice); return slices; }(), std::move(scratch), std::move(checkRecords), listed, completion, outcome);
+        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::pair<std::uint32_t, std::uint32_t>> slices; for (const auto& binding : targets) slices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u); return slices; }(), std::move(scratch), std::move(checkRecords), listed, completion, outcome);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
             // The wait the dispatch path makes for such work (source 3, "address-based"): the
@@ -2538,7 +2543,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (skipTargetWrite) break;
         if (binding.resident != nullptr) {
             // The results stay on the GPU until something reads the target's memory.
-            binding.resident->MarkSliceDirty(binding.color.arraySlice);
+            binding.resident->MarkSliceDirty(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u);
             continue;
         }
         if (binding.gpuTiling) GuestMemory::WriteChanged(binding.color.address, binding.tiled->Bytes(), binding.original);
@@ -2677,7 +2682,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.framebuffer = std::move(framebuffer);
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
-    for (const auto& color : state.colors) record.targetSlices.push_back(color.arraySlice);
+    for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
     record.pushBytes = &recipe.pushBytes;
     record.pushStages = recipe.pushStages;
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
