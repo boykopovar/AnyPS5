@@ -233,8 +233,17 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     }
     std::filesystem::path native;
     const bool module = (flags & (SCE_KERNEL_O_ACCMODE | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_RDONLY;
-    if (const int error = ResolvePathError_nid_no_patch(path, native, module, true)) return SceKernelError(error);
-    return OpenNative(native, flags, mode);
+    if (const int error = ResolvePathError_nid_no_patch(path, native, module, true)) {
+        const int result = SceKernelError(error);
+        APS5_LOG_ERR("open failed path=%s resolveError=%d result=0x%08X", path != nullptr ? path : "<null>", error, static_cast<unsigned>(result));
+        return result;
+    }
+    const int result = OpenNative(native, flags, mode);
+    if (result < 0) {
+        const auto resolved = native.u8string();
+        APS5_LOG_ERR("open failed path=%s resolvedPath=%s result=0x%08X", path != nullptr ? path : "<null>", reinterpret_cast<const char*>(resolved.c_str()), static_cast<unsigned>(result));
+    }
+    return result;
 }
 
 int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std::uint16_t mode) {
