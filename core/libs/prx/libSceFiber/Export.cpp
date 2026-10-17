@@ -167,6 +167,9 @@ Aps5FiberSwitchStack_nid_no_patch:
 Aps5FiberTrampoline_nid_no_patch:
     mov %r12, %rcx
     and $-16, %rsp
+    push $0
+    push $0
+    mov %rsp, %rbp
     sub $32, %rsp
     call Aps5FiberMain_nid_no_patch
     ud2
@@ -236,6 +239,9 @@ asm(".text\n"
     APS5_ASM_FUNCTION("Aps5FiberTrampoline_nid_no_patch") R"(
     mov %r12, %rdi
     and $-16, %rsp
+    push $0
+    push $0
+    mov %rsp, %rbp
     call )" APS5_ASM_SYMBOL("Aps5FiberMain_nid_no_patch") R"(
     ud2
 )" APS5_ASM_FUNCTION_END("Aps5FiberTrampoline_nid_no_patch"));
