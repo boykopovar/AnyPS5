@@ -43,6 +43,7 @@ VkClearColorValue fastClearColor(const ColorTarget& target) {
 template<typename Record>
 void recordCommands(const Context& context, Record&& record) {
     auto* recorder = Recorder::Active();
+    if (recorder != nullptr && recorder->Device() != context.device) recorder = nullptr;
     std::unique_ptr<CommandBatch> batch;
     if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
     record(recorder != nullptr ? recorder->Commands() : batch->Handle(), recorder);
