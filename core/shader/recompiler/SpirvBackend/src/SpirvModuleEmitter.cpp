@@ -611,7 +611,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
     const auto address = ctx.Arg(inst, 1);
     const bool patch = kind == TessellationAttribute::PatchOutput || kind == TessellationAttribute::PatchInput;
     const bool local = kind == TessellationAttribute::LocalOutput || kind == TessellationAttribute::ControlInput;
-    const auto stride = local ? state.program.Metadata().tessellationLocalStride : state.program.Metadata().tessellationControlStride;
+    const auto stride = local ? state.program.Metadata().tessellationLocalStride : kind == TessellationAttribute::ControlShared ? state.program.Metadata().tessellationSharedStride : state.program.Metadata().tessellationControlStride;
     const auto type = TypePointer(state, storage, TypeU32(state));
     const auto inPatch = [&](std::uint32_t vertex) {
         if (kind != TessellationAttribute::ControlInput) return vertex;
@@ -619,9 +619,10 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
         state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, vertex, ConstantU32(state, state.inputInfo.vertex->tess.inputControlPoints - 1u));
         return clamped;
     };
+    const bool sharedRead = kind == TessellationAttribute::ControlShared && inst.Opcode() == IrOpcode::GetTessellationAttribute;
     const auto* sum = inst.Argument(1);
     const auto* scaled = sum->Opcode() == IrOpcode::IAdd32 ? sum->Argument(0) : nullptr;
-    if (kind == TessellationAttribute::ControlInput && scaled != nullptr && sum->Argument(1)->HasImmediate() && scaled->Opcode() == IrOpcode::IMul32 && scaled->Argument(1)->HasImmediate() && scaled->Argument(1)->ImmediateU32() == stride) {
+    if ((kind == TessellationAttribute::ControlInput || sharedRead) && scaled != nullptr && sum->Argument(1)->HasImmediate() && scaled->Opcode() == IrOpcode::IMul32 && scaled->Argument(1)->HasImmediate() && scaled->Argument(1)->ImmediateU32() == stride) {
         const auto constant = sum->Argument(1)->ImmediateU32();
         const auto vertex = inPatch(EmitBinaryU32(state, spv::OpIAdd, ctx.Arg(*scaled, 0), ConstantU32(state, constant / stride)));
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, vertex, ConstantU32(state, constant % stride / 16u), ConstantU32(state, constant % stride % 16u / 4u));
@@ -633,7 +634,8 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
     if (kind == TessellationAttribute::LocalOutput || patch) {
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, attribute, component);
     } else {
-        const auto vertex = kind == TessellationAttribute::ControlOutput ? EmitLaneId(state) : inPatch(EmitBinaryU32(state, spv::OpUDiv, address, ConstantU32(state, stride)));
+        const bool own = kind == TessellationAttribute::ControlOutput || (kind == TessellationAttribute::ControlShared && !sharedRead);
+        const auto vertex = own ? EmitLaneId(state) : inPatch(EmitBinaryU32(state, spv::OpUDiv, address, ConstantU32(state, stride)));
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, vertex, attribute, component);
     }
     return pointer;
@@ -642,7 +644,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
 }
 
 void DefineTessellationInterfaces(SpirvEmitterState& state) {
-    std::array<bool, 9> used {};
+    std::array<bool, 10> used {};
     for (const IrBlock* block : state.program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() != IrOpcode::GetTessellationAttribute && inst->Opcode() != IrOpcode::SetTessellationAttribute) {
@@ -676,7 +678,7 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             type = array(TypeU32Vector(state, 4u), (state.program.Metadata().tessellationPatchStride + 15u) / 16u);
         } else {
             const bool local = kind == TessellationAttribute::LocalOutput || kind == TessellationAttribute::ControlInput;
-            const auto stride = local ? state.program.Metadata().tessellationLocalStride : state.program.Metadata().tessellationControlStride;
+            const auto stride = local ? state.program.Metadata().tessellationLocalStride : kind == TessellationAttribute::ControlShared ? state.program.Metadata().tessellationSharedStride : state.program.Metadata().tessellationControlStride;
             type = array(TypeU32Vector(state, 4u), (stride + 15u) / 16u);
             if (kind != TessellationAttribute::LocalOutput) {
                 type = array(type, local ? tess.inputControlPoints : tess.outputControlPoints);
@@ -692,7 +694,11 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             state.module.AddAnnotation(spv::OpDecorate, state.tessInnerVariable, spv::DecorationBuiltIn, spv::BuiltInTessLevelInner);
             state.module.AddAnnotation(spv::OpDecorate, state.tessInnerVariable, spv::DecorationPatch);
         } else {
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationLocation, patch ? (state.program.Metadata().tessellationControlStride + 15u) / 16u : 0u);
+            const auto controlLocations = (state.program.Metadata().tessellationControlStride + 15u) / 16u;
+            const bool patchUsed = used[static_cast<std::uint32_t>(TessellationAttribute::PatchOutput)] || used[static_cast<std::uint32_t>(TessellationAttribute::PatchInput)];
+            const auto patchLocations = patchUsed ? (state.program.Metadata().tessellationPatchStride + 15u) / 16u : 0u;
+            const auto location = patch ? controlLocations : kind == TessellationAttribute::ControlShared ? controlLocations + patchLocations : 0u;
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationLocation, location);
         }
         if (kind == TessellationAttribute::Factor || patch) {
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationPatch);

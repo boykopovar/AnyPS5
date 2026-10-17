@@ -188,6 +188,10 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
     const auto tessellationBase = [&entryIr](TessellationBaseKind kind) -> IrValue& {
         return entryIr.Emit(IrOpcode::TessellationBase, IrOpcodeType(IrOpcode::TessellationBase), {&entryIr.Constant(static_cast<std::uint32_t>(kind))});
     };
+    constexpr std::uint32_t MergedHullRecordBytes = 16u;
+    const auto mergedHullRecord = [&entryIr](IrValue& address) -> IrValue& {
+        return entryIr.Emit(IrOpcode::GetTessellationAttribute, IrOpcodeType(IrOpcode::GetTessellationAttribute), {&entryIr.Constant(static_cast<std::uint32_t>(TessellationAttribute::ControlInput)), &address, &entryIr.ConstantBool(true)});
+    };
 
     for (std::uint32_t index = 0; index < options.userDataCount; index++) {
         const auto reg = static_cast<ScalarReg>(options.userDataBaseRegister + index);
@@ -325,6 +329,13 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         setVector(static_cast<VectorReg>(2), drawIndex(StageInputKind::VertexIndex));
         setVector(static_cast<VectorReg>(3), tessellationBase(TessellationBaseKind::RelativeIndex));
         setVector(static_cast<VectorReg>(5), drawIndex(StageInputKind::InstanceIndex));
+        if (options.inputInfo.vertex->tess.mergedHull) {
+            const auto kind = static_cast<std::uint32_t>(TessellationAttribute::LocalOutput);
+            for (const auto [offset, index] : {std::pair{0u, StageInputKind::VertexIndex}, std::pair{4u, StageInputKind::InstanceIndex}}) {
+                static_cast<void>(entryIr.Emit(IrOpcode::SetTessellationAttribute, IrType::Void, {&entryIr.Constant(kind), &entryIr.Constant(offset), &builtin(index), &entryIr.ConstantBool(true)}));
+            }
+            program.Metadata().tessellationLocalStride = MergedHullRecordBytes;
+        }
     } else if (options.stage == ShaderStageKind::TessellationControl) {
         const auto& tess = options.inputInfo.vertex->tess;
         entryIr.SetScalarReg(static_cast<ScalarReg>(2), tessellationBase(TessellationBaseKind::OffChip));
@@ -332,6 +343,14 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.Constant(0x81010000u | tess.inputControlPoints | (tess.outputControlPoints << 8u)));
         setVector(static_cast<VectorReg>(0), builtin(StageInputKind::PrimitiveId));
         setVector(static_cast<VectorReg>(1), entryIr.BitwiseOr(entryIr.ShiftLeftLogical(builtin(StageInputKind::InvocationId), entryIr.Constant(8u)), tessellationBase(TessellationBaseKind::RelativeIndex)));
+        if (tess.mergedHull) {
+            IrValue& point = entryIr.Emit(IrOpcode::UMin32, IrOpcodeType(IrOpcode::UMin32), {&builtin(StageInputKind::InvocationId), &entryIr.Constant(tess.inputControlPoints - 1u)});
+            IrValue& record = entryIr.IMul(point, entryIr.Constant(MergedHullRecordBytes));
+            setVector(static_cast<VectorReg>(2), mergedHullRecord(record));
+            setVector(static_cast<VectorReg>(3), entryIr.IAdd(entryIr.IMul(tessellationBase(TessellationBaseKind::RelativeIndex), entryIr.Constant(tess.inputControlPoints)), builtin(StageInputKind::InvocationId)));
+            setVector(static_cast<VectorReg>(5), mergedHullRecord(entryIr.IAdd(record, entryIr.Constant(4u))));
+            program.Metadata().tessellationLocalStride = MergedHullRecordBytes;
+        }
     } else if (options.stage == ShaderStageKind::TessellationEvaluation) {
         entryIr.SetScalarReg(static_cast<ScalarReg>(3), entryIr.Constant(64u));
         entryIr.SetScalarReg(static_cast<ScalarReg>(4), tessellationBase(TessellationBaseKind::OffChip));
