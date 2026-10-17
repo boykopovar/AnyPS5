@@ -596,7 +596,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     const std::unique_ptr<AVPacket, decltype(freePacket)> packetOwner(packet, freePacket);
     if (decoder.parameterSets.size() + unit->size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
     if (av_new_packet(packet, static_cast<int>(decoder.parameterSets.size() + unit->size())) < 0) throw std::runtime_error("Videodec2: cannot allocate packet data");
-    std::memcpy(packet->data, decoder.parameterSets.data(), decoder.parameterSets.size());
+    if (!decoder.parameterSets.empty()) std::memcpy(packet->data, decoder.parameterSets.data(), decoder.parameterSets.size());
     std::memcpy(packet->data + decoder.parameterSets.size(), unit->data(), unit->size());
     decoder.parameterSets.clear();
     packet->pts = decoder.nextKey;
