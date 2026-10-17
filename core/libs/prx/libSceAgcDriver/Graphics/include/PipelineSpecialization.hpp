@@ -50,7 +50,12 @@ public:
         }
     }
 
-    explicit PipelineSpecialization(const ShaderRecompiler::RecompileResult& shader) {
+    explicit PipelineSpecialization(const ShaderRecompiler::RecompileResult& shader, std::uint32_t layerBase = 0u, std::uint32_t layerCount = 0xffffffffu) {
+        values = shader.specialization;
+        for (auto& constant : values) {
+            if (constant.id == ShaderRecompiler::PipelineSpecialization::MeshLayerBase) constant.value = layerBase;
+            if (constant.id == ShaderRecompiler::PipelineSpecialization::MeshLayerCount) constant.value = layerCount;
+        }
         Validate(shader);
         entries.reserve(shader.specialization.size());
         for (std::size_t index = 0; index < shader.specialization.size(); ++index) {
@@ -61,12 +66,13 @@ public:
         info.mapEntryCount = static_cast<std::uint32_t>(entries.size());
         info.pMapEntries = entries.data();
         info.dataSize = shader.specialization.size() * sizeof(ShaderRecompiler::PipelineSpecializationConstant);
-        info.pData = shader.specialization.data();
+        info.pData = values.data();
     }
 
     [[nodiscard]] const VkSpecializationInfo* Info() const { return entries.empty() ? nullptr : &info; }
 
 private:
+    std::vector<ShaderRecompiler::PipelineSpecializationConstant> values;
     std::vector<VkSpecializationMapEntry> entries;
     VkSpecializationInfo info{};
 };

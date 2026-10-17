@@ -610,6 +610,7 @@ struct CompiledShaderArtifact {
     BarycentricEmulation barycentricEmulation;
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
+    bool layerReplaySafe = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
