@@ -44,11 +44,7 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::size_t TexturesOffset = 65536;
 constexpr std::size_t BlockBytes = TexturesOffset + 2 * 65536;
 constexpr std::size_t UnimportableBytes = BlockBytes - 256;
-#ifdef _WIN32
-constexpr std::uint64_t CpuWriteResolutions = 2;
-#else
 constexpr std::uint64_t CpuWriteResolutions = 1;
-#endif
 
 alignas(256) std::array<std::uint32_t, Records> Keys{};
 alignas(256) std::array<std::uint32_t, Lanes * 4> Output{};

@@ -640,6 +640,32 @@ void CheckCollectBoundaries() {
 }
 }
 
+#ifdef _WIN32
+void CheckWidenedCollectBesideUncommittedPages() {
+    constexpr std::size_t reserved = std::size_t{1} << 30;
+    constexpr std::size_t committed = Block - 4 * 4096;
+    void* range = GuestArena::GuestArenaAllocate_nid_postfix(reserved, Block);
+    struct Cleanup {
+        void* range;
+        ~Cleanup() { GuestArena::GuestArenaRelease_nid_postfix(range, reserved); }
+    } cleanup{range};
+    void* memory = static_cast<std::uint8_t*>(range) + reserved - Block;
+    MEMORY_BASIC_INFORMATION tail{};
+    Require(VirtualQuery(static_cast<std::uint8_t*>(memory) + committed, &tail, sizeof(tail)) == sizeof(tail) && tail.State == MEM_RESERVE, "the test block's tail is not a placeholder");
+    GuestArena::GuestArenaCommit_nid_postfix(memory, committed, PAGE_READWRITE, committed);
+    Require(VirtualQuery(static_cast<std::uint8_t*>(memory) + committed, &tail, sizeof(tail)) == sizeof(tail) && tail.State == MEM_RESERVE, "committing the test block's head committed its tail");
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 17, committed);
+    BumpCollectEpoch();
+    const auto before = CollectWrites(base + 4096, 64);
+    Require(before != 0, "a collect beside uncommitted pages of its block failed");
+    bytes[4096 + 8] = 19;
+    BumpCollectEpoch();
+    Require(CollectWrites(base + 4096, 64) > before && !UnchangedSince(base + 4096, 64, before), "a collect beside uncommitted pages missed a CPU write");
+}
+#endif
+
 void CheckImportWindow() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -943,6 +969,9 @@ int main() {
 #endif
         CheckVersionRanges();
         CheckCollectBoundaries();
+#ifdef _WIN32
+        CheckWidenedCollectBesideUncommittedPages();
+#endif
         CheckImportWindow();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();

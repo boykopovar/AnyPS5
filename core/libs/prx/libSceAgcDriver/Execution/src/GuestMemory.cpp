@@ -1218,7 +1218,8 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
         }
     }
     const TimedAccess timed(CounterCollect, bytes);
-#ifndef _WIN32
+    const auto requestedFirst = first;
+    const auto requestedStop = stop;
     if (useMemo && threadCollectEpoch != 0 && bytes <= WriteBlockBytes) {
         const auto begin = first & ~(WriteBlockBytes - 1);
         const auto end = (stop + WriteBlockBytes - 1) & ~(WriteBlockBytes - 1);
@@ -1227,8 +1228,18 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             stop = end;
         }
     }
+    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) {
+#ifdef _WIN32
+        // Windows coverage does not know which pages of a block are committed or inaccessible, and a
+        // walk refuses such a range before it collects anything: walk the requested pages instead.
+        if (first == requestedFirst && stop == requestedStop) return 0;
+        first = requestedFirst;
+        stop = requestedStop;
+        if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+#else
+        return 0;
 #endif
-    if (!walkWrites(tracker, first, stop, StampKind::Cpu)) return 0;
+    }
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
