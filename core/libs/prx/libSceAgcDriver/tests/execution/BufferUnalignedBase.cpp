@@ -42,7 +42,10 @@ alignas(256) constexpr std::array<std::uint32_t, 11> PairCode{
     0xe0741000, 0x80020302, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 3> AtomicCode{0xe0c81000, 0x80000100, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 10> AtomicCode{
+    0x34040082, 0x4a040408, 0x4a020081, 0xe0c85000, 0x80000102, 0xbf8c3f70, 0x34060082, 0xe0701000,
+    0x80010103, 0xbf810000,
+};
 
 constexpr std::array<std::uint32_t, 7> FormattedLoadCode(std::uint32_t format, std::uint32_t offset) {
     return {0x34020082, 0xe8001000u | (format << 19u) | offset, 0x80000201, 0xbf8c0000, 0xe0701000, 0x80010201, 0xbf810000};
@@ -218,20 +221,32 @@ void RunFormattedStore(AgcDriver::VulkanDevice& device, std::uint32_t viewOffset
     }
 }
 
-void RunAtomic(AgcDriver::VulkanDevice& device) {
+void DispatchAtomic(AgcDriver::VulkanDevice& device, std::uint32_t misalignment, std::uint32_t addend) {
+    Output.fill(Fill);
     std::vector<std::uint32_t> userData;
-    const auto descriptor = BufferDescriptor(reinterpret_cast<std::uint8_t*>(Output.data()) + 2u, 64u);
-    userData.insert(userData.end(), descriptor.begin(), descriptor.end());
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(AtomicCode.data()), std::as_bytes(std::span(AtomicCode))}}};
-    try {
-        const auto result = ShaderRecompiler::Recompile(Request(AtomicCode, userData, device.Target(), memory));
-        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(AtomicCode.data()));
-        device.WaitIdle();
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("buffer atomic on a V# whose base is not DWORD aligned") != std::string::npos, std::string("buffer unaligned base atomic: unexpected error: ") + error.what());
-        return;
+    for (const auto& descriptor : {BufferDescriptor(reinterpret_cast<std::uint8_t*>(Output.data()) + misalignment, (Lanes + 2u) * 4u), BufferDescriptor(Output.data() + 128, Lanes * 4u)}) {
+        userData.insert(userData.end(), descriptor.begin(), descriptor.end());
     }
-    throw std::runtime_error("buffer unaligned base atomic: an atomic on a V# off a DWORD boundary ran");
+    userData.push_back(addend);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(AtomicCode.data()), std::as_bytes(std::span(AtomicCode))}}};
+    const auto result = ShaderRecompiler::Recompile(Request(AtomicCode, userData, device.Target(), memory));
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(AtomicCode.data()));
+    device.WaitIdle();
+}
+
+void RunAtomic(AgcDriver::VulkanDevice& device, std::uint32_t misalignment) {
+    DispatchAtomic(device, misalignment, 4u - misalignment);
+    const auto run = "buffer unaligned base atomic, view +" + std::to_string(misalignment) + ", offset lane * 4 + " + std::to_string(4u - misalignment);
+    for (std::uint32_t word = 0; word < 128u; ++word) {
+        const auto expected = word >= 1u && word <= Lanes ? Fill + word : Fill;
+        Require(Output[word] == expected, run + ": dword " + std::to_string(word) + " is " + Hex(Output[word]) + ", expected " + Hex(expected));
+    }
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) Require(Output[128u + lane] == Fill, run + ": lane " + std::to_string(lane) + " returned " + Hex(Output[128u + lane]) + ", expected " + Hex(Fill));
+}
+
+void RunAtomicFault(AgcDriver::VulkanDevice& device) {
+    DispatchAtomic(device, 2u, 0u);
+    for (std::uint32_t word = 0; word < Output.size(); ++word) Require(Output[word] == Fill, "buffer unaligned base atomic, view +2, offset lane * 4: dword " + std::to_string(word) + " is " + Hex(Output[word]) + ", but an atomic off a DWORD boundary faults the wave on RDNA2");
 }
 
 }
@@ -246,7 +261,7 @@ int main() {
         RunPair(*device, 1);
         RunPair(*device, 2);
         RunPair(*device, 3);
-        RunAtomic(*device);
+        for (const auto view : {1u, 2u, 3u}) RunAtomic(*device, view);
         RunFormattedLoad(*device, 2);
         RunFormattedStore(*device, 2);
         for (const auto view : {1u, 3u}) {
@@ -257,6 +272,7 @@ int main() {
             RunFormattedFault(*device, "tbuffer_load_format_x 32_UINT", Load32Code, view);
             RunFormattedFault(*device, "tbuffer_load_format_x 16_16_UINT", Load16_16Code, view);
         }
+        RunAtomicFault(*device);
         std::puts("buffer unaligned base tests passed");
         return 0;
     } catch (const std::exception& error) {

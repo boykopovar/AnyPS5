@@ -1196,7 +1196,8 @@ void verifyBindingPlanSelection() {
         throw std::runtime_error("binding plan accepted an unsupported buffer alignment");
     };
     snapshot.buffers[0].dwords[0] |= 2u;
-    rejectsAlignment("buffer atomic on a V# whose base is not DWORD aligned");
+    const auto atomicPlan = builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot);
+    require(std::ranges::any_of(atomicPlan.specialization, [](const PipelineSpecializationConstant& constant) { return constant.id == PipelineSpecialization::BufferBase + 3u && constant.value == 2u; }), "a buffer atomic V# off a DWORD boundary did not record its misalignment");
     snapshot.buffers[0].dwords[0] &= ~3u;
     info.buffers[1].typedAlignment = 2u;
     snapshot.buffers[1].dwords[0] |= 2u;
