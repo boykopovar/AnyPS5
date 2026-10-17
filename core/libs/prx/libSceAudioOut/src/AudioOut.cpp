@@ -12,6 +12,12 @@
 
 #include "SDL.h"
 #include "SceTypes.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -111,6 +117,17 @@ static std::mutex g_mutex;
 static std::array<std::mutex, PORTS_MAX> g_outputMutexes;
 static Port g_ports[PORTS_MAX];
 static bool g_sdlInitialized = false;
+
+static void raiseOutputThreadPriority() {
+#ifdef _WIN32
+    thread_local bool raised = false;
+    if (raised) return;
+    if (SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST) == 0) {
+        throw std::runtime_error("sceAudioOutOutput: SetThreadPriority failed (error " + std::to_string(GetLastError()) + ")");
+    }
+    raised = true;
+#endif
+}
 
 static bool ensureSdlAudio() {
     if (g_sdlInitialized) {
@@ -364,6 +381,7 @@ int APS5_VABI sceAudioOutClose(int handle) {
 int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
     const AudioOutCall call;
     if (handle <= 0 || handle > PORTS_MAX) return -2144993277;
+    raiseOutputThreadPriority();
     std::lock_guard<std::mutex> outputLock(g_outputMutexes[handle - 1]);
     std::unique_lock<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
@@ -393,6 +411,7 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
         if (param[i].handle <= 0 || param[i].handle > PORTS_MAX) return -2144993277;
         selected[param[i].handle - 1] = true;
     }
+    raiseOutputThreadPriority();
     std::array<std::unique_lock<std::mutex>, PORTS_MAX> outputLocks;
     for (int index = 0; index < PORTS_MAX; ++index) {
         if (selected[index]) outputLocks[index] = std::unique_lock<std::mutex>(g_outputMutexes[index]);
