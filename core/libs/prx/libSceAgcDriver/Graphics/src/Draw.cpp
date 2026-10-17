@@ -2242,6 +2242,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
         masked->colors[index].format = AttachmentProxyFormat(context, state.colors[index].format);
+    }
+    const auto renderOverride = HotReload::GetRenderStateOverrideExport();
     const State& baseState = masked.has_value() ? *masked : state;
     State overriddenState = baseState;
     bool hasOverrides = false;
@@ -2257,7 +2259,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         overriddenState.depthWrite = true;
         hasOverrides = true;
     }
-    if (renderOverride.forceOpaqueAlpha) {
+    if (renderOverride.disableBlend) {
         for (auto& blend : overriddenState.blends) {
             blend.blendEnable = VK_FALSE;
         }

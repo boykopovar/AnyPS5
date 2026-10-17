@@ -22,7 +22,7 @@ struct RenderStateOverride {
     bool disableCull = false;
     bool disableDepthTest = false;
     bool forceDepthWrite = false;
-    bool forceOpaqueAlpha = false;
+    bool disableBlend = false;
     bool fallbackMagenta = false;
     bool disableDcc = false;
 };

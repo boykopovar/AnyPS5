@@ -15,6 +15,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <elf.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -245,6 +246,51 @@ std::size_t LoadPatchModules(const std::filesystem::path& patchDirectory) {
 #else
         void* hPatch = dlopen(shadowPath.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (hPatch == nullptr) continue;
+
+        FILE* elfFile = std::fopen(shadowPath.string().c_str(), "rb");
+        if (elfFile != nullptr) {
+            Elf64_Ehdr ehdr;
+            if (std::fread(&ehdr, 1, sizeof(ehdr), elfFile) == sizeof(ehdr) &&
+                ehdr.e_ident[EI_MAG0] == ELFMAG0 && ehdr.e_ident[EI_MAG1] == ELFMAG1 &&
+                ehdr.e_ident[EI_MAG2] == ELFMAG2 && ehdr.e_ident[EI_MAG3] == ELFMAG3 &&
+                ehdr.e_ident[EI_CLASS] == ELFCLASS64 && ehdr.e_shoff != 0 && ehdr.e_shentsize == sizeof(Elf64_Shdr)) {
+                std::vector<Elf64_Shdr> shdrs(ehdr.e_shnum);
+                std::fseek(elfFile, ehdr.e_shoff, SEEK_SET);
+                if (std::fread(shdrs.data(), sizeof(Elf64_Shdr), ehdr.e_shnum, elfFile) == ehdr.e_shnum) {
+                    for (const auto& shdr : shdrs) {
+                        if (shdr.sh_type == SHT_DYNSYM && shdr.sh_link < shdrs.size()) {
+                            const auto& strShdr = shdrs[shdr.sh_link];
+                            std::vector<char> strtab(strShdr.sh_size);
+                            std::fseek(elfFile, strShdr.sh_offset, SEEK_SET);
+                            if (std::fread(strtab.data(), 1, strShdr.sh_size, elfFile) != strShdr.sh_size) continue;
+
+                            const std::size_t numSyms = shdr.sh_size / sizeof(Elf64_Sym);
+                            std::vector<Elf64_Sym> syms(numSyms);
+                            std::fseek(elfFile, shdr.sh_offset, SEEK_SET);
+                            if (std::fread(syms.data(), sizeof(Elf64_Sym), numSyms, elfFile) != numSyms) continue;
+
+                            for (const auto& sym : syms) {
+                                if (sym.st_name >= strtab.size() || sym.st_shndx == SHN_UNDEF) continue;
+                                const unsigned char bind = ELF64_ST_BIND(sym.st_info);
+                                if (bind != STB_GLOBAL && bind != STB_WEAK) continue;
+                                const char* symName = strtab.data() + sym.st_name;
+                                if (*symName == '\0') continue;
+
+                                void* patchFunc = dlsym(hPatch, symName);
+                                void* baseFunc = dlsym(RTLD_DEFAULT, symName);
+                                if (baseFunc != nullptr && patchFunc != nullptr && baseFunc != patchFunc) {
+                                    if (PatchFunction(baseFunc, patchFunc)) {
+                                        std::fprintf(stderr, "[HOT-RELOAD] Patched export %s: %p -> %p\n", symName, baseFunc, patchFunc);
+                                        ++patchedTotal;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::fclose(elfFile);
+        }
 #endif
 
         std::filesystem::remove(entry.path(), ec);
@@ -388,7 +434,7 @@ bool CheckRenderStateReload() {
             else if (std::strcmp(trimKey, "disable_cull") == 0) newState.disableCull = (val != 0);
             else if (std::strcmp(trimKey, "disable_depth_test") == 0) newState.disableDepthTest = (val != 0);
             else if (std::strcmp(trimKey, "force_depth_write") == 0) newState.forceDepthWrite = (val != 0);
-            else if (std::strcmp(trimKey, "force_opaque_alpha") == 0) newState.forceOpaqueAlpha = (val != 0);
+            else if (std::strcmp(trimKey, "disable_blend") == 0 || std::strcmp(trimKey, "disable_blending") == 0 || std::strcmp(trimKey, "force_opaque_alpha") == 0) newState.disableBlend = (val != 0);
             else if (std::strcmp(trimKey, "fallback_magenta") == 0) newState.fallbackMagenta = (val != 0);
             else if (std::strcmp(trimKey, "disable_dcc") == 0) newState.disableDcc = (val != 0);
         }
@@ -396,8 +442,8 @@ bool CheckRenderStateReload() {
     std::fclose(file);
     SetRenderStateOverride(newState);
     std::fprintf(stderr, "[HOT-RELOAD] Render state updated from %s:\n", overridePath.string().c_str());
-    std::fprintf(stderr, "  force_wireframe=%d disable_cull=%d disable_depth_test=%d force_depth_write=%d force_opaque_alpha=%d fallback_magenta=%d disable_dcc=%d\n",
-                 newState.forceWireframe, newState.disableCull, newState.disableDepthTest, newState.forceDepthWrite, newState.forceOpaqueAlpha, newState.fallbackMagenta, newState.disableDcc);
+    std::fprintf(stderr, "  force_wireframe=%d disable_cull=%d disable_depth_test=%d force_depth_write=%d disable_blend=%d fallback_magenta=%d disable_dcc=%d\n",
+                 newState.forceWireframe, newState.disableCull, newState.disableDepthTest, newState.forceDepthWrite, newState.disableBlend, newState.fallbackMagenta, newState.disableDcc);
     return true;
 }
 

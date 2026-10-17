@@ -78,7 +78,7 @@ int main() {
     overrideState.disableCull = true;
     overrideState.disableDepthTest = true;
     overrideState.forceDepthWrite = true;
-    overrideState.forceOpaqueAlpha = true;
+    overrideState.disableBlend = true;
     overrideState.fallbackMagenta = true;
     overrideState.disableDcc = true;
     HotReload::SetRenderStateOverride(overrideState);
@@ -88,7 +88,7 @@ int main() {
     if (!currentOverride.disableCull) std::abort();
     if (!currentOverride.disableDepthTest) std::abort();
     if (!currentOverride.forceDepthWrite) std::abort();
-    if (!currentOverride.forceOpaqueAlpha) std::abort();
+    if (!currentOverride.disableBlend) std::abort();
     if (!currentOverride.fallbackMagenta) std::abort();
     if (!currentOverride.disableDcc) std::abort();
 
@@ -100,6 +100,7 @@ int main() {
         std::fprintf(f, "force_wireframe=0\n");
         std::fprintf(f, "disable_cull=1\n");
         std::fprintf(f, "disable_depth_test=0\n");
+        std::fprintf(f, "disable_blend=1\n");
         std::fprintf(f, "fallback_magenta=1\n");
         std::fclose(f);
     }
@@ -109,9 +110,16 @@ int main() {
     if (fileOverride.forceWireframe) std::abort();
     if (!fileOverride.disableCull) std::abort();
     if (fileOverride.disableDepthTest) std::abort();
+    if (!fileOverride.disableBlend) std::abort();
     if (!fileOverride.fallbackMagenta) std::abort();
 
     std::filesystem::remove(testRenderStateFile);
+
+    std::uint8_t buffer[8] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+    const std::uint8_t rawBytes[4] = {0x01, 0x02, 0x03, 0x04};
+    if (!HotReload::ApplyRawPatch(buffer, rawBytes, sizeof(rawBytes))) std::abort();
+    if (buffer[0] != 0x01 || buffer[1] != 0x02 || buffer[2] != 0x03 || buffer[3] != 0x04) std::abort();
+    if (buffer[4] != 0x90) std::abort();
 
     return 0;
 }
