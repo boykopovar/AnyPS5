@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "VulkanTestDevice.hpp"
 #include "../AllocationFailure.hpp"
+#include "../SlabReturn.hpp"
 #include <SDL_loadso.h>
 #include <array>
 #include <cstdint>
@@ -469,7 +470,7 @@ void ExactSizes(const Context& context) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         std::unique_ptr<Device> device;
         try {
@@ -479,7 +480,27 @@ int main() {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
-        SlabMetadataFailures(device->GetContext());
+        const auto& context = device->GetContext();
+        const bool onlyReturns = argc == 2;
+        const bool hostOnly = onlyReturns && std::strcmp(argv[1], "--slab-return-host") == 0;
+        Require(!onlyReturns || hostOnly || std::strcmp(argv[1], "--slab-return-device") == 0, "unknown slab return test mode");
+        bool host = false;
+        bool local = false;
+        for (std::uint32_t type = 0; type < context.memory.memoryTypeCount; ++type) {
+            const auto flags = context.memory.memoryTypes[type].propertyFlags;
+            const bool isHost = (flags & HostMemory) == HostMemory;
+            const bool isLocal = (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0;
+            if ((!host && isHost && (!onlyReturns || hostOnly)) || (!local && isLocal && (!onlyReturns || !hostOnly))) {
+                const auto before = LiveBytes;
+                AgcDriver::Tests::SlabReturnWithoutAllocation(context, type);
+                Require(LiveBytes == before && AllocationErrors == 0, "slab returns leaked or invalidly freed native Vulkan memory");
+                host |= isHost;
+                local |= isLocal;
+            }
+        }
+        Require(onlyReturns ? (hostOnly ? host : local) : host, "no requested memory type for the slab return test");
+        if (onlyReturns) return 0;
+        SlabMetadataFailures(context);
         RobustReadPastEnd(device->GetContext());
         ExactSizes(device->GetContext());
         device.reset();
