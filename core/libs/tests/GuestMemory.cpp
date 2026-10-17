@@ -2390,6 +2390,44 @@ static void CheckMappingCostFollowsTheMappingCount() {
 }
 #endif
 
+// The overlap queries must start at the range that reaches into the queried address,
+// not at the first range whose base is above it: a query landing inside a registered
+// range is the case these two functions exist to report.
+static void CheckOverlapQueriesSeeRangesStartingBelowTheAddress() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t many = 4096;
+    constexpr std::uintptr_t first = 0x7f0000000000ull;
+    for (std::size_t index = 0; index < many; ++index) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(reinterpret_cast<void*>(first + page * 2 * index), page, true, true, false);
+    }
+    const auto last = first + page * 2 * (many - 1);
+    const auto inside = reinterpret_cast<const void*>(last + page / 2);
+    const auto atBase = reinterpret_cast<const void*>(last);
+    const auto before = reinterpret_cast<const void*>(last - page / 2);
+    Require(GuestAllocations::GuestAllocationsOverlaps_nid_postfix(nullptr, inside, 1));
+    Require(GuestAllocations::GuestAllocationsOverlaps_nid_postfix(nullptr, atBase, 1));
+    Require(!GuestAllocations::GuestAllocationsOverlaps_nid_postfix(nullptr, before, 1));
+    bool refused = false;
+    try {
+        GuestAllocations::GuestAllocationsRequireAvailable_nid_postfix(nullptr, inside, 1);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    Require(refused);
+    refused = false;
+    try {
+        GuestAllocations::GuestAllocationsRequireAvailable_nid_postfix(nullptr, before, 1);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    Require(!refused);
+    for (std::size_t index = 0; index < many; ++index) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(reinterpret_cast<const void*>(first + page * 2 * index));
+    }
+}
+
 static void CheckVirtualQuerySplitFlexibleRanges() {
     constexpr std::size_t page = 0x4000;
     void* mapped = nullptr;
@@ -2638,6 +2676,7 @@ int main(int argc, char** argv) {
     }
     Require(argc == 1);
     CheckAvailableDirectMemoryIsLargestFreeBlock();
+    CheckOverlapQueriesSeeRangesStartingBelowTheAddress();
     CheckVirtualQuerySplitFlexibleRanges();
     CheckVirtualQueryForNonReadableGuestRange();
     CheckReleaseFlexibleMemory();
