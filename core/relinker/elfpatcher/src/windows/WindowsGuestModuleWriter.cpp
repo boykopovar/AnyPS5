@@ -71,7 +71,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 } else {
                     if (symbol.Name.empty()) throw Domain::RelinkerException("Empty guest import", target);
                     image.WritePointer(target, 0);
-                    runtime.Imports.push_back({symbol.Name, rva, addend, 1, symbol.Library, type == 7 || (type == 6 && (symbol.Info & 15) == 2)});
+                    runtime.Imports.push_back({symbol.Name, rva, addend, 1, symbol.Library, type == 7 || (type == 6 && (symbol.Info & 15) == 2), (symbol.Info >> 4) == 2});
                 }
             } else throw Domain::RelinkerException("Unsupported Windows guest relocation " + std::to_string(type), target);
         }
