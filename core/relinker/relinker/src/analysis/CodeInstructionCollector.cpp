@@ -12,6 +12,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -104,6 +105,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             auto begin = header.MappedAddress;
             for (const auto& interpreter : headers)
                 if (interpreter.Type == 3 && interpreter.MappedAddress >= begin && interpreter.MappedAddress < end) begin = interpreter.MappedAddress + std::min(interpreter.FileSize, end - interpreter.MappedAddress);
+            const std::string_view loaderPath("/libexec/ld-elf.so.1", 21);
+            if (begin == header.MappedAddress && end - begin > loaderPath.size() && std::equal(loaderPath.begin(), loaderPath.end(), segment.begin())) begin += loaderPath.size();
             header.Offset += begin - header.MappedAddress;
             header.MappedAddress = begin;
             header.FileSize = end - begin;
