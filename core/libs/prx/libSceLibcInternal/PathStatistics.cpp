@@ -10,6 +10,12 @@
 #else
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include "prx/libSceLibcInternal/include/Statvfs.hpp"
+#include <cstring>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#endif
 
 struct LibcStatvfs;
 extern "C" int APS5_VABI fstatvfs_nid_postfix(int, LibcStatvfs*);
@@ -38,6 +44,32 @@ int HostError(int error) {
     }
 }
 
+#ifdef __APPLE__
+int PathVolume(const std::filesystem::path& path, bool directory, LibcStatvfs* output) {
+    struct statvfs host{};
+    if (::statvfs(path.c_str(), &host) != 0) return Fail(HostError(errno));
+    if (directory) {
+        struct stat file{};
+        if (::stat(path.c_str(), &file) != 0) return Fail(HostError(errno));
+        if (!S_ISDIR(file.st_mode)) return Fail(20);
+    }
+    if (output == nullptr) return Fail(14);
+    KernelStatfs volume{};
+    if (host.f_flag & ST_RDONLY) volume.f_flags |= 0x1;
+    if (host.f_flag & ST_NOSUID) volume.f_flags |= 0x8;
+    volume.f_bsize = host.f_frsize != 0 ? host.f_frsize : host.f_bsize;
+    volume.f_iosize = host.f_bsize;
+    volume.f_blocks = host.f_blocks;
+    volume.f_bfree = host.f_bfree;
+    volume.f_bavail = static_cast<std::int64_t>(host.f_bavail);
+    volume.f_files = host.f_files;
+    volume.f_ffree = static_cast<std::int64_t>(host.f_favail);
+    volume.f_namemax = static_cast<std::uint32_t>(host.f_namemax);
+    const LibcStatvfs result = StatvfsFromStatfs(volume);
+    std::memcpy(output, &result, sizeof(result));
+    return 0;
+}
+#else
 struct Descriptor {
     int value;
     ~Descriptor() {
@@ -104,6 +136,7 @@ int OpenMetadata(const std::filesystem::path& path, bool directory) {
     return descriptor < 0 ? Fail(HostError(errno)) : descriptor;
 #endif
 }
+#endif
 }
 
 extern "C" int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* output) {
@@ -114,9 +147,15 @@ extern "C" int APS5_VABI statvfs_nid_postfix(const char* path, LibcStatvfs* outp
     const bool directory = last == '/' || last == '\\' || FinalPathComponentIsDot_nid_no_patch(path);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return Fail(error);
+#ifdef __APPLE__
+    if (PathVolume(native, directory, output) != 0) return -1;
+    errno = saved;
+    return 0;
+#else
     const int descriptor = OpenMetadata(native, directory);
     if (descriptor < 0) return -1;
     const Descriptor owner{descriptor};
     errno = saved;
     return fstatvfs_nid_postfix(descriptor, output);
+#endif
 }

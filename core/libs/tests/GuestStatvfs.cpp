@@ -64,7 +64,12 @@ static std::size_t OpenHandles() {
     Require(GetProcessHandleCount(GetCurrentProcess(), &count) != 0);
     return count;
 #else
-    return static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator("/proc/self/fd"),
+#ifdef __APPLE__
+    const std::filesystem::path descriptors = "/dev/fd";
+#else
+    const std::filesystem::path descriptors = "/proc/self/fd";
+#endif
+    return static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator(descriptors),
         std::filesystem::directory_iterator{}));
 #endif
 }
