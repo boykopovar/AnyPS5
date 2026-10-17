@@ -79,6 +79,30 @@ class OracleCacheTests(unittest.TestCase):
 
 
 class InputRowsTests(unittest.TestCase):
+    def test_cli_reports_invalid_input_before_tool_lookup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body, rows = Path(tmp) / "body.s", Path(tmp) / "rows.txt"
+            body.write_text("s_nop 0", encoding="utf-8")
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [part for name, value in MODES.items()
+                     for part in ["--" + name.replace("_", "-"), str(value)]]
+            for contents in (None, b"not a number\n", b"1 2 3\n", b"-1 0 0 0\n", b"4294967296 0 0 0\n", b"\xff"):
+                with self.subTest(contents=contents):
+                    rows.unlink(missing_ok=True)
+                    if contents is not None:
+                        rows.write_bytes(contents)
+                    with patch("sys.argv", argv), patch.object(hw_oracle, "assemble") as assemble, \
+                            patch.object(hw_oracle, "oracle") as oracle, \
+                            contextlib.redirect_stdout(io.StringIO()) as output, \
+                            contextlib.redirect_stderr(io.StringIO()) as errors, \
+                            self.assertRaises(SystemExit) as exited:
+                        hw_oracle.main()
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn("error:", errors.getvalue())
+                    self.assertEqual(output.getvalue(), "")
+                    assemble.assert_not_called()
+                    oracle.assert_not_called()
+
     def test_successful_dispatch_without_output_cannot_reuse_previous_results(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = Path(directory) / "runner.py"
@@ -257,8 +281,9 @@ class JsonReportTests(unittest.TestCase):
         self.rows.write_text("0x100000000 0 0 0\n", encoding="utf-8")
         output = io.StringIO()
         with patch.object(hw_oracle, "target", side_effect=AssertionError("target lookup")) as target:
-            with self.assertRaisesRegex(ValueError, "row 1"):
+            with self.assertRaises(SystemExit) as exited:
                 self.cli("--json", output=output)
+            self.assertEqual(exited.exception.code, 2)
             target.assert_not_called()
         self.assertEqual(output.getvalue(), "")
 
