@@ -58,6 +58,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -7587,6 +7588,33 @@ int pipelineCacheFileTests(const Device& device) {
     {
         PipelineCache reloaded(context, properties);
         Require(holds(reloaded.Handle(), 1), "an invalid cache file was not replaced by the saving object's pipelines");
+    }
+    {
+        PipelineCache busy(context, properties);
+        build(busy.Handle(), 0);
+        std::promise<void> held;
+        std::promise<void> release;
+        std::thread creation([&] {
+            auto use = busy.Synchronization().LockForPipelineUse();
+            held.set_value();
+            release.get_future().wait();
+        });
+        held.get_future().wait();
+        auto saving = std::async(std::launch::async, [&] { busy.SaveUnlessBusy(); });
+        const bool saveReturned = saving.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+        bool otherCreationProceeded = false;
+        if (saveReturned) {
+            auto other = std::async(std::launch::async, [&] { auto use = busy.Synchronization().LockForPipelineUse(); });
+            otherCreationProceeded = other.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+            release.set_value();
+            other.wait();
+        } else {
+            release.set_value();
+        }
+        creation.join();
+        saving.wait();
+        Require(saveReturned, "a periodic pipeline cache save waited for a pipeline creation to finish");
+        Require(otherCreationProceeded, "a pipeline creation waited behind a periodic pipeline cache save");
     }
     std::cout << "Pipeline cache file merge tests passed\n";
     return 0;

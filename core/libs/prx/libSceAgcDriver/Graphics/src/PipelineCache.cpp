@@ -80,7 +80,7 @@ PipelineCache::~PipelineCache() {
         }
         wake.notify_all();
         saver.join();
-        save(true);
+        save(true, true);
     }
     context.Function<PFN_vkDestroyPipelineCache>("vkDestroyPipelineCache")(context.device, cache, nullptr);
 }
@@ -164,12 +164,14 @@ void PipelineCache::load(std::vector<std::byte>& initialData) {
     std::fprintf(stderr, "[pipeline-cache] loaded %.1f KiB from %s\n", static_cast<double>(initialData.size()) / 1024.0, path.string().c_str());
 }
 
-void PipelineCache::save(bool final) {
+void PipelineCache::save(bool final, bool waitForPipelines) {
     std::lock_guard pathLock(pathMutex(path));
     const auto getData = context.Function<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
+    const auto snapshot = [&] { return waitForPipelines ? synchronization.LockForSnapshot() : synchronization.TryLockForSnapshot(); };
     std::size_t liveBytes = 0;
     {
-        auto synchronizationLock = synchronization.LockForSnapshot();
+        auto synchronizationLock = snapshot();
+        if (!synchronizationLock.owns_lock()) return;
         if (getData(context.device, cache, &liveBytes, nullptr) != VK_SUCCESS || liveBytes == 0) return;
     }
     const auto onDisk = readHeader();
@@ -210,7 +212,8 @@ void PipelineCache::save(bool final) {
         }
     }
     if (merged != VK_NULL_HANDLE) {
-        auto synchronizationLock = synchronization.LockForSnapshot();
+        auto synchronizationLock = snapshot();
+        if (!synchronizationLock.owns_lock()) return;
         const auto result = context.Function<PFN_vkMergePipelineCaches>("vkMergePipelineCaches")(context.device, merged, 1, &cache);
         if (result != VK_SUCCESS) {
             std::fprintf(stderr, "[pipeline-cache] cannot merge into %s (Vulkan result %d); not saving over it\n", path.string().c_str(), static_cast<int>(result));
@@ -221,7 +224,8 @@ void PipelineCache::save(bool final) {
     std::size_t size = 0;
     std::vector<std::byte> file;
     {
-        auto synchronizationLock = source == cache ? synchronization.LockForSnapshot() : PipelineCacheSynchronization::SnapshotLock{};
+        auto synchronizationLock = source == cache ? snapshot() : PipelineCacheSynchronization::SnapshotLock{};
+        if (source == cache && !synchronizationLock.owns_lock()) return;
         if (getData(context.device, source, &size, nullptr) != VK_SUCCESS || size == 0) return;
         if (merged != VK_NULL_HANDLE && size == disk.header.dataBytes) {
             settle(disk.header);
@@ -248,14 +252,18 @@ void PipelineCache::save(bool final) {
 }
 
 void PipelineCache::SaveNow() {
-    save(false);
+    save(false, true);
+}
+
+void PipelineCache::SaveUnlessBusy() {
+    save(false, false);
 }
 
 void PipelineCache::run() {
     std::unique_lock lock(mutex);
     while (!wake.wait_for(lock, std::chrono::seconds(SaveIntervalSeconds), [&] { return stopping; })) {
         lock.unlock();
-        save(false);
+        save(false, false);
         lock.lock();
     }
 }
