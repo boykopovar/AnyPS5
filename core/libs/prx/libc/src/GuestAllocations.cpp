@@ -36,8 +36,8 @@ struct Registry {
     std::map<std::uint64_t, std::shared_ptr<const Range>> ranges;
     bool mainImageRegistered = false;
     std::map<std::uintptr_t, std::uintptr_t> registeredImages;
-    std::weak_ptr<const Lease::Ranges> readableLease;
-    std::weak_ptr<const Lease::Ranges> allLease;
+    std::shared_ptr<const Lease::Ranges> readableLease;
+    std::shared_ptr<const Lease::Ranges> allLease;
 };
 
 Registry& registry() {
@@ -606,7 +606,7 @@ void GuestAllocationsSetUnmapObserver_nid_postfix(void (*callback)(std::uintptr_
 
 Lease GuestAllocationsAcquire_nid_postfix() {
     std::lock_guard lock(registry().mutex);
-    if (auto shared = registry().readableLease.lock()) return Lease(std::move(shared));
+    if (auto shared = registry().readableLease) return Lease(std::move(shared));
     auto ranges = std::make_shared<Lease::Ranges>();
     for (const auto& [address, range] : registry().ranges) {
         if (range->readable && range->bytes != 0) ranges->push_back(range);
@@ -633,7 +633,7 @@ std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t a
 
 Lease GuestAllocationsAcquireAll_nid_postfix() {
     std::lock_guard lock(registry().mutex);
-    if (auto shared = registry().allLease.lock()) return Lease(std::move(shared));
+    if (auto shared = registry().allLease) return Lease(std::move(shared));
     auto ranges = std::make_shared<Lease::Ranges>();
     ranges->reserve(registry().ranges.size());
     for (const auto& [address, range] : registry().ranges) {

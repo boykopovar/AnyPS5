@@ -316,7 +316,7 @@ void failedImportRemapTests(const Context& context, const BdaTestAccess& access)
         access.limitMemory(0);
         const auto attempts = access.allocationAttempts();
         Require(HostImportFor(importing, address, 2 * piece) == nullptr && access.allocationAttempts() == attempts + 1, "host import failure was not exercised");
-        Require(owner.use_count() == 1, "a failed import pins its owner");
+        Require(owner.use_count() == 2, "a failed import pins its owner beyond the registry and its kept lease snapshot");
         Require(HostImportFor(importing, address, 2 * piece) == nullptr && access.allocationAttempts() == attempts + 1, "an unchanged failed import was retried");
         add(3);
         Require(HostImportFor(importing, address, 2 * piece) == nullptr && access.allocationAttempts() == attempts + 1, "an unrelated mapping retried a failed import");
