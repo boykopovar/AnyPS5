@@ -16,6 +16,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuneLocale.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
@@ -238,6 +239,15 @@ if(BUILD_TESTING)
     set_tests_properties(guest_std_execute_once PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_std_execute_once PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_math_exact_tests ${LIBS_INCLUDE_DIR}/tests/GuestMathExact.cpp)
+    target_include_directories(guest_math_exact_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_math_exact_tests PRIVATE libc)
+    configure_windows_unwind(guest_math_exact_tests)
+    add_test(NAME guest_math_exact COMMAND guest_math_exact_tests)
+    if(WIN32)
+        set_tests_properties(guest_math_exact PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_libc_threads_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibcThreads.cpp)
