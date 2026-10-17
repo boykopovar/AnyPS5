@@ -41,6 +41,26 @@ class LibraryPublicationTests(unittest.TestCase):
         report = json.loads(self.manifest.read_text(encoding="utf-8"))
         self.assertTrue(all(asset["expandedBytes"] == 4096 for asset in report["platforms"].values()))
 
+    def test_file_ancestors_are_rejected_before_publication(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for entries in (("libs/nested", "libs/nested/libc.prx"),
+                        ("libs/NESTED/libc.prx", "libs/nested")):
+            with self.subTest(entries=entries):
+                invalid = library_zip([(name, b"content") for name in entries])
+                with self.assertRaisesRegex(ValueError, "file is also used as a directory"):
+                    self.publish(invalid, valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+
+    def test_explicit_and_implicit_archive_directories_are_valid(self):
+        for entries in ([('libs/sub/libc.prx', b'content')],
+                        [('libs/sub/', b''), ('libs/sub/libc.prx', b'content')]):
+            with self.subTest(entries=entries):
+                payload = library_zip(entries)
+                self.publish(payload, payload)
+                self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
