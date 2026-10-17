@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -62,7 +63,7 @@ struct PthreadCondattrPrivate {
 };
 
 struct PthreadCondPrivate {
-    TimedWait::Condition _cv;
+    std::shared_ptr<TimedWait::Condition> _cv = std::make_shared<TimedWait::Condition>();
     int _clockid = 0;
 };
 
