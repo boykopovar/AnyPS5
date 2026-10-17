@@ -1,0 +1,11 @@
+{
+  "PPSA01153": {"name": "OliSe Player", "relink": ["--trap-sdk-syscall-stubs"]},
+  "PPSA68091": {"name": "Ruffle Flash", "relink": ["--registry"], "fixed_base": "0x400000"},
+  "PPSA85300": {"name": "VLC", "relink": ["--registry"], "fixed_base": "0x400000"},
+  "PPSA97358": {"name": "XPSemu", "relink": ["--registry"], "fixed_base": "0x400000"},
+  "PPSA99004": {"name": "ProsperoAI", "relink": ["--trap-sdk-syscall-stubs"]},
+  "PPSA99169": {"name": "RetroArch", "executables": ["picker/picker.bin"]},
+  "PPSA99203": {"name": "PS5SX2", "relink": ["--trap-sdk-syscall-stubs"]},
+  "PPSA99288": {"name": "Nuvio Max'd", "relink": ["--trap-sdk-syscall-stubs"]},
+  "PPSA99360": {"name": "PS5CEMU-HAR", "relink": ["--trap-sdk-syscall-stubs"]}
+}
