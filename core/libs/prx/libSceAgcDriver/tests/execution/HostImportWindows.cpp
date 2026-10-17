@@ -9,6 +9,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 #include <array>
 #include <cstdint>
@@ -40,14 +42,18 @@ std::string Hex(std::uint64_t value) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(std::uint64_t size) : bytes(size) {
+    explicit GuestBlock(std::uint64_t size, std::uint64_t committedBytes = 0) : bytes(size), committed(committedBytes == 0 ? size : committedBytes) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS));
+        Require(block != nullptr && VirtualAlloc(block, committed, MEM_COMMIT, PAGE_READWRITE) != nullptr, "host import windows: cannot commit guest memory");
 #else
         block = static_cast<std::uint8_t*>(std::aligned_alloc(GuestAlignment, bytes));
 #endif
         Require(block != nullptr, "host import windows: cannot allocate a guest block of " + Hex(bytes));
-        std::memset(block, 0, bytes);
+#ifndef _WIN32
+        if (committed < bytes) Require(mprotect(block + committed, bytes - committed, PROT_NONE) == 0, "host import windows: cannot protect uncommitted guest memory");
+#endif
+        std::memset(block, 0, committed);
         GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
@@ -56,6 +62,7 @@ public:
 #ifdef _WIN32
         VirtualFree(block, 0, MEM_RELEASE);
 #else
+        if (committed < bytes) mprotect(block + committed, bytes - committed, PROT_READ | PROT_WRITE);
         std::free(block);
 #endif
     }
@@ -69,6 +76,7 @@ public:
 private:
     std::uint8_t* block = nullptr;
     std::uint64_t bytes = 0;
+    std::uint64_t committed = 0;
 };
 
 enum class Outcome : std::uint8_t { NoDevice, NoImport, Passed };
@@ -124,6 +132,21 @@ Outcome WindowsFollowTheirRange() {
     return Outcome::Passed;
 }
 
+Outcome PartlyCommittedWindow() {
+    GuestBlock guest(BlockBytes, GuestAlignment);
+    auto device = OpenVulkanTestDevice();
+    if (!device) return Outcome::NoDevice;
+    Require(!AgcDriver::GuestMemory::DescribeCommitted(guest.Address(), WindowBytes).whole, "host import windows: the partial window has no inaccessible tail");
+    Require(Fill(*device, guest.Address()), "host import windows: cannot fill the committed prefix");
+    const auto probe = Probe(*device);
+    Require(Graphics::HostImportCovers(probe, guest.Address(), ProbeBytes), "host import windows: a committed prefix fell back to copies because of an inaccessible tail");
+    std::array<std::uint32_t, 4> actual{};
+    std::memcpy(actual.data(), guest.Data(), sizeof(actual));
+    Require(actual == std::array<std::uint32_t, 4>{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u}, "host import windows: the imported committed prefix lost its GPU stores");
+    Graphics::ClearHostImports(device->Device());
+    return Outcome::Passed;
+}
+
 }
 
 int main() {
@@ -136,6 +159,7 @@ int main() {
         }
         const auto windows = WindowsFollowTheirRange();
         Require(windows == Outcome::Passed, "host import windows: the device stopped importing guest memory between two scenarios");
+        Require(PartlyCommittedWindow() == Outcome::Passed, "host import windows: the partial window lost its device");
         std::puts("host import windows tests passed");
         return 0;
     } catch (const std::exception& error) {
