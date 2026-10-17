@@ -39,7 +39,8 @@ public:
                 const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
                 const auto fde = encoded(position, tableEncoding, segment.MappedAddress);
                 if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize) throw RelinkerException("Strict filter: EH frame table exceeds segment", position);
-                result.push_back(readFde(begin, fde));
+                auto region = readFde(begin, fde);
+                if (region.End != region.Begin) result.push_back(std::move(region));
             }
         }
         return result;
@@ -211,7 +212,7 @@ private:
         const auto cie = readCie(cieField - cieOffset);
         const auto begin = encoded(position, cie.PointerEncoding);
         const auto size = encoded(position, cie.PointerEncoding & 0x0F);
-        if (begin != expectedBegin || size == 0 || size > std::numeric_limits<VirtualAddress>::max() - begin)
+        if (begin != expectedBegin || size > std::numeric_limits<VirtualAddress>::max() - begin)
             throw RelinkerException("Strict filter: inconsistent FDE function range", address);
         StrictCodeRegion region{begin, begin + size, {}};
         if (cie.Personality != 0) region.ExtraTargets.push_back(cie.Personality);

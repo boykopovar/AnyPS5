@@ -22,17 +22,8 @@ add_library(atrac9 STATIC EXCLUDE_FROM_ALL
 target_include_directories(atrac9 PRIVATE ${LIBATRAC9_DIR})
 set_target_properties(atrac9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(libSceAjm.native SHARED EXCLUDE_FROM_ALL
-        ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Ajm.cpp
-)
-
-target_include_directories(libSceAjm.native PRIVATE
-        ${LIBS_INCLUDE_DIR}
-        ${LIBATRAC9_DIR}
-)
-target_link_libraries(libSceAjm.native PRIVATE atrac9 ffmpeg libc libkernel)
-configure_windows_unwind(libSceAjm.native)
+include(${CMAKE_CURRENT_SOURCE_DIR}/AjmLibrary.cmake)
+add_sce_ajm_library(libSceAjm.native)
 
 if(BUILD_TESTING)
     add_test_executable(atrac9_gradient_tests tests/Atrac9Gradient.c ${LIBATRAC9_DIR}/bit_reader.c)

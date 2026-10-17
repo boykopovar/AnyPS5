@@ -13,6 +13,8 @@ PT_SCE_DYNLIBDATA = 0x61000000
 PT_SCE_VERSION = 0x6FFFFF01
 FUNCTION = 0x200
 FUNCTION_SIZE = 0x10
+EARLY_FUNCTION = 0x160
+PLT_BEFORE_CODE = 0x180
 GOT = 0xA00
 EH_FRAME_HEADER = 0x800
 EH_FRAME = 0x840
@@ -22,10 +24,13 @@ OVERLAPPING = bytes.fromhex("b8 64 c3 90 90 72 fa c3")
 UNSUPPORTED_TLS = bytes.fromhex("64 2d 65 6c 66 2e c3")
 
 
-def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False, data_pointer=False, gap_entry=False):
-    plt = FUNCTION + FUNCTION_SIZE + gap
+def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False, data_pointer=False, gap_entry=False,
+            plt_at=None, early_function=False, function_tls=False):
+    plt = FUNCTION + FUNCTION_SIZE + gap if plt_at is None else plt_at
     entry = FUNCTION + FUNCTION_SIZE if gap_entry else FUNCTION
-    data = plt + 0x20
+    data = plt + 0x20 if plt > FUNCTION else FUNCTION + FUNCTION_SIZE
+    functions = [(EARLY_FUNCTION, FUNCTION_SIZE)] if early_function else []
+    functions.append((FUNCTION, FUNCTION_SIZE))
     interpreter = FUNCTION - len(INTERPRETER)
     image = bytearray(0x1000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
@@ -44,8 +49,9 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
     struct.pack_into("<IIQQQQQQ", image, 176,
                      *((PT_SCE_DYNLIBDATA, 0, 0, 0, 0, len(image), len(image), 1) if sce_block
                        else (PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)))
+    header_size = 12 + 8 * len(functions)
     struct.pack_into("<IIQQQQQQ", image, 232, PT_GNU_EH_FRAME, 4, EH_FRAME_HEADER, EH_FRAME_HEADER, EH_FRAME_HEADER,
-                     20, 20, 4)
+                     header_size, header_size, 4)
     if interpreter_pointer:
         struct.pack_into("<IIQQQQQQ", image, 288, PT_INTERP, 4, interpreter, interpreter, interpreter,
                          len(INTERPRETER), len(INTERPRETER), 1)
@@ -57,7 +63,8 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
     struct.pack_into("<IBBHQQ", image, 0x620 + 24, 8, 0x12, 0, 0, 0, 0)
     struct.pack_into("<QQq", image, 0x720, GOT + 24, (1 << 32) | 7, 0)
 
-    image[FUNCTION:FUNCTION + FUNCTION_SIZE] = b"\xc3" + b"\x90" * (FUNCTION_SIZE - 1)
+    for begin, size in functions:
+        image[begin:begin + size] = b"\xc3" + b"\x90" * (size - 1)
     image[FUNCTION + FUNCTION_SIZE:plt] = b"\x90" * gap
     image[plt:plt + 2] = b"\xff\x35"
     struct.pack_into("<i", image, plt + 2, GOT + plt_push_offset - (plt + 6))
@@ -77,16 +84,21 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
         image[data + 0x30:data + 0x30 + len(OVERLAPPING)] = OVERLAPPING
     if gap_entry:
         image[entry:entry + len(UNSUPPORTED_TLS)] = UNSUPPORTED_TLS
+    if function_tls:
+        image[FUNCTION:FUNCTION + len(UNSUPPORTED_TLS)] = UNSUPPORTED_TLS
 
     cie = EH_FRAME
     cie_body = b"\x00\x00\x00\x00\x01zR\x00\x01\x78\x10\x01\x1b\x00\x00\x00"
     struct.pack_into("<I", image, cie, len(cie_body))
     image[cie + 4:cie + 4 + len(cie_body)] = cie_body
     fde = cie + 4 + len(cie_body)
-    struct.pack_into("<IIiiB3x", image, fde, 16, fde + 4 - cie, FUNCTION - (fde + 8), FUNCTION_SIZE, 0)
-    struct.pack_into("<I", image, fde + 20, 0)
-    struct.pack_into("<BBBBiIii", image, EH_FRAME_HEADER, 1, 0x1B, 0x03, 0x3B,
-                     EH_FRAME - (EH_FRAME_HEADER + 4), 1, FUNCTION - EH_FRAME_HEADER, fde - EH_FRAME_HEADER)
+    struct.pack_into("<BBBBiI", image, EH_FRAME_HEADER, 1, 0x1B, 0x03, 0x3B,
+                     EH_FRAME - (EH_FRAME_HEADER + 4), len(functions))
+    for index, (begin, size) in enumerate(functions):
+        struct.pack_into("<IIiiB3x", image, fde, 16, fde + 4 - cie, begin - (fde + 8), size, 0)
+        struct.pack_into("<ii", image, EH_FRAME_HEADER + 12 + index * 8, begin - EH_FRAME_HEADER, fde - EH_FRAME_HEADER)
+        fde += 20
+    struct.pack_into("<I", image, fde, 0)
     return image, plt
 
 
@@ -100,7 +112,7 @@ def run(relinker, work, name, built, expected_error=None, target="windows"):
     if expected_error is None:
         assert result.returncode == 0 and output.exists(), (name, result.stdout, result.stderr)
         registry = json.loads((work / (name + ".registry.json")).read_text())
-        assert [entry["callSites"] for entry in registry] == [[hex(plt + 16)]], (name, registry)
+        assert [[site.lower() for site in entry["callSites"]] for entry in registry] == [[hex(plt + 16)]], (name, registry)
     else:
         assert result.returncode == 2 and expected_error in result.stderr and not output.exists(), (
             name, result.returncode, result.stdout, result.stderr)
@@ -113,7 +125,13 @@ def main():
         run(relinker, work, "sce-data-after-plt", fixture())
         run(relinker, work, "sce-code-between-function-and-plt", fixture(gap=0x40))
         run(relinker, work, "sce-plt-missing", fixture(plt_push_offset=0),
-            "PLT not found after the last unwind function")
+            "PLT not found before or after the unwind functions")
+        run(relinker, work, "sce-plt-ends-at-function", fixture(plt_at=FUNCTION - 0x20))
+        run(relinker, work, "sce-plt-starts-at-function-end",
+            fixture(plt_at=EARLY_FUNCTION + FUNCTION_SIZE, early_function=True))
+        run(relinker, work, "sce-plt-over-function", fixture(plt_at=FUNCTION), "PLT overlaps an unwind function")
+        run(relinker, work, "sce-plt-over-function-end", fixture(plt_at=FUNCTION + FUNCTION_SIZE - 8),
+            "PLT overlaps an unwind function")
         run(relinker, work, "sysv-data-after-plt", fixture(sce_block=False),
             "Cannot decode instruction")
         for target in ("windows", "macos"):
@@ -121,6 +139,15 @@ def main():
                 target=target)
             run(relinker, work, "sce-data-pointer-after-plt-" + target, fixture(data_pointer=True), target=target)
             run(relinker, work, "sce-code-before-plt-" + target, fixture(gap=0x40, gap_entry=True),
+                "Unsupported " + ("Windows" if target == "windows" else "macOS") + " guest TLS instruction", target)
+            run(relinker, work, "sce-plt-before-code-" + target, fixture(plt_at=PLT_BEFORE_CODE), target=target)
+            run(relinker, work, "sce-data-pointer-after-code-" + target, fixture(plt_at=PLT_BEFORE_CODE, data_pointer=True),
+                target=target)
+            run(relinker, work, "sce-entry-after-code-" + target, fixture(plt_at=PLT_BEFORE_CODE, gap_entry=True),
+                target=target)
+            run(relinker, work, "sce-function-before-plt-" + target,
+                fixture(plt_at=PLT_BEFORE_CODE, early_function=True), target=target)
+            run(relinker, work, "sce-code-after-plt-" + target, fixture(plt_at=PLT_BEFORE_CODE, function_tls=True),
                 "Unsupported " + ("Windows" if target == "windows" else "macOS") + " guest TLS instruction", target)
     print("SCE code extent tests passed")
 

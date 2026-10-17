@@ -19,6 +19,8 @@ int APS5_VABI dlclose_nid_postfix(void*);
 char* APS5_VABI dlerror_nid_postfix();
 int APS5_VABI _sceKernelRtldThreadAtexitIncrement_nid_postfix(const void*);
 int APS5_VABI _sceKernelRtldThreadAtexitDecrement_nid_postfix(const void*);
+int APS5_VABI sceKernelLoadStartModule(const char*, std::size_t, const void*, unsigned, const void*, int*);
+int APS5_VABI sceKernelStopUnloadModule(int, std::size_t, const void*, unsigned, const void*, int*);
 }
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (value) return;
@@ -95,6 +97,25 @@ int main(int argc, char** argv) {
     Require(dlclose_nid_postfix(redirected) == 0);
     std::filesystem::remove(guest);
     std::filesystem::remove(relinked);
+
+    const bool createdLibs = std::filesystem::create_directories("libs");
+    std::filesystem::copy_file(argv[1], "libs/anyps5-system-module-for-test.prx", std::filesystem::copy_options::overwrite_existing);
+    for (const char* path : {"/gkbHtXc3Wq/common/lib/anyps5-system-module-for-test.sprx", "/system/common/lib/anyps5-system-module-for-test.sprx"}) {
+        int started = -1;
+        const int system = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, &started);
+        Require(system > 0 && started == 0);
+        add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
+        Require(add && add(30, 12) == 42);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
+    }
+    Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-missing-system-module.sprx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
+    Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-system-module-for-test.prx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
+    std::filesystem::copy_file(argv[1], "anyps5-escape-module-for-test.prx", std::filesystem::copy_options::overwrite_existing);
+    Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/../anyps5-escape-module-for-test.sprx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
+    std::filesystem::remove("anyps5-escape-module-for-test.prx");
+    std::filesystem::remove("libs/anyps5-system-module-for-test.prx");
+    std::error_code notEmpty;
+    if (createdLibs) std::filesystem::remove("libs", notEmpty);
 
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));

@@ -29,7 +29,7 @@ bool Driver::matchesFillKernel(std::span<const std::uint32_t> code, const std::v
     static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
     static const bool patternEnabled = std::getenv("APS5_NO_PATTERN_FILL_HLE") == nullptr;
     if (!enabled || userData.size() < 8 || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1) return false;
-    if (patternEnabled && MatchesPatternFillKernel(code, userData, compute)) return true;
+    if (patternEnabled && (MatchesPatternFillKernel(code, userData, compute) || MatchesGcnPatternFillKernel(code, userData, compute))) return true;
     static constexpr std::array<std::uint32_t, 9> fillKernel{0xd7460004u, 0x04010c08u, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
     if (!matchesBufferPatternFillKernel(code) && (code.size() < fillKernel.size() || !std::equal(fillKernel.begin(), fillKernel.end(), code.begin()))) return false;
 
@@ -227,23 +227,25 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         std::fill(pattern.begin() + 1, pattern.end(), pattern[0]);
         base = memoryFill->address;
         bytes = memoryFill->bytes;
-    } else if (MatchesPatternFillKernel(code, userData, compute)) {
-        const auto range = DecodePatternFillRange(userData, packet);
+    } else if (MatchesPatternFillKernel(code, userData, compute) || MatchesGcnPatternFillKernel(code, userData, compute)) {
+        const bool gcn = MatchesGcnPatternFillKernel(code, userData, compute);
+        const auto range = gcn ? DecodeGcnPatternFillRange(userData, packet) : DecodePatternFillRange(userData, packet);
         if (!range) return false;
         if (range->invocations == 0) return true;
-        drainPendingInputWrites(queueId, {{range->control, 8}, {range->source, 4}});
+        drainPendingInputWrites(queueId, {{range->control, 8}, {range->source, 16}});
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Fill);
         inputLock.lock();
         recordLabelsForPacket(localDevice.get(), queueId);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->control), 8)) return false;
         std::array<std::uint32_t, 2> control;
         GuestMemory::Read(range->control, std::as_writable_bytes(std::span(control)), 4);
-        const auto count = range->UniformBytes(control[0], control[1]);
+        const auto count = gcn ? range->PatternBytes(control[0], control[1]) : range->UniformBytes(control[0], control[1]);
         if (!count) return false;
         if (*count == 0) return true;
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->source), 4)) return false;
-        GuestMemory::Read(range->source, std::as_writable_bytes(std::span(pattern).first(1)), 4);
-        std::fill(pattern.begin() + 1, pattern.end(), pattern[0]);
+        const auto period = control[1] + 1u;
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->source), period * 4u)) return false;
+        GuestMemory::Read(range->source, std::as_writable_bytes(std::span(pattern).first(period)), 4);
+        for (std::uint32_t word = period; word < pattern.size(); ++word) pattern[word] = pattern[word % period];
         base = range->destination;
         bytes = *count;
     } else {

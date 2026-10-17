@@ -136,7 +136,13 @@ int APS5_VABI sceVideoOutGetFlipStatus(int handle, VideoOutFlipStatus* status) t
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    *status = cfg->flipStatus;
+    if (cfg->ps4) {
+        const auto& current = cfg->flipStatus;
+        VideoOutFlipStatusPs4 legacy{current.count, current.processTime, 0, current.flipArg, 0, 0, current.gcQueueNum, current.flipPendingNum, current.currentBuffer, 0};
+        *reinterpret_cast<VideoOutFlipStatusPs4*>(status) = legacy;
+    } else {
+        *status = cfg->flipStatus;
+    }
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
@@ -152,7 +158,13 @@ int APS5_VABI sceVideoOutGetVblankStatus(int handle, VideoOutVblankStatus* statu
     }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
-    *status = cfg->vblankStatus;
+    if (cfg->ps4) {
+        const auto& current = cfg->vblankStatus;
+        VideoOutVblankStatusPs4 legacy{current.count, current.processTime, 0, current.flags};
+        *reinterpret_cast<VideoOutVblankStatusPs4*>(status) = legacy;
+    } else {
+        *status = cfg->vblankStatus;
+    }
     return 0;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();

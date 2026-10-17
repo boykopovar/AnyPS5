@@ -84,7 +84,7 @@ if(BUILD_TESTING)
     endforeach()
 
     set_target_properties(video_out_flip_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay unopened)
+    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay unopened ps4)
         if(flipMode STREQUAL "lifetime")
             add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests)
         else()

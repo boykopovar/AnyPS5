@@ -43,6 +43,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaOpcode.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaProgram.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaInstructionDecoder.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/GcnInstructionDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaScalarOpDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaVectorOpDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaMemoryOpDecoder.cpp
@@ -250,6 +251,11 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::MaterializeNanoseconds
             ResourceMaterializer::SpecializationNanoseconds
             RuntimeAbi::RequireVersion
+            GcnGuestShaders
+            SetGcnGuestShaders
+            GcnImageTilingIndex
+            GcnImagePitch
+            GcnImagePow2Pad
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
             SetDebugProbeActive

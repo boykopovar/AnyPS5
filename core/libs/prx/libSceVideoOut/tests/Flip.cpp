@@ -124,6 +124,75 @@ void testLifetime(bool reopen) {
     LibcRunShutdown_nid_postfix();
 }
 
+void testPs4Buffers() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    std::vector<std::byte> allocation(2 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBufferAttribute attribute{};
+    sceVideoOutSetBufferAttribute(&attribute, 0x80000000u, 1, 0, 64, 64, 64);
+    check(attribute.pixel_format == 0x80000000u && attribute.tiling_mode == 1 && attribute.aspect_ratio == 0 && attribute.width == 64 && attribute.height == 64 && attribute.pitch_in_pixel == 64 && attribute.option == 0 && attribute.reserved0 == 0 && attribute.reserved1 == 0, "PS4 buffer attribute fields are wrong");
+    void* const pair[2] = {storage.data(), storage.data() + 20480};
+    VideoOutBuffers second{pair[1], nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 ps5{};
+    ps5.width = 64;
+    ps5.height = 64;
+    ps5.tiling_mode = 1;
+    ps5.pitch_in_pixel = 64;
+    ps5.pixel_format = 0x8000000000000000ull;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers2(handle, 3, 5, &second, 1, &ps5, 0, nullptr); }).find("64 KiB alignment") != std::string::npos, "a PS5 buffer was accepted at 4 KiB alignment");
+    check(sceVideoOutRegisterBuffers(handle, 0, pair, 2, &attribute) == 0, "the first PS4 set index is not 0");
+    void* const third[1] = {storage.data() + 49152};
+    check(sceVideoOutRegisterBuffers(handle, 2, third, 1, &attribute) == 1, "the second PS4 set index is not 1");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].attribute.pixel_format == 0x8000000000000000ull && cfg->buffers[1].dataAddress == reinterpret_cast<uint64_t>(pair[1]) && cfg->buffers[2].groupIndex == 1, "PS4 buffers were registered wrongly");
+    }
+    VideoOutBufferAttribute2 tiledChange{};
+    tiledChange.width = 64;
+    tiledChange.height = 64;
+    tiledChange.pixel_format = 0x8000000000000000ull;
+    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
+    void* const odd[1] = {storage.data() + 65536 + 256};
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, odd, 1, &attribute); }).find("4 KiB alignment") != std::string::npos, "a PS4 buffer was accepted below 4 KiB alignment");
+    void* const fourth[1] = {storage.data() + 65536};
+    auto tiled = attribute;
+    tiled.tiling_mode = 0;
+    tiled.pitch_in_pixel = 0;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled); }).find("tiled display buffers are not implemented") != std::string::npos, "a PS4 tiled buffer was accepted");
+    auto tenBit = attribute;
+    tenBit.pixel_format = 0x88060000u;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tenBit); }).find("unsupported PS4 pixel format 0x88060000") != std::string::npos, "an unknown PS4 pixel format was accepted");
+    auto withOption = attribute;
+    withOption.option = 1;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &withOption); }).find("VIDEO_OUT_ERROR_INVALID_OPTION") != std::string::npos, "a PS4 buffer option was accepted");
+    std::array<std::uint8_t, sizeof(VideoOutFlipStatus)> raw{};
+    raw.fill(0xaa);
+    check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS4 flip status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 flip status overflowed its 64 bytes");
+    VideoOutFlipStatusPs4 flip;
+    std::memcpy(&flip, raw.data(), sizeof(flip));
+    check(flip.count == 0 && flip.flipArg == -1 && flip.currentBuffer == -1 && flip.flipPendingNum == 0, "the PS4 flip status fields are wrong");
+    raw.fill(0xaa);
+    check(sceVideoOutGetVblankStatus(handle, reinterpret_cast<VideoOutVblankStatus*>(raw.data())) == 0, "the PS4 vblank status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutVblankStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 vblank status overflowed its 32 bytes");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        check(sceVideoOutSubmitFlip(handle, 1, 1, 7) == 0, "the PS4 flip was not accepted");
+        std::unique_lock lock(cfg->mutex);
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == 1; }), "the PS4 flip did not complete");
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(cfg->flipStatus.flipArg == 7 && cfg->flipStatus.currentBuffer == 1, "the PS4 flip status is wrong");
+    }
+    sceVideoOutClose(handle);
+    const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    raw.fill(0xaa);
+    check(sceVideoOutGetFlipStatus(ps5Handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the PS5 flip status failed");
+    check(std::all_of(raw.begin() + sizeof(VideoOutFlipStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0; }), "the PS5 flip status did not fill its 128 bytes");
+    sceVideoOutClose(ps5Handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 void testDeferredBuffer() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
@@ -905,6 +974,7 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "overlay") testOverlay();
         else if (argc == 2 && std::string(argv[1]) == "deferred") testDeferredBuffer();
         else if (argc == 2 && std::string(argv[1]) == "unregistered") testUnregisteredBuffer();
+        else if (argc == 2 && std::string(argv[1]) == "ps4") testPs4Buffers();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;

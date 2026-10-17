@@ -1965,6 +1965,42 @@ struct VideoOutVblankStatus {
     std::uint8_t pad1[6] = {};
 };
 
+struct VideoOutBufferAttribute {
+    std::uint32_t pixel_format;
+    std::uint32_t tiling_mode;
+    std::uint32_t aspect_ratio;
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t pitch_in_pixel;
+    std::uint32_t option;
+    std::uint32_t reserved0;
+    std::uint64_t reserved1;
+};
+static_assert(sizeof(VideoOutBufferAttribute) == 40);
+
+struct VideoOutFlipStatusPs4 {
+    std::uint64_t count = 0;
+    std::uint64_t processTime = 0;
+    std::uint64_t tsc = 0;
+    std::int64_t flipArg = 0;
+    std::uint64_t submitTsc = 0;
+    std::uint64_t reserved0 = 0;
+    std::int32_t gcQueueNum = 0;
+    std::int32_t flipPendingNum = 0;
+    std::int32_t currentBuffer = 0;
+    std::uint32_t reserved1 = 0;
+};
+static_assert(sizeof(VideoOutFlipStatusPs4) == 64);
+
+struct VideoOutVblankStatusPs4 {
+    std::uint64_t count = 0;
+    std::uint64_t processTime = 0;
+    std::uint64_t tsc = 0;
+    std::uint8_t flags = 0;
+    std::uint8_t pad[7] = {};
+};
+static_assert(sizeof(VideoOutVblankStatusPs4) == 32);
+
 struct VideoOutOutputStatus {
     std::uint32_t resolution = 0;
     std::uint32_t dynamicRange = 0;

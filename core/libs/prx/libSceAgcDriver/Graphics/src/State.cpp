@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <bit>
 #include <bitset>
@@ -279,8 +280,9 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     Require(!depthClear || (zFormat != 0 && !depthReadOnly), "depth clear requires a writable depth plane");
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
-    depth.depthSwizzle = (read(cx, 0x010) >> 4u) & 31u;
-    depth.iterate256 = (read(cx, 0x010) & (1u << 20u)) != 0;
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    depth.depthSwizzle = gcn ? 0u : (read(cx, 0x010) >> 4u) & 31u;
+    depth.iterate256 = !gcn && (read(cx, 0x010) & (1u << 20u)) != 0;
     depth.firstSlice = view & 0x1fffu;
     depth.lastSlice = (view >> 13u) & 0x7ffu;
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
@@ -296,8 +298,13 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
             depth.htileVrsEncoding = (surface->second >> 19u) & 3u;
         }
     }
-    const auto size = read(cx, 0x007);
-    depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
+    if (gcn) {
+        const auto size = read(cx, 0x016);
+        depth.extent = {((size & 0x7ffu) + 1u) * 8u, (((size >> 11u) & 0x7ffu) + 1u) * 8u};
+    } else {
+        const auto size = read(cx, 0x007);
+        depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
+    }
     if (const auto slice = view & 0x1fffu; slice != 0) {
         if (depth.address != 0) depth.address += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, zFormat == 1 ? 2u : 4u);
         if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, 1u);
@@ -869,7 +876,16 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
     APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
-    if (path == ShaderPath::Vertex) {
+    if (path == ShaderPath::Vertex && ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0) {
+        validate(value == 0, "GCN vertex routing other than a plain VS is unsupported");
+        const auto unitStepRate = [&](std::uint32_t offset) {
+            const auto rate = find(queue.context, offset);
+            return rate == queue.context.end() || rate->second == 1u;
+        };
+        const auto components = (read(queue.shader, 0x4a, RegisterBank::Shader) >> 24u) & 3u;
+        validate(components == 0 || (unitStepRate(0x2a8) && (components == 1 || unitStepRate(0x2a9))), "GCN vertex instance step rates other than 1 are not implemented");
+        result.legacyVertex = true;
+    } else if (path == ShaderPath::Vertex) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
         validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation) {
@@ -1421,10 +1437,58 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dccAddress = color.dccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
+    if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
     return surface;
 }
 
+ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
+    const auto stride = slot * 0xfu;
+    ColorTarget color{};
+    color.slot = slot;
+    const auto info = read(cx, 0x31c + stride);
+    const auto number = (info >> 8u) & 7u;
+    const auto swap = (info >> 11u) & 3u;
+    const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
+    const auto attrib = read(cx, 0x31d + stride);
+    color.samples = 1u << ((attrib >> 12u) & 7u);
+    Require(color.samples == 1u, "multisampled GCN color targets are not implemented");
+    Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
+    Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
+    const auto view = read(cx, 0x31b + stride);
+    Require((view & 0x7ffu) == 0 && ((view >> 13u) & 0x7ffu) == 0, "GCN color array slices are not implemented");
+    const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
+    const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
+    color.extent = {pitch, sliceElements / pitch};
+    color.surfaceExtent = color.extent;
+    color.elementBytes = decoded.elementBytes;
+    switch (attrib & 0x1fu) {
+        case 8u: color.tileMode = ColorTileMode::Linear; break;
+        case 5u: case 13u: color.tileMode = ColorTileMode::GcnThin1D; break;
+        case 9u: color.tileMode = ColorTileMode::GcnDisplay1D; break;
+        case 10u: color.tileMode = ColorTileMode::GcnDisplay2D; break;
+        case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
+        default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
+    }
+    color.mipCount = 1;
+    color.surfaceAddress = static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u;
+    color.address = color.surfaceAddress;
+    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
+    color.bytes = layout.Bytes();
+    color.format = decoded.format;
+    color.componentMapping = decoded.componentMapping;
+    color.packing = decoded.packing;
+    for (std::uint32_t word = 0; word < 2; ++word) {
+        const auto clear = find(cx, 0x323 + word + stride);
+        color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
+    }
+    Require(((info >> 13u) & 1u) == 0, "PS4 color target fast clear (CMASK) is not implemented");
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, layout.Alignment(), true);
+    return color;
+}
+
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allowMultisampleDcc) {
+    if (ShaderRecompiler::GcnGuestShaders()) return DecodeGcnColorBuffer(cx, slot);
     const auto stride = slot * 0xfu;
     ColorTarget color{};
     color.slot = slot;

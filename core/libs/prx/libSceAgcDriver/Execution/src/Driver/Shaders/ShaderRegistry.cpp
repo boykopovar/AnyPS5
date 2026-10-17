@@ -606,7 +606,8 @@ std::vector<ShaderRecompiler::TableCallee> ReadTableCallees(const ShaderRecompil
 }
 
 ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::RecompileRequest& request) {
-    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute) return {};
+    const bool gcnVertex = ShaderRecompiler::GcnGuestShaders() && request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
+    if (request.shader.stage != ShaderRecompiler::ShaderStage::Compute && !gcnVertex) return {};
     const auto code = request.shader.code;
     if (std::none_of(code.begin(), code.end(), [](std::uint32_t word) { return (word & 0xff80ff00u) == 0xbe802100u; })) return {};
     const auto program = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);

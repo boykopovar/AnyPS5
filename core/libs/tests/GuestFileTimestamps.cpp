@@ -19,6 +19,7 @@ int APS5_VABI stat_nid_postfix(const char*, FileStat*);
 int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
 int APS5_VABI sceKernelFstat(int, FileStat*);
 std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
+std::int64_t APS5_VABI _fstat_nid_postfix(int, FileStat*);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI close_nid_postfix(int);
 int APS5_VABI pipe_nid_postfix(int*);
@@ -37,11 +38,12 @@ static bool Same(const KernelTimespec& actual, const KernelTimeval& expected) {
 }
 
 static void CheckTimes(const std::string& path, int fd, const KernelTimeval* expected) {
-    FileStat byPath{}, byFd{}, byKernel{};
+    FileStat byPath{}, byFd{}, byKernel{}, byAlias{};
     Require(stat_nid_postfix(path.c_str(), &byPath) == 0, "stat");
     Require(fstat_nid_disambig1_nid_postfix(fd, &byFd) == 0, "fstat");
     Require(sceKernelFstat(fd, &byKernel) == 0, "sceKernelFstat");
-    for (const auto* status : {&byPath, &byFd, &byKernel}) {
+    Require(_fstat_nid_postfix(fd, &byAlias) == 0, "_fstat");
+    for (const auto* status : {&byPath, &byFd, &byKernel, &byAlias}) {
         Require(Same(status->st_atim, expected[0]), "access time preserves microseconds");
         Require(Same(status->st_mtim, expected[1]), "modification time preserves microseconds");
     }

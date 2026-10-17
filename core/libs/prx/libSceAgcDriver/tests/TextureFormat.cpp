@@ -96,6 +96,25 @@ void packedChannelTests() {
     Require(TextureComponentChannel(133, VK_COMPONENT_SWIZZLE_ONE) == VK_COMPONENT_SWIZZLE_ONE && TextureComponentChannel(56, VK_COMPONENT_SWIZZLE_R) == VK_COMPONENT_SWIZZLE_R, "constant selectors and other formats must keep their channels");
 }
 
+void gcnBufferFormatTests() {
+    using ShaderRecompiler::IrBufferFormat;
+    const auto& formats = ShaderRecompiler::GcnBufferFormats();
+    const auto gcn = [&](std::uint32_t data, std::uint32_t number) { return static_cast<IrBufferFormat>(formats[(data << 3u) | number]); };
+    std::array<std::uint32_t, 78> seen{};
+    for (const auto format : formats) ++seen[format];
+    for (std::uint32_t format = 1; format < seen.size(); ++format) Require(seen[format] == 1u, "unified buffer format " + std::to_string(format) + " must come from exactly one GCN format pair");
+    Require(gcn(0u, 4u) == IrBufferFormat::Invalid && gcn(15u, 7u) == IrBufferFormat::Invalid, "GCN DATA_FORMAT 0 and 15 have no buffer form");
+    Require(gcn(1u, 7u) == IrBufferFormat::Invalid && gcn(4u, 0u) == IrBufferFormat::Invalid, "8-bit float and 32-bit UNORM have no buffer form");
+    Require(gcn(1u, 0u) == IrBufferFormat::Format8UNorm && gcn(2u, 7u) == IrBufferFormat::Format16Float, "8 and 16-bit pairs must map");
+    Require(gcn(4u, 4u) == IrBufferFormat::Format32UInt && gcn(4u, 7u) == IrBufferFormat::Format32Float, "32-bit pairs must map");
+    Require(gcn(6u, 7u) == IrBufferFormat::Format11_11_10Float && gcn(7u, 7u) == IrBufferFormat::Format10_11_11Float, "GCN 10_11_11 and 11_11_10 must map by bit layout");
+    Require(gcn(8u, 0u) == IrBufferFormat::Format2_10_10_10UNorm && gcn(9u, 0u) == IrBufferFormat::Format10_10_10_2UNorm, "GCN 10_10_10_2 and 2_10_10_10 must map by bit layout");
+    Require(gcn(10u, 0u) == IrBufferFormat::Format8_8_8_8UNorm && gcn(14u, 7u) == IrBufferFormat::Format32_32_32_32Float, "four-channel pairs must map");
+    const std::uint32_t word3 = 0x00000facu | (7u << 12u) | (14u << 15u) | (7u << 27u);
+    Require(ShaderRecompiler::GcnBufferWord3(16u << 16u, word3) == (0x00000facu | (77u << 12u) | (1u << 28u)), "a strided GCN V# must check its index range");
+    Require(ShaderRecompiler::GcnBufferWord3(0u, word3) == (0x00000facu | (77u << 12u) | (3u << 28u)), "a GCN V# without a stride must check its byte range");
+}
+
 void convertedDccClearTests() {
     alignas(64) std::array<std::uint8_t, 16> keys{};
     GuestTextureResource resource{};
@@ -218,4 +237,5 @@ void RunTextureFormatTests() {
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();
+    gcnBufferFormatTests();
 }

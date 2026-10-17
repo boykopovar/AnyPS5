@@ -3,8 +3,10 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <unordered_set>
+#include <vector>
 
 // PSN is not emulated: the user is reported as signed out and online queries fail.
 static constexpr int SCE_NP_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550003);
@@ -12,6 +14,7 @@ static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
+static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
@@ -25,6 +28,28 @@ void* reachabilityCallback = nullptr;
 void* reachabilityUserdata = nullptr;
 std::mutex requestMutex;
 std::unordered_set<int> liveRequests;
+
+struct AgeRestriction {
+    char countryCode[2];
+    char end;
+    char pad;
+    std::int8_t age;
+    std::uint8_t padding[3];
+};
+static_assert(sizeof(AgeRestriction) == 8);
+
+struct ContentRestriction {
+    std::uint64_t size;
+    std::int8_t defaultAgeRestriction;
+    std::uint8_t padding[3];
+    std::int32_t ageRestrictionCount;
+    const AgeRestriction* ageRestriction;
+};
+static_assert(sizeof(ContentRestriction) == 24);
+
+std::mutex restrictionMutex;
+std::int8_t defaultAgeRestriction = 0;
+std::vector<AgeRestriction> ageRestrictions;
 
 int AddRequest() {
     const int reqId = g_nextRequest.fetch_add(1, std::memory_order_relaxed);
@@ -179,9 +204,16 @@ int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
- (void)restriction;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    ContentRestriction value;
+    std::memcpy(&value, restriction, sizeof(value));
+    if (value.size != sizeof(ContentRestriction)) return SCE_NP_ERROR_INVALID_SIZE;
+    if (value.defaultAgeRestriction < 0 || value.ageRestrictionCount < 0 || value.ageRestrictionCount > 0x100) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (value.ageRestrictionCount > 0 && !value.ageRestriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(restrictionMutex);
+    defaultAgeRestriction = value.defaultAgeRestriction;
+    ageRestrictions.assign(value.ageRestriction, value.ageRestriction + value.ageRestrictionCount);
+    return 0;
 }
 
 int APS5_VABI sceNpSetNpTitleId(const NpTitleId* title_id, const NpTitleSecret* title_secret) {
@@ -245,6 +277,55 @@ int APS5_VABI sceNpGetUserIdByAccountId(uint64_t account_id, int* user_id) {
 
 int APS5_VABI sceNpGetSandboxInfo(void* sandbox_info) {
     (void)sandbox_info;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceNpInGameMessageCreateHandle() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageDeleteHandle() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessagePrepare() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageSendData() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpInGameMessageTerminate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSnsFacebookCreateRequest() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSnsFacebookDeleteRequest() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpSnsFacebookGetAccessToken() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

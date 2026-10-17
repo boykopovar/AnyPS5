@@ -18,11 +18,13 @@ NOOP = (0, 0, 0)
 IGNORED = (0xffffffffffffffff, 0xffffffff00000000, -1)
 OVERLAP = (TARGET + 1, 0xffffffff00000000, -1)
 RELATIVE = (TARGET, 8, FUNCTION)
+RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
 
-def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED):
-    image = module_with_symbol(True)
+def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12):
+    image = module_with_symbol(exported)
+    image[0x89c] = symbol_info
     image.extend(bytes(0xE00 - len(image)))
     struct.pack_into("<QQ", image, 120 + 32, 0x800, 0x800)
     image[0x400:0x406] = bytes.fromhex("b82a000000c3")
@@ -75,7 +77,9 @@ def change_tag(image, tag, value=None, replacement=None):
 
 
 def check_output(data, system, rela, plt, initial):
-    expected_rela = [entry for entry in rela if entry[1] & 0xffffffff]
+    expected_rela = [(entry[0], entry[1] & 0xffffffff, entry[2])
+                     if (entry[1] & 0xffffffff) == 8 and entry[1] >> 32 else entry
+                     for entry in rela if entry[1] & 0xffffffff]
     expected_plt = [entry for entry in plt if entry[1] & 0xffffffff]
     relocated = bool(expected_rela or expected_plt)
     if system == "linux":
@@ -108,7 +112,8 @@ def check_output(data, system, rela, plt, initial):
 
 
 def invalid_cases(sce):
-    yield "relative-symbol", module([NOOP, (TARGET, (1 << 32) | 8, FUNCTION)], sce=sce), "RELATIVE relocation has a symbol"
+    yield "relative-symbol-mismatched-value", module([(TARGET, (1 << 32) | 8, FUNCTION + 8)], sce=sce), "RELATIVE relocation has a symbol"
+    yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
     yield "overlapping-real", module([NOOP, RELATIVE, RELATIVE], sce=sce), "Overlapping guest relocations"
@@ -142,6 +147,8 @@ def main():
         return
     relinker = Path(sys.argv[1]).resolve()
     cases = (("baseline", [RELATIVE], [], False, UNCHANGED),
+             ("relative-defined-symbol", [RELATIVE_DEFINED], [], False, UNCHANGED),
+             ("relative-defined-object", [RELATIVE_DEFINED], [], False, UNCHANGED),
              ("mixed", [NOOP, OVERLAP, RELATIVE, IGNORED, (TARGET, 0, -1)], [], False, UNCHANGED),
              ("only-none", [NOOP, IGNORED, OVERLAP], [], False, UNCHANGED),
              ("plt-mixed", [], [NOOP, OVERLAP, JUMP_SLOT, IGNORED], False, UNCHANGED),
@@ -168,7 +175,8 @@ def main():
 
         for sce in (False, True):
             for name, rela, plt, lifecycle, initial in cases:
-                image = module(rela, plt, sce, lifecycle, initial)
+                symbol_info = 0x11 if name == "relative-defined-object" else 0x12
+                image = module(rela, plt, sce, lifecycle, initial, symbol_info=symbol_info)
                 for system in ("linux", "windows", "macos"):
                     result, artifact, output = convert(f"{sce}-{name}", system, image)
                     assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)

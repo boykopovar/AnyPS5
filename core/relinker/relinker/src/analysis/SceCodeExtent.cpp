@@ -20,21 +20,31 @@ std::optional<VirtualAddress> FindSceCodeEnd(std::span<const std::uint8_t> segme
         std::memcpy(&displacement, segment.data() + at + 2, sizeof(displacement));
         return segmentVAddr + at + 6 + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
     };
+    const auto isPlt = [&](const std::size_t at) {
+        return segment[at] == 0xff && segment[at + 1] == 0x35 && segment[at + 6] == 0xff && segment[at + 7] == 0x25
+            && target(at) == pltGot + 8 && target(at + 6) == pltGot + 16;
+    };
     const std::size_t lastFunctionEnd = codeEnd - segmentVAddr;
-    std::optional<std::size_t> plt;
-    for (std::size_t at = lastFunctionEnd; segment.size() >= 16 && at <= segment.size() - 16; ++at) {
-        if (segment[at] == 0xff && segment[at + 1] == 0x35 && segment[at + 6] == 0xff && segment[at + 7] == 0x25
-            && target(at) == pltGot + 8 && target(at + 6) == pltGot + 16) {
-            plt = at;
-            break;
-        }
-    }
-    if (!plt)
-        throw RelinkerException("PLT not found after the last unwind function", codeEnd);
     const ByteCount pltSize = 16 * (1 + pltRelocationsSize / 24);
-    if (pltSize > segment.size() - *plt)
-        throw RelinkerException("PLT exceeds executable segment", segmentVAddr + *plt);
-    return segmentVAddr + *plt + pltSize;
+    for (std::size_t at = lastFunctionEnd; segment.size() >= 16 && at <= segment.size() - 16; ++at) {
+        if (!isPlt(at))
+            continue;
+        if (pltSize > segment.size() - at)
+            throw RelinkerException("PLT exceeds executable segment", segmentVAddr + at);
+        return segmentVAddr + at + pltSize;
+    }
+    for (std::size_t at = 0; at < lastFunctionEnd && at + 12 <= segment.size(); ++at) {
+        if (!isPlt(at))
+            continue;
+        if (pltSize > segment.size() - at)
+            throw RelinkerException("PLT exceeds executable segment", segmentVAddr + at);
+        const VirtualAddress pltBegin = segmentVAddr + at;
+        for (const auto& function : functions)
+            if (function.Begin < pltBegin + pltSize && pltBegin < function.End)
+                throw RelinkerException("PLT overlaps an unwind function", pltBegin);
+        return codeEnd;
+    }
+    throw RelinkerException("PLT not found before or after the unwind functions", codeEnd);
 }
 
 }
