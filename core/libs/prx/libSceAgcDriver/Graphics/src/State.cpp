@@ -1497,7 +1497,11 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     Require(((attrib3 >> 24u) & 3u) != 0u || (attrib2 & 0x3fffu) == 0u, "1D color targets taller than one row are unsupported");
     if (volume) {
         color.depth = (attrib3 & 0x1fffu) + 1u;
-        Require(maxMip == 0, "mipmapped 3D color targets are unsupported");
+        if (maxMip != 0) {
+            char message[384];
+            std::snprintf(message, sizeof(message), "mipmapped 3D color targets are unsupported (slot %u, %ux%ux%u, viewMip %u, maxMip %u, slices %u..%u, CB_COLOR_INFO 0x%08x, ATTRIB2 0x%08x, ATTRIB3 0x%08x, VIEW 0x%08x)", slot, ((attrib2 >> 14u) & 0x3fffu) + 1u, (attrib2 & 0x3fffu) + 1u, color.depth, viewMip, maxMip, slice, lastSlice, info, attrib2, attrib3, view);
+            Require(false, message);
+        }
         Require(slice < color.depth && lastSlice >= slice, "the color view slices are outside the 3D surface");
         color.depthSlice = slice;
         color.layers = std::min(lastSlice + 1u, color.depth) - slice;
