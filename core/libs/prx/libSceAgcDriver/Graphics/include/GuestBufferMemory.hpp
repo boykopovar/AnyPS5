@@ -71,6 +71,7 @@ void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
+void SetHostImportMaxBytes(std::uint64_t bytes);
 std::uint64_t HostImportLiveBytes();
 // Tests: how many imports settleImport has used on the settle queue.
 std::uint64_t HostImportsSettled();
