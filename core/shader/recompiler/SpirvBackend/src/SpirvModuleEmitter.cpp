@@ -1175,7 +1175,11 @@ void EmitProgram(SpirvEmitterState& state) {
     }
     EmitLdsBufferBase(state);
     if (state.requirements.ldsLock) {
-        state.module.AddFunction(spv::OpStore, EmitLdsLockPointer(state), ConstantU32(state, 0u));
+        const auto firstInvocation = state.module.AllocateId();
+        state.module.AddFunction(spv::OpIEqual, TypeBool(state), firstInvocation, EmitLocalInvocationIndex(state), ConstantU32(state, 0u));
+        EmitIfCondition(state, firstInvocation, [&] {
+            state.module.AddFunction(spv::OpStore, EmitLdsLockPointer(state), ConstantU32(state, 0u));
+        });
         state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state)));
     }
     if (state.gdsVariable != 0u) {

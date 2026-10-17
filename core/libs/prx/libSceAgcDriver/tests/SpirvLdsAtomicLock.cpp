@@ -1,5 +1,6 @@
 #include "Recompiler.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -28,6 +29,7 @@ struct Usage {
     std::size_t releases = 0;
     std::size_t adds = 0;
     bool addBetweenLock = false;
+    bool lockInitIsLaneZero = false;
 };
 
 void Require(bool condition, const std::string& message) {
@@ -63,14 +65,32 @@ std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code)
 Usage Scan(std::span<const std::uint32_t> words) {
     Usage usage;
     bool locked = false;
+    std::uint32_t localIndexVariable = 0u;
+    std::uint32_t localIndexLoad = 0u;
+    std::uint32_t u32Type = 0u;
+    std::uint32_t zero = 0u;
+    std::uint32_t laneZeroCondition = 0u;
+    std::uint32_t laneZeroBody = 0u;
+    std::uint32_t lockPointer = 0u;
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> spv::WordCountShift;
         const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
         Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if (op == spv::OpDecorate && count >= 4u && words[cursor + 2u] == spv::DecorationBuiltIn && words[cursor + 3u] == spv::BuiltInLocalInvocationIndex) {
+            localIndexVariable = words[cursor + 1u];
+        }
+        if (op == spv::OpTypeInt && count >= 4u && words[cursor + 2u] == 32u && words[cursor + 3u] == 0u) u32Type = words[cursor + 1u];
+        if (op == spv::OpConstant && count >= 4u && words[cursor + 1u] == u32Type && words[cursor + 3u] == 0u) zero = words[cursor + 2u];
+        if (op == spv::OpLoad && count >= 4u && words[cursor + 3u] == localIndexVariable) localIndexLoad = words[cursor + 2u];
+        if (op == spv::OpIEqual && count >= 5u && ((words[cursor + 3u] == localIndexLoad && words[cursor + 4u] == zero) || (words[cursor + 4u] == localIndexLoad && words[cursor + 3u] == zero))) {
+            laneZeroCondition = words[cursor + 2u];
+        }
+        if (op == spv::OpBranchConditional && count >= 4u && words[cursor + 1u] == laneZeroCondition) laneZeroBody = words[cursor + 2u];
         if (op == spv::OpGroupNonUniformElect) ++usage.elects;
         if (op == spv::OpAtomicCompareExchange) {
             ++usage.exchanges;
             locked = true;
+            if (count >= 4u) lockPointer = words[cursor + 3u];
         }
         if (op == spv::OpAtomicStore) {
             ++usage.releases;
@@ -80,6 +100,36 @@ Usage Scan(std::span<const std::uint32_t> words) {
             ++usage.adds;
             if (locked) usage.addBetweenLock = true;
         }
+        cursor += count;
+    }
+    std::uint32_t lockBase = 0u;
+    std::uint32_t lockIndex = 0u;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> spv::WordCountShift;
+        const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
+        if (op == spv::OpAccessChain && count >= 5u && words[cursor + 2u] == lockPointer) {
+            lockBase = words[cursor + 3u];
+            lockIndex = words[cursor + 4u];
+            break;
+        }
+        cursor += count;
+    }
+    std::vector<std::uint32_t> lockPointers{lockPointer};
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> spv::WordCountShift;
+        const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
+        if (op == spv::OpAccessChain && count >= 5u && words[cursor + 3u] == lockBase && words[cursor + 4u] == lockIndex) {
+            lockPointers.push_back(words[cursor + 2u]);
+        }
+        cursor += count;
+    }
+    bool inLaneZeroBody = false;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> spv::WordCountShift;
+        const auto op = static_cast<spv::Op>(words[cursor] & spv::OpCodeMask);
+        if (op == spv::OpLabel) inLaneZeroBody = words[cursor + 1u] == laneZeroBody;
+        if (inLaneZeroBody && op == spv::OpStore && count >= 3u && std::find(lockPointers.begin(), lockPointers.end(), words[cursor + 1u]) != lockPointers.end()) usage.lockInitIsLaneZero = true;
+        if (inLaneZeroBody && (op == spv::OpBranch || op == spv::OpBranchConditional || op == spv::OpReturn)) inLaneZeroBody = false;
         cursor += count;
     }
     return usage;
@@ -95,6 +145,7 @@ Usage Compile(std::initializer_list<std::uint32_t> body) {
 void Check64BitOnlyLocks() {
     const auto usage = Compile({DsAddU64, DsOperands});
     Require(usage.elects == 1 && usage.exchanges == 1 && usage.releases == 1, "a ds_add_u64 is not serialised by one elected lane taking the workgroup lock");
+    Require(usage.lockInitIsLaneZero, "the workgroup lock is not initialized by only local invocation zero");
 }
 
 void Check32BitTakesLockWith64Bit() {
