@@ -72,6 +72,7 @@ class AnalysisTests(unittest.TestCase):
     def test_first_error(self):
         text = "Transferring control\n  what():  sysctl_nid_postfix: unsupported MIB 1.1\nFATAL: abort()\n"
         self.assertEqual(title_run.first_error(text), "what():  sysctl_nid_postfix: unsupported MIB 1.1")
+        self.assertEqual(title_run.first_error("radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s\nVkResult is ERROR_DEVICE_LOST\n"), "radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s")
         self.assertEqual(title_run.first_error("all fine\n"), "")
 
     def test_warning_counts(self):

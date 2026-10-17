@@ -46,7 +46,7 @@ def relink_args(entry, platform):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FATAL|not implemented|unhandled exception")
+ERROR = re.compile(r"what\(\):|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 
@@ -240,6 +240,7 @@ if os.name == "nt":
     user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
     user32.IsWindowVisible.argtypes = (wintypes.HWND,)
     user32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT)
+    user32.GetSystemMetrics.argtypes = (ctypes.c_int,)
     user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 
     class ProcessIdList(ctypes.Structure):
@@ -289,10 +290,12 @@ class Session:
     def exit_code(self):
         return self.process.poll()
 
-    def lower_windows(self):
+    def move_windows_offscreen(self):
         if os.name == "nt":
+            x = user32.GetSystemMetrics(76) + user32.GetSystemMetrics(78) + 64
+            y = user32.GetSystemMetrics(77)
             for window in self.windows():
-                user32.SetWindowPos(window, wintypes.HWND(1), 0, 0, 0, 0, 0x13)
+                user32.SetWindowPos(window, wintypes.HWND(1), x, y, 0, 0, 0x11)
 
     def close(self):
         if os.name == "nt":
@@ -343,8 +346,8 @@ def run_title(executable, work, run_dir, seconds, extra_env):
         session = Session([str(executable)], work, env, stdout, stderr)
         try:
             while session.alive() and time.monotonic() - started < seconds:
-                session.lower_windows()
-                time.sleep(0.5)
+                session.move_windows_offscreen()
+                time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
             elapsed = round(time.monotonic() - started, 1)
             alive, ended = session.alive(), time.time()
             exit_code = None if alive else session.exit_code()
