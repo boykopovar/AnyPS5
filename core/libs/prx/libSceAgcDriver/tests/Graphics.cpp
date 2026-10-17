@@ -152,9 +152,15 @@ void inactiveVertexPointSizeTests() {
         }
         throw std::runtime_error("potentially active point size passed the state decoder");
     };
-    for (const auto primitive : {1u, 9u}) {
+    {
         auto queue = pointSizeState();
-        queue.userConfig[0x242] = primitive;
+        queue.userConfig[0x242] = 9;
+        rejected(queue);
+    }
+    {
+        auto queue = pointSizeState();
+        queue.userConfig[0x242] = 1;
+        queue.context[0x2d5] = 0x2020;
         rejected(queue);
     }
     for (const auto stages : {0x2004u, 0x2020u}) {
@@ -192,6 +198,73 @@ void inactiveVertexPointSizeTests() {
     auto queue = pointSizeState();
     queue.userConfig.erase(0x242);
     rejected(queue);
+}
+
+void vertexPointListTests() {
+    const auto pointState = [](std::uint32_t control, std::uint32_t size, std::uint32_t limits) {
+        auto queue = makeState();
+        queue.userConfig[0x242] = 1;
+        queue.context[0x1b3] = queue.context[0x1b4] = 2;
+        queue.context[0x207] = control;
+        queue.context[0x280] = size;
+        queue.context[0x281] = limits;
+        return queue;
+    };
+    {
+        const auto queue = pointState(0x01210000u, 0x00080008u, 0x00080008u);
+        const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+        Require(rejection.empty(), "a vertex-path point list with a vertex point size failed the draw precheck: " + rejection);
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST && state.paClVsOutCntl == 0x01210000u, "a vertex-path point list with a vertex point size did not decode as a point list");
+        Require(AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Point, "a vertex-path point list is not rasterized as points");
+        Require(state.vertexPoints && state.pointSize == 1.0f && state.pointSizeMin == 1.0f && state.pointSizeMax == 1.0f, "PA_SU_POINT_SIZE and PA_SU_POINT_MINMAX of 8 did not decode as one-pixel points");
+        ShaderRecompiler::ShaderVertexStageInfo vertex{};
+        vertex.paClVsOutCntl = 1u << 21u;
+        AgcDriver::Graphics::ApplyPointSize(state, vertex);
+        Require(vertex.pointList && vertex.paClVsOutCntl == ((1u << 16u) | (1u << 21u)) && vertex.pointSize == 1.0f && vertex.pointSizeMin == 1.0f && vertex.pointSizeMax == 1.0f, "the vertex stage did not receive the vertex point size");
+    }
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(pointState(0, 0x00200020u, 0x00100004u));
+        Require(state.vertexPoints && state.pointSize == 4.0f && state.pointSizeMin == 0.5f && state.pointSizeMax == 2.0f, "a register point size did not decode as diameters");
+        ShaderRecompiler::ShaderVertexStageInfo vertex{};
+        vertex.paClVsOutCntl = 1u << 21u;
+        AgcDriver::Graphics::ApplyPointSize(state, vertex);
+        Require(vertex.pointList && vertex.paClVsOutCntl == (1u << 21u) && vertex.pointSize == 4.0f, "a register point size turned on the vertex point size");
+    }
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(pointState(0x01210000u, 0x00200010u, 0x00400000u));
+        Require(state.pointSizeMin == 0.0f && state.pointSizeMax == 8.0f, "a vertex point size refused a register size whose width and height differ");
+    }
+    {
+        auto queue = makeState();
+        queue.context[0x1b3] = queue.context[0x1b4] = 2;
+        queue.context[0x207] = 0x01210000u;
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        Require(!state.vertexPoints, "a triangle draw decoded as vertex points");
+        ShaderRecompiler::ShaderVertexStageInfo vertex{};
+        AgcDriver::Graphics::ApplyPointSize(state, vertex);
+        Require(!vertex.pointList && vertex.paClVsOutCntl == 0, "a triangle draw received a point size");
+    }
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0, 0x00200010u, 0x00080008u)); }, "points whose PA_SU_POINT_SIZE width and height differ are unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0, 0x00080008u, 0x00080010u)); }, "PA_SU_POINT_MINMAX with a minimum above its maximum is unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(1u << 16u, 0x00080008u, 0x00080008u)); }, "USE_VTX_POINT_SIZE without VS_OUT_MISC_VEC_ENA is unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0, 0, 0x00080008u)); }, "points of size 0 (PA_SU_POINT_SIZE 0) are unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0x01210000u, 0x00080008u, 0)); }, "a vertex point size clamped to 0 (PA_SU_POINT_MINMAX maximum 0) is unsupported");
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(pointState(0x01210000u, 0, 0x00200000u));
+        Require(state.pointSize == 0.0f && state.pointSizeMin == 0.0f && state.pointSizeMax == 4.0f, "a vertex point size refused a zero register size or a zero clamp minimum");
+        static_cast<void>(AgcDriver::Graphics::DecodeState(pointState(0, 0x00080008u, 0)));
+    }
+    for (const auto sprite : {1u << 17u, 1u << 23u}) {
+        auto queue = pointState(0x01210000u, 0x00080008u, 0x00080008u);
+        queue.context[0x1b5] = 0x486bu;
+        queue.context[0x1b6] = 2;
+        queue.context[0x191] = 0;
+        queue.context[0x192] = sprite;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "point sprite texture coordinates (SPI_PS_INPUT_CNTL PT_SPRITE_TEX) are not implemented");
+        queue.context[0x1b5] = 0x4869u;
+        Require(AgcDriver::Graphics::DecodeState(queue).vertexPoints, "PT_SPRITE_TEX was refused with point sprites off");
+    }
 }
 
 void retainedPixelStageTests() {
@@ -7879,6 +7952,14 @@ void pipelineJournalTests() {
         GraphicsPipelineRecipe lineDecoded;
         Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(lineState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), lineDecoded), "the line strip mesh recipe does not decode");
         Require(lineDecoded.state.stages.mesh && lineDecoded.state.stages.mesh->outputPrimitiveSize == 2u && lineDecoded.state.stages.mesh->esgsItemSize == 4u, "the recipe dropped the mesh output primitive size");
+        auto pointState = state;
+        pointState.vertexPoints = true;
+        pointState.pointSize = 4.0f;
+        pointState.pointSizeMin = 0.5f;
+        pointState.pointSizeMax = 8.0f;
+        GraphicsPipelineRecipe pointDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(pointState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), pointDecoded), "the point list recipe does not decode");
+        Require(pointDecoded.state.vertexPoints && pointDecoded.state.pointSize == 4.0f && pointDecoded.state.pointSizeMin == 0.5f && pointDecoded.state.pointSizeMax == 8.0f, "the recipe dropped the vertex point list or its point sizes");
         auto fourSampleState = state;
         fourSampleState.samples = 4;
         auto maskState = fourSampleState;
@@ -8202,6 +8283,7 @@ int main(int argc, char** argv) {
         ShaderStageTests();
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
+        vertexPointListTests();
         TuningFieldTests();
         PixelInputLayoutTests();
         UnexportedPixelInputTests();

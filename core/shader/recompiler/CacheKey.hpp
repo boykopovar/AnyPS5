@@ -4,6 +4,7 @@
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <bit>
 #include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
@@ -208,6 +209,10 @@ private:
         append(key, value.fetchBufferReg);
         append(key, value.fetchEmbedded);
         append(key, value.paClVsOutCntl);
+        append(key, value.pointList);
+        append(key, std::bit_cast<std::uint32_t>(value.pointSize));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMin));
+        append(key, std::bit_cast<std::uint32_t>(value.pointSizeMax));
         if (value.resourcesNum > value.resources.size()) throw std::runtime_error("Shader cache: invalid vertex resource count");
         append(key, value.resourcesNum);
         for (std::uint32_t i = 0; i < value.resourcesNum; ++i) {
