@@ -1768,6 +1768,112 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
     Require(sceAjmInstanceDestroy(context, reference) == 0);
 }
 
+struct PcmResults {
+    std::int64_t initialize[2] = {-1, -1};
+    std::int64_t resample[2] = {-1, -1};
+    DecodeSideband decode{};
+};
+
+AjmBatchInfo PcmJobs(std::vector<std::uint8_t>& batch, std::uint32_t instance, const std::uint32_t* parameters, float ratio, const std::vector<std::int16_t>& input, std::vector<std::int16_t>& output, PcmResults& results) {
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    if (parameters) Require(sceAjmBatchJobInitialize(&info, instance, parameters, 3 * sizeof(std::uint32_t), results.initialize) == 0);
+    if (ratio > 0) Require(sceAjmBatchJobSetResampleParameters(&info, instance, ratio, 1, results.resample) == 0);
+    Require(sceAjmBatchJobDecode(&info, instance, input.data(), input.size() * sizeof(std::int16_t), output.data(), output.size() * sizeof(std::int16_t), &results.decode) == 0);
+    return info;
+}
+
+void TestPcmResample(std::uint32_t context) {
+    constexpr std::uint64_t flags = 0x1002;
+    constexpr std::int16_t untouched = 0x7FFF;
+    const std::uint32_t parameters[3] = {0, 2, 44100};
+    constexpr std::size_t inputFrames = 235;
+    constexpr float ratio = 0.91875f;
+    std::vector<std::int16_t> input(inputFrames * 2);
+    for (std::size_t frame = 0; frame < inputFrames; ++frame) {
+        input[frame * 2] = static_cast<std::int16_t>(frame * 100);
+        input[frame * 2 + 1] = static_cast<std::int16_t>((static_cast<int>(frame * 7919 % 2001) - 1000) * 20);
+    }
+    const auto at = [&](std::ptrdiff_t frame, std::size_t channel) {
+        const auto clamped = std::clamp<std::ptrdiff_t>(frame, 0, static_cast<std::ptrdiff_t>(inputFrames) - 1);
+        return static_cast<double>(input[static_cast<std::size_t>(clamped) * 2 + channel]);
+    };
+    std::vector<std::uint8_t> batch(4096);
+
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 23, flags, &instance) == 0);
+    for (int block = 0; block < 2; ++block) {
+        std::vector<std::int16_t> output(300 * 2, untouched);
+        PcmResults results;
+        Submit(context, PcmJobs(batch, instance, parameters, ratio, input, output, results));
+        Require(results.initialize[0] == 0 && results.resample[0] == 0 && results.decode.result == 0);
+        Require(results.decode.inputConsumed == 940 && results.decode.outputWritten == 1024 && results.decode.totalDecodedSamples == 235);
+        for (std::size_t frame = 0; frame < 256; ++frame) {
+            const double position = static_cast<double>(frame) * static_cast<double>(ratio);
+            const auto index = static_cast<std::ptrdiff_t>(position);
+            const double t = position - static_cast<double>(index);
+            for (std::size_t channel = 0; channel < 2; ++channel) {
+                const double p0 = at(index - 1, channel), p1 = at(index, channel), p2 = at(index + 1, channel), p3 = at(index + 2, channel);
+                const double expected = std::clamp(p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0))), -32768.0, 32767.0);
+                Require(std::fabs(output[frame * 2 + channel] - expected) <= 1.0);
+            }
+        }
+        Require(std::all_of(output.begin() + 256 * 2, output.end(), [&](std::int16_t value) { return value == untouched; }));
+    }
+    {
+        std::vector<std::int16_t> output(256 * 2);
+        PcmResults results;
+        Require(Refused(context, PcmJobs(batch, instance, nullptr, ratio, input, output, results)));
+    }
+    {
+        std::vector<std::int16_t> output(255 * 2);
+        PcmResults results;
+        Require(Refused(context, PcmJobs(batch, instance, parameters, ratio, input, output, results)));
+    }
+    {
+        const GaplessDecode gapless{100, 0, 0};
+        std::int32_t gaplessResult[2] = {-1, -1};
+        std::vector<std::int16_t> output(256 * 2);
+        PcmResults results;
+        AjmBatchInfo info{};
+        Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+        Require(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), results.initialize) == 0);
+        Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &gapless, 1, gaplessResult) == 0);
+        Require(sceAjmBatchJobDecode(&info, instance, input.data(), input.size() * sizeof(std::int16_t), output.data(), output.size() * sizeof(std::int16_t), &results.decode) == 0);
+        Require(Refused(context, info));
+    }
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+
+    std::uint32_t plain = 0;
+    Require(sceAjmInstanceCreate(context, 23, flags, &plain) == 0);
+    for (int run = 0; run < 2; ++run) {
+        std::vector<std::int16_t> output(input.size() + 4, untouched);
+        PcmResults results;
+        Submit(context, PcmJobs(batch, plain, run == 0 ? parameters : nullptr, 0, input, output, results));
+        Require(results.decode.result == 0 && results.decode.inputConsumed == 940 && results.decode.outputWritten == 940);
+        Require(results.decode.totalDecodedSamples == 235u * static_cast<std::uint64_t>(run + 1));
+        Require(std::equal(input.begin(), input.end(), output.begin()) && output[input.size()] == untouched);
+    }
+    Require(sceAjmInstanceDestroy(context, plain) == 0);
+
+    std::uint32_t invalid = 0;
+    Require(sceAjmInstanceCreate(context, 23, flags, &invalid) == 0);
+    {
+        const std::uint32_t noChannels[3] = {0, 0, 44100};
+        std::vector<std::int16_t> output(256 * 2);
+        PcmResults results;
+        Submit(context, PcmJobs(batch, invalid, noChannels, 0, input, output, results));
+        Require(results.initialize[0] == 4 && results.decode.result == 1);
+    }
+    {
+        const std::uint32_t otherFormat[3] = {1, 2, 44100};
+        std::vector<std::int16_t> output(256 * 2);
+        PcmResults results;
+        Require(Refused(context, PcmJobs(batch, invalid, otherFormat, 0, input, output, results)));
+    }
+    Require(sceAjmInstanceDestroy(context, invalid) == 0);
+}
+
 }
 
 int main() {
@@ -1839,5 +1945,6 @@ int main() {
     TestResampleAt9(context);
     TestAt9GaplessSegments(context);
     TestAt9RunDecodesWholeInput(context);
+    TestPcmResample(context);
     Require(sceAjmFinalize(context) == 0);
 }

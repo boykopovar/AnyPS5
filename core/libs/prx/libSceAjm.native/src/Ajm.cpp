@@ -46,6 +46,7 @@ constexpr std::int32_t AJM_RESULT_FATAL = static_cast<std::int32_t>(0x80000000u)
 constexpr std::uint32_t CODEC_MP3 = 0;
 constexpr std::uint32_t CODEC_AT9 = 1;
 constexpr std::uint32_t CODEC_M4AAC = 2;
+constexpr std::uint32_t CODEC_PCM = 23;
 constexpr std::uint32_t CODEC_OPUS = 24;
 
 constexpr std::uint32_t M4AAC_CONFIG_ADTS = 1;
@@ -166,6 +167,9 @@ struct Instance {
     std::uint32_t aacFrameSamples = 0;
     std::uint32_t aacDelayFrames = 0;
     bool aacHeaac = false;
+    std::uint32_t pcmChannels = 0;
+    std::uint32_t pcmSampleRate = 0;
+    bool pcmResampled = false;
     Resampler resampler;
 
     ~Instance() {
@@ -392,8 +396,25 @@ void ClearResampler(Instance& instance) {
     instance.resampler.position = 1.0;
 }
 
+std::int32_t InitializePcm(Instance& instance, const std::uint8_t* parameters, std::uint64_t size) {
+    if (size != 12) NotImplemented_nid_no_patch("sceAjmBatchJobInitialize (codec 23 parameters other than 12 bytes)");
+    std::uint32_t words[3] = {};
+    std::memcpy(words, parameters, sizeof(words));
+    if (words[0] != 0) NotImplemented_nid_no_patch("sceAjmBatchJobInitialize (codec 23 input format other than 0, interleaved s16)");
+    if (words[1] == 0 || words[1] > 8 || words[2] == 0) return AJM_RESULT_INVALID_PARAMETER;
+    instance.pcmChannels = words[1];
+    instance.pcmSampleRate = words[2];
+    instance.pcmResampled = false;
+    instance.initialized = true;
+    instance.totalDecodedSamples = 0;
+    instance.segmentSamples = 0;
+    instance.gapless = {};
+    return 0;
+}
+
 std::int32_t InitializeInstance(Instance& instance, const std::uint8_t* parameters, std::uint64_t size) {
     ClearResampler(instance);
+    if (instance.codec == CODEC_PCM) return InitializePcm(instance, parameters, size);
     if (instance.codec == CODEC_OPUS) {
         if (size < 8) return AJM_RESULT_INVALID_PARAMETER;
         std::uint32_t channels = 0;
@@ -565,6 +586,10 @@ void ResamplerPush(Instance& instance, const double* samples, std::size_t frames
     stored.insert(stored.end(), samples, samples + frames * channels);
 }
 
+double CatmullRom(double p0, double p1, double p2, double p3, double t) {
+    return p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0)));
+}
+
 void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t channels, std::uint32_t encoding, std::size_t sampleBytes) {
     auto& resampler = instance.resampler;
     if (resampler.frames.empty() || channels == 0) return;
@@ -580,8 +605,7 @@ void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t chann
             const double p1 = resampler.frames[index * channels + channel];
             const double p2 = resampler.frames[(index + 1) * channels + channel];
             const double p3 = resampler.frames[(index + 2) * channels + channel];
-            const double value = p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0)));
-            StorePcm(value, frame.data() + channel * sampleBytes, encoding);
+            StorePcm(CatmullRom(p0, p1, p2, p3, t), frame.data() + channel * sampleBytes, encoding);
         }
         outputs.Emit(frame.data(), frameBytes);
         resampler.position += resampler.ratio;
@@ -628,6 +652,7 @@ SidebandFormat CurrentFormat(const Instance& instance) {
     case CODEC_MP3: return {instance.mp3Channels, ChannelMask(instance.mp3Channels), instance.mp3SampleRate, PcmEncoding(instance), instance.mp3Bitrate, 0};
     case CODEC_OPUS: return {instance.opusChannels, ChannelMask(instance.opusChannels), instance.opusSampleRate, PcmEncoding(instance), 0, 0};
     case CODEC_M4AAC: return {instance.aacChannels, ChannelMask(instance.aacChannels), instance.aacSampleRate, PcmEncoding(instance), instance.aacBitrate, 0};
+    case CODEC_PCM: return {instance.pcmChannels, ChannelMask(instance.pcmChannels), instance.pcmSampleRate, PcmEncoding(instance), 0, 0};
     default: throw std::runtime_error("AJM: the format of codec " + std::to_string(instance.codec) + " is not implemented");
     }
 }
@@ -1127,6 +1152,44 @@ void OpenOpusFromPacket(Instance& instance, const std::uint8_t* data, std::size_
     OpenOpus(instance);
 }
 
+void RunPcm(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* outputs) {
+    if (job.flags & ~SIDEBAND_STREAM) NotImplemented_nid_no_patch("AJM codec 23 run with flags other than SIDEBAND_STREAM");
+    const auto encoding = PcmEncoding(instance);
+    if (encoding > 2) throw std::runtime_error("AJM codec 23: PCM encoding " + std::to_string(encoding) + " is not implemented");
+    if (instance.resampler.change != 0.0f) NotImplemented_nid_no_patch("AJM codec 23 run with a resample ratio change per sample");
+    if (instance.gapless.totalSamples != 0 || instance.gapless.skipSamples != 0) NotImplemented_nid_no_patch("AJM codec 23 run with gapless decode counts");
+    if (instance.pcmResampled) NotImplemented_nid_no_patch("AJM codec 23 run after a resampled run without an initialize or context clear in between");
+    const JobInput input(job, inputs);
+    PcmOutputs pcmOutputs(outputs, job.outputCount);
+    const std::size_t channels = instance.pcmChannels;
+    const std::size_t inputFrameBytes = channels * sizeof(std::int16_t);
+    const std::size_t sampleBytes = encoding == 0 ? sizeof(std::int16_t) : sizeof(std::int32_t);
+    if (input.empty()) NotImplemented_nid_no_patch("AJM codec 23 run with an empty input");
+    if (input.size() % inputFrameBytes != 0) NotImplemented_nid_no_patch("AJM codec 23 run with an input that is not a whole number of frames");
+    const std::size_t frames = input.size() / inputFrameBytes;
+    const double ratio = instance.resampler.ratio;
+    const std::size_t room = pcmOutputs.Room() / (channels * sampleBytes);
+    std::size_t outputFrames = 0;
+    while (outputFrames < room && static_cast<double>(outputFrames) * ratio < static_cast<double>(frames)) ++outputFrames;
+    if (static_cast<double>(outputFrames) * ratio < static_cast<double>(frames)) NotImplemented_nid_no_patch("AJM codec 23 run whose output cannot hold the whole resampled input");
+    const auto sample = [&](std::size_t index, std::size_t channel) { return PcmValue(input.data() + (std::min(index, frames - 1) * channels + channel) * sizeof(std::int16_t), 0); };
+    std::vector<std::uint8_t> frame(channels * sampleBytes);
+    for (std::size_t output = 0; output < outputFrames; ++output) {
+        const double position = static_cast<double>(output) * ratio;
+        const auto index = static_cast<std::size_t>(position);
+        const double t = position - static_cast<double>(index);
+        for (std::size_t channel = 0; channel < channels; ++channel) {
+            const double value = CatmullRom(sample(index == 0 ? 0 : index - 1, channel), sample(index, channel), sample(index + 1, channel), sample(index + 2, channel), t);
+            StorePcm(value, frame.data() + channel * sampleBytes, encoding);
+        }
+        pcmOutputs.Emit(frame.data(), frame.size());
+    }
+    if (ratio != 1.0) instance.pcmResampled = true;
+    instance.totalDecodedSamples += frames;
+    AJM_TRACE("[ajm] instance %u pcm run flags 0x%llx: %zu input bytes consumed, %zu output bytes, ratio %f -> produced %zu, %zu channels, total samples %llu\n", job.instance, static_cast<unsigned long long>(job.flags), input.size(), pcmOutputs.capacity, ratio, pcmOutputs.produced, channels, static_cast<unsigned long long>(instance.totalDecodedSamples));
+    WriteRunSideband(job, instance, 0, input.size(), pcmOutputs.produced, 1, CurrentFormat(instance));
+}
+
 void RunOpus(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* outputs) {
     const JobInput input(job, inputs);
     PcmOutputs pcmOutputs(outputs, job.outputCount);
@@ -1439,6 +1502,7 @@ void ClearContext(Instance& instance) {
         instance.aacDelayFrames = AacDelayFrames(instance);
     }
     instance.opusPending.clear();
+    instance.pcmResampled = false;
     ClearResampler(instance);
 }
 
@@ -1476,7 +1540,7 @@ void Control(Instance& instance, const JobHeader& job, const AjmBuffer* inputs) 
 }
 
 std::size_t HeldSamples(const Instance& instance) {
-    const std::size_t channels = instance.codec == CODEC_OPUS ? instance.opusChannels : instance.codec == CODEC_MP3 ? instance.mp3Channels : instance.codec == CODEC_M4AAC ? instance.aacChannels : static_cast<std::size_t>(std::max(0, instance.info.channels));
+    const std::size_t channels = instance.codec == CODEC_PCM ? instance.pcmChannels : instance.codec == CODEC_OPUS ? instance.opusChannels : instance.codec == CODEC_MP3 ? instance.mp3Channels : instance.codec == CODEC_M4AAC ? instance.aacChannels : static_cast<std::size_t>(std::max(0, instance.info.channels));
     if (Resampling(instance)) return ResamplerHeld(instance, channels);
     const std::size_t sampleBytes = PcmEncoding(instance) == 0 ? sizeof(std::int16_t) : sizeof(std::int32_t);
     return channels == 0 ? 0 : instance.opusPending.size() / (channels * sampleBytes);
@@ -1542,7 +1606,7 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
         if (!instance->initialized) {
             AJM_TRACE("[ajm] instance %u run before initialize\n", job.instance);
             WriteResult(job.sideband, job.sidebandSize, AJM_RESULT_NOT_INITIALIZED);
-        } else if (instance->codec != CODEC_AT9 && instance->codec != CODEC_MP3 && instance->codec != CODEC_M4AAC && instance->codec != CODEC_OPUS) {
+        } else if (instance->codec != CODEC_AT9 && instance->codec != CODEC_MP3 && instance->codec != CODEC_M4AAC && instance->codec != CODEC_PCM && instance->codec != CODEC_OPUS) {
             throw std::runtime_error("AJM: decoding codec " + std::to_string(instance->codec) + " is not implemented");
         } else if ((job.flags & RUN_GET_CODEC_INFO) && (job.flags & RUN_MULTIPLE_FRAMES)) {
             NotImplemented_nid_no_patch("AJM run job with both RUN_GET_CODEC_INFO and RUN_MULTIPLE_FRAMES (sideband order)");
@@ -1557,6 +1621,8 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
             RunMp3(*instance, job, inputs, outputs);
         } else if (instance->codec == CODEC_M4AAC) {
             RunAac(*instance, job, inputs, outputs);
+        } else if (instance->codec == CODEC_PCM) {
+            RunPcm(*instance, job, inputs, outputs);
         } else {
             RunOpus(*instance, job, inputs, outputs);
         }
