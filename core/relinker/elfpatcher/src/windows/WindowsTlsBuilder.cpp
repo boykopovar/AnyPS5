@@ -1,4 +1,5 @@
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTlsTemplateBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -90,6 +91,20 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
     throw Domain::RelinkerException("TLS instruction is outside the PE image", access.Rva);
 }
 
+void trapInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, const std::size_t length) {
+    for (auto& section : sections) {
+        if (rva < section.Rva || rva - section.Rva >= section.Data.size())
+            continue;
+        const auto offset = rva - section.Rva;
+        if (length > section.Data.size() - offset)
+            throw Domain::RelinkerException("Guest GS instruction crosses a PE section boundary", rva);
+        std::fill_n(section.Data.begin() + offset, length, 0x90);
+        std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section.Data.begin() + offset);
+        return;
+    }
+    throw Domain::RelinkerException("Guest GS instruction is outside the PE image", rva);
+}
+
 }
 
 PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress) const {
@@ -98,6 +113,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     const Codegen::X64InstructionDecoder decoder;
 
     std::vector<TlsAccess> accesses;
+    std::vector<std::pair<std::uint32_t, std::size_t>> gsTraps;
     std::set<std::uint32_t> branchTargets;
     std::set<Domain::VirtualAddress> entryRoots;
     const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots);
@@ -133,6 +149,10 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     branchTargets.insert(static_cast<std::uint32_t>(target));
             }
 
+            if (info.SegmentPrefix == 0x65 && !insidePrevious) {
+                gsTraps.emplace_back(rva, info.Length);
+                continue;
+            }
             if (info.SegmentPrefix != 0 && !(insidePrevious && info.SegmentPrefix != 0x64)) {
                 const auto position = info.OpcodeOffset;
                 bool hasOperandSizePrefix = false;
@@ -173,7 +193,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                             if (!next.IsTwoByteOpcode && next.Opcode != 0xe9) {
                                 movedBytes = next.Opcode == 0xeb ? std::vector<std::uint8_t>{0xe9} : std::vector<std::uint8_t>{0x0f, static_cast<std::uint8_t>(0x80 | (next.Opcode & 0xf))};
                                 branchDisplacementOffset = movedBytes.size();
-                                movedBytes.insert(movedBytes.end(), 4, 0);
+                                movedBytes.resize(movedBytes.size() + 4);
                             } else {
                                 branchDisplacementOffset = next.Length - 4;
                             }
@@ -200,6 +220,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     }
 
     report(9000);
+    for (const auto& [rva, length] : gsTraps)
+        trapInstruction(sections, rva, length);
     if (tls == nullptr) {
         if (!accesses.empty())
             throw Domain::RelinkerException("Guest TLS access without PT_TLS");
