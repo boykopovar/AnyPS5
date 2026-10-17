@@ -225,8 +225,30 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 1, "flip was not handed to its output");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip did not raise the graphics end-of-pipe event");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip event was not cleared");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip duplicated the preceding guest end-of-pipe event");
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "later bare flip submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == 2, "later bare flip was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "a bare flip after the one-shot suppression did not raise its event");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "later bare flip event was not cleared");
+
+    const std::array<std::uint32_t, 8> guestEop{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
+    std::vector<std::uint32_t> flipThenGuestEop(flip.begin(), flip.end());
+    flipThenGuestEop.insert(flipThenGuestEop.end(), guestEop.begin(), guestEop.end());
+    Packet orderedPacket{const_cast<std::uint32_t*>(flipThenGuestEop.data()), static_cast<std::uint32_t>(flipThenGuestEop.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&orderedPacket) == 0, "flip-before-EOP submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == 3, "flip-before-EOP was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 2, "flip-before-EOP did not deliver both events in execution order");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip-before-EOP events were not cleared");
+
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "post-EOP flip submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "guest EOP suppression was not consumed by exactly one later flip");
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "second post-EOP bare flip submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].data == 1, "one-shot suppression disabled a later bare flip");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "second post-EOP flip event was not cleared");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
@@ -804,6 +826,12 @@ void testWorkerFailure() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--eop-interrupts") {
+            testEndOfPipeInterrupts();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC EOP interrupt suppression tests passed");
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--readonly-resummarize") {
             testReadOnlyResummarize();
             LibcRunShutdown_nid_postfix();

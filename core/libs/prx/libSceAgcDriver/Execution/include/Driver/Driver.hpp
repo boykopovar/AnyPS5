@@ -95,6 +95,8 @@ private:
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
     void reserveOutputs(Submission& submission);
+    void deliverGuestEopInterrupt(std::uint32_t queue);
+    void deliverFlipEopInterrupt(std::uint32_t queue);
     void executeRewindTail(const Submission& stalled);
     void enqueue(Submission submission);
     void noteHeldAtSubmit(Submission& submission, std::size_t cursor);
@@ -329,6 +331,7 @@ private:
     std::shared_ptr<FrameTiming> pendingFrameTiming;
 
     std::atomic<std::uint64_t> flipsCounted{0};
+    std::atomic<bool> guestEopBeforeNextFlip{false};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
 
