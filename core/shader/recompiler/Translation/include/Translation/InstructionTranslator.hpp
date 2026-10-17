@@ -34,6 +34,7 @@ struct TranslateOptions {
     std::uint64_t shaderHash = 0;
     bool fragmentShaderBarycentricEnabled = false;
     bool nativeFloat16 = false;
+    bool float32FlushToZero = false;
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;
     const EmbeddedFetchPlan* embeddedFetch = nullptr;

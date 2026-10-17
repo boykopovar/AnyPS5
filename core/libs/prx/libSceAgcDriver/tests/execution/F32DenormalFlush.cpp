@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <spirv/unified1/spirv.hpp>
 
 namespace {
 
@@ -389,6 +390,31 @@ bool IsNan(std::uint32_t value) {
     return (value & 0x7fffffffu) > 0x7f800000u;
 }
 
+bool HardwareFlush = false;
+
+std::size_t CompiledWords(AgcDriver::VulkanDevice& device, bool hardwareFlush, bool& declaresFlush) {
+    std::vector<std::uint32_t> userData(8, 0u);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(std::span(Code))}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(Code.data()), Code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    request.target.float32FlushToZero = hardwareFlush;
+    const auto result = ShaderRecompiler::Recompile(request);
+    const auto words = result.spirv.Words();
+    declaresFlush = false;
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        if ((words[cursor] & 0xffffu) == spv::OpExecutionMode && count == 4u && words[cursor + 2u] == spv::ExecutionModeDenormFlushToZero && words[cursor + 3u] == 32u) declaresFlush = true;
+        cursor += count;
+    }
+    return words.size();
+}
+
 void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code = Code, const std::uint32_t (*rows)[Inputs] = Rows) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(rows[tid]), std::end(rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
@@ -407,6 +433,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
     };
     request.useCache = false;
     request.context.floatMode = floatMode;
+    request.target.float32FlushToZero = HardwareFlush;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -477,44 +504,58 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device, std::nullopt);
-        Check("no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
-        Check("IEEE=0 f32 denormals flushed");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false});
-        Check("IEEE=1 all denormals flushed");
-        Run(*device, std::nullopt, MixedTinyCode, MixedTinyRows);
-        CheckMixedTiny("no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, MixedTinyCode, MixedTinyRows);
-        CheckMixedTiny("IEEE=0 mixed sources");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false}, MixedTinyCode, MixedTinyRows);
-        CheckMixedTiny("IEEE=1 mixed sources");
-        for (std::uint32_t round = 1u; round < 4u; ++round) {
-            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, MixedTinyCode, MixedTinyRows);
-            CheckMixedTiny("mixed sources round mode " + std::to_string(round), round);
+        const auto capabilities = device->Target().supportedCapabilities;
+        const bool hardware = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormFlushToZero)) != capabilities.end();
+        if (hardware) {
+            bool softwareDeclares = true;
+            bool hardwareDeclares = false;
+            const auto software = CompiledWords(*device, false, softwareDeclares);
+            const auto hardwareWords = CompiledWords(*device, true, hardwareDeclares);
+            Require(!softwareDeclares && hardwareDeclares, "f32 denormal flush: only the hardware-flush module declares DenormFlushToZero 32");
+            Require(hardwareWords < software, "f32 denormal flush: the hardware-flush module is " + std::to_string(hardwareWords) + " words, the emulated one " + std::to_string(software));
         }
-        Run(*device, std::nullopt, TinyCode, TinyRows);
-        CheckTinyLegacy("no float mode");
-        CheckTiny("no float mode");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, TinyCode, TinyRows);
-        CheckTinyLegacy("IEEE=0 f32 denormals flushed");
-        CheckTiny("IEEE=0 f32 denormals flushed");
-        Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false}, TinyCode, TinyRows);
-        CheckTinyLegacy("IEEE=1 all denormals flushed");
-        CheckTiny("IEEE=1 all denormals flushed");
-        for (std::uint32_t round = 1u; round < 4u; ++round) {
-            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, TinyCode, TinyRows);
-            CheckTinyLegacy("round mode " + std::to_string(round));
-            CheckTinyDirected(round);
-        }
-        for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
-            bool refused = false;
-            try {
-                Run(*device, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
-            } catch (const std::runtime_error& error) {
-                refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
+        for (const bool flush : {false, true}) {
+            if (flush && !hardware) continue;
+            HardwareFlush = flush;
+            Run(*device, std::nullopt);
+            Check("no float mode");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
+            Check("IEEE=0 f32 denormals flushed");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false});
+            Check("IEEE=1 all denormals flushed");
+            Run(*device, std::nullopt, MixedTinyCode, MixedTinyRows);
+            CheckMixedTiny("no float mode");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, MixedTinyCode, MixedTinyRows);
+            CheckMixedTiny("IEEE=0 mixed sources");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false}, MixedTinyCode, MixedTinyRows);
+            CheckMixedTiny("IEEE=1 mixed sources");
+            for (std::uint32_t round = 1u; round < 4u; ++round) {
+                Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, MixedTinyCode, MixedTinyRows);
+                CheckMixedTiny("mixed sources round mode " + std::to_string(round), round);
             }
-            Require(refused, "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was not refused");
+            Run(*device, std::nullopt, TinyCode, TinyRows);
+            CheckTinyLegacy("no float mode");
+            CheckTiny("no float mode");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false}, TinyCode, TinyRows);
+            CheckTinyLegacy("IEEE=0 f32 denormals flushed");
+            CheckTiny("IEEE=0 f32 denormals flushed");
+            Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false}, TinyCode, TinyRows);
+            CheckTinyLegacy("IEEE=1 all denormals flushed");
+            CheckTiny("IEEE=1 all denormals flushed");
+            for (std::uint32_t round = 1u; round < 4u; ++round) {
+                Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u | round, true, false, false}, TinyCode, TinyRows);
+                CheckTinyLegacy("round mode " + std::to_string(round));
+                CheckTinyDirected(round);
+            }
+            for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
+                bool refused = false;
+                try {
+                    Run(*device, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
+                } catch (const std::runtime_error& error) {
+                    refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
+                }
+                Require(refused, "f32 denormal flush: FLOAT_MODE " + Hex(mode) + " was not refused");
+            }
         }
         std::puts("f32 denormal flush tests passed");
         return 0;
