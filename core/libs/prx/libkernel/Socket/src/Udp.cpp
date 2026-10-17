@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <unistd.h>
 #include <cerrno>
@@ -738,6 +739,26 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     return 0;
 }
 
+namespace {
+bool Listening(NativeSocket socket) {
+    int accepting = 0;
+    socklen_t length = sizeof(accepting);
+    return getsockopt(socket, SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&accepting), &length) == 0 && accepting != 0;
+}
+
+std::int64_t ListenQueueLength(NativeSocket socket) {
+#ifdef __linux__
+    tcp_info info{};
+    socklen_t length = sizeof(info);
+    if (getsockopt(socket, IPPROTO_TCP, TCP_INFO, &info, &length) == 0 && length >= offsetof(tcp_info, tcpi_unacked) + sizeof(info.tcpi_unacked))
+        return info.tcpi_unacked;
+#else
+    (void)socket;
+#endif
+    return 1;
+}
+}
+
 bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* eof) {
     std::shared_ptr<Socket> socket;
     {
@@ -764,6 +785,8 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
         int queued = 0;
         if (*data > 0 && ::ioctl(socket->value, SIOCOUTQ, &queued) == 0) *data = std::max<std::int64_t>(0, *data - queued);
 #endif
+    } else if (Listening(socket->value)) {
+        *data = ListenQueueLength(socket->value);
     } else {
 #ifdef _WIN32
         unsigned long available = 0;

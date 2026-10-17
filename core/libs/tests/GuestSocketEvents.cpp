@@ -73,8 +73,22 @@ int main() {
     Require(events[0].ident == static_cast<std::uintptr_t>(listener));
     Require(events[0].filter == EVFILT_READ);
     Require(events[0].udata == &marker);
+    Require(events[0].data == 1);
+    const int second = socket_nid_postfix(2, 1, 0);
+    Require(second >= 0 && connect_nid_postfix(second, address.data(), address.size()) == 0);
+#ifdef __linux__
+    const auto queued = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    do {
+        Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_OK);
+        Require(count == 1 && events[0].ident == static_cast<std::uintptr_t>(listener));
+    } while (events[0].data != 2 && std::chrono::steady_clock::now() < queued);
+    Require(events[0].data == 2);
+#endif
     const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
     Require(accepted >= 0);
+    const int acceptedSecond = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(acceptedSecond >= 0);
+    Require(close_nid_postfix(acceptedSecond) == 0 && close_nid_postfix(second) == 0);
     Require(sceKernelDeleteReadEvent(eq, listener) == SCE_OK);
     Require(sceKernelDeleteReadEvent(eq, listener) == SCE_KERNEL_ERROR_ENOENT);
 
