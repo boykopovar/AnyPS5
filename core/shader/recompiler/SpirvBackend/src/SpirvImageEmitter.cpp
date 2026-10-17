@@ -509,19 +509,20 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
         return {};
     }
     const auto info = GetFormatInfo(format);
-    if (SampledTextureNumericClass(format) != IrTextureNumericClass::Uint || RemapTextureFormat(format) == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || info.byteSize != sizeof(std::uint32_t) || info.componentCount == 0u || info.componentCount > 4u) {
-        throw std::runtime_error("image conversion format is not a packed 32-bit unsigned integer, unorm or float format");
+    const auto remapped = image.resourceClass == ImageResourceClass::Storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
+    if (SampledTextureNumericClass(remapped) != IrTextureNumericClass::Uint || remapped == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || (info.byteSize != 2u && info.byteSize != 4u) || info.componentCount == 0u || info.componentCount > 4u) {
+        throw std::runtime_error("image conversion format is not a packed 16-bit or 32-bit unsigned integer, unorm or float format");
     }
     return info;
 }
 
 void RequireConvertedUnormAccess(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SpirvBufferFormatInfo& info) {
-    if (access.mem.dataBits == 16u) {
+    if (access.mem.dataBits == 16u && info.byteSize != 2u) {
         ctx.Fail(access.inst, info.type == SpirvFormatComponentType::Float ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
     }
     for (std::uint32_t component = 0; component < 4u; component++) {
         const auto selector = (access.image.shaderSwizzle >> (component * 3u)) & 7u;
-        if (selector >= 4u && selector - 4u >= info.componentCount) {
+        if (selector >= 4u && selector - 4u >= info.componentCount && info.byteSize != 2u) {
             ctx.Fail(access.inst, "selects a channel the converted image format does not have");
         }
     }
@@ -710,7 +711,8 @@ std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
         state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, texel, component);
         auto clamped = value;
         if (unorm) {
-            clamped = EmitFormatStoreComponent(state, info, component, value);
+            if (access.mem.dataBits == 16u) clamped = Unary(state, spv::OpBitcast, TypeU32(state), EmitF16BitsToF32(state, value));
+            clamped = EmitFormatStoreComponent(state, info, component, clamped);
         } else {
             const auto maximum = ConstantU32(state, info.componentBits[component] == 32u ? UINT32_MAX : (1u << info.componentBits[component]) - 1u);
             const auto within = Binary(state, spv::OpULessThan, TypeBool(state), value, maximum);

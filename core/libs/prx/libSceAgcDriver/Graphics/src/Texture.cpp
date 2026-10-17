@@ -758,6 +758,9 @@ Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& 
         }
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = source->Image();
+        VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+        usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        viewInfo.pNext = &usage;
         viewInfo.viewType = ViewTypeFor(descriptor.dimension, viewLayerCount);
         viewInfo.format = vkFormat;
         viewFormat = vkFormat;
@@ -864,7 +867,13 @@ VkImageView Texture::SrgbView(bool firstLayer, bool baseLevel) const {
 VkImageView Texture::BaseLevelView() const {
     Require(baseLevelInfo.has_value(), "a base-level view needs a mipmapped 1D, 2D or 2D array texture");
     std::lock_guard lock(baseLevelMutex);
-    if (!baseLevelView) Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &*baseLevelInfo, nullptr, &baseLevelView), "vkCreateImageView base level");
+    if (!baseLevelView) {
+        auto info = *baseLevelInfo;
+        VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+        usage.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        info.pNext = &usage;
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &baseLevelView), "vkCreateImageView base level");
+    }
     return baseLevelView;
 }
 
@@ -905,6 +914,17 @@ VkBufferMemoryBarrier WholeBufferBarrier(VkBuffer buffer, VkAccessFlags from, Vk
     return barrier;
 }
 
+VkFormat PackedStorageViewFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:
+        case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
+        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
+            return VK_FORMAT_R16_UINT;
+        default:
+            return VK_FORMAT_UNDEFINED;
+    }
+}
+
 // Storage images cannot use sRGB formats; the shader works on the raw encoded values either way.
 // The answer is a property of the physical device, so it is computed once per format (every storage
 // image lookup asks: a live vkGetPhysicalDeviceFormatProperties call each time was measurable) and
@@ -928,7 +948,10 @@ VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
         return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
     };
     VkFormat storage = VK_FORMAT_UNDEFINED;
-    if (supports(format)) {
+    const auto packed = PackedStorageViewFormat(format);
+    if (packed != VK_FORMAT_UNDEFINED) {
+        if (supports(packed)) storage = format;
+    } else if (supports(format)) {
         storage = format;
     } else {
         VkFormat linear = VK_FORMAT_UNDEFINED;
@@ -1479,9 +1502,10 @@ VkImageView StorageTexture::createView(std::uint32_t mip, bool firstLayer, VkFor
     Require(!firstLayer || descriptor.dimension == TextureDimension::k2DArray, "a first-layer storage view needs a 2D array surface");
     const auto viewLayerCount = firstLayer ? 1u : geometry.imageLayers - descriptor.baseArray;
     VkImageViewUsageCreateInfo usage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
-    usage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+    const bool packed = PackedStorageViewFormat(storageFormat) != VK_FORMAT_UNDEFINED;
+    usage.usage = packed && format == storageFormat ? VK_IMAGE_USAGE_SAMPLED_BIT | (attachable ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0u) : VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    viewInfo.pNext = format == storageFormat ? nullptr : &usage;
+    viewInfo.pNext = format == storageFormat && !packed ? nullptr : &usage;
     viewInfo.image = image;
     // Storage views address one mip; cube faces are written as array layers.
     viewInfo.viewType = firstLayer ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k1D ? VK_IMAGE_VIEW_TYPE_1D : descriptor.dimension == TextureDimension::k2D ? VK_IMAGE_VIEW_TYPE_2D : descriptor.dimension == TextureDimension::k3D ? VK_IMAGE_VIEW_TYPE_3D : descriptor.dimension == TextureDimension::k1DArray ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
@@ -1656,7 +1680,8 @@ VkImageView StorageTexture::FirstLayerView(std::uint32_t mip) {
 }
 
 VkImageView StorageTexture::StorageView(std::uint32_t mip, bool firstLayer) {
-    const auto format = UintFormatOfSint(storageFormat);
+    const auto packed = PackedStorageViewFormat(storageFormat);
+    const auto format = packed != VK_FORMAT_UNDEFINED ? packed : UintFormatOfSint(storageFormat);
     if (format == VK_FORMAT_UNDEFINED) return firstLayer ? FirstLayerView(mip) : View(mip);
     if (format == VK_FORMAT_R32_UINT) return AtomicView(mip, firstLayer);
     const auto found = uintViews.find({mip, firstLayer});
