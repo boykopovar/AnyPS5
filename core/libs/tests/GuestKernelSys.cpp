@@ -43,6 +43,7 @@ std::int64_t APS5_VABI readlinkat_nid_postfix(int, const char*, char*, std::size
 int APS5_VABI mkdirat_nid_postfix(int, const char*, std::uint16_t);
 int APS5_VABI renameat_nid_postfix(int, const char*, int, const char*);
 int APS5_VABI fchmodat_nid_postfix(int, const char*, int, int);
+int APS5_VABI fchown_nid_postfix(int, std::uint32_t, std::uint32_t);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
 int* APS5_VABI __error_nid_postfix();
@@ -464,6 +465,15 @@ int main() {
     Require(fchmodat_nid_postfix(base, "loop/x", 0600, 0) == -1 && Error() == 62);
     Require(fchmodat_nid_postfix(base, longName.c_str(), 0600, 0) == -1 && Error() == 63);
 #endif
+    Require(fchown_nid_postfix(base, 0, 0) == 0);
+    Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
+    Require(fchown_nid_postfix(-1, 0, 0) == -1 && Error() == 9);
+    bool fchownThrew = false;
+    try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
+    Require(fchownThrew);
+    fchownThrew = false;
+    try { fchown_nid_postfix(base, 0, 1); } catch (const std::exception&) { fchownThrew = true; }
+    Require(fchownThrew);
     Require(sceKernelClose(base) == 0);
 #ifndef _WIN32
     if (created == 0) {

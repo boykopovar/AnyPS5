@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -38,9 +39,22 @@
 extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
+#ifdef _WIN32
+extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
+static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
+static int GuestFstat(int fd) {
+    const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
+    struct _stat64 status{};
+    const int result = ::_fstat64(fd, &status);
+    _set_thread_local_invalid_parameter_handler(previous);
+    return result;
+}
+#endif
+
 constexpr int GuestEnoent = 2;
 constexpr int GuestEperm = 1;
 constexpr int GuestEio = 5;
+constexpr int GuestEbadf = 9;
 constexpr int GuestEfault = 14;
 constexpr int GuestEnotdir = 20;
 constexpr int GuestEisdir = 21;
@@ -501,6 +515,19 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
     if (::chmod(native.c_str(), static_cast<mode_t>(mode & 07777)) != 0) return static_cast<int>(Fail(GuestFileError(errno)));
 #endif
     RecordWrittenPath_nid_no_patch(native);
+    return 0;
+}
+
+int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
+    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
+    if (uid != 0 && uid != Unchanged) NotImplemented_nid_no_patch("fchown: an owner other than the guest user");
+    if (gid != 0 && gid != Unchanged) NotImplemented_nid_no_patch("fchown: a group other than the guest group");
+#ifdef _WIN32
+    if (GuestFstat(fd) != 0) return static_cast<int>(Fail(GuestEbadf));
+#else
+    struct stat status{};
+    if (::fstat(fd, &status) != 0) return static_cast<int>(Fail(GuestEbadf));
+#endif
     return 0;
 }
 
