@@ -61,6 +61,7 @@ bool WaitUntil(TimedWait::Condition& condition, TLock& lock, std::optional<std::
     while (!predicate()) {
         const bool signaled = Wait(condition, lock, deadlineNanos);
         if (Requested()) {
+            condition.NotifyOne();
             lock.unlock();
             Check();
         }
