@@ -655,8 +655,8 @@ void rosettaSubstitutions() {
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
-    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}})
-        require(!match(intel, bytes).has_value(), "RDSEED, RDPID or CLWB was converted for an Intel host");
+    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}})
+        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB or RDTSCP was converted for an Intel host");
     const auto rdseed = match(rosetta, {0x48, 0x0F, 0xC7, 0xF9});
     require(rdseed && rdseed->Lowering == Amd64OnlyLowering::InPlace && rdseed->ReplacementBytes == Bytes{0x48, 0x0F, 0xC7, 0xF1} && rdseed->InstructionName == "RDSEED", "RDSEED was not rewritten to RDRAND");
     const auto rdseed16 = match(rosetta, {0x66, 0x41, 0x0F, 0xC7, 0xFA});
@@ -669,6 +669,11 @@ void rosettaSubstitutions() {
     const auto rdpid = match(rosetta, {0xF3, 0x41, 0x0F, 0xC7, 0xFB});
     require(rdpid && rdpid->Lowering == Amd64OnlyLowering::Trampoline && rdpid->Optional && rdpid->InstructionName == "RDPID", "RDPID was not lowered through an optional stub");
     require(rdpid->ReturnBranchOffset == 6 && Bytes(rdpid->StubBody.begin(), rdpid->StubBody.begin() + 7) == Bytes{0x41, 0xBB, 0, 0, 0, 0, 0xE9}, "RDPID r11 stub does not load 0 before returning");
+    const auto rdtscp = match(rosetta, {0x0F, 0x01, 0xF9});
+    require(rdtscp && rdtscp->Lowering == Amd64OnlyLowering::Trampoline && rdtscp->Optional && rdtscp->InstructionName == "RDTSCP", "RDTSCP was not lowered through an optional stub");
+    require(rdtscp->ReturnBranchOffset == 8 && Bytes(rdtscp->StubBody.begin(), rdtscp->StubBody.begin() + 9) == Bytes{0x0F, 0x01, 0xF9, 0xB9, 0, 0, 0, 0, 0xE9}, "RDTSCP stub does not load 0 into ECX after reading the counter");
+    require(!match(rosetta, {0x0F, 0x01, 0xF8}).has_value(), "SWAPGS (0F 01 F8) was taken for RDTSCP");
+    require(!match(rosetta, {0x66, 0x0F, 0x01, 0xF9}).has_value(), "RDTSCP with an operand size prefix was lowered");
 }
 
 void wideStoreSplit() {
@@ -1732,6 +1737,40 @@ void immediateFormExecution() {}
 void ripRelativeExecution() {}
 #endif
 
+#if defined(__x86_64__) && (defined(__linux__) || defined(__APPLE__))
+void rdtscpExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x0F, 0x01, 0xF9};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDTSCP stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+    std::uint64_t processor = 0;
+    std::uint8_t carry = 0;
+    asm volatile(
+        "mov $-1, %%rcx\n\t"
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "=&a"(low), "=&d"(high), "=&c"(processor), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(((high << 32) | low) != 0, "RDTSCP stub did not read the time stamp counter");
+    require(processor == 0, "RDTSCP stub left a value other than processor 0 in RCX");
+    require(carry == 1, "RDTSCP stub changed the flags");
+}
+#else
+void rdtscpExecution() {}
+#endif
+
 void scannerZeroTail() {
     const auto scanner = Codegen::MakeInstructionScanner();
     const Bytes code{0xC3, 0x00, 0x00, 0x00};
@@ -1773,6 +1812,7 @@ int main() {
         converterRosettaScalarCompare();
         rosettaLegacyScalarCompares();
         converterRosettaLegacyScalarCompare();
+        rdtscpExecution();
         wideStoreSplit();
         converterWideStoreWindows();
         converterJumpTableTargets();
