@@ -3,9 +3,23 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
+
+namespace {
+
+bool indirectRecordsDraw(const Pm4::DrawParameters::IndirectDraw& indirect) {
+    const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+    for (std::uint32_t record = 0; record < count; ++record) {
+        const auto arguments = Pm4::ReadDrawArguments(indirect, record);
+        if (arguments.count != 0 && arguments.instances != 0) return true;
+    }
+    return false;
+}
+
+}
 
 bool Driver::drawPrecheck() {
     static const bool precheck = std::getenv("APS5_NO_DRAW_PRECHECK") == nullptr;
@@ -14,15 +28,24 @@ bool Driver::drawPrecheck() {
 
 std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
-    if (const auto pass = Graphics::DecodeColorMetadataPass(queue)) {
-        require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
+    const auto metadata = Graphics::DecodeColorMetadataPass(queue);
+    std::optional<Graphics::DepthExpandPass> expand;
+    if (!metadata) expand = Graphics::DecodeDepthExpandPass(queue);
+    if (metadata || expand) {
+        require(!metadata || !drawParameters.indirect, "indirect CB metadata passes are unsupported");
+        if (expand && !drawParameters.indirect && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
         if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
+        if (expand && drawParameters.indirect) {
+            recordQueuedLabelsBeforeRead(submission.queue);
+            if (!indirectRecordsDraw(*drawParameters.indirect)) return DrawVerdict::Nothing;
+        }
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         if (device == nullptr) device = std::make_shared<VulkanDevice>();
         const std::shared_ptr<VulkanDevice> localDevice = device;
         recordLabelsForPacket(localDevice.get(), submission.queue);
-        localDevice->ColorMetadataPass(*pass);
+        if (metadata) localDevice->ColorMetadataPass(*metadata);
+        else localDevice->DepthExpandPass(*expand);
         return DrawVerdict::Drawn;
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;

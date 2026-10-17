@@ -3646,6 +3646,10 @@ void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
 }
 
+void VulkanDevice::DepthExpandPass(const Graphics::DepthExpandPass& pass) {
+    Graphics::RunDepthExpandPass(graphicsContext(), pass);
+}
+
 bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stages, std::span<const Graphics::CompiledShader> shaders) {
     PerformanceTimer timing("Vulkan.GraphicsPipelinePrebuild");
     const auto context = graphicsContext();
