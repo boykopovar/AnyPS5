@@ -33,6 +33,7 @@ constexpr int GuestType = 0x1008;
 constexpr int GuestNonBlocking = 0x1200;
 constexpr int GuestTcpNoDelay = 1;
 constexpr int GuestTcpNoDelayFlag = 4;
+constexpr int GuestIpv6Only = 27;
 
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
@@ -226,6 +227,28 @@ int GetTcpLevelOption(std::uintptr_t native, bool tcp, int option, void* value, 
     socklen_t size = sizeof(enabled);
     if (::getsockopt(static_cast<NativeHandle>(native), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<NativeOptionOutput>(&enabled), &size)) return HostError();
     const int number = enabled != 0 ? GuestTcpNoDelayFlag : 0;
+    return Copy(value, length, &number, sizeof(number));
+}
+
+int SetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, const void* value, std::uint32_t length) {
+    if (!ipv6) return ErrorInvalid;
+    if (option != GuestIpv6Only) return ErrorNoProtocolOption;
+    if (length != sizeof(int)) return ErrorInvalid;
+    if (!value) return ErrorInvalid;
+    int number;
+    std::memcpy(&number, value, sizeof(number));
+    const int enabled = number != 0 ? 1 : 0;
+    if (::setsockopt(static_cast<NativeHandle>(native), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<NativeOptionValue>(&enabled), sizeof(enabled))) return HostError();
+    return 0;
+}
+
+int GetIpv6LevelOption(std::uintptr_t native, bool ipv6, int option, void* value, std::uint32_t* length) {
+    if (!ipv6) return ErrorInvalid;
+    if (option != GuestIpv6Only) return ErrorNoProtocolOption;
+    int enabled = 0;
+    socklen_t size = sizeof(enabled);
+    if (::getsockopt(static_cast<NativeHandle>(native), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<NativeOptionOutput>(&enabled), &size)) return HostError();
+    const int number = enabled != 0 ? 1 : 0;
     return Copy(value, length, &number, sizeof(number));
 }
 
