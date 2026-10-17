@@ -1,6 +1,10 @@
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Guest.hpp"
+#include <cstring>
+#endif
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -61,6 +65,48 @@ int APS5_VABI sigismember_nid_postfix(const GuestSignalSet* set, int signal) {
     return (set->bits[WordIndex(signal)] & Bit(signal)) != 0 ? 1 : 0;
 }
 }
+#ifdef __EMSCRIPTEN__
+extern "C" int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* old);
+
+namespace {
+
+constexpr unsigned SignalJumpRegisters[] = {WasmRuntime::Rbx, WasmRuntime::Rsp, WasmRuntime::Rbp, WasmRuntime::R12, WasmRuntime::R13, WasmRuntime::R14, WasmRuntime::R15};
+constexpr std::size_t SignalMaskOffset = 72;
+constexpr std::size_t SaveMaskOffset = 88;
+constexpr int GuestBlockSignals = 1;
+constexpr int GuestSetSignalMask = 3;
+
+}
+
+extern "C" {
+
+int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask) {
+    auto* bytes = reinterpret_cast<unsigned char*>(buffer);
+    std::memcpy(bytes + SaveMaskOffset, &saveMask, sizeof(saveMask));
+    if (saveMask != 0) _sigprocmask_nid_postfix(GuestBlockSignals, nullptr, reinterpret_cast<GuestSignalSet*>(bytes + SignalMaskOffset));
+    const auto& cpu = WasmRuntime::CurrentCpu();
+    std::memcpy(&buffer[0], reinterpret_cast<const void*>(static_cast<std::uintptr_t>(cpu.gpr[WasmRuntime::Rsp])), sizeof(buffer[0]));
+    for (unsigned slot = 0; slot < 7; ++slot) buffer[1 + slot] = cpu.gpr[SignalJumpRegisters[slot]];
+    std::memcpy(&buffer[8], &cpu.x87Fcw, sizeof(cpu.x87Fcw));
+    return 0;
+}
+
+int APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value) {
+    auto* bytes = reinterpret_cast<unsigned char*>(buffer);
+    int saveMask;
+    std::memcpy(&saveMask, bytes + SaveMaskOffset, sizeof(saveMask));
+    if (saveMask != 0) _sigprocmask_nid_postfix(GuestSetSignalMask, reinterpret_cast<const GuestSignalSet*>(bytes + SignalMaskOffset), nullptr);
+    auto& cpu = WasmRuntime::CurrentCpu();
+    for (unsigned slot = 0; slot < 7; ++slot) cpu.gpr[SignalJumpRegisters[slot]] = buffer[1 + slot];
+    std::memcpy(&cpu.x87Fcw, &buffer[8], sizeof(cpu.x87Fcw));
+    const int result = value == 0 ? 1 : value;
+    cpu.gpr[WasmRuntime::Rax] = static_cast<std::uint32_t>(result);
+    WasmRuntime::TransferGuest(buffer[0], buffer[2] + 8);
+    return result;
+}
+
+}
+#else
 #define APS5_SIGNAL_ASM_FUNCTION(name) APS5_ASM_FUNCTION(name)
 #if defined(_WIN32) || defined(__APPLE__)
 #define APS5_SIGNAL_ASM_CALL(name) "    call " APS5_ASM_SYMBOL(name) "\n"
@@ -136,3 +182,4 @@ asm(".text\n"
     "1:\n"
     "    movq %rcx, 0(%rsp)\n"
     "    ret\n");
+#endif

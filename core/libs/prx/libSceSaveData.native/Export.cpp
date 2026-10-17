@@ -21,6 +21,9 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "SaveData.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Platform.hpp"
+#endif
 
 static constexpr char SAVE_DIR[] = "_sd";
 
@@ -212,6 +215,9 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
 
 int APS5_VABI sceSaveDataCommit(const SaveDataCommitParam* param) {
     (void)param;
+#ifdef __EMSCRIPTEN__
+    WasmStorage::Commit();
+#endif
     return SAVE_DATA_OK;
 }
 
@@ -266,6 +272,9 @@ static int deleteSave(const SaveDataDelete* del) {
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) {
     const int rc = deleteSave(del);
     SAVEDATA_TRACE("delete dir=%s -> 0x%08x", del != nullptr && del->dir_name != nullptr ? del->dir_name->data : "(null)", static_cast<unsigned>(rc));
+#ifdef __EMSCRIPTEN__
+    if (rc == SAVE_DATA_OK) WasmStorage::Commit();
+#endif
     return rc;
 }
 
@@ -693,6 +702,9 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) {
     const int rc = setSaveDataMemory2(set_param);
     SAVEDATA_TRACE("setMemory2 user=%d slot=%u num=%u -> 0x%08x", set_param != nullptr ? set_param->user_id : -1, set_param != nullptr ? set_param->slot_id : 0u, set_param != nullptr ? set_param->data_num : 0u, static_cast<unsigned>(rc));
+#ifdef __EMSCRIPTEN__
+    if (rc == SAVE_DATA_OK) WasmStorage::Commit();
+#endif
     return rc;
 }
 
@@ -749,6 +761,9 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
 int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDataMemorySetupResult* result) {
     const int rc = setupSaveDataMemory2(setup_param, result);
     SAVEDATA_TRACE("setupMemory2 user=%d slot=%u size=%zu -> 0x%08x existed=%zu", setup_param != nullptr ? setup_param->user_id : -1, setup_param != nullptr ? setup_param->slot_id : 0u, setup_param != nullptr ? setup_param->memory_size : static_cast<size_t>(0), static_cast<unsigned>(rc), result != nullptr ? result->existed_memory_size : static_cast<size_t>(0));
+#ifdef __EMSCRIPTEN__
+    if (rc == SAVE_DATA_OK) WasmStorage::Commit();
+#endif
     return rc;
 }
 
@@ -815,6 +830,9 @@ static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
 int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
     const int rc = umount2(mode, mount_point);
     SAVEDATA_TRACE("umount2 mode=0x%x point=%s -> 0x%08x", mode, mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+#ifdef __EMSCRIPTEN__
+    if (rc == SAVE_DATA_OK) WasmStorage::Commit();
+#endif
     return rc;
 }
 

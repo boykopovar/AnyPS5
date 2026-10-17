@@ -1,0 +1,8 @@
+[package]
+name = "anyps5-wgsl-check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pollster = "0.4.0"
+wgpu = { version = "30.0.1", default-features = false, features = ["vulkan", "metal", "wgsl"] }

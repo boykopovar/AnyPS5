@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 
+#ifndef __EMSCRIPTEN__
 #include "SDL.h"
 #include "SDL_vulkan.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
@@ -17,6 +18,7 @@
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#endif
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
@@ -25,7 +27,11 @@
 #endif
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
+#ifdef __EMSCRIPTEN__
+#include "wasm-runtime/Presentation.hpp"
+#else
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
+#endif
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -41,6 +47,7 @@ void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("VideoOut: ") + reason);
 }
 
+#ifndef __EMSCRIPTEN__
 std::vector<const char*> windowExtensions(SDL_Window* window) {
     unsigned extensionCount = 0;
     if (!SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, nullptr)) throw std::runtime_error(std::string("SDL_Vulkan_GetInstanceExtensions failed: ") + SDL_GetError());
@@ -68,6 +75,7 @@ void windowDrawableSize(void* context, std::uint32_t* width, std::uint32_t* heig
     *width = drawableWidth > 0 ? static_cast<std::uint32_t>(drawableWidth) : 0;
     *height = drawableHeight > 0 ? static_cast<std::uint32_t>(drawableHeight) : 0;
 }
+#endif
 
 void checkConfig(const VideoOutConfig& cfg) {
     cfg.Check();
@@ -220,7 +228,9 @@ void FlipRequest::Cancel() noexcept {
 }
 
 void FlipRequest::GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>& frameTiming) {
+#ifndef __EMSCRIPTEN__
     require(frameTiming != nullptr, "missing frame timing");
+#endif
     timing = frameTiming;
     {
         AgcDriver::PerformanceContext timingContext(timing.get());
@@ -269,6 +279,15 @@ VideoOutDriver& VideoOutDriver::Get() {
 }
 
 VideoOutDriver::VideoOutDriver() {
+#ifdef __EMSCRIPTEN__
+    displayRefreshRate.store(60);
+    std::promise<void> started;
+    auto attached = started.get_future();
+    presentThread = std::jthread([this, &started](std::stop_token token) { presentLoop(token, started); });
+    attached.get();
+    vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
+    LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });
+#else
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
 #ifdef _WIN32
     SDL_SetHintWithPriority(SDL_HINT_DIRECTINPUT_ENABLED, "0", SDL_HINT_DEFAULT);
@@ -309,6 +328,7 @@ VideoOutDriver::VideoOutDriver() {
         SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
         throw;
     }
+#endif
 }
 
 VideoOutDriver::~VideoOutDriver() {
@@ -335,7 +355,9 @@ void VideoOutDriver::Shutdown() {
             if (outputs[handle]) close(handle);
         }
     }
+#ifndef __EMSCRIPTEN__
     SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
+#endif
     stopped = true;
     std::lock_guard lock(flipQueue->mutex);
     if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
@@ -492,14 +514,19 @@ int VideoOutDriver::GetDisplayRefreshRate() {
 }
 
 void VideoOutDriver::updateDisplayRefreshRate() {
+#ifdef __EMSCRIPTEN__
+    displayRefreshRate.store(60);
+#else
     const int display = SDL_GetWindowDisplayIndex(window.Handle());
     if (display < 0) throw std::runtime_error(std::string("SDL_GetWindowDisplayIndex failed: ") + SDL_GetError());
     SDL_DisplayMode mode{};
     if (SDL_GetCurrentDisplayMode(display, &mode) != 0) throw std::runtime_error(std::string("SDL_GetCurrentDisplayMode failed: ") + SDL_GetError());
     displayRefreshRate.store(mode.refresh_rate);
+#endif
 }
 
 void VideoOutDriver::pollHostHdr() {
+#ifndef __EMSCRIPTEN__
     hdrProbe.Poll(window.Handle());
     const auto generation = AgcDriver::CurrentHostHdr().generation;
     if (generation == hdrGeneration) return;
@@ -511,6 +538,7 @@ void VideoOutDriver::pollHostHdr() {
         if (!cfg->opened || cfg->closing || cfg->failure) continue;
         triggerEvents(*cfg, VIDEO_OUT_EVENT_SET_MODE, reinterpret_cast<void*>(cfg->outputMode));
     }
+#endif
 }
 
 void VideoOutDriver::vblankEnd(std::uint64_t tick) {
@@ -568,6 +596,18 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
             req.gpuComplete = true;
         }
     } else {
+#ifdef __EMSCRIPTEN__
+        if (req.index >= 0 && !req.unregistered) AgcDriverWasmPresentBuffer_nid_postfix(DescribeVideoOutBuffer(req.buffer, req.group));
+        else AgcDriverWasmPresentClear_nid_postfix(req.unregistered || req.index == VIDEO_OUT_BUFFER_INDEX_BLACK);
+        {
+            std::lock_guard lock(req.cfg->mutex);
+            req.cfg->CheckAlive();
+            if (!req.cfg->Closed()) {
+                require(!req.terminal && !req.gpuComplete, "invalid GPU completion transition");
+                req.gpuComplete = true;
+            }
+        }
+#else
         window.Ensure(req.width, req.height);
         const auto extensions = windowExtensions(window.Handle());
         const AgcDriver::PresentationWindow target{window.Handle(), extensions, &createWindowSurface, &windowDrawableSize, req.width, req.height, req.timing};
@@ -590,6 +630,7 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
         timing.Mark("present");
         window.UpdateTitle();
         timing.Mark("window_title");
+#endif
     }
     std::lock_guard lock(req.cfg->mutex);
     timing.Mark("completion_mutex_wait");
@@ -625,6 +666,42 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
     timing.Mark("notify_game");
 }
 
+#ifdef __EMSCRIPTEN__
+void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {
+    started.set_value();
+    std::shared_ptr<FlipRequest> current;
+    try {
+        while (!token.stop_requested()) {
+            {
+                std::unique_lock lock(flipQueue->mutex);
+                flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(PRESENT_POLL_MICROS), [&] { return token.stop_requested() || flipQueue->failure || !flipQueue->requests.empty(); });
+                if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+                if (token.stop_requested()) break;
+                if (!flipQueue->requests.empty()) {
+                    current = std::move(flipQueue->requests.front());
+                    flipQueue->requests.pop_front();
+                }
+            }
+            if (current) {
+                processFlip(*current);
+                current.reset();
+                flipQueue->changed.NotifyAll();
+            }
+        }
+    } catch (const ProcessShutdown&) {
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[videoout] presentation failed: %s\n", error.what());
+        std::fflush(stderr);
+        std::terminate();
+    }
+    current.reset();
+    {
+        std::list<std::shared_ptr<FlipRequest>> cancelled;
+        std::lock_guard lock(flipQueue->mutex);
+        cancelled.swap(flipQueue->requests);
+    }
+}
+#else
 void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {
     try {
         window.Ensure(VIDEO_OUT_DEFAULT_WIDTH, VIDEO_OUT_DEFAULT_HEIGHT);
@@ -746,6 +823,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
     hdrProbe.Release();
     window.Destroy();
 }
+#endif
 
 void VideoOutDriver::vblankLoop(std::stop_token token) {
     using Frame = std::chrono::duration<int64_t, std::ratio<1001, 120000>>;
