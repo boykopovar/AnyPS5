@@ -26,6 +26,7 @@ struct Args {
     std::optional<std::uint64_t> windowsFixedBase;
     bool traceImports = false;
     std::optional<std::uint64_t> linuxFixedBase;
+    std::optional<std::uint64_t> macosFixedBase;
     std::uint32_t unusedFilterLevel = 0;
     std::string inputPath;
     std::string outputPath;

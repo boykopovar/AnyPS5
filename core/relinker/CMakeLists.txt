@@ -510,6 +510,8 @@ if(BUILD_TESTING)
         set_tests_properties(needed_libraries PROPERTIES TIMEOUT 30)
         add_test(NAME macos_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_output.py $<TARGET_FILE:relinker>)
+        add_test(NAME macos_fixed_base COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_fixed_base.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_host_libc COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_host_libc.py $<TARGET_FILE:relinker>)
         add_library(guest_module_args_host SHARED elfpatcher/tests/GuestModuleArgsHost.cpp)

@@ -50,12 +50,17 @@ std::string MachODependency(const std::string& name, const std::string& origin) 
     return "@rpath/" + name;
 }
 
+MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase) : fixedBase(fixedBase) {
+    if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
+        throw Domain::RelinkerException("Invalid fixed macOS guest image base");
+}
+
 std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("macOS target does not support --windows-diagnostics");
     static_cast<void>(lazyBinding);
 
-    Windows::WindowsLoadImage image(sourceElf, originalHeaders);
+    Windows::WindowsLoadImage image(sourceElf, originalHeaders, true, fixedBase ? *fixedBase - Windows::LoadRva : Windows::ImageBase);
     if (originalPltGotVaddr != 0)
         image.GetRva(originalPltGotVaddr, 8);
     const auto relocations = Windows::WindowsRelocationBuilder().Apply(image, dynamicSection, originalHeaders);

@@ -241,6 +241,24 @@ void linuxFixedBase() {
     expectThrows({"--lazy-binding", "--linux-fixed-base", "0x400000", "input.elf", "output.elf"}, "--linux-fixed-base conflicts with --lazy-binding");
 }
 
+void macosFixedBase() {
+    require(!parse({"--macos", "input.elf", "output"}).macosFixedBase, "fixed base was enabled by default");
+    for (const auto& value : {"0x400000", "0X400000", "4194304"})
+        require(parse({"--macos-fixed-base", value, "--macos", "input.elf", "output"}).macosFixedBase == 0x400000, "fixed base was parsed incorrectly");
+    require(parse({"--macos", "input.elf", "--macos-fixed-base", "0x20000", "output"}).macosFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--macos", "--macos-fixed-base", "0x7fffffff0000", "input.elf", "output"}).macosFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
+    require(parse({"--macos", "--macos-fixed-base", "0x400000000", "input.elf", "output"}).macosFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
+    const std::string range = "--macos-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000";
+    for (const auto& value : {"0", "0x10000", "0x400001", "0x408000", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
+        expectThrows({"--macos", "--macos-fixed-base", value, "input.elf", "output"}, range);
+    expectThrows({"--macos-fixed-base"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos-fixed-base", "", "--macos", "input.elf", "output"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos-fixed-base", "--macos", "input.elf", "output"}, "--macos-fixed-base requires an address");
+    expectThrows({"--macos", "--macos-fixed-base", "0x400000", "--macos-fixed-base", "0x400000", "input.elf", "output"}, "--macos-fixed-base cannot be repeated");
+    expectThrows({"--macos-fixed-base", "0x400000", "input.elf", "output.elf"}, "--macos-fixed-base requires --macos");
+    expectThrows({"--windows", "--macos-fixed-base", "0x400000", "input.elf", "output.exe"}, "--macos-fixed-base requires --macos");
+}
+
 }
 
 void moduleDirectories() {
@@ -308,6 +326,7 @@ int main() {
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();
+        macosFixedBase();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

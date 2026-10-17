@@ -45,6 +45,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (!input.Modules.empty() && input.ModuleRoot.empty()) throw Domain::RelinkerException("Module root is required");
     if (options.WindowsDiagnostics && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Windows diagnostics require the Windows target");
     if (options.LinuxFixedBase && options.Target != TargetSystem::Linux) throw Domain::RelinkerException("A fixed Linux base requires the Linux target");
+    if (options.MacosFixedBase && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("A fixed macOS base requires the macOS target");
     const bool windows = options.Target == TargetSystem::Windows;
     const bool macos = options.Target == TargetSystem::MacOs;
     inputProgress.Report({Domain::ProgressStage::Executable, Io::Utf8Path(input.InputPath), 0, 1});
@@ -102,7 +103,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     std::shared_ptr<Elfpatcher::IElfPatcher> patcher;
     if (macos) {
-        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>();
+        patcher = std::make_shared<Elfpatcher::MacOs::MacOsMachOPatcher>(options.MacosFixedBase);
     } else if (windows) {
         patcher = std::make_shared<Elfpatcher::Windows::WindowsPePatcher>(options.WindowsGui, std::move(input.Icon), input.InputPath.parent_path() / "sce_sys" / "icon0.png", [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Image, {}, completed, total}); }, options.WindowsFixedBase, options.TraceImports);
     } else {
