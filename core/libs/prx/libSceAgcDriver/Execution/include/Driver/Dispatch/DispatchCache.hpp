@@ -49,6 +49,7 @@ struct DispatchVariant {
     std::vector<std::array<std::uint32_t, 3>> descriptorPatches;
     std::uint64_t calleeWords = 0;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> calleeReads;
+    std::shared_ptr<DispatchVariant> donor;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
     std::uint64_t userDataMask = ~std::uint64_t{0};
     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;

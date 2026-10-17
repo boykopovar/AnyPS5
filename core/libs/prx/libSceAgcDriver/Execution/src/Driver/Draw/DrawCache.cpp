@@ -232,9 +232,11 @@ bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry&) {
     });
 }
 
-std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages) {
+std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, const std::shared_ptr<DrawEntry>& donor) {
     std::shared_ptr<const std::vector<DrawRecipeRecord>> records;
-    {
+    if (donor != nullptr) {
+        records = donor->recipes.load();
+    } else {
         std::lock_guard cacheLock(drawCacheMutex);
         const auto found = drawCache.find(key);
         if (found == drawCache.end()) return nullptr;
@@ -247,9 +249,9 @@ std::shared_ptr<const DrawRecipe> Driver::findDrawRecipe(std::uint64_t key, cons
     return nullptr;
 }
 
-void Driver::attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe) {
-    std::shared_ptr<DrawEntry> entry;
-    {
+void Driver::attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_ptr<DispatchVariant>>& stages, std::shared_ptr<const DrawRecipe> recipe, const std::shared_ptr<DrawEntry>& donor) {
+    std::shared_ptr<DrawEntry> entry = donor;
+    if (entry == nullptr) {
         std::lock_guard cacheLock(drawCacheMutex);
         const auto found = drawCache.find(key);
         if (found == drawCache.end()) return;

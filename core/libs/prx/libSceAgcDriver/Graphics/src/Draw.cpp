@@ -3885,7 +3885,12 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     record.targetViews = recipe.targetViews;
     record.targets = std::move(targets);
     for (const auto& color : state.colors) record.targetSlices.emplace_back(color.arraySlice, color.arrayLastSlice != 0 ? color.layers : 1u);
-    record.pushBytes = &recipe.pushBytes;
+    auto pushBytes = recipe.pushBytes;
+    if (recipe.pushStages != 0) {
+        pushBytes = AssemblePushConstants(shaders);
+        record.resources->PatchPushConstants(pushBytes);
+    }
+    record.pushBytes = &pushBytes;
     record.pushStages = recipe.pushStages;
     record.depthLocations = passDepthLocations(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, trace);
