@@ -12,6 +12,7 @@ int APS5_VABI sceRudpProcessEvents();
 int APS5_VABI sceRudpNetFlush();
 int APS5_VABI sceRudpGetMaxSegmentSize(std::uint16_t*);
 int APS5_VABI sceRudpNetReceived();
+int APS5_VABI sceRudpEnableInternalIOThread2(std::uint32_t, std::uint32_t, std::uint64_t);
 }
 
 static void Require(bool value, int line) {
@@ -29,6 +30,7 @@ int main() {
     CHECK(sceRudpProcessEvents() == notInitialized);
     CHECK(sceRudpNetFlush() == notInitialized);
     CHECK(sceRudpNetReceived() == notInitialized);
+    CHECK(sceRudpEnableInternalIOThread2(0, 0, 0) == notInitialized);
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == notInitialized);
     CHECK(segmentSize == 0x5a5a);
     CHECK(sceRudpGetMaxSegmentSize(nullptr) == notInitialized);
@@ -38,6 +40,7 @@ int main() {
     CHECK(sceRudpProcessEvents() == 0);
     CHECK(sceRudpNetFlush() == 0);
     CHECK(sceRudpNetReceived() == 0);
+    CHECK(sceRudpEnableInternalIOThread2(0x4000, 0, 0x3) == 0);
     CHECK(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == 0);
     CHECK(segmentSize == 1410);
