@@ -44,7 +44,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 3u;
+constexpr std::uint32_t FileFormat = 4u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -215,6 +215,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Bool(state.customSampleLocations);
     writer.Bool(state.sampleLocationGrid);
     writer.Bool(state.perSampleShading);
+    writer.Bool(state.mergedCoverage);
     for (const auto mask : state.quadSampleMask) writer.Raw(mask);
 }
 
@@ -273,6 +274,7 @@ void decodeState(Reader& reader, State& state) {
     state.customSampleLocations = reader.Bool();
     state.sampleLocationGrid = reader.Bool();
     state.perSampleShading = reader.Bool();
+    state.mergedCoverage = reader.Bool();
     for (auto& mask : state.quadSampleMask) mask = reader.Raw<std::uint16_t>();
 }
 
@@ -1036,6 +1038,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.customSampleLocations = state.customSampleLocations;
     canonical.sampleLocationGrid = state.sampleLocationGrid;
     canonical.perSampleShading = state.perSampleShading;
+    canonical.mergedCoverage = state.mergedCoverage;
     canonical.quadSampleMask = state.quadSampleMask;
     return canonical;
 }

@@ -7960,6 +7960,15 @@ void pipelineJournalTests() {
         BuildPipelineStoreKey(masked, context, maskState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(maskReplayed, context, maskDecoded.state, maskDecoded.vertexInput, layouts.View(), shaders, maskDecoded.attachmentLayout);
         Require(masked != fourSamples && masked == maskReplayed, "the decoded sample mask state keys another pipeline");
+        auto mergedState = fourSampleState;
+        mergedState.mergedCoverage = true;
+        GraphicsPipelineRecipe mergedDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(mergedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), mergedDecoded), "the merged coverage recipe does not decode");
+        Require(mergedDecoded.state.mergedCoverage, "the recipe dropped merged coverage");
+        std::vector<std::byte> mergedKey, mergedReplayed;
+        BuildPipelineStoreKey(mergedKey, context, mergedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(mergedReplayed, context, mergedDecoded.state, mergedDecoded.vertexInput, layouts.View(), shaders, mergedDecoded.attachmentLayout);
+        Require(mergedKey != fourSamples && mergedKey == mergedReplayed, "the decoded merged coverage state keys another pipeline");
         auto movedState = state;
         movedState.viewport.x = 5;
         movedState.colors[0].address = 0x9000;
