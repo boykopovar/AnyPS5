@@ -2,6 +2,8 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceUserService/UserService.hpp"
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <unordered_set>
@@ -13,6 +15,7 @@ static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
+static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
@@ -32,6 +35,27 @@ int AddRequest() {
     liveRequests.insert(reqId);
     return reqId;
 }
+
+using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
+using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npId, void* userdata);
+
+constexpr int NP_STATE_CALLBACK_MAX = 8;
+
+struct StateCallbackA {
+    NpStateCallbackA callback = nullptr;
+    void* userdata = nullptr;
+    bool pending = false;
+};
+
+struct StateCallback {
+    NpStateCallback callback = nullptr;
+    void* userdata = nullptr;
+    bool pending = false;
+};
+
+std::mutex stateMutex;
+std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> stateCallbacksA;
+StateCallback stateCallback;
 }
 
 extern "C" {
@@ -42,6 +66,19 @@ int APS5_VABI sceNpAbortRequest(int req_id) {
 }
 
 int APS5_VABI sceNpCheckCallback(void) {
+    std::array<StateCallbackA, NP_STATE_CALLBACK_MAX> callbacksA;
+    StateCallback legacy;
+    {
+        std::lock_guard lock(stateMutex);
+        callbacksA = stateCallbacksA;
+        legacy = stateCallback;
+        for (auto& entry : stateCallbacksA) entry.pending = false;
+        stateCallback.pending = false;
+    }
+    if (legacy.pending) legacy.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, nullptr, legacy.userdata);
+    for (const auto& entry : callbacksA) {
+        if (entry.pending) entry.callback(USER_SERVICE_INITIAL_USER_ID, NP_STATE_SIGNED_OUT, entry.userdata);
+    }
     return 0;
 }
 
@@ -172,9 +209,11 @@ int APS5_VABI sceNpRegisterPremiumEventCallback(void* callback, void* userdata) 
     return 0;
 }
 
-int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
-    (void)userdata;
+int APS5_VABI sceNpRegisterStateCallback(NpStateCallback callback, void* userdata) {
     if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(stateMutex);
+    if (stateCallback.callback) return SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED;
+    stateCallback = {callback, userdata, true};
     return 0;
 }
 
@@ -208,6 +247,9 @@ int APS5_VABI sceNpSetTimeout(int reqId, int32_t resolveRetry, uint32_t resolveT
 }
 
 int APS5_VABI sceNpUnregisterStateCallback(void) {
+    std::lock_guard lock(stateMutex);
+    if (!stateCallback.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    stateCallback = {};
     return 0;
 }
 
@@ -223,14 +265,26 @@ int APS5_VABI sceNpNotifyPremiumFeature(const void* param) {
     return 0;
 }
 
-int APS5_VABI sceNpRegisterStateCallbackA(void* callback, void* userdata) {
-    (void)userdata;
+int APS5_VABI sceNpRegisterStateCallbackA(NpStateCallbackA callback, void* userdata) {
     if (!callback) return SCE_NP_ERROR_INVALID_ARGUMENT;
-    return 1;
+    std::lock_guard lock(stateMutex);
+    for (const auto& entry : stateCallbacksA) {
+        if (entry.callback == callback) return SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED;
+    }
+    for (int index = 0; index < NP_STATE_CALLBACK_MAX; ++index) {
+        if (stateCallbacksA[index].callback) continue;
+        stateCallbacksA[index] = {callback, userdata, true};
+        return index + 1;
+    }
+    return SCE_NP_ERROR_CALLBACK_MAX;
 }
 
-int APS5_VABI sceNpUnregisterStateCallbackA(int callback_id) {
-    (void)callback_id;
+int APS5_VABI sceNpUnregisterStateCallbackA(int callbackId) {
+    if (callbackId < 1 || callbackId > NP_STATE_CALLBACK_MAX) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(stateMutex);
+    auto& entry = stateCallbacksA[callbackId - 1];
+    if (!entry.callback) return SCE_NP_ERROR_CALLBACK_NOT_REGISTERED;
+    entry = {};
     return 0;
 }
 
