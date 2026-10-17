@@ -289,7 +289,15 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityShaderLayer);
     }
     if (InputVariableForKind(state, StageInputKind::Layer) != 0) {
-        state.module.EmitCapability(spv::CapabilityGeometry);
+        const auto supported = [&state](spv::Capability capability) {
+            return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
+        };
+        if (supported(spv::CapabilityGeometry) || !supported(spv::CapabilityShaderViewportIndexLayerEXT)) {
+            state.module.EmitCapability(spv::CapabilityGeometry);
+        } else {
+            state.module.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+            state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+        }
     }
     if (state.viewportIndexVariable != 0) {
         state.module.RequireVersion(0x00010500u);
