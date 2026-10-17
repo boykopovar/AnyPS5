@@ -1,6 +1,7 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
+#include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <elfpatcher/windows/WindowsRelocationBuilder.hpp>
@@ -154,7 +155,37 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
         if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
         nextRva = AlignRva(nextRva + lifecycle.Data.size());
-        sections.push_back(std::move(lifecycle));
+        if (guest.PreInitArray.empty()) sections.push_back(std::move(lifecycle));
+        else {
+            if (guest.Init == 0) throw Domain::RelinkerException("Guest preinit array has no initializer");
+            const auto thunkRva = nextRva;
+            const auto codeSize = static_cast<std::uint32_t>(40 + 23 * guest.PreInitArray.size());
+            const auto slotsRva = static_cast<std::uint32_t>(thunkRva + codeSize + (8 - codeSize % 8) % 8);
+            WindowsStubEmitter code(thunkRva);
+            code.Emit({0x41, 0x54, 0x41, 0x55, 0x41, 0x56});
+            code.Emit({0x49, 0x89, 0xfc, 0x49, 0x89, 0xf5, 0x49, 0x89, 0xd6});
+            for (std::size_t index = 0; index < guest.PreInitArray.size(); ++index) {
+                code.Rip({0x48, 0x8b, 0x05}, slotsRva + static_cast<std::uint32_t>(index) * 8);
+                code.Emit({0x48, 0x8b, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x08});
+                code.Emit({0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xff, 0xd0});
+            }
+            code.Emit({0x4c, 0x89, 0xe7, 0x4c, 0x89, 0xee, 0x4c, 0x89, 0xf2});
+            code.Rip({0x48, 0x8b, 0x05}, slotsRva + static_cast<std::uint32_t>(guest.PreInitArray.size()) * 8);
+            code.Emit({0xff, 0xd0});
+            code.Emit({0x41, 0x5c, 0x41, 0x5d, 0x41, 0x5e, 0xc3});
+            auto thunk = code.TakeBytes();
+            while (thunk.size() % 8 != 0) thunk.push_back(0x90);
+            for (const auto slot : guest.PreInitArray) {
+                relocations.push_back(CheckedRva(thunkRva + thunk.size()));
+                Io::AppendU64(thunk, ImageBase + image.GetRva(slot, 8));
+            }
+            relocations.push_back(CheckedRva(thunkRva + thunk.size()));
+            Io::AppendU64(thunk, ImageBase + image.GetRva(guest.Init, 1));
+            Io::WriteU32(lifecycle.Data, 0, thunkRva);
+            nextRva = AlignRva(nextRva + thunk.size());
+            sections.push_back(std::move(lifecycle));
+            sections.push_back({".ginitc", thunkRva, SectionRead | SectionExecute | 0x60u, std::move(thunk)});
+        }
     }
     if (exports.size() > 65535) throw Domain::RelinkerException("Too many guest PE exports");
     PeSection exportSection{".edata", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(40)};
@@ -201,6 +232,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     const auto entry = nextRva;
     sections.push_back({".dllmain", entry, SectionRead | SectionExecute | 0x20u, {0xb8, 1, 0, 0, 0, 0xc3}});
     for (const auto slot : guest.InitArray) runtime.InitArrayRvas.push_back(image.GetRva(slot, 8));
+    for (const auto slot : guest.PreInitArray) runtime.PreInitArrayRvas.push_back(image.GetRva(slot, 8));
     for (const auto slot : guest.FiniArray) runtime.FiniArrayRvas.push_back(image.GetRva(slot, 8));
     runtime.InitRva = guest.Init == 0 ? 0 : image.GetRva(guest.Init);
     runtime.UnmatchedImportModules.assign(guest.Dynamic.UnmatchedImportModules.begin(), guest.Dynamic.UnmatchedImportModules.end());

@@ -50,6 +50,7 @@ struct MacOsImageInput {
     std::uint32_t FiniRva = 0;
     std::vector<std::uint32_t> InitArrayRvas;
     std::vector<std::uint32_t> FiniArrayRvas;
+    std::vector<std::uint32_t> PreInitArrayRvas;
     std::vector<std::uint32_t> TlsModuleSlots;
     std::vector<MacOsTlsImport> TlsImports;
     std::vector<MacOsTlsExport> TlsExports;

@@ -534,7 +534,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         input.Binds.push_back({"___cxa_atexit", metaRva + static_cast<std::uint32_t>(MetaCxaAtexitSlot)});
     }
 
-    const bool hasInit = hasTls || !input.TlsImports.empty() || input.InitRva != 0 || !input.InitArrayRvas.empty() || hasFini;
+    const bool hasInit = hasTls || !input.TlsImports.empty() || input.InitRva != 0 || !input.InitArrayRvas.empty() || !input.PreInitArrayRvas.empty() || hasFini;
     std::vector<Section> dataSections{{"__meta", 0, metaSize, 0, 3}};
     if (hasInit) {
         const auto initStub = code.GetRva();
@@ -554,6 +554,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             }
             code.Rip({0x48, 0x89, 0x05}, import.Rva);
         }
+        for (const auto slot : input.PreInitArrayRvas) callSlot(slot);
         if (input.InitRva != 0) {
             code.Rip({0xff, 0x15}, metaRva + static_cast<std::uint32_t>(moduleArgsSlot));
             code.Emit({0x48, 0x8b, 0x38, 0x48, 0x8b, 0x70, 0x08, 0x31, 0xd2});

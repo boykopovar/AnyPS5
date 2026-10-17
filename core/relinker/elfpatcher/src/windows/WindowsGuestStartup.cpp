@@ -31,6 +31,7 @@ void WindowsGuestStartup::Initialize(WindowsStubEmitter& code, const std::vector
     for (std::size_t index = 0; index < modules.size(); ++index) {
         if (modules[index].DeferInitialization) continue;
         const auto handle = CheckedRva(handles + index * 8);
+        for (const auto slot : modules[index].PreInitArrayRvas) callLifecycle(code, handle, slot, true);
         callLifecycle(code, handle, modules[index].InitRva);
         for (const auto slot : modules[index].InitArrayRvas) callLifecycle(code, handle, slot, true);
     }

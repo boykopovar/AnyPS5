@@ -357,6 +357,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             entries.push_back(address + offset);
         }
     };
+    readLifecycleArray(32, 33, image.PreInitArray);
     readLifecycleArray(25, 27, image.InitArray);
     readLifecycleArray(26, 28, image.FiniArray);
     if (tags.contains(33) && tags.at(33) != 0 && image.Init == 0) fail("Guest PREINIT_ARRAY has no module initializer");
