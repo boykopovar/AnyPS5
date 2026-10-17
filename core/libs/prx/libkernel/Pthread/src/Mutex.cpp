@@ -39,7 +39,7 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     std::lock_guard lock(initializationMutex);
     const auto current = slot.load(std::memory_order_acquire);
     if (current == destroyedMutex())
-        throw std::runtime_error("Mutex has been destroyed");
+        return nullptr;
     if (current && current != adaptiveInitializer())
         return current;
     if (!initialize)
@@ -76,6 +76,13 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     return 0;
 }
 
+template<typename TAcquire>
+int acquireResolved(PthreadMutex mutex, TAcquire acquire, int unavailable, bool tryOnly) {
+    if (!mutex)
+        return SCE_KERNEL_ERROR_EINVAL;
+    return acquireMutex(mutex, acquire, unavailable, tryOnly);
+}
+
 }
 
 int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime) {
@@ -89,7 +96,7 @@ int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstim
         throw std::overflow_error("Absolute mutex timeout exceeds the host clock range");
     const auto deadline = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(duration));
     auto* current = resolveMutex(mutex, true);
-    return acquireMutex(current, [&](auto& native) {
+    return acquireResolved(current, [&](auto& native) {
 #ifdef _WIN32
         for (;;) {
             const auto now = std::chrono::system_clock::now();
@@ -175,7 +182,7 @@ int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
 
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) {
     auto* current = resolveMutex(mutex, true);
-    return acquireMutex(current, [current](auto& native) {
+    return acquireResolved(current, [current](auto& native) {
 #ifdef _WIN32
         return TimedWait::ParkAcquire(current, [&] { return native.try_lock(); }, nullptr);
 #else
@@ -188,6 +195,8 @@ int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) {
 
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
     auto* current = resolveMutex(mutex, false);
+    if (!current)
+        return SCE_KERNEL_ERROR_EINVAL;
     if (current->_owner.load(std::memory_order_acquire) != std::this_thread::get_id())
         return sceNotPermitted;
     bool released = true;
@@ -211,13 +220,13 @@ int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) {
     const auto deadline = TimedWait::DeadlineNanos(usec);
     auto* current = resolveMutex(mutex, true);
-    return acquireMutex(current, [=](auto& native) {
+    return acquireResolved(current, [=](auto& native) {
         return TimedWait::AcquireUntil(current, deadline, [&] { return native.try_lock(); }, [&](std::uint64_t micros) { return native.try_lock_for(std::chrono::microseconds(micros)); });
     }, sceTimedOut, false);
 }
 
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) {
-    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { return native.try_lock(); }, sceBusy, true);
+    return acquireResolved(resolveMutex(mutex, true), [](auto& native) { return native.try_lock(); }, sceBusy, true);
 }
 
 }
