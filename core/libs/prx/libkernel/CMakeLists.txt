@@ -76,6 +76,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/AppMetadata.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/ParamJsonParser.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/AppMetadata/src/ParamSfoParser.cpp
 )
 
 target_include_directories(libkernel PRIVATE ${LIBS_INCLUDE_DIR})
@@ -105,12 +106,12 @@ if(BUILD_TESTING)
     target_include_directories(download_data_mount_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(download_data_mount_tests PRIVATE libkernel libc)
     configure_windows_unwind(download_data_mount_tests)
-    foreach(downloadDataCase IN ITEMS declared:256 none:0 invalid:256 missing:0)
+    foreach(downloadDataCase IN ITEMS declared:256 none:0 invalid:256 missing:0 sfo:0)
         string(REPLACE ":" ";" downloadDataCase ${downloadDataCase})
         list(GET downloadDataCase 0 downloadDataName)
         list(GET downloadDataCase 1 downloadDataSize)
         set(downloadDataRun ${CMAKE_CURRENT_BINARY_DIR}/download_data_mount_${downloadDataName})
-        if(downloadDataName STREQUAL "missing")
+        if(downloadDataName STREQUAL "missing" OR downloadDataName STREQUAL "sfo")
             file(MAKE_DIRECTORY ${downloadDataRun})
         elseif(downloadDataName STREQUAL "invalid")
             file(WRITE ${downloadDataRun}/app0/sce_sys/param.json "{\"downloadDataSize\":${downloadDataSize}}")
@@ -133,6 +134,15 @@ if(BUILD_TESTING)
     add_test(NAME param_json_parser COMMAND param_json_parser_tests)
     if(WIN32)
         set_tests_properties(param_json_parser PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(param_sfo_parser_tests ${LIBS_INCLUDE_DIR}/tests/ParamSfoParser.cpp)
+    target_include_directories(param_sfo_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(param_sfo_parser_tests PRIVATE libkernel libc)
+    configure_windows_unwind(param_sfo_parser_tests)
+    add_test(NAME param_sfo_parser COMMAND param_sfo_parser_tests)
+    if(WIN32)
+        set_tests_properties(param_sfo_parser PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_posix_sem_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSem.cpp)
