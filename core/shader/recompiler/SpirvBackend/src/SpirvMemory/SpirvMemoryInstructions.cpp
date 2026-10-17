@@ -866,7 +866,7 @@ std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const Me
             const auto old = EmitAtomicOperation(ctx, inst, pointer, scope);
             if (lds) {
                 const std::uint32_t semantics = spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);
-                state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, semantics));
+                if (!state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, semantics));
             } else {
                 EmitDeviceAtomicMemoryBarrier(state);
             }
@@ -985,7 +985,7 @@ std::uint32_t SharedAtomicUpdate(SpirvValueEmitContext& ctx, const IrValue& inst
         if (InFunctionStorage(state, mem.kind)) return UpdateFunctionElement(state, pointer, next);
         const auto old = AtomicUpdate(state, pointer, mem.kind, next);
         const std::uint32_t semantics = spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);
-        state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, semantics));
+        if (!state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, semantics));
         return old;
     });
 }
@@ -1345,8 +1345,11 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
     state.module.AddFunction(spv::OpSelectionMerge, attemptMerge, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, acquired, critical, attemptMerge);
     EmitLabel(state, critical);
+    state.insideLdsLock = true;
     const auto old = update();
-    state.module.AddFunction(spv::OpAtomicStore, lock, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsReleaseMask | LdsMemorySemantics(state)), ConstantU32(state, 0u));
+    state.insideLdsLock = false;
+    const auto released = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicExchange, TypeU32(state), released, lock, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsReleaseMask | LdsMemorySemantics(state)), ConstantU32(state, 0u));
     const auto criticalExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, attemptMerge);
     EmitLabel(state, attemptMerge);

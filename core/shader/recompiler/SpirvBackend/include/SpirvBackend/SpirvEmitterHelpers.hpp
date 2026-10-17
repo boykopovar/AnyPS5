@@ -269,7 +269,7 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     EmitLabel(state, cont);
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, merge);
-    state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
+    if (kind != ResourceKind::Lds || !state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | memory));
     return observed;
 }
 
