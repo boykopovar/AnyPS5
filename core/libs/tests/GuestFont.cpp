@@ -57,6 +57,17 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting*);
 FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting*, const FontWritingLetterStep**);
 const void* APS5_VABI sceFontSelectLibraryFt(int);
 const void* APS5_VABI sceFontSelectRendererFt(int);
+int APS5_VABI sceFontFtSupportBdf();
+int APS5_VABI sceFontFtSupportCid();
+int APS5_VABI sceFontFtSupportOpenType();
+int APS5_VABI sceFontFtSupportOpenTypeOtf();
+int APS5_VABI sceFontFtSupportOpenTypeTtf();
+int APS5_VABI sceFontFtSupportPcf();
+int APS5_VABI sceFontFtSupportPfr();
+int APS5_VABI sceFontFtSupportTrueType();
+int APS5_VABI sceFontFtSupportType1();
+int APS5_VABI sceFontFtSupportType42();
+int APS5_VABI sceFontFtSupportWinFonts();
 int APS5_VABI sceFontCharacterGetSyllableStringState(const FontTextCharacter*, int*);
 FontTextCodes* APS5_VABI sceFontCharactersRefersTextCodes(const FontTextCharacter*, const FontTextCharacter*, FontTextCodes*);
 FontTextCodes* APS5_VABI sceFontTextCodesStepNext(FontTextCodes*);
@@ -227,6 +238,7 @@ int main() {
     Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, nullptr, nullptr, nullptr) == SCE_FONT_OK);
     Require(sceFontSelectLibraryFt(0) != nullptr && sceFontSelectLibraryFt(1) == nullptr);
     Require(sceFontSelectRendererFt(0) != nullptr && sceFontSelectRendererFt(1) == nullptr);
+    Require(sceFontFtSupportBdf() == 0 && sceFontFtSupportCid() == 0 && sceFontFtSupportOpenType() == 0 && sceFontFtSupportOpenTypeOtf() == 0 && sceFontFtSupportOpenTypeTtf() == 0 && sceFontFtSupportPcf() == 0 && sceFontFtSupportPfr() == 0 && sceFontFtSupportTrueType() == 0 && sceFontFtSupportType1() == 0 && sceFontFtSupportType42() == 0 && sceFontFtSupportWinFonts() == 0);
 
     FontLibrary library = nullptr;
     Require(sceFontCreateLibrary(&memory, nullptr, &library) == SCE_FONT_ERROR_INVALID_PARAMETER && library == nullptr);

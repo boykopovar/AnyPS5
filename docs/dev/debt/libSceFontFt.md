@@ -1,0 +1,5 @@
+# libSceFontFt technical debt
+
+### Unknown function info
+
+- [sceFontFtSupportBdf, sceFontFtSupportCid, sceFontFtSupportOpenType, sceFontFtSupportOpenTypeOtf, sceFontFtSupportOpenTypeTtf, sceFontFtSupportPcf, sceFontFtSupportPfr, sceFontFtSupportTrueType, sceFontFtSupportType1, sceFontFtSupportType42 and sceFontFtSupportWinFonts](../../../core/libs/prx/libSceFontFt/Export.cpp) (libSceFontFt) are declared without parameters, signatures unknown; [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/font/fontft.cpp), another emulator, declares them the same way and only logs. They are assumed to enable one font format in the FontFt library, which here always registers FreeType's default modules, so each call returns 0 when the host FreeType has the module (`bdf`, `t1cid`, `truetype`, `cff`, `pcf`, `pfr`, `type1`, `type42`, `winfonts`; OpenType needs `cff` and `truetype`) and throws when it does not. The mapping of Sony's format names to FreeType modules, the return value and the error codes of the console are unverified, and no title is known to call them.
