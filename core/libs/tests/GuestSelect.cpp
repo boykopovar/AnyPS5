@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -33,6 +34,8 @@ std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
 std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
+int APS5_VABI open_nid_postfix(const char*, int, int);
+int APS5_VABI unlink_nid_postfix(const char*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -86,6 +89,38 @@ int main() {
         char buffer[1]{};
         Require(read_nid_postfix(reader, buffer, sizeof(buffer)) == 1);
         Require(buffer[0] == byte);
+    }
+
+    {
+        const std::string path = "anyps5-select-file-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const int file = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+        const int random = open_nid_postfix("/dev/urandom", 0, 0);
+        Require(file >= 0 && random >= 0);
+        GuestDescriptorSet read{};
+        GuestDescriptorSet write{};
+        GuestDescriptorSet except{};
+        for (const int descriptor : {file, random}) {
+            read.Add(descriptor);
+            write.Add(descriptor);
+            except.Add(descriptor);
+        }
+        read.Add(reader);
+        const int highest = file > random ? (file > reader ? file : reader) : (random > reader ? random : reader);
+        const GuestTimeval zero{0, 0};
+        Require(select_nid_postfix(highest + 1, read.words.data(), write.words.data(), except.words.data(), &zero) == 3);
+        Require(read.Has(file) && write.Has(file) && !except.Has(file));
+        Require(read.Has(random) && !write.Has(random) && !except.Has(random));
+        GuestDescriptorSet randomWrite{};
+        GuestDescriptorSet randomExcept{};
+        randomWrite.Add(random);
+        randomExcept.Add(random);
+        Require(select_nid_postfix(random + 1, nullptr, randomWrite.words.data(), randomExcept.words.data(), &zero) == 2);
+        Require(randomWrite.Has(random) && randomExcept.Has(random));
+        Require(!read.Has(reader));
+        GuestDescriptorSet onlyExcept{};
+        onlyExcept.Add(file);
+        Require(select_nid_postfix(file + 1, nullptr, nullptr, onlyExcept.words.data(), &zero) == 0 && !onlyExcept.Has(file));
+        Require(close_nid_postfix(random) == 0 && close_nid_postfix(file) == 0 && unlink_nid_postfix(path.c_str()) == 0);
     }
 
     {

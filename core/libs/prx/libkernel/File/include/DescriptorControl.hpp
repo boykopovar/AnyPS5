@@ -15,6 +15,7 @@ void RememberDescriptor(int fd, int openFlags);
 void ShareDescriptor(int from, int to);
 void ForgetDescriptor(int fd);
 bool Appends(int fd);
+bool IsVnode(int fd);
 
 }
 
