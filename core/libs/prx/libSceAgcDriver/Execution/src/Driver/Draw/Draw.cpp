@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -579,13 +580,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         const auto commitQueue = submission.queue;
         const auto commitPacket = (packet[0] >> 8u) & 0xffu;
         const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
+        auto reads = QueuedDrawReadRanges(drawParameters, stages);
         auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), drawParameters, stages = std::move(stages), snapshots = std::move(snapshots), recipe = std::move(recipe), recipeStages = std::move(recipeStages), drawKey, commitQueue, commitPacket, epoch, programs = std::move(programs), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)] {
             DrawPipeline::FollowEpoch(epoch);
             GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
             commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey);
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
-        DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes));
+        DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads));
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
         return drawn();

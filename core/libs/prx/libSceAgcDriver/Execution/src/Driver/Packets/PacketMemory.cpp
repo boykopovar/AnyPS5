@@ -310,7 +310,7 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
         std::vector<std::byte> bytes(copy.bytes);
         GuestMemory::Read(copy.source, bytes, 1);
         commitDmaStore(queue, copy.destination, bytes);
-    }, {{copy->destination, copy->destination + copy->bytes}});
+    }, {{copy->destination, copy->destination + copy->bytes}}, 0, {}, {{copy->source, copy->source + copy->bytes}});
     return true;
 }
 

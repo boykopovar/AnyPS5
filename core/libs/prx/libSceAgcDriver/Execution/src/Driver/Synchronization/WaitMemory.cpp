@@ -327,6 +327,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         ~BlockedWait() { driver.noteWaitBlocked(queue, 0, false); }
     } blocked{*this, queue};
     static const bool pauseSpin = std::getenv("APS5_NO_PAUSE_SPIN") == nullptr;
+    static const bool storeHeldResults = std::getenv("APS5_NO_QUEUED_DRAW_READ_ORDER") == nullptr;
     const auto spinLimit = queue == 0 ? std::chrono::microseconds(1500) : std::chrono::microseconds(100);
     const auto spinStart = std::chrono::steady_clock::now();
     bool spinning = pauseSpin;
@@ -350,6 +351,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         CheckFailure();
         if (pollService(!spinning)) return;
+        if (storeHeldResults && !spinning && (polls & 31u) == 0) GuestMemory::FlushGpuWrites(awaited, awaitedBytes);
         noteAwaitingTitle(queue, awaited);
         if (requireMemory && (polls & 15u) == 0) {
             std::unique_lock settleLock(GuestMemory::GpuMutex(), std::try_to_lock);
