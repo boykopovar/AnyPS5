@@ -4200,6 +4200,15 @@ void verifyUnnormalizedSamplers() {
     reject(0xf11c0108u, userData(unnormalized), "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: image_gather4_lz was accepted");
     reject(0xf1800308u, userData(unnormalized), "unnormalized guest sampler is used by image_get_lod, which is not implemented", "unnormalized samplers: image_get_lod was accepted");
     reject(0xf0800f09u, userData(unnormalized), "unnormalized guest sampler is used by an image_sample_*_a variant, which is not implemented", "unnormalized samplers: image_sample_a was accepted");
+    const auto reservedDword3 = [&](std::uint32_t mimg) {
+        auto code = program(mimg);
+        const std::array<std::uint32_t, 4> computed{0x7d8a0080u, 0x870bff6au, 0x000000ffu, 0x8f0b8c0bu};
+        code.insert(code.begin(), computed.begin(), computed.end());
+        return code;
+    };
+    const auto adjusted = recompile(reservedDword3(0xf0800f09u), userData(normalized));
+    require(proven(adjusted, false), "sampler dword 3: an image_sample_a whose S# dword 3 holds only a ballot in its reserved bits was not compiled");
+    expectFailure([&] { static_cast<void>(recompile(reservedDword3(0xf0800f08u), userData(normalized))); }, "GetSamplerResource dword 3 is not a valid runtime value", "sampler dword 3: an image_sample whose S# dword 3 holds a ballot was accepted");
     reject(0xf09c0f18u, imageData(unnormalized, TypeCube, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a cube T# was accepted");
     reject(0xf09c0f10u, imageData(unnormalized, Type3D, Format8888UNorm, 3u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 3D T# was accepted");
     reject(0xf09c0f28u, imageData(unnormalized, Type2DArray, Format8888UNorm, 5u), "unnormalized guest sampler samples a 1D-array, 2D-array, 3D, cube or multisampled image", "unnormalized samplers: a 2D-array sample was accepted");
