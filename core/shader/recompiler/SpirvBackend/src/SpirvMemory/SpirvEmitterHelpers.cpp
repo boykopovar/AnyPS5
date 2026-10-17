@@ -329,15 +329,12 @@ void DefineOutputs(SpirvEmitterState& state) {
     }
     const auto stage = state.program.Resources().stage;
     const bool exportsPosition = std::ranges::any_of(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::Position; });
-    if (exportsPosition && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation)) {
+    if (exportsPosition && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation) && clipDistanceCount + cullDistanceCount < MaxClipDistances) {
         if (std::ranges::find(state.supportedCapabilities, spv::CapabilityClipDistance) == state.supportedCapabilities.end()) {
             FailEmit("clipping a primitive with an all-zero clip position needs shaderClipDistance on the target device");
         }
         state.zeroPositionClipIndex = clipDistanceCount;
         clipDistanceCount += 1u;
-        if (clipDistanceCount > MaxClipDistances) {
-            FailEmit("guest clip distances plus the all-zero clip position distance exceed " + std::to_string(MaxClipDistances) + " clip distances");
-        }
     }
     const auto BuiltIn = [&](std::uint32_t& variable, std::uint32_t type, const char* name, std::uint32_t builtin) {
         if (variable == 0u) {
