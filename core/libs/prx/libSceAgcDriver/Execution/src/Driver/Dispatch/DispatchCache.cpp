@@ -23,7 +23,7 @@ std::size_t Driver::dispatchVariants() {
     static const std::size_t variants = [] {
         if (stampValidate()) return std::size_t{1};
         const char* text = std::getenv("APS5_DISPATCH_VARIANTS");
-        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 4ull;
+        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 16ull;
         return static_cast<std::size_t>(std::clamp<unsigned long long>(parsed, 1, MaxDispatchVariants));
     }();
     return variants;

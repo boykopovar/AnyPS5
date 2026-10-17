@@ -68,6 +68,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     require(snapshot.type == 0, "compute program refers to a non-compute shader");
     const auto userCount = (readRegister(queue.shader, 0x213) >> 1u) & 0x1fu;
     std::vector<std::uint32_t> userData;
+    userData.reserve(userCount);
     for (std::uint32_t i = 0; i < userCount; ++i) {
         userData.push_back(readUserData(queue.shader, 0x240 + i));
     }
@@ -128,15 +129,15 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             pendingDispatchPhases().outcome = DispatchOutcome::FillHle;
             return;
         }
-        if (DrawPipeline::Active() && !pipelineCandidate) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
-        if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0) {
-            const auto threads = (packet[4] & 0x20u) != 0 ? static_cast<std::uint64_t>(packet[1]) : static_cast<std::uint64_t>(packet[1]) * compute.numThreads[0];
-            const auto nativeBytes = Graphics::HtileDepthClearBytes_nid_no_patch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments);
-            Graphics::NoteHtileDepthClear(htile, static_cast<std::size_t>(threads * 16u), nativeBytes);
-        }
         if (!partialLastGroup && indirectArguments == 0 && copyBuffer(queue, submission.queue, packet, std::span(snapshot.code).subspan(codeOffset), userData, compute, localDevice, address)) {
             pendingDispatchPhases().outcome = DispatchOutcome::CopyHle;
             return;
+        }
+        if (const auto htile = Graphics::HtileDepthClearAddress(std::span(snapshot.code).subspan(codeOffset), userData, compute.numThreads); htile != 0) {
+            const auto threads = (packet[4] & 0x20u) != 0 ? static_cast<std::uint64_t>(packet[1]) : static_cast<std::uint64_t>(packet[1]) * compute.numThreads[0];
+            const auto nativeBytes = Graphics::HtileDepthClearBytes_nid_no_patch(std::span(snapshot.code).subspan(codeOffset), userData, compute, packet, indirectArguments);
+            if (DrawPipeline::Active() && !pipelineCandidate && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(htile, nativeBytes)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x15);
+            Graphics::NoteHtileDepthClear(htile, static_cast<std::size_t>(threads * 16u), nativeBytes);
         }
     }
     if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
@@ -200,9 +201,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
     if (keyHygiene) {
         for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u}) {
-            const auto found = queue.shader.find(offset);
-
-            mix(found == queue.shader.end() ? (1ull << 32u) : found->second);
+            mix(queue.shader.contains(offset) ? queue.shader.at(offset) : (1ull << 32u));
         }
     } else {
         for (const auto& [offset, value] : queue.shader) {

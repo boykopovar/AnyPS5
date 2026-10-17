@@ -96,6 +96,10 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
         const auto count = (header & 0xc0000000u) == 0xc0000000u ? Pm4::PacketWords(header) : words - cursor;
         if ((header & 0xc0000000u) != 0xc0000000u || count > words - cursor) {
             submission.commands.insert(submission.commands.end(), guest + cursor, guest + words);
+            for (const auto& range : guarded) {
+                submission.conditionalEnds.emplace(range.second, submission.commands.size());
+            }
+            guarded.clear();
             return false;
         }
         reach(cursor, cursor + count);
@@ -156,7 +160,10 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
         }
     }
     reach(words, words);
-    require(guarded.empty(), "conditional execution range exceeds its command buffer");
+    for (const auto& range : guarded) {
+        submission.conditionalEnds.emplace(range.second, submission.commands.size());
+    }
+    guarded.clear();
     return false;
 }
 

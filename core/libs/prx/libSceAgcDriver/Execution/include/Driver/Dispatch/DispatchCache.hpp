@@ -21,7 +21,7 @@
 
 namespace AgcDriver::DriverDetail {
 
-inline constexpr std::size_t MaxDispatchVariants = 8;
+inline constexpr std::size_t MaxDispatchVariants = 32;
 
 struct DispatchVariant {
 
