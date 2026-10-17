@@ -1240,6 +1240,43 @@ void verifyImageTableBulkReads() {
     require(cutByRun->snapshot.tables == cutByWord->snapshot.tables && cutWordReads.wordReads == 12u && cutRunReads.wordReads == 0u && cutRunReads.bulkWords == 12u, "image table bulk reads: a record cut by an unmapped page read other words in runs than word by word");
 }
 
+void verifyImageTableBulkKeyScan() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    guest.heap[0] = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    guest.heap[1] = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    guest.heap[3] = guest.heap[0];
+    guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0x08000003u, 0u, 0u}, {0u, 1u, 0u, 0u}}};
+    FillTableSrt(guest, guest.heap.data(), 32u, 4u);
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableMaterialCode, userData);
+    const auto capture = [&](CountingMemory& memory, bool bulk) {
+        SrtRuntime runtime;
+        runtime.userData = request.context.userData;
+        runtime.shaderBase = request.shader.codeAddress;
+        runtime.userContext = &memory;
+        runtime.readMemory = &CountingRead;
+        runtime.readSpecializationMemory = &CountingRead;
+        runtime.accessible = &CountingAccessible;
+        if (bulk) runtime.readWords = &CountingReadWords;
+        return CaptureResources(request, runtime);
+    };
+    const auto begin = reinterpret_cast<std::uintptr_t>(guest.materials.data());
+    CountingMemory byWordReads{begin, begin + sizeof(guest.materials)};
+    CountingMemory byRunReads = byWordReads;
+    const auto byWord = capture(byWordReads, false);
+    const auto byRun = capture(byRunReads, true);
+    require(byWordReads.wordReads == guest.materials.size(), "image table bulk key scan: without a bulk reader the keys were not read one word each");
+    require(byRunReads.wordReads == 0u, "image table bulk key scan: the keys were read word by word although a bulk reader exists");
+    require(byRun->snapshot.tables == byWord->snapshot.tables, "image table bulk key scan: scanning the keys in bulk changed the snapshot");
+    const auto& snapshot = byRun->snapshot.tables.tables.at(0);
+    const auto outside = Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::OutsideDomain));
+    require(snapshot.keys == 4u && snapshot.codes[0] == snapshot.codes[3] && snapshot.codes[0] != snapshot.codes[1] && snapshot.codes[2] == outside, "image table bulk key scan: the narrowed codes are wrong");
+}
+
 void verifyImageTables() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -5212,6 +5249,7 @@ int main(int argc, char** argv) {
             verifyImageTableKeys();
             verifyImageTables();
             verifyImageTableBulkReads();
+            verifyImageTableBulkKeyScan();
             verifyImageTableSrtKey();
             verifyImageTableMaskedOffset();
             verifyImageTableKeyUnion();
