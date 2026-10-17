@@ -272,4 +272,19 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
     return 0;
 }
 
+int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
+    if ((id & 0x7fffffffu) == 0) {
+        return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+    }
+    if (!findModuleName(id)) {
+        throw std::runtime_error(std::string("sceSysmoduleIsLoadedInternal: unknown id ") + std::to_string(id));
+    }
+    std::lock_guard<std::mutex> lock(gMutex);
+    const auto it = gLoadCount.find(id);
+    if (it == gLoadCount.end() || it->second < 1) {
+        return SCE_SYSMODULE_ERROR_UNLOADED;
+    }
+    return 0;
+}
+
 }

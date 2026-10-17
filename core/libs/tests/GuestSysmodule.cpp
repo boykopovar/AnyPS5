@@ -24,6 +24,7 @@ int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id);
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id);
 int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id);
+int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id);
 int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
 int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t* handle);
@@ -202,6 +203,7 @@ int main() {
     Require(sceSysmoduleLoadModule(0) == kInvalidValue);
     Require(sceSysmoduleUnloadModule(0) == kInvalidValue);
     for (std::uint32_t id : {0u, kInternalFlag}) {
+        Require(sceSysmoduleIsLoadedInternal(id) == kInvalidValue);
         Require(sceSysmoduleLoadModuleInternal(id) == kInvalidValue);
         Require(sceSysmoduleUnloadModuleInternal(id) == kInvalidValue);
         int result = 0x5a5a5a5a;
@@ -209,8 +211,11 @@ int main() {
         Require(result == 0x5a5a5a5a);
     }
 
+    Require(ThrowsRuntimeError([] { sceSysmoduleIsLoadedInternal(0x00ffffffu); }));
+    Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);
+    Require(sceSysmoduleIsLoadedInternal(kFiberModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kFiberModuleId) == 0);
     Require(sceSysmoduleLoadModuleInternal(kFiberModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternal(kFiberModuleId) == 0);
@@ -264,11 +269,15 @@ int main() {
     Require(sceSysmoduleUnloadModule(kPsmlModuleId) == 0);
     Require(sceSysmoduleIsLoaded(kPsmlModuleId) == kModuleUnloaded);
 
+    Require(sceSysmoduleIsLoadedInternal(kAgcModuleId) == kModuleUnloaded);
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == kModuleUnloaded);
     Require(sceSysmoduleLoadModuleInternal(kAgcModuleId) == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcModuleId) == 0);
     Require(sceSysmoduleLoadModuleInternal(kAgcModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcModuleId) == 0);
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == 0);
+    Require(sceSysmoduleIsLoadedInternal(kAgcModuleId) == kModuleUnloaded);
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == kModuleUnloaded);
 #if defined(__linux__) || defined(_WIN32)
     CheckUnwindInfo();
