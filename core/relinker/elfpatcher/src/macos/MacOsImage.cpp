@@ -1,4 +1,5 @@
 #include <elfpatcher/macos/MacOsImage.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -193,6 +194,11 @@ void AppendPathCommand(std::vector<std::uint8_t>& out, const std::uint32_t cmd, 
     out.resize(start + size, 0);
 }
 
+struct GsTrap {
+    std::uint32_t Rva;
+    std::size_t Length;
+};
+
 struct TlsAccess {
     std::uint32_t Rva;
     std::size_t Length;
@@ -206,6 +212,7 @@ struct TlsScan {
     const Domain::ProgramHeader* Tls = nullptr;
     std::vector<TlsAccess> Accesses;
     std::set<std::uint32_t> BranchTargets;
+    std::vector<GsTrap> GsTraps;
 };
 
 TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image) {
@@ -218,16 +225,23 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
             scan.Tls = &header;
         }
         if (header.Type != 1 || (header.Flags & 1) == 0) continue;
+        std::uint64_t decodedEnd = 0;
         for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
+            const bool insidePrevious = *instruction < decodedEnd;
+            decodedEnd = std::max(decodedEnd, *instruction + info.Length);
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
                 if (target >= 0 && target <= std::numeric_limits<std::uint32_t>::max()) scan.BranchTargets.insert(static_cast<std::uint32_t>(target));
             }
-            if (info.SegmentPrefix == 0) continue;
+            if (info.SegmentPrefix == 0 || (insidePrevious && info.SegmentPrefix != 0x64)) continue;
+            if (info.SegmentPrefix == 0x65) {
+                scan.GsTraps.push_back({rva, info.Length});
+                continue;
+            }
             const auto position = info.OpcodeOffset;
             bool hasOperandSizePrefix = false;
             bool supportedPrefixes = info.SegmentPrefix == 0x64;
@@ -370,6 +384,23 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     segments.push_back({"__TEXT", 0, LoadRva, VmProtRead | VmProtExecute, {}, {}});
     const auto guestSegments = segments.size();
     auto sections = image.BuildSections();
+    for (const auto& trap : tls.GsTraps) {
+        if (input.Trampolines != nullptr) {
+            for (const auto& site : *input.Trampolines) {
+                const auto siteRva = image.GetRva(site.Address, site.Length);
+                if (siteRva < trap.Rva + trap.Length && trap.Rva < siteRva + site.Length)
+                    throw Domain::RelinkerException("AMD-only instruction is also a guest GS access", siteRva);
+            }
+        }
+        const auto section = std::find_if(sections.begin(), sections.end(), [&](const auto& candidate) {
+            return trap.Rva >= candidate.Rva && trap.Rva - candidate.Rva < candidate.Data.size();
+        });
+        if (section == sections.end()) throw Domain::RelinkerException("Guest GS instruction is outside the image", trap.Rva);
+        const auto offset = trap.Rva - section->Rva;
+        if (trap.Length > section->Data.size() - offset) throw Domain::RelinkerException("Guest GS instruction crosses a section boundary", trap.Rva);
+        std::fill_n(section->Data.begin() + offset, trap.Length, 0x90);
+        std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section->Data.begin() + offset);
+    }
     if (input.Trampolines != nullptr && !input.Trampolines->empty()) {
         for (const auto& access : tls.Accesses) {
             for (const auto& site : *input.Trampolines) {
