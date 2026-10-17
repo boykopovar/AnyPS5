@@ -623,9 +623,10 @@ void AllocationFailureReportsHeapBudgets() {
     }
     Expect(failure.find("heap 0 1500/2000 MiB") != std::string::npos, "allocation failure omitted the first heap's memory budget");
     Expect(failure.find("heap 1 2500/3000 MiB") != std::string::npos, "allocation failure omitted a later heap's memory budget");
-    Expect(diagnosticBudgetQueries == 1, "allocation failure did not query the memory budget exactly once");
+    Expect(diagnosticBudgetQueries == 2, "allocation failure did not query the memory budget for both type selection and its diagnostic");
 
     mock = MockDevice{};
+    diagnosticBudgetQueries = 0;
     failure.clear();
     {
         auto context = mockContext();
@@ -639,7 +640,7 @@ void AllocationFailureReportsHeapBudgets() {
         }
     }
     Expect(failure.find("heap 0") == std::string::npos && failure.find("heap 1") == std::string::npos, "allocation failure emitted heap data when VK_EXT_memory_budget was unavailable");
-    Expect(diagnosticBudgetQueries == 1, "missing-extension fallback attempted a memory budget query");
+    Expect(diagnosticBudgetQueries == 0, "missing-extension fallback attempted a memory budget query");
 }
 
 void SuccessfulAllocationKeepsPool() {
