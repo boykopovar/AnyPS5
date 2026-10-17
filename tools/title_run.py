@@ -46,7 +46,7 @@ def relink_args(entry, platform):
     return args
 
 
-ERROR = re.compile(r"what\(\):|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission")
+ERROR = re.compile(r"what\(\):|FAIL:|FATAL|not implemented|unhandled exception|DEVICE_LOST|has not reached submission")
 WARNINGS = ("destroyed with GPU results pending", "guest memory changed while GPU results were pending")
 STALL_SECONDS = 20
 
@@ -249,6 +249,7 @@ if os.name == "nt":
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
     kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, *(ctypes.POINTER(ctypes.c_ulonglong),) * 4)
     kernel32.QueryInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p)
     WindowCallback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -264,10 +265,11 @@ if os.name == "nt":
 
 
 class Session:
-    def __init__(self, command, cwd, env, stdout, stderr):
+    def __init__(self, command, cwd, env, stdout, stderr, owned=None):
+        self.owned = os.path.normcase(os.path.abspath(owned)) if owned else None
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
-            self.handles = {}
+            self.handles, self.images = {}, {}
             self.job = kernel32.CreateJobObjectW(None, None)
             if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
                 error = ctypes.get_last_error()
@@ -282,6 +284,7 @@ class Session:
         ids = set(listing.ids[:listing.listed])
         for pid in ids - self.handles.keys():
             self.handles[pid] = kernel32.OpenProcess(0x1000, False, pid)
+            self.images[pid] = self.image_path(self.handles[pid]) if self.handles[pid] else ""
         return ids
 
     def windows(self):
@@ -307,12 +310,17 @@ class Session:
         except ProcessLookupError:
             return False
 
+    def image_path(self, handle):
+        size = wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        return os.path.normcase(os.path.abspath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
+
     def exit_code(self):
         if os.name == "nt" and not self.process_ids():
             last = None
-            for handle in self.handles.values():
+            for pid, handle in self.handles.items():
                 code, times = wintypes.DWORD(), [ctypes.c_ulonglong() for _ in range(4)]
-                if (handle and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
+                if (handle and (self.owned is None or self.images[pid].startswith(self.owned)) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
                         and kernel32.GetProcessTimes(handle, *map(ctypes.byref, times)) and (last is None or times[0].value >= last[0])):
                     last = (times[0].value, code.value)
             if last:
@@ -373,7 +381,7 @@ def run_title(executable, work, run_dir, seconds, extra_env):
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
     started = time.monotonic()
     with (run_dir / "stdout.log").open("wb") as stdout, (run_dir / "stderr.log").open("wb") as stderr:
-        session = Session([str(executable)], work, env, stdout, stderr)
+        session = Session([str(executable)], work, env, stdout, stderr, owned=work)
         try:
             while session.alive() and time.monotonic() - started < seconds:
                 session.move_windows_offscreen()
@@ -452,13 +460,15 @@ def main(argv=None):
     for title_id in ids:
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
-        work = output / title_id / "work"
+        work = args.out.resolve() / "work" / title_id
         try:
             executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
         except (unwrap_self.Refused, OSError, RuntimeError, TypeError, ValueError) as error:
             work.mkdir(parents=True, exist_ok=True)
             (work / "relink.log").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
             executable = None
+        (output / title_id).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(work / "relink.log", output / title_id / "relink.log")
         runs = []
         for number in range(1, args.runs + 1):
             if executable is None:
