@@ -17,6 +17,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstdint>
@@ -279,10 +280,12 @@ void WaitForWord(std::uint64_t address, std::uint32_t value, const char* what) {
     }
 }
 
+std::atomic<bool> GateOpen{true};
+
 void GateUntilQueued() {
     AgcDriver::DriverDetail::DrawPipeline::Queue0().Enqueue([] {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (AgcDriver::DriverDetail::DrawPipeline::QueuedItems() < 2) {
+        while (AgcDriver::DriverDetail::DrawPipeline::QueuedItems() < 2 || !GateOpen.load()) {
             if (std::chrono::steady_clock::now() >= deadline) return;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -300,7 +303,9 @@ void WaitForCommits() {
 void WaitForHeldRange(std::uint64_t address, std::size_t bytes, const char* what) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!AgcDriver::DriverDetail::DrawPipeline::HeldReads(address, bytes) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    Require(AgcDriver::DriverDetail::DrawPipeline::HeldReads(address, bytes), std::string("queued index read: the queued draw holds no read of its ") + what + " range");
+    const bool held = AgcDriver::DriverDetail::DrawPipeline::HeldReads(address, bytes);
+    GateOpen = true;
+    Require(held, std::string("queued index read: the queued draw holds no read of its ") + what + " range");
 }
 
 }
@@ -347,6 +352,7 @@ int main() {
         Submit(ImageWrite(), "the second image write");
         AgcDriverWaitIdle_nid_postfix();
         Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "queued index read: the second image write left no pending result to order against");
+        GateOpen = false;
         GateUntilQueued();
         std::fill_n(ColorMemory, ColorBytes, std::byte{0});
         Submit(Draw(Pool + VertexOffset, Vertices.size()), "the draw whose vertices the image covers");
