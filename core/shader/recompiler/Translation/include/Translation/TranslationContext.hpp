@@ -68,7 +68,7 @@ private:
     void writeOperand(const RdnaOperand& operand, IrValue* value);
     IrU32 packHalf2x16(IrF32 low, IrF32 high);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
-    void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
+    void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
     bool directedF16Rounding() const;
     IrU32 flushF16Bits(IrU32 bits, std::uint32_t keepBit);
     IrU32 flushF16Input(IrU32 bits);
@@ -85,6 +85,7 @@ private:
     IrU32 quietNan16(IrU32 bits);
     IrValue* nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct = nullptr);
     IrValue& invalidProductF32(IrValue* lhs, IrValue* rhs);
+    IrValue& invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct);
     std::array<IrU32, 2> quietNan64(const std::array<IrU32, 2>& bits);
     std::array<IrU32, 2> readU32Pair(const RdnaOperand& operand);
     IrU64 readU64(const RdnaOperand& operand);

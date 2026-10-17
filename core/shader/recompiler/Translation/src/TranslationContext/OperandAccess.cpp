@@ -362,6 +362,15 @@ IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
     return ir.LogicalOr(infZero(lhsMagnitude, rhsMagnitude), infZero(rhsMagnitude, lhsMagnitude));
 }
 
+IrValue& TranslationContext::invalidOperationF32(std::initializer_list<IrValue*> sources, IrValue& invalidProduct) {
+    IrValue* noNan = &ir.ConstantBool(true);
+    for (IrValue* source : sources) {
+        IrValue& nan = ir.UGreaterThan(ir.BitwiseAnd(ir.BitCastU32(*source), ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u));
+        noNan = &ir.LogicalAnd(*noNan, ir.LogicalNot(nan));
+    }
+    return ir.LogicalOr(invalidProduct, *noNan);
+}
+
 IrU32 TranslationContext::quietNan16(IrU32 bits) {
     return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x0200u))) : bits;
 }
