@@ -449,6 +449,11 @@ void DitheredCoverage(AgcDriver::VulkanDevice& device) {
 
 void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    const auto expectRange = [](std::string_view message, const char* plane, std::uint64_t address, std::size_t bytes, std::uint32_t samples) {
+        char detail[160];
+        std::snprintf(detail, sizeof(detail), "(%s range 0x%llx+0x%zx, %u samples)", plane, static_cast<unsigned long long>(address), bytes, samples);
+        Require(message.find(detail) != std::string_view::npos, "a resident multisampled DCC refusal did not identify the affected plane, range and sample count");
+    };
     std::vector<std::unique_ptr<Block>> blocks;
     struct ClearTargets {
         AgcDriver::VulkanDevice& device;
@@ -521,6 +526,7 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
                             device.ColorMetadataPass(pass);
                         } catch (const std::runtime_error& error) {
                             refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "color", source.Address(), AgcDriver::Graphics::MultisampledColorBytes(target), samples);
                         }
                         Require(refused, "a same-value CPU color store did not invalidate multisampled DCC residency");
                     }
@@ -531,8 +537,20 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
                             device.ColorMetadataPass(pass);
                         } catch (const std::runtime_error& error) {
                             refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "DCC", metadata.Address(), AgcDriver::Graphics::MultisampledDccBytes(target), samples);
                         }
                         Require(refused, "a same-value CPU DCC store did not invalidate multisampled DCC residency");
+                    }
+                    if (code == 0x40u && alphaOnMsb && cmaskMode == 0xccu) {
+                        reinterpret_cast<volatile std::uint8_t*>(target.cmaskAddress)[0] = 0xccu;
+                        bool refused = false;
+                        try {
+                            device.ColorMetadataPass(pass);
+                        } catch (const std::runtime_error& error) {
+                            refused = std::string_view(error.what()).find("writes to a resident multisampled DCC") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "CMASK", target.cmaskAddress, target.cmaskBytes, samples);
+                        }
+                        Require(refused, "a same-value CPU CMASK store did not invalidate multisampled DCC residency");
                     }
                     if (code == 0xc0u && alphaOnMsb && cmaskMode == 0) {
                         AgcDriver::GuestMemory::Unwatch(metadata.Address(), 4096);
@@ -541,6 +559,7 @@ void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSa
                             device.ColorMetadataPass(pass);
                         } catch (const std::runtime_error& error) {
                             refused = std::string_view(error.what()).find("reuse requires watched guest memory") != std::string_view::npos;
+                            if (refused) expectRange(error.what(), "DCC", metadata.Address(), AgcDriver::Graphics::MultisampledDccBytes(target), samples);
                         }
                         Require(refused, "an unwatched metadata range remained eligible for multisampled DCC reuse");
                     }
