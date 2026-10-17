@@ -465,6 +465,20 @@ int main() {
     Require(fchmodat_nid_postfix(base, longName.c_str(), 0600, 0) == -1 && Error() == 63);
 #endif
     Require(sceKernelClose(base) == 0);
+#ifdef _WIN32
+    const auto junctionTarget = root / "junction-target";
+    const auto junction = root / "junction";
+    Require(std::filesystem::create_directory(junctionTarget));
+    const auto junctionCommand = L"cmd /c mklink /J \"" + junction.wstring() + L"\" \"" + std::filesystem::absolute(junctionTarget).wstring() + L"\"";
+    Require(_wsystem(junctionCommand.c_str()) == 0);
+    char junctionBuffer[512];
+    std::memset(junctionBuffer, '#', sizeof(junctionBuffer));
+    const auto junctionLength = readlink_nid_postfix(junction.string().c_str(), junctionBuffer, sizeof(junctionBuffer));
+    Require(junctionLength > 0 && static_cast<std::size_t>(junctionLength) < sizeof(junctionBuffer) && junctionBuffer[junctionLength] == '#');
+    const std::string junctionText(junctionBuffer, static_cast<std::size_t>(junctionLength));
+    std::error_code junctionError;
+    Require(junctionText.find('?') == std::string::npos && std::filesystem::equivalent(junctionText, junctionTarget, junctionError) && !junctionError);
+#endif
 #ifndef _WIN32
     if (created == 0) {
         const auto throughLink = (root / "through-link.bin").string();

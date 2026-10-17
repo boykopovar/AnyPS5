@@ -787,6 +787,17 @@ int main() {
         Require(std::filesystem::remove(fileLink) && std::filesystem::remove(directoryLink) && DeleteFileW(danglingLink.c_str()) != 0 &&
             std::filesystem::remove(absoluteLink) && std::filesystem::remove(targetDirectory));
     }
+    const auto junctionTarget = root / "junction-target";
+    const auto junction = root / "junction";
+    Require(std::filesystem::create_directory(junctionTarget));
+    const auto junctionCommand = L"cmd /c mklink /J \"" + junction.wstring() + L"\" \"" + junctionTarget.wstring() + L"\"";
+    Require(_wsystem(junctionCommand.c_str()) == 0);
+    FileStat junctionStatus{};
+    Require(lstat_nid_postfix(junction.string().c_str(), &junctionStatus) == 0);
+    Require((junctionStatus.st_mode & 0170000) == 0120000 && junctionStatus.st_size > 0);
+    FileStat junctionFollowed{};
+    Require(stat_nid_postfix(junction.string().c_str(), &junctionFollowed) == 0 && (junctionFollowed.st_mode & 0170000) == 0040000);
+    Require(std::filesystem::remove(junction) && std::filesystem::remove(junctionTarget));
 #endif
     FileStat identity{};
     FileStat byDescriptor{};
