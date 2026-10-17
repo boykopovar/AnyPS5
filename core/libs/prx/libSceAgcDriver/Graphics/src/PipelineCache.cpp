@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "ShaderDiskCache.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -45,9 +46,11 @@ PipelineCache::PipelineCache(const Context& context, const VkPhysicalDevicePrope
             std::snprintf(digits, sizeof(digits), "%02x", static_cast<unsigned>(byte));
             uuid += digits;
         }
+        char version[17];
+        std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::SourceVersion()));
         char name[160];
         std::snprintf(name, sizeof(name), "vk-pipelines-%04x-%04x-%08x-%s.bin", properties.vendorID, properties.deviceID, properties.driverVersion, uuid.c_str());
-        path = directory / name;
+        path = directory / version / name;
     }
     std::vector<std::byte> initialData;
     if (!path.empty()) {
