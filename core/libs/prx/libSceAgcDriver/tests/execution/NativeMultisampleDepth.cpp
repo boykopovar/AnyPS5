@@ -534,7 +534,7 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     const auto format = target.format == VK_FORMAT_D16_UNORM ? 7u : 22u;
     const auto count = static_cast<std::uint32_t>(std::countr_zero(target.samples));
     const auto width = target.extent.width - 1u, height = target.extent.height - 1u;
-    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (1u << 10u) | (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
+    return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (1u << 19u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
 bool DepthSupported(const Context& context, VkFormat format, std::uint32_t fragments) {
@@ -649,7 +649,7 @@ void CheckClearDispatch() {
     }
 }
 
-void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments, bool one, bool clearing = false, std::optional<bool> depthOnlyOverride = std::nullopt, ClearFault fault = ClearFault::None) {
+void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments, bool one, bool clearing = false, std::optional<bool> depthOnlyOverride = std::nullopt, ClearFault fault = ClearFault::None, bool iterate256 = true) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, fragments));
     TargetMemory memory(bytes), metadata(65536u);
@@ -661,7 +661,8 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     target.depthSwizzle = 24u;
     target.pipeBankXor = one ? 0x8c00u : 0u;
     target.htileDepthOnly = depthOnly;
-    target.iterate256 = target.htilePipeAligned = true;
+    target.iterate256 = iterate256;
+    target.htilePipeAligned = true;
     Recorder recorder(context);
     recorder.Activate();
     struct Cleanup {
@@ -797,7 +798,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
             case 8u: changed.pipeBankXor ^= 0x100u; break;
             case 9u: changed.dccAddress += 256u; break;
             case 10u: changed.dccPipeAligned = false; break;
-            case 11u: changed.iterate256 = false; break;
+            case 11u: changed.iterate256 = !changed.iterate256; break;
             case 12u: changed.allocatedMipCount = 2u; break;
             case 13u: changed.mipCount = 2u; break;
             case 14u: changed.baseLevel = 1u; break;
@@ -811,7 +812,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     TargetRefuses([&] { CachedSampledTexture(context, words); }, "guest writes");
     TargetRefuses([&] { DepthSurfaceHolds(context, resource, texture.get()); }, "guest writes");
     texture.reset();
-    std::printf("Native depth format=%u samples=%u clear=%u: imported, rasterized twice, sampled and refused conflicts\n", static_cast<std::uint32_t>(format), fragments, one);
+    std::printf("Native depth format=%u samples=%u clear=%u iterate256=%u: imported, rasterized twice, sampled and refused conflicts\n", static_cast<std::uint32_t>(format), fragments, one, iterate256);
 }
 
 void CheckHtileRouting(Context context, VkFormat format, std::uint32_t fragments) {
@@ -877,7 +878,7 @@ void CheckEligibility(Context context) {
             case 2u: invalid.lastSlice = 1u; reason = "arrays"; break;
             case 3u: invalid.pipeBankXor = 0x10u; reason = "XOR"; break;
             case 4u: invalid.htileAddress = 0u; reason = "HTILE"; break;
-            case 5u: invalid.iterate256 = false; reason = "HTILE"; break;
+            case 5u: invalid.htileAddress += 16u; reason = "HTILE"; break;
             case 6u: invalid.htilePipeAligned = false; reason = "HTILE"; break;
             case 7u: invalid.htileVrsEncoding = 1u; reason = "VRS"; break;
             case 8u: invalid.clearDepth = 0.5f; reason = "clear value"; break;
@@ -1143,8 +1144,10 @@ int main(int argc, char** argv) {
         std::uint32_t checked = 0u, unavailable = 0u;
         for (const auto format : {VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT}) {
             for (const auto samples : {2u, 4u, 8u}) {
-                if (!DepthSupported(context, format, samples)) { unavailable += 2u; continue; }
-                for (const bool one : {false, true}) { CheckDepthTarget(context, format, samples, one); ++checked; }
+                if (!DepthSupported(context, format, samples)) { unavailable += 4u; continue; }
+                for (const bool one : {false, true}) {
+                    for (const bool iterate256 : {true, false}) { CheckDepthTarget(context, format, samples, one, false, std::nullopt, ClearFault::None, iterate256); ++checked; }
+                }
                 CheckHtileRouting(context, format, samples);
             }
         }
