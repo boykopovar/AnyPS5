@@ -34,6 +34,7 @@ constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_ENFILE = 23;
 constexpr int GUEST_EMFILE = 24;
+constexpr int GUEST_EPIPE = 32;
 
 constexpr int KQ_NEVENTS = 8;
 constexpr std::uint32_t NOTE_FFCTRLMASK = 0xc0000000;
@@ -138,9 +139,13 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
     const bool socket = GuestSockets::IsOpen(descriptor);
     std::int64_t data = 0;
     bool eof = false;
-    const bool pipe = !socket && change.filter == EVFILT_READ && GuestSockets::PipeReadState(descriptor, &data, &eof);
+    bool writable = false;
+    const bool pipe = !socket && (change.filter == EVFILT_READ ? GuestSockets::PipeReadState(descriptor, &data, &eof) : GuestSockets::PipeWriteState(descriptor, &data, &eof, &writable));
     if (!socket && !pipe) {
-        NotImplemented_nid_no_patch(change.filter == EVFILT_READ ? "kevent: EVFILT_READ on a descriptor that is neither a socket nor the read end of a pipe" : "kevent: EVFILT_WRITE on a non-socket descriptor");
+        NotImplemented_nid_no_patch(change.filter == EVFILT_READ ? "kevent: EVFILT_READ on a descriptor that is neither a socket nor the read end of a pipe" : "kevent: EVFILT_WRITE on a descriptor that is neither a socket nor the write end of a pipe");
+    }
+    if (pipe && change.filter == EVFILT_WRITE && eof) {
+        return GUEST_EPIPE;
     }
     if ((change.fflags & NOTE_LOWAT) != 0) {
         NotImplemented_nid_no_patch("kevent: NOTE_LOWAT");
