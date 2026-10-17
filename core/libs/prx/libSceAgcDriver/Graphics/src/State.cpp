@@ -166,10 +166,11 @@ bool zFormatSupported(std::uint32_t format) {
 std::uint32_t shaderControlMask(std::uint32_t zFormat) {
     constexpr std::uint32_t zExportEnable = 0x1u;
     constexpr std::uint32_t stencilTestValExportEnable = 0x2u;
+    constexpr std::uint32_t stencilOpValExportEnable = 0x4u;
     constexpr std::uint32_t maskExportEnable = 0x100u;
     auto mask = ShaderControlMask;
     if (zFormat != 0u && zFormatSupported(zFormat)) mask &= ~zExportEnable;
-    if (zFormat == 2u || zFormat == 9u) mask &= ~stencilTestValExportEnable;
+    if (zFormat == 2u || zFormat == 9u) mask &= ~(stencilTestValExportEnable | stencilOpValExportEnable);
     if (zFormat == 9u) mask &= ~maskExportEnable;
     return mask;
 }
@@ -202,7 +203,7 @@ bool depthPlanesAbsent(const Registers& cx) {
     return z != cx.end() && stencil != cx.end() && (z->second & 3u) == 0 && (stencil->second & 1u) == 0;
 }
 
-VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint32_t refMask, bool readOnly, bool testValExport) {
+VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint32_t refMask, bool readOnly, bool testValExport, bool opValExport, bool opValReference) {
     VkStencilOpState face{};
     face.compareOp = static_cast<VkCompareOp>(compare);
     face.compareMask = (refMask >> 8u) & 0xffu;
@@ -213,7 +214,11 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     auto fixed = compare == 0 || compare == 7 ? 0u : face.compareMask;
     const auto convert = [&](std::uint32_t op) {
         if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
-        char detail[96];
+        char detail[112];
+        if (opValExport && ((op == 4 && !opValReference) || op == 5 || op == 6 || op == 8 || op == 9)) {
+            std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u with a pixel shader that exports the stencil operation value is unsupported", op);
+            throw std::runtime_error(detail);
+        }
         switch (op) {
             case 0: return VK_STENCIL_OP_KEEP;
             case 1: return VK_STENCIL_OP_ZERO;
@@ -222,6 +227,10 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
             case 4: {
                 if (testValExport) {
                     if (op != 3) throw std::runtime_error("AGC graphics: stencil replacement by a value other than the test value is unsupported with a pixel shader that exports the stencil test value");
+                    return VK_STENCIL_OP_REPLACE;
+                }
+                if (opValReference) {
+                    if (op != 4) throw std::runtime_error("AGC graphics: stencil replacement by a value other than the operation value is unsupported with a pixel shader that exports the stencil operation value");
                     return VK_STENCIL_OP_REPLACE;
                 }
                 const auto value = op == 2 ? 0xffu : op == 3 ? test : opValue;
@@ -252,10 +261,12 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     face.passOp = convert((ops >> 4u) & 0xfu);
     face.depthFailOp = convert((ops >> 8u) & 0xfu);
     face.reference = reference;
+    Require(!opValReference || compare == 0 || compare == 7 || face.compareMask == 0, "a stencil compare against the test value is unsupported with a pixel shader that exports the stencil operation value");
     return face;
 }
 
-void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValExport, State& result) {
+void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValExport, bool opValExport, State& result) {
+    const bool opValReference = opValExport && StencilOperationValueReplaces(cx);
     zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const bool depthClear = (read(cx, 0x000) & 1u) != 0;
     const bool stencilClear = (read(cx, 0x000) & 2u) != 0;
@@ -341,8 +352,8 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
         result.stencilBack = clear;
     } else if (result.stencilTest) {
         const auto ops = read(cx, 0x10b);
-        result.stencilFront = stencilFace((depthControl >> 8u) & 7u, ops, read(cx, 0x10c), stencilReadOnly, testValExport);
-        result.stencilBack = (depthControl & 0x80u) != 0 ? stencilFace((depthControl >> 20u) & 7u, ops >> 12u, read(cx, 0x10d), stencilReadOnly, testValExport) : result.stencilFront;
+        result.stencilFront = stencilFace((depthControl >> 8u) & 7u, ops, read(cx, 0x10c), stencilReadOnly, testValExport, opValExport, opValReference);
+        result.stencilBack = (depthControl & 0x80u) != 0 ? stencilFace((depthControl >> 20u) & 7u, ops >> 12u, read(cx, 0x10d), stencilReadOnly, testValExport, opValExport, opValReference) : result.stencilFront;
     }
 }
 
@@ -1047,7 +1058,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         const bool clear = renderControl != cx.end() && (renderControl->second & 3u) != 0;
         const auto tests = planeTests(cx, depthControl);
         if ((clear || tests != 0) && depthSurfaceBound(cx)) {
-            decodeDepth(cx, depthControl, (read(cx, 0x203) & 2u) != 0 && !PixelProgramSkipped(queue), result);
+            decodeDepth(cx, depthControl, (read(cx, 0x203) & 2u) != 0 && !PixelProgramSkipped(queue), (read(cx, 0x203) & 4u) != 0 && !PixelProgramSkipped(queue), result);
         } else if (depthPassThrough(depthControl) || ((depthControl & 0xbu) != 0 && (tests == 0 || depthPlanesAbsent(cx)))) {
             static bool reported = false;
             if (!reported) {
@@ -1799,6 +1810,22 @@ bool SplitsAlternateAlpha(const State& state) {
         if (blend.srcColorBlendFactor != blend.srcAlphaBlendFactor || blend.dstColorBlendFactor != blend.dstAlphaBlendFactor || blend.colorBlendOp != blend.alphaBlendOp) return true;
     }
     return false;
+}
+
+bool StencilOperationValueReplaces(const Registers& context) {
+    const auto value = [&](std::uint32_t offset) {
+        const auto found = find(context, offset);
+        return found == context.end() ? 0u : found->second;
+    };
+    if ((value(0x203) & 6u) != 4u) return false;
+    const auto depthControl = value(0x200);
+    if ((depthControl & 1u) == 0 || (value(0x011) & 1u) == 0 || (value(0x002) & 0x02000000u) != 0 || (value(0x000) & 2u) != 0) return false;
+    const auto replaces = [](std::uint32_t ops, std::uint32_t refMask) {
+        if (((refMask >> 16u) & 0xffu) == 0) return false;
+        return (ops & 0xfu) == 4u || ((ops >> 4u) & 0xfu) == 4u || ((ops >> 8u) & 0xfu) == 4u;
+    };
+    const auto ops = value(0x10b);
+    return replaces(ops, value(0x10c)) || ((depthControl & 0x80u) != 0 && replaces(ops >> 12u, value(0x10d)));
 }
 
 bool StencilReferenceUnused(const State& state) {

@@ -190,6 +190,7 @@ private:
         append(key, value.orderedPixelShader);
         append(key, value.alphaToCoverage);
         append(key, value.stencilRefExportEnable);
+        append(key, value.stencilOperationValueExport);
         append(key, value.ditheredAlphaToCoverage);
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);

@@ -255,6 +255,7 @@ inline constexpr std::array<DrawKeyRange, 50> DrawKeyRegisters{{
     {RegisterBank::UserConfig, 0x242, 1}, {RegisterBank::UserConfig, 0x24b, 1}, {RegisterBank::UserConfig, 0x25b, 1},
 }};
 bool SplitsAlternateAlpha(const State& state);
+bool StencilOperationValueReplaces(const Registers& context);
 bool StencilReferenceUnused(const State& state);
 // Whether DrawKeyRegisters holds the read.
 bool DrawKeyCovers(RegisterRead read);

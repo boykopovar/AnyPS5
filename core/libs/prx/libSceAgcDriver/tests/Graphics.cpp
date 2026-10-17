@@ -6199,12 +6199,52 @@ void stencilRefExportTests() {
             Require(!AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck accepted a stencil reference export with Z format " + std::to_string(zFormat));
         }
     }
-    for (const auto shaderControl : {0x54u, 0x56u}) {
-        const auto queue = stencilRefExportQueue(shaderControl, 2u);
-        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(queue)); }, "depth export, shader coverage or ordered fragment execution");
-        Require(!AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck accepted STENCIL_OP_VAL_EXPORT_ENABLE in DB_SHADER_CONTROL " + std::to_string(shaderControl));
+    for (const auto shaderControl : {0x54u, 0x56u, 0x45u}) {
+        for (const auto zFormat : {2u, 9u}) {
+            const auto unused = stencilRefExportQueue(shaderControl, zFormat);
+            static_cast<void>(AgcDriver::Graphics::DecodeState(unused));
+            Require(AgcDriver::Graphics::DrawRejection(unused, false).empty(), "the precheck rejected STENCIL_OP_VAL_EXPORT_ENABLE without a stencil test in DB_SHADER_CONTROL " + std::to_string(shaderControl));
+            Require(AgcDriver::Graphics::DecodePixelStageInfo(unused.context, IdentityExports).stencilRefExportEnable == ((shaderControl & 2u) != 0), "STENCIL_OP_VAL_EXPORT_ENABLE without a stencil test exported the stencil reference");
+            const bool replaces = (shaderControl & 6u) == 4u;
+            for (const auto [ops, writeMask, compare, accepted] : {std::tuple{0x000u, 0xffu, 7u, true}, std::tuple{0x737u, 0xffu, 7u, true}, std::tuple{0x110u, 0xffu, 7u, true}, std::tuple{0x050u, 0x00u, 7u, true}, std::tuple{0x040u, 0xffu, 7u, replaces}, std::tuple{0x40040u, 0xffu, 7u, replaces}, std::tuple{0x404u, 0x0fu, 0u, replaces}, std::tuple{0x040u, 0xffu, 2u, false}, std::tuple{0x340u, 0xffu, 7u, false}, std::tuple{0x042u, 0xffu, 7u, false}, std::tuple{0x050u, 0xffu, 7u, false}, std::tuple{0x600u, 0xffu, 7u, false}, std::tuple{0x008u, 0xffu, 7u, false}, std::tuple{0x900u, 0xffu, 7u, false}, std::tuple{0x5000u, 0xffu, 7u, false}}) {
+                auto stenciled = stencilRefExportQueue(shaderControl, zFormat);
+                for (const auto [offset, word] : {std::pair{0x010u, 0x80000180u}, std::pair{0x011u, 0x20000181u}, std::pair{0x012u, 0x00001000u}, std::pair{0x013u, 0x00002000u}, std::pair{0x015u, 0x00002000u}, std::pair{0x007u, 0x003f003fu}, std::pair{0x000u, 0u}, std::pair{0x002u, 0u}, std::pair{0x00au, 0u}, std::pair{0x00bu, 0x3f800000u}, std::pair{0x200u, 0x007007b3u}}) stenciled.context[offset] = word;
+                stenciled.context[0x10b] = ops;
+                stenciled.context[0x10c] = 0x0100ff00u | (writeMask << 16u);
+                stenciled.context[0x10d] = stenciled.context[0x10c];
+                stenciled.context[0x200] = 0x000000b3u | (compare << 8u) | (compare << 20u);
+                const auto name = "DB_SHADER_CONTROL " + std::to_string(shaderControl) + " with DB_STENCIL_CONTROL " + std::to_string(ops) + ", write mask " + std::to_string(writeMask) + " and compare " + std::to_string(compare);
+                if (accepted) {
+                    const auto state = AgcDriver::Graphics::DecodeState(stenciled);
+                    Require(state.stencilTest && state.depth.has_value(), "the stencil operation value fixture has no stencil test: " + name);
+                    const bool routed = replaces && (ops == 0x040u || ops == 0x40040u || ops == 0x404u);
+                    const auto pixel = AgcDriver::Graphics::DecodePixelStageInfo(stenciled.context, IdentityExports);
+                    Require(pixel.stencilRefExportEnable == (routed || (shaderControl & 2u) != 0) && pixel.stencilOperationValueExport == routed, "the stencil reference export does not follow the stencil operation value: " + name);
+                    if (routed) {
+                        const auto replaced = [&](const VkStencilOpState& face, std::uint32_t faceOps) {
+                            const auto expected = [&](std::uint32_t shift) { return ((faceOps >> shift) & 0xfu) == 4u ? VK_STENCIL_OP_REPLACE : VK_STENCIL_OP_KEEP; };
+                            return face.failOp == expected(0u) && face.passOp == expected(4u) && face.depthFailOp == expected(8u) && face.writeMask == writeMask;
+                        };
+                        Require(replaced(state.stencilFront, ops) && replaced(state.stencilBack, ops >> 12u) && !AgcDriver::Graphics::StencilReferenceUnused(state), "REPLACE_OP did not replace with the exported stencil value: " + name);
+                    }
+                } else {
+                    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(stenciled)); }, "with a pixel shader that exports the stencil");
+                }
+            }
+        }
+        for (const auto zFormat : {0u, 1u, 3u, 7u}) {
+            const auto queue = stencilRefExportQueue(shaderControl, zFormat);
+            expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(queue)); }, "depth export, shader coverage or ordered fragment execution");
+            Require(!AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck accepted STENCIL_OP_VAL_EXPORT_ENABLE with Z format " + std::to_string(zFormat));
+        }
     }
     Require(!AgcDriver::Graphics::DecodePixelStageInfo(stencilRefExportQueue(0x50u, 2u).context, IdentityExports).stencilRefExportEnable, "a pixel stage without STENCIL_TEST_VAL_EXPORT_ENABLE exports the stencil reference");
+    {
+        auto early = stencilRefExportQueue(0x1004u, 2u);
+        for (const auto [offset, word] : {std::pair{0x011u, 0x20000181u}, std::pair{0x002u, 0u}, std::pair{0x000u, 0u}, std::pair{0x200u, 0x007007b3u}, std::pair{0x10bu, 0x040u}, std::pair{0x10cu, 0x01ffff00u}}) early.context[offset] = word;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodePixelStageInfo(early.context, IdentityExports)); }, "early tests with a pixel shader that exports the stencil operation value");
+        Require(!AgcDriver::Graphics::DecodePixelStageInfo(early.context, IdentityExports, true).stencilRefExportEnable, "a skipped pixel program exported the stencil operation value");
+    }
     Require(AgcDriver::Graphics::DecodePixelStageInfo(stencilRefExportQueue(0x1012u, 2u).context, IdentityExports).earlyZ, "DEPTH_BEFORE_SHADER with a stencil reference export did not get early tests");
     const std::array<std::uint32_t, 2> stencilExport{spv::CapabilityShader, spv::CapabilityStencilExportEXT};
     const std::array<std::uint32_t, 1> plain{spv::CapabilityShader};
@@ -6235,6 +6275,30 @@ void stencilRefExportTests() {
     const auto emulated = ShaderRecompiler::Recompile(stencilRefExportRequest(0x52u, plain));
     Require(emulated.stencilReferences == std::vector<std::uint32_t>{0u} && emulated.stencilReplaySafe && stencilRefShape(emulated.spirv.Words()).empty(), "a constant stencil reference was not lowered to replay");
     Require(emulated.stencilReferenceDword == 0u && emulated.pushConstants.size() == sizeof(std::uint32_t), "a stencil-only shader did not reserve dynamic reference data");
+    {
+        const std::array<std::uint32_t, 5> literalStencil{0x7e0e02ffu, 0x00002a05u, 0xf8001882u, 0x700u, 0xbf810000u};
+        const auto shifts = [](std::span<const std::uint32_t> words) {
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                if ((words[at] & 0xffffu) == spv::OpShiftRightLogical) return true;
+            }
+            return false;
+        };
+        const auto testValue = stencilRefExportRequest(0x52u, plain, literalStencil);
+        auto operationValue = testValue;
+        operationValue.context.pixel->stencilOperationValueExport = true;
+        Require(ShaderRecompiler::Recompile(testValue).stencilReferences == std::vector<std::uint32_t>{0x05u}, "a stencil test value replay did not take the low byte of the MRTZ stencil channel");
+        Require(ShaderRecompiler::Recompile(operationValue).stencilReferences == std::vector<std::uint32_t>{0x2au}, "a stencil operation value replay did not take the second byte of the MRTZ stencil channel");
+        const auto exportedTest = stencilRefExportRequest(0x52u, stencilExport, literalStencil);
+        auto exportedOperation = exportedTest;
+        exportedOperation.context.pixel->stencilOperationValueExport = true;
+        Require(!shifts(ShaderRecompiler::Recompile(exportedTest).spirv.Words()) && shifts(ShaderRecompiler::Recompile(exportedOperation).spirv.Words()), "the exported stencil operation value was not taken from the second byte of the MRTZ stencil channel");
+        Require(serializer.Deserialize(serializer.Serialize(exportedOperation)).request.context.pixel->stencilOperationValueExport, "the serialized request lost the stencil operation value export");
+        std::vector<std::uint64_t> testKey;
+        std::vector<std::uint64_t> operationKey;
+        ShaderRecompiler::RecompileCacheKey::Build(exportedTest, testKey);
+        ShaderRecompiler::RecompileCacheKey::Build(exportedOperation, operationKey);
+        Require(testKey != operationKey, "the recompile cache key ignores the stencil operation value export");
+    }
     auto replayRequest = stencilRefExportRequest(0x52u, plain);
     const auto replayHandle = ShaderRecompiler::PrepareShader(replayRequest);
     const auto replayCapture = ShaderRecompiler::CaptureResources(replayRequest, ShaderRecompiler::SrtRuntime{}, *replayHandle);

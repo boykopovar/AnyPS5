@@ -553,7 +553,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.registrationModule = registration;
     result.stencilReplaySafe = (request.shader.stage == ShaderStage::Vertex || stencilReplay) && StencilReplaySafe(program);
     if (stencilReplay) {
-        result.stencilReferences = StencilReferenceValues(program);
+        result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
 
