@@ -4368,6 +4368,21 @@ void verifyUnusedUnnormalizedSampler() {
     require(normalized[0].imageUnnormalized == std::vector<bool>{false} && normalized[1].samplerUnnormalized == std::vector<bool>{false}, "unnormalized samplers: a normalized S# was flagged");
     static_cast<void>(populate(offset));
     expectFailure([&] { static_cast<void>(populate(foldOnly)); }, "normalized guest sampler is used with a texel offset that is not a constant", "unnormalized samplers: a normalized S# was accepted for an offset that only folds");
+    ImageResource msaaArrayImage{};
+    msaaArrayImage.resourceClass = ImageResourceClass::Sampled;
+    msaaArrayImage.numericClass = IrTextureNumericClass::Float;
+    msaaArrayImage.dimension = RdnaImageDimension::Dim2DMsaaArray;
+    msaaArrayImage.read = true;
+    ShaderInfo msaaArrayInfo;
+    msaaArrayInfo.images = {msaaArrayImage};
+    msaaArrayInfo.runtimeImageModes = {ResourceMaterializer::RuntimeImageModes(msaaArrayImage)};
+    BindingAllocationResult msaaArrayAllocation;
+    msaaArrayAllocation.layout.descriptors = {{DescriptorBindingForImage(msaaArrayImage), {0u}}};
+    auto msaaArraySnapshot = snapshot;
+    msaaArraySnapshot.images[0].dwords[3] = 0xf0020facu;
+    msaaArraySnapshot.images[0].dwords[5] = 0x00000020u;
+    DescriptorBindingBuilder{}.Populate(msaaArrayAllocation, msaaArrayInfo, IrShaderStage::Compute, 0u, msaaArraySnapshot, {});
+    require(msaaArrayAllocation.bindings.size() == 1u && msaaArrayAllocation.bindings[0].imageShape == DescriptorImageShape::Image2DMultisampleArray, "multisampled array image resource did not receive Image2DMultisampleArray descriptor shape");
 }
 
 void verifyWaveUniformValues() {

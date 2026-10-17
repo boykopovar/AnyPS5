@@ -72,6 +72,13 @@ alignas(256) constexpr std::array<std::uint32_t, 26> LoadCode{
     0x80001301, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 26> ArrayLoadCode{
+    0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+    0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xbf8c3f70, 0xf0001f38, 0x00011004,
+    0xbf8c3f70, 0xe0701030, 0x80001001, 0xe0701034, 0x80001101, 0xe0701038, 0x80001201, 0xe070103c,
+    0x80001301, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 19> StoreCode{
     0x34020087, 0xe030100c, 0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xe0301018,
     0x80001001, 0xe030101c, 0x80001101, 0xe0301020, 0x80001201, 0xe0301024, 0x80001301, 0xbf8c3f70,
@@ -231,8 +238,8 @@ ShaderRecompiler::RecompileResult CompileProgram(AgcDriver::VulkanDevice& device
     return ShaderRecompiler::Recompile(request);
 }
 
-ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, std::vector<std::uint32_t>& userData) {
-    return CompileProgram(device, LoadCode, texture, userData);
+ShaderRecompiler::RecompileResult CompileLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, std::vector<std::uint32_t>& userData, bool arrayed = false) {
+    return CompileProgram(device, arrayed ? ArrayLoadCode : LoadCode, texture, userData);
 }
 
 void StoreSamples(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::vector<SampleWrite>& writes) {
@@ -288,24 +295,34 @@ void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::
     Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
-std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block) {
+std::vector<std::array<float, 4>> RunLoad(AgcDriver::VulkanDevice& device, const Block& block, bool arrayed) {
     std::vector<std::uint32_t> userData;
-    const auto program = CompileLoad(device, TargetDescriptor(block, SampleShift), userData);
+    const auto program = CompileLoad(device, TargetDescriptor(block, SampleShift), userData, arrayed);
     std::vector<std::array<float, 4>> loaded(Side * Side * Samples);
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>((arrayed ? ArrayLoadCode : LoadCode).data());
     for (std::uint32_t first = 0; first < loaded.size(); first += Threads) {
         Buffer.fill(0xdeadbeefu);
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             const auto index = first + tid;
             const auto pixel = index / Samples;
-            const std::array<std::uint32_t, 6> words{0u, 0u, 0u, pixel % Side, pixel / Side, index % Samples};
+            const std::array<std::uint32_t, 6> words = arrayed
+                ? std::array<std::uint32_t, 6>{0u, 0u, pixel % Side, pixel / Side, 0u, index % Samples}
+                : std::array<std::uint32_t, 6>{0u, 0u, 0u, pixel % Side, pixel / Side, index % Samples};
             std::copy(words.begin(), words.end(), &Buffer[tid * Words]);
         }
-        device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadCode.data()));
+        device.Dispatch(program, 1, 1, 1, {}, codeAddress);
         device.WaitIdle();
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             for (std::uint32_t component = 0; component < 4u; ++component) loaded[first + tid][component] = std::bit_cast<float>(Buffer[tid * Words + LoadResult + component]);
         }
     }
+    return loaded;
+}
+
+std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block) {
+    auto loaded = RunLoad(device, block, false);
+    const auto loadedArray = RunLoad(device, block, true);
+    Require(loadedArray == loaded, "Dim2DMsaaArray image_load disagreed with Dim2DMsaa image_load on the multisampled color target");
     return loaded;
 }
 

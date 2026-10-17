@@ -6328,12 +6328,12 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
             0u,
         };
     };
-    const auto sampledProgram = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words) {
+    const auto sampledProgram = [&](ShaderRecompiler::DescriptorKind kind, std::vector<std::uint32_t> words, ShaderRecompiler::DescriptorImageShape shape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample) {
         ShaderRecompiler::RecompileResult result;
         auto element = binding;
         element.kind = kind;
         if (kind == ShaderRecompiler::DescriptorKind::StorageImage) element.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
-        element.imageShape = ShaderRecompiler::DescriptorImageShape::Image2DMultisample;
+        element.imageShape = shape;
         element.guestDescriptor = std::move(words);
         result.bindings.push_back(std::move(element));
         return result;
@@ -6352,13 +6352,29 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     };
     {
         const auto sampled = sampledProgram(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address));
+        const auto sampledArray = sampledProgram(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address), ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray);
+        auto bothShapes = sampled;
+        auto arrayBinding = sampledArray.bindings.front();
+        arrayBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding + 1u;
+        bothShapes.bindings.push_back(std::move(arrayBinding));
         const CompiledShader sampledCompute{ShaderRecompiler::ShaderStage::Compute, &sampled, 0};
+        const CompiledShader sampledArrayCompute{ShaderRecompiler::ShaderStage::Compute, &sampledArray, 0};
+        const CompiledShader bothShapesCompute{ShaderRecompiler::ShaderStage::Compute, &bothShapes, 0};
         std::lock_guard gpu(GpuMutex());
         ShaderResources first(context, sampledCompute);
         ShaderResources second(context, sampledCompute);
+        ShaderResources arrayFirst(context, sampledArrayCompute);
+        ShaderResources arraySecond(context, sampledArrayCompute);
+        ShaderResources combined(context, bothShapesCompute);
         Require(first.SampledTextures().size() == 1 && first.SampledTextures().front() != nullptr, "the multisampled target was not bound as a sampled texture");
         Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_GENERAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a view of the target's image in its layout");
+        Require(first.SampledTextures().front()->SampledViewRange(false).type == VK_IMAGE_VIEW_TYPE_2D, "Image2DMultisample did not bind a 2D image view");
         Require(second.SampledTextures().front() == first.SampledTextures().front(), "a second lookup of the multisampled target made another texture");
+        Require(arrayFirst.SampledTextures().size() == 1 && arrayFirst.SampledTextures().front() != nullptr, "the multisampled array target was not bound as a sampled texture");
+        Require(arrayFirst.SampledTextures().front()->SampledViewRange(false).type == VK_IMAGE_VIEW_TYPE_2D_ARRAY, "Image2DMultisampleArray did not bind a 2D array image view");
+        Require(arrayFirst.SampledTextures().front()->View() != first.SampledTextures().front()->View(), "Image2DMultisampleArray reused the non-arrayed multisampled image view");
+        Require(arraySecond.SampledTextures().front() == arrayFirst.SampledTextures().front(), "a second lookup of the multisampled array target made another texture");
+        Require(combined.SampledTextures().size() == 2 && combined.SampledTextures()[0] == first.SampledTextures().front() && combined.SampledTextures()[1] == arrayFirst.SampledTextures().front(), "consecutive multisampled bindings of different shapes did not preserve their distinct views");
         Require(first.MultisampleSources() == std::vector<std::uint64_t>{address} && !first.Reusable(), "resources sampling a multisampled target are kept for reuse without the barrier their lookup records");
         recorder.Submit();
         device.WaitQueue();

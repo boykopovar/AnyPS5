@@ -511,6 +511,8 @@ void RunGuestTextureResourceTests() {
     Require(MatchesGuestDimension(Shape::Image2DArray, TextureDimension::k2DArray), "2D array shape must match 2D array dimension");
     Require(MatchesGuestDimension(Shape::Image2DMultisample, TextureDimension::k2DMsaa), "multisampled shape must match the multisampled dimension");
     Require(!MatchesGuestDimension(Shape::Image2DMultisample, TextureDimension::k2D), "multisampled shape must not match 2D dimension");
+    Require(MatchesGuestDimension(Shape::Image2DMultisampleArray, TextureDimension::k2DMsaa), "multisampled array shape must match the multisampled dimension");
+    Require(!MatchesGuestDimension(Shape::Image2DMultisampleArray, TextureDimension::k2DArray), "multisampled array shape must not match 2D array dimension");
     Require(!MatchesGuestDimension(Shape::Image2D, TextureDimension::k2DMsaa), "2D shape must not match the multisampled dimension");
     Require(MatchesGuestDimension(Shape::Image2DArray, TextureDimension::kCube), "a cube must be readable as a 2D array of its faces");
     Require(MatchesGuestDimension(Shape::ImageCube, TextureDimension::kCube), "cube shape must match cube dimension");
