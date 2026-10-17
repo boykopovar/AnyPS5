@@ -86,7 +86,7 @@ def chart(points):
     for tick in range(0, top + 1, step):
         out.append(f'<line x1="{LEFT}" x2="{WIDTH - RIGHT}" y1="{py(tick):.1f}" y2="{py(tick):.1f}" stroke="{GRID}"/>'
                    f'<text x="{LEFT - 6}" y="{py(tick) + 4:.1f}" text-anchor="end">{tick}</text>')
-    for d, p in zip(days, points):
+    for d in range(first, days[-1] + 1):
         x = px(d)
         label = labelled(date.fromordinal(d), span)
         if label:

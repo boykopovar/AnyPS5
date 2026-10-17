@@ -54,6 +54,16 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertEqual((medium.count("rotate(60)"), medium.count("<circle")), (14, 0))
         self.assertEqual((long.count("rotate(60)"), long.count("<circle")), (14, 0))
 
+    def test_axis_labels_fall_on_calendar_days_without_commits(self):
+        start = date(2026, 8, 3).toordinal()
+        skipped = {date(2026, 8, 10), date(2026, 8, 17), date(2026, 8, 31)}
+        points = [{"date": day.isoformat(),
+                   **{name: {"done": i, "total": 70, "percent": 100 * i / 70} for name in ("libraries", "shaders")}}
+                  for i, day in enumerate(date.fromordinal(start + i) for i in range(70)) if day not in skipped]
+        svg = progress_history.chart(points)
+        for label in ("08-03", "08-10", "08-17", "08-24", "08-31"):
+            self.assertIn(f">{label}<", svg)
+
 
 if __name__ == "__main__":
     unittest.main()
