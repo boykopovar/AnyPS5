@@ -370,4 +370,56 @@ void RunTextureTilingTests() {
 
     reject([] { ComputeSurfaceSize({}, 1); }, "empty mip chain");
     reject([] { ComputeSurfaceSize(ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 1), 0); }, "zero array layers");
+
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x10000000ull;
+        array.width = 3328;
+        array.height = 1872;
+        array.format = 1;
+        array.mipCount = 2;
+        array.dimension = TextureDimension::k2DArray;
+        array.tileMode = TextureTileMode::kR64KBX;
+        array.depthOrLastArray = 1536;
+        array.baseArray = 1536;
+        const auto layerBytes = DescribeSurface(array).layerBytes;
+        const auto window = ViewedArrayWindow(array);
+        Require(window.baseAddress == array.baseAddress + 1536ull * layerBytes && window.depthOrLastArray == 0 && window.baseArray == 0, "a sampled view of one slice at 1536 of an R_X array must start at that slice");
+        Require(DescribeSurface(window).layerBytes == layerBytes && DescribeSurface(window).layers == 1, "a sampled array window must keep the slice layout");
+
+        auto unaligned = array;
+        unaligned.baseArray = 1530;
+        Require(ViewedArrayWindow(unaligned).baseAddress == array.baseAddress, "an R_X window at a slice the swizzle mixes in must keep the whole array");
+
+        auto plain = array;
+        plain.tileMode = TextureTileMode::kStandard64KB;
+        plain.baseArray = 1530;
+        Require(ViewedArrayWindow(plain).baseAddress == array.baseAddress + 1530ull * DescribeSurface(plain).layerBytes && ViewedArrayWindow(plain).depthOrLastArray == 6, "a non-XOR window may start at any slice");
+
+        auto fromZero = array;
+        fromZero.baseArray = 0;
+        Require(ViewedArrayWindow(fromZero).baseAddress == array.baseAddress && ViewedArrayWindow(fromZero).depthOrLastArray == 1536, "a view from slice 0 keeps its descriptor");
+
+        auto compressed = array;
+        compressed.dccAddress = 0x20000000ull;
+        Require(ViewedArrayWindow(compressed).baseAddress == array.baseAddress, "a view with DCC metadata keeps its descriptor");
+
+        GuestTextureResource cube{};
+        cube.baseAddress = 0x30000000ull;
+        cube.width = 256;
+        cube.height = 256;
+        cube.format = 71;
+        cube.mipCount = 1;
+        cube.dimension = TextureDimension::kCube;
+        cube.tileMode = TextureTileMode::kStandard4KB;
+        cube.depthOrLastArray = 7232;
+        cube.baseArray = 7227;
+        const auto faces = ViewedArrayWindow(cube);
+        Require(faces.baseAddress == cube.baseAddress + 7227ull * DescribeSurface(cube).layerBytes && faces.depthOrLastArray == 5 && faces.baseArray == 0 && faces.dimension == TextureDimension::kCube, "a cube view of six faces at 7227 must start at its first face");
+
+        auto volume = cube;
+        volume.dimension = TextureDimension::k3D;
+        volume.baseArray = 0;
+        Require(ViewedArrayWindow(volume).baseAddress == cube.baseAddress, "a volume keeps its descriptor");
+    }
 }

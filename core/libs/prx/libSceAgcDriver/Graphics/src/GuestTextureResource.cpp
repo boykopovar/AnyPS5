@@ -243,6 +243,15 @@ bool DescriptorSingleLevel(std::span<const std::uint32_t> words) {
     return ((words[3] >> 12u) & 0xfu) == ((words[3] >> 16u) & 0xfu);
 }
 
+bool FirstLayerDescriptor(std::span<const std::uint32_t> words, std::array<std::uint32_t, 8>& narrowed) {
+    if (words.size() != narrowed.size()) return false;
+    const auto resource = DecodeTextureResource(words);
+    if (resource.dimension != TextureDimension::k2DArray || resource.depthOrLastArray <= resource.baseArray) return false;
+    std::copy(words.begin(), words.end(), narrowed.begin());
+    narrowed[4] = (narrowed[4] & ~0x1fffu) | resource.baseArray;
+    return true;
+}
+
 bool MatchesGuestDimension(ShaderRecompiler::DescriptorImageShape shape, TextureDimension dimension) {
     switch (shape) {
         case ShaderRecompiler::DescriptorImageShape::Image1D: return dimension == TextureDimension::k1D;

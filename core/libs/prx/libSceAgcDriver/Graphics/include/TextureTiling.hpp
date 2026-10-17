@@ -75,6 +75,7 @@ struct SurfaceGeometry {
 };
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed);
 
 }
 

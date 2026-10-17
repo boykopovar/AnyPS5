@@ -557,4 +557,21 @@ void RunGuestTextureResourceTests() {
     Fields cornered = base;
     cornered.cornerSample = true;
     Require(!SampledTexturesShareEntry(pack(base), pack(cornered)), "T#s differing in a field next to the feedback fields must not share a sampled texture entry");
+
+    Fields arrayFields = base;
+    arrayFields.typeRaw = 13;
+    arrayFields.depth = 1536;
+    arrayFields.baseArray = 3;
+    const auto arrayWords = pack(arrayFields);
+    std::array<std::uint32_t, 8> narrowed{};
+    Require(FirstLayerDescriptor(arrayWords, narrowed), "a 2D array T# naming more than its base slice must narrow to that slice");
+    const auto slice = DecodeTextureResource(narrowed);
+    const auto whole = DecodeTextureResource(arrayWords);
+    Require(slice.dimension == TextureDimension::k2DArray && slice.baseArray == 3 && slice.depthOrLastArray == 3, "a narrowed 2D array T# must name its base slice alone");
+    Require(slice.baseAddress == whole.baseAddress && slice.width == whole.width && slice.format == whole.format && slice.mipCount == whole.mipCount && slice.tileMode == whole.tileMode, "narrowing a 2D array T# must keep every other field");
+    Require(!SampledTexturesShareEntry(arrayWords, narrowed), "a narrowed 2D array T# must not share the whole array's sampled texture entry");
+    Fields single = arrayFields;
+    single.depth = 3;
+    Require(!FirstLayerDescriptor(pack(single), narrowed), "a 2D array T# of its base slice alone needs no narrowing");
+    Require(!FirstLayerDescriptor(baseWords, narrowed), "a 2D T# needs no narrowing");
 }
