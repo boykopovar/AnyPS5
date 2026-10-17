@@ -1,15 +1,23 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
+#include <filesystem>
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
+
+extern "C" char* APS5_VABI getenv_nid_postfix(const char* name);
 
 namespace {
 
+constexpr int NoSuchFile = 2;
 constexpr int BadDescriptor = 9;
 constexpr int OutOfMemory = 12;
+constexpr std::string_view DefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
 
 PosixSpawnAttributes& Attributes(PosixSpawnAttributes* const* attributes, const char* function) {
     if (attributes == nullptr || *attributes == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized attributes");
@@ -19,6 +27,36 @@ PosixSpawnAttributes& Attributes(PosixSpawnAttributes* const* attributes, const 
 PosixSpawnFileActions& FileActions(PosixSpawnFileActions* const* actions, const char* function) {
     if (actions == nullptr || *actions == nullptr) throw std::invalid_argument(std::string(function) + ": uninitialized file actions");
     return **actions;
+}
+
+bool GuestPathExists(const std::string& path) {
+    std::filesystem::path native;
+    if (ResolvePathError_nid_no_patch(path.c_str(), native) != 0) return false;
+    std::error_code error;
+    return std::filesystem::exists(native, error);
+}
+
+bool ProgramFound(std::string_view name, bool searchesPath) {
+    if (name.empty()) return false;
+    if (!searchesPath || name.find('/') != std::string_view::npos) return GuestPathExists(std::string(name));
+    const char* variable = getenv_nid_postfix("PATH");
+    std::string_view directories = variable != nullptr ? std::string_view(variable) : DefaultSearchPath;
+    while (true) {
+        const auto separator = directories.find(':');
+        const auto directory = directories.substr(0, separator);
+        if (GuestPathExists((directory.empty() ? std::string(".") : std::string(directory)) + '/' + std::string(name))) return true;
+        if (separator == std::string_view::npos) return false;
+        directories.remove_prefix(separator + 1);
+    }
+}
+
+int Spawn(const char* function, const char* file, bool searchesPath, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes) {
+    if (file == nullptr) throw std::invalid_argument(std::string(function) + ": null path");
+    if (actions != nullptr) FileActions(actions, function);
+    if (attributes != nullptr) Attributes(attributes, function);
+    if (!ProgramFound(file, searchesPath)) return NoSuchFile;
+    NotImplemented_nid_no_patch((std::string(function) + ": process creation").c_str());
+    return -1;
 }
 
 int Append(PosixSpawnFileActions& actions, PosixSpawnFileAction action) {
@@ -96,24 +134,16 @@ int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileAction
 
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t* processId, const char* path, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment) {
     (void)processId;
-    (void)path;
-    (void)actions;
-    (void)attributes;
     (void)arguments;
     (void)environment;
-    NotImplemented_nid_no_patch("posix_spawn: process creation");
-    return -1;
+    return Spawn("posix_spawn", path, false, actions, attributes);
 }
 
 int APS5_VABI posix_spawnp_nid_postfix(std::int32_t* processId, const char* file, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment) {
     (void)processId;
-    (void)file;
-    (void)actions;
-    (void)attributes;
     (void)arguments;
     (void)environment;
-    NotImplemented_nid_no_patch("posix_spawnp: process creation");
-    return -1;
+    return Spawn("posix_spawnp", file, true, actions, attributes);
 }
 
 }

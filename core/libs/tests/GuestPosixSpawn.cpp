@@ -1,9 +1,12 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 
@@ -19,6 +22,9 @@ int APS5_VABI posix_spawn_file_actions_adddup2_nid_postfix(PosixSpawnFileActions
 int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileActions**, int);
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t*, const char*, PosixSpawnFileActions* const*, PosixSpawnAttributes* const*, char* const*, char* const*);
 int APS5_VABI posix_spawnp_nid_postfix(std::int32_t*, const char*, PosixSpawnFileActions* const*, PosixSpawnAttributes* const*, char* const*, char* const*);
+int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
+int APS5_VABI unsetenv_nid_postfix(const char*);
+int APS5_VABI chdir_nid_postfix(const char*);
 }
 
 static void Require(bool condition, int line) {
@@ -29,6 +35,7 @@ static void Require(bool condition, int line) {
 }
 #define Check(value) Require((value), __LINE__)
 
+constexpr int NoSuchFile = 2;
 constexpr int BadDescriptor = 9;
 
 template<typename TCall>
@@ -115,19 +122,64 @@ static void CheckFileActions() {
 }
 
 static void CheckSpawn() {
+    const auto name = "anyps5-spawn-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto directory = std::filesystem::current_path() / name;
+    Check(std::filesystem::create_directories(directory / "empty"));
+    { std::ofstream file(directory / "tool.elf"); file << "tool"; }
+    const std::string guest = "/" + name;
+    const std::string existing = guest + "/tool.elf";
+    const std::string missing = guest + "/missing.elf";
+    const std::string bothDirectories = guest + "/empty:" + guest;
+    const std::string emptyOnly = guest + "/empty";
+
     PosixSpawnAttributes* attributes = nullptr;
     PosixSpawnFileActions* actions = nullptr;
     Check(posix_spawnattr_init_nid_postfix(&attributes) == 0 && posix_spawn_file_actions_init_nid_postfix(&actions) == 0);
-    char program[] = "/app0/tool.elf";
+    Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 3) == 0);
+    char program[] = "tool.elf";
     char* arguments[] = {program, nullptr};
     char* environment[] = {nullptr};
     std::int32_t processId = 77;
-    Check(ReportsNotImplemented([&] { posix_spawn_nid_postfix(&processId, program, &actions, &attributes, arguments, environment); },
+
+    Check(ReportsNotImplemented([&] { posix_spawn_nid_postfix(&processId, existing.c_str(), &actions, &attributes, arguments, environment); },
         "posix_spawn: process creation not implemented"));
+    Check(posix_spawn_nid_postfix(&processId, missing.c_str(), &actions, &attributes, arguments, environment) == NoSuchFile);
+    Check(posix_spawn_nid_postfix(&processId, "", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
+    Check(posix_spawn_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
+
+    Check(setenv_nid_postfix("PATH", bothDirectories.c_str(), 1) == 0);
+    Check(ReportsNotImplemented([&] { posix_spawnp_nid_postfix(&processId, "tool.elf", &actions, &attributes, arguments, nullptr); },
+        "posix_spawnp: process creation not implemented"));
+    Check(posix_spawnp_nid_postfix(&processId, "missing.elf", &actions, &attributes, arguments, nullptr) == NoSuchFile);
+    Check(posix_spawnp_nid_postfix(&processId, "", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
+    Check(setenv_nid_postfix("PATH", emptyOnly.c_str(), 1) == 0);
+    Check(posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
+    Check(ReportsNotImplemented([&] { posix_spawnp_nid_postfix(&processId, existing.c_str(), nullptr, nullptr, arguments, nullptr); },
+        "posix_spawnp: process creation not implemented"));
+    Check(posix_spawnp_nid_postfix(&processId, missing.c_str(), nullptr, nullptr, arguments, nullptr) == NoSuchFile);
+
+    Check(setenv_nid_postfix("PATH", (emptyOnly + ":").c_str(), 1) == 0);
+    Check(posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
+    Check(chdir_nid_postfix(guest.c_str()) == 0);
     Check(ReportsNotImplemented([&] { posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr); },
         "posix_spawnp: process creation not implemented"));
+    Check(ReportsNotImplemented([&] { posix_spawn_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr); },
+        "posix_spawn: process creation not implemented"));
+    Check(chdir_nid_postfix("/") == 0);
+
+    Check(unsetenv_nid_postfix("PATH") == 0);
+    Check(posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
     Check(processId == 77);
+
+    PosixSpawnAttributes* uninitializedAttributes = nullptr;
+    PosixSpawnFileActions* uninitializedActions = nullptr;
+    Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(&processId, missing.c_str(), &uninitializedActions, nullptr, arguments, nullptr); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, "missing.elf", nullptr, &uninitializedAttributes, arguments, nullptr); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
+
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0 && posix_spawnattr_destroy_nid_postfix(&attributes) == 0);
+    std::filesystem::remove_all(directory);
 }
 
 int main() {
