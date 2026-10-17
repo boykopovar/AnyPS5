@@ -592,6 +592,22 @@ bool IsDccClear(DccKeys keys) {
     return keys == DccKeys::Clear0000 || keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111 || keys == DccKeys::ClearRegister;
 }
 
+std::optional<std::uint8_t> LandedUniformMetadataByte(std::uint64_t address, std::size_t bytes) {
+    if (address == 0 || bytes == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return std::nullopt;
+    if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+    if (AnyShadowedOverlaps(address, bytes)) return std::nullopt;
+    GuestMemory::FlushGpuWrites(address, bytes);
+    auto* recorder = GuestMemory::GpuMutex().HeldByThisThread() ? Recorder::Active() : nullptr;
+    if (recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {
+        const auto landed = KeysAfterPendingWrites(*recorder, address, bytes);
+        if (landed.mixed || landed.unknown || landed.value < 0) return std::nullopt;
+        return static_cast<std::uint8_t>(landed.value);
+    }
+    const auto* data = reinterpret_cast<const std::uint8_t*>(address);
+    if (!AllKeysEqual(data + 1, bytes - 1, data[0])) return std::nullopt;
+    return data[0];
+}
+
 void MarkDccUncompressed(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
     MarkDccUncompressed(metaAddress, surfaceBytes, DccKeyBytes(surfaceBytes));
 }
