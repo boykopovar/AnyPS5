@@ -1,0 +1,35 @@
+name: PR labels
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+  schedule:
+    - cron: '45 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pr-labels-${{ github.event.pull_request.number || 'all' }}
+
+jobs:
+  labels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            python3 -I tools/pr_labels.py --pr "$PR_NUMBER"
+          else
+            python3 -I tools/pr_labels.py --all
+          fi
