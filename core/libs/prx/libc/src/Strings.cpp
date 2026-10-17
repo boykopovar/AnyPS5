@@ -94,6 +94,10 @@ void APS5_VABI bzero_nid_postfix(void* destination, size_t count) {
     std::memset(destination, 0, count);
 }
 
+void APS5_VABI bcopy_nid_postfix(const void* source, void* destination, size_t count) {
+    if (count != 0) std::memmove(destination, source, count);
+}
+
 void* APS5_VABI memcpy_nid_postfix(void* dest, const void* src, size_t n) {
     return std::memcpy(dest, src, n);
 }

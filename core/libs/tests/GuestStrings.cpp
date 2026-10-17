@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -7,6 +8,7 @@
 #include <string>
 
 extern "C" {
+void APS5_VABI bcopy_nid_postfix(const void*, void*, std::size_t);
 char* APS5_VABI basename_nid_postfix(const char*);
 char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int);
 char* APS5_VABI dirname_nid_postfix(const char*);
@@ -212,7 +214,28 @@ static bool CheckDirnameLengths() {
     return passed;
 }
 
+static void CheckBcopy() {
+    constexpr std::array<unsigned char, 12> original = {0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170, 187};
+    for (std::size_t source = 0; source < original.size(); ++source) {
+        for (std::size_t destination = 0; destination < original.size(); ++destination) {
+            for (std::size_t count = 0; count <= original.size() - std::max(source, destination); ++count) {
+                auto actual = original;
+                auto expected = original;
+                for (std::size_t i = 0; i < count; ++i) expected[destination + i] = original[source + i];
+                bcopy_nid_postfix(actual.data() + source, actual.data() + destination, count);
+                Require(actual == expected);
+            }
+        }
+    }
+    auto destination = original;
+    destination.fill(0xff);
+    bcopy_nid_postfix(original.data(), destination.data(), original.size());
+    Require(destination == original);
+    bcopy_nid_postfix(nullptr, nullptr, 0);
+}
+
 int main() {
+    CheckBcopy();
     if (!CheckDirnameLengths()) return 1;
     CheckBoundsCheckedFunctions();
     CheckCaseInsensitiveComparison();
