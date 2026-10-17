@@ -15,7 +15,11 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
     for (std::uint32_t index = 0u; index < count; ++index) {
         const RdnaOperand& operand = sourceAt(inst, index);
         switch (IrOpcodeArgumentType(opcode, index)) {
-            case IrType::U64: args[index] = &readF64(operand).Value(); break;
+            case IrType::U64: {
+                const std::array<IrU32, 2> bits = opcode == IrOpcode::FPFrexpExp64 ? flushF64Bits(readF64Bits(operand), 0x40u) : readF64Bits(operand);
+                args[index] = &ir.ConstructU64(bits[0].Value(), bits[1].Value());
+                break;
+            }
             case IrType::F32: args[index] = readOperand(operand, IrType::F32); break;
             default: args[index] = &readU32(operand).Value(); break;
         }
@@ -52,14 +56,17 @@ bool TranslationContext::nonIeeeMinMaxF64(const RdnaInstruction& inst, IrOpcode 
 }
 
 bool TranslationContext::float64Unary(const RdnaInstruction& inst, IrOpcode opcode) {
-    const auto bits = readF64Bits(sourceAt(inst, 0u));
+    const bool flushesInput = opcode == IrOpcode::FPFloor64 || opcode == IrOpcode::FPCeil64 || opcode == IrOpcode::FPFract64 || opcode == IrOpcode::FPFrexpMant64;
+    const auto bits = flushesInput ? flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u) : readF64Bits(sourceAt(inst, 0u));
     IrValue& argument = ir.ConstructU64(bits[0].Value(), bits[1].Value());
     IrValue& result = opcode == IrOpcode::FPLdexp64 ? ir.Emit(opcode, IrType::U64, {&argument, &readU32(sourceAt(inst, 1u)).Value()}) : ir.Emit(opcode, IrType::U64, {&argument});
+    std::array<IrU32, 2> words{IrU32(ir.CompositeExtract(result, 0u)), IrU32(ir.CompositeExtract(result, 1u))};
+    if (opcode == IrOpcode::FPFract64) words = flushF64Bits(words, 0x80u);
     const IrU32 magnitude(ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x7fffffffu)));
     const IrU1 nan(ir.LogicalOr(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7ff00000u)),
         ir.LogicalAnd(ir.IEqual(magnitude.Value(), ir.Constant(0x7ff00000u)), ir.INotEqual(bits[0].Value(), ir.Constant(0u)))));
     const auto quiet = quietNan64(bits);
-    writeF64Result(inst.destination, ir.ConstructU64(ir.Select(nan.Value(), quiet[0].Value(), ir.CompositeExtract(result, 0u)), ir.Select(nan.Value(), quiet[1].Value(), ir.CompositeExtract(result, 1u))));
+    writeF64Result(inst.destination, ir.ConstructU64(ir.Select(nan.Value(), quiet[0].Value(), words[0].Value()), ir.Select(nan.Value(), quiet[1].Value(), words[1].Value())));
     return true;
 }
 

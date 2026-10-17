@@ -52,6 +52,12 @@ std::array<IrU32, 2> TranslationContext::readF64Bits(const RdnaOperand& operand)
     return bits;
 }
 
+std::array<IrU32, 2> TranslationContext::flushF64Bits(const std::array<IrU32, 2>& bits, std::uint32_t keepBit) {
+    if (!floatMode.has_value() || (floatMode->floatMode & keepBit) != 0u) return bits;
+    const IrU1 tiny(ir.IEqual(ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x7ff00000u)), ir.Constant(0u)));
+    return {IrU32(ir.Select(tiny.Value(), ir.Constant(0u), bits[0].Value())), IrU32(ir.Select(tiny.Value(), ir.BitwiseAnd(bits[1].Value(), ir.Constant(0x80000000u)), bits[1].Value()))};
+}
+
 std::array<IrU32, 2> TranslationContext::extractU64(IrU64 value) {
     return {IrU32(ir.CompositeExtract(value.Value(), 0u)), IrU32(ir.CompositeExtract(value.Value(), 1u))};
 }
