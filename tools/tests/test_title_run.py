@@ -87,6 +87,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.read_summary(path), {"presents": 500, "fps": 25.0, "gpu": "B", "driver": "2", "os": "W"})
         path.write_text(path.read_text(encoding="utf-8") + '{"presents": 3', encoding="utf-8")
         self.assertEqual(title_run.read_summary(path)["presents"], 500)
+        path.write_text(path.read_text(encoding="utf-8") + "\n[1, 2]\n", encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path)["presents"], 500)
         self.assertEqual(title_run.read_summary(self.root / "missing.jsonl")["presents"], 0)
 
     def test_frame_is_uniform(self):
@@ -233,10 +235,11 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 3)
 
-    def test_instant_exit_is_reported(self):
-        session = self.start("import sys; sys.exit(5)")
+    @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
+    def test_exit_code_of_the_last_process(self):
+        session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])")
         self.assertTrue(wait_until(lambda: not session.alive()))
-        self.assertEqual(session.exit_code(), 5)
+        self.assertEqual(session.exit_code(), 7)
 
     def test_children_keep_it_alive_and_are_killed(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])")
