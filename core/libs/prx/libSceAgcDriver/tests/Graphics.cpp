@@ -5448,6 +5448,67 @@ void pipelineLibraryClearWaitsForBuildTests() {
     Require(mock.live == 0, "clearing during a library build leaked Vulkan objects");
 }
 
+void framebufferOwnerTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.maxColorAttachments = 1;
+    context.limits.maxFramebufferWidth = 4;
+    context.limits.maxFramebufferHeight = 4;
+    context.limits.maxFramebufferLayers = 1;
+    context.deviceProc = +[](VkDevice device, const char* name) -> PFN_vkVoidFunction {
+        if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0) {
+            return reinterpret_cast<PFN_vkVoidFunction>(+[](VkDevice, VkPipelineCache, std::uint32_t count, const VkGraphicsPipelineCreateInfo*, const VkAllocationCallbacks*, VkPipeline* pipeline) -> VkResult {
+                Require(count == 1, "framebuffer owner test expects one graphics pipeline");
+                *pipeline = makeHandle<VkPipeline>();
+                ++mock.live;
+                return VK_SUCCESS;
+            });
+        }
+        return mockProc(device, name);
+    };
+    {
+        State state{};
+        state.hasColorTarget = true;
+        state.samples = 2;
+        state.colors.resize(1);
+        state.colors[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+        state.colors[0].samples = 2;
+        state.blends.resize(1);
+        ShaderRecompiler::RecompileResult vertex, fragment;
+        vertex.spirv = makeModule({});
+        fragment.spirv = makeModule({.fragment = true});
+        const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        Pipeline pipeline(context, state, VertexInputLayout{}, PipelineSetLayouts{}, shaders);
+        const std::array<VkImageView, 1> views{makeHandle<VkImageView>()};
+        std::array<std::shared_ptr<void>, 1> owners{std::make_shared<int>(1)};
+        const std::weak_ptr<void> firstOwner = owners[0];
+        auto first = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        auto repeated = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(first == repeated, "a live framebuffer owner did not reuse its framebuffer");
+        auto retainedOwner = owners[0];
+        owners[0] = std::make_shared<int>(2);
+        auto distinct = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(distinct != first, "identical image-view handles reused another live owner's framebuffer");
+        retainedOwner.reset();
+        Require(firstOwner.expired(), "the framebuffer cache retained its image owner");
+        const std::weak_ptr<Framebuffer> retired = first;
+        auto recycled = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(recycled == distinct && recycled != first, "an expired owner matched a recycled image-view handle");
+        first.reset();
+        repeated.reset();
+        recycled = pipeline.AcquireFramebuffer(views, owners, {4, 4});
+        Require(retired.expired(), "the framebuffer cache retained an unused framebuffer after its owner expired");
+        const std::weak_ptr<void> lastOwner = owners[0];
+        owners[0].reset();
+        Require(lastOwner.expired(), "a cached framebuffer kept the final image owner alive");
+    }
+    ClearPipelineLibraries(context.device);
+    Require(mock.live == 0, "framebuffer owner tests leaked Vulkan objects");
+}
+
 void barycentricEmulationTests() {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
@@ -8126,6 +8187,7 @@ int main(int argc, char** argv) {
         retainedPixelStageTests();
         pipelineLibrarySetTests();
         pipelineLibraryClearWaitsForBuildTests();
+        framebufferOwnerTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
         hardwareScreenOffsetTests();

@@ -43,13 +43,14 @@ VkClearColorValue fastClearColor(const ColorTarget& target) {
 template<typename Record>
 void recordCommands(const Context& context, Record&& record) {
     auto* recorder = Recorder::Active();
+    if (recorder != nullptr && recorder->Device() != context.device) recorder = nullptr;
     std::unique_ptr<CommandBatch> batch;
     if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
     record(recorder != nullptr ? recorder->Commands() : batch->Handle(), recorder);
     if (batch) batch->SubmitAndWait();
 }
 
-class MultisampleTarget {
+class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget> {
 public:
     MultisampleTarget(const Context& context, const ColorTarget& target) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
         this->context.bufferPool.reset();
@@ -78,6 +79,7 @@ public:
             image = created.image;
             memory = created.memory;
             view = created.view;
+            allocationBytes = created.bytes;
             recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
                 recordToGeneral(commands, image);
                 const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -98,6 +100,7 @@ public:
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
+        VkDeviceSize bytes = 0;
     };
 
     Allocation allocate(VkImageUsageFlags imageUsage, VkImageCreateFlags flags) {
@@ -120,6 +123,7 @@ public:
             context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, created.image, &requirements);
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
+            created.bytes = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &created.memory), "vkAllocateMemory multisampled target");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, created.image, created.memory, 0), "vkBindImageMemory multisampled target");
@@ -167,19 +171,29 @@ public:
         context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(recorder.Commands(), source, VK_IMAGE_LAYOUT_GENERAL, storable.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
         RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         Recorder::CountBarriers(Recorder::CommandClass::Draw, 3);
-        for (const auto& [key, texture] : textures) recorder.Keep(texture);
+        for (auto& [key, texture] : textures) retiredTextures.push_back(std::move(texture));
         textures.clear();
         retired.push_back({image, memory, view});
         image = storable.image;
         memory = storable.memory;
         view = storable.view;
         usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        allocationBytes += storable.bytes;
+        recorder.Keep(shared_from_this(), static_cast<std::size_t>(storable.bytes));
+    }
+
+    void Keep() {
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) {
+            recorder->Keep(shared_from_this());
+            recorder->KeepBytes(this, allocationBytes);
+        }
     }
 
     void ApplyFastClear(const ColorTarget& use) {
         checkDccCurrent(use);
         VkClearColorValue clear{};
         if (!TakeMultisampledClear(cmask, colorFill, use, clear)) return;
+        Keep();
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -204,7 +218,8 @@ public:
         Require(cmask.Refusal().empty(), cmask.Refusal());
         Require(cmask.Keys() != DccKeys::Clear0000, "a storage image access to a multisampled color target whose CMASK fast clear no draw has applied is not implemented");
         auto* recording = Recorder::Active();
-        Require(recording != nullptr, "a multisampled color target is only written by recorded dispatches");
+        Require(recording != nullptr && recording->Device() == context.device, "a multisampled color target is only written by recorded dispatches on its device");
+        Keep();
         makeStorable(*recording);
         ApplyFastClear(target);
         if (storageView == VK_NULL_HANDLE) {
@@ -231,7 +246,9 @@ public:
         Require(sampleable, "the device cannot sample the multisampled color target's format at its sample count");
         Require(cmask.Refusal().empty(), cmask.Refusal());
         Require(cmask.Keys() != DccKeys::Clear0000, "sampling a multisampled color target whose CMASK fast clear no draw has applied is not implemented");
-        Require(Recorder::Active() != nullptr, "a multisampled color target is only sampled by recorded draws and dispatches");
+        auto* recording = Recorder::Active();
+        Require(recording != nullptr && recording->Device() == context.device, "a multisampled color target is only sampled by recorded draws and dispatches on its device");
+        Keep();
         SettleStorageWrites();
         ApplyFastClear(target);
         recordCommands(context, [&](VkCommandBuffer commands, Recorder*) {
@@ -239,10 +256,9 @@ public:
             Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
         });
         const std::array<std::uint32_t, 4> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)};
-        if (const auto found = textures.find(key); found != textures.end()) return found->second;
-        auto texture = std::make_shared<Texture>(context, image, target.format, VK_IMAGE_ASPECT_COLOR_BIT, components);
-        textures.emplace(key, texture);
-        return texture;
+        auto& texture = textures[key];
+        if (texture == nullptr) texture = std::make_unique<Texture>(context, image, target.format, VK_IMAGE_ASPECT_COLOR_BIT, components);
+        return {shared_from_this(), texture.get()};
     }
 
     VkRenderPass ResolvePass() {
@@ -298,7 +314,9 @@ private:
     std::vector<Allocation> retired;
     VkImageView storageView = VK_NULL_HANDLE;
     bool storageWritten = false;
-    std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> textures;
+    VkDeviceSize allocationBytes = 0;
+    std::map<std::array<std::uint32_t, 4>, std::unique_ptr<Texture>> textures;
+    std::vector<std::unique_ptr<Texture>> retiredTextures;
     std::vector<GuestMemory::UnchangedQuery> dccRanges;
 
     VkClearColorValue initialDccClear(const ColorTarget& use) {
@@ -351,6 +369,7 @@ private:
 
     void release() noexcept {
         textures.clear();
+        retiredTextures.clear();
         if (resolvePass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
         if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
         destroy({image, memory, view});
@@ -433,12 +452,17 @@ std::mutex& targetsMutex() {
     return mutex;
 }
 
-std::vector<std::unique_ptr<MultisampleTarget>>& targets() {
-    static std::vector<std::unique_ptr<MultisampleTarget>> list;
+std::vector<std::shared_ptr<MultisampleTarget>>& targets() {
+    static std::vector<std::shared_ptr<MultisampleTarget>> list;
     return list;
 }
 
+void discardRetiredTargets() {
+    std::erase_if(targets(), [](const auto& target) { return !target->active->load(std::memory_order_acquire); });
+}
+
 MultisampleTarget& acquire(const Context& context, const ColorTarget& use) {
+    discardRetiredTargets();
     for (const auto& target : targets()) {
         if (!target->active->load(std::memory_order_acquire)) continue;
         if (target->context.device != context.device || !sameTarget(target->target, use)) continue;
@@ -447,15 +471,19 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& use) {
             target->cmask = MultisampledCmask(use.cmaskAddress, use.cmaskBytes);
         }
         target->cmask.CheckAddress(use.cmaskAddress);
+        target->Keep();
         target->SettleStorageWrites();
         target->ApplyFastClear(use);
         return *target;
     }
-    targets().push_back(std::make_unique<MultisampleTarget>(context, use));
+    auto target = std::make_shared<MultisampleTarget>(context, use);
+    target->Keep();
+    targets().push_back(std::move(target));
     auto& created = *targets().back();
     guard(context, use, created.active, created.metadataValid);
     if (use.cmaskFastClear && use.dccAddress == 0) created.cmask.SeedKeys(CurrentDccKeys(use.cmaskAddress, static_cast<std::uint64_t>(use.cmaskBytes) * 256u));
     created.ApplyFastClear(use);
+    created.Keep();
     return created;
 }
 
@@ -501,7 +529,9 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     }
     VkClearColorValue clear{};
     if (!MultisampledFillClearColor(use, value, clear)) refuse(std::string("whose color memory ") + range + " holds " + held + ", which has no exact clear value in its format");
-    targets().push_back(std::make_unique<MultisampleTarget>(context, use));
+    auto target = std::make_shared<MultisampleTarget>(context, use);
+    target->Keep();
+    targets().push_back(std::move(target));
     auto& created = *targets().back();
     guard(context, use, created.active, created.metadataValid);
     created.colorFill.NoteFill(use.address, static_cast<std::size_t>(bytes), value);
@@ -671,13 +701,28 @@ bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colo
     return true;
 }
 
-VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target) {
+VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
     std::lock_guard lock(targetsMutex());
-    return acquire(context, target).view;
+    const auto& acquired = acquire(context, target);
+    if (image != nullptr) *image = acquired.image;
+    return acquired.view;
+}
+
+VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image) {
+    std::lock_guard lock(targetsMutex());
+    auto& acquired = acquire(context, target);
+    owner = acquired.shared_from_this();
+    if (image != nullptr) *image = acquired.image;
+    return acquired.view;
+}
+
+void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner) {
+    std::static_pointer_cast<MultisampleTarget>(owner)->Keep();
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
     std::lock_guard lock(targetsMutex());
+    discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
     const MultisampleTarget* other = nullptr;
     for (const auto& target : targets()) {
@@ -703,6 +748,7 @@ void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget
 
 VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource) {
     std::lock_guard lock(targetsMutex());
+    discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
     const MultisampleTarget* other = nullptr;
     for (const auto& target : targets()) {
@@ -731,6 +777,7 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
     std::lock_guard lock(targetsMutex());
     auto& target = acquire(context, source);
+    target.Keep();
     const std::array<VkImageView, 2> views{target.view, destinationView};
     auto framebuffer = std::make_shared<Framebuffer>(context, target.ResolvePass(), views, source.extent);
     recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
