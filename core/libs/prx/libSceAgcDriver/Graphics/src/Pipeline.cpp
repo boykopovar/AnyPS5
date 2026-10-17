@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -18,6 +19,7 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -287,6 +289,148 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     return true;
 }
 
+std::vector<std::uint32_t> DropFragmentLayerInput(std::span<const std::uint32_t> spirv) {
+    std::uint32_t layerId = 0;
+    std::uint32_t zeroId = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> zeros;
+    for (std::size_t i = 5; i < spirv.size();) {
+        const auto word = spirv[i];
+        const auto count = word >> 16u;
+        const auto op = word & 0xffffu;
+        if (count == 0 || i + count > spirv.size()) break;
+        if (op == spv::OpDecorate && count == 4 && spirv[i + 2] == spv::DecorationBuiltIn && spirv[i + 3] == spv::BuiltInLayer) {
+            layerId = spirv[i + 1];
+        }
+        if (op == spv::OpConstant && count == 4 && spirv[i + 3] == 0) {
+            zeros[spirv[i + 1]] = spirv[i + 2];
+            if (zeroId == 0) zeroId = spirv[i + 2];
+        } else if (op == spv::OpConstantNull && count == 3) {
+            zeros[spirv[i + 1]] = spirv[i + 2];
+            if (zeroId == 0) zeroId = spirv[i + 2];
+        }
+        i += count;
+    }
+    if (layerId == 0 || zeroId == 0) return {};
+    std::vector<std::uint32_t> words(spirv.begin(), spirv.end());
+    for (std::size_t i = 5; i < words.size();) {
+        const auto word = words[i];
+        const auto count = word >> 16u;
+        const auto op = word & 0xffffu;
+        if (count == 0 || i + count > words.size()) break;
+        if (op == spv::OpEntryPoint && count >= 4) {
+            const auto* nameStart = reinterpret_cast<const char*>(&words[i + 3]);
+            const auto maxLen = (count - 3) * sizeof(std::uint32_t);
+            std::size_t len = 0;
+            while (len < maxLen && nameStart[len] != '\0') ++len;
+            const auto nameWords = (len + 4) / 4;
+            const auto interfaceStart = words.begin() + i + 3 + nameWords;
+            if (interfaceStart <= words.begin() + i + count) {
+                const auto it = std::find(interfaceStart, words.begin() + i + count, layerId);
+                if (it != words.begin() + i + count) {
+                    std::move(it + 1, words.begin() + i + count, it);
+                    words[i] = ((count - 1u) << 16u) | spv::OpEntryPoint;
+                    words[i + count - 1u] = 1u << 16u;
+                }
+            }
+        } else if (op == spv::OpLoad && count == 4 && words[i + 3] == layerId) {
+            const auto typeId = words[i + 1];
+            const auto it = zeros.find(typeId);
+            const auto copyId = it != zeros.end() ? it->second : zeroId;
+            words[i] = (4u << 16u) | spv::OpCopyObject;
+            words[i + 3] = copyId;
+        } else if (op == spv::OpVariable && count >= 3 && words[i + 2] == layerId) {
+            std::fill_n(words.begin() + i, count, 0u);
+            words[i] = count << 16u;
+        } else if ((op == spv::OpDecorate || op == spv::OpName) && count >= 2 && words[i + 1] == layerId) {
+            std::fill_n(words.begin() + i, count, 0u);
+            words[i] = count << 16u;
+        }
+        i += count;
+    }
+    return words;
+}
+
+std::vector<std::uint32_t> DropMeshLayerOutput(std::span<const std::uint32_t> spirv) {
+    std::uint32_t layerId = 0;
+    for (std::size_t i = 5; i < spirv.size();) {
+        const auto word = spirv[i];
+        const auto count = word >> 16u;
+        const auto op = word & 0xffffu;
+        if (count == 0 || i + count > spirv.size()) break;
+        if (op == spv::OpDecorate && count == 4 && spirv[i + 2] == spv::DecorationBuiltIn && spirv[i + 3] == spv::BuiltInLayer) {
+            layerId = spirv[i + 1];
+            break;
+        }
+        i += count;
+    }
+    if (layerId == 0) return {};
+    std::vector<std::uint32_t> words(spirv.begin(), spirv.end());
+    std::unordered_set<std::uint32_t> pointerIds;
+    for (std::size_t i = 5; i < words.size();) {
+        const auto word = words[i];
+        const auto count = word >> 16u;
+        const auto op = word & 0xffffu;
+        if (count == 0 || i + count > words.size()) break;
+        if (op == spv::OpEntryPoint && count >= 4) {
+            const auto* nameStart = reinterpret_cast<const char*>(&words[i + 3]);
+            const auto maxLen = (count - 3) * sizeof(std::uint32_t);
+            std::size_t len = 0;
+            while (len < maxLen && nameStart[len] != '\0') ++len;
+            const auto nameWords = (len + 4) / 4;
+            const auto interfaceStart = words.begin() + i + 3 + nameWords;
+            if (interfaceStart <= words.begin() + i + count) {
+                const auto it = std::find(interfaceStart, words.begin() + i + count, layerId);
+                if (it != words.begin() + i + count) {
+                    std::move(it + 1, words.begin() + i + count, it);
+                    words[i] = ((count - 1u) << 16u) | spv::OpEntryPoint;
+                    words[i + count - 1u] = 1u << 16u;
+                }
+            }
+        } else if ((op == spv::OpDecorate || op == spv::OpName) && count >= 2 && words[i + 1] == layerId) {
+            std::fill_n(words.begin() + i, count, 0u);
+            words[i] = count << 16u;
+        } else if (op == spv::OpVariable && count >= 3 && words[i + 2] == layerId) {
+            std::fill_n(words.begin() + i, count, 0u);
+            words[i] = count << 16u;
+        } else if (op == spv::OpAccessChain && count >= 4 && words[i + 3] == layerId) {
+            pointerIds.insert(words[i + 2]);
+            std::fill_n(words.begin() + i, count, 0u);
+            words[i] = count << 16u;
+        } else if (op == spv::OpStore && count >= 3 && pointerIds.contains(words[i + 1])) {
+            std::fill_n(words.begin() + i, count, 0u);
+            words[i] = count << 16u;
+        }
+        i += count;
+    }
+    return words;
+}
+
+bool StageDeclaresLayer(std::span<const std::uint32_t> spirv) {
+    for (std::size_t i = 5; i < spirv.size();) {
+        const auto word = spirv[i];
+        const auto count = word >> 16u;
+        const auto op = word & 0xffffu;
+        if (count == 0 || i + count > spirv.size()) break;
+        if (op == spv::OpDecorate && count == 4 && spirv[i + 2] == spv::DecorationBuiltIn && spirv[i + 3] == spv::BuiltInLayer) {
+            return true;
+        }
+        if (op == spv::OpMemberDecorate && count == 5 && spirv[i + 3] == spv::DecorationBuiltIn && spirv[i + 4] == spv::BuiltInLayer) {
+            return true;
+        }
+        i += count;
+    }
+    return false;
+}
+
+bool PrecedingStageExportsLayer(std::span<const CompiledShader> shaders, const State& state) {
+    if (state.renderLayers <= 1 || state.layerExports == 0) return false;
+    for (const auto& shader : shaders) {
+        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) break;
+        if (StageDeclaresLayer(shader.program->spirv)) return true;
+    }
+    return false;
+}
+
 }
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const ShaderResources& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : Pipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout) {}
@@ -334,9 +478,16 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
+            std::vector<std::uint32_t> sanitizedSpirv;
+            if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh) {
+                sanitizedSpirv = DropMeshLayerOutput(shader.spirv);
+            } else if (shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment && (state.stages.mesh.has_value() || !PrecedingStageExportsLayer(shaders, state))) {
+                sanitizedSpirv = DropFragmentLayerInput(shader.spirv);
+            }
+            const auto& spirv = sanitizedSpirv.empty() ? shader.spirv : sanitizedSpirv;
             VkShaderModuleCreateInfo module{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-            module.codeSize = shader.spirv.size() * sizeof(std::uint32_t);
-            module.pCode = shader.spirv.data();
+            module.codeSize = spirv.size() * sizeof(std::uint32_t);
+            module.pCode = spirv.data();
             Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &module, nullptr, &_modules[i]), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
             stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
