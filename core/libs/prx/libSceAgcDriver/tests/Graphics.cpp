@@ -116,7 +116,7 @@ void inactiveVertexPointSizeTests() {
         queue.context[0x207] = 0x01210000;
         return queue;
     };
-    for (const auto primitive : {2u, 4u, 5u, 6u, 7u, 17u}) {
+    for (const auto primitive : {2u, 4u, 5u, 6u, 7u, 17u, 21u}) {
         auto queue = pointSizeState();
         queue.userConfig[0x242] = primitive;
         for (const auto raster : {0u, 0x240u, 0x248u}) {
@@ -191,6 +191,23 @@ void inactiveVertexPointSizeTests() {
     auto queue = pointSizeState();
     queue.userConfig.erase(0x242);
     rejected(queue);
+}
+
+void PolygonPrimitiveTests() {
+    auto queue = makeState();
+    queue.userConfig[0x242] = 21;
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "a polygon did not decode to a triangle fan");
+    Require(!state.primitiveRestart, "polygon decoding enabled primitive restart by default");
+    Require(AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Triangle, "a polygon was not classified as a triangle primitive");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected a direct polygon draw");
+    queue.userConfig[0x24b] = 1;
+    queue.context[0x103] = 0xffffffffu;
+    Require(AgcDriver::Graphics::DrawRejection(queue, true).empty(), "the precheck rejected an indexed polygon draw with restart");
+    const auto indexedState = AgcDriver::Graphics::DecodeState(queue);
+    Require(indexedState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && indexedState.primitiveRestart, "indexed polygon decoding did not keep primitive restart");
 }
 
 void retainedPixelStageTests() {
@@ -314,6 +331,9 @@ void stateTests() {
     queue.context[0x103] = 0xffffffffu;
     Require(AgcDriver::Graphics::DrawRejection(queue, true).empty(), "primitive restart was rejected for an indexed strip");
     Require(AgcDriver::Graphics::DecodeState(queue).primitiveRestart, "primitive restart was not decoded for a strip");
+    queue.userConfig[0x242] = 21;
+    Require(AgcDriver::Graphics::DrawRejection(queue, true).empty(), "primitive restart was rejected for an indexed polygon");
+    Require(AgcDriver::Graphics::DecodeState(queue).primitiveRestart, "primitive restart was not decoded for a polygon");
     queue.context[0x103] = 5;
     Require(AgcDriver::Graphics::DrawRejection(queue, true).find("all ones") != std::string::npos, "a restart index other than all ones was accepted");
     queue = makeState();
@@ -725,10 +745,10 @@ void MsaaEnableSingleSampleTests() {
     queue = enabled();
     queue.userConfig[0x242] = 1;
     Require(DrawRejection(queue, false).find("primitives other than triangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for points");
-    for (const auto primitive : {5u, 6u}) {
+    for (const auto primitive : {5u, 6u, 21u}) {
         queue = enabled();
         queue.userConfig[0x242] = primitive;
-        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a triangle fan or strip");
+        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a triangle fan, strip or polygon");
     }
     queue = enabled();
     queue.context[0x292] = 7;
@@ -6641,7 +6661,7 @@ void ConservativeRasterizationTests() {
     queue.context[0x1b4] = 2;
     Require(AgcDriver::Graphics::DecodeState(queue).conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT, "PA_SC_CONSERVATIVE_RASTERIZATION_CNTL 0x6000 enabled conservative rasterization");
     queue.context[0x313] = 0x6001;
-    for (const auto primitive : {4u, 5u, 6u}) {
+    for (const auto primitive : {4u, 5u, 6u, 21u}) {
         queue.userConfig[0x242] = primitive;
         Require(AgcDriver::Graphics::DecodeState(queue).conservativeRasterization == VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT, "OVER_RAST_ENABLE did not decode to overestimation for primitive type " + std::to_string(primitive));
         Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck rejected OVER_RAST_ENABLE");
@@ -8174,6 +8194,7 @@ int main(int argc, char** argv) {
         ShaderStageTests();
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
+        PolygonPrimitiveTests();
         TuningFieldTests();
         PixelInputLayoutTests();
         UnexportedPixelInputTests();
