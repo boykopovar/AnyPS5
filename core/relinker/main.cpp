@@ -185,7 +185,7 @@ int Run(const int argc, char* argv[]) {
         if (!args.toWindows && !args.toMacos && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";
         Io::FileWriter fileWriter;
 
-        if (std::filesystem::exists(Io::NativePath(args.inputPath)) && std::filesystem::exists(Io::NativePath(args.outputPath)) && std::filesystem::equivalent(Io::NativePath(args.inputPath), Io::NativePath(args.outputPath)))
+        if (std::filesystem::exists(Io::NativePath(args.inputPath)) && std::filesystem::exists(Io::NativePath(args.outputPath)) && SameOutputFile(Io::NativePath(args.inputPath), Io::NativePath(args.outputPath)))
             throw Domain::RelinkerException("Executable output would overwrite the input executable");
         if (Io::NativePath(args.outputPath).filename().empty() || std::filesystem::is_directory(Io::NativePath(args.outputPath)))
             throw Domain::RelinkerException("Executable output is a directory: " + args.outputPath);
@@ -250,10 +250,10 @@ int Run(const int argc, char* argv[]) {
         const auto checkOutputInputs = [&](const std::filesystem::path& path, const char* kind) {
             if (!std::filesystem::exists(path)) return;
             for (const auto& executable : executables)
-                if (std::filesystem::equivalent(Io::NativePath(executable.InputPath), path))
+                if (SameOutputFile(Io::NativePath(executable.InputPath), path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite the input executable: " + Io::Utf8Path(path));
             for (const auto& artifact : guestArtifacts)
-                if (std::filesystem::equivalent(artifact.SourcePath, path))
+                if (SameOutputFile(artifact.SourcePath, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite an input module: " + Io::Utf8Path(path));
         };
         for (std::size_t index = 1; index < executables.size(); ++index) checkOutputInputs(Io::NativePath(executables[index].OutputPath), "Executable");
