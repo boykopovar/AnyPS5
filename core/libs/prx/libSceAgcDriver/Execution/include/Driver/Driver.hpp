@@ -197,6 +197,16 @@ private:
     static void countIndirect(int path, double readMs);
     static int indirectArgumentsPath(std::span<const std::uint32_t> packet, std::uint64_t arguments);
     void dispatchIndirect(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission);
+    enum class AheadArguments { None, Matched, Differed };
+    struct IndirectSource {
+        std::uint64_t arguments = 0;
+        int path = IndirectGpu;
+        std::uint32_t queue = 0;
+        AheadArguments ahead = AheadArguments::None;
+    };
+    static IndirectSource& indirectSource();
+    static std::string describeIndirectSource();
+    std::array<std::uint32_t, 5> readDispatchArguments(std::uint32_t queue, std::uint64_t arguments, std::uint32_t initiator);
     static bool& sampledRead();
     static bool writeEvidenceEnabled();
     static bool writerKeyedEvidence();
@@ -272,7 +282,7 @@ private:
         std::chrono::steady_clock::time_point resolvedAt{};
     };
     struct GroupCaptureStats {
-        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0;
+        std::uint64_t runs = 0, resolved = 0, resolvedHits = 0, adopted = 0, addressMismatches = 0, keyMismatches = 0, failures = 0, stale = 0, labelOverlaps = 0, writtenBefore = 0, deviceRejects = 0, argumentMismatches = 0;
         double resolveMs = 0, resolveMaxMs = 0, ageMs = 0, ageMaxMs = 0;
         std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
     };
