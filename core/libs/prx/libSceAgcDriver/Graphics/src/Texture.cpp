@@ -3211,7 +3211,7 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
     return false;
 }
 
-bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published) {
+bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
     if (published != nullptr) *published = false;
     // The images stay alive across the scan: their last owner may be a batch's kept list, which
     // another thread releases outside the GPU mutex once the batch completed.
@@ -3246,7 +3246,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (flush.empty()) {
         // Units shadowed over the range (another image's results retiled into the import's unit
         // shadow, or an earlier flush's) still reach the import as the scope asks.
-        const bool units = PublishShadowsOnly(address, bytes, scope, reason);
+        const bool units = PublishShadowsOnly(address, bytes, scope, reason, waited);
         if (published != nullptr) *published = units;
         return false;
     }
@@ -3281,7 +3281,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     // The stores above went into the unit shadows where slabs took them: the consumer reads the
     // import, so they are published under the same hold, after every store.
     if (scope != PublishScope::None) {
-        const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason));
+        const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited);
         if (published != nullptr) *published = units != 0;
     }
     return true;
@@ -3430,10 +3430,10 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
     if (outstanding()) recorder->Sync();
 }
 
-bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason) {
+bool StorageTexture::PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason, bool waited) {
     if (scope == PublishScope::None || !AnyShadowedOverlaps(address, bytes)) return false;
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    return PublishShadow(address, bytes, scope, PublishReasonFor(reason)) != 0;
+    return PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited) != 0;
 }
 
 namespace {

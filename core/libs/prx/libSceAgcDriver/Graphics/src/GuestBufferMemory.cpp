@@ -3695,6 +3695,12 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     const auto loopStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::uint64_t refreshUs = 0;
     std::uint64_t copyUs = 0;
+    std::uint64_t heapsBegin = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t heapsEnd = 0;
+    if (addressable && space != nullptr && !space->base.empty()) {
+        heapsBegin = space->base.front().begin;
+        heapsEnd = space->base.back().end;
+    }
     for (auto& region : regions) {
         if (!region.pending) continue;
         region.pending = false;
@@ -3785,7 +3791,12 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             // an address-based shader maps are exempt (they hold every pending image, and such shaders
             // do not read texture memory through pointers); APS5_BDA_FLUSH=1 flushes for them too.
             static const bool bdaFlush = std::getenv("APS5_BDA_FLUSH") != nullptr;
-            if (!(addressable && region.hostBacked) || bdaFlush) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "imported buffer region");
+            if (!(addressable && region.hostBacked) || bdaFlush) {
+                StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(bytes), nullptr, "imported buffer region");
+            } else {
+                heapsBegin = std::min(heapsBegin, region.begin);
+                heapsEnd = std::max(heapsEnd, region.end);
+            }
             continue;
         }
         if (copyOnGpu) {
@@ -3810,6 +3821,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
         copyRegion(region, addressable);
         if (profile) copyUs += microsecondsSince(copyStart);
     }
+    if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
     takeHeapReferences();
     if (!profile) return;
