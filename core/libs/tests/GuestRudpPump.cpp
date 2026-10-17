@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
 #include <string>
 
 extern "C" {
@@ -29,6 +28,7 @@ int main() {
     std::uint16_t segmentSize = 0x5a5a;
     CHECK(sceRudpProcessEvents() == notInitialized);
     CHECK(sceRudpNetFlush() == notInitialized);
+    CHECK(sceRudpNetReceived() == notInitialized);
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == notInitialized);
     CHECK(segmentSize == 0x5a5a);
     CHECK(sceRudpGetMaxSegmentSize(nullptr) == notInitialized);
@@ -37,6 +37,7 @@ int main() {
     CHECK(sceRudpInit_nid_postfix(pool, sizeof(pool)) == 0);
     CHECK(sceRudpProcessEvents() == 0);
     CHECK(sceRudpNetFlush() == 0);
+    CHECK(sceRudpNetReceived() == 0);
     CHECK(sceRudpGetMaxSegmentSize(nullptr) == invalidArgument);
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == 0);
     CHECK(segmentSize == 1410);
@@ -49,12 +50,6 @@ int main() {
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == notInitialized);
     CHECK(segmentSize == 0x5a5a);
 
-    bool threw = false;
-    try {
-        sceRudpNetReceived();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    CHECK(threw);
+    CHECK(sceRudpNetReceived() == notInitialized);
     return 0;
 }

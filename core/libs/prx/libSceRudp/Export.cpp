@@ -156,7 +156,11 @@ int APS5_VABI sceRudpSetOption(int ctx_id, int option, const void* value, uint32
     return valid_ctx(ctx_id) ? 0 : RUDP_ERROR_INVALID_CONTEXT_ID;
 }
 
-int APS5_VABI sceRudpGetOption() {
+int APS5_VABI sceRudpGetOption(int ctx_id, int option, void* value, uint32_t len) {
+    (void)ctx_id;
+    (void)option;
+    (void)value;
+    (void)len;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -270,8 +274,8 @@ int APS5_VABI sceRudpProcessEvents(void) {
 }
 
 int APS5_VABI sceRudpNetReceived(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_inited ? 0 : RUDP_ERROR_NOT_INITIALIZED;
 }
 
 int APS5_VABI sceRudpGetMaxSegmentSize(uint16_t* size) {
