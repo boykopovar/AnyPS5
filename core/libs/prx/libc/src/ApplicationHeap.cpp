@@ -51,10 +51,13 @@ int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size
     catch (const std::length_error&) { return 12; }
 }
 
+int APS5_VABI defaultStatsFast(void* stats) { return GuestHeap::GuestHeapStatsFast_nid_postfix(stats); }
+
 std::array<void*, 10> defaultApi() {
     return {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
         reinterpret_cast<void*>(defaultCalloc), reinterpret_cast<void*>(defaultReallocate),
-        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign)};
+        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign), nullptr,
+        reinterpret_cast<void*>(defaultStatsFast)};
 }
 
 class CallbackScope {

@@ -1,3 +1,4 @@
+#include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstdint>
@@ -123,17 +124,6 @@ bool InsideAllocation(const Arena& arena, std::uintptr_t start, std::size_t size
     --found;
     return found->second.used && size <= found->second.end - start && start - found->first <= found->second.end - found->first - size;
 }
-
-struct MallocManagedSize {
-    std::uint16_t size;
-    std::uint16_t version;
-    std::uint32_t reserved;
-    std::size_t maxSystemSize;
-    std::size_t currentSystemSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
-static_assert(sizeof(MallocManagedSize) == 0x28);
 
 int FillStats(void* handle, MallocManagedSize* stats) {
     if (!stats || stats->size < sizeof(MallocManagedSize)) return 22;
