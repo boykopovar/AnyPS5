@@ -3844,6 +3844,70 @@ void parkedImportUnmapTests(const Device& device) {
     std::cout << "parked import unmap: ok\n";
 }
 
+void windowImportUnmapTests(const Device& device) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: window import unmap not tested\n";
+        return;
+    }
+    const auto alignment = static_cast<std::size_t>(std::max<VkDeviceSize>(65536u, context.hostImportAlignment));
+    const auto window = alignment * 2u;
+    const auto bytes = window * 4u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(alignment, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the window import unmap block");
+    const auto release = [&] {
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        std::free(block);
+#endif
+    };
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    SetHostImportRangeWindow(window);
+    const HostImport* imported = nullptr;
+    {
+        std::lock_guard gpu(GpuMutex());
+        imported = HostImportFor(context, address, alignment);
+    }
+    const bool windowed = imported != nullptr && imported->base == address && imported->bytes == window;
+    if (imported == nullptr) {
+        SetHostImportRangeWindow(64ull << 20u);
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+        release();
+        std::cout << "host import refused: window import unmap not tested\n";
+        return;
+    }
+    auto* tail = static_cast<std::byte*>(block) + 2u * window;
+    bool unmapped = false;
+    std::string failure;
+    try {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(tail, window, [&](const void*, std::size_t, const void*, bool) { unmapped = true; });
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    SetHostImportRangeWindow(64ull << 20u);
+    ClearHostImports(context.device);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(block, bytes, [](const void*, std::size_t, const void*, bool) {});
+    }
+    release();
+    Require(windowed, "the access to the first window of a large range did not import that window alone");
+    Require(failure.empty(), "guest unmap of a window another window's import pins: " + failure);
+    Require(unmapped, "guest unmap of a window another window's import pins did not run");
+    std::cout << "window import unmap: ok\n";
+}
+
 void importWatchTests(const Device& device) {
     using namespace AgcDriver::GuestMemory;
     const auto& context = device.GetContext();
@@ -8241,6 +8305,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--parked-import-unmap-only") {
             gpu.unlock();
             parkedImportUnmapTests(device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--window-import-unmap-only") {
+            gpu.unlock();
+            windowImportUnmapTests(device);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unit-shadow-only") {
