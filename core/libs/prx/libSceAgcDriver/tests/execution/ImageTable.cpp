@@ -251,7 +251,16 @@ alignas(256) constexpr std::array<std::uint32_t, 32> IndirectRecordCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 34> PointerChainRecordCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u, 0xf4240b02u, 0x24000008u, 0xf4040b96u, 0xfa000010u,
+    0xf40c0917u, 0xfa000020u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu,
+    0x3e000000u, 0xf09c0f08u, 0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
+    0x80070408u, 0xbf810000u,
+};
+
 alignas(256) std::array<std::uint32_t, Records * 16> Indirect{};
+alignas(256) std::array<std::uint32_t, Records * 8> Links{};
 
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
@@ -433,12 +442,13 @@ Outcome RunIndirectRecords(AgcDriver::VulkanDevice& device, const std::array<std
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
     std::copy(PointClamp.begin(), PointClamp.end(), Srt.begin() + 12);
     const std::span<const std::uint32_t> span(code);
-    const std::array<ShaderRecompiler::MemoryRegion, 5> memory{{
+    const std::array<ShaderRecompiler::MemoryRegion, 6> memory{{
         {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
         {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
         {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
         {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
         {reinterpret_cast<std::uintptr_t>(Indirect.data()), std::as_bytes(std::span(Indirect))},
+        {reinterpret_cast<std::uintptr_t>(Links.data()), std::as_bytes(std::span(Links))},
     }};
     return Execute(device, span, Srt.data(), memory, groups, Lanes, 64);
 }
@@ -1106,6 +1116,45 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
     RequireRed(changed, 1, Lanes, texels[0], "float texels after the T# behind record 1's pointer changed");
 }
 
+void RunPointerChainRecordTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    const auto uintImage = Image(UintTexels.data(), Format32UInt);
+    const auto sintImage = Image(SintTexels.data(), Format32SInt);
+    const std::array<std::array<std::uint32_t, 4>, 3> images{floatImage, uintImage, sintImage};
+    const std::array<std::function<std::uint32_t(std::uint32_t)>, 3> texels{
+        [](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[x]); },
+        [](std::uint32_t x) { return UintTexels[x]; },
+        [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); },
+    };
+    const std::array<const char*, 3> names{"float", "uint", "sint"};
+    const auto store = [](std::uint32_t* at, const void* pointer) {
+        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+        at[0] = static_cast<std::uint32_t>(address);
+        at[1] = static_cast<std::uint32_t>(address >> 32u);
+    };
+
+    Table = {};
+    Indirect = {};
+    Links = {};
+    Keys = {};
+    for (std::uint32_t group = 0; group < 3; ++group) Keys[group] = 2u - group;
+    for (std::uint32_t record = 0; record < 3; ++record) {
+        const std::uint32_t entry = 2u - record;
+        std::copy(images[record].begin(), images[record].end(), Indirect.data() + entry * 16u + 8u);
+        store(Links.data() + record * 8u + 4u, Indirect.data() + entry * 16u);
+        store(Table.data() + record * (Stride / 4u) + 2u, Links.data() + record * 8u);
+    }
+    const auto chained = RunIndirectRecords(device, PointerChainRecordCode, 3);
+    Require(!Faulted(chained), "image table: a T# behind two pointers from its record faulted:\n" + chained.log);
+    Require(chained.imageTableCount == 3u, "image table: T#s behind two pointers from their records do not hold one element per distinct T# (" + std::to_string(chained.imageTableCount) + ")");
+    for (std::uint32_t group = 0; group < 3; ++group) RequireRed(chained, group, Lanes, texels[2u - group], std::string(names[2u - group]) + " texels of a T# behind two pointers from its record");
+
+    store(Links.data() + 8u + 4u, Indirect.data() + 2u * 16u);
+    const auto relinked = RunIndirectRecords(device, PointerChainRecordCode, 3);
+    RequireRed(relinked, 1, Lanes, texels[0], "float texels after record 1's second pointer moved to another T#");
+}
+
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
     Fill();
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
@@ -1329,6 +1378,7 @@ int main() {
         RunStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);
+        RunPointerChainRecordTests(*device);
         RunSplitRecordTests(*device);
         RunPointerStorageWriteTests(*device);
         RunGraphicsTests(*device);
