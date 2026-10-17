@@ -1238,6 +1238,19 @@ void verifyImageTableBulkReads() {
     const auto& cut = cutByRun->snapshot.tables.tables.at(0);
     require(cut.keys == 4u && (cut.codes[0] & Abi::PoisonFlag) == 0u && cut.codes[1] == unmapped && cut.codes[2] == unmapped && cut.codes[3] == unmapped, "image table bulk reads: a record crossing into an unmapped page was not Unmapped poison");
     require(cutByRun->snapshot.tables == cutByWord->snapshot.tables && cutWordReads.wordReads == 12u && cutRunReads.wordReads == 0u && cutRunReads.bulkWords == 12u, "image table bulk reads: a record cut by an unmapped page read other words in runs than word by word");
+
+    place(1028u, 4u);
+    CountingMemory insideWordReads{reinterpret_cast<std::uintptr_t>(words.data() + 1028u), reinterpret_cast<std::uintptr_t>(words.data() + 1060u)};
+    const auto insideByWord = capture(request, insideWordReads, false);
+    AgcDriver::ShaderMemory inside({});
+    const auto insideCaptured = inside.Capture(request);
+    const auto regions = inside.Regions();
+    const auto first = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    const auto past = first + words.size() * sizeof(std::uint32_t);
+    const auto tableFirst = first + 1028u * sizeof(std::uint32_t);
+    const auto tablePast = first + 1060u * sizeof(std::uint32_t);
+    const bool exact = std::all_of(regions.begin(), regions.end(), [&](const ShaderRecompiler::MemoryRegion& region) { return region.guestAddress + region.bytes.size() <= first || region.guestAddress >= past || (region.guestAddress >= tableFirst && region.guestAddress + region.bytes.size() <= tablePast); });
+    require(insideCaptured->snapshot.tables == insideByWord->snapshot.tables && TableCovered(regions, words.data() + 1028u, 32u * sizeof(std::uint32_t)) && exact, "image table bulk reads: run reads inside 16-word blocks changed the snapshot or captured words outside the records");
 }
 
 void verifyImageTables() {

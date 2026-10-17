@@ -83,6 +83,10 @@ private:
     class WordMask {
     public:
         [[nodiscard]] bool Test(std::size_t index) const { return (bits[index / 64u] >> (index % 64u) & 1u) != 0u; }
+        [[nodiscard]] bool TestBlock(std::size_t index) const {
+            const auto block = ((std::uint64_t{1} << BlockWords) - 1u) << (index % 64u / BlockWords * BlockWords);
+            return (bits[index / 64u] & block) == block;
+        }
         void Set(std::size_t index) { bits[index / 64u] |= std::uint64_t{1} << (index % 64u); }
         void SetAll() { bits.fill(~std::uint64_t{0}); }
         void SetBlock(std::size_t index) { bits[index / 64u] |= ((std::uint64_t{1} << BlockWords) - 1u) << (index % 64u / BlockWords * BlockWords); }
