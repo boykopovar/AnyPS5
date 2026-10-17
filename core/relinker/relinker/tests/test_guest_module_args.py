@@ -72,12 +72,29 @@ def load_and_record(work, provider, module):
     assert f'result={RETURNED}' in recorded, recorded
 
 
+def load_and_record_default(work, provider, module):
+    events = work / 'events_default.txt'
+    run = subprocess.run([sys.executable, __file__, '--load-default', str(provider), str(module)],
+                         env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},
+                         capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+    recorded = events.read_text()
+    assert 'args=0000000000000010' in recorded, recorded
+    assert 'argp=0000000000000000' not in recorded, recorded
+    assert f'result={RETURNED}' in recorded, recorded
+
+
 def main():
     if sys.argv[1] == '--load':
         import ctypes
         host = ctypes.CDLL(sys.argv[2], mode=ctypes.RTLD_GLOBAL if sys.platform == 'darwin' else ctypes.DEFAULT_MODE)
         host.SetPendingArgs.argtypes = [ctypes.c_size_t, ctypes.c_void_p]
         host.SetPendingArgs(ARGS, ARGP)
+        ctypes.CDLL(sys.argv[3])
+        return
+    if sys.argv[1] == '--load-default':
+        import ctypes
+        ctypes.CDLL(sys.argv[2], mode=ctypes.RTLD_GLOBAL if sys.platform == 'darwin' else ctypes.DEFAULT_MODE)
         ctypes.CDLL(sys.argv[3])
         return
     relinker = Path(sys.argv[1]).resolve()
@@ -133,12 +150,14 @@ def main():
             libraries.mkdir()
             shutil.copyfile(host, libraries / 'libc.prx')
             load_and_record(work, libraries / 'libc.prx', converted)
+            load_and_record_default(work, libraries / 'libc.prx', converted)
         elif macos:
             libraries = mach / 'libs'
             libraries.mkdir()
             shutil.copyfile(host, libraries / 'libkernel.prx')
             (libraries / 'libc.prx').symlink_to('libkernel.prx')
             load_and_record(mach, libraries / 'libkernel.prx', mach_converted)
+            load_and_record_default(mach, libraries / 'libkernel.prx', mach_converted)
         else:
             print('Guest module argument tests passed: native execution skipped')
             return

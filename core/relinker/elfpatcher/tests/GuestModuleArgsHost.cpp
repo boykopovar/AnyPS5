@@ -5,10 +5,20 @@
 
 namespace {
 
+struct DefaultModuleArgs {
+    std::uint32_t size = 0x10;
+    std::uint32_t version = 0x200;
+    const void* context = nullptr;
+};
+
+alignas(16) constexpr DefaultModuleArgs kDefaultArgs{};
+
 struct Pending {
     std::size_t args = 0;
     const void* argp = nullptr;
 } pending;
+
+const Pending kEmptyPending{sizeof(kDefaultArgs), &kDefaultArgs};
 
 [[noreturn]] void Fail(const char* message) noexcept {
     std::fprintf(stderr, "Guest module argument fixture: %s\n", message);
@@ -38,6 +48,13 @@ extern "C" void APS5_VABI RecordArgs(std::size_t args, const void* argp) {
     std::snprintf(line, sizeof(line), "args=%016zx argp=%016zx\n", args,
                   static_cast<std::size_t>(reinterpret_cast<std::uintptr_t>(argp)));
     Write(line);
+    if (args == sizeof(DefaultModuleArgs)) {
+        if (argp == nullptr) Fail("Missing default argument block");
+        const auto* defaultArgs = static_cast<const DefaultModuleArgs*>(argp);
+        if (defaultArgs->size != 0x10 || defaultArgs->version != 0x200 || defaultArgs->context != nullptr) {
+            Fail("Default arguments corruption");
+        }
+    }
 }
 
 extern "C" void SetPendingArgs(std::size_t args, const void* argp) {
@@ -53,6 +70,9 @@ extern "C" void APS5_VABI RecordFini(std::size_t args, const void* argp, const v
 }
 
 extern "C" const void* __aps5_get_pending_module_args_nid_no_patch() {
+    if (pending.argp == nullptr) {
+        return &kEmptyPending;
+    }
     return &pending;
 }
 

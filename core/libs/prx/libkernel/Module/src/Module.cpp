@@ -257,6 +257,15 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
 
 namespace {
 
+struct SceKernelDefaultModuleArgs {
+    std::uint32_t size = 0x10;
+    std::uint32_t version = 0x200;
+    const void* context = nullptr;
+};
+
+alignas(16) constexpr SceKernelDefaultModuleArgs kDefaultModuleArgs{};
+const PendingModuleArgs kEmptyPendingArgs{sizeof(kDefaultModuleArgs), &kDefaultModuleArgs};
+
 thread_local PendingModuleArgs pendingModuleArgs;
 thread_local int pendingModuleInitResult = 0;
 
@@ -265,6 +274,9 @@ thread_local int pendingModuleInitResult = 0;
 extern "C" {
 
 const void* __aps5_get_pending_module_args_nid_no_patch() {
+    if (pendingModuleArgs.argp == nullptr) {
+        return &kEmptyPendingArgs;
+    }
     return &pendingModuleArgs;
 }
 
