@@ -181,7 +181,6 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(buffer)));
     snprintf_nid_postfix(buffer, sizeof(buffer), "%#08x %.3e %a %g %p", 42u, 1.25, 1.25, 1.25, static_cast<void*>(buffer));
     Require(std::strcmp(buffer, expected) == 0);
-#ifdef _WIN32
     char pointers[128];
     const auto address = [](std::uintptr_t value) { return reinterpret_cast<void*>(value); };
     Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p|%p|%p", address(0), address(0x1234), address(0xdeadbeef12)) == 23 &&
@@ -193,7 +192,19 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         address(0x1a), 6, address(0xf), -6, address(0xf)) == 34 &&
         std::strcmp(pointers, "[0x1a][0x1a][0x1a][   0xf][0xf   ]") == 0);
     Require(snprintf_nid_postfix(pointers, 6, "%p", address(0xabcdef)) == 8 && std::strcmp(pointers, "0xabc") == 0);
-#endif
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%p%ls", address(0), u"") == 3 && std::strcmp(pointers, "0x0") == 0);
+    Require(snprintf_nid_postfix(pointers, sizeof(pointers), "%%p|%%%p", address(0)) == 7 && std::strcmp(pointers, "%p|%0x0") == 0);
+    Require(sprintf_nid_postfix(pointers, "%p", address(0)) == 3 && std::strcmp(pointers, "0x0") == 0);
+    Require(FormatList(pointers, sizeof(pointers), "%2$p:%1$d", 7, address(0)) == 5 && std::strcmp(pointers, "0x0:7") == 0);
+    Require(FormatList(pointers, sizeof(pointers), "[%1$*2$.*3$p]", address(0x1a), 10, 4) == 12 && std::strcmp(pointers, "[    0x001a]") == 0);
+    Require(FormatList(pointers, sizeof(pointers), "%p:%d:%.1f:%d %d %d %d %d %d", address(0), 7, 2.5, 1, 2, 3, 4, 5, 6) == 21 &&
+        std::strcmp(pointers, "0x0:7:2.5:1 2 3 4 5 6") == 0);
+    Require(FormatListS(pointers, sizeof(pointers), "%p", address(0)) == 3 && std::strcmp(pointers, "0x0") == 0);
+    Require(snprintf_nid_postfix(nullptr, 0, "%p", address(0)) == 3);
+    pointers[3] = '!';
+    int pointerCount = -1;
+    Require(FormatList(pointers, 3, "%p%n:end", address(0), &pointerCount) == 7 && pointerCount == 3 &&
+        std::strcmp(pointers, "0x") == 0 && pointers[3] == '!');
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.*s", -1, "unlimited");
     Require(std::strcmp(buffer, "unlimited") == 0);
     buffer[5] = '!';
@@ -290,6 +301,8 @@ static void CheckAllocatingFormat() {
     ApplicationHeapRegister_nid_no_patch(api.data());
     char* allocated = nullptr;
     Require(asprintf_nid_postfix(&allocated, "%ls:%S:%lc:%d", u"\u00e9", u"ab", 0x20ac, 7) == 11 && std::strcmp(allocated, "\xc3\xa9:ab:\xe2\x82\xac:7") == 0);
+    free_nid_postfix(allocated);
+    Require(asprintf_nid_postfix(&allocated, "%p:%d", static_cast<void*>(nullptr), 7) == 5 && std::strcmp(allocated, "0x0:7") == 0);
     free_nid_postfix(allocated);
 }
 
