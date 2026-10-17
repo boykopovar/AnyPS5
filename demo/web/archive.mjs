@@ -131,6 +131,10 @@ export class Archive {
     let total = 0;
     for await (const entry of this.reader.getEntriesGenerator()) {
       if (this.entries.length >= MAX_ENTRIES) throw new Error("Input contains more than 100,000 entries");
+      if (Number.isInteger(entry.versionMadeBy) && entry.versionMadeBy >> 8 === 0 && entry.filename.includes("\\")) {
+        entry.filename = entry.filename.replaceAll("\\", "/");
+        if (entry.filename.endsWith("/")) entry.directory = true;
+      }
       validPath(entry.filename);
       const key = entry.filename.replace(/\/$/u, "").toLowerCase();
       if (paths.has(key)) throw new Error(`Duplicate ZIP path: ${entry.filename}`);
@@ -260,7 +264,7 @@ async function appendEntry(writer, name, entry, report) {
   await Promise.all([
     entry.getData(stream.writable, { checkSignature: true }),
     writer.add(name, stream.readable.pipeThrough(limit), {
-      versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes,
+      versionMadeBy: 0x31e, externalFileAttributes: entry.externalFileAttributes >>> 16 ? entry.externalFileAttributes : ((0o100644 << 16) | (entry.externalFileAttributes & 0xffff)) >>> 0,
       onprogress: completed => report({ phase: writer instanceof DirectoryWriter ? "Writing files" : "Compressing ZIP", input: name, completed, total: entry.uncompressedSize })
     })
   ]);
