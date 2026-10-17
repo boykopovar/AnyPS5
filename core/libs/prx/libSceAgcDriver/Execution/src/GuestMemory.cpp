@@ -358,6 +358,7 @@ namespace {
 // callback), and address-based builds verify every image section on each build, so without the table
 // each of those verifications was a VirtualQuery. APS5_NO_IMAGE_PAGE_CACHE=1 leaves the image uncached.
 constexpr std::size_t PageBytes = 4096;
+constexpr std::size_t BlockPages = 64;
 constexpr std::uint8_t PageReadable = 1;
 constexpr std::uint8_t PageWritable = 2;
 
@@ -366,17 +367,20 @@ struct PageSpan {
     std::size_t size = 0;
     // Per page: access flags, zero while unknown.
     std::uint8_t* pages = nullptr;
+    std::uint8_t* blocks = nullptr;
 
     // Reserves and commits the table; untouched table pages cost nothing until a guest page is recorded.
     bool allocate() {
         if (size == 0) return false;
-        const auto count = (size / PageBytes + 8) & ~static_cast<std::size_t>(7);
+        const auto count = (size / PageBytes + BlockPages) & ~(BlockPages - 1);
+        const auto blockCount = (count / BlockPages + 8) & ~static_cast<std::size_t>(7);
 #ifdef _WIN32
-        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count + blockCount, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        pages = static_cast<std::uint8_t*>(std::calloc(count, 1));
+        pages = static_cast<std::uint8_t*>(std::calloc(count + blockCount, 1));
 #endif
         if (pages == nullptr) size = 0;
+        else blocks = pages + count;
         return pages != nullptr;
     }
 
@@ -384,12 +388,50 @@ struct PageSpan {
         return size != 0 && address >= base && address - base < size;
     }
 
-    std::uint8_t load(std::uintptr_t address) const {
-        return std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[(address - base) / PageBytes])).load(std::memory_order_relaxed);
+    static std::uint8_t loadByte(const std::uint8_t* at) {
+        return std::atomic_ref<std::uint8_t>(*const_cast<std::uint8_t*>(at)).load(std::memory_order_relaxed);
     }
 
-    void store(std::uintptr_t address, std::uint8_t value) {
-        std::atomic_ref<std::uint8_t>(pages[(address - base) / PageBytes]).store(value, std::memory_order_relaxed);
+    static void storeByte(std::uint8_t* at, std::uint8_t value) {
+        std::atomic_ref<std::uint8_t>(*at).store(value, std::memory_order_relaxed);
+    }
+
+    static std::uint64_t loadWide(const std::uint8_t* at) {
+        return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(const_cast<std::uint8_t*>(at))).load(std::memory_order_relaxed);
+    }
+
+    std::uint8_t load(std::uintptr_t address) const {
+        return loadByte(pages + (address - base) / PageBytes);
+    }
+
+    std::uint8_t common(std::size_t block) const {
+        const auto first = block * BlockPages;
+        const auto value = loadByte(pages + first);
+        const std::uint64_t wide = 0x0101010101010101ull * value;
+        for (auto index = first; index < first + BlockPages; index += 8) {
+            if (loadWide(pages + index) != wide) return 0;
+        }
+        return value;
+    }
+
+    void settle(std::size_t first, std::size_t last) {
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        for (auto block = first / BlockPages; block <= (last - 1) / BlockPages; ++block) {
+            const auto value = common(block);
+            if (loadByte(blocks + block) == value) continue;
+            storeByte(blocks + block, value);
+            if (value == 0) continue;
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            if (common(block) != value) storeByte(blocks + block, 0);
+        }
+    }
+
+    void store(std::uintptr_t first, std::uintptr_t last, std::uint8_t value) {
+        if (first >= last) return;
+        const auto begin = (first - base) / PageBytes;
+        const auto end = (last - 1 - base) / PageBytes + 1;
+        for (auto index = begin; index < end; ++index) storeByte(pages + index, value);
+        settle(begin, end);
     }
 
     // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
@@ -398,11 +440,22 @@ struct PageSpan {
         const auto stop = std::min<std::uintptr_t>((std::min(limit, base + size) - base + PageBytes - 1) / PageBytes, size / PageBytes);
         const std::uint64_t wide = 0x0101010101010101ull * value;
         while (index < stop) {
-            if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(const_cast<std::uint8_t*>(pages + index))).load(std::memory_order_relaxed) == wide) {
+            if (index % BlockPages == 0) {
+                const auto block = index / BlockPages;
+                if (block % 8 == 0 && index + 8 * BlockPages <= stop && loadWide(blocks + block) == wide) {
+                    index += 8 * BlockPages;
+                    continue;
+                }
+                if (index + BlockPages <= stop && loadByte(blocks + block) == value) {
+                    index += BlockPages;
+                    continue;
+                }
+            }
+            if (index % 8 == 0 && index + 8 <= stop && loadWide(pages + index) == wide) {
                 index += 8;
                 continue;
             }
-            if (std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[index])).load(std::memory_order_relaxed) != value) break;
+            if (loadByte(pages + index) != value) break;
             ++index;
         }
         return std::min(limit, base + index * PageBytes);
@@ -412,7 +465,11 @@ struct PageSpan {
         if (size == 0 || bytes == 0 || address >= base + size || address + bytes <= base) return;
         const auto first = (std::max(address, base) - base) / PageBytes;
         const auto last = (std::min(address + bytes, base + size) - 1 - base) / PageBytes;
-        for (auto page = first; page <= last; ++page) std::atomic_ref<std::uint8_t>(pages[page]).store(0, std::memory_order_relaxed);
+        for (auto page = first; page <= last; ++page) storeByte(pages + page, 0);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        for (auto block = first / BlockPages; block <= last / BlockPages; ++block) {
+            if (loadByte(blocks + block) != 0) storeByte(blocks + block, 0);
+        }
     }
 };
 
@@ -440,7 +497,7 @@ struct PageStates {
             const std::uint8_t value = PageReadable | (writable ? PageWritable : 0u);
             const auto first = std::max(base, span->base);
             const auto last = std::min(regionEnd, span->base + span->size);
-            for (auto at = first; at < last; at += PageBytes) span->store(at, value);
+            span->store(first, last, value);
             if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != generation) span->forget(first, static_cast<std::size_t>(last - first));
         }
     }
