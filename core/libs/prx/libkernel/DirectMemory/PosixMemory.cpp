@@ -114,7 +114,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
             !GuestArena::GuestArenaContains_nid_postfix(address, rounded))) return failed(GuestInvalid);
         const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
         const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
-        void* mapped = fixedAnonymous ? address : nullptr;
+        void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
             const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive);
