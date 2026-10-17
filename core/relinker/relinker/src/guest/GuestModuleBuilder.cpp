@@ -379,7 +379,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 const auto symbolIndex = static_cast<std::size_t>(info >> 32);
                 if (!systemImports[index].contains(symbolIndex)) continue;
                 const auto& symbol = image.Symbols[symbolIndex];
-                imports.push_back({symbol.Name, symbol.Library, {}, 0, {}, Io::ReadU64(*table, position), {}, false});
+                imports.push_back({symbol.Name, symbol.Library, {}, 0, {}, Io::ReadU64(*table, position), {}, false, (symbol.Info >> 4) == 2});
             }
         }
         dynamic.GuestModules.push_back(std::move(runtime));

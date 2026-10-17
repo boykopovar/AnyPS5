@@ -72,7 +72,9 @@ std::string CallRegistryWriter::WriteModuleImports(const std::vector<CallRegistr
         out << "  {\n";
         out << "    \"nid\": " << _jsonString(e.Nid) << ",\n";
         out << "    \"library\": " << _jsonString(e.Library) << ",\n";
-        out << "    \"targetOffset\": " << _hexOffset(e.TargetOffset) << "\n";
+        out << "    \"targetOffset\": " << _hexOffset(e.TargetOffset);
+        if (e.Weak) out << ",\n    \"weak\": true";
+        out << "\n";
         out << "  }";
         if (i + 1 < entries.size()) out << ",";
         out << "\n";
