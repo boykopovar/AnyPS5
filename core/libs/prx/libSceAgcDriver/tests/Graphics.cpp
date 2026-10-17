@@ -2,6 +2,7 @@
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
@@ -34,6 +35,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -4065,6 +4067,117 @@ AgcDriver::Graphics::Context mockContext() {
     return context;
 }
 
+struct CommandBatchFailureProbe {
+    VkResult allocation = VK_SUCCESS;
+    VkResult creation = VK_SUCCESS;
+    VkResult begin = VK_SUCCESS;
+    VkFence failedFence = VK_NULL_HANDLE;
+    std::uint32_t freed = 0;
+    std::uint32_t creates = 0;
+    std::uint32_t destroys = 0;
+    std::uint32_t invalidDestroys = 0;
+    std::uint32_t begins = 0;
+};
+
+CommandBatchFailureProbe batchProbe;
+
+VKAPI_ATTR VkResult VKAPI_CALL batchAllocateCommands(VkDevice device, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* commands) {
+    if (batchProbe.allocation != VK_SUCCESS) {
+        std::fill_n(commands, info->commandBufferCount, VK_NULL_HANDLE);
+        return batchProbe.allocation;
+    }
+    return mockAllocateCommandBuffers(device, info, commands);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL batchCreateFence(VkDevice device, const VkFenceCreateInfo* info, const VkAllocationCallbacks* allocator, VkFence* fence) {
+    ++batchProbe.creates;
+    if (batchProbe.creation != VK_SUCCESS) {
+        *fence = batchProbe.failedFence;
+        return batchProbe.creation;
+    }
+    return mockCreateFence(device, info, allocator, fence);
+}
+
+VKAPI_ATTR void VKAPI_CALL batchFreeCommands(VkDevice device, VkCommandPool pool, std::uint32_t count, const VkCommandBuffer* commands) {
+    batchProbe.freed += count;
+    mockFreeCommandBuffers(device, pool, count, commands);
+}
+
+VKAPI_ATTR void VKAPI_CALL batchDestroyFence(VkDevice device, VkFence fence, const VkAllocationCallbacks* allocator) {
+    ++batchProbe.destroys;
+    if (fence != VK_NULL_HANDLE && fence == batchProbe.failedFence) {
+        ++batchProbe.invalidDestroys;
+        return;
+    }
+    mockDestroyFence(device, fence, allocator);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL batchBeginCommands(VkCommandBuffer commands, const VkCommandBufferBeginInfo* info) {
+    ++batchProbe.begins;
+    if (batchProbe.begin != VK_SUCCESS) return batchProbe.begin;
+    return mockBeginCommandBuffer(commands, info);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL batchFailureProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkAllocateCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(batchAllocateCommands);
+    if (std::strcmp(name, "vkCreateFence") == 0) return reinterpret_cast<PFN_vkVoidFunction>(batchCreateFence);
+    if (std::strcmp(name, "vkFreeCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(batchFreeCommands);
+    if (std::strcmp(name, "vkDestroyFence") == 0) return reinterpret_cast<PFN_vkVoidFunction>(batchDestroyFence);
+    if (std::strcmp(name, "vkBeginCommandBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(batchBeginCommands);
+    return mockProc(device, name);
+}
+
+void commandBatchFenceFailureTests() {
+    using namespace AgcDriver::Graphics;
+    const std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    std::uint32_t invalidDestroys = 0;
+    for (const auto result : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}) {
+        for (const bool nonnull : {false, true}) {
+            mock = MockVulkan{};
+            batchProbe = {};
+            batchProbe.creation = result;
+            batchProbe.failedFence = nonnull ? reinterpret_cast<VkFence>(std::uintptr_t{0xdeadbeef}) : VK_NULL_HANDLE;
+            auto context = mockContext();
+            context.deviceProc = batchFailureProc;
+            bool failed = false;
+            try {
+                CommandBatch batch(context);
+            } catch (const std::runtime_error& error) {
+                const std::string message = error.what();
+                failed = message.find("vkCreateFence") != std::string::npos && message.find("Vulkan result " + std::to_string(result)) != std::string::npos;
+            }
+            Require(failed && batchProbe.creates == 1 && batchProbe.begins == 0, "fence creation failure lost its error or continued construction");
+            Require(mock.live == 0 && batchProbe.freed == 1, "fence creation failure leaked the allocated command buffer");
+            invalidDestroys += batchProbe.invalidDestroys;
+            std::printf("command batch fence result=%d nonnull=%d invalid destroys=%u\n", result, nonnull, batchProbe.invalidDestroys);
+            const auto destroyed = batchProbe.destroys;
+            const auto invalid = batchProbe.invalidDestroys;
+            batchProbe.creation = VK_SUCCESS;
+            {
+                CommandBatch recovered(context);
+                Require(recovered.Handle() != VK_NULL_HANDLE, "command batch did not recover after fence creation failed");
+            }
+            Require(mock.live == 0 && batchProbe.freed == 2 && batchProbe.destroys == destroyed + 1 && batchProbe.invalidDestroys == invalid, "recovered command batch mishandled its owned objects");
+        }
+    }
+    for (const bool allocated : {false, true}) {
+        mock = MockVulkan{};
+        batchProbe = {};
+        batchProbe.allocation = allocated ? VK_SUCCESS : VK_ERROR_OUT_OF_HOST_MEMORY;
+        batchProbe.begin = VK_ERROR_OUT_OF_HOST_MEMORY;
+        auto context = mockContext();
+        context.deviceProc = batchFailureProc;
+        bool failed = false;
+        try {
+            CommandBatch batch(context);
+        } catch (const std::runtime_error& error) {
+            failed = std::string(error.what()).find(allocated ? "vkBeginCommandBuffer" : "vkAllocateCommandBuffers") != std::string::npos;
+        }
+        Require(failed && mock.live == 0 && batchProbe.freed == (allocated ? 1u : 0u) && batchProbe.destroys == (allocated ? 1u : 0u) && batchProbe.invalidDestroys == 0, "command batch constructor failure mishandled its owned objects");
+    }
+    Require(invalidDestroys == 0, "command batch destroyed undefined failed fence outputs");
+}
+
 void addressSpaceTeardownTests() {
 #ifdef _WIN32
     _putenv_s("APS5_NO_LEASE_MIRROR", "1");
@@ -7996,6 +8109,10 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--unused-stencil-reference") {
             stencilReferenceUnusedTests();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--command-batch-fence-failure") {
+            commandBatchFenceFailureTests();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-journal") {
