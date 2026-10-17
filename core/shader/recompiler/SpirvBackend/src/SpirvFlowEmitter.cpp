@@ -731,6 +731,9 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
         return;
     }
     EmitDirectInstruction(ctx, inst);
+    if (!ctx.state.gpuConstantChecks.empty()) {
+        if (const auto check = ctx.state.gpuConstantChecks.find(&inst); check != ctx.state.gpuConstantChecks.end()) EmitGpuConstantCheck(ctx.state, ctx.Def(&inst), check->second);
+    }
 }
 
 void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrBlock* block) {

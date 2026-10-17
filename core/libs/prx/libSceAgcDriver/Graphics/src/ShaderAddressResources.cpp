@@ -22,6 +22,7 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         Require(shader.program->bdaAbiVersion == (faults == 0 ? 0u : ShaderRecompiler::BdaAbi::Version), "incompatible BDA ABI version");
         // Rect-list validation needs a fault buffer, but never accesses guest addresses.
         usesBda = usesBda || tables != 0;
+        if (tables != 0 && !shader.program->bdaReadOnly) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
         faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || loopGuarded));

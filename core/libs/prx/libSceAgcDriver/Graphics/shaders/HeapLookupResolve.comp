@@ -1,0 +1,48 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) buffer Ring { uint ring[]; };
+layout(set = 0, binding = 1) buffer Table { uint table[]; };
+layout(set = 0, binding = 2) readonly buffer Fixups { uint fixups[]; };
+layout(push_constant) uniform Push { uint first; uint count; } push;
+
+const uint HeaderDwords = 16u;
+const uint EntryDwords = 16u;
+const uint KeyDwords = 10u;
+const uint SlotDword = 11u;
+const uint Probes = 16u;
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= push.count) return;
+    const uint fixup = (push.first + i) * (2u + KeyDwords);
+    const uint target = fixups[fixup];
+    const uint expected = fixups[fixup + 1u];
+    uint key[KeyDwords];
+    for (uint j = 0u; j < KeyDwords; ++j) key[j] = fixups[fixup + 2u + j];
+    uint hash = 2166136261u;
+    for (uint j = 0u; j < KeyDwords; ++j) hash = (hash ^ key[j]) * 16777619u;
+    hash ^= hash >> 16u;
+    hash *= 0x85ebca6bu;
+    hash ^= hash >> 13u;
+    hash *= 0xc2b2ae35u;
+    hash ^= hash >> 16u;
+    const uint mask = table[0];
+    uint slot = 0xffffffffu;
+    for (uint probe = 0u; probe < Probes; ++probe) {
+        const uint entry = HeaderDwords + ((hash + probe) & mask) * EntryDwords;
+        if (table[entry] == 0u) break;
+        bool match = true;
+        for (uint j = 0u; j < KeyDwords; ++j) match = match && table[entry + 1u + j] == key[j];
+        if (match) {
+            slot = table[entry + SlotDword];
+            break;
+        }
+    }
+    if (slot == 0xffffffffu) {
+        atomicAdd(table[1], 1u);
+        slot = expected;
+    } else if (slot != expected) {
+        atomicAdd(table[2], 1u);
+    }
+    ring[target] = slot;
+}

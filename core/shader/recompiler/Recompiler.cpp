@@ -290,7 +290,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     }
 
     constexpr SrtWalker srtWalker;
-    srtWalker.BuildPlan(program);
+    srtWalker.BuildPlan(program, request.target.gpuConstants && request.shader.stage == ShaderStage::Vertex, request.target.gpuConstantsVerify && request.shader.stage == ShaderStage::Vertex);
     deadCodeEliminator.Eliminate(program);
     dumpIr("srt");
 
@@ -318,6 +318,19 @@ struct EmissionFailure {
     std::exception_ptr failure;
 };
 
+struct UsedBindingPlan {
+    std::shared_ptr<const void> owner;
+    const DescriptorBindingPlan* plan = nullptr;
+};
+
+struct HeapTemplate {
+    std::shared_ptr<const RecompileResult> result;
+    UsedBindingPlan plan;
+    std::vector<DescriptorValue> buffers;
+    std::vector<DescriptorValue> images;
+    std::vector<DescriptorValue> samplers;
+};
+
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::mutex mutex;
     // The code the entry was built for: the key carries only a hash of it, so a candidate entry is
@@ -336,6 +349,7 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
     std::list<ResultMemoEntry> memo;
     std::unordered_map<std::uint64_t, std::list<ResultMemoEntry>::iterator> memoIndex;
+    std::unordered_map<std::uint64_t, HeapTemplate> heapTemplates;
 };
 
 namespace {
@@ -515,7 +529,12 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     bool registration = request.target.registrationModules && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Fragment);
     program.Metadata().bindingLayoutComplete = false;
     const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
-    auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay);
+    const auto gpuStage = [&] {
+        return request.target.gpuResolvedImages && (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex);
+    };
+    const bool gpuResolved = gpuStage();
+    auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay, gpuResolved);
+    const bool gpuMode = gpuResolved && bindings.layout.gpuResolvedImages;
 
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
@@ -531,6 +550,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
+    targetOptions.gpuResolvedImages = gpuMode;
+    targetOptions.bdaRangeCache = request.target.gpuConstants && request.shader.stage != ShaderStage::Compute;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -546,7 +567,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
         registration = false;
         program.Metadata().bindingLayoutComplete = false;
-        bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay);
+        bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay, gpuResolved);
+        targetOptions.gpuResolvedImages = gpuResolved && bindings.layout.gpuResolvedImages;
         targetOptions.registrationModules = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
     }
@@ -556,6 +578,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         result.stencilReferences = StencilReferenceValues(program);
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
+    result.gpuResolvedImages = targetOptions.gpuResolvedImages;
+    result.samplerSlotDword = result.gpuResolvedImages ? bindings.layout.SamplerSlotDword() : 0u;
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
@@ -781,33 +805,42 @@ std::shared_ptr<const SpecializedModule> registrationModule(std::uint64_t varian
     return entry->module;
 }
 
-std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
-    struct BindingPlanKeyStorage {};
-    auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
-    key.clear();
-    key.push_back(variant.artifact.variantId);
+template<typename TVisit>
+void visitBindingPlanKey(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, TVisit&& visit) {
+    visit(variant.artifact.variantId);
     for (std::size_t index = 0; index < variant.info.info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
-        key.push_back(descriptor.dwordCount);
-        key.push_back(descriptor.dwords[1] & 0xffff0000u);
-        key.push_back(descriptor.dwords[3]);
+        visit(descriptor.dwordCount);
+        visit(descriptor.dwords[1] & 0xffff0000u);
+        visit(descriptor.dwords[3]);
         const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
-        key.push_back(present ? 4u | (descriptor.dwords[0] & 3u) : 0u);
+        visit(present ? 4u | (descriptor.dwords[0] & 3u) : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
-        key.push_back(descriptor.dwordCount);
-        key.push_back(descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffu) != 0u);
-        key.push_back(descriptor.dwords[1] & ~0xffu);
-        for (std::size_t word = 2; word < 8; ++word) key.push_back(descriptor.dwords[word]);
+        visit(descriptor.dwordCount);
+        visit(descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffu) != 0u);
+        visit(descriptor.dwords[1] & ~0xffu);
+        for (std::size_t word = 2; word < 8; ++word) visit(descriptor.dwords[word]);
     }
     for (std::size_t index = 0; index < variant.info.info.samplers.size(); ++index) {
         const auto& descriptor = snapshot.samplers.at(index);
-        key.push_back(descriptor.dwordCount);
-        for (std::size_t word = 0; word < 4; ++word) key.push_back(descriptor.dwords[word]);
+        visit(descriptor.dwordCount);
+        for (std::size_t word = 0; word < 4; ++word) visit(descriptor.dwords[word]);
     }
-    key.push_back(exports.size());
-    for (const auto mapping : exports) key.push_back(mapping);
+    visit(exports.size());
+    for (const auto mapping : exports) visit(mapping);
+}
+
+void bindingPlanKey(std::vector<std::uint64_t>& key, const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports) {
+    key.clear();
+    visitBindingPlanKey(variant, snapshot, exports, [&](std::uint64_t word) { key.push_back(word); });
+}
+
+std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
+    struct BindingPlanKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
+    bindingPlanKey(key, variant, snapshot, exports);
     static PrimedSharedMutex mutex;
     static std::map<std::vector<std::uint64_t>, std::shared_ptr<PreparedBindingPlan>> plans;
     std::shared_ptr<PreparedBindingPlan> plan;
@@ -860,7 +893,7 @@ std::shared_ptr<const SpecializedModule> specializeModule(const CompiledShaderAr
     return entry->module;
 }
 
-RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults = false) {
+RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults = false, UsedBindingPlan* usedPlan = nullptr) {
     RecompileResult result;
     const auto& artifact = variant.artifact;
     static_cast<CompiledShaderArtifact&>(result) = {
@@ -870,6 +903,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .runtimeImageCount = artifact.runtimeImageCount,
         .runtimeImageResources = artifact.runtimeImageResources,
         .registrationModule = artifact.registrationModule,
+        .gpuResolvedImages = artifact.gpuResolvedImages,
+        .samplerSlotDword = artifact.samplerSlotDword,
         .bdaAbiVersion = artifact.bdaAbiVersion,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
@@ -889,6 +924,11 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .stencilReferenceDword = artifact.stencilReferenceDword,
         .variantId = artifact.variantId
     };
+    result.bdaReadOnly = !variant.info.info.bdaWrites;
+    for (const auto reg : variant.bindings.layout.userDataRegisters) {
+        const auto index = reg - request.context.userDataBaseRegister;
+        result.userDataRegisterReads |= reg >= request.context.userDataBaseRegister && index < 64u ? std::uint64_t{1} << index : ~std::uint64_t{0};
+    }
     const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
     std::shared_ptr<PreparedModuleEntry> entry;
@@ -986,11 +1026,13 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         result.spirv = artifact.spirv;
     }
     const auto tables = ResourceMaterializer::ResolveImageTables(variant.info.info, snapshot, artifact.variantId);
+    if (usedPlan != nullptr) *usedPlan = {entry != nullptr ? std::shared_ptr<const void>(entry) : std::shared_ptr<const void>(plan), bindingPlan};
     BindingAllocationResult bindings;
     DescriptorBindingBuilder{}.Populate(bindings, variant.bindings, *bindingPlan, variant.info.userDataBase, snapshot, partialThreads(request), &tables);
     result.workgroupMemoryDwords = WorkgroupMemoryStrideDwords(variant.info.info);
     result.bindings = std::move(bindings.bindings);
     result.pushConstants = std::move(bindings.pushConstants);
+    result.heapSlotWords = bindingPlan->heapSlotWords;
     if (!artifact.stencilReferences.empty()) {
         if (artifact.stencilReferenceDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("stencil replay push constant lies outside the stage range");
         result.pushConstants.resize(result.pushConstants.size() + sizeof(std::uint32_t));
@@ -1135,6 +1177,8 @@ bool ResultMemo() {
 
 constexpr std::size_t ResultMemoEntries = 256;
 
+
+
 struct ResultMemoCounters {
     std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0};
     std::atomic<std::int64_t> lastReport{0};
@@ -1166,7 +1210,7 @@ void reportResultMemo() {
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot) {
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool perDrawData = true, bool descriptors = true) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -1184,11 +1228,15 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             for (std::uint32_t i = 0; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
         }
     };
-    mixDescriptors(snapshot.buffers);
-    mixDescriptors(snapshot.images);
-    mixDescriptors(snapshot.samplers);
-    mixWords(snapshot.flattenedSrt);
-    mixWords(snapshot.userData);
+    if (descriptors) {
+        mixDescriptors(snapshot.buffers);
+        mixDescriptors(snapshot.images);
+        mixDescriptors(snapshot.samplers);
+    }
+    if (perDrawData) {
+        mixWords(snapshot.flattenedSrt);
+        mixWords(snapshot.userData);
+    }
     mix(static_cast<std::uint64_t>(snapshot.uniformFill.kind));
     mix(snapshot.uniformFill.resource);
     for (const auto stride : snapshot.uniformFill.groupStride) mix(stride);
@@ -1232,7 +1280,11 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
         mix(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            for (const auto field : vertex.resources[i].fields) mix(field);
+            if (perDrawData) {
+                for (const auto field : vertex.resources[i].fields) mix(field);
+            } else {
+                mix(vertex.resources[i].fields[3]);
+            }
             mix(vertex.resourcesDst[i].fetchIndex);
         }
     } else {
@@ -1418,7 +1470,7 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     if (layout.descriptorSet != handle.artifact->layout.descriptorSet || layout.firstBinding != handle.artifact->layout.firstBinding) return false;
     if (layout.pushConstantOffsetBytes % 4u != 0u || layout.pushConstantSizeBytes % 4u != 0u || layout.pushConstantOffsetBytes > NativePushConstantSize || layout.pushConstantSizeBytes > NativePushConstantSize - layout.pushConstantOffsetBytes) return false;
     const auto words = prepared.ShaderDataDwords();
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
+    const bool usesPush = !prepared.gpuResolvedImages && prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;
@@ -1430,7 +1482,7 @@ std::span<const std::uint32_t> GetPreparedCode(const SourceHandle& handle) {
     return handle.source->code;
 }
 
-PreparedShaderInvocation::PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle) : request(request), handle(handle) {
+PreparedShaderInvocation::PreparedShaderInvocation(RecompileRequest request, const std::shared_ptr<const SourceHandle>& handle) : request(std::move(request)), handle(handle) {
     this->request.context.linkedCallFallbacks = handle->source->linkedCallFallbacks;
 }
 
@@ -1447,6 +1499,12 @@ std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(cons
     return PreparedShaderInvocation(request, handle);
 }
 
+std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(RecompileRequest&& request, const std::shared_ptr<const SourceHandle>& handle, std::span<const std::uint64_t> key) {
+    if (handle == nullptr || !MatchesPreparedShader(request, *handle, key)) return std::nullopt;
+    if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) static_cast<void>(RequestInputInfo(request));
+    return PreparedShaderInvocation(std::move(request), handle);
+}
+
 std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const SrtRuntime& runtime) const {
     auto capture = std::make_shared<ResourceCapture>();
     capture->source = handle->source;
@@ -1455,12 +1513,157 @@ std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const S
     return capture;
 }
 
+std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words) const {
+    if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
+    const auto& variant = handle->artifact;
+    if (!variant->artifact.gpuResolvedImages || !variant->artifact.registrationModule || variant->bindings.layout.UsesPushData()) return nullptr;
+    const auto& snapshot = capture.snapshot;
+    const auto& layout = variant->bindings.layout;
+    const auto userDataBase = request.context.userDataBaseRegister;
+    words.userData.resize(layout.userDataRegisters.size());
+    for (std::size_t i = 0; i < layout.userDataRegisters.size(); ++i) {
+        const auto reg = layout.userDataRegisters[i];
+        if (reg < userDataBase || reg - userDataBase >= snapshot.userData.size()) throw std::runtime_error("ShaderRecompiler: shader user-data register is out of range");
+        words.userData[i] = snapshot.userData[reg - userDataBase];
+    }
+    words.flattenedSrt.assign(snapshot.flattenedSrt.begin(), snapshot.flattenedSrt.end());
+    words.bindings.clear();
+    const bool tables = std::ranges::any_of(layout.descriptors, [](const IrDescriptorBinding& descriptor) { return descriptor.kind == DescriptorBindingKind::ImageTable || descriptor.kind == DescriptorBindingKind::SamplerTable || descriptor.kind == DescriptorBindingKind::ImageTableMap; });
+    const bool perDrawBindings = (request.shader.stage == ShaderStage::Fragment || request.shader.stage == ShaderStage::Vertex) && !tables;
+    auto& source = *handle->source;
+    std::uint64_t key = snapshotHash(request, snapshot, false, !perDrawBindings) ^ variant->artifact.variantId * 0x9e3779b97f4a7c15ull;
+    if (perDrawBindings) {
+        visitBindingPlanKey(*variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, [&](std::uint64_t word) { key = (key ^ word) * 0x100000001b3ull; });
+    }
+    const auto useAttributes = [&](const std::shared_ptr<const RecompileResult>& result) {
+        words.vertexAttributes.clear();
+        if (!request.context.vertex) return;
+        const auto& vertex = *request.context.vertex;
+        words.vertexAttributes = result->vertexAttributes;
+        for (auto& attribute : words.vertexAttributes) {
+            if (attribute.location >= vertex.resourcesNum || attribute.location >= vertex.resources.size()) throw std::runtime_error("ShaderRecompiler: vertex attribute outside the draw's vertex resources");
+            attribute.resource = vertex.resources[attribute.location];
+            if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
+        }
+    };
+    const auto useBindings = [&](const HeapTemplate& shared) {
+        if (!perDrawBindings) return;
+        if (shared.plan.plan == nullptr) throw std::runtime_error("ShaderRecompiler: a heap template has no binding plan");
+        const bool sameBuffers = snapshot.buffers == shared.buffers;
+        const bool sameImages = snapshot.images == shared.images && snapshot.samplers == shared.samplers;
+        if (sameBuffers && sameImages) return;
+        const auto count = shared.result->bindings.size();
+        if (shared.plan.plan->bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap template's binding plan differs from its bindings");
+        if (sameImages) {
+            words.bindings.assign(count, {});
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto& entry = shared.plan.plan->bindings[index];
+                if (entry.descriptor.role != DescriptorRole::GuestBuffers) continue;
+                auto& descriptor = words.bindings[index];
+                descriptor.reserve(entry.resources.size() * 4u);
+                for (const auto resource : entry.resources) {
+                    if (resource >= snapshot.buffers.size() || snapshot.buffers[resource].dwordCount != 4u) throw std::runtime_error("ShaderRecompiler: a heap stage's guest buffer descriptor is out of range");
+                    descriptor.insert(descriptor.end(), snapshot.buffers[resource].dwords.begin(), snapshot.buffers[resource].dwords.begin() + 4);
+                }
+                if (descriptor == shared.result->bindings[index].guestDescriptor) descriptor.clear();
+            }
+            if (std::all_of(words.bindings.begin(), words.bindings.end(), [](const std::vector<std::uint32_t>& descriptor) { return descriptor.empty(); })) words.bindings.clear();
+            return;
+        }
+        const auto tables = ResourceMaterializer::ResolveImageTables(variant->info.info, snapshot, variant->artifact.variantId);
+        BindingAllocationResult bindings;
+        DescriptorBindingBuilder{}.Populate(bindings, variant->bindings, *shared.plan.plan, variant->info.userDataBase, snapshot, partialThreads(request), &tables);
+        if (bindings.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ from its template");
+        words.bindings.reserve(count);
+        for (auto& binding : bindings.bindings) words.bindings.push_back(std::move(binding.guestDescriptor));
+        if (variant->artifact.registrationModule && request.shader.stage != ShaderStage::Fragment && layout.runtimeStateDwords != 0u) {
+            const auto first = layout.RuntimeStateDword() + RuntimeAbi::StateVertexSelectors;
+            for (std::size_t index = 0; index < words.bindings.size(); ++index) {
+                if (shared.result->bindings[index].role != DescriptorRole::ShaderData) continue;
+                const auto& kept = shared.result->bindings[index].guestDescriptor;
+                if (first + layout.runtimeStateDwords > kept.size() || first + layout.runtimeStateDwords > words.bindings[index].size()) throw std::runtime_error("ShaderRecompiler: vertex selector state lies outside a heap stage's shader data");
+                std::copy_n(kept.begin() + first, layout.runtimeStateDwords, words.bindings[index].begin() + first);
+            }
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+            if (words.bindings[index] == shared.result->bindings[index].guestDescriptor) words.bindings[index].clear();
+        }
+        if (std::all_of(words.bindings.begin(), words.bindings.end(), [](const std::vector<std::uint32_t>& descriptor) { return descriptor.empty(); })) words.bindings.clear();
+    };
+    {
+        std::lock_guard lock(source.mutex);
+        const auto found = source.heapTemplates.find(key);
+        if (found != source.heapTemplates.end()) {
+            const auto shared = found->second;
+            useAttributes(shared.result);
+            useBindings(shared);
+            CompleteHeapDataWords(*shared.result, words);
+            return shared.result;
+        }
+    }
+    UsedBindingPlan usedPlan;
+    auto built = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, &usedPlan));
+    built->cacheHit = true;
+    for (const auto reg : layout.userDataRegisters) built->heapUserWords.push_back(reg - userDataBase);
+    static std::atomic<std::uint64_t> templateIds{0};
+    built->heapTemplateId = templateIds.fetch_add(1, std::memory_order_relaxed) + 1u;
+    HeapTemplate shared{std::move(built), std::move(usedPlan), perDrawBindings ? snapshot.buffers : std::vector<DescriptorValue>{}, perDrawBindings ? snapshot.images : std::vector<DescriptorValue>{}, perDrawBindings ? snapshot.samplers : std::vector<DescriptorValue>{}};
+    {
+        std::lock_guard lock(source.mutex);
+        if (source.heapTemplates.size() >= 4096) source.heapTemplates.clear();
+        shared = source.heapTemplates.emplace(key, shared).first->second;
+    }
+    useAttributes(shared.result);
+    useBindings(shared);
+    CompleteHeapDataWords(*shared.result, words);
+    return shared.result;
+}
+
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(const ResourceCapture& capture) const {
     if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (request.useCache && ResultMemo()) return materializePreparedMemoized(*handle->source, handle->artifact, request, capture.snapshot, true, nullptr);
     auto result = std::make_shared<RecompileResult>(materializeResult(*handle->artifact, request, capture.snapshot));
     result->cacheHit = true;
     return result;
+}
+
+const std::shared_ptr<const IrResourcePlan>& PreparedShaderInvocation::Plan() const {
+    static const std::shared_ptr<const IrResourcePlan> none;
+    return handle != nullptr && handle->source != nullptr ? handle->source->plan : none;
+}
+
+std::uint64_t PreparedShaderInvocation::VariantId() const {
+    return handle != nullptr && handle->artifact != nullptr ? handle->artifact->artifact.variantId : 0u;
+}
+
+void CompleteHeapDataWords(const RecompileResult& shared, HeapStageWords& words) {
+    const auto count = shared.bindings.size();
+    if (!words.bindings.empty() && words.bindings.size() != count) throw std::runtime_error("ShaderRecompiler: a heap stage's per-draw bindings differ in number from its template");
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& binding = shared.bindings[index];
+        if (binding.role != DescriptorRole::ShaderData && binding.role != DescriptorRole::FlattenedSrt) continue;
+        if (!words.bindings.empty() && !words.bindings[index].empty()) continue;
+        std::vector<std::uint32_t> descriptor;
+        if (binding.role == DescriptorRole::FlattenedSrt) {
+            if (words.flattenedSrt.empty() || words.flattenedSrt == binding.guestDescriptor) continue;
+            descriptor = words.flattenedSrt;
+        } else {
+            const auto patched = std::min(words.userData.size(), binding.guestDescriptor.size());
+            if (std::equal(words.userData.begin(), words.userData.begin() + static_cast<std::ptrdiff_t>(patched), binding.guestDescriptor.begin())) continue;
+            descriptor = binding.guestDescriptor;
+            std::copy_n(words.userData.begin(), patched, descriptor.begin());
+        }
+        if (words.bindings.empty()) words.bindings.assign(count, {});
+        words.bindings[index] = std::move(descriptor);
+    }
+}
+
+bool HeapFragmentEligible(const IrResourcePlan& plan) {
+    if (plan.stage != IrShaderStage::Pixel && plan.stage != IrShaderStage::Vertex && plan.stage != IrShaderStage::Compute) return false;
+    for (const auto& image : plan.info.images) {
+        if (image.source >= plan.descriptorSources.size()) return false;
+    }
+    return true;
 }
 
 const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle) {

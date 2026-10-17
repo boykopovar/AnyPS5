@@ -114,7 +114,7 @@ std::span<const VkDynamicState> PipelineLibraryDynamicStates() {
 VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules) {
     Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     const bool split = (layout.flags & VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) != 0;
-    Require(!split || (layout.setLayoutCount == 2u && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~3u) == 0u), "split pipeline library layout requires two descriptor set slots and a valid mask");
+    Require(!split || ((layout.setLayoutCount == 2u || layout.setLayoutCount == 3u) && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~((1u << layout.setLayoutCount) - 1u)) == 0u), "split pipeline library layout requires two or three descriptor set slots and a valid mask");
     auto& store = Libraries();
     std::unique_lock lock(store.mutex);
     ++store.activeBuilds[context.device];
@@ -137,9 +137,9 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         auto found = device.layouts.find(key);
         if (found != device.layouts.end()) return found->second;
         auto info = layout;
-        std::array<VkDescriptorSetLayout, 2> sets{VK_NULL_HANDLE, VK_NULL_HANDLE};
+        std::array<VkDescriptorSetLayout, 3> sets{VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
         if (mask.has_value()) {
-            for (std::uint32_t set = 0; set < sets.size(); ++set) {
+            for (std::uint32_t set = 0; set < layout.setLayoutCount; ++set) {
                 if ((*mask & (1u << set)) != 0u) sets[set] = layout.pSetLayouts[set];
             }
             info.pSetLayouts = sets.data();

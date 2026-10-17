@@ -8,6 +8,7 @@
 #endif
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -307,6 +308,7 @@ struct VulkanDevice::State {
     bool descriptorIndexing = false;
     bool storageBufferUpdateAfterBind = false;
     bool descriptorBindingPartiallyBound = false;
+    bool bindlessHeapFeatures = false;
     bool descriptorBindingVariableDescriptorCount = false;
     bool runtimeDescriptorArray = false;
     VkPhysicalDeviceDescriptorIndexingPropertiesEXT descriptorIndexingProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES_EXT};
@@ -750,6 +752,7 @@ struct VulkanDevice::State {
             resourceCache.Clear();
             Graphics::ClearCachedTextures(device);
             Graphics::ClearSnapshotCopies(device);
+            Graphics::BindlessHeap::Release(device);
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
@@ -1628,11 +1631,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->descriptorBindingPartiallyBound = descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE;
         state->descriptorBindingVariableDescriptorCount = descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount == VK_TRUE;
         state->runtimeDescriptorArray = descriptorIndexingFeatures.runtimeDescriptorArray == VK_TRUE;
+        state->bindlessHeapFeatures = Graphics::BindlessTexturesEnabled() && descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE && descriptorIndexingFeatures.descriptorBindingPartiallyBound == VK_TRUE && descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+        if (state->bindlessHeapFeatures) state->descriptorBindingPartiallyBound = true;
         if (state->storageBufferUpdateAfterBind) {
             VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &state->descriptorIndexingProperties};
             state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
         }
     }
+    if (Graphics::GpuHeapEnabled() && !state->bindlessHeapFeatures) throw std::runtime_error("APS5_GPU_HEAP needs descriptorBindingSampledImageUpdateAfterBind, descriptorBindingPartiallyBound and descriptorBindingUpdateUnusedWhilePending; this device lacks one, so unset APS5_GPU_HEAP");
     descriptorIndexingFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT};
     if (state->descriptorIndexing || state->storageBufferUpdateAfterBind || state->descriptorBindingPartiallyBound || state->descriptorBindingVariableDescriptorCount || state->runtimeDescriptorArray) deviceExtensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
     if (state->descriptorIndexing) {
@@ -1647,6 +1653,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     descriptorIndexingFeatures.descriptorBindingPartiallyBound = state->descriptorBindingPartiallyBound ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = state->descriptorBindingVariableDescriptorCount ? VK_TRUE : VK_FALSE;
     descriptorIndexingFeatures.runtimeDescriptorArray = state->runtimeDescriptorArray ? VK_TRUE : VK_FALSE;
+    if (state->bindlessHeapFeatures) {
+        descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+    }
     if (state->runtimeDescriptorArray) {
         state->capabilities.push_back(spv::CapabilityRuntimeDescriptorArray);
         if (!state->descriptorIndexing) state->spirvExtensions.push_back("SPV_EXT_descriptor_indexing");
@@ -3175,6 +3185,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     APS5_LOG_OUT_DEBUG("Presentation command buffer begin commands=%p image=%p", reinterpret_cast<void*>(commands), reinterpret_cast<void*>(state->images[index]));
     using CommandClass = Graphics::Recorder::CommandClass;
     Graphics::Recorder::CountPresent();
+    if (Graphics::GpuHeapEnabled()) Graphics::BindlessHeap::SweepIfDue();
     if (Graphics::Recorder::GpuTimingEnabled()) {
         if (slot.queries == VK_NULL_HANDLE) {
             VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -3477,7 +3488,11 @@ std::uint32_t VulkanDevice::VendorId() const {
 
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
-    return state->shaderProfile->Target();
+    auto target = state->shaderProfile->Target();
+    target.gpuConstants = Graphics::GpuConstantsEnabled();
+    static const bool verifyGpuConstants = std::getenv("APS5_VERIFY_GPU_HEAP") != nullptr;
+    target.gpuConstantsVerify = target.gpuConstants && verifyGpuConstants;
+    return target;
 }
 
 ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {

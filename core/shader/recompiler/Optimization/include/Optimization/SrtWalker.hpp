@@ -46,7 +46,7 @@ enum class RuntimeValueType {
 
 class SrtWalker {
 public:
-    void BuildPlan(IrProgram& program) const;
+    void BuildPlan(IrProgram& program, bool gpuConstants = false, bool verifyGpuConstants = false) const;
     [[nodiscard]] bool ValidateRuntimeValue(const IrResourcePlan& program, const IrValue* value, RuntimeValueType type = RuntimeValueType::Any) const;
     void EvaluateUniformValues(const IrResourcePlan& program, std::span<IrValue* const> values, const SrtRuntime& runtime, std::span<std::uint32_t> results) const;
     void EvaluateDescriptorSource(const IrResourcePlan& program, std::uint32_t source, const SrtRuntime& runtime, DescriptorValue& result) const;

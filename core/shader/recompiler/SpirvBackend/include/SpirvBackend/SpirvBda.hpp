@@ -14,6 +14,7 @@ std::uint32_t BdaWord(SpirvEmitterState& state, std::uint32_t variable, std::uin
 std::uint32_t BdaLoadWord(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t BdaLoadAddress(SpirvEmitterState& state, std::uint32_t index);
 void DefineBdaFaultFunction(SpirvEmitterState& state);
+void EmitGpuConstantCheck(SpirvEmitterState& state, std::uint32_t value, std::uint32_t slot);
 void DefineBdaDwordReadFunctions(SpirvEmitterState& state);
 void DefineBdaSpanReadFunctions(SpirvEmitterState& state);
 void RecordBdaFault(SpirvEmitterState& state, std::uint32_t address, std::uint32_t bytes, std::uint32_t instruction, BdaAbi::FaultReason reason);

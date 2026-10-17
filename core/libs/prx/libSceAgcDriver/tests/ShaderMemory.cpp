@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "Optimization/DescriptorBindingBuilder.hpp"
+#include "Optimization/GpuSrtProgram.hpp"
 #include "Optimization/RequestMemoryView.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -674,6 +675,80 @@ void verifySignedSrtComparison() {
             require(descriptors[0].dwords[index] == expected[index], "signed SRT comparison: signed boundary selected the wrong descriptor dword");
         }
     }
+}
+
+void verifyStraightLineSrtWalk() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.userDataBase = 8;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t id = 0;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        auto value = std::make_unique<IrValue>(opcode, type, id++);
+        for (auto* argument : arguments) value->AddArgument(argument);
+        values.push_back(std::move(value));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    const auto userData = [&](std::uint32_t reg) -> IrValue& {
+        auto& registerValue = make(IrOpcode::Void, IrType::ScalarReg);
+        registerValue.SetRegister({RegisterBank::Scalar, reg});
+        return make(IrOpcode::GetUserData, IrType::U32, {&registerValue});
+    };
+    auto& first = userData(8u);
+    auto& second = userData(9u);
+    auto& sum = make(IrOpcode::IAdd32, IrType::U32, {&first, &second});
+    auto& shifted = make(IrOpcode::ShiftLeftLogical32, IrType::U32, {&second, &constant(4u)});
+    auto& mixed = make(IrOpcode::BitwiseXor32, IrType::U32, {&sum, &shifted});
+    auto& below = make(IrOpcode::ULessThan32, IrType::Bool, {&first, &second});
+    auto& selected = make(IrOpcode::SelectU32, IrType::U32, {&below, &mixed, &sum});
+    auto& masked = make(IrOpcode::BitwiseAnd32, IrType::U32, {&selected, &constant(0xffff00ffu)});
+    auto& signedLow = make(IrOpcode::SLessThan32, IrType::Bool, {&second, &constant(0u)});
+    auto& clamped = make(IrOpcode::SelectU32, IrType::U32, {&signedLow, &constant(0u), &second});
+    DescriptorSource source;
+    source.dwordCount = 4u;
+    source.dwords[0] = &sum;
+    source.dwords[1] = &mixed;
+    source.dwords[2] = &masked;
+    source.dwords[3] = &clamped;
+    plan.descriptorSources.push_back(source);
+    plan.materializationSources = {0u};
+    plan.srtReads = {{&mixed, 0u}, {&masked, 1u}};
+    std::string reason;
+    const auto program = EncodeGpuSrtProgram(plan, &reason);
+    if (!program.has_value()) std::cerr << "straight-line SRT walk: " << reason << "\n";
+    require(program.has_value(), "straight-line SRT walk: a plan of user words and arithmetic was not encoded");
+    const std::array<std::array<std::uint32_t, 2>, 5> cases{{{1u, 2u}, {7u, 3u}, {0xffffffffu, 1u}, {0x12345678u, 0x80000000u}, {0u, 0u}}};
+    for (const auto& words : cases) {
+        const auto expectedSum = words[0] + words[1];
+        const auto expectedMixed = expectedSum ^ (words[1] << 4u);
+        const std::array<std::uint32_t, 4> expected{expectedSum, expectedMixed, (words[0] < words[1] ? expectedMixed : expectedSum) & 0xffff00ffu, static_cast<std::int32_t>(words[1]) < 0 ? 0u : words[1]};
+        SrtUserDataUse use;
+        SrtRuntime runtime{words};
+        runtime.userDataUse = &use;
+        GpuSrtResult fast;
+        require(RunGpuSrtProgram(*program, runtime, fast), "straight-line SRT walk: the walk refused user words the plan reads");
+        std::vector<DescriptorValue> descriptors;
+        std::vector<std::uint32_t> flat;
+        std::vector<std::uint8_t> active;
+        const std::array<std::uint32_t, 1> sourceIndex{0u};
+        require(Detail::EvaluateRuntimeSourcesImpl(plan, sourceIndex, SrtRuntime{words}, descriptors, flat, true, {}, active), "straight-line SRT walk: the IR evaluator could not evaluate the plan");
+        require(fast.sources == descriptors && fast.flat == flat, "straight-line SRT walk: the walk differs from the IR evaluator");
+        require(fast.sources.size() == 1u && fast.sources[0].dwordCount == expected.size(), "straight-line SRT walk: the descriptor shape changed");
+        for (std::size_t dword = 0; dword < expected.size(); ++dword) require(fast.sources[0].dwords[dword] == expected[dword], "straight-line SRT walk: a descriptor dword is wrong");
+        require(fast.flat.size() >= 2u && fast.flat[0] == expected[1] && fast.flat[1] == expected[2], "straight-line SRT walk: a flat SRT slot is wrong");
+        require(use.asValue == 3u, "straight-line SRT walk: the read user words were not recorded as value words");
+    }
+    plan.srtPlanComplete = false;
+    require(!EncodeGpuSrtProgram(plan).has_value(), "straight-line SRT walk: an incomplete plan was encoded");
+    plan.srtPlanComplete = true;
+    plan.controlFlow.push_back({&below, {}, {}});
+    require(!EncodeGpuSrtProgram(plan).has_value(), "straight-line SRT walk: a plan with control flow was encoded");
 }
 
 void verifyTypeZeroImageMaterialization() {
@@ -2648,6 +2723,33 @@ void verifySingleLaneVertexWave() {
     request.target.vertexSubgroups = true;
     RecompileCacheKey::Build(request, withKey);
     require(withoutKey != withKey, "single-lane vertex wave: vertex subgroup support did not change the cache key");
+}
+
+void verifyExtensionKey() {
+    using namespace ShaderRecompiler;
+    RecompileRequest request{};
+    request.shader.stage = ShaderStage::Compute;
+    const std::array<std::string_view, 2> first{"VK_KHR_a", "VK_KHR_bb"};
+    const std::string copied[2] = {"VK_KHR_a", "VK_KHR_bb"};
+    const std::array<std::string_view, 2> same{copied[0], copied[1]};
+    const std::array<std::string_view, 2> second{"VK_KHR_a", "VK_KHR_bc"};
+    std::vector<std::uint64_t> firstKey, againKey, sameKey, secondKey, backKey;
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, firstKey);
+    RecompileCacheKey::BuildInterface(request, againKey);
+    request.target.supportedExtensions = same;
+    RecompileCacheKey::BuildInterface(request, sameKey);
+    request.target.supportedExtensions = second;
+    RecompileCacheKey::BuildInterface(request, secondKey);
+    request.target.supportedExtensions = first;
+    RecompileCacheKey::BuildInterface(request, backKey);
+    require(firstKey == againKey && firstKey == sameKey && firstKey == backKey, "extension key: the same extension names built different keys");
+    require(firstKey != secondKey, "extension key: a changed extension name kept the key");
+    std::vector<std::uint64_t> expected{2u, 8u};
+    for (const char byte : std::string_view("VK_KHR_a")) expected.push_back(static_cast<unsigned char>(byte));
+    expected.push_back(9u);
+    for (const char byte : std::string_view("VK_KHR_bb")) expected.push_back(static_cast<unsigned char>(byte));
+    require(std::search(firstKey.begin(), firstKey.end(), expected.begin(), expected.end()) != firstKey.end(), "extension key: the names no longer enter the key byte by byte");
 }
 
 void verifyMeshConfiguration() {
@@ -5240,6 +5342,7 @@ int main(int argc, char** argv) {
         verifyFrontendPair();
         verifyLayoutPair();
         verifySignedSrtComparison();
+        verifyStraightLineSrtWalk();
         verifyTypeZeroImageMaterialization();
         verifyOutOfRangeConstantReads();
         verifySignedMinimum();
@@ -5260,6 +5363,7 @@ int main(int argc, char** argv) {
         verifyHalfWaveReduction();
         verifyNarrowVertexWave();
         verifySingleLaneVertexWave();
+        verifyExtensionKey();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();

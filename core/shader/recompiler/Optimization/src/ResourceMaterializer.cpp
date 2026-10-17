@@ -1,4 +1,5 @@
 #include "Optimization/ResourceMaterializer.hpp"
+#include "Optimization/GpuSrtProgram.hpp"
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/SrtWalker/SrtEvaluator.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
@@ -800,7 +801,40 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
 
     std::vector<DescriptorValue> values;
     const auto evaluateStarted = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    walker.EvaluateRuntimeSources(plan, plan.materializationSources, runtime, values, snapshot.flattenedSrt, plan.cleanFlatSlots, activeSources, &snapshot.srtPoison, &snapshot.nullRootReads);
+    static const bool fastWalk = std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    static const bool verifyFastWalk = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    bool walked = false;
+    if ((fastWalk || verifyFastWalk) && plan.fastWalk != nullptr) {
+        GpuSrtResult fast;
+        auto fastRuntime = runtime;
+        if (!fastWalk) {
+            fastRuntime.readTrace = nullptr;
+            fastRuntime.userDataUse = nullptr;
+        }
+        if (RunGpuSrtProgram(*plan.fastWalk, fastRuntime, fast)) {
+            if (verifyFastWalk) {
+                auto untraced = runtime;
+                untraced.readTrace = nullptr;
+                untraced.userDataUse = nullptr;
+                std::vector<std::uint32_t> flat;
+                std::vector<SrtReadPoison> poison;
+                std::uint32_t nullRoots = 0;
+                walker.EvaluateRuntimeSources(plan, plan.materializationSources, untraced, values, flat, plan.cleanFlatSlots, activeSources, &poison, &nullRoots);
+                static std::atomic<std::uint64_t> checked{0};
+                static std::atomic<std::uint64_t> differed{0};
+                const bool same = values == fast.sources && flat == fast.flat && poison == fast.poison && nullRoots == fast.nullRoots;
+                if (!same && differed.fetch_add(1, std::memory_order_relaxed) < 8) std::fprintf(stderr, "[fast-srt] shader 0x%llx: the straight-line walk differs from the CPU walk\n", static_cast<unsigned long long>(plan.shaderHash));
+                if ((checked.fetch_add(1, std::memory_order_relaxed) + 1) % 100000u == 0u) std::fprintf(stderr, "[fast-srt] %llu walks compared, %llu differed\n", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(differed.load()));
+            }
+            values = std::move(fast.sources);
+            snapshot.flattenedSrt = std::move(fast.flat);
+            snapshot.srtPoison = std::move(fast.poison);
+            snapshot.nullRootReads = fast.nullRoots;
+            activeSources.assign(plan.descriptorSources.size() + plan.info.images.size(), 1u);
+            walked = fastWalk;
+        }
+    }
+    if (!walked) walker.EvaluateRuntimeSources(plan, plan.materializationSources, runtime, values, snapshot.flattenedSrt, plan.cleanFlatSlots, activeSources, &snapshot.srtPoison, &snapshot.nullRootReads);
     if (MaterializeProfiled()) evaluateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - evaluateStarted).count()), std::memory_order_relaxed);
 
     std::size_t cursor = 0;
@@ -1653,6 +1687,8 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     plan.descriptorSources = source.descriptorSources;
     plan.controlFlow = source.controlFlow;
     plan.srtReads = source.srtReads;
+    plan.gpuConstants = program.Metadata().gpuConstants;
+    plan.gpuConstantCheckSlots = static_cast<std::uint32_t>(program.Metadata().gpuConstantChecks.empty() ? 0u : source.srtReads.size() - std::min_element(program.Metadata().gpuConstantChecks.begin(), program.Metadata().gpuConstantChecks.end(), [](const auto& left, const auto& right) { return left.second < right.second; })->second);
     plan.cleanFlatSlots = source.cleanFlatSlots;
     plan.requiresSpecializationMemory = source.requiresSpecializationMemory;
     plan.srtPlanComplete = source.srtPlanComplete;
@@ -1689,14 +1725,18 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         }
     }
     plan.pureFlatSlots = Detail::ComputePureFlatSlots(plan);
+    for (std::size_t slot = plan.srtReads.size() - plan.gpuConstantCheckSlots; slot < plan.pureFlatSlots.size(); ++slot) plan.pureFlatSlots[slot] = 0u;
     plan.guardedSrtSlots = Detail::ComputeGuardedFlatSlots(plan);
     buildCompactPlan(plan);
+    if (auto program = EncodeGpuSrtProgram(plan)) plan.fastWalk = std::make_shared<const GpuSrtProgram>(std::move(*program));
     return plan;
 }
 
 void ResourceMaterializer::CompactPlan(IrResourcePlan& plan) {
     plan.compact = {};
     buildCompactPlan(plan);
+    plan.fastWalk.reset();
+    if (auto program = EncodeGpuSrtProgram(plan)) plan.fastWalk = std::make_shared<const GpuSrtProgram>(std::move(*program));
 }
 
 void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const {

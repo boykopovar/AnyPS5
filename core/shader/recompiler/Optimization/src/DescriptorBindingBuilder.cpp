@@ -371,10 +371,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if (last < first || last - first >= RuntimeAbi::StorageMipSlots) fail("invalid dynamic storage mip range");
         if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::MipCountBase + index, last - first + 1u});
     }
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> activeElements(info.images.size(), {UINT32_MAX, 0u});
     plan.bindings.reserve(layout.descriptors.size());
+    const bool slotWords = layout.gpuResolvedImages && !registrationModules;
+    std::uint32_t imageSlotBase = layout.ImageSlotDword();
     for (const auto& logical : layout.descriptors) {
         const bool imageHeap = ImageBindingResourceClass(logical.kind) != ImageResourceClass::None;
         const bool samplerHeap = logical.kind == DescriptorBindingKind::Samplers;
+        const bool sampledSlots = slotWords && ImageBindingResourceClass(logical.kind) == ImageResourceClass::Sampled;
         IrDescriptorBinding compact{logical.kind, {}};
         std::vector<std::uint32_t> originals;
         std::vector<bool> inactive;
@@ -397,18 +401,23 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 active = (samplerModes.at(resource) & (1u << (element & 1u))) != 0u;
             }
             if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::DescriptorIndex(static_cast<std::uint32_t>(logical.kind), element), active ? static_cast<std::uint32_t>(compact.resources.size()) : 0u});
+            if (active && sampledSlots) plan.heapSlotWords.push_back({imageSlotBase + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
+            if (active && slotWords && samplerHeap) plan.heapSlotWords.push_back({layout.SamplerSlotDword() + element, static_cast<std::uint32_t>(logical.kind), static_cast<std::uint32_t>(compact.resources.size())});
             if (active || ((imageHeap || samplerHeap) && registrationModules)) {
                 compact.resources.push_back(resource);
                 originals.push_back(element);
                 inactive.push_back(!active);
             }
         }
+        if (sampledSlots) imageSlotBase += static_cast<std::uint32_t>(logical.resources.size());
         if ((imageHeap || samplerHeap) && !registrationModules) plan.specialization.push_back({PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(logical.kind), std::max(1u, static_cast<std::uint32_t>(compact.resources.size()))});
         if ((imageHeap || samplerHeap) && compact.resources.empty()) continue;
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
-        physical.descriptorSet = fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
-        physical.binding = NativeBinding(stage, compact.kind);
+        const bool heapSetBinding = ImageBindingResourceClass(compact.kind) == ImageResourceClass::Sampled || samplerHeap || compact.kind == DescriptorBindingKind::ShaderData || compact.kind == DescriptorBindingKind::FlattenedSrt;
+        const bool sharedHeapArray = layout.gpuResolvedImages && (ImageBindingResourceClass(compact.kind) == ImageResourceClass::Sampled || samplerHeap);
+        physical.descriptorSet = layout.gpuResolvedImages ? (heapSetBinding ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet) : fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
+        physical.binding = NativeBinding(sharedHeapArray ? IrShaderStage::Pixel : stage, compact.kind);
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
@@ -438,6 +447,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
                 physical.imageUnnormalizedBaseLevel.push_back(unnormalized.imagesAtBaseLevel.at(resource));
                 physical.imageSamplers.push_back(0u);
                 physical.imageAtomic64.push_back(image.atomic64);
+                if (layout.gpuResolvedImages && !inactive[element] && activeElements[resource].first == UINT32_MAX && DescriptorBindingForImage(mode) == compact.kind) activeElements[resource] = {static_cast<std::uint32_t>(compact.kind), static_cast<std::uint32_t>(element)};
             }
         } else if (physical.role == DescriptorRole::GuestSamplers) {
             for (std::uint32_t element = 0; element < compact.resources.size(); ++element) {
@@ -467,6 +477,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         RuntimeAbi::ResourceMetadata metadata{};
         if (descriptor.dwordCount != metadata.descriptor.size()) fail("invalid runtime image descriptor width");
         metadata.elementCount = 1u;
+        if (layout.gpuResolvedImages && activeElements[resource].first != UINT32_MAX) {
+            metadata.binding = activeElements[resource].first;
+            metadata.firstElement = activeElements[resource].second;
+        }
         if (imageModes[resource] > RuntimeAbi::ImageModeMask) fail("runtime image mode exceeds its metadata field");
         metadata.flags = imageModes[resource] << 1u | (registrationModules ? (compareStates[resource] & RuntimeAbi::CompareStateMask) << RuntimeAbi::CompareStateShift : 0u);
         if (descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u) metadata.flags |= 1u;
@@ -518,6 +532,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPl
     }
     selected.imageMetadata = plan.imageMetadata;
     selected.runtimeState = plan.runtimeState;
+    selected.heapSlotWords = plan.heapSlotWords;
     return selected;
 }
 

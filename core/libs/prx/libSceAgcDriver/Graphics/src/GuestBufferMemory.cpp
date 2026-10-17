@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -32,6 +34,7 @@
 #include <iterator>
 #include <list>
 #include <map>
+#include <unordered_set>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -97,6 +100,8 @@ struct GuestBufferMemory::AddressSpace {
     std::uint64_t serial = 0;
     GuestAllocations::Lease lease;
     std::vector<Region> base;
+    bool baseDisjoint = false;
+    std::vector<const HostImport*> directImports;
     struct HeapRun {
         std::uint64_t begin;
         std::uint64_t bytes;
@@ -109,6 +114,8 @@ struct GuestBufferMemory::AddressSpace {
     std::vector<HeapRun> heapRuns;
     std::vector<ImageMirror*> sparseMirrors;
     std::unique_ptr<std::atomic<std::uint64_t>[]> verified;
+    mutable std::atomic<std::uint64_t> refreshedEpoch{0};
+    mutable std::atomic<std::uint64_t> refreshedProof{0};
     std::vector<CopiedRange> copied;
     // The BDA table entries of `base`, in its order.
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
@@ -2756,9 +2763,7 @@ void GuestBufferMemory::AcquireRegistered() {
             importFloor = state.useCounter + 1;
             if (hit) {
                 const auto stamp = ++state.useCounter;
-                for (const auto& region : current->base) {
-                    if (region.direct != nullptr) region.direct->lastUse = stamp;
-                }
+                for (const auto* import : current->directImports) import->lastUse = stamp;
             }
         }
         if (hit) {
@@ -2921,6 +2926,12 @@ void GuestBufferMemory::AcquireRegistered() {
                 }
                 regions = std::move(extras);
                 lease.clear();
+                for (const auto& region : built->base) {
+                    if (region.direct != nullptr) built->directImports.push_back(region.direct);
+                }
+                std::sort(built->directImports.begin(), built->directImports.end());
+                built->directImports.erase(std::unique(built->directImports.begin(), built->directImports.end()), built->directImports.end());
+                built->baseDisjoint = std::adjacent_find(built->base.begin(), built->base.end(), [](const Region& left, const Region& right) { return right.begin < left.end; }) == built->base.end();
                 planSpaceMirrors(*built);
                 {
                     auto reads = std::make_shared<Recorder::ReadList>();
@@ -3146,6 +3157,109 @@ void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
     // overlapping the range still covers it through its own Writes() entry.
     addDescriptorRegion(address, bytes, false, false, true);
+}
+
+bool GuestBufferMemory::SpaceOnly() const {
+    return space != nullptr && lease.empty() && regions.empty() && space->sparseMirrors.empty() && space->copied.empty();
+}
+
+std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
+    releasedSpace = space;
+    return std::move(space);
+}
+
+namespace {
+
+bool epochMirrors() {
+    return DrawPipelineEnabled();
+}
+
+void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space) {
+    static std::atomic<std::uint64_t> reuses{0}, refreshes{0}, compared{0}, differing{0};
+    static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
+    if (reused && verify && reuses.load(std::memory_order_relaxed) % 64u == 0u) {
+        for (const auto index : space.writableMirrors) {
+            const auto& region = space.base[index];
+            const auto& mirror = *region.mirror;
+            if (!mirror.writable || mirror.heap || mirror.shadow.empty()) continue;
+            constexpr std::uint64_t block = 65536;
+            for (auto at = region.begin; at < region.end;) {
+                const auto next = std::min(region.end, (at / block + 1) * block);
+                const auto offset = static_cast<std::size_t>(at - mirror.base);
+                compared.fetch_add(1, std::memory_order_relaxed);
+                if (std::memcmp(mirror.shadow.data() + offset, reinterpret_cast<const void*>(at), static_cast<std::size_t>(next - at)) != 0) differing.fetch_add(1, std::memory_order_relaxed);
+                at = next;
+            }
+        }
+    }
+    const auto count = (reused ? reuses : refreshes).fetch_add(1, std::memory_order_relaxed) + 1u;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!verify && !profile) return;
+    if (count % 65536u == 0u || (count & (count - 1u)) == 0u) std::fprintf(stderr, "[epoch-mirrors] address space uses: %llu reused the epoch's refresh, %llu refreshed; verify: %llu blocks compared, %llu differ\n", static_cast<unsigned long long>(reuses.load()), static_cast<unsigned long long>(refreshes.load()), static_cast<unsigned long long>(compared.load()), static_cast<unsigned long long>(differing.load()));
+}
+
+}
+
+bool GuestBufferMemory::RetakeSpace() {
+    if (space != nullptr) return true;
+    auto kept = releasedSpace.lock();
+    if (kept == nullptr) return false;
+    auto& spaces = Spaces();
+    auto current = spaces.current.load();
+    if (current != kept) return false;
+    const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    {
+        auto& state = Imports();
+        std::lock_guard lock(state.mutex);
+        if (current->device != context.device || current->generation != generation || current->importsEpoch != state.epoch) return false;
+        importFloor = state.useCounter + 1;
+        const auto stamp = ++state.useCounter;
+        for (const auto* import : current->directImports) import->lastUse = stamp;
+    }
+    spaces.hits.fetch_add(1, std::memory_order_relaxed);
+    space = std::move(current);
+    std::vector<RefreshBlock> blocks;
+    const auto epoch = GuestMemory::CollectEpoch();
+    const auto proof = GuestMemory::ProofSerial();
+    const bool reuse = epochMirrors() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
+    if (reuse) {
+        noteEpochMirrors(true, *space);
+    } else {
+        for (const auto index : space->writableMirrors) {
+            const auto& region = space->base[index];
+            if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+        }
+        if (epochMirrors()) noteEpochMirrors(false, *space);
+    }
+    const auto checked = refreshHeapRuns(*space, blocks);
+    compareBlocks(blocks);
+    for (const auto& [run, collected] : checked) space->verified[run].store(collected, std::memory_order_relaxed);
+    if (!reuse && epoch != 0) {
+        space->refreshedEpoch.store(epoch, std::memory_order_relaxed);
+        space->refreshedProof.store(proof, std::memory_order_relaxed);
+    }
+    {
+        auto& state = Imports();
+        std::lock_guard lock(state.mutex);
+        if (space->importsEpoch != state.epoch) {
+            releasedSpace = space;
+            space.reset();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool GuestBufferMemory::SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const {
+    if (space == nullptr) return false;
+    for (const auto& snapshot : snapshots) {
+        const Region* owner = nullptr;
+        if (baseOverlap(snapshot.address, snapshot.address + snapshot.bytes.size(), &owner) != BaseOverlap::Inside || owner == nullptr) return false;
+        if (!(owner->writable || owner->hostBacked || owner->mirror != nullptr)) return false;
+        if (AnyShadowedOverlaps(snapshot.address, snapshot.bytes.size())) return false;
+        if (std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) != 0) return false;
+    }
+    return true;
 }
 
 void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
@@ -4550,6 +4664,39 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::InPlaceR
         if (region.direct != nullptr) result.emplace_back(region.begin, inPlaceEnd(region));
     }
     return result;
+}
+
+bool GuestBufferMemory::ReadsInPlace(std::uint64_t address, std::uint64_t bytes) const {
+    if (!uploaded || committed) return false;
+    const auto inside = [&](std::uint64_t begin, std::uint64_t end) { return address >= begin && address < end && bytes <= end - address; };
+    if (space != nullptr) {
+        const auto& base = space->base;
+        if (!space->baseDisjoint) {
+            if (std::any_of(base.begin(), base.end(), [&](const Region& region) { return region.direct != nullptr && inside(region.begin, region.end); })) return true;
+        } else {
+            const auto found = std::upper_bound(base.begin(), base.end(), address, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+            if (found != base.begin() && std::prev(found)->direct != nullptr && inside(std::prev(found)->begin, std::prev(found)->end)) return true;
+        }
+    }
+    return std::any_of(regions.begin(), regions.end(), [&](const Region& region) { return region.direct != nullptr && inside(region.begin, inPlaceEnd(region)); });
+}
+
+bool GuestBufferMemory::InPlaceReadsOverlap(std::uint64_t address, std::uint64_t bytes) const {
+    if (!uploaded || committed) return false;
+    const auto end = address + bytes;
+    if (space != nullptr) {
+        const auto& base = space->base;
+        if (!space->baseDisjoint) {
+            if (std::any_of(base.begin(), base.end(), [&](const Region& region) { return region.direct != nullptr && address < region.end && region.begin < end; })) return true;
+        } else {
+            auto at = std::upper_bound(base.begin(), base.end(), address, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+            if (at != base.begin()) --at;
+            for (; at != base.end() && at->begin < end; ++at) {
+                if (at->direct != nullptr && address < at->end) return true;
+            }
+        }
+    }
+    return std::any_of(regions.begin(), regions.end(), [&](const Region& region) { return region.direct != nullptr && address < inPlaceEnd(region) && region.begin < end; });
 }
 
 std::optional<GuestBufferMemory::SplitReads> GuestBufferMemory::SplitInPlaceReads() const {

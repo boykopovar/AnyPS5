@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include <array>
 #include <bit>
 #include <utility>
 #include <iterator>
@@ -37,6 +38,34 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
     state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
     state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
     EmitLabel(state, state.module.AllocateId());
+    std::array<std::uint32_t, 4> cache{};
+    if (state.bdaRangeCache) {
+        const auto pointer64 = TypePointer(state, spv::StorageClassPrivate, u64);
+        const auto pointer32 = TypePointer(state, spv::StorageClassPrivate, u32);
+        for (std::size_t i = 0; i < 3; ++i) cache[i] = state.module.DefineInitializedGlobalVariable(pointer64, spv::StorageClassPrivate, BdaConstant(state, 0u));
+        cache[3] = state.module.DefineInitializedGlobalVariable(pointer32, spv::StorageClassPrivate, constant(0u));
+        for (std::size_t i = 0; i < 4; ++i) state.bdaRangeCacheVariables.emplace_back(cache[i], i < 3 ? BdaConstant(state, 0u) : constant(0u));
+        const auto load = [&](std::uint32_t type, std::uint32_t variable) {
+            const auto value = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, type, value, variable);
+            return value;
+        };
+        const auto cachedBegin = load(u64, cache[0]);
+        const auto cachedEnd = load(u64, cache[1]);
+        const auto cachedBase = load(u64, cache[2]);
+        const auto cachedPermissions = load(u32, cache[3]);
+        const auto accessEnd = binary(spv::OpIAdd, u64, address, Unary(state, spv::OpUConvert, u64, bytes));
+        auto hit = binary(spv::OpLogicalAnd, boolean, binary(spv::OpUGreaterThanEqual, boolean, address, cachedBegin), binary(spv::OpULessThanEqual, boolean, accessEnd, cachedEnd));
+        hit = binary(spv::OpLogicalAnd, boolean, hit, binary(spv::OpUGreaterThan, boolean, accessEnd, address));
+        hit = binary(spv::OpLogicalAnd, boolean, hit, binary(spv::OpIEqual, boolean, binary(spv::OpBitwiseAnd, u32, cachedPermissions, constant(permission)), constant(permission)));
+        const auto cached = state.module.AllocateId();
+        const auto next = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, hit, cached, next);
+        EmitLabel(state, cached);
+        state.module.AddFunction(spv::OpReturnValue, binary(spv::OpIAdd, u64, cachedBase, binary(spv::OpISub, u64, address, cachedBegin)));
+        EmitLabel(state, next);
+    }
     const auto fail = [&](std::uint32_t condition, BdaAbi::FaultReason reason) {
         if (recordFaults) {
             ReturnBdaFailureIf(state, condition, address, bytes, instruction, reason);
@@ -124,6 +153,12 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
         {binary(spv::OpULessThan, boolean, result, base), BdaAbi::FaultReason::Overflow},
         {binary(spv::OpULessThanEqual, boolean, deviceEnd, result), BdaAbi::FaultReason::Overflow},
     });
+    if (state.bdaRangeCache) {
+        state.module.AddFunction(spv::OpStore, cache[0], begin);
+        state.module.AddFunction(spv::OpStore, cache[1], finish);
+        state.module.AddFunction(spv::OpStore, cache[2], base);
+        state.module.AddFunction(spv::OpStore, cache[3], permissions);
+    }
     state.module.AddFunction(spv::OpReturnValue, result);
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;
@@ -210,6 +245,29 @@ static std::uint32_t DefineBdaNoteWrite(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;
+}
+
+void EmitGpuConstantCheck(SpirvEmitterState& state, std::uint32_t value, std::uint32_t slot) {
+    if (state.faultBufferVariable == 0 || state.flattenedSrtVariable == 0) return;
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto constant = [&](std::uint32_t word) { return ConstantU32(state, word); };
+    const auto scope = constant(spv::ScopeDevice);
+    const auto relaxed = constant(spv::MemorySemanticsMaskNone);
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, constant(0u), constant(slot));
+    const auto expected = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, u32, expected, pointer);
+    state.module.AddFunction(spv::OpAtomicIAdd, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, constant(BdaAbi::GpuConstantCheckedWord)), scope, relaxed, constant(1u));
+    EmitIfCondition(state, Binary(state, spv::OpINotEqual, boolean, value, expected), [&] {
+        state.module.AddFunction(spv::OpAtomicIAdd, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, constant(BdaAbi::GpuConstantDifferingWord)), scope, relaxed, constant(1u));
+        const auto previous = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicCompareExchange, u32, previous, BdaWord(state, state.faultBufferVariable, constant(BdaAbi::GpuConstantFirstWord)), scope, relaxed, relaxed, constant(slot + 1u), constant(0u));
+        EmitIfCondition(state, Binary(state, spv::OpIEqual, boolean, previous, constant(0u)), [&] {
+            state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, constant(BdaAbi::GpuConstantFirstWord + 1u)), scope, relaxed, value);
+            state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, constant(BdaAbi::GpuConstantFirstWord + 2u)), scope, relaxed, expected);
+        });
+    });
 }
 
 void DefineGetBdaPointer(SpirvEmitterState& state) {

@@ -426,14 +426,19 @@ void DefineDescriptors(SpirvEmitterState& state) {
         const auto Define = [&](std::uint32_t type, const char* name, std::uint32_t storage = spv::StorageClassStorageBuffer) {
             const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
             state.module.AddName(variable, name);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, state.fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(stage, binding.kind));
+            const bool gpuData = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::ShaderData || binding.kind == DescriptorBindingKind::FlattenedSrt);
+            const bool gpuHeap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) == ImageResourceClass::Sampled;
+            const bool sharedHeap = state.gpuResolvedImages && gpuHeap;
+            const bool fragmentSet = sharedHeap || (!state.gpuResolvedImages && state.fragmentDescriptorSet && stage == IrShaderStage::Pixel);
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, gpuData ? RuntimeAbi::GpuDataSet : fragmentSet ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet);
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(sharedHeap ? IrShaderStage::Pixel : stage, binding.kind));
             return variable;
         };
         const auto ArrayType = [&](std::uint32_t type) {
             const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const auto count = static_cast<std::uint32_t>(binding.resources.size());
-            const auto length = heap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
+            const bool gpuHeap = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) == ImageResourceClass::Sampled);
+            const auto count = gpuHeap ? (binding.kind == DescriptorBindingKind::Samplers ? RuntimeAbi::GpuSamplerHeapSlots : RuntimeAbi::GpuImageHeapSlots) : static_cast<std::uint32_t>(binding.resources.size());
+            const auto length = heap && !gpuHeap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
             return state.module.Type(spv::OpTypeArray, type, length);
         };
         switch (binding.kind) {

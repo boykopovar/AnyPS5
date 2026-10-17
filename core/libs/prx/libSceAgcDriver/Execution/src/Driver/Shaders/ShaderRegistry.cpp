@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "CacheKey.hpp"
@@ -218,6 +219,216 @@ bool ProgramUsesWorkgroup(const ShaderSnapshot& snapshot, std::size_t codeOffset
     });
     if (codeOffset == 0) snapshot.workgroupUse->store(used ? Used : Unused, std::memory_order_release);
     return used;
+}
+
+namespace {
+
+bool readOnlyMemoryOp(ShaderRecompiler::RdnaOpcode op) {
+    using Op = ShaderRecompiler::RdnaOpcode;
+    switch (op) {
+        case Op::SLoadDword:
+        case Op::SLoadDwordx2:
+        case Op::SLoadDwordx4:
+        case Op::SLoadDwordx8:
+        case Op::SLoadDwordx16:
+        case Op::BufferLoadFormatX:
+        case Op::BufferLoadFormatXy:
+        case Op::BufferLoadFormatXyz:
+        case Op::BufferLoadFormatXyzw:
+        case Op::BufferLoadDword:
+        case Op::BufferLoadDwordx2:
+        case Op::BufferLoadDwordx4:
+        case Op::ImageSample:
+        case Op::ImageSampleLz:
+        case Op::ImageSampleBCl:
+        case Op::ImageSampleBClO:
+        case Op::ImageSampleBO:
+        case Op::ImageSampleC:
+        case Op::ImageSampleCB:
+        case Op::ImageSampleCBCl:
+        case Op::ImageSampleCBClO:
+        case Op::ImageSampleCBO:
+        case Op::ImageSampleCCl:
+        case Op::ImageSampleCClO:
+        case Op::ImageSampleCD:
+        case Op::ImageSampleCDCl:
+        case Op::ImageSampleCDClO:
+        case Op::ImageSampleCDO:
+        case Op::ImageSampleCL:
+        case Op::ImageSampleCLzO:
+        case Op::ImageSampleCLO:
+        case Op::ImageSampleCO:
+        case Op::ImageSampleCl:
+        case Op::ImageSampleClO:
+        case Op::ImageSampleD:
+        case Op::ImageSampleDCl:
+        case Op::ImageSampleDO:
+        case Op::ImageSampleLzO:
+        case Op::ImageSampleO:
+        case Op::ImageSampleCd:
+        case Op::ImageSampleCdCl:
+        case Op::ImageSampleCCd:
+        case Op::ImageSampleCCdCl:
+        case Op::ImageSampleCdO:
+        case Op::ImageSampleCdClO:
+        case Op::ImageSampleCCdO:
+        case Op::ImageSampleCCdClO:
+        case Op::ImageSampleDG16:
+        case Op::ImageSampleDClG16:
+        case Op::ImageSampleCDG16:
+        case Op::ImageSampleCDClG16:
+        case Op::ImageSampleDOG16:
+        case Op::ImageSampleDClOG16:
+        case Op::ImageSampleCDOG16:
+        case Op::ImageSampleCDClOG16:
+        case Op::ImageSampleCdG16:
+        case Op::ImageSampleCdClG16:
+        case Op::ImageSampleCCdG16:
+        case Op::ImageSampleCCdClG16:
+        case Op::ImageSampleCdOG16:
+        case Op::ImageSampleCdClOG16:
+        case Op::ImageSampleCCdOG16:
+        case Op::ImageSampleCCdClOG16:
+        case Op::ImageLoad:
+        case Op::ImageGetResinfo:
+        case Op::SBufferLoadDword:
+        case Op::SBufferLoadDwordx2:
+        case Op::SBufferLoadDwordx4:
+        case Op::SBufferLoadDwordx8:
+        case Op::SBufferLoadDwordx16:
+        case Op::SScratchLoadDword:
+        case Op::SScratchLoadDwordx2:
+        case Op::SScratchLoadDwordx4:
+        case Op::BufferLoadUbyte:
+        case Op::BufferLoadSbyte:
+        case Op::BufferLoadUshort:
+        case Op::BufferLoadSshort:
+        case Op::BufferLoadDwordx3:
+        case Op::BufferLoadUbyteD16:
+        case Op::BufferLoadUbyteD16Hi:
+        case Op::BufferLoadSbyteD16:
+        case Op::BufferLoadSbyteD16Hi:
+        case Op::BufferLoadShortD16:
+        case Op::BufferLoadShortD16Hi:
+        case Op::TbufferLoadFormatX:
+        case Op::TbufferLoadFormatXy:
+        case Op::TbufferLoadFormatXyz:
+        case Op::TbufferLoadFormatXyzw:
+        case Op::TbufferLoadFormatD16X:
+        case Op::TbufferLoadFormatD16Xy:
+        case Op::TbufferLoadFormatD16Xyz:
+        case Op::TbufferLoadFormatD16Xyzw:
+        case Op::BufferLoadFormatD16X:
+        case Op::BufferLoadFormatD16Xy:
+        case Op::BufferLoadFormatD16Xyz:
+        case Op::BufferLoadFormatD16Xyzw:
+        case Op::BufferLoadFormatD16HiX:
+        case Op::FlatLoadUbyte:
+        case Op::FlatLoadSbyte:
+        case Op::FlatLoadUshort:
+        case Op::FlatLoadSshort:
+        case Op::FlatLoadDword:
+        case Op::FlatLoadDwordx2:
+        case Op::FlatLoadDwordx3:
+        case Op::FlatLoadDwordx4:
+        case Op::GlobalLoadDwordAddtid:
+        case Op::FlatLoadUbyteD16:
+        case Op::FlatLoadUbyteD16Hi:
+        case Op::FlatLoadSbyteD16:
+        case Op::FlatLoadSbyteD16Hi:
+        case Op::FlatLoadShortD16:
+        case Op::FlatLoadShortD16Hi:
+        case Op::ImageGetLod:
+        case Op::ImageLoadMip:
+        case Op::ImageLoadPck:
+        case Op::ImageLoadPckSgn:
+        case Op::ImageLoadMipPck:
+        case Op::ImageLoadMipPckSgn:
+        case Op::ImageLoadBy2:
+        case Op::ImageLoadBy4:
+        case Op::ImageLoadMipBy2:
+        case Op::ImageLoadMipBy4:
+        case Op::ImageLoadPck2:
+        case Op::ImageLoadPck4:
+        case Op::ImageLoadMipPck2:
+        case Op::ImageLoadMipPck4:
+        case Op::ImageMsaaLoad:
+        case Op::ImageGather4Lz:
+        case Op::ImageGather4C:
+        case Op::ImageGather4CLz:
+        case Op::ImageGather4LzO:
+        case Op::ImageGather4CO:
+        case Op::ImageGather4CLzO:
+        case Op::ImageGather4h:
+        case Op::ImageGather4hPck:
+        case Op::ImageGather4:
+        case Op::ImageGather4B:
+        case Op::ImageGather4BCl:
+        case Op::ImageGather4BClO:
+        case Op::ImageGather4BO:
+        case Op::ImageGather4Cl:
+        case Op::ImageGather4ClO:
+        case Op::ImageGather4CB:
+        case Op::ImageGather4CBCl:
+        case Op::ImageGather4CBClO:
+        case Op::ImageGather4CBO:
+        case Op::ImageGather4CCl:
+        case Op::ImageGather4CClO:
+        case Op::ImageGather4CL:
+        case Op::ImageGather4CLO:
+        case Op::ImageGather4L:
+        case Op::ImageGather4LO:
+        case Op::ImageGather4O:
+        case Op::ImageBvhIntersectRay:
+        case Op::SGl1Inv:
+        case Op::SDcacheInv:
+        case Op::SDcacheWb:
+        case Op::SMemtime:
+        case Op::SMemrealtime:
+        case Op::SDcacheDiscard:
+        case Op::SDcacheDiscardX2:
+        case Op::BufferGl0Inv:
+        case Op::BufferGl1Inv:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool decodedWritesMemory(std::span<const std::uint32_t> code) {
+    using Family = ShaderRecompiler::RdnaInstructionFamily;
+    using Op = ShaderRecompiler::RdnaOpcode;
+    try {
+        const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        return std::any_of(decoded.instructions.begin(), decoded.instructions.end(), [](const auto& instruction) {
+            switch (instruction.family) {
+            case Family::MUBUF: case Family::MTBUF: case Family::FLAT: case Family::MIMG: case Family::SMEM:
+                return !readOnlyMemoryOp(instruction.op);
+            case Family::DS:
+                return instruction.gds || instruction.op == Op::DsGwsInit || instruction.op == Op::DsGwsBarrier || instruction.op == Op::DsGwsSemaV || instruction.op == Op::DsGwsSemaP || instruction.op == Op::DsGwsSemaBr || instruction.op == Op::DsGwsSemaReleaseAll || instruction.op == Op::DsOrderedCount || instruction.op == Op::DsAppend || instruction.op == Op::DsConsume;
+            case Family::Unknown:
+                return true;
+            default:
+                return instruction.op == Op::SSetpcB64 || instruction.op == Op::SSwappcB64 || instruction.op == Op::SRfeB64;
+            }
+        });
+    } catch (const std::exception&) {
+        return true;
+    }
+}
+
+}
+
+bool ProgramWritesMemory(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    constexpr std::uint8_t Unknown = 0, Reads = 1, Writes = 2;
+    if (codeOffset == 0) {
+        const auto cached = snapshot.memoryWrites->load(std::memory_order_acquire);
+        if (cached != Unknown) return cached == Writes;
+    }
+    if (codeOffset > snapshot.code.size()) return true;
+    const bool writes = decodedWritesMemory(std::span(snapshot.code).subspan(codeOffset));
+    if (codeOffset == 0) snapshot.memoryWrites->store(writes ? Writes : Reads, std::memory_order_release);
+    return writes;
 }
 
 std::uint32_t PositionExportLayout(const ShaderSnapshot* snapshot, std::size_t codeOffset, std::span<const std::uint32_t> code, std::uint32_t paClVsOutCntl, const ShaderSnapshot* continuation) {
@@ -645,11 +856,13 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
     auto linked = LinkUserDataCallees(request);
     if (linked.code.empty()) linked.code = LinkGraphicsUserDataTail(request, snapshot);
-    auto source = request;
+    std::optional<ShaderRecompiler::RecompileRequest> linkedSource;
     if (!linked.code.empty()) {
-        source.shader.code = linked.code;
-        source.context.linkedCallFallbacks = linked.fallbacks;
+        linkedSource.emplace(request);
+        linkedSource->shader.code = linked.code;
+        linkedSource->context.linkedCallFallbacks = linked.fallbacks;
     }
+    const auto& source = linkedSource ? *linkedSource : request;
     auto invocationRequest = source;
     struct PreparedKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
@@ -660,13 +873,13 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         if (entry.codeOffset != codeOffset) continue;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
         if (!linked.code.empty() && !std::ranges::equal(invocationRequest.shader.code, linked.code)) continue;
-        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) return std::move(*invocation);
+        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(std::move(invocationRequest), entry.handle, key)) return std::move(*invocation);
     }
     ReportPreparedAtUse(snapshot, source);
     auto handle = PrepareShaderWithDiagnostics(source);
     invocationRequest = source;
     invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(std::move(invocationRequest), handle, key);
     if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
     snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
     return std::move(*invocation);
@@ -898,13 +1111,26 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
         entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(request, &preparation)});
     };
     append();
-    if (plan.prebuildDevice != nullptr && request.target.registrationModules && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && !LibraryPrebuildDisabled()) {
+    const bool fragment = request.shader.stage == ShaderRecompiler::ShaderStage::Fragment;
+    const auto prebuild = [&](const ShaderRecompiler::RecompileRequest& stageRequest, const ShaderRecompiler::SourceHandle& handle) {
+        if (plan.prebuildDevice == nullptr || !stageRequest.target.registrationModules || !fragment || LibraryPrebuildDisabled()) return;
         try {
-            PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes);
+            PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, stageRequest.context.waveSize, {}, {}}, stageRequest.shader.stage, ShaderRecompiler::RegistrationResult(stageRequest, handle), stageRequest.layout.pushConstantOffsetBytes);
         } catch (const std::exception& error) {
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
         }
+    };
+    if (fragment && HeapFragmentsEnabled()) {
+        const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, entries.front().handle);
+        if (invocation && HeapStageEligible(request.shader.stage, invocation->Plan().get(), false)) {
+            auto heapRequest = request;
+            heapRequest.target.gpuResolvedImages = true;
+            PerformanceTimer timing("Shader.PrepareArtifact");
+            entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(heapRequest, &preparation)});
+            prebuild(heapRequest, *entries.back().handle);
+        }
     }
+    prebuild(request, *entries.front().handle);
     if (request.context.compute) {
         request.context.compute->partialThreads = {1, 1, 1};
         append();
@@ -1177,6 +1403,24 @@ unsigned RegistrationPreparationThreads() {
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target) {
     ShaderPreparationTransaction transaction;
+    const auto preparedHandle = [&](const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+        std::vector<std::uint64_t> key;
+        ShaderRecompiler::BuildPreparedShaderKey(request, key);
+        for (const auto& entry : transaction.Read(snapshot).entries) {
+            if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
+        }
+        PerformanceTimer timing("Shader.PrepareArtifact");
+        return PrepareShaderWithDiagnostics(request);
+    };
+    const auto registrationFor = [&](const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle) -> std::shared_ptr<const ShaderRecompiler::RecompileResult> {
+        if (!target.registrationModules || LibraryPrebuildDisabled()) return nullptr;
+        try {
+            return ShaderRecompiler::RegistrationResult(request, handle);
+        } catch (const std::exception& error) {
+            APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+            return nullptr;
+        }
+    };
     require(decoded.programs.size() == decoded.roles.size(), "graphics ABI program roles are incomplete");
     for (const auto& program : decoded.programs) require(program.snapshot != nullptr, "graphics ABI has no registered shader snapshot");
     std::vector<ShaderRecompiler::ProgramRole> expected;
@@ -1200,6 +1444,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         memory.insert(memory.end(), program.memory.begin(), program.memory.end());
     }
     std::vector<PreparedGraphicsStage> prepared;
+    std::vector<ShaderRecompiler::RecompileRequest> requests;
     std::uint32_t pushOffset = 0;
     const bool fixedSlots = target.fixedPushSlots;
     const auto capacity = decoded.state.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : decoded.state.stages.tessellation ? ShaderRecompiler::TessellationLevelPushOffsetBytes : Graphics::PipelinePushSlotBytes;
@@ -1215,31 +1460,33 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         const auto offset = pushOffset;
         const auto room = (fixedSlots && fragment ? Graphics::PipelinePushSlotBytes : capacity) - pushOffset % Graphics::PipelinePushSlotBytes;
         ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, decoded.state.stages.mesh, decoded.state.stages.tessellation, {}}};
-        std::vector<std::uint64_t> key;
-        ShaderRecompiler::BuildPreparedShaderKey(request, key);
-        std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
-        for (const auto& entry : transaction.Read(*program.snapshot).entries) {
-            if (entry.codeOffset == program.codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) {
-                handle = entry.handle;
-                break;
-            }
-        }
-        if (handle == nullptr) {
-            PerformanceTimer timing("Shader.PrepareArtifact");
-            handle = PrepareShaderWithDiagnostics(request);
-        }
+        const auto handle = preparedHandle(*program.snapshot, program.codeOffset, request);
         const auto bytes = handle->artifact->bindings.pushConstantSizeBytes;
         require(bytes <= room, "prepared graphics stages exceed the push constant block");
-        std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
-        if (target.registrationModules && !LibraryPrebuildDisabled()) {
-            try {
-                registration = ShaderRecompiler::RegistrationResult(request, *handle);
-            } catch (const std::exception& error) {
-                APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
-            }
-        }
-        prepared.push_back({program.snapshot, {program.codeOffset, handle}, program.binary.stage, offset, std::move(registration)});
+        prepared.push_back({program.snapshot, {program.codeOffset, handle}, program.binary.stage, offset, registrationFor(request, *handle)});
+        requests.push_back(std::move(request));
         pushOffset += bytes;
+    }
+    if (HeapFragmentsEnabled()) {
+        std::vector<PreparedGraphicsStage> heap;
+        const auto addHeap = [&](std::size_t index, bool gpuConstantsVertex) {
+            const auto& stage = prepared[index];
+            const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(requests[index], stage.entry.handle);
+            if (!invocation || !HeapStageEligible(stage.stage, invocation->Plan().get(), gpuConstantsVertex)) return false;
+            auto request = requests[index];
+            request.target.gpuResolvedImages = true;
+            const auto handle = preparedHandle(*stage.snapshot, stage.entry.codeOffset, request);
+            heap.push_back({stage.snapshot, {stage.entry.codeOffset, handle}, stage.stage, stage.pushOffset, registrationFor(request, *handle), true});
+            return true;
+        };
+        bool fragmentOnHeap = true;
+        for (std::size_t index = 0; index < prepared.size(); ++index) {
+            if (prepared[index].stage == ShaderRecompiler::ShaderStage::Fragment) fragmentOnHeap = addHeap(index, false);
+        }
+        for (std::size_t index = 0; index < prepared.size(); ++index) {
+            if (prepared[index].stage == ShaderRecompiler::ShaderStage::Vertex) static_cast<void>(addHeap(index, target.gpuConstants && fragmentOnHeap));
+        }
+        prepared.insert(prepared.begin(), std::make_move_iterator(heap.begin()), std::make_move_iterator(heap.end()));
     }
     transaction.Commit();
     return prepared;
@@ -1305,7 +1552,7 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
         if (!duplicate) transaction.Edit(*stage.snapshot).entries.push_back(std::move(stage.entry));
     }
     for (const auto& stage : prepared) {
-        if (stage.snapshot->type == 1) continue;
+        if (stage.snapshot->type == 1 || stage.heapVariant) continue;
         ResolvePreparedGraphics(*stage.snapshot, {}, primitiveType == state.userConfig.end() ? 0u : primitiveType->second, localDevice->Target());
     }
     if (decoded.state.stages.path == Graphics::ShaderPath::Vertex) {
@@ -1314,7 +1561,9 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
         }
     }
     PreparedShaderState::GraphicsAbi abi{key, registry, {}};
-    for (const auto& stage : prepared) abi.stages.push_back(stage.snapshot);
+    for (const auto& stage : prepared) {
+        if (!stage.heapVariant) abi.stages.push_back(stage.snapshot);
+    }
     auto& graphicsAbis = transaction.Edit(*owner).graphicsAbis;
     std::erase_if(graphicsAbis, [](const auto& entry) { return entry.registry.expired(); });
     graphicsAbis.push_back(std::move(abi));

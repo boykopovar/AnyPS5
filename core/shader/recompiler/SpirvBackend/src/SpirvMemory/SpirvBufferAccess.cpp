@@ -59,6 +59,31 @@ void EmitMemoryOffsets(SpirvEmitterState& state) {
     }
 }
 
+void EmitHeapSlotPreload(SpirvEmitterState& state) {
+    if (!state.gpuResolvedImages || state.shaderDataStorageVariable == 0) return;
+    const IrBindingLayout& layout = state.program.Metadata().bindings;
+    std::vector<std::uint32_t> dwords;
+    for (auto dword = layout.SamplerSlotDword(); dword < layout.ShaderDataDwords(); ++dword) dwords.push_back(dword);
+    constexpr auto metadataWords = static_cast<std::uint32_t>(sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));
+    constexpr auto firstElement = static_cast<std::uint32_t>(offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t));
+    for (std::uint32_t image = 0; image < layout.runtimeImageCount; ++image) dwords.push_back(layout.ImageMetadataDword() + image * metadataWords + firstElement);
+    const auto pointerType = TypePointer(state, spv::StorageClassPrivate, TypeU32(state));
+    for (const auto dword : dwords) {
+        if (dword >= layout.ShaderDataDwords() || state.heapSlotVariables.contains(dword)) continue;
+        const auto variable = state.module.DefineGlobalVariable(pointerType, spv::StorageClassPrivate);
+        state.module.AddFunction(spv::OpStore, variable, EmitShaderDataDwordLoad(state, dword));
+        state.heapSlotVariables.emplace(dword, variable);
+    }
+}
+
+std::uint32_t LoadHeapSlotWord(SpirvEmitterState& state, std::uint32_t dword) {
+    const auto found = state.heapSlotVariables.find(dword);
+    if (found == state.heapSlotVariables.end()) return EmitShaderDataDwordLoad(state, dword);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, found->second);
+    return value;
+}
+
 std::uint32_t LdsDwordCount(const SpirvEmitterState& state) {
     const auto* workgroup = ShaderWorkgroupInput(state);
     if (workgroup != nullptr) return workgroup->ldsSizeDwords;

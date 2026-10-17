@@ -43,6 +43,31 @@ inline constexpr std::uint32_t BindlessTableSlots = 16u;
 inline constexpr std::uint32_t StorageMipSlots = 4u;
 inline constexpr std::uint32_t StorageHeapCapacity = 16u;
 inline constexpr std::uint32_t SamplerHeapCapacity = 64u;
+inline constexpr std::uint32_t GpuImageHeapSlots = 4096u;
+inline constexpr std::uint32_t GpuSamplerHeapSlots = 256u;
+inline constexpr std::uint32_t GpuDataSet = 2u;
+struct HeapSlotWord {
+    std::uint32_t dword = 0;
+    std::uint32_t kind = 0;
+    std::uint32_t element = 0;
+
+    bool operator==(const HeapSlotWord& other) const = default;
+};
+inline constexpr std::uint32_t GpuLookupSentinel = 0xffffffffu;
+inline constexpr std::uint32_t GpuLookupHeaderDwords = 16u;
+inline constexpr std::uint32_t GpuLookupEntryDwords = 16u;
+inline constexpr std::uint32_t GpuLookupEntries = 16384u;
+inline constexpr std::uint32_t GpuLookupProbes = 16u;
+inline constexpr std::uint32_t GpuLookupKeyDwords = 10u;
+inline constexpr std::uint32_t GpuLookupSlotDword = 1u + GpuLookupKeyDwords;
+inline constexpr std::uint32_t GpuLookupMissDword = 1u;
+inline constexpr std::uint32_t GpuLookupHashBasis = 2166136261u;
+inline constexpr std::uint32_t GpuLookupHashPrime = 16777619u;
+inline constexpr std::uint32_t GpuLookupHash(const std::uint32_t* key) {
+    std::uint32_t hash = GpuLookupHashBasis;
+    for (std::uint32_t i = 0; i < GpuLookupKeyDwords; ++i) hash = (hash ^ key[i]) * GpuLookupHashPrime;
+    return hash;
+}
 inline constexpr std::uint32_t StateExportMappings = 0u;
 inline constexpr std::uint32_t StateDwords = 2u;
 inline constexpr std::uint32_t StateVertexSelectors = 0u;

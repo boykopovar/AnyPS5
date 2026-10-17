@@ -285,6 +285,10 @@ public:
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
+    bool SpaceOnly() const;
+    std::shared_ptr<const void> ReleaseSpace();
+    bool RetakeSpace();
+    bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;
         for (const auto& region : regions) if (region.buffer != nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
@@ -305,6 +309,8 @@ public:
     // the GPU copies out of an import (gpuCopy) notes its read itself when the copy is recorded.
     // For the recorder's read tracking (ShaderResources::MarkGpuWrites); nothing once committed.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> InPlaceReads() const;
+    bool ReadsInPlace(std::uint64_t address, std::uint64_t bytes) const;
+    bool InPlaceReadsOverlap(std::uint64_t address, std::uint64_t bytes) const;
     struct SplitReads {
         std::shared_ptr<const std::vector<std::pair<std::uint64_t, std::uint64_t>>> space;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> own;
@@ -422,6 +428,7 @@ private:
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
+    std::weak_ptr<const AddressSpace> releasedSpace;
     mutable std::uint64_t tableSerial = 0;
     mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> tableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while

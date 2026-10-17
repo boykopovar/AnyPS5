@@ -8,12 +8,12 @@
 
 namespace ShaderRecompiler {
 
-void SrtWalker::BuildPlan(IrProgram& program) const {
+void SrtWalker::BuildPlan(IrProgram& program, bool gpuConstants, bool verifyGpuConstants) const {
     if (program.Resources().resourceTrackingComplete) {
         throw std::runtime_error("shader SRT planning failed: cannot rebuild SRT after resource tracking");
     }
     program.Resources().srtPlanComplete = false;
-    Detail::PlanBuilder(program).Run();
+    Detail::PlanBuilder(program, gpuConstants, verifyGpuConstants).Run();
     program.Resources().srtPlanComplete = true;
 }
 

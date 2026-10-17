@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -14,13 +15,14 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 template<typename TVisit>
-void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVisit&& visit) {
+void visitWrittenBuffers(const ShaderRecompiler::RecompileResult& compiled, TVisit&& visit, const ShaderRecompiler::HeapStageWords* heap = nullptr) {
     for (const auto& binding : compiled.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
         for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const auto& guestWords = Graphics::DrawGuestWords(compiled, heap, binding);
             const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-            if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 4) continue;
-            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4);
+            if (!written || guestWords.size() < (static_cast<std::size_t>(element) + 1) * 4) continue;
+            const auto words = std::span<const std::uint32_t>(guestWords).subspan(static_cast<std::size_t>(element) * 4, 4);
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto base = descriptor.Base48();
             const auto size = descriptor.GetSize();
@@ -84,7 +86,7 @@ void Driver::noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint
 
 void Driver::noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue) {
     for (const auto& stage : stages) {
-        forEachWrittenBuffer(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { noteForeignWriter(begin, end, queue); });
+        visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { noteForeignWriter(begin, end, queue); }, stage.heap);
     }
 }
 
@@ -102,13 +104,14 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
     };
     for (const auto& stage : stages) {
         if (stage.program == nullptr) continue;
-        visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); });
+        visitWrittenBuffers(*stage.program, [&](std::uint32_t, std::uint64_t begin, std::uint64_t end, bool) { ranges.emplace_back(begin, end); }, stage.heap);
         for (const auto& binding : stage.program->bindings) {
             if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) continue;
             for (std::uint32_t element = 0; element < binding.count; ++element) {
                 const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
-                if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
-                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+                const auto& guestWords = Graphics::DrawGuestWords(stage, binding);
+                if (!written || guestWords.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
+                const auto words = std::span<const std::uint32_t>(guestWords).subspan(static_cast<std::size_t>(element) * 8, 8);
                 if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
                 const auto resource = Graphics::DecodeTextureResource(words);
                 if (resource.baseAddress == 0) continue;

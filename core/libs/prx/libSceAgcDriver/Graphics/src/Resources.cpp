@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
 
 namespace AgcDriver::Graphics {
@@ -351,6 +353,7 @@ void CommandBatch::release() noexcept {
         if (result == VK_NOT_READY) result = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
         if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) std::terminate();
     }
+    heapResolve.reset();
     if (commands) context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &commands);
     if (fence) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
 }
@@ -371,6 +374,15 @@ void CommandBatch::Submit() {
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
     submission.pCommandBuffers = &commands;
+    std::array<VkCommandBuffer, 2> withResolve{VK_NULL_HANDLE, commands};
+    if (auto* heap = BindlessTexturesEnabled() ? BindlessHeap::Existing(context) : nullptr; heap != nullptr) {
+        if (auto resolve = heap->TakeLookupResolve(); resolve.commands != VK_NULL_HANDLE) {
+            withResolve[0] = resolve.commands;
+            submission.commandBufferCount = 2;
+            submission.pCommandBuffers = withResolve.data();
+            heapResolve = std::move(resolve.release);
+        }
+    }
     timing.Mark("command_end");
     Check(context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submission, fence), "vkQueueSubmit graphics");
     timing.Mark("queue_submit");

@@ -258,6 +258,9 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.narrowSubgroupClock = target.narrowSubgroupClock;
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.registrationModules = target.registrationModules;
+    state.gpuResolvedImages = target.gpuResolvedImages;
+    state.bdaRangeCache = target.bdaRangeCache;
+    for (const auto& [value, slot] : program.Metadata().gpuConstantChecks) state.gpuConstantChecks.emplace(value, slot);
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.hostSubgroupSize = target.subgroupSize;

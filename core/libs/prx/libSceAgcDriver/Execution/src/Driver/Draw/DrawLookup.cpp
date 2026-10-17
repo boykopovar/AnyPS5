@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 
@@ -7,6 +8,7 @@ namespace AgcDriver::DriverDetail {
 
 void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::shared_ptr<DrawEntry>& dataEntry, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData) {
     using Role = ShaderRecompiler::ProgramRole;
+    const bool heapRefused = HeapRefused();
     if (useDrawEntries) {
         if (!registerKey) {
             drawKey = 0xcbf29ce484222325ull;
@@ -107,7 +109,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     bool anyLayout = false;
                     for (std::size_t rank = 0; rank < variants.size(); ++rank) {
                         const auto& variant = variants[rank];
-                        if (variant->pushOffset != cursor) continue;
+                        if (variant->pushOffset != cursor || (heapRefused && variant->compiled->gpuResolvedImages)) continue;
                         if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh && !std::equal(variant->meshIndexDescriptor.begin(), variant->meshIndexDescriptor.end(), programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord)) {
                             if (!anyLayout) outcome = EntryOutcome::Differing;
                             anyLayout = true;
@@ -210,9 +212,17 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;
             for (std::size_t i = 0; i < programs.size(); ++i) {
-                if (roles[i] == Role::GeometryBack || programs[i].userData != dataEntry->decode->programs[i].userData) continue;
+                if (roles[i] == Role::GeometryBack || programs[i].userData.size() != dataEntry->decode->programs[i].userData.size()) continue;
+                const auto& now = programs[i].userData;
+                const auto& was = dataEntry->decode->programs[i].userData;
                 auto& candidates = dataCandidates[i];
                 for (const auto& variant : dataEntry->stages[i]) {
+                    if (heapRefused && variant->compiled->gpuResolvedImages) continue;
+                    bool usedEqual = true;
+                    for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
+                        if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;
+                    }
+                    if (!usedEqual) continue;
                     if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
                     std::vector<ShaderRecompiler::MemoryRegion> regions;
                     appendEntryRegions(*variant, regions);

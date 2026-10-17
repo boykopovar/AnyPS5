@@ -68,7 +68,7 @@ bool usesGds(const IrProgram& program) {
 
 }
 
-BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay) const {
+BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay, bool gpuResolvedImages) const {
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
@@ -113,8 +113,12 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
+    if (gpuResolvedImages) {
+        next.samplerSlotDwords = static_cast<std::uint32_t>(info.samplers.size()) * 2u;
+        next.gpuResolvedImages = true;
+    }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
-    next.pushDataStartDword = next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
+    next.pushDataStartDword = !gpuResolvedImages && next.runtimeImageCount == 0u && next.ShaderDataDwords() != 0u && next.ShaderDataDwords() <= pushSize ? layout.pushConstantOffsetBytes / 4u : PushData::NoStart;
     if (stencilReplay) {
         const auto offset = next.UsesPushData() ? next.ShaderDataDwords() : 0u;
         if (offset >= pushSize) fail("stencil replay requires an unused push constant dword");
@@ -150,6 +154,12 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         if (!imageGroups[i].empty()) {
             if (imageGroups[i].size() > RuntimeAbi::HeapCapacity(static_cast<DescriptorBindingKind>(FirstImageBinding + i))) fail("shader image heap capacity exceeded");
             addBinding(next, static_cast<DescriptorBindingKind>(FirstImageBinding + i), std::move(imageGroups[i]));
+        }
+    }
+
+    if (gpuResolvedImages && !registrationModules) {
+        for (const auto& descriptor : next.descriptors) {
+            if (ImageBindingResourceClass(descriptor.kind) == ImageResourceClass::Sampled) next.imageSlotDwords += static_cast<std::uint32_t>(descriptor.resources.size());
         }
     }
 

@@ -23,6 +23,8 @@ struct IrProgramMetadata {
     bool barycentricEmulation = false;
     bool invalidatesCaches = false;
     std::vector<IrValue*> dynamicReads;
+    std::vector<std::pair<IrValue*, std::uint32_t>> gpuConstantChecks;
+    bool gpuConstants = false;
     bool shaderInfoComplete = false;
     IrBindingLayout bindings;
     bool bindingLayoutComplete = false;

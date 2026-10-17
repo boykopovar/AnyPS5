@@ -107,6 +107,7 @@ std::uint32_t EmitSubgroupLaneActiveBool(SpirvEmitterState& state, std::uint32_t
 std::uint32_t EmitBinaryU32(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t lhs, std::uint32_t rhs);
 std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dwordIndex);
 void EmitMemoryOffsets(SpirvEmitterState& state);
+void EmitHeapSlotPreload(SpirvEmitterState& state);
 std::uint32_t LdsDwordCount(const SpirvEmitterState& state);
 bool LdsInDeviceMemory(const SpirvEmitterState& state);
 std::uint32_t LdsMemorySemantics(const SpirvEmitterState& state);

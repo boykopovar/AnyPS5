@@ -23,6 +23,16 @@ bool orderedFills() {
     return ordered;
 }
 
+bool keepsDrawFinisher(std::uint32_t header, std::uint32_t opcode) {
+    if (header == FlipPacketHeader || header == RenderingWaitPacketHeader) return false;
+    if (Pm4::DrawOpcode(opcode)) return true;
+    switch (opcode) {
+        case 0x13: case 0x26: case 0x2a: case 0x2f: case 0x69: case 0x76: case 0x79: return true;
+        case 0x10: return ((header >> 2u) & 0x3fu) == 0;
+        default: return false;
+    }
+}
+
 bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t header, std::uint32_t opcode) {
     if (header == FlipPacketHeader || header == RenderingWaitPacketHeader) return false;
     if (Pm4::DrawOpcode(opcode)) return true;
@@ -44,13 +54,17 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
 
 template <typename TWork>
 void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
+    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!report) {
+        work();
+        return;
+    }
     static thread_local WorkerProfile profile;
     const auto begin = std::chrono::steady_clock::now();
     work();
     const auto end = std::chrono::steady_clock::now();
     profile.*bucket += std::chrono::duration<double, std::milli>(end - begin).count();
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (report && end - profile.reported > std::chrono::seconds(10)) {
+    if (end - profile.reported > std::chrono::seconds(10)) {
         profile.reported = end;
         AgcDriver::ProfilePrint_nid_no_patch( "[gpu] worker at %.0f s: dispatch %.1f s, draw %.1f s, wait %.1f s\n", std::chrono::duration<double>(end - profile.start).count(), profile.dispatchMs / 1000, profile.drawMs / 1000, profile.waitMs / 1000);
     }
@@ -160,6 +174,12 @@ void Driver::execute(const Submission& submission) {
     struct ClearAhead {
         ~ClearAhead() { clearResolvedAhead(); }
     } clearAhead;
+    struct SettleFinisher {
+        bool queue0;
+        ~SettleFinisher() {
+            if (queue0) DrawFinisher::Get().Settle();
+        }
+    } settleFinisher{submission.queue == 0};
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
@@ -169,6 +189,14 @@ void Driver::execute(const Submission& submission) {
         const auto packet = std::span(submission.commands).subspan(cursor, count);
         const auto opcode = (header >> 8u) & 0xffu;
         auto nextCursor = cursor + count;
+        if (submission.queue == 0 && DrawFinisher::Busy() && !keepsDrawFinisher(header, opcode)) {
+            const bool beside = DrawFinisher::Overlap() && opcode != 0x15 && keepsDrawPipeline(packet, header, opcode);
+            if (!beside) DrawFinisher::Get().Drain();
+            if (DrawFinisher::Overlap()) {
+                DrawFinisher::NoteDrain(DrawFinisher::DrainSite::Packet, !beside);
+                if (!beside) DrawFinisher::NoteDrainedOpcode(header == FlipPacketHeader ? 0xffu : opcode, keepsDrawPipeline(packet, header, opcode));
+            }
+        }
         if (APS5_ENABLE_TIMING_LOG && submission.queue == 0 && pendingFrameTiming == nullptr) includeTimingSubmission(submission, false);
         PerformanceContext timingContext(submission.queue == 0 ? pendingFrameTiming.get() : FrameTiming::Async());
         PerformanceTimer timing("Driver.Packet");
@@ -213,7 +241,7 @@ void Driver::execute(const Submission& submission) {
         const auto flushStart = profilePackets ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         flushBetweenPackets(submission.queue, header, opcode == 0x49 || opcode == 0x37);
         timing.Mark("flush_between_packets");
-        PacketTimer packetTimer{profilePackets, header == FlipPacketHeader ? 0xffffu : opcode, submission.queue, packetProfile, std::chrono::steady_clock::now()};
+        PacketTimer packetTimer{profilePackets, header == FlipPacketHeader ? 0xffffu : opcode, submission.queue, packetProfile, profilePackets ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}};
 
         if (profilePackets) {
             packetStartedAt() = packetTimer.start;
@@ -402,6 +430,7 @@ void Driver::execute(const Submission& submission) {
         cursor = nextCursor;
     }
 
+    if (submission.queue == 0) DrawFinisher::Get().Drain();
     PerformanceContext endContext(submission.queue == 0 ? frameTiming() : FrameTiming::Async());
     PerformanceTimer endTiming("Driver.EndSubmission");
     static const bool submitAtEnd = std::getenv("APS5_SUBMIT_AT_END") != nullptr;

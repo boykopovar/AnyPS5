@@ -48,6 +48,9 @@ public:
     static TableCacheStats TableCacheCounters();
 
 private:
+    void noteGpuConstantChecks() const;
+    mutable std::uint32_t seenChecked = 0;
+    mutable std::uint32_t seenDiffering = 0;
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).

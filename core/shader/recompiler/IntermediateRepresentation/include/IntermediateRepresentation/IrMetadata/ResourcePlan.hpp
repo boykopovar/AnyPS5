@@ -151,6 +151,8 @@ struct CompactResourcePlan {
     std::vector<std::uint32_t> conditions;
 };
 
+struct GpuSrtProgram;
+
 struct IrResourcePlan {
     IrShaderStage stage = IrShaderStage::Unknown;
     std::uint64_t shaderHash = 0;
@@ -171,7 +173,10 @@ struct IrResourcePlan {
     // Detail::ComputePureFlatSlots): a driver may reuse a capture whose words differ only there.
     std::vector<std::uint8_t> pureFlatSlots;
     bool denseValueIds = false;
+    std::uint32_t gpuConstantCheckSlots = 0;
+    bool gpuConstants = false;
     CompactResourcePlan compact;
+    std::shared_ptr<const GpuSrtProgram> fastWalk;
     bool requiresSpecializationMemory = false;
     bool srtPlanComplete = false;
     bool resourceTrackingComplete = false;

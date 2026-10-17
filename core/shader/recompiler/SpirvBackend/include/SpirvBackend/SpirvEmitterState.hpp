@@ -105,6 +105,10 @@ struct SpirvEmitterState {
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool registrationModules = false;
+    bool gpuResolvedImages = false;
+    bool bdaRangeCache = false;
+    std::unordered_map<const IrValue*, std::uint32_t> gpuConstantChecks;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> bdaRangeCacheVariables;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
@@ -159,6 +163,7 @@ struct SpirvEmitterState {
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;
     std::uint32_t shaderDataStorageVariable = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;

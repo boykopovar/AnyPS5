@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -127,6 +128,7 @@ BdaResources::BdaResources(const Context& context) {
     Require(ShaderRecompiler::BdaAbi::FaultBufferBytes <= context.limits.maxStorageBufferRange, "BDA fault buffer exceeds storage buffer range limit");
     fault = std::make_unique<Buffer>(context, ShaderRecompiler::BdaAbi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::memset(fault->Bytes().data(), 0, ShaderRecompiler::BdaAbi::WrittenListWord * sizeof(std::uint32_t));
+    std::memset(fault->Bytes().data() + ShaderRecompiler::BdaAbi::GpuConstantCheckedWord * sizeof(std::uint32_t), 0, 5 * sizeof(std::uint32_t));
 }
 
 BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memory) : BdaResources(context) {
@@ -238,8 +240,34 @@ bool LoopGuardTripped() {
     return loopGuardTripped.load(std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<std::uint64_t> gpuConstantsChecked{0}, gpuConstantsDiffering{0};
+std::atomic<std::int64_t> gpuConstantsReportedAt{0};
+std::atomic<std::uint32_t> gpuConstantsDifferencesLogged{0};
+}
+
+void BdaResources::noteGpuConstantChecks() const {
+    const auto* words = reinterpret_cast<const std::uint32_t*>(fault->Bytes().data());
+    const auto checked = std::atomic_ref<const std::uint32_t>(words[ShaderRecompiler::BdaAbi::GpuConstantCheckedWord]).load(std::memory_order_relaxed);
+    const auto differing = std::atomic_ref<const std::uint32_t>(words[ShaderRecompiler::BdaAbi::GpuConstantDifferingWord]).load(std::memory_order_relaxed);
+    if (checked == seenChecked && differing == seenDiffering) return;
+    gpuConstantsChecked.fetch_add(static_cast<std::uint32_t>(checked - seenChecked), std::memory_order_relaxed);
+    gpuConstantsDiffering.fetch_add(static_cast<std::uint32_t>(differing - seenDiffering), std::memory_order_relaxed);
+    if (differing != seenDiffering && gpuConstantsDifferencesLogged.fetch_add(1, std::memory_order_relaxed) < 8) {
+        const auto first = words[ShaderRecompiler::BdaAbi::GpuConstantFirstWord];
+        std::fprintf(stderr, "[gpu-heap] gpu-read verify: a GPU-loaded constant differs from the CPU walk: flat slot %u, GPU 0x%08x, CPU 0x%08x\n", first == 0 ? 0u : first - 1u, words[ShaderRecompiler::BdaAbi::GpuConstantFirstWord + 1], words[ShaderRecompiler::BdaAbi::GpuConstantFirstWord + 2]);
+    }
+    seenChecked = checked;
+    seenDiffering = differing;
+    const auto tenSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (gpuConstantsReportedAt.exchange(tenSeconds, std::memory_order_relaxed) != tenSeconds) {
+        std::fprintf(stderr, "[gpu-heap] gpu-read verify (cumulative): %llu GPU-loaded constant words compared with the CPU walk, %llu differing\n", static_cast<unsigned long long>(gpuConstantsChecked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(gpuConstantsDiffering.load(std::memory_order_relaxed)));
+    }
+}
+
 void BdaResources::CheckFault() const {
     markWrittenPages();
+    noteGpuConstantChecks();
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault->Bytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
@@ -253,6 +281,7 @@ void BdaResources::CheckFault() const {
         loopGuardTripped.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
         std::memset(fault->Bytes().data(), 0, fault->Bytes().size());
+        seenChecked = seenDiffering = 0;
         return;
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
