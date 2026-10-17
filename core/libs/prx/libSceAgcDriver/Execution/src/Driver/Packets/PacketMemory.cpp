@@ -268,10 +268,25 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
 }
 
 bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state) {
-    static const bool enabled = std::getenv("APS5_PIPELINE_DMA") != nullptr;
+    static const bool enabled = std::getenv("APS5_NO_PIPELINE_DMA") == nullptr;
     if (!enabled || opcode != 0x50 || queue != 0 || packet.size() < 7 || !DrawPipeline::Active() || !deferredLabels().labels.empty()) return false;
     const auto source = ((packet[1] >> 29u) & 3u) | ((packet[6] >> 24u) & 4u) | ((packet[6] >> 25u) & 8u);
     constexpr std::size_t immediateLimit = std::size_t{16} << 20u;
+    constexpr std::size_t gpuStoreLimit = 65536;
+    if (source == 2 && Pm4::DmaBytes(packet) > gpuStoreLimit && Pm4::DmaDestination(packet) != Pm4::DmaSelectGds) {
+        const auto fillAddress = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
+        const auto fillBytes = Pm4::DmaBytes(packet);
+        const auto pattern = packet[2];
+        if (fillAddress % 16 != 0 || fillBytes % 16 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(fillAddress), fillBytes, true) || !device.Load()) return false;
+        DrawPipeline::Queue0().Enqueue([this, queue, fillAddress, fillBytes, pattern] {
+            GuestMemory::SetCurrentPacket(0x50, queue);
+            if (const auto localDevice = device.Load()) {
+                storeBufferFill(queue, fillAddress, fillBytes, {pattern, pattern, pattern, pattern}, localDevice, false, false);
+                ++dmaFills;
+            }
+        }, {{fillAddress, fillAddress + fillBytes}});
+        return true;
+    }
     if (source == 2) {
         const auto store = Pm4::ResolveStore(packet, state, immediateLimit);
         if (!store.has_value() || store->Bytes().empty() || !GuestMemory::Accessible(reinterpret_cast<const void*>(store->address), store->Bytes().size(), true)) return false;
@@ -305,6 +320,7 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
                 recordDeferredLabels(localDevice.get(), queue);
                 const auto outcome = localDevice->CopyBuffer(copy.destination, copy.source, copy.bytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, queue, [](std::span<const std::byte>, std::uint64_t) {});
                 if (outcome.path == 1 || outcome.path == 3) return;
+                if (outcome.path == 2 && !Graphics::RegisteredReadableCovers(copy.destination, copy.bytes) && !localDevice->StoresPendingOver(copy.destination, copy.bytes)) ++copiesToHostMemory;
             }
         }
         std::vector<std::byte> bytes(copy.bytes);
