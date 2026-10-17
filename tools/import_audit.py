@@ -454,7 +454,7 @@ def source_stubs(source):
     shared = {}
     for library in sorted(item for item in Path(source).iterdir() if item.is_dir()):
         aliases = {}
-        for file in library.rglob("*.cpp"):
+        for file in nid_names.source_files(library):
             for nid, name in nid_names.source_aliases(file.read_text(errors="ignore")):
                 aliases[name] = nid
         group = progress.scan_library(library)

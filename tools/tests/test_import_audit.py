@@ -224,6 +224,20 @@ class ImportAuditTests(unittest.TestCase):
             registry.write_text(json.dumps([dict(nid="AAAAAAAAAAA", library="libSceA.prx", **fields)]), encoding="utf-8")
             self.assertEqual(import_audit.read_registry(registry), [("AAAAAAAAAAA", "libSceA.prx", expected)])
 
+    def test_test_file_aliases_cannot_override_production_stubs(self):
+        source = self.work.source
+        text = 'APS5_EXPORT("AAAAAAAAAAA", sceExample);\n' + STUB_SOURCE.format(name="sceExample")
+        write_source(source, "libSceExample", text)
+        test = source / "libSceExample" / "tests" / "Alias.cpp"
+        test.parent.mkdir()
+        test.write_text('APS5_EXPORT("BBBBBBBBBBB", sceExample);\n', encoding="utf-8")
+        stubs = import_audit.source_stubs(source)
+        self.assertEqual(stubs, {("libSceExample.prx", "AAAAAAAAAAA"): "sceExample"})
+        records, _ = import_audit.audit([("AAAAAAAAAAA", "libSceExample.prx", False)],
+                                       {"AAAAAAAAAAA": ["libSceExample.prx"]}, stubs,
+                                       {"libSceExample.prx"}, set())
+        self.assertEqual(records[0]["class"], "stub")
+
 
     def setUp(self):
         self.work = Workspace()
