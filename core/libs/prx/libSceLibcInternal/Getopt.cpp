@@ -38,6 +38,7 @@ constexpr int OptionalArgument = 2;
 
 constexpr int FlagPermute = 1;
 constexpr int FlagAllArguments = 2;
+constexpr int FlagLongOnly = 4;
 
 constexpr int BadCharacter = '?';
 constexpr int InOrder = 1;
@@ -112,7 +113,7 @@ void PermuteArguments(int nonOptionStart, int nonOptionEnd, int optionEnd, char*
     }
 }
 
-int ParseLongOptions(char* const* arguments, const char* options, const GuestOption* longOptions, int* index, const char* dash) {
+int ParseLongOptions(char* const* arguments, const char* options, const GuestOption* longOptions, int* index, const char* dash, bool shortToo, int flags) {
     char* const current = g_longPlace;
     int match = -1;
     bool exactMatch = false;
@@ -136,8 +137,9 @@ int ParseLongOptions(char* const* arguments, const char* options, const GuestOpt
             exactMatch = true;
             break;
         }
+        if (shortToo && length == 1) continue;
         if (match == -1) match = i;
-        else if (longOptions[i].hasArgument != longOptions[match].hasArgument ||
+        else if ((flags & FlagLongOnly) || longOptions[i].hasArgument != longOptions[match].hasArgument ||
                  longOptions[i].flag != longOptions[match].flag ||
                  longOptions[i].value != longOptions[match].value)
             secondPartialMatch = true;
@@ -149,6 +151,10 @@ int ParseLongOptions(char* const* arguments, const char* options, const GuestOpt
         return BadCharacter;
     }
     if (match == -1) {
+        if (shortToo) {
+            --optind_nid_postfix;
+            return -1;
+        }
         if (PrintError(options)) Warn(std::string("unrecognized option `") + dash + current + "'");
         optopt_nid_postfix = 0;
         return BadCharacter;
@@ -237,11 +243,21 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
         break;
     }
 
-    if (longOptions && *g_longPlace == '-' && g_longPlace != arguments[optind_nid_postfix]) {
-        ++g_longPlace;
-        const int result = ParseLongOptions(arguments, options, longOptions, index, "--");
-        g_longPlace = g_emptyMessage;
-        return result;
+    if (longOptions && g_longPlace != arguments[optind_nid_postfix] &&
+        (*g_longPlace == '-' || (flags & FlagLongOnly))) {
+        bool shortToo = false;
+        const char* dash = "-";
+        if (*g_longPlace == '-') {
+            ++g_longPlace;
+            dash = "--";
+        } else if (*g_longPlace != ':' && std::strchr(options, *g_longPlace)) {
+            shortToo = true;
+        }
+        const int result = ParseLongOptions(arguments, options, longOptions, index, dash, shortToo, flags);
+        if (result != -1) {
+            g_longPlace = g_emptyMessage;
+            return result;
+        }
     }
 
     const int character = OptionCharacter(g_longPlace++);
@@ -265,7 +281,7 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
             }
             g_longPlace = Argument(arguments, optind_nid_postfix, "getopt_long");
         }
-        const int result = ParseLongOptions(arguments, options, longOptions, index, "-W ");
+        const int result = ParseLongOptions(arguments, options, longOptions, index, "-W ", false, flags);
         g_longPlace = g_emptyMessage;
         return result;
     }
@@ -353,6 +369,10 @@ int APS5_VABI getopt_nid_postfix(int count, char* const* arguments, const char* 
 
 int APS5_VABI getopt_long_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index) {
     return GetoptInternal(count, arguments, options, longOptions, index, FlagPermute);
+}
+
+int APS5_VABI getopt_long_only_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index) {
+    return GetoptInternal(count, arguments, options, longOptions, index, FlagPermute | FlagLongOnly);
 }
 
 }
