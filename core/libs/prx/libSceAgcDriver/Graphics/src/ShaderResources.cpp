@@ -2797,7 +2797,7 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     if ((context.copiedWriters == nullptr || context.copiedWriters->empty()) && drawWriters->empty() && !labels) return false;
     if (!recorder->PendingWriteOverlaps(address, bytes)) return false;
     const auto overlaps = [&](const auto& writers) {
-        return std::any_of(writers.begin(), writers.end(), [&](const auto& writer) { return writer->WritesOverlap(address, bytes); });
+        return std::any_of(writers.begin(), writers.end(), [&](const auto& writer) { return writer->CopiedWritesOverlap(address, bytes); });
     };
     if ((context.copiedWriters != nullptr && overlaps(*context.copiedWriters)) || overlaps(*drawWriters) || (labels && recorder->PendingLabelIn(address, bytes))) {
         Recorder::CountSync(4);
