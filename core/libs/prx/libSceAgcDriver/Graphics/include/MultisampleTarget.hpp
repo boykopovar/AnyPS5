@@ -17,12 +17,14 @@ class StorageTexture;
 class Texture;
 struct GuestTextureResource;
 
+std::optional<DccKeys> MultisampledCmaskKeys(std::uint8_t code);
+
 class MultisampledCmask {
 public:
     MultisampledCmask() = default;
     MultisampledCmask(std::uint64_t cmaskAddress, std::uint64_t cmaskBytes) : address(cmaskAddress), bytes(cmaskBytes) {}
     void NoteFill(std::uint64_t fillAddress, std::size_t fillBytes, std::uint32_t pattern);
-    void SeedKeys(DccKeys seeded);
+    void SeedCode(std::optional<std::uint8_t> code);
     void CheckAddress(std::uint64_t cmaskAddress) const;
     bool TakeClear();
     DccKeys Keys() const { return keys; }

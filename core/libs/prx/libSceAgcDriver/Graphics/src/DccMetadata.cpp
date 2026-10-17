@@ -580,6 +580,25 @@ DccKeys CurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, st
     return currentDccKeys(metaAddress, keyCount, memoized);
 }
 
+std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, std::size_t bytes) {
+    if (address == 0 || bytes == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return std::nullopt;
+    if (GuestMemory::GpuMutex().HeldByThisThread()) {
+        if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && (recorder->PendingWriteOverlaps(address, bytes) || AnyShadowedOverlaps(address, bytes))) {
+            const auto landed = KeysAfterPendingWrites(*recorder, address, bytes);
+            if (landed.mixed) return std::nullopt;
+            if (!landed.unknown && landed.value >= 0 && !AnyShadowedOverlaps(address, bytes)) return static_cast<std::uint8_t>(landed.value);
+            Recorder::CountSync(2);
+            recorder->Sync();
+        }
+    }
+    std::vector<std::byte> data(bytes);
+    GuestMemory::Read(address, data);
+    const auto first = data.front();
+    if (!std::all_of(data.begin(), data.end(), [&](std::byte value) { return value == first; })) return std::nullopt;
+    return std::to_integer<std::uint8_t>(first);
+}
+
 std::optional<DccKeys> KnownPendingDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes) {
     const auto count = DccKeyBytes(surfaceBytes);
     if (metaAddress == 0 || count == 0 || !GuestMemory::GpuMutex().HeldByThisThread()) return std::nullopt;
