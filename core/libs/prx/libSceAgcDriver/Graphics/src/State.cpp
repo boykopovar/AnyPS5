@@ -772,6 +772,7 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
             const auto mapping = static_cast<std::uint8_t>(alternate ? 0xecu : 0xe4u);
             if (number == unorm) return {VK_FORMAT_R8G8_UNORM, 2, mapping};
             if (number == snorm) return {VK_FORMAT_R8G8_SNORM, 2, mapping};
+            if (number == uint) return {VK_FORMAT_R8G8_UINT, 2, mapping};
             return fail();
         }
         case 4:

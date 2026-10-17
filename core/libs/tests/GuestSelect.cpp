@@ -3,6 +3,12 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#if defined(_WIN32)
+#include <filesystem>
+#include <fstream>
+#include <process.h>
+#include <string>
+#endif
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -25,6 +31,7 @@ extern "C" {
 int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI close_nid_postfix(int);
+int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
 int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
@@ -173,4 +180,30 @@ int main() {
         Require(select_nid_postfix(reader + 1, read.words.data(), nullptr, nullptr, &limit) == -1);
         Require(*__error_nid_postfix() == GuestEbadf);
     }
+
+#if defined(_WIN32)
+    {
+        const auto path = std::filesystem::temp_directory_path() /
+            ("aps5_select_disk_ready_" + std::to_string(::_getpid()) + ".txt");
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        {
+            std::ofstream out(path, std::ios::binary);
+            out << "ready";
+            Require(static_cast<bool>(out));
+        }
+        const int file = open_nid_postfix(path.string().c_str(), 0, 0);
+        Require(file >= 0);
+        GuestDescriptorSet read{};
+        GuestDescriptorSet write{};
+        read.Add(file);
+        write.Add(file);
+        GuestTimeval limit{0, 200000};
+        const int ready = select_nid_postfix(file + 1, read.words.data(), write.words.data(), nullptr, &limit);
+        Require(ready >= 1);
+        Require(read.Has(file) && write.Has(file));
+        Require(close_nid_postfix(file) == 0);
+        std::filesystem::remove(path, ec);
+    }
+#endif
 }
