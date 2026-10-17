@@ -53,6 +53,19 @@ While initialization runs, the count is `UINT32_MAX` and the entry word holds th
 
 [GuestDeferredModule.cpp](../../core/libs/tests/GuestDeferredModule.cpp) checks repeated loads at the same base, multiple guest references, an external native reference, concurrent initialization and recursive loading. The Windows fixture uses the same table layout as the relinker and reports its entry and constructor calls separately.
 
+## Windows allocator
+
+On Windows, the libraries of a relinked game and the C and C++ runtime they use allocate through [mimalloc](../../3rdparty/mimalloc) instead of the C runtime's heap.
+
+- The build copies `mimalloc.dll` and `mimalloc-redirect.dll` beside the libraries ([`core/libs/CMakeLists.txt`](../../core/libs/CMakeLists.txt)). [`pe_import_first`](../../core/libs/allocator/PeImportFirst.cpp) moves `mimalloc-redirect.dll` to the front of the copied `mimalloc.dll`'s import directory. The redirection module has to load before mimalloc, and MinGW's linker does not keep that order.
+- The relinker's Windows entry stub ([`WindowsEntryStubBuilder.cpp`](../../core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp)) loads `mimalloc.dll` from the run path with `LoadLibraryExW` before the first library. `mimalloc-redirect.dll` then sends the C runtime's allocation functions in `ucrtbase.dll` (`malloc`, `calloc`, `realloc`, `free` and their relatives) to mimalloc for the whole process. The libraries loaded after it, and the MinGW runtime DLLs they use (`libstdc++`, `libgcc_s`, `libwinpthread`), allocate and free through mimalloc.
+  - Without `mimalloc.dll` the load fails quietly and the process keeps the C runtime's heap. With a relative run path, a module directory too long for the stub's path buffer skips the load the same way.
+  - A run path whose `mimalloc.dll` path cannot fit that buffer fails the relink, as a library path does.
+- Guest code, the executable and its bundled modules, allocates through libc's guest heap ([`GuestHeap.cpp`](../../core/libs/prx/libc/src/GuestHeap.cpp)). The guest heap takes its blocks from the guest arena, or from `malloc` when there is no arena, and returns them the same way, so a block never moves between the guest heap and the host allocator.
+- `mimalloc.dll` links the MinGW runtime statically, and three parts of it allocate through the C runtime: GCC's emulated thread-locals (`emutls`, which hold mimalloc's own thread-locals), MinGW's thread-exit destructor list and winpthreads.
+  - After the redirection these calls would enter mimalloc again, before the calling thread's mimalloc state exists.
+  - Linker wraps send them to [`RuntimeHeap.c`](../../core/libs/allocator/RuntimeHeap.c), which allocates from the process heap (`HeapAlloc` on `GetProcessHeap()`). The same code frees these blocks through the same wraps.
+
 ## Thread cancellation
 
 [`Thread.cpp`](../../core/libs/prx/libkernel/Pthread/src/Thread.cpp) records cancellation requests on the target guest thread. New threads start with cancellation enabled and deferred. A disabled request stays pending; enabling deferred cancellation returns before the next cancellation point acts on it. Repeated requests do not add cleanup invocations.

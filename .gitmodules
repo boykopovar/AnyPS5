@@ -31,6 +31,9 @@
 [submodule "3rdparty/tracy"]
 	path = 3rdparty/tracy
 	url = https://github.com/wolfpld/tracy.git
+[submodule "3rdparty/mimalloc"]
+	path = 3rdparty/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
 [submodule "3rdparty/libjpeg-turbo"]
 	path = 3rdparty/libjpeg-turbo
 	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
