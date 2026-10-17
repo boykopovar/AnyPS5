@@ -10,7 +10,7 @@
 #include <string_view>
 #include <system_error>
 #include <sys/stat.h>
-#ifdef __linux__
+#ifndef _WIN32
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -343,7 +343,7 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     int error = 0;
     const char* path = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
     if (path == nullptr) return static_cast<int>(Fail(error));
-#ifdef __linux__
+#ifndef _WIN32
     if (::faccessat(fd, ".", X_OK, AT_EACCESS) != 0) return static_cast<int>(Fail(errno));
 #endif
     error = SetWorkingDirectory_nid_no_patch(path);

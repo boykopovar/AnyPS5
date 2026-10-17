@@ -16,7 +16,7 @@
 #define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
 #endif
 #endif
-#ifdef __linux__
+#ifndef _WIN32
 #include <cerrno>
 #include <unistd.h>
 #endif
@@ -208,7 +208,7 @@ int main() {
     char directoryPath[1024];
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath);
     Require(std::strcmp(directoryPath, ("/" + root.filename().string()).c_str()) == 0);
-#ifdef __linux__
+#ifndef _WIN32
     Require(chdir_nid_postfix("/") == 0);
     const auto originalPermissions = std::filesystem::status(root).permissions();
     std::filesystem::permissions(root, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
