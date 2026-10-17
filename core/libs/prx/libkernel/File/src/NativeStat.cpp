@@ -51,8 +51,8 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     const auto attributes = GetFileAttributesW(p.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return DoStat(p, st);
     std::string target;
-    if (!File::WindowsSymbolicLink::ReadRelative(p, target, "lstat"))
-        NotImplemented_nid_no_patch("lstat of a Windows reparse point other than a relative symbolic link");
+    if (!File::WindowsSymbolicLink::Read(p, target, "lstat"))
+        NotImplemented_nid_no_patch("lstat of a Windows reparse point other than a symbolic link");
     const auto handle = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
