@@ -194,6 +194,7 @@ private:
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
         append(key, value.targetOutputMode);
+        append(key, value.sampleOrder);
     }
 
     static void append(std::vector<std::uint64_t>& key, const ShaderVertexResourceDestination& value) {

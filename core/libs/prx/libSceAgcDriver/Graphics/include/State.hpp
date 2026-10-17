@@ -152,6 +152,14 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = 
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 VkExtent2D SampleLocationGrid(const State& state);
+using SampleOrder = std::array<std::uint32_t, 4>;
+inline constexpr std::uint32_t KeptSampleOrder = 0x76543210u;
+std::optional<SampleOrder> SameSetSampleOrder(const State& state);
+bool ReordersSamples(const SampleOrder& order);
+std::uint32_t InvertSampleOrder(std::uint32_t order);
+std::uint32_t HostSampleBits(std::uint32_t guestBits, std::uint32_t order);
+bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
+std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);

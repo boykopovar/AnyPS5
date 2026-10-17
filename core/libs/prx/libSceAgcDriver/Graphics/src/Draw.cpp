@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -1581,6 +1582,9 @@ struct RecordedDraw {
     const std::array<std::byte, PipelinePushConstantBytes>* pushBytes = nullptr;
     VkShaderStageFlags pushStages = 0;
     std::vector<std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> stencilReplay;
+    std::vector<SampleOrderTarget> reordered;
+    SampleOrderPass reorderPass;
+    std::optional<DepthSampleLocations> depthLocations;
 };
 
 void recordStencilReplay(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, std::span<const std::pair<std::uint32_t, std::shared_ptr<Pipeline>>> replay, std::span<const CompiledShader> shaders, const ShaderResources& resources, const std::array<std::byte, PipelinePushConstantBytes>* bytes = nullptr, VkShaderStageFlags stages = 0) {
@@ -1826,6 +1830,11 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         }
         // Earlier recorded work (dispatches, the previous draw) wrote the images in the general
         // layout, which a lean draw renders in: no transitions.
+        if (!record.reordered.empty()) {
+            std::vector<std::shared_ptr<void>> kept;
+            RecordSampleOrder(context, commands, record.reorderPass, record.reordered, true, kept);
+            for (auto& object : kept) recorder->Keep(std::move(object));
+        }
         APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
         record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state);
     }
@@ -1859,11 +1868,21 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     auto checkRecords = indirectRecordCheck(record.indirect);
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
     std::function<void(VkCommandBuffer)> storeProxies;
-    if (!continued && !record.proxies.empty()) {
-        storeProxies = [proxies = record.proxies](VkCommandBuffer passCommands) {
+    if (!continued && (!record.proxies.empty() || !record.reordered.empty() || record.depthLocations)) {
+        storeProxies = [proxies = record.proxies, reordered = record.reordered, reorderPass = record.reorderPass, depthLocations = record.depthLocations, context, recorder](VkCommandBuffer passCommands) {
             for (const auto& proxy : proxies) {
                 proxy->RecordAttachmentProxyStore(passCommands, VK_IMAGE_LAYOUT_GENERAL);
                 Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+            }
+            if (!reordered.empty()) {
+                std::vector<std::shared_ptr<void>> kept;
+                RecordSampleOrder(context, passCommands, reorderPass, reordered, false, kept);
+                for (auto& object : kept) recorder->Keep(std::move(object));
+            }
+            if (depthLocations) {
+                RecordDepthSampleLocations(context, passCommands, *depthLocations);
+                Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+                recorder->Keep(depthLocations->keep);
             }
         };
     }
@@ -1894,6 +1913,14 @@ std::optional<State> maskedState(const State& state, const std::set<std::uint32_
         masked->blends[index].colorWriteMask = 0;
     }
     return masked;
+}
+
+std::optional<DepthSampleLocations> passDepthLocations(const Context& context, const State& state, const Pipeline& pipeline) {
+    if (!state.depth || state.depth->samples <= 1u || !state.customSampleLocations || !pipeline.SampleLocationsEnabled()) return std::nullopt;
+    auto locations = DepthSurfaceSampleLocations(context, *state.depth);
+    locations.grid = pipeline.HostSampleLocationGrid();
+    locations.locations = SampleLocations(state);
+    return locations;
 }
 
 // Debug aid: APS5_DUMP_TARGETS=<n> saves the first n renders of every color target as a raw file
@@ -2269,6 +2296,17 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         persistent.push_back(binding.multisampled ? 1u : 0u);
     }
     auto framebuffer = pipeline->AcquireFramebuffer(targetViews, owners, state.renderExtent, state.renderLayers, persistent);
+    std::vector<SampleOrderTarget> reordered;
+    SampleOrderPass reorderPass;
+    if (pipeline->ReordersSamples()) {
+        reorderPass = SampleOrderPassFor(context, pipelineState, pipeline->HostSampleOrder());
+        for (const auto& step : PlanSampleOrder(context, state, pipeline->HostSampleOrder())) {
+            if (step.attachment < targets.size()) reordered.push_back(MultisampleTargetOrderTarget(context, targets[step.attachment].color));
+            else reordered.push_back(DepthSurfaceOrderTarget(context, *state.depth));
+            Require(reordered.back().method == step.method, "a reordered attachment's surface disagrees with the planned way of putting its samples in order");
+        }
+    }
+    const auto depthLocations = passDepthLocations(context, pipelineState, *pipeline);
     timer.phase(PhasePipeline);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline created");
     if (lean) {
@@ -2289,12 +2327,15 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         record.completion = completion;
         record.waited = outcome.waited;
         record.stencilReplay = stencilReplay;
+        record.reordered = reordered;
+        record.reorderPass = reorderPass;
+        record.depthLocations = depthLocations;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
         // The recipe for the caller's draw-cache entry (design_cpu_final M8, rule R3 for draws):
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && resolved.moved.empty() && !multisampled) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && resolved.moved.empty() && !multisampled && !pipeline->ReordersSamples()) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
@@ -2413,6 +2454,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         context.Resolved(&DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, linear, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
         imageBarrier(context, commands, binding.target->Image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     }
+    std::vector<std::shared_ptr<void>> reorderKept;
+    RecordSampleOrder(context, commands, reorderPass, reordered, true, reorderKept);
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
     pipeline->Begin(commands, *framebuffer, state.renderExtent, state);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
@@ -2439,6 +2482,15 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     APS5_LOG_CHARS_OUT_DEBUG("Draw recorded");
     if (recorded) recorder->EndPassSamples();
     EndRenderPass(context, commands);
+    RecordSampleOrder(context, commands, reorderPass, reordered, false, reorderKept);
+    if (depthLocations) {
+        RecordDepthSampleLocations(context, commands, *depthLocations);
+        countBarrier(2);
+        reorderKept.push_back(depthLocations->keep);
+    }
+    if (recorded) {
+        for (auto& object : reorderKept) recorder->Keep(std::move(object));
+    }
     APS5_LOG_CHARS_OUT_DEBUG("Render pass ended");
     for (auto& binding : targets) {
         if (binding.proxied) {
@@ -2678,6 +2730,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     for (const auto& color : state.colors) record.targetSlices.push_back(color.arraySlice);
     record.pushBytes = &recipe.pushBytes;
     record.pushStages = recipe.pushStages;
+    record.depthLocations = passDepthLocations(context, state, *record.pipeline);
     recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs);
     if (profile) {
         result.recordUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - recordStart).count();

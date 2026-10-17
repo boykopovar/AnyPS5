@@ -6318,10 +6318,11 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     target.format = VK_FORMAT_R8G8B8A8_UNORM;
     target.bytes = targetBytes;
     target.samples = 4;
+    const bool ordered = MayReorderSamples(context, target.samples) && SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) != VK_FORMAT_UNDEFINED;
     {
         std::lock_guard gpu(GpuMutex());
         Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the multisampled target has no view");
-        Require(!MultisampleTargetStorable(context, target), "a multisampled target nothing stored to was created with storage usage");
+        Require(MultisampleTargetStorable(context, target) == ordered, ordered ? "a multisampled target whose samples may be reordered was created without storage usage" : "a multisampled target nothing stored to was created with storage usage");
         recorder.Submit();
         device.WaitQueue();
         recorder.Sync();
@@ -6412,9 +6413,9 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         const CompiledShader storedCompute{ShaderRecompiler::ShaderStage::Compute, &stored, 0};
         std::lock_guard gpu(GpuMutex());
         const auto rendered = MultisampleTargetView(context, target);
-        Require(!MultisampleTargetStorable(context, target), "sampling the multisampled target gave it storage usage");
+        Require(MultisampleTargetStorable(context, target) == ordered, "sampling the multisampled target changed its storage usage");
         ShaderResources resources(context, storedCompute);
-        Require(MultisampleTargetStorable(context, target) && MultisampleTargetView(context, target) != rendered, "a storage binding did not move the multisampled target to an image with storage usage");
+        Require(MultisampleTargetStorable(context, target) && (MultisampleTargetView(context, target) != rendered) != ordered, "a storage binding did not move the multisampled target to an image with storage usage, or moved one that had it");
         recorder.Submit();
         device.WaitQueue();
         recorder.Sync();

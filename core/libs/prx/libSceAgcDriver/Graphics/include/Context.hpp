@@ -6,6 +6,7 @@
 #endif
 #include <mutex>
 #include <vulkan/vulkan.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -232,6 +233,8 @@ struct Context {
     bool singlePassStorage = false;
     VkSampleCountFlags sampleLocationSampleCounts = 0;
     VkSampleCountFlags sampleLocationGridSampleCounts = 0;
+    std::array<VkExtent2D, 4> sampleLocationGridSizes{};
+    bool shaderStencilExport = false;
     PipelineCacheSynchronization* pipelineCacheSynchronization = nullptr;
     bool shaderTerminateInvocation = false;
 
