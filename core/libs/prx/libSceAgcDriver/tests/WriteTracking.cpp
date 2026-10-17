@@ -372,6 +372,49 @@ void CheckPrivateMappingReuse() {
     GuestArena::GuestArenaRelease_nid_postfix(replacement, 3 * Block);
 }
 
+void CheckRewatch() {
+    void* memory = GuestArena::GuestArenaAllocate_nid_postfix(4 * Block, Block);
+    GuestArena::GuestArenaCommit_nid_postfix(memory, 4 * Block, PAGE_READWRITE, 16384);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    Require(Watched(base, 4 * Block), "the rewatch test block is not watched");
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    const auto imported = base + Block;
+    std::memset(memory, 0x11, 4 * Block);
+    BumpCollectEpoch();
+    const auto before = CollectWrites(base, 4 * Block);
+    Require(before != 0, "the test range was not collected");
+    Unwatch(imported, 2 * Block);
+    const auto unwatched = UnwatchSerial();
+    Require(!Watched(imported, Block) && UntrackedHint(imported, Block) != 0, "the unwatched block does not read as untracked");
+    bytes[Block + 8] = 0x22;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> partial{{{imported + 4096, imported + Block}}};
+    Rewatch(partial);
+    Require(!Watched(imported, Block) && UnwatchSerial() == unwatched, "part of a block returned to the write watch");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> first{{{imported, imported + Block}}};
+    Rewatch(first);
+    Require(Watched(imported, Block) && !Watched(imported + Block, Block), "rewatching did not return exactly its block to the write watch");
+    Require(UnwatchSerial() != unwatched, "rewatching did not invalidate what was cached while the block was unwatched");
+    Require(UntrackedHint(imported, Block) == 0, "a rewatched block still reads as untracked");
+    Require(!UnchangedSince(imported, Block, before) && StoredOver(imported, Block, before), "a block returned to the write watch reads as unchanged since before it left");
+    Require(!UnchangedSinceCollected(imported, Block, before), "a CPU store made while the block was unwatched reads as no CPU store");
+    Require(UnchangedSince(base, Block, before) && UnchangedSince(base + 3 * Block, Block, before), "rewatching stamped the blocks around it");
+    BumpCollectEpoch();
+    const auto after = CollectWrites(imported, Block);
+    Require(after != 0 && UnchangedSince(imported, Block, after), "a rewatched block is not collected");
+    bytes[Block + 16] = 0x33;
+    CollectWritesUncached(imported, Block);
+    Require(!UnchangedSince(imported, Block, after), "a CPU store after rewatching was missed");
+    const auto serial = UnwatchSerial();
+    Rewatch(first);
+    Require(UnwatchSerial() == serial, "rewatching a watched block changed what it covers");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> uncommitted{{{base + 2 * Block, base + 3 * Block}}};
+    GuestArena::GuestArenaReset_nid_postfix(static_cast<std::uint8_t*>(memory) + 2 * Block, 16384);
+    Rewatch(uncommitted);
+    Require(!Watched(base + 2 * Block, Block), "a block with uncommitted pages returned to the write watch");
+    GuestArena::GuestArenaReset_nid_postfix(memory, 4 * Block);
+    GuestArena::GuestArenaRelease_nid_postfix(memory, 4 * Block);
+}
+
 void CheckUntrackedHint() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<volatile std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
@@ -938,6 +981,7 @@ int main() {
 #ifdef _WIN32
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
+        CheckRewatch();
         CheckUntrackedHint();
         CheckHostHoleInChild();
 #endif

@@ -1322,6 +1322,31 @@ void Unwatch(std::uint64_t address, std::size_t bytes) {
     unwatchLocked(tracker, address, bytes);
 }
 
+void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+#ifdef _WIN32
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) return;
+    bool restored = false;
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WriteBlockBytes != 0 || (end - tracker.base) % WriteBlockBytes != 0) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (tracker.coverage.Covers(begin, bytes) || !walkWrites(tracker, begin, end, StampKind::Cpu) || !tracker.coverage.Restore(begin, bytes)) continue;
+        ++tracker.generation;
+        tracker.noteCpuStore(begin, end, tracker.generation);
+        for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
+            tracker.driverPieces.erase(block);
+            tracker.stamp(block, tracker.generation, StampKind::Cpu);
+        }
+        restored = true;
+    }
+    if (restored) unwatchSerial.fetch_add(1, std::memory_order_release);
+#else
+    static_cast<void>(ranges);
+#endif
+}
+
 bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return import();
     if (!staysWatched) {

@@ -680,6 +680,10 @@ void RunImportWindow(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 #ifdef _WIN32
 void RunHintedImport(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     using namespace AgcDriver::GuestMemory;
+    AgcDriver::Graphics::SetHostImportDeferredSettles(false);
+    struct Restore {
+        ~Restore() { AgcDriver::Graphics::SetHostImportDeferredSettles(true); }
+    } restore;
     const auto address = AddressOf(block);
     std::memset(block, 0x55, BlockBytes);
     auto descriptor = TextureDescriptor(block, nullptr);
