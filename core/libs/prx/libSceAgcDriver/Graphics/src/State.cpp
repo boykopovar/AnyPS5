@@ -17,6 +17,7 @@
 #include <span>
 #include <array>
 #include <sstream>
+#include <string_view>
 
 namespace AgcDriver::Graphics {
 namespace {
@@ -48,6 +49,25 @@ std::string zeroMessage(std::uint32_t offset, std::uint32_t value, const char* n
     char detail[64];
     std::snprintf(detail, sizeof(detail), " (register 0x%x = 0x%08x)", offset, value);
     return std::string(name) + " is unsupported" + detail;
+}
+
+std::string tessellationMessage(std::uint32_t config, std::uint32_t parameters, const ShaderRecompiler::TessellationConfiguration& tess) {
+    static constexpr std::array<std::string_view, 3> Types{"TESS_ISOLINE", "TESS_TRIANGLE", "TESS_QUAD"};
+    static constexpr std::array<std::string_view, 4> Partitionings{"PART_INTEGER", "PART_POW2", "PART_FRAC_ODD", "PART_FRAC_EVEN"};
+    static constexpr std::array<std::string_view, 4> Topologies{"OUTPUT_POINT", "OUTPUT_LINE", "OUTPUT_TRIANGLE_CW", "OUTPUT_TRIANGLE_CCW"};
+    std::ostringstream message;
+    const auto field = [&](std::string_view name, std::uint32_t value, std::span<const std::string_view> names) {
+        message << name << '=' << value;
+        if (value < names.size()) message << ' ' << names[value];
+    };
+    message << "VGT_TF_PARAM=0x" << std::hex << parameters << std::dec << " (";
+    field("TYPE", tess.domain, Types);
+    message << ", ";
+    field("PARTITIONING", tess.partitioning, Partitionings);
+    message << ", ";
+    field("TOPOLOGY", tess.outputTopology, Topologies);
+    message << "), VGT_LS_HS_CONFIG=0x" << std::hex << config << std::dec << " (NUM_PATCHES=" << tess.patchesPerGroup << ", HS_NUM_INPUT_CP=" << tess.inputControlPoints << ", HS_NUM_OUTPUT_CP=" << tess.outputControlPoints << "): only triangle and quad domains with integer, fractional-even or fractional-odd partitioning and triangle output are supported by the reference path";
+    return message.str();
 }
 
 void zero(const Registers& registers, std::uint32_t offset, std::uint32_t mask, const char* name, RegisterBank bank = RegisterBank::Context) {
@@ -904,7 +924,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
         validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
         if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
-        validate((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3), "only triangle and quad domains with integer, fractional-even or fractional-odd partitioning and triangle output are supported by the reference path");
+        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
         result.minTessellationLevel = readFloat(queue.context, 0x287);
         result.maxTessellationLevel = readFloat(queue.context, 0x286);
         Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");

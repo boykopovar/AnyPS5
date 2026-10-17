@@ -958,6 +958,29 @@ void ShaderStageTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
 }
 
+void UnsupportedTessellationFieldTests() {
+    auto queue = makeState();
+    queue.context[0x2d5] = 0x0200210d;
+    queue.userConfig[0x242] = 9;
+    queue.userConfig[0x25b] = 0x1fe55;
+    queue.context[0x286] = 0x42800000;
+    queue.context[0x287] = 0x3f800000;
+    for (const auto [config, parameters, fields] : {
+             std::tuple{0xc355u, 0x40045u, "VGT_TF_PARAM=0x40045 (TYPE=1 TESS_TRIANGLE, PARTITIONING=1 PART_POW2, TOPOLOGY=2 OUTPUT_TRIANGLE_CW), VGT_LS_HS_CONFIG=0xc355 (NUM_PATCHES=85, HS_NUM_INPUT_CP=3, HS_NUM_OUTPUT_CP=3)"},
+             std::tuple{0x1033fu, 0x40066u, "VGT_TF_PARAM=0x40066 (TYPE=2 TESS_QUAD, PARTITIONING=1 PART_POW2, TOPOLOGY=3 OUTPUT_TRIANGLE_CCW), VGT_LS_HS_CONFIG=0x1033f (NUM_PATCHES=63, HS_NUM_INPUT_CP=3, HS_NUM_OUTPUT_CP=4)"},
+             std::tuple{0xc355u, 0x40048u, "VGT_TF_PARAM=0x40048 (TYPE=0 TESS_ISOLINE, PARTITIONING=2 PART_FRAC_ODD, TOPOLOGY=2 OUTPUT_TRIANGLE_CW)"},
+             std::tuple{0xc355u, 0x40029u, "(TYPE=1 TESS_TRIANGLE, PARTITIONING=2 PART_FRAC_ODD, TOPOLOGY=1 OUTPUT_LINE)"},
+             std::tuple{0xc355u, 0x4000du, "(TYPE=1 TESS_TRIANGLE, PARTITIONING=3 PART_FRAC_EVEN, TOPOLOGY=0 OUTPUT_POINT)"},
+             std::tuple{0xc355u, 0x4004bu, "(TYPE=3, PARTITIONING=2 PART_FRAC_ODD, TOPOLOGY=2 OUTPUT_TRIANGLE_CW)"},
+             std::tuple{0xc355u, 0x400f1u, "(TYPE=1 TESS_TRIANGLE, PARTITIONING=4, TOPOLOGY=7)"}}) {
+        queue.context[0x2d6] = config;
+        queue.context[0x2db] = parameters;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "VGT_SHADER_STAGES_EN=0x200210d: VGT_TF_PARAM=0x");
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, fields);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "): only triangle and quad domains with integer, fractional-even or fractional-odd partitioning and triangle output are supported by the reference path");
+    }
+}
+
 void NggVertexWorkgroupTests() {
     auto queue = makeState();
     queue.context[0x2d5] = 0x12010;
@@ -8162,6 +8185,7 @@ int main(int argc, char** argv) {
         UnwrittenSampleLocationTests();
         quadPixelMaskTests();
         ShaderStageTests();
+        UnsupportedTessellationFieldTests();
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
         TuningFieldTests();
