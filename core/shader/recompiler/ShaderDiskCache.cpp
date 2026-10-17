@@ -104,7 +104,7 @@ static_assert(sizeof(IrDescriptorBinding) == 32, "IrDescriptorBinding changed: u
 static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult changed: update the allocation encoder");
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
-static_assert(sizeof(IrResourcePlan) == 712, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(sizeof(IrValue) == 152, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
@@ -145,7 +145,7 @@ static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: upda
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
-static_assert(fieldCount<IrResourcePlan>() == 23, "IrResourcePlan changed: update EncodePlan and DecodePlan");
+static_assert(fieldCount<IrResourcePlan>() == 24, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 31, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");

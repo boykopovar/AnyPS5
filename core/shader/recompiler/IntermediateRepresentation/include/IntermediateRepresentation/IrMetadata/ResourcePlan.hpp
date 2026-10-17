@@ -9,8 +9,10 @@
 #include "IntermediateRepresentation/IrMetadata/ShaderInfo.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <stdexcept>
 #include <utility>
@@ -151,6 +153,12 @@ struct CompactResourcePlan {
     std::vector<std::uint32_t> conditions;
 };
 
+struct SrtTapeSlot {
+    std::once_flag once;
+    std::atomic<bool> ready{false};
+    std::shared_ptr<const void> tape;
+};
+
 struct IrResourcePlan {
     IrShaderStage stage = IrShaderStage::Unknown;
     std::uint64_t shaderHash = 0;
@@ -177,6 +185,7 @@ struct IrResourcePlan {
     bool resourceTrackingComplete = false;
     ShaderInfo info;
     UniformFillPlan uniformFill;
+    std::shared_ptr<SrtTapeSlot> tapeSlot = std::make_shared<SrtTapeSlot>();
 };
 
 }
