@@ -8,6 +8,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <net/if.h>
+#include <net/route.h>
+#include <vector>
+#endif
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
@@ -18,9 +23,20 @@
 #include <initializer_list>
 #include <stdexcept>
 
+#ifdef __APPLE__
+struct NetCtlDefaultRoute {
+    char name[IF_NAMESIZE];
+    in_addr gateway;
+    std::uint32_t metric;
+};
+#endif
+
 extern "C" {
 int APS5_VABI sceNetCtlGetInfo(int, NetCtlInfo*);
 int APS5_VABI sceNetCtlGetState(int*);
+#ifdef __APPLE__
+std::size_t NetCtlDefaultRoutes_nid_no_patch(const char*, std::size_t, NetCtlDefaultRoute*, std::size_t);
+#endif
 }
 
 namespace {
@@ -84,10 +100,66 @@ bool Binds(in_addr address) {
 
 }
 
+#ifdef __APPLE__
+void AppendRoute(std::vector<char>& table, std::uint32_t destination, std::uint32_t gateway, int flags, unsigned short index) {
+    rt_msghdr header{};
+    header.rtm_msglen = static_cast<unsigned short>(sizeof(header) + 2 * sizeof(sockaddr_in) + sizeof(std::uint32_t));
+    header.rtm_version = RTM_VERSION;
+    header.rtm_type = RTM_GET;
+    header.rtm_index = index;
+    header.rtm_flags = flags;
+    header.rtm_addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK;
+    sockaddr_in addresses[2]{};
+    for (auto& address : addresses) {
+        address.sin_len = sizeof(address);
+        address.sin_family = AF_INET;
+    }
+    addresses[0].sin_addr.s_addr = htonl(destination);
+    addresses[1].sin_addr.s_addr = htonl(gateway);
+    const std::uint32_t emptyMask = 0;
+    const auto* bytes = reinterpret_cast<const char*>(&header);
+    table.insert(table.end(), bytes, bytes + sizeof(header));
+    bytes = reinterpret_cast<const char*>(addresses);
+    table.insert(table.end(), bytes, bytes + sizeof(addresses));
+    bytes = reinterpret_cast<const char*>(&emptyMask);
+    table.insert(table.end(), bytes, bytes + sizeof(emptyMask));
+}
+
+void CheckDefaultRoutes() {
+    const auto loopback = static_cast<unsigned short>(if_nametoindex("lo0"));
+    Require(loopback != 0);
+    constexpr int up = RTF_UP | RTF_GATEWAY | RTF_STATIC;
+    std::vector<char> table;
+    AppendRoute(table, 0, 0x0A000001, up, loopback);
+    AppendRoute(table, 0x01020304, 0x0A000009, up | RTF_HOST, loopback);
+    AppendRoute(table, 0, 0x0A000009, up | RTF_HOST, loopback);
+    AppendRoute(table, 0, 0x0A000009, up | RTF_REJECT, loopback);
+    AppendRoute(table, 0, 0x0A000002, up | RTF_IFSCOPE, loopback);
+    AppendRoute(table, 0, 0x0A000009, RTF_GATEWAY | RTF_STATIC, loopback);
+    AppendRoute(table, 0, 0x0A000009, up, 0xFFFF);
+    const std::size_t complete = table.size();
+    AppendRoute(table, 0, 0x0A000009, up, loopback);
+    table.resize(table.size() - sizeof(std::uint32_t));
+
+    NetCtlDefaultRoute routes[4]{};
+    Require(NetCtlDefaultRoutes_nid_no_patch(table.data(), table.size(), routes, 4) == 2);
+    Require(std::strcmp(routes[0].name, "lo0") == 0 && ntohl(routes[0].gateway.s_addr) == 0x0A000001 && routes[0].metric == 0);
+    Require(std::strcmp(routes[1].name, "lo0") == 0 && ntohl(routes[1].gateway.s_addr) == 0x0A000002 && routes[1].metric == 1);
+
+    NetCtlDefaultRoute first[1]{};
+    Require(NetCtlDefaultRoutes_nid_no_patch(table.data(), complete, first, 1) == 2);
+    Require(ntohl(first[0].gateway.s_addr) == 0x0A000001);
+    Require(NetCtlDefaultRoutes_nid_no_patch(table.data(), 0, nullptr, 0) == 0);
+}
+#endif
+
 int main() {
 #ifdef _WIN32
     WSADATA data{};
     Require(WSAStartup(MAKEWORD(2, 2), &data) == 0);
+#endif
+#ifdef __APPLE__
+    CheckDefaultRoutes();
 #endif
     NetCtlInfo info{};
     Require(sceNetCtlGetInfo(0, &info) == kErrInvalidCode);
