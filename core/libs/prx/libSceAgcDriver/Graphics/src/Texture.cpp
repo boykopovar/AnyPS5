@@ -1154,28 +1154,48 @@ namespace {
 class PendingList {
 public:
     using iterator = std::vector<StorageTexture*>::iterator;
+    using Ranges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
     iterator begin() { return textures.begin(); }
     iterator end() { return textures.end(); }
     void push_back(StorageTexture* texture) {
         textures.push_back(texture);
-        ++version;
+        changed();
     }
     iterator erase(iterator it) {
-        ++version;
-        return textures.erase(it);
+        const auto next = textures.erase(it);
+        changed();
+        return next;
     }
     void remove(const StorageTexture* texture) {
-        if (std::erase(textures, texture) != 0) ++version;
+        if (std::erase(textures, texture) != 0) changed();
     }
     bool MayOverlap(std::uint64_t address, std::size_t bytes) {
-        if (textures.empty() || bytes == 0) return false;
         if (indexed != version) rebuild();
+        return !textures.empty() && Overlaps(ranges, address, bytes);
+    }
+    bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
+        const auto current = published.load(std::memory_order_acquire);
+        return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
+    }
+
+private:
+    struct Snapshot {
+        std::uint64_t version = 0;
+        Ranges ranges;
+    };
+
+    static bool Overlaps(const Ranges& ranges, std::uint64_t address, std::size_t bytes) {
+        if (bytes == 0) return false;
         const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
         const auto it = std::upper_bound(ranges.begin(), ranges.end(), address, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
         return it != ranges.end() && it->first < end;
     }
 
-private:
+    void changed() {
+        ++version;
+        changes.store(version, std::memory_order_release);
+    }
+
     void rebuild() {
         ranges.clear();
         for (const auto* texture : textures) ranges.emplace_back(texture->Descriptor().baseAddress, texture->Descriptor().baseAddress + texture->GuestBytes());
@@ -1187,11 +1207,14 @@ private:
         }
         ranges.resize(merged);
         indexed = version;
+        published.store(std::make_shared<const Snapshot>(Snapshot{version, ranges}), std::memory_order_release);
     }
     std::vector<StorageTexture*> textures;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    Ranges ranges;
     std::uint64_t version = 0;
     std::uint64_t indexed = ~std::uint64_t{0};
+    std::atomic<std::uint64_t> changes{0};
+    std::atomic<std::shared_ptr<const Snapshot>> published;
 };
 
 // Storage images whose results have not reached guest memory yet.
@@ -3601,6 +3624,7 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
     // FlushPending's listing; the images stay alive across the caller's scan as there.
     std::vector<std::shared_ptr<StorageTexture>> overlapping;
     auto& pending = Pending();
+    if (pending.textures.SurelyClear(address, bytes)) return overlapping;
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return overlapping;
     const auto* exempt = refreshing;

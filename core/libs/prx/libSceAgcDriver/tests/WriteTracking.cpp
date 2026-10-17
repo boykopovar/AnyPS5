@@ -9,6 +9,7 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 #include <array>
 #include <cstdint>
@@ -279,6 +280,75 @@ void CheckNewestStamp() {
     CollectWritesUncached(base + 3 * Block, Block);
     Require(NewestStamp(base + 3 * Block - 8, Block + 8) > partial, "a CPU store into the watched part of a partly watched range did not advance its stamp");
 }
+
+void CheckPartlyWatchedStore() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto stored = base + Block;
+    const auto unwatched = base + 2 * Block;
+    std::memset(memory, 0x11, 3 * Block);
+    BumpCollectEpoch();
+    Unwatch(unwatched, Block);
+    const auto before = CollectWrites(base, 2 * Block);
+    Require(before != 0 && UnchangedSince(base, 2 * Block, before), "the watched blocks were not collected");
+    Require(MarkWritten(unwatched - 64, 128) == 0, "a driver store into partly watched memory is trusted");
+    Require(!UnchangedSince(stored, Block, before), "a driver store into partly watched memory left its watched block unchanged");
+    Require(StoredOver(unwatched - 64, 64, before), "a driver store into partly watched memory is not seen over its watched bytes");
+    Require(!StoredOver(stored, Block - 64, before), "a driver store into partly watched memory is seen over watched bytes it did not store");
+    Require(UnchangedSince(base, Block, before), "a driver store into partly watched memory stamped a block it did not store into");
+    const auto beforeOwn = TrackerGeneration();
+    Require(StoreOwnBytes(unwatched - 64, 128, [&] { std::memset(reinterpret_cast<void*>(unwatched - 64), 0x22, 128); }) == 0, "an own store into partly watched memory is trusted");
+    Require(!UnchangedSince(stored, Block, beforeOwn), "an own store into partly watched memory left its watched block unchanged");
+    Require(UnchangedSince(base, Block, beforeOwn), "an own store into partly watched memory stamped a block it did not store into");
+#ifndef _WIN32
+    void* split = AllocateWatched(Block);
+    const auto splitBase = reinterpret_cast<std::uint64_t>(split);
+    const auto watchedHalf = splitBase + Block / 2;
+    std::memset(split, 0x11, Block);
+    Unwatch(splitBase, Block / 2);
+    const auto beforeSplit = CollectWrites(watchedHalf, Block / 2);
+    Require(beforeSplit != 0 && UnchangedSince(watchedHalf, Block / 2, beforeSplit), "the watched half of a split block was not collected");
+    Require(MarkWritten(splitBase + 64, 128) == 0 && UnchangedSince(watchedHalf, Block / 2, beforeSplit), "a driver store into the unwatched half of a split block stamped its watched half");
+    Require(MarkWritten(watchedHalf - 64, 128) == 0, "a driver store across the halves of a split block is trusted");
+    Require(!UnchangedSince(watchedHalf, Block / 2, beforeSplit), "a driver store across the halves of a split block left its watched half unchanged");
+#endif
+}
+
+#ifndef _WIN32
+void CheckWatchOverlaps() {
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uintptr_t>(memory);
+    Require(GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, page), "cannot unwatch the block's first page");
+    Require(GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<void*>(base + 3 * page), Block - 3 * page), "cannot unwatch the block's last pages");
+    Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(base, Block), "a block with unwatched pages is covered");
+    Require(GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(base, Block), "a block with watched pages inside does not overlap the watch");
+    Require(GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(base + page - 1, 2), "a range ending in a watched page does not overlap the watch");
+    Require(GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(base + 3 * page - 1, 2), "a range starting in a watched page does not overlap the watch");
+    Require(!GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(base, page), "an unwatched page before the watched ones overlaps the watch");
+    Require(!GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(base + 3 * page, Block - 3 * page), "unwatched pages after the watched ones overlap the watch");
+    Require(!GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(base + page, 0), "an empty range overlaps the watch");
+}
+
+void CheckWatchedMiddleStore() {
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto middle = base + page;
+    std::memset(memory, 0x11, Block);
+    Unwatch(base, page);
+    Unwatch(base + 3 * page, Block - 3 * page);
+    const auto before = CollectWrites(middle, 2 * page);
+    Require(before != 0 && UnchangedSince(middle, 2 * page, before), "the watched middle of a block was not collected");
+    Require(MarkWritten(base + 3 * page + 64, 128) == 0 && UnchangedSince(middle, 2 * page, before), "a driver store into an unwatched end of a block stamped its watched middle");
+    Require(MarkWritten(base + page / 2, 3 * page) == 0, "a driver store around the watched middle of a block is trusted");
+    Require(!UnchangedSince(middle, 2 * page, before), "a driver store around the watched middle of a block left it unchanged");
+    Require(StoredOver(middle, 2 * page, before), "a driver store around the watched middle of a block is not seen over it");
+    const auto beforeOwn = TrackerGeneration();
+    Require(StoreOwnBytes(base + page / 2, 3 * page, [&] { std::memset(reinterpret_cast<void*>(base + page / 2), 0x22, 3 * page); }) == 0, "an own store around the watched middle of a block is trusted");
+    Require(!UnchangedSince(middle, 2 * page, beforeOwn), "an own store around the watched middle of a block left it unchanged");
+}
+#endif
 
 #ifdef _WIN32
 void CheckDeferredSharedImports() {
@@ -730,6 +800,24 @@ void ProtectPage(std::uint64_t address, bool readable) {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(static_cast<std::uintptr_t>(address), 4096);
 }
 
+void CheckStoreAcrossImports() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block;
+    std::memset(memory, 0x11, 3 * Block);
+    Require(ImportWatched(base, 2 * Block, [] { return true; }) && Watched(base, 2 * Block), "an import that stays watched left the watch");
+    Require(ImportWatched(boundary, Block, [] { return true; }, false) && !Watched(boundary, Block), "an import that leaves the watch stayed watched");
+    const auto before = CollectWrites(base, 2 * Block);
+    Require(before != 0 && UnchangedSince(base, 2 * Block, before), "the watched import was not collected");
+    Require(MarkWritten(boundary - 64, 128) == 0, "a GPU write across a watched import and an unwatched one is trusted");
+    Require(!UnchangedSince(base + Block, Block, before), "a GPU write across a watched import and an unwatched one left the watched import's last block unchanged");
+    Require(StoredOver(boundary - 64, 64, before) && !StoredOver(base + Block, Block - 64, before), "a GPU write across a watched import and an unwatched one is not seen over exactly its watched bytes");
+    Require(UnchangedSince(base, Block, before), "a GPU write across a watched import and an unwatched one stamped a block it did not write");
+    const auto beforeOwn = TrackerGeneration();
+    Require(StoreOwnBytes(boundary - 64, 128, [&] { std::memset(reinterpret_cast<void*>(boundary - 64), 0x22, 128); }) == 0, "an own store across a watched import and an unwatched one is trusted");
+    Require(!UnchangedSince(base + Block, Block, beforeOwn) && UnchangedSince(base, Block, beforeOwn), "an own store across a watched import and an unwatched one did not stamp exactly the watched block it wrote");
+}
+
 void CheckUnwatchedImport() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -935,6 +1023,11 @@ int main() {
         CheckOwnStore();
         CheckUnwatch();
         CheckNewestStamp();
+        CheckPartlyWatchedStore();
+#ifndef _WIN32
+        CheckWatchOverlaps();
+        CheckWatchedMiddleStore();
+#endif
 #ifdef _WIN32
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
@@ -946,6 +1039,7 @@ int main() {
         CheckImportWindow();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
+        CheckStoreAcrossImports();
         CheckUnwatchedImport();
         CheckCommittedRanges();
     } catch (const std::exception& error) {

@@ -118,6 +118,7 @@ struct StageCapture {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
     std::vector<ShaderRecompiler::MemoryRegion> regions;
+    std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied;
     std::uint64_t forgetSerial = 0;
     std::uint32_t pushOffset = 0;
     ShaderRecompiler::SrtUserDataUse userDataUse;

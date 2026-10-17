@@ -156,10 +156,10 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
         if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
         const auto pointer = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.element);
-        DecorateTableNonUniform(state, pointer);
+        if (!state.tableAccess.uniform) DecorateTableNonUniform(state, pointer);
         const auto image = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, imageType, image, pointer);
-        DecorateTableNonUniform(state, image);
+        if (!state.tableAccess.uniform) DecorateTableNonUniform(state, image);
         return image;
     }
     const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
@@ -206,7 +206,7 @@ std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource,
     const auto sampledImage = state.module.AllocateId();
     const auto sampledType = state.module.Type(spv::OpTypeSampledImage, ImageType(state, imageResource));
     state.module.AddFunction(spv::OpSampledImage, sampledType, sampledImage, image, samplerId);
-    if (imageResource.table != NoTable || state.program.Info().samplers.at(sampler).table != NoTable) DecorateTableNonUniform(state, sampledImage);
+    if ((imageResource.table != NoTable && !state.tableAccess.uniform) || state.program.Info().samplers.at(sampler).table != NoTable) DecorateTableNonUniform(state, sampledImage);
     return sampledImage;
 }
 

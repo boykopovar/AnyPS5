@@ -231,6 +231,21 @@ void CheckProtection() {
     Require(!GuestWriteWatchCovers_nid_postfix(region.Address(2), region.page), "an unregistered range is covered");
 }
 
+void CheckOverlaps() {
+    Region region(6);
+    Require(!GuestWriteWatchOverlaps_nid_postfix(region.Address(0), region.bytes), "an unregistered range overlaps the watch");
+    GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+    Require(GuestWriteWatchUnregister_nid_postfix(region.base, region.page), "cannot unregister the first page");
+    Require(GuestWriteWatchUnregister_nid_postfix(region.base + 3 * region.page, 3 * region.page), "cannot unregister the last pages");
+    Require(!GuestWriteWatchCovers_nid_postfix(region.Address(0), region.bytes), "a range around unregistered pages is covered");
+    Require(GuestWriteWatchOverlaps_nid_postfix(region.Address(0), region.bytes), "a range around registered pages does not overlap the watch");
+    Require(GuestWriteWatchOverlaps_nid_postfix(region.Address(1) - 1, 2), "a range ending in a registered page does not overlap the watch");
+    Require(GuestWriteWatchOverlaps_nid_postfix(region.Address(3) - 1, 2), "a range starting in a registered page does not overlap the watch");
+    Require(!GuestWriteWatchOverlaps_nid_postfix(region.Address(0), region.page), "an unregistered page before the registered ones overlaps the watch");
+    Require(!GuestWriteWatchOverlaps_nid_postfix(region.Address(3), 3 * region.page), "unregistered pages after the registered ones overlap the watch");
+    Require(!GuestWriteWatchOverlaps_nid_postfix(region.Address(1), 0), "an empty range overlaps the watch");
+}
+
 void CheckThreads() {
     constexpr std::size_t Threads = 4;
     constexpr std::size_t PagesPerThread = 64;
@@ -269,7 +284,7 @@ void CheckThreads() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection or threads");
+        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps or threads");
         const std::string_view mode(argv[1]);
         if (mode == "collect") CheckCollect();
         else if (mode == "fresh") CheckFresh();
@@ -279,6 +294,7 @@ int main(int argc, char** argv) {
         else if (mode == "host") CheckHostWrite();
         else if (mode == "empty") CheckEmptyRanges();
         else if (mode == "protection") CheckProtection();
+        else if (mode == "overlaps") CheckOverlaps();
         else if (mode == "threads") CheckThreads();
         else throw std::runtime_error("unknown write watch test");
         std::printf("write watch %s passed\n", argv[1]);

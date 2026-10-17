@@ -110,6 +110,20 @@ alignas(256) constexpr std::array<std::uint32_t, 32> TableWave32Code{
     0x01090401u, 0x7e120202u, 0x34101287u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 29> SelectedTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4000400u, 0xfa000060u,
+    0xf4200444u, 0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 31> SelectedTableCutCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4000400u, 0xfa000060u,
+    0xf4200444u, 0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0x7da400ffu, 0x00001000u, 0xf09c8f08u, 0x01090401u,
+    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 22> DirectCode{
     0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0x360200bfu, 0x7e020d01u,
     0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u, 0x7e120202u,
@@ -188,6 +202,14 @@ alignas(256) constexpr std::array<std::uint32_t, 17> StoreTableCutCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7da400ffu, 0x00001000u, 0xf0208f08u, 0x00090401u,
     0xbf810000u,
+};
+
+constexpr std::uint32_t SelectedStoreValue = 0xc0de5eedu;
+
+alignas(256) constexpr std::array<std::uint32_t, 18> SelectedStoreCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4000400u, 0xfa000060u, 0xf4200444u, 0x20000000u,
+    0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e0802ffu, SelectedStoreValue, 0xf0208f08u,
+    0x00090401u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 30> PointerCode{
@@ -934,6 +956,43 @@ void RunGuardedTableTests(AgcDriver::VulkanDevice& device) {
     SetClassRecords();
 }
 
+void RunSelectedRecordTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    SetClassRecords();
+    Keys = {};
+    Srt[24] = 12u;
+    Outcome first;
+    for (const auto record : {2u, 0u, 1u}) {
+        Keys[3] = record;
+        const auto selected = Run(device, SelectedTableCode, 1, Lanes, 64);
+        Require(!Faulted(selected) && selected.imageTableCount == 1u, "image table selected record: record " + std::to_string(record) + " faulted or bound other entries:\n" + selected.log);
+        const auto* words = Table.data() + record * (Stride / 4u);
+        const auto control = RunDirect(device, {words[0], words[1], words[2], words[3]}, {words[4], words[5], words[6], words[7]});
+        Require(Group(selected, 0) == Group(control, 0), "image table selected record: record " + std::to_string(record) + " differs from the direct binding of the same words");
+        if (record == 2u) first = selected;
+        Require(selected.artifactId == first.artifactId && selected.variantId == first.variantId, "image table selected record: another key changed the module");
+    }
+
+    Keys[3] = 1000u;
+    const auto beyond = Run(device, SelectedTableCode, 1, Lanes, 64);
+    Require(!Faulted(beyond) && Zeros(beyond), "image table selected record: a key past the table faulted or did not sample zeros:\n" + beyond.log);
+
+    Keys[3] = 7u;
+    const auto cut = Run(device, SelectedTableCutCode, 1, Lanes, 64);
+    Require(!Faulted(cut), "image table selected record: an invalid record selected with EXEC clear faulted:\n" + cut.log);
+    const auto invalid = Run(device, SelectedTableCode, 1, Lanes, 64);
+    const auto tableAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Table.data())) + 7u * Stride + 16u;
+    char address[32];
+    std::snprintf(address, sizeof(address), "0x%llx", static_cast<unsigned long long>(tableAddress));
+    Require(Faulted(invalid) && invalid.log.find("not an image") != std::string::npos && invalid.log.find(address) != std::string::npos && invalid.log.find("00001234") != std::string::npos && Zeros(invalid), "image table selected record: an invalid record selected with EXEC set did not report its address, words and reason:\n" + invalid.log);
+
+    Keys[3] = 0u;
+    const auto aliased = Run(device, SelectedTableCode, 1, Lanes, 64, true);
+    Require(Faulted(aliased) && aliased.log.find("is written by its own dispatch") != std::string::npos, "image table selected record: a dispatch storing over its selected record did not fault on use:\n" + aliased.log);
+    SetClassRecords();
+    Srt[24] = 0u;
+}
+
 template <std::size_t TableWords, std::size_t DirectWords>
 void RequireModeEntry(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, TableWords>& tableCode, const std::array<std::uint32_t, DirectWords>& directCode, std::uint32_t record, std::span<const std::uint32_t> image, const std::string& what) {
     Keys = {};
@@ -997,6 +1056,30 @@ void RunStoreTests(AgcDriver::VulkanDevice& device) {
     const auto stored = Run(device, StoreTableCode, 1, Lanes, 64);
     Require(Faulted(stored) && stored.log.find("unsupported operation") != std::string::npos, "image table store: an image_store through a table did not fault as an unsupported operation:\n" + stored.log);
     Require(UintTexels == saved, "image table store: an unsupported store reached the image");
+}
+
+void RunSelectedStoreTests(AgcDriver::VulkanDevice& device) {
+    alignas(256) static std::array<std::uint32_t, Width * Height> storeTexels{};
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registered(storeTexels.data(), sizeof(storeTexels));
+    for (std::uint32_t texel = 0; texel < storeTexels.size(); ++texel) storeTexels[texel] = 0x5000u + texel;
+    const auto saved = storeTexels;
+    SetClassRecords();
+    SetRecord(9, PointClamp, Image(storeTexels.data(), Format32UInt));
+    Keys = {};
+    Keys[3] = 9u;
+    Srt[24] = 12u;
+    const auto stored = Run(device, SelectedStoreCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(storeTexels.data()), sizeof(storeTexels), nullptr, "test");
+    device.WaitIdle();
+    Require(!Faulted(stored) && stored.imageTableCount == 0u, "image table selected store: an image_store through a T# whose record the CPU evaluates faulted or was bound through an image table:\n" + stored.log);
+    for (std::uint32_t texel = 0; texel < storeTexels.size(); ++texel) {
+        const auto expected = texel < Lanes ? SelectedStoreValue : saved[texel];
+        Require(storeTexels[texel] == expected, "image table selected store: texel " + std::to_string(texel) + " holds " + std::to_string(storeTexels[texel]) + " after an image_store through a T# whose record the CPU evaluates, expected " + std::to_string(expected));
+    }
 }
 
 void RunPointerTests(AgcDriver::VulkanDevice& device) {
@@ -1325,8 +1408,10 @@ int main() {
         RunReadTests(*device);
         RunLoopKeyTests(*device);
         RunGuardedTableTests(*device);
+        RunSelectedRecordTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
+        RunSelectedStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);
         RunSplitRecordTests(*device);

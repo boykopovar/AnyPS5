@@ -60,7 +60,7 @@ Driver::DispatchCacheFootprint Driver::DispatchCacheSize() {
 }
 
 std::uint64_t Driver::variantBytes(const DispatchVariant& variant) {
-    return sizeof(DispatchVariant) + variant.words.size() * sizeof(std::uint32_t) + variant.runs.size() * sizeof(std::pair<std::uint64_t, std::uint64_t>) + variant.captured.size() * sizeof(ShaderRecompiler::MemoryRegion) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0);
+    return sizeof(DispatchVariant) + variant.words.size() * sizeof(std::uint32_t) + variant.shared.size() * sizeof(SharedWords) + variant.runs.size() * sizeof(std::pair<std::uint64_t, std::uint64_t>) + variant.captured.size() * sizeof(ShaderRecompiler::MemoryRegion) + (variant.vertexInfo != nullptr ? sizeof(ShaderRecompiler::ShaderVertexStageInfo) : 0);
 }
 
 void Driver::accountVariant(const DispatchVariant& variant, bool added) {

@@ -1,4 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "Optimization/SrtWalker.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
@@ -10,6 +12,8 @@
 #include <exception>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -117,6 +121,27 @@ void MovedDataHitsTheCache(bool libraries) {
     Require(again.lookups == 10 && again.hits == 5, mode + ": a draw at an address seen before did not reuse the cached draw (" + std::to_string(again.hits) + " hits)");
 }
 
+void SplitRunsNameTheirSharedWords() {
+    alignas(16) static std::array<std::uint32_t, 4> data{1u, 2u, 3u, 4u};
+    auto table = std::make_shared<ShaderRecompiler::SrtGuestWords>();
+    table->words = {5u, 6u, 7u, 8u};
+    const auto dataAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data.data()));
+    const auto tableAddress = dataAddress + 0x1000u;
+    const std::array<ShaderRecompiler::MemoryRegion, 2> regions{{{dataAddress, std::as_bytes(std::span(data))}, {tableAddress, std::as_bytes(std::span(table->words))}}};
+    ShaderRecompiler::SrtUserDataUse use;
+    use.asBase = 0x3u;
+    use.reads = {{dataAddress, 0}, {dataAddress + 8u, 1}};
+    const std::array<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>, 1> supplied{table};
+    AgcDriver::DriverDetail::DispatchVariant variant;
+    AgcDriver::DriverDetail::Driver::tagVariantRuns(variant, regions, use, true, 0, supplied);
+    Require(variant.runs.size() > regions.size(), "two user-data bases into one region did not split it into several runs");
+    Require(variant.shared.size() == 1u && variant.shared.front().regions == 1u, "the table region's words were not recorded as one shared run");
+    const auto& shared = variant.shared.front();
+    std::size_t first = 0;
+    for (std::size_t run = 0; run < shared.region && run < variant.runs.size(); ++run) first += static_cast<std::size_t>((variant.runs[run].second - variant.runs[run].first) / sizeof(std::uint32_t));
+    Require(shared.region < variant.runs.size() && variant.runs[shared.region].first == tableAddress && first == shared.first, "the shared words of a variant whose runs were split for relocation name run " + std::to_string(shared.region) + " of " + std::to_string(variant.runs.size()) + ", not the table's run " + std::to_string(variant.runs.size() - 1u));
+}
+
 void UnrelocatedAliasesStayOut(bool libraries) {
     Registered(SecondVertexHeader, SecondVertexCode.data(), sizeof(SecondVertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
@@ -149,6 +174,7 @@ void UnrelocatedAliasesStayOut(bool libraries) {
 
 int main() {
     try {
+        SplitRunsNameTheirSharedWords();
         bool libraries = false;
         {
             const auto device = OpenVulkanTestDevice();

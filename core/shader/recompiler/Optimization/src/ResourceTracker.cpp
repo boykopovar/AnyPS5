@@ -146,11 +146,15 @@ public:
         }
         std::vector<const IrValue*> referenced;
         for (const auto& plan : m_tableColumns) {
-            for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
-                plan.handle->ReplaceArgument(argument, plan.offset);
-            }
             const auto& column = *m_sources[plan.source].tableColumn;
+            IrValue* offset = column.selected ? &m_builder.Constant(column.addend) : plan.offset;
+            for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
+                plan.handle->ReplaceArgument(argument, offset);
+            }
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
+            if (column.selected) {
+                KeepSourceAlive(*plan.handle, m_sources[column.selection], referenced);
+            }
             if (plan.keyDomain.has_value()) {
                 KeepSourceAlive(*plan.handle, m_sources[plan.keyDomain->source], referenced);
             }
@@ -650,6 +654,18 @@ private:
         column.address = address;
         column.foldedAddend = folded ? baseAddend : 0u;
         column.foldedCarry = folded ? carry : 0u;
+        if (!address && !sampler) {
+            DescriptorSource direct;
+            MakeSource(handle, width, false, false, direct);
+            DescriptorSource selection;
+            selection.dwordCount = 1u;
+            selection.dwords[0] = offset;
+            std::uint32_t badDword = 0;
+            if (ValidateSource(direct, badDword) && ValidateSource(selection, badDword)) {
+                column.selected = true;
+                column.selection = InternSource(selection);
+            }
+        }
         const auto domain = masked ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
@@ -1273,6 +1289,7 @@ private:
             return;
         }
         IndexMemoryUsers();
+        const auto directImages = DirectImageHandles();
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
                 const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
@@ -1284,7 +1301,10 @@ private:
                     continue;
                 }
                 const auto memory = m_program.Resources().memoryInfo[flags.index];
-                static_cast<void>(PlanTableColumn(*inst->Argument(0)->Resolve(), false, memory.imageR128));
+                IrValue& image = *inst->Argument(0)->Resolve();
+                if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); })) {
+                    static_cast<void>(PlanTableColumn(image, false, memory.imageR128));
+                }
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
                     static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
                 }
@@ -1328,6 +1348,54 @@ private:
         return ValidateSource(descriptor, badDword);
     }
 
+    bool DirectImage(const IrValue& handle) {
+        if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u) {
+            return false;
+        }
+        DescriptorSource descriptor;
+        MakeSource(handle, 8u, false, false, descriptor);
+        std::uint32_t badDword = 0;
+        return ValidateSource(descriptor, badDword);
+    }
+
+    std::vector<const IrValue*> DirectImageHandles() {
+        std::vector<const IrValue*> handles;
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
+                if (imageInfo.access == ImageAccess::None || inst->ArgumentCount() == 0u) {
+                    continue;
+                }
+                const auto flags = inst->Flags<MemoryFlags>();
+                if (flags.index >= m_program.Resources().memoryInfo.size()) {
+                    continue;
+                }
+                const auto& memory = m_program.Resources().memoryInfo[flags.index];
+                const bool tableUnsupported = imageInfo.resourceClass == ImageResourceClass::Storage || memory.imagePacked || memory.imageByElements != 0u;
+                const IrValue* handle = inst->Argument(0)->Resolve();
+                if (tableUnsupported && DirectImage(*handle)) {
+                    handles.push_back(handle);
+                }
+            }
+        }
+        return handles;
+    }
+
+    bool SameHandle(const IrValue& left, const IrValue& right) const {
+        if (&left == &right) {
+            return true;
+        }
+        if (left.Opcode() != right.Opcode() || left.ArgumentCount() != right.ArgumentCount()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < left.ArgumentCount(); index++) {
+            if (!EquivalentValue(m_program.Resources(), left.Argument(index), right.Argument(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool IsTablePlanningMemory(std::uint32_t index) const {
         return std::ranges::find(m_tablePlanningMemory, index) != m_tablePlanningMemory.end();
     }
@@ -1336,8 +1404,59 @@ private:
         return source < m_sources.size() && m_sources[source].tableColumn.has_value();
     }
 
+    bool SameBufferSource(const IrValue& handle, std::uint32_t source) const {
+        const auto& current = m_sources[source];
+        if (current.tableColumn.has_value() || current.dwordCount != 4u || handle.ArgumentCount() != 4u) {
+            return false;
+        }
+        for (std::uint32_t dword = 0; dword < 4u; dword++) {
+            if (!EquivalentValue(m_program.Resources(), current.dwords[dword], handle.Argument(dword))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool SelectionWritten(const TableColumn& column) const {
+        const auto written = [&](const auto& matches) {
+            return std::any_of(m_info.buffers.begin(), m_info.buffers.end(), [&](const auto& buffer) { return (buffer.written || buffer.atomic) && matches(buffer.source); });
+        };
+        std::vector<const IrValue*> pending{m_sources[column.selection].dwords[0]};
+        std::vector<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (std::ranges::find(seen, current) != seen.end()) {
+                continue;
+            }
+            seen.push_back(current);
+            const bool pointer = current->Opcode() == IrOpcode::LoadAddressU32;
+            const bool buffer = current->Opcode() == IrOpcode::ReadConstBuffer && current->ArgumentCount() != 0u;
+            if ((pointer || buffer) && m_info.bdaWrites) {
+                return true;
+            }
+            if (pointer && written([](std::uint32_t) { return true; })) {
+                return true;
+            }
+            if (buffer) {
+                const IrValue* handle = current->Argument(0)->Resolve();
+                if (written([&](std::uint32_t source) { return SameBufferSource(*handle, source); })) {
+                    return true;
+                }
+            }
+            for (std::size_t index = 0; index < current->ArgumentCount(); index++) {
+                pending.push_back(current->Argument(index));
+            }
+        }
+        return false;
+    }
+
     void CheckTableStores() {
         for (auto& source : m_sources) {
+            if (source.tableColumn.has_value() && source.tableColumn->selected && SelectionWritten(*source.tableColumn)) {
+                source.tableColumn->selected = false;
+                source.tableColumn->keyDomains.clear();
+            }
             if (!source.tableColumn.has_value() || source.tableColumn->keyDomains.empty()) {
                 continue;
             }

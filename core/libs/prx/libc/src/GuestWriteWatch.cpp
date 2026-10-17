@@ -90,6 +90,13 @@ public:
         return covers(begin, end);
     }
 
+    bool Overlaps(std::uintptr_t begin, std::uintptr_t end) {
+        if (!Available()) return false;
+        std::shared_lock lock(_lock);
+        const auto next = _ranges.upper_bound(begin);
+        return (next != _ranges.begin() && std::prev(next)->second > begin) || (next != _ranges.end() && next->first < end);
+    }
+
     bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
         if (!Available()) return false;
         begin &= ~(PageBytes - 1);
@@ -379,6 +386,13 @@ public:
         return covers(begin, end);
     }
 
+    bool Overlaps(std::uintptr_t begin, std::uintptr_t end) {
+        if (!_available) return false;
+        const Lock lock(_lock);
+        const auto next = _ranges.upper_bound(begin);
+        return (next != _ranges.begin() && std::prev(next)->second.end > begin) || (next != _ranges.end() && next->first < end);
+    }
+
     enum class Take { All, Armed, Fresh };
 
     bool Collect(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context, Take take = Take::All) {
@@ -653,6 +667,16 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
 bool GuestWriteWatchCovers_nid_postfix(std::uintptr_t address, std::size_t bytes) {
 #ifdef APS5_GUEST_WRITE_WATCH
     return bytes != 0 && address + bytes > address && Watch::Get().Covers(address, address + bytes);
+#else
+    static_cast<void>(address);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+bool GuestWriteWatchOverlaps_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+#ifdef APS5_GUEST_WRITE_WATCH
+    return bytes != 0 && address + bytes > address && Watch::Get().Overlaps(address, address + bytes);
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
