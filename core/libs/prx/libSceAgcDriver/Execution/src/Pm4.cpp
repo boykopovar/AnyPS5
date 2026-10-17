@@ -449,7 +449,6 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             size(opcode == 0x3c ? 7 : 9);
             require((packet[1] & 0x10u) != 0, "register-space WAIT_REG_MEM is not implemented");
             require((packet[1] & 7u) <= 6u, "invalid WAIT_REG_MEM compare function");
-            require((packet[2] & (opcode == 0x3c ? 3u : 7u)) == 0, "misaligned WAIT_REG_MEM address");
             break;
         }
         case 0x45: {
@@ -548,7 +547,7 @@ bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_
 
 bool WaitSatisfied(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
-    const auto source = address(packet[2], packet[3]);
+    const auto source = address(packet[2] & (wide ? ~7u : ~3u), packet[3]);
     std::uint64_t value = 0;
     // Named for the [hooksync] attribution (the read goes through the flush hook).
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
@@ -558,7 +557,7 @@ bool WaitSatisfied(std::span<const std::uint32_t> packet) {
 
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet) {
     const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
-    const auto source = address(packet[2], packet[3]);
+    const auto source = address(packet[2] & (wide ? ~7u : ~3u), packet[3]);
     const std::uint64_t value = wide ? *reinterpret_cast<const volatile std::uint64_t*>(source) : *reinterpret_cast<const volatile std::uint32_t*>(source);
     return waitCompares(packet, wide, value);
 }
@@ -669,7 +668,7 @@ WaitFields DecodeWait(std::span<const std::uint32_t> packet) {
     const auto opcode = packet.empty() ? 0u : (packet[0] >> 8u) & 0xffu;
     require((opcode == 0x3cu && packet.size() == 7) || (opcode == 0x93u && packet.size() == 9), "expected WAIT_REG_MEM or WAIT_REG_MEM_64 packet");
     const bool wide = opcode == 0x93u;
-    return {packet[1] & 7u, address(packet[2], packet[3]), wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], wide ? packet[8] : packet[6], WaitAwaitedBytes(packet)};
+    return {packet[1] & 7u, address(packet[2] & (wide ? ~7u : ~3u), packet[3]), wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], wide ? packet[8] : packet[6], WaitAwaitedBytes(packet)};
 }
 
 ConditionalWrite DecodeConditionalWrite(std::span<const std::uint32_t> packet) {
@@ -1045,7 +1044,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                 if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
                     warned = true;
                     std::fprintf(stderr, "[gpu] WAIT_REG_MEM at 0x%llx still waiting after 5s (function %u ref 0x%x mask 0x%x)\n",
-                                 static_cast<unsigned long long>(address(packet[2], packet[3])), packet[1] & 7u, packet[4], packet[5]);
+                                 static_cast<unsigned long long>(address(packet[2] & (((packet[0] >> 8u) & 0xffu) == 0x93u ? ~7u : ~3u), packet[3])), packet[1] & 7u, packet[4], packet[5]);
                 }
             }
             return;
