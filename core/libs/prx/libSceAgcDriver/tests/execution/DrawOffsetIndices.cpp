@@ -69,6 +69,15 @@ alignas(256) constexpr std::array<std::uint32_t, 30> PostAddCode{
     0xbf810000,
 };
 
+alignas(256) constexpr auto NoCarryCode = [] {
+    auto code = PostAddCode;
+    code[2] = 0x4a0a0a10u;
+    code[3] = 0xbf800000u;
+    code[4] = 0x4a101011u;
+    code[5] = 0xbf800000u;
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 30> CarryCode{
     0x7e020280, 0x7e040280,
     0xd70f7d05, 0x00020a10,
@@ -452,15 +461,16 @@ std::string Run(Fixture& fixture) {
         failures += fixture.Check(what + ", on the CPU path", autoIndices, arguments.firstVertexOrIndex, arguments.firstInstance, true);
     }
     if (fixture.device->DrawIndirectSupport().firstInstance) {
-        {
-            const std::string what = "indexed indirect record whose fetch adds are the only readers of v5/v8, user data s16 0x51, s17 0x62";
-            const auto vertex = fixture.Vertex(PostAddCode, staleUserData);
+        for (const auto* code : {&PostAddCode, &NoCarryCode}) {
+            const std::string what = std::string(code == &NoCarryCode ? "no-carry " : "carry ") + "indexed indirect record whose fetch adds are the only readers of v5/v8, user data s16 0x51, s17 0x62";
+            const auto vertex = fixture.Vertex(*code, staleUserData);
             AgcDriver::Pm4::DrawParameters draw{indexAddress, static_cast<std::uint32_t>(Indices.size()), 2, 0, 0, true, 0, 0};
             draw.indirect = indexedIndirect;
             failures += Classified(fixture, what, vertex, staleUserData, draw, std::nullopt, Rule::InPlace);
             fixture.Place(indexedRecord[3], bufferIndices, indexedRecord[4]);
             fixture.Draw(vertex, draw);
             failures += fixture.Check(what + ", drawn in place on the GPU", bufferIndices, indexedRecord[3], indexedRecord[4], false);
+            if (code == &NoCarryCode) std::cout << "no-carry indexed indirect GPU readback checked\n";
         }
         {
             const std::string what = "indexed indirect record whose packet names no register for its offsets, user data s16 0x51, s17 0x62";

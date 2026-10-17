@@ -357,6 +357,7 @@ bool writesSgprMask(const RdnaInstruction& inst, std::uint32_t sgpr, std::uint32
 
 bool carryObserved(const RdnaProgram& program, std::size_t addIndex, std::uint32_t waveSize) {
     const auto& add = program.instructions[addIndex];
+    if (add.op == RdnaOpcode::VAddNcU32) return false;
     if (add.destination2.kind == RdnaOperandKind::None || add.destination2.kind == RdnaOperandKind::Null) return false;
     if (!isScalarOperand(add.destination2)) return true;
     const auto first = scalarSlot(add.destination2);
@@ -408,8 +409,9 @@ EmbeddedFetchPlan EmbeddedVertexFetchAnalyzer::Analyze(const RdnaProgram& progra
         const bool vertexIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == 0u || (userDataBaseRegister == 8u && inst.destination.reg == kVertexIndexVgpr));
         const bool instanceIndexAccumulator = isVectorOperand(inst.destination) && (inst.destination.reg == (userDataBaseRegister == 8u ? kInstanceIndexVgpr : 3u));
         std::uint32_t sadZero = 0u;
+        const bool plainNoCarryAdd = inst.op == RdnaOpcode::VAddNcU32 && inst.family == RdnaInstructionFamily::VOP2 && inst.wordCount == 1u;
         const bool indexOffsetAdd = (vertexIndexAccumulator || instanceIndexAccumulator) && isScalarOperand(inst.source0) &&
-            ((inst.op == RdnaOpcode::VAddI32 && isVectorOperand(inst.source1) && inst.source1.reg == inst.destination.reg) ||
+            (((inst.op == RdnaOpcode::VAddI32 || plainNoCarryAdd) && isVectorOperand(inst.source1) && inst.source1.reg == inst.destination.reg) ||
              (userDataBaseRegister == 8u && (inst.destination.reg == kVertexIndexVgpr || inst.destination.reg == kInstanceIndexVgpr) &&
               inst.op == RdnaOpcode::VSadU32 && isVectorOperand(inst.source2) && inst.source2.reg == inst.destination.reg &&
               tryConstantOperand(sgprs, inst.source1, sadZero) && sadZero == 0u));
