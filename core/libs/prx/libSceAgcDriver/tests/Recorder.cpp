@@ -4246,7 +4246,7 @@ void splitWriteBackTests(const Device& device, Recorder& recorder) {
         {"64 KiB R_X 200x150, 3 mips, ranges split at 128 KiB, a second store outside the write watch", TextureTileMode::kR64KBX, 3, 0, 131072, true, true, false, true},
         {"linear 200x150, ranges split at 64 KiB, a second store outside the write watch", TextureTileMode::kLinear, 1, 0, 65536, true, true, false, true},
     };
-    SetHostImportWindow(64ull << 20u);
+    SetHostImportWindow(64ull << 10u);
     struct Window {
         ~Window() { SetHostImportWindow(0); }
     } window;
@@ -4376,6 +4376,113 @@ void splitWriteBackTests(const Device& device, Recorder& recorder) {
     }
     if (!failures.empty()) throw std::runtime_error("split write-back:\n" + failures);
     std::cout << "split write-back: ok\n";
+}
+
+void writeBackBlockTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: write-back blocks not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = std::size_t{8} << 20u;
+    struct Case {
+        const char* name;
+        std::size_t offset;
+        std::size_t registeredEnd;
+        bool alternate;
+        bool direct;
+        std::size_t imports;
+    };
+    const Case cases[] = {
+        {"a 4 MiB image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, false, true, 1},
+        {"a 4 MiB image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, false, true, 2},
+        {"a 4 MiB image over 64 KiB pieces of which every other one is not GPU mapped", 0, 4u << 20u, true, false, 0},
+    };
+    SetHostImportWindow(window);
+    struct Window {
+        ~Window() { SetHostImportWindow(0); }
+    } restore;
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    std::string failures;
+    for (const auto& test : cases) {
+        GuestTextureResource resource{};
+        resource.width = 1024;
+        resource.height = 1024;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kLinear;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
+        Require(surfaceBytes == (4u << 20u) && test.offset + surfaceBytes <= test.registeredEnd, std::string(test.name) + ": the surface does not fit its pieces");
+#ifdef _WIN32
+        void* reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        void* reserved = std::aligned_alloc(window, 2 * window);
+#endif
+        Require(reserved != nullptr, "cannot allocate the write-back block");
+        auto* memory = static_cast<std::uint8_t*>(reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(reserved) + window - 1) / window * window));
+        for (std::size_t i = 0; i < window; ++i) memory[i] = pattern(i);
+        std::vector<std::size_t> pieces;
+        for (std::size_t offset = 0; offset < test.registeredEnd; offset += piece) pieces.push_back(offset);
+        {
+            GuestAllocations::Mutation mutation;
+            for (const auto offset : pieces) mutation.Add(memory + offset, piece, true, true, !test.alternate || offset / piece % 2 == 0);
+        }
+        ClearHostImports(base.device);
+        const auto address = reinterpret_cast<std::uint64_t>(memory) + test.offset;
+        const auto before = HostImportCounters();
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        resource.baseAddress = address;
+        std::size_t texels = 0;
+        bool direct = false;
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const auto commands = recorder.Commands();
+            recorder.Keep(image);
+            const VkClearColorValue value{{1.0f, 0.0f, 0.0f, 1.0f}};
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            image->MarkDirty();
+            image->WriteBack();
+            direct = !image->GuestSnapshotValid();
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            for (std::size_t i = test.offset; i < test.offset + surfaceBytes; i += 4) texels += std::equal(red.begin(), red.end(), memory + i) ? 1 : 0;
+        }
+        const auto after = HostImportCounters();
+        std::size_t made = 0;
+        std::size_t segments = 0;
+        for (std::size_t index = 0; index < ImportRequesterCount; ++index) made += after.requesters[index].made - before.requesters[index].made;
+        segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
+        std::printf("%s: %zu imports made (%zu by write-back segments), %s write-back, %zu of %zu texels stored\n", test.name, made, segments, direct ? "GPU-direct" : "CPU", texels, surfaceBytes / 4);
+        if (made != test.imports) failures += std::string(test.name) + ": the write-back made " + std::to_string(made) + " imports, expected " + std::to_string(test.imports) + "\n";
+        if (direct != test.direct) failures += std::string(test.name) + ": the write-back took the " + (direct ? "GPU-direct" : "CPU") + " path\n";
+        if (texels != surfaceBytes / 4) failures += std::string(test.name) + ": the write-back stored " + std::to_string(texels) + " of " + std::to_string(surfaceBytes / 4) + " texels\n";
+        {
+            GuestAllocations::Mutation mutation;
+            for (const auto offset : pieces) mutation.Remove(memory + offset);
+        }
+        ClearHostImports(base.device);
+        recorder.Sync();
+#ifdef _WIN32
+        VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+        std::free(reserved);
+#endif
+    }
+    if (!failures.empty()) throw std::runtime_error("write-back blocks:\n" + failures);
+    std::cout << "write-back blocks: ok\n";
 }
 
 void singlePassTests(const Device& device, Recorder& recorder, bool watched) {
@@ -8304,6 +8411,14 @@ int main(int argc, char** argv) {
             std::cout << "CMASK copied clear, write-back and failure tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--writeback-blocks-only") {
+            if (device.GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, host imports are unavailable\n";
+                return 77;
+            }
+            writeBackBlockTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--metadata-pass-only") {
             metadataPassTests(device, recorder);
             std::cout << "Color metadata pass tests passed\n";
@@ -8433,6 +8548,7 @@ int main(int argc, char** argv) {
         writeBackPaddingTests(device, recorder, false);
         writeBackPaddingTests(device, recorder, true);
         splitWriteBackTests(device, recorder);
+        writeBackBlockTests(device, recorder);
         singlePassTests(device, recorder, false);
         singlePassTests(device, recorder, true);
         unchangedCpuStampTests(device, recorder);

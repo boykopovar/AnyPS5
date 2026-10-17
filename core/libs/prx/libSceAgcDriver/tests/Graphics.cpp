@@ -3696,6 +3696,7 @@ struct MockVulkan {
     VkDeviceSize allocatedBytes = 0;
     std::optional<VkDeviceSize> memoryLimit;
     std::uint64_t allocationAttempts = 0;
+    std::optional<VkDeviceSize> importLimit;
     std::uint32_t bufferMemoryTypeBits = 1;
     std::vector<std::uint32_t> allocationTypes;
     std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
@@ -3766,6 +3767,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAlloca
     ++mock.allocationAttempts;
     mock.allocationTypes.push_back(info->memoryTypeIndex);
     if (mock.memoryLimit.has_value() && mock.allocatedBytes + info->allocationSize > *mock.memoryLimit) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (mock.importLimit.has_value() && info->allocationSize > *mock.importLimit && info->pNext != nullptr && static_cast<const VkMemoryAllocateFlagsInfo*>(info->pNext)->pNext != nullptr) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     *memory = makeHandle<VkDeviceMemory>();
     mock.memories[*memory] = std::vector<std::byte>(info->allocationSize);
     mock.allocationSizes[*memory] = info->allocationSize;
@@ -8268,7 +8270,8 @@ int main(int argc, char** argv) {
             [](std::optional<VkDeviceSize> headroom) {
                 mock.memoryLimit = headroom.has_value() ? std::optional<VkDeviceSize>(mock.allocatedBytes + *headroom) : std::nullopt;
             },
-            [] { return mock.allocationAttempts; }
+            [] { return mock.allocationAttempts; },
+            [](std::optional<VkDeviceSize> limit) { mock.importLimit = limit; }
         });
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
