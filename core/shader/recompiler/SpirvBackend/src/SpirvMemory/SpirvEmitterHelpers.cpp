@@ -380,7 +380,7 @@ void DefineOutputs(SpirvEmitterState& state) {
         case StageOutputKind::StencilRef:
             if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == state.supportedCapabilities.end()) {
                 const auto values = StencilReferenceValues(state.program);
-                if (values.empty()) throw std::runtime_error("stencil reference export emulation requires a proven set of at most 16 values");
+                if (values.empty()) throw std::runtime_error("stencil reference export emulation found no stencil export");
                 if (!StencilReferenceDefinedForKeptInvocations(state.program)) throw std::runtime_error("stencil reference export emulation requires a stencil export on every kept path");
                 if (PixelInfo(state).psEarlyZ || PixelInfo(state).psOrderedPixelShader || !StencilReplaySafe(state.program)) throw std::runtime_error("stencil reference export emulation requires a replay-safe pixel shader with late tests");
                 state.stencilReplay = true;

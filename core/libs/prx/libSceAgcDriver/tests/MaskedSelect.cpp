@@ -987,6 +987,42 @@ int main() {
         return StencilReferenceValues(b.program) == std::vector<std::uint32_t>{0u, 255u} && !StencilReplaySafe(b.program);
     });
 
+    passed &= run("an unprovable stencil reference replays every eight-bit value", [] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& zero = b.constant(0u);
+        auto& reference = b.emit(IrOpcode::UndefU32, IrType::U32, {});
+        ExportInfo info{};
+        info.kind = ExportTargetKind::MrtZ;
+        info.en = 2u;
+        info.vm = true;
+        b.program.Metadata().exportInfo.push_back(info);
+        ExportFlags flags{0u};
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &flags, sizeof(flags));
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&zero, &reference, &zero, &zero});
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &b.truth()}, bits);
+        const auto values = StencilReferenceValues(b.program);
+        return values.size() == 256u && values.front() == 0u && values.back() == 255u;
+    });
+
+    passed &= run("a proven stencil reference replays its eight-bit value", [] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& zero = b.constant(0u);
+        ExportInfo info{};
+        info.kind = ExportTargetKind::MrtZ;
+        info.en = 2u;
+        info.vm = true;
+        b.program.Metadata().exportInfo.push_back(info);
+        ExportFlags flags{0u};
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &flags, sizeof(flags));
+        auto& value = b.emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&zero, &b.constant(300u), &zero, &zero});
+        b.emit(IrOpcode::SetAttribute, IrType::Void, {&value, &b.truth()}, bits);
+        return StencilReferenceValues(b.program) == std::vector<std::uint32_t>{44u};
+    });
+
     passed &= run("stencil replay admits own-lane masks and their whole-quad expansion as export guards", [&] {
         Builder b;
         b.program.Resources().stage = IrShaderStage::Pixel;

@@ -5,6 +5,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -601,9 +602,12 @@ std::vector<std::uint32_t> StencilReferenceValues(const IrProgram& program) {
             if (info.kind != ExportTargetKind::MrtZ || (info.en & 2u) == 0u) continue;
             std::set<const IrValue*> visiting;
             const auto values = Values(program, instruction->Argument(0), visiting, 0u, 1u, instruction->Argument(1));
-            if (!values) return {};
-            result.insert(values->begin(), values->end());
-            if (result.size() > 16u) return {};
+            if (!values) {
+                std::vector<std::uint32_t> all(256u);
+                std::iota(all.begin(), all.end(), 0u);
+                return all;
+            }
+            for (const auto value : *values) result.insert(value & 0xffu);
         }
     }
     return {result.begin(), result.end()};
