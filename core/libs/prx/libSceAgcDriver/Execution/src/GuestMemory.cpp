@@ -797,6 +797,7 @@ struct WriteTracker {
         std::uintptr_t end = 0;
         std::uint64_t epoch = 0;
         std::uint64_t unwatched = 0;
+        std::uint64_t mapping = 0;
     };
     std::array<Memo, 256> memo{};
     std::size_t nextMemo = 0;
@@ -1184,19 +1185,20 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     // must not differ between them.
     const auto epoch = currentCollectEpoch();
     const auto unwatched = unwatchSerial.load(std::memory_order_acquire);
+    const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const bool useMemo = memoized && collectMemoEnabled() && bytes != 0;
     if (useMemo && !sharedCollectMemo()) {
         // An entry exists only for a completed walk of an in-arena range, so the tracker is
         // initialized and watched; nothing below the lock needs asking.
         if (epochCollectMapEnabled()) {
             const auto& map = epochCollectMap(epoch);
-            if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && stop <= found->second.end) {
+            if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == mapping && stop <= found->second.end) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
                 return tracker.generation.load(std::memory_order_relaxed);
             }
         }
         for (const auto& entry : threadCollectMemo.entries) {
-            if (entry.epoch == epoch && entry.unwatched == unwatched && entry.begin <= first && stop <= entry.end) {
+            if (entry.epoch == epoch && entry.unwatched == unwatched && entry.mapping == mapping && entry.begin <= first && stop <= entry.end) {
                 // The current generation, not the memoized one: blocks stamped since (MarkWritten, an
                 // overlapping collect) were written before this caller reads, and an older value would
                 // make every later UnchangedSince fail until the epoch ends.
@@ -1211,7 +1213,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     auto cursor = first;
     if (useMemo && sharedCollectMemo()) {
         for (const auto& entry : tracker.memo) {
-            if (entry.epoch == epoch && entry.unwatched == unwatchSerial.load(std::memory_order_relaxed) && entry.begin <= cursor && stop <= entry.end) {
+            if (entry.epoch == epoch && entry.unwatched == unwatchSerial.load(std::memory_order_relaxed) && entry.mapping == mapping && entry.begin <= cursor && stop <= entry.end) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
                 return tracker.generation;
             }
@@ -1232,12 +1234,12 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     // Only a completed walk is remembered; a failed one (uncommitted pages) returned 0 above.
     if (collectMemoEnabled()) {
         const auto serial = unwatchSerial.load(std::memory_order_relaxed);
-        if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial};
+        if (sharedCollectMemo()) tracker.memo[tracker.nextMemo++ % tracker.memo.size()] = {first, stop, epoch, serial, mapping};
         else {
-            threadCollectMemo.entries[threadCollectMemo.next++ % threadCollectMemo.entries.size()] = {first, stop, epoch, serial};
+            threadCollectMemo.entries[threadCollectMemo.next++ % threadCollectMemo.entries.size()] = {first, stop, epoch, serial, mapping};
             if (epochCollectMapEnabled()) {
                 auto& entry = epochCollectMap(epoch).ranges[first];
-                if (entry.unwatched != serial || entry.end < stop) entry = {first, stop, epoch, serial};
+                if (entry.unwatched != serial || entry.mapping != mapping || entry.end < stop) entry = {first, stop, epoch, serial, mapping};
             }
         }
     }

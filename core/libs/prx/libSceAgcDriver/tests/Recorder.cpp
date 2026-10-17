@@ -109,6 +109,32 @@ void ReleaseWatched(void* block, std::size_t bytes) {
 #endif
 }
 
+bool collectMappingHistoryTests() {
+    constexpr std::size_t bytes = 131072;
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes, 65536));
+    if (memory == nullptr) return false;
+    GuestAllocations::Mutation().Add(memory, bytes, true, true, false);
+    struct Cleanup {
+        std::uint8_t* memory;
+        ~Cleanup() {
+            GuestAllocations::Mutation().Remove(memory);
+            ReleaseWatched(memory, bytes);
+        }
+    } cleanup{memory};
+    const auto address = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, bytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto before = AgcDriver::GuestMemory::CollectWrites(address, bytes);
+    Require(before != 0, "the mapping fixture has no complete write history");
+    memory[4096] = 0x22;
+    GuestAllocations::Mutation().Remove(memory);
+    GuestAllocations::Mutation().Add(memory, bytes, true, true, false);
+    Require(AgcDriver::GuestMemory::CollectWrites(address, bytes) != 0, "the replacement mapping lost write tracking");
+    Require(!AgcDriver::GuestMemory::UnchangedSince(address, bytes, before), "a cached collect hid a CPU store across allocation replacement");
+    Require(memory[4096] == 0x22, "collecting the replacement mapping changed its CPU bytes");
+    return true;
+}
+
 std::optional<std::size_t> selectDevice(std::span<const VkPhysicalDeviceProperties> devices, std::string_view request) {
     const auto rankDeviceType = [](VkPhysicalDeviceType type) {
         switch (type) {
@@ -8176,6 +8202,11 @@ void Run(Context context) {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--collect-mapping-history-only") {
+            if (!collectMappingHistoryTests()) return 77;
+            std::cout << "collect mapping history tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--device-selection-only") {
             deviceSelectionTests();
             std::cout << "recorder device selection tests passed\n";
