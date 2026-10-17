@@ -1,6 +1,7 @@
 #include "Recompiler.hpp"
 #include "StencilReplay.hpp"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <list>
 #include <functional>
 #include <map>
+#include <memory>
 #include <set>
 #include <mutex>
 #include <new>
@@ -307,9 +309,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 // shared immutable object every later capture that reproduces the snapshot receives, so Populate
 // and the per-request copy run once per distinct snapshot.
 struct ResultMemoEntry {
-    std::uint64_t variantId;
-    std::uint64_t hash;
+    std::uint64_t variantId = 0;
+    std::uint64_t hash = 0;
     std::shared_ptr<const RecompileResult> result;
+    std::uint64_t used = 0;
 };
 
 struct EmissionFailure {
@@ -317,6 +320,10 @@ struct EmissionFailure {
     BindingLayout layout;
     std::exception_ptr failure;
 };
+
+constexpr std::size_t ResultMemoSets = 64;
+constexpr std::size_t ResultMemoWays = 4;
+using ResultMemoTable = std::array<ResultMemoEntry, ResultMemoSets * ResultMemoWays>;
 
 struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::mutex mutex;
@@ -333,9 +340,8 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::unique_ptr<IrProgram> program;
     std::vector<std::shared_ptr<const CompiledVariant>> variants;
     std::vector<EmissionFailure> emissionFailures;
-    // The result memo, most recently used first, at most ResultMemoEntries (under mutex).
-    std::list<ResultMemoEntry> memo;
-    std::unordered_map<std::uint64_t, std::list<ResultMemoEntry>::iterator> memoIndex;
+    std::unique_ptr<ResultMemoTable> memo;
+    std::uint64_t memoClock = 0;
 };
 
 namespace {
@@ -1133,7 +1139,10 @@ bool ResultMemo() {
     return resultMemo;
 }
 
-constexpr std::size_t ResultMemoEntries = 256;
+ResultMemoEntry* memoSet(SourceEntry& source, std::uint64_t index) {
+    if (source.memo == nullptr) return nullptr;
+    return source.memo->data() + static_cast<std::size_t>((index ^ (index >> 32u)) % ResultMemoSets) * ResultMemoWays;
+}
 
 struct ResultMemoCounters {
     std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0};
@@ -1252,13 +1261,16 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     {
         std::lock_guard lock(source.mutex);
         index = (variant->artifact.variantId * 0x9e3779b97f4a7c15ull) ^ hash;
-        const auto found = source.memoIndex.find(index);
-        if (found != source.memoIndex.end() && found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
-            source.memo.splice(source.memo.begin(), source.memo, found->second);
-            counters.hits.fetch_add(1, std::memory_order_relaxed);
-            if (memoHit != nullptr) *memoHit = true;
-            reportResultMemo();
-            return found->second->result;
+        if (auto* set = memoSet(source, index)) {
+            for (std::size_t way = 0; way < ResultMemoWays; ++way) {
+                auto& entry = set[way];
+                if (entry.result == nullptr || entry.variantId != variant->artifact.variantId || entry.hash != hash) continue;
+                entry.used = ++source.memoClock;
+                counters.hits.fetch_add(1, std::memory_order_relaxed);
+                if (memoHit != nullptr) *memoHit = true;
+                reportResultMemo();
+                return entry.result;
+            }
         }
     }
     const auto started = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -1269,25 +1281,23 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     std::shared_ptr<const RecompileResult> shared = std::move(result);
     {
         std::lock_guard lock(source.mutex);
-        const auto found = source.memoIndex.find(index);
-        if (found != source.memoIndex.end()) {
-            if (found->second->variantId == variant->artifact.variantId && found->second->hash == hash) {
-                source.memo.splice(source.memo.begin(), source.memo, found->second);
-                shared = found->second->result;
-            } else {
-                source.memo.erase(found->second);
-                source.memoIndex.erase(found);
+        if (source.memo == nullptr) source.memo = std::make_unique<ResultMemoTable>();
+        auto* set = memoSet(source, index);
+        auto* victim = set;
+        bool present = false;
+        for (std::size_t way = 0; way < ResultMemoWays && !present; ++way) {
+            auto& entry = set[way];
+            if (entry.result != nullptr && entry.variantId == variant->artifact.variantId && entry.hash == hash) {
+                entry.used = ++source.memoClock;
+                shared = entry.result;
+                present = true;
+            } else if (entry.used < victim->used) {
+                victim = &entry;
             }
         }
-        if (source.memoIndex.find(index) == source.memoIndex.end()) {
-            source.memo.push_front({variant->artifact.variantId, hash, shared});
-            source.memoIndex.emplace(index, source.memo.begin());
-            while (source.memo.size() > ResultMemoEntries) {
-                const auto& last = source.memo.back();
-                source.memoIndex.erase((last.variantId * 0x9e3779b97f4a7c15ull) ^ last.hash);
-                source.memo.pop_back();
-                counters.evictions.fetch_add(1, std::memory_order_relaxed);
-            }
+        if (!present) {
+            if (victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+            *victim = {variant->artifact.variantId, hash, shared, ++source.memoClock};
         }
     }
     reportResultMemo();
