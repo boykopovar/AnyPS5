@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
 #include "ThreadOwned.hpp"
@@ -34,6 +35,9 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <fstream>
+#ifdef __linux__
+#include <link.h>
+#endif
 #include <pthread.h>
 #include <sstream>
 #include <sys/ioctl.h>
@@ -495,6 +499,26 @@ void PageStates::initialize() {
             image.base = start;
             image.size = cursor - start;
             imageCached = image.allocate();
+        }
+#elif defined(__linux__)
+        static const bool imageCache = std::getenv("APS5_NO_IMAGE_PAGE_CACHE") == nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+        if (imageCache) {
+            std::pair<std::uintptr_t, std::uintptr_t> extent{std::numeric_limits<std::uintptr_t>::max(), 0};
+            dl_iterate_phdr([](dl_phdr_info* info, std::size_t, void* data) {
+                auto& found = *static_cast<std::pair<std::uintptr_t, std::uintptr_t>*>(data);
+                for (int index = 0; index < info->dlpi_phnum; ++index) {
+                    const auto& header = info->dlpi_phdr[index];
+                    if (header.p_type != PT_LOAD || header.p_memsz == 0) continue;
+                    found.first = std::min<std::uintptr_t>(found.first, (info->dlpi_addr + header.p_vaddr) & ~static_cast<std::uintptr_t>(PageBytes - 1));
+                    found.second = std::max<std::uintptr_t>(found.second, (info->dlpi_addr + header.p_vaddr + header.p_memsz + PageBytes - 1) & ~static_cast<std::uintptr_t>(PageBytes - 1));
+                }
+                return 1;
+            }, &extent);
+            if (extent.second > extent.first && !arena.covers(extent.first)) {
+                image.base = extent.first;
+                image.size = extent.second - extent.first;
+                imageCached = image.allocate();
+            }
         }
 #endif
         if (arenaCached || imageCached) GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
@@ -1271,6 +1295,23 @@ std::uint64_t CollectEpochBumps() {
     return collectEpochBumps.load(std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<std::uint64_t> proofSerial{1};
+thread_local bool proofThread = false;
+}
+
+std::uint64_t ProofSerial() {
+    return proofSerial.load(std::memory_order_acquire);
+}
+
+void BreakProofs() {
+    proofSerial.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void MarkProofThread() {
+    proofThread = true;
+}
+
 std::uint64_t CollectEpoch() {
     return collectMemoEnabled() ? threadCollectEpoch : 0;
 }
@@ -1442,6 +1483,7 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 
 std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, const std::function<std::pair<std::uint64_t, std::uint64_t>()>& store) {
     if (bytes == 0) return 0;
+    BreakProofs();
     const auto stampStored = [](WriteTracker& tracker, std::pair<std::uint64_t, std::uint64_t> stored) -> std::uint64_t {
         if (stored.second <= stored.first) return 0;
         ++tracker.generation;
@@ -1485,6 +1527,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
+    BreakProofs();
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
@@ -1861,7 +1904,10 @@ std::atomic<std::uint64_t> gpuHoldSerial{0};
 
 void GpuMutexType::acquired() {
     owner.store(ThreadToken(), std::memory_order_relaxed);
-    if (++depth == 1) gpuHoldSerial.fetch_add(1, std::memory_order_relaxed);
+    if (++depth == 1) {
+        gpuHoldSerial.fetch_add(1, std::memory_order_relaxed);
+        if (!proofThread) BreakProofs();
+    }
 }
 
 bool GpuMutexType::try_lock() {
@@ -1931,12 +1977,12 @@ void GpuMutexType::lock() {
     if (!GpuLockProfiled()) {
         auto* trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr;
         if (trace == nullptr) {
-            mutex.lock();
+            LockSpinning(mutex, HandoffSpinWindow());
         } else {
             const auto site = static_cast<std::size_t>(std::exchange(LockStats().nextSite, GpuLockSite::Other));
             if (!mutex.try_lock()) {
                 const auto start = std::chrono::steady_clock::now();
-                mutex.lock();
+                LockSpinning(mutex, HandoffSpinWindow());
                 trace->Add("GpuMutex.wait", GpuLockSiteNames[site], start, std::chrono::steady_clock::now());
             }
         }
@@ -1954,7 +2000,7 @@ void GpuMutexType::lock() {
         HolderMatrixValues before{};
         if (holders) Holders().Snapshot(before);
         const auto start = std::chrono::steady_clock::now();
-        mutex.lock();
+        LockSpinning(mutex, HandoffSpinWindow());
         acquired();
         const auto now = std::chrono::steady_clock::now();
         if (auto* trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr) trace->Add("GpuMutex.wait", GpuLockSiteNames[site], start, now);
@@ -2189,6 +2235,7 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
+    BreakProofs();
     if (current.empty()) return;
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).
