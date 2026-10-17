@@ -14,6 +14,9 @@ namespace Pad {
 
 inline constexpr double MouseFullTiltCountsPerSecond = 3000.0;
 inline constexpr double MouseMinimumStepSeconds = 0.0005;
+inline constexpr std::chrono::milliseconds ShakeHalfPeriod{50};
+inline constexpr float ShakeAcceleration = 2.0f * 9.80665f;
+inline constexpr float ShakeAngularVelocity = 6.0f;
 
 class MouseStick {
 public:

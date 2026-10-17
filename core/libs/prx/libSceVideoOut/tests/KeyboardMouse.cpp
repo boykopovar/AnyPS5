@@ -278,6 +278,21 @@ void testFocusLossReleasesMouse() {
     check(!keyboardMouse.HandleEvent(PadSimulation::FocusLostEvent(), Pad::KeyboardMouse::Clock::now()).releaseMouse, "nothing to release without capture");
 }
 
+void testShake() {
+    const auto samples = Simulate(defaults(), {At(0.0, KeyEvent(SDL_SCANCODE_X, true)), At(200.0, KeyEvent(SDL_SCANCODE_X, false))}, 10.0, 300.0);
+    const auto& first = samples[1].state;
+    const auto& second = samples[6].state;
+    check(first.hasMotion && second.hasMotion, "a held shake key reports motion");
+    check(std::fabs(first.accel[0]) == Pad::ShakeAcceleration && second.accel[0] == -first.accel[0], "the shake acceleration flips every half period");
+    check(second.gyro[2] == -first.gyro[2] && std::fabs(first.gyro[2]) == Pad::ShakeAngularVelocity, "the shake angular velocity flips with it");
+    check(!samples[25].state.hasMotion && samples[25].state.accel == PadInputState{}.accel, "releasing the shake key stops the motion");
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    keyboardMouse.Advance(now);
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_X, true), now);
+    check(keyboardMouse.Advance(now + Pad::ShakeHalfPeriod), "a held shake key keeps the state changing");
+}
+
 void testToggleRequests() {
     Pad::KeyboardMouse keyboardMouse(defaults());
     const auto now = Pad::KeyboardMouse::Clock::now();
@@ -304,6 +319,7 @@ int main() {
             {"wheel press", testWheelPress},
             {"wheel and keys on focus loss", testWheelFocusLoss},
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
+            {"shake", testShake},
             {"toggle requests", testToggleRequests},
         };
         for (const auto& [name, test] : tests) {
