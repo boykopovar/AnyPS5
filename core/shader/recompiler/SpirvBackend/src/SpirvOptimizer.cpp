@@ -159,6 +159,7 @@ std::vector<std::uint32_t> ValidateAndOptimizeSpirv(std::span<const std::uint32_
     // Validating after every pass costs more than the passes on large shaders; the result is validated below.
     optimizer.SetValidateAfterAll(false);
     spvtools::OptimizerOptions options;
+    options.set_run_validator(false);
     options.set_preserve_bindings(true);
     options.set_preserve_spec_constants(!specialize);
     options.set_validator_options(validatorOptions);
