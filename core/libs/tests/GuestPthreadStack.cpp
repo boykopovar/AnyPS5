@@ -63,6 +63,7 @@ static void* APS5_VABI Worker(void* arg) {
     Require(scePthreadAttrGetstack(&attr, &address, &size) == SCE_OK);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     Require(size == requested);
+    Require(reinterpret_cast<std::uintptr_t>(address) >= 0x100000000ull);
 
     const auto begin = reinterpret_cast<std::uintptr_t>(address);
     const auto local = reinterpret_cast<std::uintptr_t>(&size);

@@ -167,8 +167,34 @@ static void RetireGuestStack(PthreadPrivate* thread) {
     thread->guestStackBytes = 0;
 }
 #else
+#if defined(_WIN32)
+static constexpr std::size_t GUEST_STACK_GUARD = PS5_PAGE_SIZE;
+
+static void AllocateGuestStack(PthreadPrivate* thread, std::size_t usableBytes) {
+    const std::size_t bytes = (usableBytes + PS5_PAGE_SIZE - 1) / PS5_PAGE_SIZE * PS5_PAGE_SIZE + GUEST_STACK_GUARD;
+    void* stack = nullptr;
+    if (DoMapAnon(&stack, bytes, 3, 0) != 0)
+        throw std::runtime_error("scePthreadCreate: cannot map the guest thread stack");
+    if (DoMprotect(stack, GUEST_STACK_GUARD, 0) != 0) {
+        DoMunmap(stack, bytes);
+        throw std::runtime_error("scePthreadCreate: cannot protect the guest thread stack guard");
+    }
+    thread->guestStack = stack;
+    thread->guestStackBytes = bytes;
+}
+
+static void FreeGuestStack(PthreadPrivate* thread) {
+    if (thread->guestStack == nullptr) return;
+    DoMunmap(thread->guestStack, thread->guestStackBytes);
+    thread->guestStack = nullptr;
+    thread->guestStackBytes = 0;
+}
+
+static void RetireGuestStack(PthreadPrivate*) {}
+#else
 static void FreeGuestStack(PthreadPrivate*) {}
 static void RetireGuestStack(PthreadPrivate*) {}
+#endif
 #endif
 
 static bool HostStackLimits(std::uintptr_t* low, std::uintptr_t* high) {
@@ -616,22 +642,94 @@ struct NativeThreadArgs {
 };
 
 #ifdef _WIN32
+struct WinStackBounds {
+    std::uintptr_t base;
+    std::uintptr_t limit;
+    std::uintptr_t deallocation;
+};
+
+static WinStackBounds CurrentWinBounds() {
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    auto* teb = reinterpret_cast<std::uint8_t*>(tib);
+    return {reinterpret_cast<std::uintptr_t>(tib->StackBase), reinterpret_cast<std::uintptr_t>(tib->StackLimit),
+            *reinterpret_cast<std::uintptr_t*>(teb + 0x1478)};
+}
+
+static void ApplyWinBounds(const WinStackBounds& bounds) {
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    auto* teb = reinterpret_cast<std::uint8_t*>(tib);
+    tib->StackBase = reinterpret_cast<void*>(bounds.base);
+    tib->StackLimit = reinterpret_cast<void*>(bounds.limit);
+    *reinterpret_cast<std::uintptr_t*>(teb + 0x1478) = bounds.deallocation;
+}
+
+extern "C" void* CallOnGuestStack_nid_no_patch(void* guestTop, void* (*fn)(void*), void* arg);
+
+asm(R"(
+    .text
+    .globl CallOnGuestStack_nid_no_patch
+    .def CallOnGuestStack_nid_no_patch; .scl 2; .type 32; .endef
+CallOnGuestStack_nid_no_patch:
+    push %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    push %rdi
+    push %rsi
+    mov %rsp, %r15
+    mov %rcx, %rsp
+    mov %r8, %rcx
+    sub $32, %rsp
+    call *%rdx
+    add $32, %rsp
+    mov %r15, %rsp
+    pop %rsi
+    pop %rdi
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+)");
+
+struct GuestRun {
+    ThreadArgs* args;
+    std::exception_ptr* error;
+};
+
+static void* RunThreadOnGuest(void* arg) {
+    auto* run = static_cast<GuestRun*>(arg);
+    try {
+        std::unique_ptr<ThreadArgs> owned(run->args);
+        run->args = nullptr;
+        RunThread(std::move(owned));
+    } catch (...) {
+        if (run->error != nullptr) *run->error = std::current_exception();
+    }
+    return nullptr;
+}
+
 static unsigned __stdcall StartNativeThread(void* opaque) {
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
     try {
-        ULONG_PTR low = 0;
-        ULONG_PTR high = 0;
-        GetCurrentThreadStackLimits(&low, &high);
-        if (high <= low || high - low < self->stackSize)
+        if (self->guestStack == nullptr || self->guestStackBytes <= GUEST_STACK_GUARD || self->stackSize < 16384 ||
+            self->stackSize > self->guestStackBytes - GUEST_STACK_GUARD)
             throw std::runtime_error("Cannot query guest thread stack");
-        self->stackAddress = reinterpret_cast<void*>(high - self->stackSize);
-        for (auto cursor = high - self->stackSize; cursor < high;) {
+        const auto mappingBase = reinterpret_cast<std::uintptr_t>(self->guestStack);
+        const auto usableTop = mappingBase + self->guestStackBytes;
+        const auto reportedLow = usableTop - self->stackSize;
+        for (auto cursor = reportedLow; cursor < usableTop;) {
             MEMORY_BASIC_INFORMATION memory{};
             if (VirtualQuery(reinterpret_cast<void*>(cursor), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT || memory.Protect != PAGE_READWRITE || memory.RegionSize == 0)
                 throw std::runtime_error("Guest thread stack is not fully committed");
             cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
         }
+        self->stackAddress = reinterpret_cast<void*>(reportedLow);
         self->threadId = std::this_thread::get_id();
         CurrentGuestState().current = self;
         if (!self->name.empty()) {
@@ -646,10 +744,26 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
     }
     if (!args->start.get())
         return 0;
-    auto guest = std::move(args->guest);
+    auto* guestRaw = args->guest.release();
     args.reset();
-    RunThread(std::move(guest));
+    const auto mappingBase = reinterpret_cast<std::uintptr_t>(self->guestStack);
+    const auto usableLow = mappingBase + GUEST_STACK_GUARD;
+    const auto usableTop = mappingBase + self->guestStackBytes;
+    const auto guestTop = usableTop & ~static_cast<std::uintptr_t>(15);
+    const WinStackBounds hostBounds = CurrentWinBounds();
+    const WinStackBounds guestBounds{usableTop, usableLow, mappingBase};
+    std::exception_ptr guestError;
+    GuestRun run{guestRaw, &guestError};
+    ApplyWinBounds(guestBounds);
+    CallOnGuestStack_nid_no_patch(reinterpret_cast<void*>(guestTop), RunThreadOnGuest, &run);
+    ApplyWinBounds(hostBounds);
+    if (run.args != nullptr) {
+        std::unique_ptr<ThreadArgs> leaked(run.args);
+        run.args = nullptr;
+    }
+    FreeGuestStack(self);
     CurrentGuestState().current = nullptr;
+    if (guestError) std::rethrow_exception(guestError);
     ReleaseThread(self);
     return 0;
 }
@@ -722,11 +836,14 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<unsigned>::max() - HOST_STACK_MARGIN - system.dwPageSize)
         throw std::runtime_error("scePthreadCreate: invalid Windows stack size");
     const std::size_t nativeStack = (p->stackSize + HOST_STACK_MARGIN + system.dwPageSize - 1) / system.dwPageSize * system.dwPageSize;
+    AllocateGuestStack(p.get(), p->stackSize + HOST_STACK_MARGIN);
     auto native = std::make_unique<NativeThreadArgs>(NativeThreadArgs{std::move(args), start.get_future(), {}});
     auto initialized = native->initialized.get_future();
     const auto handle = _beginthreadex(nullptr, static_cast<unsigned>(nativeStack), StartNativeThread, native.get(), 0, nullptr);
-    if (handle == 0)
+    if (handle == 0) {
+        FreeGuestStack(p.get());
         throw std::system_error(errno, std::generic_category(), "Creating guest thread");
+    }
     p->nativeHandle = reinterpret_cast<void*>(handle);
     native.release();
     try {
@@ -735,6 +852,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         start.set_value(false);
         WaitForSingleObject(p->nativeHandle, INFINITE);
         CloseHandle(p->nativeHandle);
+        FreeGuestStack(p.get());
         throw;
     }
     auto* published = p.release();

@@ -275,20 +275,28 @@ static std::uint64_t HostStackGuardBytes() {
 static void AllocateHostStack(Fiber* fiber) {
     const auto page = HostStackGuardBytes();
     const auto bytes = (fiber->contextSize + FIBER_HOST_STACK_MARGIN + page - 1) / page * page + page;
-    auto* mapping = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-    if (mapping == nullptr) throw std::runtime_error(std::string("sceFiberInitialize: no host stack of ") + std::to_string(bytes) + " bytes for fiber '" + fiber->name + "' (error " + std::to_string(GetLastError()) + ")");
-    DWORD previous = 0;
-    if (!VirtualProtect(mapping, page, PAGE_NOACCESS, &previous)) {
-        const auto error = GetLastError();
-        VirtualFree(mapping, 0, MEM_RELEASE);
-        throw std::runtime_error(std::string("sceFiberInitialize: cannot protect the guard page of the host stack of fiber '") + fiber->name + "' (error " + std::to_string(error) + ")");
+    void* allocation = nullptr;
+    try {
+        allocation = GuestArena::GuestArenaAllocate_nid_postfix(static_cast<std::size_t>(bytes), static_cast<std::size_t>(page));
+        GuestArena::GuestArenaCommit_nid_postfix(static_cast<std::uint8_t*>(allocation) + page, static_cast<std::size_t>(bytes - page), PAGE_READWRITE, 0x1000);
+        GuestArena::GuestArenaPinWritable_nid_postfix(static_cast<std::uint8_t*>(allocation) + page, static_cast<std::size_t>(bytes - page));
+    } catch (...) {
+        if (allocation != nullptr) {
+            GuestArena::GuestArenaReset_nid_postfix(allocation, static_cast<std::size_t>(bytes));
+            GuestArena::GuestArenaRelease_nid_postfix(allocation, static_cast<std::size_t>(bytes));
+        }
+        throw std::runtime_error(std::string("sceFiberInitialize: no host stack of ") + std::to_string(bytes) + " bytes for fiber '" + fiber->name + "'");
     }
-    fiber->hostStack = mapping;
+    fiber->hostStack = static_cast<std::uint8_t*>(allocation);
     fiber->hostStackBytes = bytes;
 }
 
 static void ReleaseHostStack(Fiber* fiber) {
-    if (fiber->hostStack && !VirtualFree(fiber->hostStack, 0, MEM_RELEASE)) throw std::runtime_error(std::string("sceFiberFinalize: cannot release the host stack of fiber '") + fiber->name + "' (error " + std::to_string(GetLastError()) + ")");
+    if (fiber->hostStack == nullptr) return;
+    const auto page = HostStackGuardBytes();
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(fiber->hostStack + page, static_cast<std::size_t>(fiber->hostStackBytes - page));
+    GuestArena::GuestArenaReset_nid_postfix(fiber->hostStack, static_cast<std::size_t>(fiber->hostStackBytes));
+    GuestArena::GuestArenaRelease_nid_postfix(fiber->hostStack, static_cast<std::size_t>(fiber->hostStackBytes));
     fiber->hostStack = nullptr;
     fiber->hostStackBytes = 0;
 }

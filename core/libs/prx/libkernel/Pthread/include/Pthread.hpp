@@ -130,10 +130,10 @@ struct PthreadPrivate {
 #ifndef _WIN32
     clockid_t hostCpuClock{};
     bool hostCpuClockBound = false;
-    void* guestStack = nullptr;
-    std::size_t guestStackBytes = 0;
     int hostTid = 0;
 #endif
+    void* guestStack = nullptr;
+    std::size_t guestStackBytes = 0;
     std::mutex nameLock;
     std::string name;
     std::atomic<bool> _finished;
