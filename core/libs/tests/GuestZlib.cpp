@@ -68,6 +68,8 @@ int main() {
     corrupt.back() ^= 1;
     decode(corrupt.data(), corrupt.size(), expectedLength, static_cast<std::int32_t>(0x811200FF));
     decode(compressed.data(), compressed.size() - 1, 65536, static_cast<std::int32_t>(0x811200FF));
+    decode(compressed.data(), compressed.size() - 4, expectedLength, static_cast<std::int32_t>(0x811200FF));
+    decode(compressed.data(), compressed.size() - 1, expectedLength, static_cast<std::int32_t>(0x811200FF));
     Require(sceZlibFinalize() == 0);
     Require(sceZlibGetResult(id, &produced, &status) == static_cast<std::int32_t>(0x81120032));
     std::array<std::uint8_t, 65536> scratch{};

@@ -67,7 +67,7 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     const int decoded = inflate(&stream, Z_FINISH);
     const auto produced = static_cast<std::uint32_t>(stream.total_out);
     const std::int32_t status = decoded == Z_STREAM_END ? 0 :
-        (decoded == Z_BUF_ERROR && stream.avail_out == 0 ? NO_SPACE : FATAL);
+        (decoded == Z_BUF_ERROR && stream.avail_out == 0 && stream.avail_in != 0 ? NO_SPACE : FATAL);
     const int ended = inflateEnd(&stream);
     if (ended != Z_OK) throw std::runtime_error("sceZlibInflate: decoder cleanup failed");
     result = Result{nextId++, produced, status};
