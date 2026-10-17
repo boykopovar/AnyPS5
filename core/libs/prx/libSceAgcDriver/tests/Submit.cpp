@@ -784,6 +784,36 @@ void testRegisteredVertexWorkgroupRouting() {
     check(expectFailure([&] { static_cast<void>(VertexWorkgroupRequired(queue, registry)); }).find("reserved graphics program address") != std::string::npos, "reserved NGG program address bits were accepted");
 }
 
+void testRegisteredFastLaunchWorkgroupVertex() {
+    alignas(256) static const std::array<std::uint32_t, 6> code{
+        0xd8340000u, 0x00000100u, 0xbf8a0000u, 0xf80008cfu, 0x00000000u, 0xbf810000u,
+    };
+    struct Header {
+        Shader shader{};
+        ShaderUserData userData{};
+        std::array<ShaderRegister, 4> registers{};
+    };
+    alignas(8) static Header header{};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.type = 2u;
+    header.shader.user_data = &header.userData;
+    header.registers = {{{0x0c8u, static_cast<std::uint32_t>(address >> 8u)}, {0x0c9u, static_cast<std::uint32_t>(address >> 40u)}, {0x08au, 0x022c0245u}, {0x08bu, 0x0009002au}}};
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    const std::array<const Shader*, 1> stages{&header.shader};
+    const std::array<ShaderRegister, 6> context{{
+        {0x2d5u, 0x00482030u}, {0x1ffu, 32u}, {0x2ceu, 32u}, {0x2d3u, 64u}, {0x29bu, 2u}, {0x2abu, 4u},
+    }};
+    const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -886,6 +916,7 @@ int main(int argc, char** argv) {
         testProgramWorkgroupUse();
         testVertexTailSnapshots();
         testRegisteredVertexWorkgroupRouting();
+        testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
         testValidation();
         testClearState();

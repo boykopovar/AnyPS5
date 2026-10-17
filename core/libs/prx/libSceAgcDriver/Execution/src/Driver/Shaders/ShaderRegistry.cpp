@@ -835,7 +835,13 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
         wave = (routing & 0x00400000u) != 0 ? 32u : 64u;
-        if (registration && stage == Stage::Vertex && (routing & 0x02002024u) == 0x2000u && ProgramUsesWorkgroup(snapshot, codeOffset)) return nullptr;
+        const bool unroutedBarrier = routing == 0 && std::ranges::any_of(decoded.instructions, [](const auto& instruction) {
+            return instruction.op == ShaderRecompiler::RdnaOpcode::SBarrier;
+        });
+        if (registration && stage == Stage::Vertex && (((routing & 0x02002024u) == 0x2000u && ProgramUsesWorkgroup(snapshot, codeOffset)) || unroutedBarrier)) {
+            if (unroutedBarrier && deferred != nullptr) return defer("its s_barrier depends on draw routing");
+            return nullptr;
+        }
         if ((routing & 0x20u) != 0 || stage == Stage::Mesh || (routing & 4u) != 0 || ((routing >> 3u) & 3u) == 1u) {
             if (registration) return {};
             auto stageState = state;
