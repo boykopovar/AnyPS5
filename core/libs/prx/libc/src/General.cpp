@@ -494,8 +494,14 @@ extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::file
     const auto relinked = RelinkedModuleName(path);
     std::error_code error;
     if (std::filesystem::is_regular_file(relinked, error)) return relinked;
+    const auto parent = relinked.parent_path().empty() ? std::filesystem::path(".") : relinked.parent_path();
+    const auto name = relinked.filename();
+    for (const char* directory : {"prx", "sce_module", "sce_modules"}) {
+        const auto candidate = parent / directory / name;
+        if (std::filesystem::is_regular_file(candidate, error)) return candidate;
+    }
     NameMatch names[] = {{relinked.filename().string()}};
-    MatchNames(relinked.parent_path().empty() ? "." : relinked.parent_path(), names);
+    MatchNames(parent, names);
     return MatchedModuleOrPath(path, relinked, names[0]);
 }
 

@@ -96,6 +96,22 @@ int main(int argc, char** argv) {
     std::filesystem::remove(guest);
     std::filesystem::remove(relinked);
 
+    const std::filesystem::path nestedRoot = "anyps5-relinked-prx-dir-for-test";
+    const std::filesystem::path nestedGuest = nestedRoot / "Engine.Render.prx";
+    const std::filesystem::path nestedRelinked = nestedRoot / "prx" / "Engine.Render.prx.guest.prx";
+    std::filesystem::create_directories(nestedRelinked.parent_path());
+    {
+        std::ofstream elf(nestedGuest, std::ios::binary);
+        elf.write("\x7f" "ELF", 4);
+    }
+    std::filesystem::copy_file(argv[1], nestedRelinked, std::filesystem::copy_options::overwrite_existing);
+    void* nested = dlopen_nid_postfix(nestedGuest.string().c_str(), 2);
+    Require(nested != nullptr);
+    add = reinterpret_cast<Add>(dlsym_nid_postfix(nested, "GuestModuleAdd"));
+    Require(add && add(20, 22) == 42);
+    Require(dlclose_nid_postfix(nested) == 0);
+    std::filesystem::remove_all(nestedRoot);
+
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));
     Require(add && _sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
