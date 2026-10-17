@@ -4637,7 +4637,8 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     for (std::size_t index = 0; index < selected.size(); ++index) snapshotIndices[selected[index]] = index;
     auto nextWrite = writes.begin();
     for (const auto& binding : bindings) {
-        while (nextWrite != writes.end() && nextWrite->dstBinding == binding.layout.binding) {
+        const auto original = setOf(binding) == 0 ? _set : fragment.set;
+        while (nextWrite != writes.end() && nextWrite->dstBinding == binding.layout.binding && nextWrite->dstSet == original) {
             auto& write = *nextWrite++;
             write.dstSet = setOf(binding) == 0 ? result->allocation.set : result->fragmentAllocation.set;
             if (binding.allocations.empty()) continue;
