@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
+#include <algorithm>
 #include <array>
 #include <condition_variable>
 #include <filesystem>
@@ -39,6 +40,9 @@ struct Module {
     void* native = nullptr;
     bool owned = true;
     bool global = false;
+#ifdef _WIN32
+    std::uintptr_t globalOrder = 0;
+#endif
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32
@@ -193,7 +197,21 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
 #endif
         std::lock_guard lock(modulesMutex);
         const auto handle = nextHandle++;
-        modules.emplace(handle, std::move(module));
+#ifdef _WIN32
+        module->globalOrder = module->global ? handle : 0;
+        for (const auto& [key, entry] : modules) {
+            if (entry->native == module->native && entry->globalOrder != 0 &&
+                (module->globalOrder == 0 || entry->globalOrder < module->globalOrder)) module->globalOrder = entry->globalOrder;
+        }
+#endif
+        modules.emplace(handle, module);
+#ifdef _WIN32
+        for (const auto& [key, entry] : modules) {
+            if (entry->native != module->native) continue;
+            entry->global = module->globalOrder != 0;
+            entry->globalOrder = module->globalOrder;
+        }
+#endif
         return reinterpret_cast<void*>(handle);
     } catch (const std::exception& error) { Error(error.what()); return nullptr; }
 }
@@ -205,6 +223,10 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
             std::lock_guard lock(modulesMutex);
             if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
                 for (const auto& [key, module] : modules) if (module->global) search.push_back(module);
+#ifdef _WIN32
+                std::sort(search.begin(), search.end(), [](const auto& left, const auto& right) { return left->globalOrder < right->globalOrder; });
+                search.erase(std::unique(search.begin(), search.end(), [](const auto& left, const auto& right) { return left->native == right->native; }), search.end());
+#endif
             } else {
                 auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
                 if (found == modules.end()) { Error("dlsym: invalid or unsupported module handle"); return nullptr; }

@@ -35,6 +35,70 @@ static bool ThrowsRuntimeError(TFunction function) {
     }
     return false;
 }
+#ifdef _WIN32
+static void CheckGlobalLookupOrder(const char* path) {
+    const std::filesystem::path other = "anyps5-global-order-for-test.guest.prx";
+    std::filesystem::copy_file(path, other, std::filesystem::copy_options::overwrite_existing);
+    void* local = dlopen_nid_postfix(path, 2);
+    void* earlierGlobal = dlopen_nid_postfix(other.string().c_str(), 2 | 0x100);
+    void* promoted = dlopen_nid_postfix(path, 2 | 0x100);
+    Require(local && earlierGlobal && promoted);
+    void* firstSymbol = dlsym_nid_postfix(local, "GuestModuleAdd");
+    void* earlierSymbol = dlsym_nid_postfix(earlierGlobal, "GuestModuleAdd");
+    Require(firstSymbol && earlierSymbol && firstSymbol != earlierSymbol);
+    const std::array<void*, 2> scopes{nullptr, reinterpret_cast<void*>(-2)};
+    for (void* scope : scopes) Require(dlsym_nid_postfix(scope, "GuestModuleAdd") == earlierSymbol);
+    Require(dlclose_nid_postfix(promoted) == 0);
+    for (void* scope : scopes) Require(dlsym_nid_postfix(scope, "GuestModuleAdd") == earlierSymbol);
+    Require(dlclose_nid_postfix(local) == 0);
+    Require(dlclose_nid_postfix(earlierGlobal) == 0);
+    std::filesystem::remove(other);
+}
+static bool CheckGlobalVisibility(const char* path, bool globalFirst) {
+    using Add = int (APS5_VABI *)(int, int);
+    const std::array<void*, 2> scopes{nullptr, reinterpret_cast<void*>(-2)};
+    const auto requireHidden = [&] {
+        for (void* scope : scopes) {
+            Require(dlsym_nid_postfix(scope, "GuestModuleAdd") == nullptr);
+            Require(dlerror_nid_postfix() != nullptr);
+        }
+    };
+    requireHidden();
+    void* first = dlopen_nid_postfix(path, 2 | (globalFirst ? 0x100 : 0));
+    Require(first != nullptr);
+    if (!globalFirst) requireHidden();
+    void* second = dlopen_nid_postfix(path, 2 | (globalFirst ? 0 : 0x100));
+    Require(second != nullptr && second != first);
+    auto add = reinterpret_cast<Add>(dlsym_nid_postfix(first, "GuestModuleAdd"));
+    Require(add && add(19, 23) == 42);
+    Require(dlsym_nid_postfix(second, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    for (void* scope : scopes) Require(dlsym_nid_postfix(scope, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    void* global = globalFirst ? first : second;
+    void* local = globalFirst ? second : first;
+    Require(dlclose_nid_postfix(global) == 0);
+    Require(dlsym_nid_postfix(local, "GuestModuleAdd") == reinterpret_cast<void*>(add));
+    Require(add(20, 22) == 42);
+    bool visible = true;
+    for (void* scope : scopes) {
+        const bool found = dlsym_nid_postfix(scope, "GuestModuleAdd") == reinterpret_cast<void*>(add);
+        if (!found) {
+            std::fprintf(stderr, "RTLD_GLOBAL lost after closing its handle: global_first=%d scope=%s; surviving handle returns %d\n",
+                globalFirst, scope == nullptr ? "NULL" : "-2", add(20, 22));
+            dlerror_nid_postfix();
+            visible = false;
+        }
+    }
+    Require(dlclose_nid_postfix(local) == 0);
+    requireHidden();
+    void* reloaded = dlopen_nid_postfix(path, 2);
+    Require(reloaded != nullptr);
+    auto reloadedAdd = reinterpret_cast<Add>(dlsym_nid_postfix(reloaded, "GuestModuleAdd"));
+    Require(reloadedAdd && reloadedAdd(21, 21) == 42);
+    requireHidden();
+    Require(dlclose_nid_postfix(reloaded) == 0);
+    return visible;
+}
+#endif
 int main(int argc, char** argv) {
     Require(argc == 2);
     Require(dlerror_nid_postfix() == nullptr);
@@ -53,6 +117,12 @@ int main(int argc, char** argv) {
     dlerror_nid_postfix();
     void* executable = dlopen_nid_postfix(nullptr, 2);
     Require(executable != nullptr && dlclose_nid_postfix(executable) == 0);
+#ifdef _WIN32
+    CheckGlobalLookupOrder(argv[1]);
+    const bool localFirstVisible = CheckGlobalVisibility(argv[1], false);
+    const bool globalFirstVisible = CheckGlobalVisibility(argv[1], true);
+    Require(localFirstVisible && globalFirstVisible);
+#endif
     void* module = dlopen_nid_postfix(argv[1], 2 | 0x100);
     Require(module != nullptr);
     using Add = int (APS5_VABI *)(int, int);
