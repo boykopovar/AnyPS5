@@ -4097,6 +4097,7 @@ struct RecordedDispatch {
     // A template hit's revalidate time, charged to the [rescache] refresh accounting.
     double revalidateMs;
     DispatchTimer* timer;
+    std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
     // Whether the data refresh recorded anything.
     bool refreshed = false;
     bool resourceKeyMatched = false;
@@ -4316,8 +4317,8 @@ std::shared_ptr<RecipeHit> VulkanDevice::PrepareRecipe(const std::shared_ptr<con
     return hit;
 }
 
-void VulkanDevice::Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe) {
-    static_cast<void>(dispatch(shader, x, y, z, 0, snapshots, programAddress, std::move(prepared), recipe));
+void VulkanDevice::Dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
+    static_cast<void>(dispatch(shader, x, y, z, 0, snapshots, programAddress, std::move(prepared), recipe, htileClear));
 }
 
 VulkanDevice::IndirectOutcome VulkanDevice::DispatchIndirect(const ShaderRecompiler::RecompileResult& shader, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipe) {
@@ -4527,17 +4528,22 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     recordStep(PhaseRecordMarks);
     // Only copied written buffers (and BDA fault checks) need work once the GPU is done; without them
     // the batch can signal its labels from the GPU.
-    if (resources.NeedsCompletion() && resources.Reusable()) {
+    const bool completionNeeded = resources.NeedsCompletion() || record.htileClear.has_value();
+    if (completionNeeded && resources.Reusable()) {
         auto kept = record.resources;
-        recorder.OnComplete([kept] { kept->CheckFaults(); });
-    } else if (resources.NeedsCompletion()) {
+        recorder.OnComplete([kept, htileClear = record.htileClear] {
+            kept->CheckFaults();
+            if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
+        });
+    } else if (completionNeeded) {
         // Listed for DispatchIndirect until the write-back ran (a non-reusable object, so once).
         auto writers = state->copiedWriters;
         auto kept = record.resources;
-        recorder.OnComplete([kept, writers] {
+        recorder.OnComplete([kept, writers, htileClear = record.htileClear] {
             // Delisted before the write-back: one that fails must not keep indirect dispatches on the CPU.
             writers->erase(std::remove(writers->begin(), writers->end(), kept), writers->end());
             kept->WriteBackBuffers();
+            if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
         });
         // Listed after the registration: a throw there leaves nothing that would pin the CPU path forever.
         if (resources.HasCopiedWrites()) writers->push_back(kept);
@@ -4646,7 +4652,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
     return finish(std::move(objects), nullptr);
 }
 
-VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut) {
+VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
     startJournalReplay();
     state->recorder->BoundKeptBytes();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
@@ -4828,7 +4834,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     // works; the batch is waited for where the guest expects results (labels, flips, CPU reads).
     auto& recorder = *state->recorder;
     IndirectOutcome outcome{0, 0};
-    RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer};
+    RecordedDispatch record{&context, &shaders[0], resources, objects, pushStages, &pushBytes, x, y, z, arguments, nullptr, programAddress, fromCache && TemplateDataRefresh() ? RecordedDispatch::DataRefresh::Words : RecordedDispatch::DataRefresh::None, 0, revalidateMs, &timer, htileClear};
     record.resourceKeyMatched = fromCache;
     if (arguments != 0) decideIndirect(record, outcome, groupsText);
     // The indirect hold total below still covers the whole call of a CPU-resolved one.

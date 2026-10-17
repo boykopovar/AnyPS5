@@ -78,6 +78,7 @@ bool UnchangedCommittedSince(std::span<const std::pair<std::uint64_t, std::uint6
 // Returns the generation the blocks were stamped with (0 when the arena is not write-watched):
 // UnchangedSince(range, it) holds until the next store over the range.
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes);
+std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std::function<void()>& store);
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source);
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation);

@@ -145,6 +145,21 @@ void CheckStoredAllSince() {
     Require(StoredAllSince_nid_no_patch(base, 64, before), "a complete non-block-aligned range store is absent");
 
     before = TrackerGeneration();
+    MarkPossiblyWritten(base + 2048, 16);
+    Require(StoredOver(base + 2048, 16, before), "a possible driver write did not invalidate its exact range");
+    Require(!StoredOver(base + 2064, 16, before), "a possible driver write invalidated an adjacent range");
+    Require(!StoredAllSince_nid_no_patch(base + 2048, 16, before), "a possible driver write proved complete byte coverage");
+    for (unsigned repeat = 0; repeat < 6; ++repeat) MarkPossiblyWritten(base + 2048, 16);
+    Require(StoredOver(base + 2048, 16, before), "repeated possible writes lost their overlap evidence");
+    Require(!StoredAllSince_nid_no_patch(base + 2048, 16, before), "repeated possible writes proved complete byte coverage");
+
+    before = TrackerGeneration();
+    MarkWritten(base + 2560, 16);
+    MarkPossiblyWritten(base, Block);
+    Require(StoredAllSince_nid_no_patch(base + 2560, 16, before), "a possible whole-block range erased an exact partial-store proof");
+    Require(!StoredAllSince_nid_no_patch(base, Block, before), "a possible whole-block range proved complete block coverage");
+
+    before = TrackerGeneration();
     MarkWritten(base + 512, 16);
     MarkWritten(base + 544, 16);
     Require(!StoredAllSince_nid_no_patch(base + 512, 48, before), "split driver stores prove coverage across a hole");
