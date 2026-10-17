@@ -12,6 +12,7 @@ int APS5_VABI sceAcmBatchWait(std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAcm_ConvReverb_SharedInput(void);
 int APS5_VABI sceAcm_FFT(void);
 int APS5_VABI sceAcm_Panner(void);
+int APS5_VABI sceAcmBatchJobPriority(void);
 }
 
 static void Require(bool value) {
@@ -36,6 +37,7 @@ int main() {
     Require(sceAcm_ConvReverb_SharedInput() == 0);
     Require(sceAcm_FFT() == 0);
     Require(sceAcm_Panner() == 0);
+    Require(sceAcmBatchJobPriority() == 0);
 
     Require(sceAcmContextDestroy(context) == 0);
 }
