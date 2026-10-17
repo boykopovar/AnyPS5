@@ -57,6 +57,8 @@ constexpr std::uint32_t MultisampledAttrib = (SampleShift << 12u) | (SampleShift
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t Format16161616Float = 71;
+constexpr std::uint32_t Unorm8x4SwappedInfo = 0x8828u;
+constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Type2DMsaa = 14;
 constexpr std::uint32_t TileRenderTarget = 0x1b;
 constexpr std::uint32_t Threads = 32;
@@ -146,6 +148,31 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block) {
     return color;
 }
 
+AgcDriver::Graphics::ColorTarget DecodeSwappedTarget(const Block& block) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
+    cx[0x31b] = 0;
+    cx[0x31c] = Unorm8x4SwappedInfo;
+    cx[0x31d] = MultisampledAttrib;
+    cx[0x3b0] = ((Side - 1u) << 14u) | (Side - 1u);
+    cx[0x3b8] = TiledAttrib3;
+    cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.format == VK_FORMAT_B8G8R8A8_UNORM && color.samples == Samples && color.extent.width == Side && color.extent.height == Side, "the swapped 8_8_8_8 target did not decode as a 16x16 BGRA8 surface of 4 samples");
+    return color;
+}
+
+void CheckSwappedSamples(const std::vector<std::array<float, 4>>& loaded) {
+    const std::array<float, 4> swapped{Drawn[2], Drawn[1], Drawn[0], Drawn[3]};
+    std::size_t drawn = 0;
+    for (const auto& texel : loaded) {
+        if (texel == std::array<float, 4>{}) continue;
+        for (std::uint32_t channel = 0; channel < 4u; ++channel) Require(std::abs(texel[channel] - swapped[channel]) <= 0.5f / 255.0f, "a sample of a BGRA8 target loaded through an RGBA8 texture does not hold the drawn color with red and blue swapped");
+        ++drawn;
+    }
+    Require(drawn != 0, "no sample of the BGRA8 target holds the drawn color");
+}
+
 AgcDriver::Graphics::State TargetState(const AgcDriver::Graphics::ColorTarget& color) {
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
@@ -211,11 +238,11 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& sta
     device.Draw(state, draw, shaders);
 }
 
-std::array<std::uint32_t, 8> TargetDescriptor(const Block& block, std::uint32_t sampleShift) {
+std::array<std::uint32_t, 8> TargetDescriptor(const Block& block, std::uint32_t sampleShift, std::uint32_t format = Format16161616Float) {
     const auto address = block.Address();
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format16161616Float << 20u) | (((Side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Side - 1u) & 3u) << 30u),
         ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
         0xfacu | (sampleShift << 16u) | (TileRenderTarget << 20u) | (Type2DMsaa << 28u),
         0u,
@@ -300,9 +327,9 @@ void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::
     Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
-std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block) {
+std::vector<std::array<float, 4>> LoadSamples(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t format = Format16161616Float) {
     std::vector<std::uint32_t> userData;
-    const auto program = CompileLoad(device, TargetDescriptor(block, SampleShift), userData);
+    const auto program = CompileLoad(device, TargetDescriptor(block, SampleShift, format), userData);
     std::vector<std::array<float, 4>> loaded(Side * Side * Samples);
     for (std::uint32_t first = 0; first < loaded.size(); first += Threads) {
         Buffer.fill(0xdeadbeefu);
@@ -617,6 +644,10 @@ int main(int argc, char** argv) {
         RequireStoreRefused(*device, TargetDescriptor(mixedStore, SampleShift), "writing the 16x16 multisampled texture", "storing to a multisampled texture no draw rendered to whose color memory is not uniform");
         std::puts("stores to one sample of each pixel of a drawn 4x target and to samples of zeroed color memory no draw rendered to reach exactly those samples, and a store to non-uniform color memory no draw rendered to is refused");
         std::puts("every sample of a 4x color target loaded through its multisampled texture descriptor matches the triangle drawn into it, then the fill of its color memory; a surface no draw rendered to loads the value its color memory repeats and keeps it under a later draw");
+        Block swapped(4u * BlockBytes);
+        Draw(*device, TargetState(DecodeSwappedTarget(swapped)));
+        CheckSwappedSamples(LoadSamples(*device, swapped, Format8888Unorm));
+        std::puts("a 4x BGRA8 color target loaded through an RGBA8 texture descriptor reads its drawn color with red and blue swapped");
         Block destination(BlockBytes);
         struct ReleaseIndexDevice {
             std::unique_ptr<AgcDriver::VulkanDevice>& device;

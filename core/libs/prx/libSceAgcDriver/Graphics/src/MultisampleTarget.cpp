@@ -676,6 +676,25 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
     return acquire(context, target).view;
 }
 
+namespace {
+
+bool redBlueSwapped(VkFormat rendered, VkFormat sampled) {
+    const auto pair = [&](VkFormat a, VkFormat b) { return (rendered == a && sampled == b) || (rendered == b && sampled == a); };
+    return pair(VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM) || pair(VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB) || pair(VK_FORMAT_B8G8R8A8_SNORM, VK_FORMAT_R8G8B8A8_SNORM) || pair(VK_FORMAT_B8G8R8A8_UINT, VK_FORMAT_R8G8B8A8_UINT) || pair(VK_FORMAT_B8G8R8A8_SINT, VK_FORMAT_R8G8B8A8_SINT);
+}
+
+VkComponentMapping swapRedBlue(VkComponentMapping components) {
+    const auto swapped = [](VkComponentSwizzle swizzle, VkComponentSwizzle identity) {
+        if (swizzle == VK_COMPONENT_SWIZZLE_IDENTITY) swizzle = identity;
+        if (swizzle == VK_COMPONENT_SWIZZLE_R) return VK_COMPONENT_SWIZZLE_B;
+        if (swizzle == VK_COMPONENT_SWIZZLE_B) return VK_COMPONENT_SWIZZLE_R;
+        return swizzle;
+    };
+    return {swapped(components.r, VK_COMPONENT_SWIZZLE_R), swapped(components.g, VK_COMPONENT_SWIZZLE_G), swapped(components.b, VK_COMPONENT_SWIZZLE_B), swapped(components.a, VK_COMPONENT_SWIZZLE_A)};
+}
+
+}
+
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
     std::lock_guard lock(targetsMutex());
     const auto format = ResolveTextureFormat(resource.format);
@@ -684,7 +703,9 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
         if (!target->active->load(std::memory_order_acquire)) continue;
         if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
         const auto& rendered = target->target;
-        if (rendered.format == format && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) return target->Sampled(components);
+        const bool sameShape = rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0;
+        if (sameShape && rendered.format == format) return target->Sampled(components);
+        if (sameShape && redBlueSwapped(rendered.format, format)) return target->Sampled(swapRedBlue(components));
         other = target.get();
     }
     if (other == nullptr) {
