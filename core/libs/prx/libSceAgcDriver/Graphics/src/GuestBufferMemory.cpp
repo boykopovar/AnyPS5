@@ -149,6 +149,33 @@ AddressSpaceCache& Spaces() {
     return cache;
 }
 
+struct AddressReuseCounts {
+    std::atomic<std::uint64_t> proofs{0};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressReuse::Count)> outcomes{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(SpaceResumeMiss::Count)> resumeMisses{};
+    std::atomic<std::uint64_t> refusedProofNs{0};
+    std::atomic<std::uint64_t> reusedHolds{0};
+    std::atomic<std::uint64_t> budgetRefusals{0};
+    std::atomic<std::uint64_t> budgetRefusalsHeld{0};
+    std::atomic<std::uint64_t> heldImportRefusals{0};
+    std::atomic<std::uint64_t> heldImportRefusalsHeld{0};
+};
+
+AddressReuseCounts& ReuseCounts() {
+    static AddressReuseCounts counts;
+    return counts;
+}
+
+void countResumeMiss(SpaceResumeMiss miss) {
+    ReuseCounts().resumeMisses[static_cast<std::size_t>(miss)].fetch_add(1, std::memory_order_relaxed);
+}
+
+void countImportRefusal(std::atomic<std::uint64_t> AddressReuseCounts::*all, std::atomic<std::uint64_t> AddressReuseCounts::*held) {
+    auto& counts = ReuseCounts();
+    (counts.*all).fetch_add(1, std::memory_order_relaxed);
+    if (counts.reusedHolds.load(std::memory_order_relaxed) != 0) (counts.*held).fetch_add(1, std::memory_order_relaxed);
+}
+
 bool addressSpaceCacheEnabled() {
     static const bool disabled = std::getenv("APS5_NO_ADDRESS_SPACE_CACHE") != nullptr;
     return !disabled;
@@ -1092,7 +1119,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         return !expandedWindow || Recorder::Active() == nullptr;
     };
     for (auto it = first; it != state.imports.end() && it->first < base + bytes; ++it) {
-        if (held(it->second)) return nullptr;
+        if (held(it->second)) {
+            countImportRefusal(&AddressReuseCounts::heldImportRefusals, &AddressReuseCounts::heldImportRefusalsHeld);
+            return nullptr;
+        }
         replaced += it->second.bytes;
     }
     const auto budget = importBudget(context);
@@ -1107,6 +1137,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             lastReport = std::chrono::steady_clock::now();
             std::fprintf(stderr, "[gpu] host import budget: %llu MiB live of %llu MiB (APS5_HOST_IMPORT_MIB); %llu imports (%llu MiB) refused so far, last 0x%llx+0x%llx\n", static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
         }
+        countImportRefusal(&AddressReuseCounts::budgetRefusals, &AddressReuseCounts::budgetRefusalsHeld);
         return nullptr;
     }
     for (auto it = first; it != state.imports.end() && it->first < base + bytes;) {
@@ -1853,6 +1884,40 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
     return checked;
 }
 
+enum class SpaceMiss { None, First, Device, Generation, Epoch };
+
+SpaceMiss spaceMiss(const Context& context, const GuestBufferMemory::AddressSpace* current, std::uint64_t generation, const HostImports& state) {
+    if (current == nullptr) return SpaceMiss::First;
+    if (current->device != context.device) return SpaceMiss::Device;
+    if (current->generation != generation) return SpaceMiss::Generation;
+    if (current->importsEpoch != state.epoch) return SpaceMiss::Epoch;
+    return SpaceMiss::None;
+}
+
+void stampSpaceImports(const GuestBufferMemory::AddressSpace& space, HostImports& state) {
+    const auto stamp = ++state.useCounter;
+    for (const auto& region : space.base) {
+        if (region.direct != nullptr) region.direct->lastUse = stamp;
+    }
+}
+
+bool refreshSparseMirrors(std::shared_ptr<const GuestBufferMemory::AddressSpace>& current, std::vector<RefreshBlock>& blocks) {
+    for (auto* mirror : current->sparseMirrors) {
+        if (refreshSparseMirror(*mirror, blocks)) continue;
+        blocks.clear();
+        Spaces().current.compare_exchange_strong(current, std::shared_ptr<const GuestBufferMemory::AddressSpace>{});
+        return false;
+    }
+    return true;
+}
+
+void appendWritableMirrors(const GuestBufferMemory::AddressSpace& space, std::vector<RefreshBlock>& blocks) {
+    for (const auto index : space.writableMirrors) {
+        const auto& region = space.base[index];
+        if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+    }
+}
+
 // The mirror for a leased image range: the existing one, or a new one when none exists or the
 // registered Range object changed (a protection change). Null when the range cannot be mirrored. An
 // existing writable mirror's blocks are appended to `blocks` for the caller's one compare of every
@@ -2075,6 +2140,11 @@ SnapshotStats& Snapshots() {
     return stats;
 }
 
+bool liveSnapshotCompared(std::uint64_t address, std::size_t bytes) {
+    static const bool checkLive = std::getenv("APS5_NO_SNAPSHOT_CHECK") == nullptr;
+    return checkLive && !AnyShadowedOverlaps(address, bytes);
+}
+
 bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) noexcept {
     const auto start = std::chrono::steady_clock::now();
     bool synced = false;
@@ -2267,6 +2337,38 @@ AddressSpaceStats AddressSpaceCounters() {
     const auto& cache = Spaces();
     const auto load = [](const std::atomic<std::uint64_t>& counter) { return counter.load(std::memory_order_relaxed); };
     return {addressSpaceCacheEnabled(), load(cache.hits), load(cache.rebuiltFirst), load(cache.rebuiltGeneration), load(cache.rebuiltEpoch), load(cache.rebuiltDevice), load(cache.rebuiltWaiterDrop), load(cache.unpublished), load(cache.dissolvedOverlap), load(cache.dissolvedImports), load(cache.waiterDrops)};
+}
+
+void CountAddressReuseProof() {
+    ReuseCounts().proofs.fetch_add(1, std::memory_order_relaxed);
+}
+
+void CountAddressReuse(AddressReuse outcome, std::uint64_t proofNs) {
+    auto& counts = ReuseCounts();
+    counts.outcomes[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
+    if (outcome != AddressReuse::Reused && proofNs != 0) counts.refusedProofNs.fetch_add(proofNs, std::memory_order_relaxed);
+}
+
+void HoldReusedSpace(bool held) {
+    auto& holds = ReuseCounts().reusedHolds;
+    if (held) holds.fetch_add(1, std::memory_order_relaxed);
+    else holds.fetch_sub(1, std::memory_order_relaxed);
+}
+
+AddressReuseStats AddressReuseCounters() {
+    const auto& counts = ReuseCounts();
+    const auto load = [](const std::atomic<std::uint64_t>& counter) { return counter.load(std::memory_order_relaxed); };
+    AddressReuseStats stats;
+    stats.proofs = load(counts.proofs);
+    for (std::size_t index = 0; index < stats.outcomes.size(); ++index) stats.outcomes[index] = load(counts.outcomes[index]);
+    for (std::size_t index = 0; index < stats.resumeMisses.size(); ++index) stats.resumeMisses[index] = load(counts.resumeMisses[index]);
+    stats.refusedProofNs = load(counts.refusedProofNs);
+    stats.reusedHolds = load(counts.reusedHolds);
+    stats.budgetRefusals = load(counts.budgetRefusals);
+    stats.budgetRefusalsHeld = load(counts.budgetRefusalsHeld);
+    stats.heldImportRefusals = load(counts.heldImportRefusals);
+    stats.heldImportRefusalsHeld = load(counts.heldImportRefusalsHeld);
+    return stats;
 }
 
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit) {
@@ -2748,28 +2850,17 @@ void GuestBufferMemory::AcquireRegistered() {
         {
             auto& state = Imports();
             std::lock_guard lock(state.mutex);
-            if (current == nullptr) (spaces.droppedByWaiter.exchange(false, std::memory_order_relaxed) ? spaces.rebuiltWaiterDrop : spaces.rebuiltFirst).fetch_add(1, std::memory_order_relaxed);
-            else if (current->device != context.device) spaces.rebuiltDevice.fetch_add(1, std::memory_order_relaxed);
-            else if (current->generation != generation) spaces.rebuiltGeneration.fetch_add(1, std::memory_order_relaxed);
-            else if (current->importsEpoch != state.epoch) spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed);
-            else hit = true;
+            switch (spaceMiss(context, current.get(), generation, state)) {
+                case SpaceMiss::First: (spaces.droppedByWaiter.exchange(false, std::memory_order_relaxed) ? spaces.rebuiltWaiterDrop : spaces.rebuiltFirst).fetch_add(1, std::memory_order_relaxed); break;
+                case SpaceMiss::Device: spaces.rebuiltDevice.fetch_add(1, std::memory_order_relaxed); break;
+                case SpaceMiss::Generation: spaces.rebuiltGeneration.fetch_add(1, std::memory_order_relaxed); break;
+                case SpaceMiss::Epoch: spaces.rebuiltEpoch.fetch_add(1, std::memory_order_relaxed); break;
+                case SpaceMiss::None: hit = true; break;
+            }
             importFloor = state.useCounter + 1;
-            if (hit) {
-                const auto stamp = ++state.useCounter;
-                for (const auto& region : current->base) {
-                    if (region.direct != nullptr) region.direct->lastUse = stamp;
-                }
-            }
+            if (hit) stampSpaceImports(*current, state);
         }
-        if (hit) {
-            for (auto* mirror : current->sparseMirrors) {
-                if (refreshSparseMirror(*mirror, blocks)) continue;
-                hit = false;
-                blocks.clear();
-                spaces.current.compare_exchange_strong(current, std::shared_ptr<const AddressSpace>{});
-                break;
-            }
-        }
+        if (hit) hit = refreshSparseMirrors(current, blocks);
         if (hit) {
             spaces.hits.fetch_add(1, std::memory_order_relaxed);
             space = std::move(current);
@@ -2783,10 +2874,7 @@ void GuestBufferMemory::AcquireRegistered() {
             // before any of them is dereferenced.
             served = true;
             mirrored = space->mirrored;
-            for (const auto index : space->writableMirrors) {
-                const auto& region = space->base[index];
-                if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-            }
+            appendWritableMirrors(*space, blocks);
             lap(timing.mirrorsUs, at);
         }
     }
@@ -3183,12 +3271,12 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
         // descriptors and specialization still equal what the GPU reads. APS5_NO_SNAPSHOT_CHECK=1
         // skips the compare of live-backed regions (the region serves the GPU whatever the snapshot
         // held; only the diagnostic is lost).
-        static const bool checkLive = std::getenv("APS5_NO_SNAPSHOT_CHECK") == nullptr;
         static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
         const bool live = owner->writable || owner->hostBacked || owner->mirror != nullptr;
+        snapshotUses.push_back({snapshot.address, snapshot.bytes.size(), live});
         // A live region over a unit shadow's fresh results reads the import's stale bytes here
         // (the publish happens when the region is bound, under the device lock): not compared.
-        if (live && (!checkLive || AnyShadowedOverlaps(snapshot.address, snapshot.bytes.size()))) {
+        if (live && !liveSnapshotCompared(snapshot.address, snapshot.bytes.size())) {
             if (profile) Snapshots().skipped.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -3216,6 +3304,7 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
         if (profile) Snapshots().checked.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    snapshotUses.push_back({snapshot.address, snapshot.bytes.size(), false});
     regions.push_back({snapshot.address, end, false, {snapshot.bytes.begin(), snapshot.bytes.end()}, nullptr});
     regionsSorted = false;
 }
@@ -4573,6 +4662,103 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::DeviceRe
         if (region.direct != nullptr || region.mirror != nullptr) result.emplace_back(region.begin, region.end);
     }
     return result;
+}
+
+std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::SpaceRegions() const {
+    if (!uploaded || committed || space == nullptr || !lease.empty()) return std::nullopt;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
+    for (const auto& region : regions) {
+        const bool snapshotCopy = region.buffer != nullptr && region.direct == nullptr && region.mirror == nullptr && !region.hostBacked && !region.writable && !region.sparse && !region.gpuCopy;
+        if (snapshotCopy) continue;
+        const bool fixedMirror = region.mirror != nullptr && !region.mirror->writable && !region.mirror->heap;
+        if (region.direct == nullptr && !fixedMirror) return std::nullopt;
+        result.emplace_back(region.begin, region.end);
+    }
+    return result;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::DirectWrites() const {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> result;
+    for (const auto& [begin, end] : mergeWrites(writes)) {
+        const auto* found = owner(begin, end);
+        if (found != nullptr && found->direct != nullptr) result.emplace_back(begin, end);
+    }
+    return result;
+}
+
+bool GuestBufferMemory::SameSnapshots(std::span<const GuestMemorySnapshot> snapshots) const {
+    if (snapshots.size() != snapshotUses.size()) return false;
+    for (std::size_t index = 0; index < snapshots.size(); ++index) {
+        const auto& snapshot = snapshots[index];
+        const auto& use = snapshotUses[index];
+        if (snapshot.address != use.address || snapshot.bytes.size() != use.bytes) return false;
+        if (use.live) {
+            if (liveSnapshotCompared(snapshot.address, snapshot.bytes.size()) && std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) != 0) return false;
+            continue;
+        }
+        const auto found = std::upper_bound(regions.begin(), regions.end(), snapshot.address, [](std::uint64_t value, const Region& region) { return value < region.begin; });
+        if (found == regions.begin()) return false;
+        const auto& region = *std::prev(found);
+        if (region.buffer == nullptr || region.direct != nullptr || region.mirror != nullptr || snapshot.address + snapshot.bytes.size() > region.end) return false;
+        const auto bytes = region.buffer->Bytes();
+        const auto offset = static_cast<std::size_t>(snapshot.address - region.begin);
+        if (offset + snapshot.bytes.size() > bytes.size() || std::memcmp(bytes.data() + offset, snapshot.bytes.data(), snapshot.bytes.size()) != 0) return false;
+    }
+    return true;
+}
+
+void GuestBufferMemory::SuspendSpace() noexcept {
+    if (space == nullptr) return;
+    suspendedSpace = space->serial;
+    space.reset();
+}
+
+bool GuestBufferMemory::ResumeSpace() {
+    SuspendSpace();
+    if (!uploaded || committed || !lease.empty() || suspendedSpace == 0) {
+        countResumeMiss(SpaceResumeMiss::State);
+        return false;
+    }
+    const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    auto current = Spaces().current.load();
+    {
+        auto& state = Imports();
+        std::lock_guard lock(state.mutex);
+        if (current == nullptr || current->serial != suspendedSpace) {
+            countResumeMiss(SpaceResumeMiss::Replaced);
+            return false;
+        }
+        if (const auto miss = spaceMiss(context, current.get(), generation, state); miss != SpaceMiss::None) {
+            countResumeMiss(miss == SpaceMiss::Device ? SpaceResumeMiss::Device : miss == SpaceMiss::Generation ? SpaceResumeMiss::Generation : miss == SpaceMiss::Epoch ? SpaceResumeMiss::Epoch : SpaceResumeMiss::Replaced);
+            return false;
+        }
+        stampSpaceImports(*current, state);
+    }
+    std::vector<RefreshBlock> blocks;
+    if (!refreshSparseMirrors(current, blocks)) {
+        countResumeMiss(SpaceResumeMiss::Mirrors);
+        return false;
+    }
+    appendWritableMirrors(*current, blocks);
+    const auto checked = refreshHeapRuns(*current, blocks);
+    compareBlocks(blocks);
+    for (const auto& [run, collected] : checked) current->verified[run].store(collected, std::memory_order_relaxed);
+    if (mirrorsEnabled()) {
+        sweepMirrors();
+        reportMirrors();
+    }
+    space = std::move(current);
+    completeSpaceWrites();
+    return true;
+}
+
+bool GuestBufferMemory::SpaceImportsCurrent() {
+    if (space == nullptr) return false;
+    if (context.hostImportAlignment == 0) return true;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (importsStale(context, state)) refreshImports(context, state, space->lease);
+    return state.epoch == space->importsEpoch;
 }
 
 void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {

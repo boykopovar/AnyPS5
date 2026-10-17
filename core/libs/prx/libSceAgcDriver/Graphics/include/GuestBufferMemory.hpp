@@ -5,6 +5,7 @@
 #include "BdaAbi.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -183,6 +184,24 @@ struct AddressSpaceStats {
 };
 AddressSpaceStats AddressSpaceCounters();
 
+enum class AddressReuse : std::uint8_t { Reused, NotReusable, InUse, Snapshots, Space, Proof, Imports, Threw, Moved, Count };
+enum class SpaceResumeMiss : std::uint8_t { State, Replaced, Device, Generation, Epoch, Mirrors, Count };
+struct AddressReuseStats {
+    std::uint64_t proofs = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(AddressReuse::Count)> outcomes{};
+    std::array<std::uint64_t, static_cast<std::size_t>(SpaceResumeMiss::Count)> resumeMisses{};
+    std::uint64_t refusedProofNs = 0;
+    std::uint64_t reusedHolds = 0;
+    std::uint64_t budgetRefusals = 0;
+    std::uint64_t budgetRefusalsHeld = 0;
+    std::uint64_t heldImportRefusals = 0;
+    std::uint64_t heldImportRefusalsHeld = 0;
+};
+void CountAddressReuseProof();
+void CountAddressReuse(AddressReuse outcome, std::uint64_t proofNs = 0);
+void HoldReusedSpace(bool held);
+AddressReuseStats AddressReuseCounters();
+
 struct MirrorStats {
     std::uint64_t heapMirrors = 0;
     std::uint64_t heapBytes = 0;
@@ -311,8 +330,20 @@ public:
     };
     std::optional<SplitReads> SplitInPlaceReads() const;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> DeviceReads() const;
+    std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> SpaceRegions() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> DirectWrites() const;
+    bool SameSnapshots(std::span<const GuestMemorySnapshot> snapshots) const;
+    void SuspendSpace() noexcept;
+    bool ResumeSpace();
+    bool SpaceImportsCurrent();
+    std::shared_ptr<const void> SpaceHold() const { return space; }
 
 private:
+    struct SnapshotUse {
+        std::uint64_t address;
+        std::size_t bytes;
+        bool live;
+    };
     struct Region {
         std::uint64_t begin;
         std::uint64_t end;
@@ -436,6 +467,8 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
+    std::vector<SnapshotUse> snapshotUses;
+    std::uint64_t suspendedSpace = 0;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;

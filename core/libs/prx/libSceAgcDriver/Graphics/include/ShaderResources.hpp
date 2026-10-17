@@ -8,6 +8,7 @@
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <limits>
 #include <list>
@@ -226,9 +227,15 @@ public:
     bool Reusable() const { return reusable; }
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
+    static std::uint64_t GuestBufferBytes(const Context& context, std::span<const std::uint32_t> words);
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }
     bool ChecksFaults() const { return bda != nullptr; }
     void CheckFaults() const;
+    bool InUse() const { return usesInFlight->load(std::memory_order_acquire) != 0; }
+    bool ReusesAddressSpace() const { return addressReuse; }
+    std::shared_ptr<const void> BeginUse();
+    void CompleteUse();
+    void EndUse() noexcept;
     // `shaders` are the stages the object was built from, in build order (a recorded draw's vertex
     // and fragment stages, or one compute stage): their bindings are walked like the build did.
     // How a Revalidate proved (or refused) the object, for the [recipe] line: the proof path taken
@@ -239,7 +246,7 @@ public:
         ProofPath path = ProofPath::Fast;
         ProofFailure failure = ProofFailure::None;
     };
-    bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr);
+    bool Revalidate(std::span<const CompiledShader> shaders, ProofReport* report = nullptr, std::span<const GuestMemorySnapshot> snapshots = {});
     bool Revalidate(const CompiledShader& shader, ProofReport* report = nullptr) { return Revalidate(std::span<const CompiledShader>(&shader, 1), report); }
     // The proof a recipe hit runs on its template (design_cpu_final M4): Revalidate by that name.
     bool ProveCurrent(std::span<const CompiledShader> shaders, ProofReport* report = nullptr) { return Revalidate(shaders, report); }
@@ -425,6 +432,7 @@ private:
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
     void noteReusable();
+    bool proveBuild(std::span<const CompiledShader> shaders, ProofReport* report);
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)
     // looked it up, so the next Revalidate can repeat the proof from write stamps and the DCC keys
@@ -549,6 +557,10 @@ private:
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
+    bool addressReuse = false;
+    bool reuseProved = false;
+    std::shared_ptr<std::atomic<std::uint32_t>> usesInFlight = std::make_shared<std::atomic<std::uint32_t>>(0u);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> addressWrites;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
     // The pending registry's serial at the last Revalidate that proved this object, taken before

@@ -456,6 +456,8 @@ struct DrawProfile {
     // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
+    AddressReuseStats reuseSeen;
+    LeaseStats leaseSeen;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
@@ -558,6 +560,16 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     }
     std::fprintf(stderr, "%s\n", line);
     std::fprintf(stderr, "[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
+    const auto reuse = AddressReuseCounters();
+    const auto leases = LeaseCounters();
+    const auto& reuseSeen = profile.reuseSeen;
+    const auto reuseCount = [&](AddressReuse kind) { return static_cast<unsigned long long>(reuse.outcomes[static_cast<std::size_t>(kind)] - reuseSeen.outcomes[static_cast<std::size_t>(kind)]); };
+    const auto resumeMiss = [&](SpaceResumeMiss kind) { return static_cast<unsigned long long>(reuse.resumeMisses[static_cast<std::size_t>(kind)] - reuseSeen.resumeMisses[static_cast<std::size_t>(kind)]); };
+    if (reuse.proofs != reuseSeen.proofs || reuseCount(AddressReuse::InUse) != 0) {
+        std::fprintf(stderr, "[rescache] address-based draws: %llu proofs, %llu reused; refused: in use %llu, not reusable %llu, snapshots %llu, space %llu (state %llu, replaced %llu, device %llu, generation %llu, epoch %llu, mirrors %llu), images or buffers %llu, imports %llu, threw %llu, moved buffers %llu; %.1f ms in refused proofs; host import refusals: budget %llu (%llu while a reused draw held its space), held import %llu (%llu); pin-contention waits %llu (%.1f ms)\n", static_cast<unsigned long long>(reuse.proofs - reuseSeen.proofs), reuseCount(AddressReuse::Reused), reuseCount(AddressReuse::InUse), reuseCount(AddressReuse::NotReusable), reuseCount(AddressReuse::Snapshots), reuseCount(AddressReuse::Space), resumeMiss(SpaceResumeMiss::State), resumeMiss(SpaceResumeMiss::Replaced), resumeMiss(SpaceResumeMiss::Device), resumeMiss(SpaceResumeMiss::Generation), resumeMiss(SpaceResumeMiss::Epoch), resumeMiss(SpaceResumeMiss::Mirrors), reuseCount(AddressReuse::Proof), reuseCount(AddressReuse::Imports), reuseCount(AddressReuse::Threw), reuseCount(AddressReuse::Moved), static_cast<double>(reuse.refusedProofNs - reuseSeen.refusedProofNs) / 1e6, static_cast<unsigned long long>(reuse.budgetRefusals - reuseSeen.budgetRefusals), static_cast<unsigned long long>(reuse.budgetRefusalsHeld - reuseSeen.budgetRefusalsHeld), static_cast<unsigned long long>(reuse.heldImportRefusals - reuseSeen.heldImportRefusals), static_cast<unsigned long long>(reuse.heldImportRefusalsHeld - reuseSeen.heldImportRefusalsHeld), static_cast<unsigned long long>(leases.contentionWaits - profile.leaseSeen.contentionWaits), leases.contentionMs - profile.leaseSeen.contentionMs);
+    }
+    profile.reuseSeen = reuse;
+    profile.leaseSeen = leases;
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
     profile.maxDrawUs = profile.hookWaitUs = profile.maxHookWaitUs = profile.ownSyncUs = 0;
@@ -765,7 +777,7 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
 // addGuestBuffer), repeated for a cached build whose own checks compared the buffers against
 // another draw's render target and index buffer. The same conditions and messages, so a draw that
 // would have failed its build fails its hit.
-void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes) {
+void CheckBufferAliases(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes) {
     const auto overlap = [](std::uint64_t first, std::uint64_t firstSize, std::uint64_t second, std::uint64_t secondSize) { return first < second + secondSize && second < first + firstSize; };
     for (const auto& shader : shaders) {
         for (const auto& binding : shader.program->bindings) {
@@ -774,7 +786,7 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
             for (std::size_t offset = 0; offset + 4 <= words.size(); offset += 4) {
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[offset], words[offset + 1], words[offset + 2], words[offset + 3]}};
                 const auto address = descriptor.Base48();
-                const auto size = descriptor.GetSize();
+                const auto size = ShaderResources::GuestBufferBytes(context, std::span<const std::uint32_t>(words).subspan(offset, 4));
                 if (size == 0 || address == 0) continue;
                 const auto element = offset / 4;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
@@ -1273,6 +1285,16 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
     return resident;
 }
 
+struct ResourceUse {
+    std::shared_ptr<ShaderResources> resources;
+    ResourceUse() = default;
+    ResourceUse(ResourceUse&& other) noexcept : resources(std::move(other.resources)) {}
+    ResourceUse& operator=(ResourceUse&& other) = delete;
+    ~ResourceUse() {
+        if (resources != nullptr) resources->EndUse();
+    }
+};
+
 // A draw's resources (resolveDrawResources): the resource-cache template a recordable draw's
 // stages repeat, or a fresh build.
 struct ResolvedResources {
@@ -1281,6 +1303,7 @@ struct ResolvedResources {
     ResourceCache::Key contentKey;
     bool cacheable = false;
     const ShaderResources::BuildTiming* built = nullptr;
+    ResourceUse use;
 };
 
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
@@ -1300,18 +1323,27 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
     if (resolved.cacheable) {
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
-            const bool valid = cached->Revalidate(shaders);
+        auto cached = SharedResourceCache().Find(resolved.contentKey);
+        const bool inUse = cached != nullptr && cached->InUse();
+        if (inUse) CountAddressReuse(AddressReuse::InUse);
+        if (cached != nullptr && !inUse) {
+            const bool addressBased = cached->ReusesAddressSpace();
+            const auto proofStart = addressBased && timer.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            const bool valid = cached->Revalidate(shaders, nullptr, snapshots);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder);
             if (moved.has_value()) {
-                if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 resolved.resources = std::move(cached);
+                resolved.use.resources = resolved.resources;
                 resolved.moved = std::move(*moved);
+                if (trimKey) CheckBufferAliases(context, shaders, state.color, draw.indexAddress, indexBytes);
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
+                if (addressBased) CountAddressReuse(AddressReuse::Reused);
             } else if (valid) {
+                if (addressBased) CountAddressReuse(AddressReuse::Moved, timer.profile ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - proofStart).count()) : 0);
+                cached->EndUse();
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 SharedResourceCache().Remove(resolved.contentKey);
@@ -1324,6 +1356,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        resolved.use.resources = resolved.resources;
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
@@ -1548,8 +1581,14 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         });
         writers->push_back(resources);
     } else if (completion) {
-        if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
-        else recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
+        if (resources->Reusable()) {
+            recorder.OnComplete([resources, hold = resources->BeginUse()]() mutable {
+                const auto held = std::move(hold);
+                resources->CompleteUse();
+            });
+        } else {
+            recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
+        }
     }
     for (std::size_t index = 0; index < residents.size(); ++index) {
         if (residents[index] == nullptr) continue;
@@ -2296,7 +2335,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && resolved.moved.empty() && !multisampled) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->UsesAddressTable() && resolved.moved.empty() && !multisampled) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
@@ -2653,7 +2692,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         timer.phase(PhaseLookup);
         return miss(DrawRecipeMiss::Proof);
     }
-    CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
+    CheckBufferAliases(context, shaders, state.color, draw.indexAddress, inputs.indexBytes);
     SharedResourceCache().Touch(recipe.key);
     countCache(&DrawProfile::cacheHits);
     timer.phase(PhaseLookup);
