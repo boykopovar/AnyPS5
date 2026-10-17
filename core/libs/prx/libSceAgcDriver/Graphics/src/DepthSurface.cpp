@@ -354,6 +354,19 @@ public:
         return target.stencilAddress != 0 && address < target.stencilAddress + stencilBytes() && target.stencilAddress < end;
     }
 
+    bool CoveredBy(std::span<const std::pair<std::uint64_t, std::uint64_t>> written) const {
+        const auto covers = [&](std::uint64_t begin, std::uint64_t end) {
+            for (const auto& [writtenBegin, writtenEnd] : written) {
+                if (writtenEnd <= begin) continue;
+                if (writtenBegin > begin) return false;
+                begin = writtenEnd;
+                if (begin >= end) return true;
+            }
+            return false;
+        };
+        return covers(target.address, target.address + depthBytes()) || (target.stencilAddress != 0 && covers(target.stencilAddress, target.stencilAddress + stencilBytes()));
+    }
+
     void NoteMemory() {
         depthMemory = GuestMemory::CollectWrites(target.address, static_cast<std::size_t>(depthBytes()));
         stencilMemory = target.stencilAddress != 0 ? GuestMemory::CollectWrites(target.stencilAddress, static_cast<std::size_t>(stencilBytes())) : 0;
@@ -1523,6 +1536,18 @@ void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t b
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
         if (surface->context.device == device && !surface->retired && surface->Overlaps(address, bytes)) retire(*surface);
+    }
+}
+
+bool DepthSurfaceOverlaps(VkDevice device, std::uint64_t address, std::uint64_t bytes) {
+    std::lock_guard lock(surfacesMutex());
+    return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->context.device == device && !surface->retired && surface->Overlaps(address, bytes); });
+}
+
+void RetireCoveredDepthSurfaces(VkDevice device, std::span<const std::pair<std::uint64_t, std::uint64_t>> written) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (surface->context.device == device && !surface->retired && surface->CoveredBy(written)) retire(*surface);
     }
 }
 

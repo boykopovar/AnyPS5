@@ -26,14 +26,14 @@ alignas(256) constexpr std::array<std::uint32_t, 10> SampleCode{
     0x00610a1eu, 0x34060082u, 0xe0701000u, 0x80000a03u, 0xbf810000u,
 };
 
-void Read(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t width, bool sampled, float expected) {
+void Read(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t width, bool sampled, float expected, std::uint32_t height = Height) {
     Output.fill(0xdeadbeefu);
     const auto output = reinterpret_cast<std::uintptr_t>(Output.data());
     const auto depth = reinterpret_cast<std::uintptr_t>(Depth.data());
     const std::array<std::uint32_t, 16> data{
         static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), sizeof(Output), 0x31016facu,
         static_cast<std::uint32_t>(depth >> 8u), static_cast<std::uint32_t>(depth >> 40u) | (format << 20u) | (((width - 1u) & 3u) << 30u),
-        ((width - 1u) >> 2u) | ((Height - 1u) << 14u), 0x90000facu, 0u, 0u, 0u, 0u,
+        ((width - 1u) >> 2u) | ((height - 1u) << 14u), 0x90000facu, 0u, 0u, 0u, 0u,
         0x92u, 0u, 0u, 0u,
     };
     const auto code = sampled ? std::span<const std::uint32_t>(SampleCode) : std::span<const std::uint32_t>(LoadCode);
@@ -68,7 +68,10 @@ int main() {
             Require(DepthFastClearHarness::Draw(*device, shaders, surface, {.depthWrite = true}) == DepthFastClearHarness::Covered, "depth producer did not cover the surface");
             Read(*device, format == VK_FORMAT_D16_UNORM ? 7u : 22u, Width, true, 0.5f);
             Read(*device, 22u, format == VK_FORMAT_D16_UNORM ? Width : Width / 2u, false, 0.25f);
-            if (format == VK_FORMAT_D32_SFLOAT) Read(*device, 22u, Width, true, 0.25f);
+            if (format != VK_FORMAT_D32_SFLOAT) continue;
+            Read(*device, 22u, Width, true, 0.5f);
+            Read(*device, 22u, 128u, false, 0.25f, 128u);
+            Read(*device, 22u, Width, true, 0.25f);
         }
         std::puts("depth storage reuse GPU tests passed");
         return 0;

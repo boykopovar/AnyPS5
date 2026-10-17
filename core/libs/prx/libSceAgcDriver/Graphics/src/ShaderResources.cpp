@@ -933,12 +933,29 @@ GuestTextureResource StorageSurface(const Context& context, const GuestTextureRe
     return surface;
 }
 
+static std::vector<std::pair<std::uint64_t, std::uint64_t>> WrittenStorageBytes(const GuestTextureResource& viewed, std::uint32_t mip) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    const auto geometry = DescribeSurface(viewed);
+    if (geometry.thick || mip >= geometry.mips.size()) return written;
+    const auto covered = CoveredMipBytes(viewed.tileMode, BytesPerElement(viewed.format), geometry.mips[mip]);
+    const auto first = geometry.layers > 1u && geometry.imageDepth <= 1u ? std::min(viewed.baseArray, geometry.layers) : 0u;
+    for (auto layer = first; layer < geometry.layers; ++layer) {
+        if (!geometry.HasLayer(mip, layer)) continue;
+        const auto begin = viewed.baseAddress + geometry.GuestLayerOffset(layer) + geometry.mips[mip].tiledOffset;
+        for (const auto& [rangeBegin, rangeEnd] : covered) {
+            if (!written.empty() && written.back().second == begin + rangeBegin) written.back().second = begin + rangeEnd;
+            else written.emplace_back(begin + rangeBegin, begin + rangeEnd);
+        }
+    }
+    return written;
+}
+
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& viewed, std::uint32_t mip, std::uint64_t guestBytes, bool written) {
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
     RequireNoMultisampleTarget(viewed.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a storage image access");
     if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
-    if (written) RetireDepthSurfaces(context.device, viewed.baseAddress, guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes);
+    if (written && DepthSurfaceOverlaps(context.device, viewed.baseAddress, guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes)) RetireCoveredDepthSurfaces(context.device, WrittenStorageBytes(viewed, mip));
     static const bool disabled = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     if (disabled) return StorageTexture::Create(context, *context.detiler, viewed, mip);
     static_cast<void>(words);
