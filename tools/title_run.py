@@ -61,11 +61,13 @@ def warning_counts(text):
 
 def read_summary(path):
     lines = []
-    for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
         try:
-            lines.append(json.loads(line))
+            decoded = json.loads(line)
         except ValueError:
-            pass
+            continue
+        if isinstance(decoded, dict):
+            lines.append(decoded)
     presents = sum(line.get("presents", 0) for line in lines)
     seconds = sum(line.get("window", {}).get("ms", 0) for line in lines) / 1000
     last = lines[-1] if lines else {}
@@ -148,7 +150,7 @@ def render_markdown(summary, previous=None):
         if missing:
             names = ", ".join(f"{previous['titles'][title_id]['name']} ({title_id})" for title_id in missing)
             lines += [f"Missing: {names}", ""]
-    lines +=["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    lines += ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     for title_id, title in sorted(summary["titles"].items()):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering"), "")
@@ -244,6 +246,9 @@ if os.name == "nt":
     kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
     kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
     kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
     kernel32.QueryInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p)
     WindowCallback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user32.EnumWindows.argtypes = (WindowCallback, wintypes.LPARAM)
@@ -261,6 +266,7 @@ class Session:
     def __init__(self, command, cwd, env, stdout, stderr):
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.handles = {}
             self.job = kernel32.CreateJobObjectW(None, None)
             if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
                 error = ctypes.get_last_error()
@@ -272,7 +278,10 @@ class Session:
     def process_ids(self):
         listing = ProcessIdList()
         kernel32.QueryInformationJobObject(self.job, 3, ctypes.byref(listing), ctypes.sizeof(listing), None)
-        return set(listing.ids[:listing.listed])
+        ids = set(listing.ids[:listing.listed])
+        for pid in ids - self.handles.keys():
+            self.handles[pid] = kernel32.OpenProcess(0x1000, False, pid)
+        return ids
 
     def windows(self):
         ids, found = self.process_ids(), []
@@ -298,6 +307,11 @@ class Session:
             return False
 
     def exit_code(self):
+        if os.name == "nt" and not self.process_ids():
+            for handle in reversed(list(self.handles.values())):
+                code = wintypes.DWORD()
+                if handle and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259:
+                    return code.value
         return self.process.poll()
 
     def move_windows_offscreen(self):
@@ -348,7 +362,8 @@ def collect_frames(work, destination):
 
 def run_title(executable, work, run_dir, seconds, extra_env):
     run_dir.mkdir(parents=True)
-    env = {**os.environ, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
+    inherited = {key: value for key, value in os.environ.items() if key not in ("ANYPS5_SHADER_CACHE_DIR", "ANYPS5_NO_SHADER_CACHE")}
+    env = {**inherited, "SDL_AUDIODRIVER": "dummy", "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
     started = time.monotonic()
@@ -399,18 +414,23 @@ def last_line(text):
     return next((line.strip() for line in reversed(text.splitlines()) if line.strip()), "")
 
 
+def write_summary(output, summary):
+    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run titles repeatably and report each run's outcome.")
     parser.add_argument("ids", nargs="*", help="title IDs to run (default: every title found)")
     parser.add_argument("--games", action="append", type=Path, required=True, help="directory searched for extracted packages")
     parser.add_argument("--build", type=Path, default=ROOT / "build")
-    parser.add_argument("--out", type=Path, default=Path("title-runs"))
+    parser.add_argument("--out", type=Path)
     parser.add_argument("--runs", type=positive, default=2)
     parser.add_argument("--seconds", type=positive, help="run length for every title (default: the title's, else 60)")
     parser.add_argument("--note", default="", help="free text for the report, e.g. 'main + #6814'")
     parser.add_argument("--compare", type=Path, help="summary.json of an earlier run")
     parser.add_argument("--titles", type=Path, default=ROOT / "tools/titles.json")
     args = parser.parse_args(argv)
+    args.out = args.out or args.build / "title-runs"
     previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
     titles = load_titles(args.titles)
@@ -423,12 +443,17 @@ def main(argv=None):
     output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
     summary = {"build": {"commit": commit, "dirty": bool(git("status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
-               "driver_cache": "shared (not isolated)" if platform == "windows" else "isolated", "titles": {}}
+               "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
     for title_id in ids:
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
         work = output / title_id / "work"
-        executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
+        try:
+            executable = prepare(title_id, found[title_id], entry, platform, args.build, work)
+        except (unwrap_self.Refused, OSError, RuntimeError, TypeError, ValueError) as error:
+            work.mkdir(parents=True, exist_ok=True)
+            (work / "relink.log").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
+            executable = None
         runs = []
         for number in range(1, args.runs + 1):
             if executable is None:
@@ -444,7 +469,8 @@ def main(argv=None):
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
             print(f"{title_id} run{number}: {result['outcome']}", flush=True)
         summary["titles"][title_id] = {"name": entry.get("name", found[title_id]["name"]), "version": found[title_id]["version"], "seconds": seconds, "runs": runs}
-    (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+        write_summary(output, summary)
+    write_summary(output, summary)
     report = render_markdown(summary, previous)
     (output / "summary.md").write_text(report, encoding="utf-8")
     print(report)
