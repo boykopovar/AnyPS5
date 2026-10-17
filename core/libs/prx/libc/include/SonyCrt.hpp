@@ -20,11 +20,9 @@
 
 extern "C" GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
 
-namespace {
+using SonyConstraintHandler = void (APS5_VABI *)(const char* message, void* pointer, int error);
 
-using SonyConstraintHandler = void (*)(const char* message, void* pointer, int error);
-
-inline void SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
+inline void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
     (void)message;
     (void)pointer;
     (void)error;
@@ -40,6 +38,8 @@ inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
     static SonyConstraintHandler handler = SonyDefaultConstraintHandler;
     return handler;
 }
+
+namespace {
 
 inline void SonyInvokeConstraintHandler(const char* message, void* pointer, int error) {
     SonyConstraintHandler handler = nullptr;

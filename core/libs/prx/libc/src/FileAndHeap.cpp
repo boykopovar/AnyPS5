@@ -22,6 +22,7 @@
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #endif
 
+#include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -120,6 +121,7 @@ static bool IsPipeStream(std::FILE* native) {
 #endif
 
 using GuestCompare = int (APS5_VABI *)(const void*, const void*);
+using GuestContextCompare = int (APS5_VABI *)(const void*, const void*, void*);
 
 static void SwapElements(unsigned char* left, unsigned char* right, size_t size) {
     for (size_t index = 0; index < size; ++index) std::swap(left[index], right[index]);
@@ -129,19 +131,22 @@ static void SwapRanges(unsigned char* left, unsigned char* right, size_t bytes) 
     if (bytes > 0) SwapElements(left, right, bytes);
 }
 
-static unsigned char* MedianOfThree(unsigned char* a, unsigned char* b, unsigned char* c, GuestCompare compare) {
+template <typename Compare>
+static unsigned char* MedianOfThree(unsigned char* a, unsigned char* b, unsigned char* c, Compare compare) {
     return compare(a, b) < 0
         ? (compare(b, c) < 0 ? b : (compare(a, c) < 0 ? c : a))
         : (compare(b, c) > 0 ? b : (compare(a, c) < 0 ? a : c));
 }
 
-static void InsertionSort(unsigned char* base, size_t count, size_t size, GuestCompare compare) {
+template <typename Compare>
+static void InsertionSort(unsigned char* base, size_t count, size_t size, Compare compare) {
     for (unsigned char* next = base + size; next < base + count * size; next += size)
         for (unsigned char* element = next; element > base && compare(element - size, element) > 0; element -= size)
             SwapElements(element, element - size, size);
 }
 
-static void SortElements(unsigned char* base, size_t count, size_t size, GuestCompare compare) {
+template <typename Compare>
+static void SortElements(unsigned char* base, size_t count, size_t size, Compare compare) {
     for (;;) {
         if (count < 7) {
             InsertionSort(base, count, size, compare);
@@ -553,6 +558,22 @@ void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS
     if (count == 1) return;
 
     SortElements(static_cast<unsigned char*>(base), count, size, compare);
+}
+
+int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context) {
+    constexpr size_t RsizeMax = std::numeric_limits<size_t>::max() >> 1;
+    const char* const violation = count > RsizeMax ? "qsort_s : n > RSIZE_MAX"
+        : size > RsizeMax ? "qsort_s : es > RSIZE_MAX"
+        : count != 0 && !base ? "qsort_s : a == NULL"
+        : count != 0 && !compare ? "qsort_s : cmp == NULL"
+        : nullptr;
+    if (violation) {
+        SonyInvokeConstraintHandler(violation, nullptr, 22);
+        return 22;
+    }
+    if (count > 1 && size != 0)
+        SortElements(static_cast<unsigned char*>(base), count, size, [compare, context](const void* left, const void* right) { return compare(left, right, context); });
+    return 0;
 }
 
 }
