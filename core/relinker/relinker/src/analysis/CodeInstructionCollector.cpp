@@ -192,13 +192,21 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     CodePointers pointers;
     std::set<std::uint64_t> importSlots;
-    const auto readRelocations = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) {
+    const auto relocationRange = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) -> std::pair<std::uint64_t, std::uint64_t> {
         const auto size = value(sizeTag, sceSizeTag);
-        if (!size) return;
+        if (!size) return {0, 0};
         if (*size % 24 != 0) throw Domain::RelinkerException("Code analysis: invalid relocation table size");
-        if (*size == 0) return;
-        const auto start = table(addressTag, sceAddressTag, *size);
-        for (std::uint64_t offset = start; offset < start + *size; offset += 24) {
+        if (*size == 0) return {0, 0};
+        return {table(addressTag, sceAddressTag, *size), *size};
+    };
+    const auto [relaOffset, relaSize] = relocationRange(7, 0x6100002f, 8, 0x61000031);
+    const auto [pltOffset, pltSize] = relocationRange(23, 0x61000029, 2, 0x6100002d);
+    if (relaSize != 0 && pltSize != 0 && relaOffset < pltOffset + pltSize && pltOffset < relaOffset + relaSize
+        && relaOffset % 24 != pltOffset % 24)
+        throw Domain::RelinkerException("Code analysis: unaligned overlapping relocation tables", pltOffset);
+    const auto readRelocations = [&](std::uint64_t start, std::uint64_t size, bool plt) {
+        for (std::uint64_t offset = start; offset < start + size; offset += 24) {
+            if (!plt && offset >= pltOffset && offset - pltOffset < pltSize) continue;
             const auto slot = Io::ReadU64(bytes, offset);
             const auto info = Io::ReadU64(bytes, offset + 8);
             const auto type = static_cast<std::uint32_t>(info);
@@ -220,8 +228,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             }
         }
     };
-    readRelocations(7, 0x6100002f, 8, 0x61000031);
-    readRelocations(23, 0x61000029, 2, 0x6100002d);
+    readRelocations(relaOffset, relaSize, false);
+    readRelocations(pltOffset, pltSize, true);
     for (const auto& [addressTag, sizeTag] : {std::pair{25u, 27u}, std::pair{26u, 28u}, std::pair{32u, 33u}}) {
         const auto address = value(addressTag, 0x60000000 + addressTag);
         const auto size = value(sizeTag, 0x60000000 + sizeTag);
