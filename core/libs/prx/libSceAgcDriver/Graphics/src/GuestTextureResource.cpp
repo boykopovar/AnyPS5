@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -136,6 +137,13 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
 
     Require(baseLevel <= lastLevel, "guest texture descriptor has a base mip level past its last mip level");
 
+    const bool fmask = ShaderRecompiler::IsFmaskTextureFormat(static_cast<ShaderRecompiler::IrBufferFormat>(format));
+    if (fmask) {
+        Require(format == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Fmask32_S8_F8), "guest FMASK format is not implemented");
+        Require(!metaCompress && !writeCompress, "FMASK CMASK compression is not implemented");
+        Require((typeRaw == 9u || typeRaw == 13u) && tileModeRaw == 24u && baseLevel == 0u && lastLevel == 0u && maxMip == 0u, "FMASK reads require a single-mip 2D or 2D-array Z_64KB_X surface");
+        for (const auto selector : {dstSelX, dstSelY, dstSelZ, dstSelW}) Require(selector == 0u || selector == 1u || selector == 4u, "FMASK destination channel selector is not implemented");
+    }
 
     const auto describe = [&] { return " (format " + std::to_string(format) + ", " + std::to_string(width) + "x" + std::to_string(height) + "x" + std::to_string(depth + 1) + ", type " + std::to_string(typeRaw) + ", tile " + std::to_string(tileModeRaw) + ", mips " + std::to_string(baseLevel) + ".." + std::to_string(lastLevel) + " of " + std::to_string(maxMip + 1) + ")"; };
     TextureTileMode tileMode;
@@ -215,7 +223,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
     result.lastLevel = lastLevel;
     result.tileMode = tileMode;
     result.dimension = dimension;
-    result.format = format;
+    result.format = fmask ? static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format32UInt) : format;
     result.dstSelX = static_cast<std::uint8_t>(dstSelX);
     result.dstSelY = static_cast<std::uint8_t>(dstSelY);
     result.dstSelZ = static_cast<std::uint8_t>(dstSelZ);

@@ -1804,18 +1804,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     }
     const auto emitMode = [&](const ImageResource& mode) {
         state.runtimeImage = &mode;
-        if (mode.packedFormat == IrBufferFormat::Fmask8_S2_F1) {
-            if (inst.Opcode() == IrOpcode::ImageRead && memory.dataBits == 32u) {
-                const auto value = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), value, ConstantU32(state, 0x76543210u), ConstantU32(state, 0xfedcba98u), ConstantU32(state, 0u), ConstantU32(state, 0u));
-                const auto active = ctx.Arg(inst, 2u);
-                const auto mapped = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), mapped, active, active, active, active);
-                ctx.Define(inst, Select(state, TypeU32Vector(state, 4u), mapped, value, ConstantU32CompositeZero(state, 4u)));
-            } else {
-                ctx.Fail(inst, "FMASK requires a 32-bit image read");
-            }
-        } else if (mode.depthBits && memory.dataBits == 16u) {
+        if (mode.depthBits && memory.dataBits == 16u) {
             ctx.Fail(inst, "depth bits require a 32-bit image result");
         } else {
             EmitImageMode(ctx, inst, mode);

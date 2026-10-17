@@ -116,6 +116,43 @@ void RunGuestTextureResourceTests() {
     Require(result.tileMode == TextureTileMode::kLinear, "decoded tile mode changed");
     Require(result.dimension == TextureDimension::k2D, "decoded dimension changed");
     Require(result.format == 56, "decoded format changed");
+    Fields fmask = base;
+    fmask.format = 166u;
+    fmask.tileModeRaw = 24u;
+    fmask.dstSelY = fmask.dstSelZ = fmask.dstSelW = 0u;
+    const auto fmaskResource = DecodeTextureResource(pack(fmask));
+    Require(fmaskResource.format == 20u && fmaskResource.dimension == TextureDimension::k2D && fmaskResource.tileMode == TextureTileMode::kZ64KBX, "uncompressed 32-bit FMASK did not use an integer Z surface");
+    Fields fmaskArray = fmask;
+    fmaskArray.typeRaw = 13u;
+    fmaskArray.depth = 2u;
+    fmaskArray.baseArray = 1u;
+    const auto fmaskArrayResource = DecodeTextureResource(pack(fmaskArray));
+    Require(fmaskArrayResource.format == 20u && fmaskArrayResource.baseArray == 1u && fmaskArrayResource.depthOrLastArray == 2u, "FMASK normalization changed the array view");
+    for (std::uint32_t format = 156u; format <= 168u; ++format) {
+        if (format == 166u) continue;
+        auto unsupported = fmask;
+        unsupported.format = format;
+        rejectFields(unsupported, "FMASK format is not implemented");
+    }
+    for (const auto field : {&Fields::metaCompress, &Fields::writeCompress}) {
+        auto compressed = fmask;
+        compressed.*field = true;
+        rejectFields(compressed, "FMASK CMASK compression is not implemented");
+    }
+    for (const auto selector : {5u, 6u, 7u}) {
+        auto unsupported = fmask;
+        unsupported.dstSelX = selector;
+        rejectFields(unsupported, "FMASK destination channel selector is not implemented");
+    }
+    auto unsupportedFmask = fmask;
+    unsupportedFmask.tileModeRaw = 0u;
+    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
+    unsupportedFmask = fmask;
+    unsupportedFmask.lastLevel = unsupportedFmask.maxMip = 1u;
+    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
+    unsupportedFmask = fmask;
+    unsupportedFmask.typeRaw = 10u;
+    rejectFields(unsupportedFmask, "FMASK reads require a single-mip");
     Require(result.dstSelX == 4 && result.dstSelY == 5 && result.dstSelZ == 6 && result.dstSelW == 7, "decoded destination selectors changed");
 
     Fields wide = base;

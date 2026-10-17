@@ -206,6 +206,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     if (decoded.fmask && (storage || base.depthCompare || table)) {
         return rejectImage(PoisonReason::Fmask, "FMASK requires a direct sampled image load");
     }
+    if (decoded.fmask && format != IrBufferFormat::Fmask32_S8_F8) return rejectImage(PoisonReason::Fmask, "FMASK format is not implemented");
+    if (decoded.fmask && (descriptor.dwords[6] & (3u << 20u)) != 0u) return rejectImage(PoisonReason::Fmask, "FMASK CMASK compression is not implemented");
+    if (decoded.fmask && (base.packed || base.byElements != 0u)) return rejectImage(PoisonReason::Fmask, "packed FMASK image reads are not implemented");
     if (base.packed) {
         if (table || (!storage && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle)) {
             return rejectImage(PoisonReason::InvalidFormat, "packed image access requires a direct image, with identity swizzle when sampled");
@@ -244,7 +247,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
     const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
-    decoded.numericClass = base.atomic ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
+    decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : SampledTextureNumericClass(format);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
         if (!base.depthBitsCompatible) return rejectImage(PoisonReason::DepthBits16, "runtime image reads depth bits as unsupported 16-bit results");
@@ -1313,7 +1316,6 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, false);
                     append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Invalid, true, true);
                 }
-                if (image.fmaskCompatible && !table) append(IrTextureNumericClass::Float, IrBufferFormat::Invalid, IrBufferFormat::Fmask8_S2_F1, false, false);
             }
         }
     }
@@ -1429,13 +1431,6 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         const auto& mode = modes[index];
         if (mode.constantSwizzle) continue;
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;
-        if (decoded.fmask) {
-            if (mode.packedFormat == IrBufferFormat::Fmask8_S2_F1) {
-                result.mode = index;
-                return result;
-            }
-            continue;
-        }
         if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode) {
             result.mode = index;
             return result;

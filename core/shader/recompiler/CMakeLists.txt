@@ -230,6 +230,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
             ImageTableAbi::TableHeader
+            IsFmaskTextureFormat
             PixelInput
             PixelInputBit
             RayTracingStrict

@@ -5133,6 +5133,33 @@ void verifyQuadMaskNeighbourReads() {
     require(declares(maskedBallot, spv::OpDemoteToHelperInvocation) && declares(maskedBallot, spv::OpGroupNonUniformBallot), "a quad mask with demote did not preserve its ballot path");
 }
 
+void verifyFmaskImageMode() {
+    using namespace ShaderRecompiler;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    DescriptorValue descriptor{{0x100u, 166u << 20u, 0u, 0x91800004u, 0u, 0u, 0u, 0u}, 8u};
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
+    require(modes[selected].numericClass == IrTextureNumericClass::Uint && modes[selected].packedFormat == IrBufferFormat::Invalid && !modes[selected].constantSwizzle, "FMASK did not select a bound integer image mode");
+    for (std::uint32_t format = 156u; format <= 168u; ++format) {
+        if (format == 166u) continue;
+        descriptor.dwords[1] = format << 20u;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK format is not implemented", "an unsupported FMASK format was accepted");
+    }
+    descriptor.dwords[1] = 166u << 20u;
+    for (const auto compression : {1u << 20u, 1u << 21u}) {
+        descriptor.dwords[6] = compression;
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK CMASK compression is not implemented", "compressed FMASK was accepted without decoding its metadata");
+    }
+    descriptor.dwords[6] = 0u;
+    image.packed = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "packed FMASK image reads are not implemented", "packed FMASK was accepted");
+    image.packed = false;
+    image.fmaskCompatible = false;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "FMASK requires a direct 32-bit image load", "an incompatible FMASK operation was accepted");
+}
+
 void verifyCubeDepthCompareMode() {
     using namespace ShaderRecompiler;
     ImageResource image{};
@@ -5284,6 +5311,7 @@ int main(int argc, char** argv) {
         verifyFunctionLdsUpdates();
         verifySrtReadPatching();
         verifyGuardedNullPointers();
+        verifyFmaskImageMode();
         verifyCubeDepthCompareMode();
         verifyVolumeArrayLoadMode();
         verifySrgbDepthCompareModes();
