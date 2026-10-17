@@ -428,7 +428,7 @@ void GuestArenaForgetSection_nid_postfix(void* section) {
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 namespace {
 int PosixProtection(std::uint32_t windowsProtection) {
     switch (windowsProtection) {
@@ -449,7 +449,7 @@ void* PlaceAt(void* pointer, std::size_t bytes, std::uint32_t protection) {
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
     if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
     if (mprotect(reinterpret_cast<void*>(address), bytes, PosixProtection(protection)) != 0)
