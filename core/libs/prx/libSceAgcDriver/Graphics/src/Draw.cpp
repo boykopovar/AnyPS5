@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/HotReload.hpp"
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include <algorithm>
 #include <array>
@@ -2063,7 +2064,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
             ReadColorTarget(color, binding.transfer->Bytes());
         }
         // A fast-cleared DCC target holds its clear value wherever the draw does not write.
-        if (color.dccAddress != 0) {
+        const auto renderOverride = HotReload::GetRenderStateOverrideExport();
+        if (color.dccAddress != 0 && !renderOverride.disableDcc) {
             const auto keys = CurrentDccKeys(color.dccAddress, colorLayout.Bytes());
             if (IsDccClear(keys)) {
                 const auto pixels = binding.gpuTiling ? binding.tiled->Bytes() : binding.transfer->Bytes();
@@ -2240,9 +2242,28 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         if (!targets[index].proxied) continue;
         if (!masked.has_value()) masked = state;
         masked->colors[index].format = AttachmentProxyFormat(context, state.colors[index].format);
-        masked->blends.at(state.colors[index].exportIndex).colorWriteMask &= VK_COLOR_COMPONENT_R_BIT;
+    const State& baseState = masked.has_value() ? *masked : state;
+    State overriddenState = baseState;
+    bool hasOverrides = false;
+    if (renderOverride.disableCull && overriddenState.cullMode != VK_CULL_MODE_NONE) {
+        overriddenState.cullMode = VK_CULL_MODE_NONE;
+        hasOverrides = true;
     }
-    const State& pipelineState = masked.has_value() ? *masked : state;
+    if (renderOverride.disableDepthTest && overriddenState.depthTest) {
+        overriddenState.depthTest = false;
+        hasOverrides = true;
+    }
+    if (renderOverride.forceDepthWrite && !overriddenState.depthWrite) {
+        overriddenState.depthWrite = true;
+        hasOverrides = true;
+    }
+    if (renderOverride.forceOpaqueAlpha) {
+        for (auto& blend : overriddenState.blends) {
+            blend.blendEnable = VK_FALSE;
+        }
+        hasOverrides = true;
+    }
+    const State& pipelineState = hasOverrides ? overriddenState : baseState;
     static const bool verifySetLayouts = std::getenv("APS5_VERIFY_SET_LAYOUTS") != nullptr;
     if (verifySetLayouts && context.descriptorCache != nullptr) {
         const auto described = DescribeSetLayouts(context, shaders);

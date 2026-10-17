@@ -7,6 +7,10 @@
 #include <algorithm>
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
 #include <cstdlib>
+#include <filesystem>
+#include "prx/libc/include/HotReload.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "Recompiler.hpp"
 
 namespace AgcDriver::DriverDetail {
 
@@ -84,6 +88,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
             timing.Mark("gpu_mutex_wait");
             require(device != nullptr && device->Window() == window.context, "presentation window is not attached to the device");
             presenting = device;
+            checkShaderHotReload();
             timing.Mark("device_setup");
             std::uint32_t drawableWidth = 0;
             std::uint32_t drawableHeight = 0;
@@ -187,6 +192,43 @@ void Driver::reportPresents(double waitedMs, std::size_t inFlight) {
 void Driver::ReleaseWindow(void* window) {
     std::lock_guard lock(GuestMemory::GpuMutex());
     if (device && device->Window() == window) device.Reset();
+}
+
+void Driver::checkShaderHotReload() {
+    static const bool hotReloadEnabled = std::getenv("APS5_HOT_RELOAD") != nullptr;
+    if (!hotReloadEnabled) return;
+    static std::uint32_t frameCounter = 0;
+    if (++frameCounter % 30 != 0) return;
+    const std::filesystem::path trigger("hotreload/reload_shaders");
+    std::error_code ec;
+    bool shouldReload = HotReload::IsShaderReloadTriggeredExport();
+    if (std::filesystem::exists(trigger, ec)) {
+        std::filesystem::remove(trigger, ec);
+        shouldReload = true;
+    }
+    const bool stateChanged = HotReload::CheckRenderStateReloadExport();
+    if (stateChanged) {
+        std::shared_ptr<VulkanDevice> currentDevice = device.Load();
+        if (currentDevice != nullptr) {
+            currentDevice->WaitIdle();
+            Graphics::ClearCachedPipelines(currentDevice->Device());
+        }
+    }
+    if (shouldReload) {
+        HotReloadShaders();
+    }
+}
+
+
+
+void Driver::HotReloadShaders() {
+    std::shared_ptr<VulkanDevice> currentDevice = device.Load();
+    if (currentDevice != nullptr) {
+        currentDevice->WaitIdle();
+        Graphics::ClearCachedPipelines(currentDevice->Device());
+    }
+    ShaderRecompiler::ResetRecompilerCaches();
+    std::fprintf(stderr, "[HOT-RELOAD] Shader and pipeline caches successfully invalidated and reset.\n");
 }
 
 }

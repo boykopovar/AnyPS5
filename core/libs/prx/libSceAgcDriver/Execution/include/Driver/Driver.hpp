@@ -76,11 +76,13 @@ public:
     DispatchCacheFootprint DispatchCacheSize();
     static std::uint64_t DispatchCacheBytes();
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
+    void HotReloadShaders();
 
 private:
     friend class SampledReadScope;
     friend struct PendingView;
     friend struct PacketTimer;
+    void checkShaderHotReload();
     void stop();
     Driver();
     void rethrowFailure() const;

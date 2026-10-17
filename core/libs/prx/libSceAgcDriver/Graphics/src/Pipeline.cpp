@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/HotReload.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -446,11 +447,12 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
         dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
         dynamic.pDynamicStates = dynamicStates.data();
+        const auto renderOverride = HotReload::GetRenderStateOverrideExport();
         VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.polygonMode = renderOverride.forceWireframe ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
         Require(!state.depthBiasPerFace || (depthBias && state.cullMode == VK_CULL_MODE_NONE), "per-face depth bias needs both faces rasterized");
-        raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
+        raster.cullMode = renderOverride.disableCull ? VK_CULL_MODE_NONE : (state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode);
         raster.frontFace = state.frontFace;
         raster.depthBiasEnable = depthBias;
         raster.lineWidth = 1;
@@ -474,8 +476,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         sampleLocations.sampleLocationsInfo = {VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, samples.rasterizationSamples, grid, state.samples * grid.width * grid.height, locations.data()};
         if (sampleLocationsEnabled) samples.pNext = &sampleLocations;
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        depthStencil.depthTestEnable = state.depthTest;
-        depthStencil.depthWriteEnable = state.depthWrite;
+        depthStencil.depthTestEnable = renderOverride.disableDepthTest ? VK_FALSE : state.depthTest;
+        depthStencil.depthWriteEnable = renderOverride.forceDepthWrite ? VK_TRUE : state.depthWrite;
         depthStencil.depthCompareOp = state.depthCompare;
         depthStencil.depthBoundsTestEnable = depthBounds;
         depthStencil.stencilTestEnable = state.stencilTest;
