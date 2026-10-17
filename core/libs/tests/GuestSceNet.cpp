@@ -76,6 +76,7 @@ int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
 int APS5_VABI close_nid_postfix(int);
+bool GuestSocketIsOpen_nid_no_patch(int);
 int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
 int APS5_VABI fcntl_nid_postfix(int, int, ...);
 struct GuestPollEntry {
@@ -991,6 +992,14 @@ static void CheckSocketError() {
     Require(sceNetSocketClose(refused) == 0);
 }
 
+static void CheckCloseKernelSocket() {
+    const int kernel = socket_nid_postfix(2, 1, 0);
+    Require(kernel >= 0 && GuestSocketIsOpen_nid_no_patch(kernel));
+    Require(sceNetSocketClose(kernel) == 0);
+    Require(!GuestSocketIsOpen_nid_no_patch(kernel));
+    Require(Failed(sceNetSocketClose(kernel), 9));
+}
+
 static void CheckDatagramDisconnect() {
     const int peer = sceNetSocket("disconnect-peer", 2, 2, 17);
     const int other = sceNetSocket("disconnect-other", 2, 2, 17);
@@ -1060,6 +1069,7 @@ int main() {
     CheckUnspecifiedIpv6();
     if (!ipv6Unavailable) CheckIpv6SocketsAreIpv6Only();
     CheckDatagramDisconnect();
+    CheckCloseKernelSocket();
 
     const int closed = sceNetSocket("closed-by-kernel", 2, 2, 17);
     Require(closed >= 0);
