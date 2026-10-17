@@ -397,7 +397,7 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
     }
     if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(*alphaToMask == AlphaToCoverageDithered && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     if (const auto conservative = word(cx, 0x313); conservative && (*conservative & ~0x001f6000u) != 0) return zeroMessage(0x313, *conservative, "MSAA_ENABLE on a single-sample target with conservative rasterization");
-    constexpr const char* primitives = "MSAA_ENABLE on a single-sample target for primitives other than triangles";
+    constexpr const char* primitives = "MSAA_ENABLE on a single-sample target for primitives other than triangles and rectangles";
     const auto stages = word(cx, 0x2d5);
     if (!stages) return {};
     if ((*stages & 0x20u) != 0) {
@@ -408,7 +408,7 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
             const auto topology = (*parameters >> 5u) & 7u;
             if ((domain != 1u && domain != 2u) || (topology != 2u && topology != 3u)) return zeroMessage(0x2db, *parameters, primitives);
         }
-    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u) {
+    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 7u && *primitive != 17u) {
         return zeroMessage(0x242, *primitive, primitives);
     }
     return {};
