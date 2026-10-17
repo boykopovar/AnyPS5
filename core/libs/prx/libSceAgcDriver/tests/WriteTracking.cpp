@@ -918,6 +918,30 @@ void CheckCommittedRanges() {
     Require(!UnchangedCommittedSince(first, 0), "an unknown generation was accepted for the committed parts");
 }
 
+void CheckAdoptLatestEpoch() {
+    std::uint64_t bumped = 0;
+    std::thread([&] {
+        BumpCollectEpoch();
+        bumped = CollectEpoch();
+    }).join();
+    Require(bumped != 0, "a bumped thread has no collect epoch");
+    std::uint64_t before = 1;
+    std::uint64_t adopted = 0;
+    bool keptOwn = false;
+    std::thread([&] {
+        before = CollectEpoch();
+        AdoptLatestCollectEpoch();
+        adopted = CollectEpoch();
+        BumpCollectEpoch();
+        const auto own = CollectEpoch();
+        AdoptLatestCollectEpoch();
+        keptOwn = CollectEpoch() == own;
+    }).join();
+    Require(before == 0, "a thread that never bumped had a collect epoch");
+    Require(adopted == bumped, "a thread that never bumped did not take the newest bumped collect epoch");
+    Require(keptOwn, "adopting the newest collect epoch moved a thread off its own");
+}
+
 int main() {
     try {
         if (!WriteWatched()) {
@@ -948,6 +972,7 @@ int main() {
         CheckImportWindowOtherThread();
         CheckUnwatchedImport();
         CheckCommittedRanges();
+        CheckAdoptLatestEpoch();
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
         return 1;
