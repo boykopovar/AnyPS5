@@ -101,6 +101,44 @@ void CheckSharedBlock() {
     if (!Watched(outside, unwatched.size())) Require(StoredOver(outside, unwatched.size(), TrackerGeneration()), "an unwatched range reads as not stored over");
 }
 
+void CheckRepeatedNeighbourStores() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto boundary = base + 2 * Block - 0x9000;
+    const auto sharedFirst = boundary - (base + Block);
+    const auto neighbourBytes = static_cast<std::size_t>(base + 3 * Block - boundary);
+    std::memset(memory, 0x11, 3 * Block);
+
+    const auto synced = CollectWrites(base, 3 * Block);
+    Require(synced != 0, "the test block is not collected");
+    for (int store = 0; store < 6; ++store) MarkWritten(boundary, neighbourBytes);
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), synced), "repeated stores of the neighbour's bytes count for the first surface's part of the shared block");
+    Require(StoredAllSince_nid_no_patch(boundary, neighbourBytes, synced), "repeated stores of the neighbour's bytes forget that they covered them");
+
+    const auto pieces = TrackerGeneration();
+    for (int store = 0; store < 3; ++store) MarkWritten(boundary + static_cast<std::uint64_t>(store) * 0x100, 4);
+    MarkWritten(boundary, 0x400);
+    Require(StoredOver(boundary + 0x200, 4, pieces) && !StoredOver(boundary + 0x400, 4, pieces), "a store over earlier pieces of the block answers for other bytes than its own");
+    Require(!StoredOver(base + Block, static_cast<std::size_t>(sharedFirst), pieces), "a store over earlier pieces counts for the first surface's part of the shared block");
+
+    void* fresh = AllocateWatched(2 * Block);
+    const auto freshBase = reinterpret_cast<std::uint64_t>(fresh);
+    std::memset(fresh, 0x11, 2 * Block);
+    const auto freshSynced = CollectWrites(freshBase, 2 * Block);
+    const auto neighbour = freshBase + Block - 0x9000;
+    for (std::uint64_t store = 0; store < 4; ++store) MarkWritten(neighbour + store * 0x1000, 0x100);
+    const auto settled = TrackerGeneration();
+    MarkWritten(neighbour, 0x100);
+    MarkWritten(neighbour + 0x5000, 0x100);
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), settled), "a full block forgets a store newer than its oldest");
+    Require(StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), freshSynced), "a forgotten store is not taken as a store over the rest of the block");
+
+    const auto partial = TrackerGeneration();
+    MarkWritten(neighbour + 0x5080, 0x100);
+    Require(StoredOver(neighbour + 0x5000, 0x10, settled) && StoredOver(neighbour + 0x5100, 0x10, partial), "a store that overlaps an earlier piece without containing it replaces it");
+    Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), settled), "a full block forgets a store newer than its oldest");
+}
+
 void CheckStoredAllSince() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes));
@@ -931,6 +969,7 @@ int main() {
         }
 #endif
         CheckSharedBlock();
+        CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
         CheckOwnStore();
         CheckUnwatch();

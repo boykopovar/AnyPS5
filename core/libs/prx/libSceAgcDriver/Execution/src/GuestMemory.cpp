@@ -881,7 +881,6 @@ struct WriteTracker {
     struct DriverPieces {
         std::uint32_t whole = 0;
         std::uint32_t dropped = 0;
-        std::uint32_t next = 0;
         std::array<DriverPiece, 4> pieces{};
 
         bool covers(std::uint32_t begin, std::uint32_t end, std::uint64_t generation) const {
@@ -929,9 +928,22 @@ struct WriteTracker {
             return;
         }
         auto& entry = driverPieces[block];
-        auto& slot = entry.pieces[entry.next++ % entry.pieces.size()];
-        entry.dropped = std::max(entry.dropped, slot.generation);
-        slot = {stampGeneration, from, to};
+        DriverPiece* covered = nullptr;
+        for (auto& piece : entry.pieces) {
+            if (piece.generation == 0 || piece.begin < from || piece.end > to) continue;
+            if (covered == nullptr) covered = &piece;
+            else piece = {};
+        }
+        if (covered != nullptr) {
+            *covered = {stampGeneration, from, to};
+            return;
+        }
+        auto* oldest = &entry.pieces.front();
+        for (auto& piece : entry.pieces) {
+            if (piece.generation < oldest->generation) oldest = &piece;
+        }
+        entry.dropped = std::max(entry.dropped, oldest->generation);
+        *oldest = {stampGeneration, from, to};
     }
 
     std::uint32_t stampOf(std::uint64_t block) const {
