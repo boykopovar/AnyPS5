@@ -1798,6 +1798,23 @@ void DepthStencilTests() {
     const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
     Require(rejection.empty(), "precheck rejected a stencil draw with a surface: " + rejection);
     Require(state.depth && state.depth->address == 0x10000 && state.depth->stencilAddress == 0x20000 && state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT && state.depth->clearStencil == 7 && state.depth->htileAddress == 0x10000030000ull && !state.depth->htileStencil, "depth surface decode changed");
+    {
+        auto split = queue;
+        split.context[0x014] = 0;
+        for (const auto control : {0x00700711u, 0x00700715u, 0x00700713u}) {
+            split.context[0x200] = control;
+            const auto splitState = AgcDriver::Graphics::DecodeState(split);
+            Require(splitState.depth && splitState.depth->address == 0x10000 && !splitState.depthWrite, "a depth plane the draw does not write rejected another write address");
+            Require(AgcDriver::Graphics::DrawRejection(split, false).empty(), "precheck rejected a depth plane the draw does not write at another write address");
+        }
+        split.context[0x200] = 0x00700717u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
+        split.context[0x200] = 0x00700711u;
+        for (const auto control : {0x01u, 0x20u, 0x40u, 0x60u}) {
+            split.context[0x000] = control;
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
+        }
+    }
     for (const auto clear : {0u, 1u, 2u, 3u}) {
         auto retained = queue;
         retained.context[0x8e] = retained.context[0x8f] = retained.context[0x203] = 0;
