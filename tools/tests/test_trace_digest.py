@@ -356,6 +356,25 @@ class IntervalDigestTests(unittest.TestCase):
         self.assertEqual(trace_digest.sparkline([0.0, 0.0]), "..")
         self.assertEqual(trace_digest.sparkline([]), "")
 
+    def test_largest_phase_does_not_depend_on_json_key_order(self):
+        phases = [("Driver.Completion", 1.0), ("Driver.Packet", 7.0), ("Driver.Present", 2.0)]
+        for offset in range(len(phases)):
+            for sort_keys in (False, True):
+                with self.subTest(offset=offset, sort_keys=sort_keys):
+                    line = interval_line(0.0, 30.0, 20.0, 5.0,
+                                         top_phases_ms_per_frame=dict(phases[offset:] + phases[:offset]))
+                    self.path.write_text(json.dumps(line, sort_keys=sort_keys) + "\n", encoding="utf-8")
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(trace_digest.main([str(self.path), "--json"]), 0)
+                    result = json.loads(output.getvalue())
+                    self.assertEqual(result["intervals"][0]["top_phase"],
+                                     {"name": "Driver.Packet", "ms_per_frame": 7.0})
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(trace_digest.main([str(self.path)]), 0)
+                    self.assertIn("| Driver.Packet 7.0 |", output.getvalue())
+
     def test_command_line_table_and_json(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

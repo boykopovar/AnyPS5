@@ -261,11 +261,12 @@ def digest_intervals(lines):
     for line in lines:
         workers = line.get("worker_busy_pct", {})
         busiest = max(workers.items(), key=lambda entry: entry[1]) if workers else None
-        phases = list(line.get("top_phases_ms_per_frame", {}).items())
+        phases = line.get("top_phases_ms_per_frame", {})
+        largest = max(phases.items(), key=lambda entry: entry[1]) if phases else None
         rows.append({"start_s": line["interval_start_s"], "end_s": line["interval_end_s"], "presents": line["presents"],
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
-                     "top_phase": {"name": phases[0][0], "ms_per_frame": phases[0][1]} if phases else None,
+                     "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
                      "trace_dropped": line.get("trace_dropped", False)})
     first = lines[0] if lines else {}
     keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution")
