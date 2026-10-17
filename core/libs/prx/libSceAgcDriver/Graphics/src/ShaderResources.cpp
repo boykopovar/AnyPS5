@@ -4526,10 +4526,19 @@ std::size_t ShaderResources::MaxDrawSnapshotBytes() {
     return static_cast<std::size_t>(mib * 1024ull * 1024ull);
 }
 
+std::size_t ShaderResources::DrawUploadLimit() {
+    static const std::size_t limit = [] {
+        const char* value = std::getenv("APS5_DRAW_UPLOAD_MAX");
+        return value != nullptr ? static_cast<std::size_t>(std::strtoull(value, nullptr, 10)) : std::size_t{4096};
+    }();
+    return limit;
+}
+
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved) const {
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
     const auto reads = guestMemory.InPlaceReads();
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
+    const auto uploadLimit = DrawUploadLimit();
     std::size_t totalSnapshotBytes = 0;
     auto result = std::make_shared<DrawBindings>();
     thread_local std::vector<std::size_t>* selectedSlot = nullptr;
@@ -4557,7 +4566,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 else movedWordBuffers[movedWordBufferNext++ % MovedWordBufferSlots] = std::move(entry);
             }
             selected.push_back(index);
-            result->snapshots.push_back({0, std::move(buffer)});
+            result->snapshots.push_back({0, std::move(buffer), 0, override->size});
             continue;
         }
         std::uint64_t address = item.address;
@@ -4578,28 +4587,38 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             stamp = {GuestMemory::TrackerGeneration(), GuestMemory::CollectEpoch(), registryGeneration};
             stamped = true;
         }
-        auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp);
+        VkDeviceSize offset = 0;
+        auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp, &offset);
         static const bool verifySnapshots = std::getenv("APS5_VERIFY_DRAW_SNAPSHOTS") != nullptr;
         if (verifySnapshots && buffer != nullptr) {
             static std::atomic<std::uint64_t> checked{0}, differing{0};
+            const auto fast = buffer->Bytes().subspan(static_cast<std::size_t>(offset), bytes);
             const auto slow = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, GuestMemory::CollectWrites(begin, bytes));
-            const bool same = slow == buffer || (slow != nullptr && slow->Bytes().size() == buffer->Bytes().size() && std::memcmp(slow->Bytes().data(), buffer->Bytes().data(), buffer->Bytes().size()) == 0) || (slow == nullptr && std::memcmp(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes) == 0);
+            const bool same = slow == buffer || (slow != nullptr && slow->Bytes().size() == fast.size() && std::memcmp(slow->Bytes().data(), fast.data(), fast.size()) == 0) || (slow == nullptr && std::memcmp(fast.data(), reinterpret_cast<const void*>(begin), bytes) == 0);
             if (!same) differing.fetch_add(1);
             if (checked.fetch_add(1) % 200000 == 199999) std::fprintf(stderr, "[draw-snapshots] verify: %llu fast answers checked, %llu differing%c", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(differing.load()), 10);
         }
         if (buffer == nullptr) {
-            const auto generation = GuestMemory::CollectWrites(begin, bytes);
-            buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation);
-            if (buffer == nullptr) {
-                buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-                std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
-                recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+            const bool uploaded = bytes != 0 && bytes <= uploadLimit;
+            if (uploaded) {
+                auto slice = recorder.DrawUpload(bytes);
+                std::memcpy(slice.bytes, reinterpret_cast<const void*>(begin), bytes);
+                buffer = std::move(slice.buffer);
+                offset = slice.offset;
+            } else {
+                const auto generation = GuestMemory::CollectWrites(begin, bytes);
+                buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation);
+                if (buffer == nullptr) {
+                    buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                    std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
+                    recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+                }
             }
-            if (GuestMemory::TrackerGeneration() == stamp[0]) recorder.NoteUnwrittenDrawSnapshot(begin, bytes, stamp, buffer);
-            else stamped = false;
+            if (GuestMemory::TrackerGeneration() != stamp[0]) stamped = false;
+            else if (!uploaded || stamp[1] != 0) recorder.NoteUnwrittenDrawSnapshot(begin, bytes, stamp, buffer, offset);
         }
         selected.push_back(index);
-        result->snapshots.push_back({begin, std::move(buffer)});
+        result->snapshots.push_back({begin, std::move(buffer), offset, bytes});
         totalSnapshotBytes += bytes;
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
@@ -4647,7 +4666,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result->snapshots[snapshotIndex];
-                buffers[offset + element] = {snapshot.buffer->Handle(), 0, snapshot.buffer->Bytes().size()};
+                buffers[offset + element] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes};
             }
         }
     }

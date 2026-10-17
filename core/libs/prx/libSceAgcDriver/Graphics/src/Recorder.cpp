@@ -2540,6 +2540,17 @@ void Recorder::eraseDrawSnapshot(std::map<DrawSnapshotKey, DrawSnapshot>::iterat
     drawSnapshots.erase(entry);
 }
 
+Recorder::UploadSlice Recorder::DrawUpload(std::size_t bytes) {
+    const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16);
+    auto offset = (drawUploadUsed + alignment - 1) & ~(alignment - 1);
+    if (drawUpload == nullptr || offset + bytes > drawUpload->Bytes().size()) {
+        drawUpload = std::make_shared<Buffer>(context, std::max(DrawUploadChunk, bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        offset = 0;
+    }
+    drawUploadUsed = offset + bytes;
+    return {drawUpload, offset, drawUpload->Bytes().data() + offset};
+}
+
 void Recorder::retireUnwrittenSnapshots(const std::array<std::uint64_t, 3>& stamp) {
     if (stamp == unwrittenStamp) return;
     unwrittenSnapshots.clear();
@@ -2547,21 +2558,22 @@ void Recorder::retireUnwrittenSnapshots(const std::array<std::uint64_t, 3>& stam
     unwrittenStamp = stamp;
 }
 
-std::shared_ptr<Buffer> Recorder::UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp) {
+std::shared_ptr<Buffer> Recorder::UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset) {
     retireUnwrittenSnapshots(stamp);
     const auto found = unwrittenSnapshots.find(address);
     if (found == unwrittenSnapshots.end() || found->second.bytes != bytes) return {};
+    if (offset != nullptr) *offset = found->second.offset;
     return found->second.buffer;
 }
 
-void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer) {
+void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset) {
     retireUnwrittenSnapshots(stamp);
     if (const auto found = unwrittenSnapshots.find(address); found != unwrittenSnapshots.end()) {
         unwrittenBytes -= found->second.bytes;
         unwrittenSnapshots.erase(found);
     }
     if (unwrittenSnapshots.size() >= UnwrittenSnapshotEntries || bytes > DrawSnapshotBudget - unwrittenBytes) return;
-    unwrittenSnapshots.emplace(address, UnwrittenSnapshot{bytes, std::move(buffer)});
+    unwrittenSnapshots.emplace(address, UnwrittenSnapshot{bytes, std::move(buffer), offset});
     unwrittenBytes += bytes;
 }
 
