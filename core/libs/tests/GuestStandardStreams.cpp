@@ -1,6 +1,9 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstdlib>
+#include <string>
+#include <string_view>
 #include <fcntl.h>
 #include <cstring>
 #include <cstdarg>
@@ -550,9 +553,127 @@ static int CheckClosedStandardOutput() {
     return 0;
 }
 
+#ifndef _WIN32
+static void FillScanStream(FileStream& stream, const std::string& text) {
+    Require(std::fwrite(text.data(), 1, text.size(), stream.GetHandle()) == text.size());
+    std::rewind(stream.GetHandle());
+}
+
+#if defined(__GLIBC__)
+static void CheckWideScan() {
+    char16_t wide[8];
+    const auto reset = [&] { std::fill(std::begin(wide), std::end(wide), u'!'); };
+    const auto holds = [&](std::u16string_view expected, std::size_t untouchedFrom) {
+        return std::u16string_view(wide, expected.size()) == expected &&
+            std::all_of(wide + untouchedFrom, std::end(wide), [](char16_t unit) { return unit == u'!'; });
+    };
+
+    FileStream mixed(std::tmpfile());
+    FillScanStream(mixed, "ab cdef 12");
+    char16_t letters[4];
+    std::fill(std::begin(letters), std::end(letters), u'!');
+    int number = -1;
+    int count = -1;
+    reset();
+    Require(fscanf_nid_postfix(&mixed, "%ls%n %3lc%d", wide, &count, letters, &number) == 2);
+    Require(holds(std::u16string_view(u"ab", 3), 3) && count == 2 && number == -1);
+    Require(std::u16string_view(letters, 4) == u"cde!");
+    Require(fgetc_nid_postfix(&mixed) == 'f');
+    mixed.Close();
+
+    FileStream literal(std::tmpfile());
+    FillScanStream(literal, "a-b");
+    reset();
+    Require(fscanf_nid_postfix(&literal, "%C+%lc", wide, wide + 1) == 1 && holds(u"a", 1));
+    Require(fgetc_nid_postfix(&literal) == '-');
+    literal.Close();
+
+    FileStream digits(std::tmpfile());
+    FillScanStream(digits, "12");
+    reset();
+    Require(fscanf_nid_postfix(&digits, "%l[a-z]", wide) == 0 && holds(u"", 0));
+    Require(fgetc_nid_postfix(&digits) == '1');
+    digits.Close();
+
+    FileStream latin(std::tmpfile());
+    FillScanStream(latin, "\xe9t\xff ");
+    reset();
+    Require(fscanf_nid_postfix(&latin, "%S", wide) == 1 && holds(std::u16string_view(u"\u00e9t\u00ff", 4), 4));
+    Require(fgetc_nid_postfix(&latin) == ' ');
+    latin.Close();
+
+    FileStream embedded(std::tmpfile());
+    FillScanStream(embedded, std::string("a\0b\n", 4));
+    reset();
+    Require(fscanf_nid_postfix(&embedded, "%l[^\n]", wide) == 1 && holds(std::u16string_view(u"a\0b", 4), 4));
+    Require(fgetc_nid_postfix(&embedded) == '\n');
+    embedded.Close();
+
+    FileStream quad(std::tmpfile());
+    FillScanStream(quad, "xy z");
+    reset();
+    Require(fscanf_nid_postfix(&quad, "%qS", wide) == 1 && holds(std::u16string_view(u"xy", 3), 3));
+    Require(fgetc_nid_postfix(&quad) == ' ');
+    quad.Close();
+
+    const std::string word(300, 'x');
+    FileStream longWord(std::tmpfile());
+    FillScanStream(longWord, word + " tail");
+    std::u16string longWide(302, u'!');
+    Require(fscanf_nid_postfix(&longWord, "%ls", longWide.data()) == 1);
+    Require(longWide.compare(0, 300, std::u16string(300, u'x')) == 0 && longWide[300] == u'\0' && longWide[301] == u'!');
+    Require(fgetc_nid_postfix(&longWord) == ' ');
+    longWord.Close();
+
+    FileStream empty(std::tmpfile());
+    FillScanStream(empty, "");
+    reset();
+    Require(fscanf_nid_postfix(&empty, "%ls", wide) == EOF && holds(u"", 0));
+    Require(feof_nid_postfix(&empty) && (empty.GuestState().flags & 0x20));
+    Require(fgetc_nid_postfix(&empty) == EOF);
+    empty.Close();
+
+    FileStream suppressed(std::tmpfile());
+    FillScanStream(suppressed, "ab");
+    Require(fscanf_nid_postfix(&suppressed, "%*ls%d", &number) == 0 && number == -1);
+    Require(fgetc_nid_postfix(&suppressed) == EOF);
+    suppressed.Close();
+
+    FileStream positional(std::tmpfile());
+    FillScanStream(positional, "ab");
+    reset();
+    bool threw = false;
+    try {
+        fscanf_nid_postfix(&positional, "%1$ls", wide);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && holds(u"", 0) && fgetc_nid_postfix(&positional) == 'a');
+    positional.Close();
+}
+#else
+static void CheckWideScan() {
+    FileStream stream(std::tmpfile());
+    FillScanStream(stream, "ab");
+    char16_t wide[2] = {u'!', u'!'};
+    bool threw = false;
+    try {
+        fscanf_nid_postfix(&stream, "%ls", wide);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && wide[0] == u'!' && fgetc_nid_postfix(&stream) == 'a');
+    stream.Close();
+}
+#endif
+#endif
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     CheckClosedStreamWrites();
+#ifndef _WIN32
+    CheckWideScan();
+#endif
     CheckDescriptorAccessModes();
     Require(_Getmbcurmax_nid_postfix() == 1 && _Getmbcurmax_nid_postfix() == ___mb_cur_max_nid_postfix());
     CheckFlushWhileReading();
