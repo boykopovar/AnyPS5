@@ -3,7 +3,32 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, symbols, patch, HASH_OFFSET, SHOFF, read_dynsym, gnu_hash
+from test_symbol_versions import build_image, symbols, patch, HASH_OFFSET, SHOFF, read_dynsym, gnu_hash, sections
+
+
+def sysv_hash(name):
+    value = 0
+    for byte in name.encode("utf-8"):
+        value = ((value << 4) + byte) & 0xFFFFFFFF
+        high = value & 0xF0000000
+        value = (value ^ (high >> 24)) & ~high
+    return value
+
+
+def sysv_lookup(image, name):
+    table = next(section for section in sections(image) if section[1] == 5)
+    buckets, chains = struct.unpack_from("<II", image, table[4])
+    entries = read_dynsym(image)
+    index = struct.unpack_from("<I", image, table[4] + 8 + (sysv_hash(name) % buckets) * 4)[0]
+    visited = set()
+    while index:
+        if index >= chains or index in visited:
+            raise AssertionError("invalid SysV hash chain")
+        visited.add(index)
+        if entries[index][0] == name:
+            return index
+        index = struct.unpack_from("<I", image, table[4] + 8 + buckets * 4 + index * 4)[0]
+    return None
 
 
 class GnuHashTests(unittest.TestCase):
@@ -68,6 +93,63 @@ class GnuHashTests(unittest.TestCase):
         result, after = patch(PATCHER, image, "empty.so")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(struct.unpack_from("<I", after, HASH_OFFSET)[0], 0)
+
+
+class SysvHashTests(unittest.TestCase):
+    def image(self, both, buckets):
+        entries = symbols(False)
+        entries.append(("retained_nid_no_patch", 1, 9, 2, 0x1400))
+        entries[3:] = sorted(entries[3:], key=lambda entry: gnu_hash(entry[0]) % 4)
+        image = build_image(entries, False)
+        offset = 0x600
+        size = 8 + (buckets + len(entries)) * 4
+        struct.pack_into("<II", image, offset, buckets, len(entries))
+        for index, entry in enumerate(entries[1:], 1):
+            bucket_offset = offset + 8 + (sysv_hash(entry[0]) % buckets) * 4
+            head = struct.unpack_from("<I", image, bucket_offset)[0]
+            struct.pack_into("<I", image, offset + 8 + buckets * 4 + index * 4, head)
+            struct.pack_into("<I", image, bucket_offset, index)
+        section = (0, 5, 2, 0, offset, size, 1, 0, 4, 4)
+        struct.pack_into("<IIQQQQIIQQ", image, SHOFF + (4 if both else 3) * 64, *section)
+        if both:
+            struct.pack_into("<H", image, 0x3C, 5)
+        return image
+
+    def test_rebuilt_sysv_hash_finds_renamed_and_preserved_symbols(self):
+        for both in (False, True):
+            for buckets in (1, 3, 7):
+                with self.subTest(both=both, buckets=buckets):
+                    image = self.image(both, buckets)
+                    before = read_dynsym(image)
+                    for name, _, _ in before[1:]:
+                        self.assertIsNotNone(sysv_lookup(image, name), name)
+                    result, after = patch(PATCHER, image, "sysv.so")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    entries = read_dynsym(after)
+                    if not both:
+                        self.assertEqual([(entry[1], entry[2]) for entry in entries],
+                                         [(entry[1], entry[2]) for entry in before])
+                    else:
+                        self.assertNotEqual([entry[2] for entry in entries], [entry[2] for entry in before])
+                    for index, (name, _, _) in enumerate(entries[1:], 1):
+                        self.assertEqual(sysv_lookup(after, name), index, name)
+                    self.assertEqual(entries[sysv_lookup(after, "retained_nid_no_patch")][2], 0x1400)
+                    for name, _, value in before[3:]:
+                        if name != "retained_nid_no_patch":
+                            self.assertIsNone(sysv_lookup(after, name), name)
+                            renamed = next(entry[0] for entry in entries if entry[2] == value)
+                            self.assertRegex(renamed, r"^[A-Za-z0-9+-]{11}$")
+                    self.assertIsNone(sysv_lookup(after, "missing_nid_no_patch"))
+
+    def test_invalid_sysv_geometry_is_rejected_without_writing(self):
+        for field, value in ((0, 0), (4, 1000), (4, 1)):
+            with self.subTest(field=field, value=value):
+                image = self.image(False, 3)
+                struct.pack_into("<I", image, 0x600 + field, value)
+                result, after = patch(PATCHER, image, "invalid-sysv.so")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(b"hash", result.stderr)
+                self.assertEqual(after, image)
 
 
 if __name__ == "__main__":

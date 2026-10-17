@@ -28,6 +28,44 @@ std::uint32_t GnuHash(const std::string& name) {
     return h;
 }
 
+std::uint32_t SysvHash(const std::string& name) {
+    std::uint32_t hash = 0u;
+    for (const unsigned char byte : name) {
+        hash = (hash << 4u) + byte;
+        const auto high = hash & 0xf0000000u;
+        hash ^= high >> 24u;
+        hash &= ~high;
+    }
+    return hash;
+}
+
+void ValidateSysvHash(const std::vector<std::uint8_t>& elf, std::size_t offset, std::size_t size, std::size_t symCount) {
+    using namespace Internal;
+    RequireElfRange(elf, offset, size, "hash");
+    if (size < 8u) throw std::runtime_error("invalid ELF hash header");
+    const auto buckets = Read<std::uint32_t>(elf, offset);
+    const auto chains = Read<std::uint32_t>(elf, offset + 4u);
+    if (!buckets || chains != symCount || 8u + (std::uint64_t{buckets} + chains) * 4u > size)
+        throw std::runtime_error("invalid ELF hash geometry");
+}
+
+void RebuildSysvHash(std::vector<std::uint8_t>& elf, std::size_t offset, const std::vector<std::string>& symbolNames) {
+    using namespace Internal;
+    const auto bucketCount = Read<std::uint32_t>(elf, offset);
+    std::vector<std::uint32_t> buckets(bucketCount, 0u);
+    std::vector<std::uint32_t> chains(symbolNames.size(), 0u);
+    for (std::size_t index = 1u; index < symbolNames.size(); ++index) {
+        if (symbolNames[index].empty()) continue;
+        const auto bucket = SysvHash(symbolNames[index]) % bucketCount;
+        chains[index] = buckets[bucket];
+        buckets[bucket] = static_cast<std::uint32_t>(index);
+    }
+    for (std::size_t index = 0u; index < buckets.size(); ++index)
+        Write(elf, offset + 8u + index * 4u, buckets[index]);
+    for (std::size_t index = 0u; index < chains.size(); ++index)
+        Write(elf, offset + 8u + buckets.size() * 4u + index * 4u, chains[index]);
+}
+
 
 GnuHashLayout ReadGnuHashLayout(const std::vector<std::uint8_t>& elf, std::size_t sectionOffset) {
     using namespace Internal;
@@ -329,6 +367,8 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     std::size_t dynSymOffset = 0u, dynSymSize = 0u;
     std::size_t gnuHashOffset = 0u, gnuHashSize = 0u;
+    std::size_t sysvHashOffset = 0u, sysvHashSize = 0u;
+    std::uint32_t sysvHashLink = 0u;
     std::size_t versymOffset = 0u;
     std::uint32_t dynSymSectionIndex = 0u;
     std::uint32_t gnuHashSymOffset = 0u;
@@ -347,6 +387,11 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
             gnuHashOffset = static_cast<std::size_t>(shdr.sh_offset);
             gnuHashSize = static_cast<std::size_t>(shdr.sh_size);
         }
+        if (shdr.sh_type == kShtHash) {
+            sysvHashOffset = static_cast<std::size_t>(shdr.sh_offset);
+            sysvHashSize = static_cast<std::size_t>(shdr.sh_size);
+            sysvHashLink = shdr.sh_link;
+        }
         if (shdr.sh_type == kShtGnuVersym)
             versymOffset = static_cast<std::size_t>(shdr.sh_offset);
         if (shdr.sh_type == kShtGnuVerdef)
@@ -357,6 +402,10 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
 
     const std::size_t symCount = dynSymSize / sizeof(Elf64_Sym);
     if (symCount == 0u) throw std::runtime_error(".dynsym is empty");
+    if (sysvHashOffset != 0u) {
+        if (sysvHashLink != dynSymSectionIndex) throw std::runtime_error("invalid ELF hash symbol table link");
+        ValidateSysvHash(elf, sysvHashOffset, sysvHashSize, symCount);
+    }
     if (gnuHashOffset != 0u) {
         ValidateGnuHash(elf, gnuHashOffset, gnuHashSize, symCount);
         gnuHashSymOffset = Read<std::uint32_t>(elf, gnuHashOffset + 4u);
@@ -515,6 +564,7 @@ void ElfNidPatcher::PatchNids(std::vector<std::uint8_t>& elf, const std::string&
         FixupRelocationSymbolIndices(elf, ehdr, dynSymSectionIndex, oldToNewIndex);
         RebuildGnuHash(elf, gnuHashOffset, gnuHashSize, symCount, newSymbolNames);
     }
+    if (sysvHashOffset != 0u) RebuildSysvHash(elf, sysvHashOffset, newSymbolNames);
 }
 
 }
