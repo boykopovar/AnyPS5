@@ -623,8 +623,9 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
 }
 
 int APS5_VABI getdtablesize_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return -1;
+    GuestResourceLimit limit{};
+    getrlimit_nid_postfix(guestRlimitNofile, &limit);
+    return limit.rlim_cur > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : static_cast<int>(limit.rlim_cur);
 }
 
 int APS5_VABI sceKernelIsTrinityMode(void) {
