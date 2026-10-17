@@ -1356,7 +1356,12 @@ void DisabledColorTests() {
     Require(!state.hasColorTarget && state.color.address == 0 && state.color.bytes == 0, "disabled color writes accessed a color surface");
     Require(state.renderExtent.width == 64 && state.renderExtent.height == 4, "attachment-free framebuffer lost screen scissor extent");
     queue.context[0xd] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "empty framebuffer extent");
+    const auto emptyScreen = AgcDriver::Graphics::DecodeState(queue);
+    Require(emptyScreen.renderExtent.width == 1 && emptyScreen.renderExtent.height == 1, "an empty screen scissor without targets did not get a one-pixel framebuffer");
+    Require(emptyScreen.scissor.extent.width == 0 && emptyScreen.scissor.extent.height == 0, "an empty screen scissor without targets rasterized pixels");
+    queue.context[0xd] = 64u;
+    const auto emptyRows = AgcDriver::Graphics::DecodeState(queue);
+    Require(emptyRows.renderExtent.width == 64 && emptyRows.scissor.extent.height == 0, "a screen scissor without rows rasterized pixels");
     queue = makeState();
     queue.context[0x8e] = 3;
     const auto partial = AgcDriver::Graphics::DecodeState(queue);
