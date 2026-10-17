@@ -297,7 +297,7 @@ void Driver::execute(const Submission& submission) {
                 }
             }
             if (header == FlipPacketHeader && !eopInterruptDelivered && !flipInterruptDeferred) AgcDriverDeliverEopInterrupt(submission.queue);
-            if (header == FlipPacketHeader) eopInterruptDelivered = true;
+            eopInterruptDelivered = false;
             ++flipsCounted;
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
             flipBatchesUnsignaled += unsignaledAtFlip;

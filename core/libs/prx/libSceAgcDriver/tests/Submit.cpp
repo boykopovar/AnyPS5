@@ -242,6 +242,13 @@ void testEndOfPipeInterrupts() {
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 3, "video-out flip was not handed to its output");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "video-out flip raised an unsolicited end-of-pipe event");
+    std::array<std::uint32_t, 12> twoFlips{AgcDriver::FlipPacketHeader, 7, 0xfffffffeu, 1, 0, 0, AgcDriver::FlipPacketHeader, 7, 0xfffffffeu, 1, 0, 0};
+    Packet twoFlipsPacket{twoFlips.data(), static_cast<std::uint32_t>(twoFlips.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&twoFlipsPacket) == 0, "two-flip submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == 5, "two flips were not handed to their output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].data == 2, "two flips did not deliver two end-of-pipe interrupts");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "two-flip event was not cleared");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
