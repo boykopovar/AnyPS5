@@ -225,6 +225,7 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     if (const auto archived = File::OpenArchivedFile(native, flags)) {
         if (*archived < 0) return SceErrorFromErrno(-*archived);
         File::RememberDescriptor(*archived, flags);
+        EqueueNoteOpen(*archived);
         return *archived;
     }
 #ifdef _WIN32
@@ -289,6 +290,7 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
     if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC)))
         RecordWrittenPath_nid_no_patch(native);
     File::RememberDescriptor(fd, flags);
+    EqueueNoteOpen(fd);
     return fd;
 }
 
@@ -340,6 +342,7 @@ int APS5_VABI sceKernelClose(int d) {
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
+    EqueueNoteClose(d);
     File::ForgetRandomDevice(d);
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
@@ -368,10 +371,10 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) errno = EFAULT;
     else if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<std::int64_t>(nbytes);
-    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived;
+    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return EqueueNotedRead(d, *archived);
     auto n = destination.Open() ? NativeRead(d, buf, nbytes) : -1;
     if (n < 0) return SceIoErrorFromErrno(errno);
-    return static_cast<std::int64_t>(n);
+    return EqueueNotedRead(d, static_cast<std::int64_t>(n));
 }
 
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {

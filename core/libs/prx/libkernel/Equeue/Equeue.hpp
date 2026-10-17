@@ -134,9 +134,25 @@ void KqueueDescriptorReadShut(int descriptor);
 extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);
-void RequireVnodeNotes(uint32_t fflags);
 void SetVnodeNotes(KernelEqueueEvent& event, uint32_t fflags);
 int AddVnodeEvent(const KernelEqueueRef& queue, int descriptor, uint32_t fflags, uint16_t flags, void* udata);
+
+struct EqueueCloseNote {
+    uint32_t device = 0;
+    uint32_t inode = 0;
+    uint32_t note = 0;
+};
+
+void EqueueNoteOpen(int descriptor);
+void EqueueNoteRead(int descriptor);
+EqueueCloseNote EqueuePrepareCloseNote(int descriptor);
+void EqueueDeliverCloseNote(const EqueueCloseNote& note);
+void EqueueNoteClose(int descriptor);
+
+template <typename Result> Result EqueueNotedRead(int descriptor, Result result) {
+    if (result >= 0) EqueueNoteRead(descriptor);
+    return result;
+}
 extern "C" {
 
 KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq);
