@@ -109,7 +109,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
         patcher = std::make_shared<Elfpatcher::Linux::LinuxElfPatcher>(
             std::make_shared<Elfpatcher::EntryStubBuilder>(),
             std::make_shared<Elfpatcher::ProgramHeaderLayoutBuilder>(
-                std::make_shared<Elfpatcher::SegmentFilter>(),
+                std::make_shared<Elfpatcher::SegmentFilter>(options.LazyBinding),
                 byteWriter
             ),
             std::make_shared<Elfpatcher::SectionHeaderTableBuilder>(byteWriter),
