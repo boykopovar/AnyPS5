@@ -9,6 +9,7 @@
 #include <tuple>
 
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadRange(SceAgcMemoryRange* range, std::uint32_t* cmd, int type);
+extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress(std::uint32_t** addr, std::uint32_t* cmd, int type);
 extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
 
 namespace {
@@ -44,6 +45,9 @@ void testRanges() {
         std::uint32_t* address = nullptr;
         check(sceAgcGetDataPacketPayloadAddress_0090(&address, words.data(), type) == 0 && address == range.base,
               "payload range base differs from the payload address");
+        std::uint32_t* unversionedAddress = nullptr;
+        check(sceAgcGetDataPacketPayloadAddress(&unversionedAddress, words.data(), type) == 0 && unversionedAddress == address,
+              "unversioned payload address differs from versioned payload address");
     }
 }
 
@@ -60,6 +64,10 @@ void testRejections() {
         misalignedRange = reinterpret_cast<SceAgcMemoryRange*>(storage.data() + 2);
     }
     expectFailure([&] { sceAgcGetDataPacketPayloadRange(misalignedRange, words.data(), 1); });
+    std::uint32_t* address = nullptr;
+    expectFailure([&] { sceAgcGetDataPacketPayloadAddress(nullptr, words.data(), 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadAddress(&address, nullptr, 1); });
+    expectFailure([&] { sceAgcGetDataPacketPayloadAddress(&address, misaligned, 0); });
 }
 
 }

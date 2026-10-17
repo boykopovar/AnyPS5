@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/Cb/include/Sync.hpp"
 
+#include "prx/libSceAgc/Command/include/Control.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -56,6 +57,13 @@ std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer* buf, std::uint8_t act
     static const std::uint64_t traced = [] { const char* value = std::getenv("APS5_TRACE_LABEL"); return value ? std::strtoull(value, nullptr, 16) : 0ull; }();
     if (traced != 0 && guestAddress == traced) std::fprintf(stderr, "[agc] RELEASE_MEM for 0x%llx recorded at %p"  "\n", static_cast<unsigned long long>(guestAddress), static_cast<void*>(packet));
     return packet;
+}
+
+std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, std::uint8_t action, std::uint8_t clientCode, const volatile void* address) {
+    const std::uint8_t operation = action != 0 ? 7u : 6u;
+    const std::uint8_t signalType = clientCode & 1u;
+    const std::uint8_t waitForMailbox = (clientCode >> 1u) & 1u;
+    return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, __func__);
 }
 
 }

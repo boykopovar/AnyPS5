@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -13,6 +14,7 @@
 
 extern "C" int APS5_VABI sceAgcSetAmmSemaphoreMemory(void* memory, std::uint64_t sizeInBytes);
 extern "C" int APS5_VABI sceAgcGetSemaphoreLabel(std::uint32_t index, void** label);
+extern "C" std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, std::uint8_t action, std::uint8_t clientCode, const volatile void* address);
 
 namespace {
 
@@ -138,6 +140,41 @@ void testRepeatedRegistration() {
     check(sceAgcGetSemaphoreLabel(labelCount - 1u, &label) == 0 && label == memory() + memoryBytes - labelBytes, "a repeated registration replaced the semaphore memory");
 }
 
+void testMemSemaphore() {
+    void* label = nullptr;
+    check(sceAgcGetSemaphoreLabel(0, &label) == 0 && label != nullptr, "failed to get label for memory semaphore test");
+    const auto guestAddress = reinterpret_cast<std::uintptr_t>(label);
+
+    for (std::uint8_t action = 0; action <= 1; ++action) {
+        for (std::uint8_t clientCode = 0; clientCode <= 3; ++clientCode) {
+            std::array<std::uint32_t, 16> words{};
+            words.fill(0xdeadbeefu);
+            CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+
+            auto* packet = sceAgcCbMemSemaphore(&buffer, action, clientCode, label);
+            check(packet == words.data(), "packet address mismatch");
+            check(packet[0] == 0xc0023900u, "MEM_SEMAPHORE header opcode mismatch");
+            check(packet[1] == static_cast<std::uint32_t>(guestAddress), "MEM_SEMAPHORE address low mismatch");
+            check(packet[2] == static_cast<std::uint32_t>(guestAddress >> 32u), "MEM_SEMAPHORE address high mismatch");
+
+            const std::uint32_t expectedOp = action != 0 ? 7u : 6u;
+            const std::uint32_t expectedSignal = clientCode & 1u;
+            const std::uint32_t expectedMailbox = (clientCode >> 1u) & 1u;
+            const std::uint32_t expectedControl = (expectedOp << 29u) | (expectedSignal << 20u) | (expectedMailbox << 16u);
+            check(packet[3] == expectedControl, "MEM_SEMAPHORE control word mismatch");
+            check(buffer.cursor_up == words.data() + 4, "cursor did not advance by 4 words");
+            check(words[4] == 0xdeadbeefu, "words past packet modified");
+        }
+    }
+
+    std::array<std::uint32_t, 16> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    expectFailure([&] { sceAgcCbMemSemaphore(nullptr, 0, 0, label); });
+    expectFailure([&] { sceAgcCbMemSemaphore(&buffer, 0, 0, nullptr); });
+    auto* unalignedLabel = reinterpret_cast<void*>(guestAddress + 1);
+    expectFailure([&] { sceAgcCbMemSemaphore(&buffer, 0, 0, unalignedLabel); });
+}
+
 }
 
 int main() {
@@ -149,6 +186,7 @@ int main() {
         testUnsettledClearing();
         testRegistration();
         testLabels();
+        testMemSemaphore();
         testLabelRejections();
         testRepeatedRegistration();
         storage.reset();
