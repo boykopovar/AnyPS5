@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 
 #define STB_IMAGE_STATIC
@@ -97,12 +98,12 @@ std::optional<Image> Decode(std::span<const std::uint8_t> jpeg) {
     int width = 0;
     int height = 0;
     int channels = 0;
-    stbi_uc* decoded = stbi_load_from_memory(jpeg.data(), static_cast<int>(jpeg.size()), &width, &height, &channels, 0);
+    const std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> decoded(
+        stbi_load_from_memory(jpeg.data(), static_cast<int>(jpeg.size()), &width, &height, &channels, 0), stbi_image_free);
     if (!decoded) return std::nullopt;
 
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), static_cast<std::uint32_t>(channels), {}};
-    image.pixels.assign(decoded, decoded + static_cast<std::size_t>(image.width) * image.height * image.channels);
-    stbi_image_free(decoded);
+    image.pixels.assign(decoded.get(), decoded.get() + static_cast<std::size_t>(image.width) * image.height * image.channels);
     return image;
 }
 
