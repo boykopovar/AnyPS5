@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -124,7 +125,7 @@ struct ThreadSyncs {
     std::array<double, 5> waitedMs;
 };
 std::vector<ThreadSyncs> threadSyncs;
-std::mutex threadSyncsMutex;
+AgcDriver::Mutex threadSyncsMutex;
 
 // This thread's fence and timeline waits in total (Recorder::ThreadWaitedMs): a caller times a span
 // of its own work and reads the difference to learn how much of it was waiting for the GPU.
@@ -172,7 +173,7 @@ std::atomic<int> unlockedWaiters[WaiterSlots]{};
 std::atomic<int>& WaitersOf(std::uint64_t id) { return unlockedWaiters[id % WaiterSlots]; }
 // Recorders alive, by id (own mutex, taken under the GpuMutex or with nothing held): a thread that
 // released the GpuMutex around a wait learns whether its recorder still exists before touching it.
-std::mutex liveRecordersMutex;
+AgcDriver::Mutex liveRecordersMutex;
 std::vector<std::uint64_t> liveRecorders;
 std::atomic<std::uint64_t> nextRecorderId{1};
 std::atomic<std::uint64_t> samplesPassed{0};
@@ -189,7 +190,7 @@ std::atomic<std::uint64_t> dumpsQueued{0}, dumpsQueuedInPass{0}, dumpsAtOnce{0},
 struct SamplePoolCache {
     VkDevice device;
     PFN_vkDestroyQueryPool destroy;
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::vector<VkQueryPool> free;
     bool closed = false;
     void put(VkQueryPool pool) {
@@ -412,7 +413,7 @@ struct ReleaseQueue {
     // Set by a joiner under `mutex` until the thread was joined: the thread leaves once the queue
     // is empty, and hand-offs meanwhile destroy inline (nothing may be queued without a taker).
     bool stop = false;
-    std::mutex joinMutex;
+    AgcDriver::Mutex joinMutex;
 };
 
 ReleaseQueue& ReleaseThreadQueue() {
@@ -535,7 +536,7 @@ bool ProcTable() {
 // instead of queueing behind a dispatch. `labelTableOwner` is the active recorder while it lives,
 // set and cleared under this mutex, so a lookup never touches a table being destroyed. Nothing
 // under this mutex takes the GPU mutex (no lock-order cycle).
-std::mutex labelTableMutex;
+AgcDriver::Mutex labelTableMutex;
 Recorder* labelTableOwner = nullptr;
 // The ranges of the calling worker's queued labels (NoteQueuedLabel, cleared by
 // ForgetQueuedLabels): the flush hook, on the same thread, has them recorded before an access that
@@ -888,7 +889,7 @@ struct RecordedStoreTotals {
 };
 
 struct RecordedStoreStats {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::map<HookSyncKey, RecordedStoreTotals> byKey;
     RecordedStoreTotals totals;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
@@ -1755,7 +1756,7 @@ std::atomic<std::uint64_t> timingPresents{0};
 std::atomic<std::uint64_t> presentSerial{0};
 std::atomic<std::uint64_t> timingDropped{0};
 struct TimingTotals { std::uint64_t count = 0; double ms = 0; std::uint64_t bytes = 0; };
-std::mutex timingMutex;
+AgcDriver::Mutex timingMutex;
 std::map<std::uint64_t, TimingTotals> timingByKey;
 double timingProgramMs = 0, timingClassMs = 0, timingUnionMs = 0, timingBatchMs = 0;
 std::uint64_t timingBatches = 0;

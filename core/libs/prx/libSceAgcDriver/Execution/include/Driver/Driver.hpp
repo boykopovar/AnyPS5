@@ -17,6 +17,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <atomic>
@@ -320,7 +321,7 @@ private:
     void run(std::uint32_t id) noexcept;
 
     std::mutex mutex;
-    std::mutex shutdownMutex;
+    AgcDriver::Mutex shutdownMutex;
     std::condition_variable changed;
 
     std::map<std::uint32_t, QueueWorker> workers;
@@ -340,7 +341,7 @@ private:
     std::unordered_map<std::uint64_t, std::shared_ptr<DispatchEntry>> dispatchCache;
 
     std::list<std::uint64_t> dispatchOrder;
-    std::mutex dispatchCacheMutex;
+    AgcDriver::Mutex dispatchCacheMutex;
     std::uint64_t dispatchCacheHits = 0;
     std::uint64_t dispatchCacheEvictions = 0;
 
@@ -363,18 +364,18 @@ private:
     DrawRelocationPending drawRelocationPending;
     std::unordered_map<std::uint64_t, DrawRelocationTrial> drawRelocationTrials;
     DrawRelocationCounters drawRelocationCounters;
-    std::mutex drawCacheMutex;
+    AgcDriver::Mutex drawCacheMutex;
     std::uint64_t drawCacheHits = 0, drawCacheEvictions = 0, drawCacheVariants = 0, drawCacheVariantBytes = 0;
     std::optional<DrawKeySightings> drawKeySightings;
     std::optional<DrawKeySightings> drawShapeSightings;
 
     DrawEntryCounters drawEntryCounters;
 
-    std::mutex driverPhasesMutex;
+    AgcDriver::Mutex driverPhasesMutex;
     std::array<DriverPhaseTotals, DispatchClassCount> driverPhaseTotals{};
     std::chrono::steady_clock::time_point driverPhasesReport = std::chrono::steady_clock::now();
 
-    std::mutex drawPhasesMutex;
+    AgcDriver::Mutex drawPhasesMutex;
     DrawPhaseTotals drawPhaseTotals;
 
     std::map<std::uint32_t, QueueState> queues;
@@ -387,7 +388,7 @@ private:
     std::uint32_t nextEopToken = EopFlipTokenBase;
     DevicePointer device;
 
-    std::mutex labelStoresMutex;
+    AgcDriver::Mutex labelStoresMutex;
     std::unordered_map<std::uint64_t, std::array<LabelStore, LabelStoreHistory>> labelStores;
 
     std::vector<std::shared_ptr<VulkanDevice>> replacedDevices;
@@ -418,7 +419,7 @@ private:
     std::atomic<std::uint64_t> evidenceValidations{0};
     std::atomic<std::uint64_t> dispatchesAdoptedAhead{0};
 
-    std::mutex writtenBuffersMutex;
+    AgcDriver::Mutex writtenBuffersMutex;
     std::deque<WrittenBuffer> writtenBuffers;
     std::uint64_t writtenBufferSerial = 0;
     std::unordered_map<std::uint64_t, DwordEvidence> dwordEvidence;
@@ -428,7 +429,7 @@ private:
     std::atomic<std::uint64_t> observationsNoWait{0};
     std::atomic<std::uint64_t> observationsNotReached{0};
 
-    std::mutex validateMutex;
+    AgcDriver::Mutex validateMutex;
     ValidateCounters validateCounters;
 
 };

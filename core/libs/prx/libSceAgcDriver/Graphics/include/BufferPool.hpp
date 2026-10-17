@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_BUFFERPOOL_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -133,13 +134,13 @@ private:
     PFN_vkFreeMemory freeMemory;
     PFN_vkAllocateMemory allocateMemory;
     PFN_vkMapMemory mapMemory;
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     // Not `small`/`large`: <rpcndr.h> (via <windows.h>) defines `small` as a macro.
     Tier smallTier;
     Tier largeTier;
     Tier deviceTier;
     std::uint64_t clock = 0;
-    std::mutex slabMutex;
+    AgcDriver::Mutex slabMutex;
     std::unordered_map<std::uint64_t, Slab> slabs;
     std::unordered_map<VkDeviceMemory, std::unique_ptr<SlabBlock>> slabBlocks;
     static constexpr VkDeviceSize budget = 512ull * 1024 * 1024;

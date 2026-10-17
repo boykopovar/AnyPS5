@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -113,7 +114,7 @@ struct GuestBufferMemory::AddressSpace {
     // The BDA table entries of `base`, in its order.
     std::vector<ShaderRecompiler::BdaAbi::Range> ranges;
     std::shared_ptr<const std::vector<std::pair<std::uint64_t, std::uint64_t>>> directReads;
-    mutable std::mutex tableMutex;
+    mutable AgcDriver::Mutex tableMutex;
     struct Table {
         std::uint64_t serial;
         std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> ranges;
@@ -163,7 +164,7 @@ struct ImportFailure {
 // Imports persist across draws, keyed by allocation base, and are dropped when their allocation leaves
 // the registered set; a dropped import is destroyed once the recorded work that may read it completed.
 struct HostImports {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkDestroyBuffer destroyBuffer = nullptr;
     PFN_vkFreeMemory freeMemory = nullptr;
@@ -402,7 +403,7 @@ struct ImportChunk {
 };
 
 struct ImportChunks {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     std::map<std::tuple<dev_t, ino_t, std::uint64_t>, std::weak_ptr<ImportChunk>> chunks;
 };
@@ -1334,7 +1335,7 @@ bool importsStale(const Context& context, const HostImports& state) {
 // GuestMemory::GpuMutex only (every completion and every stage B holds it). APS5_NO_LEASE_MIRROR=1
 // restores copies.
 struct ImageMirrors {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     std::map<std::uint64_t, std::shared_ptr<ImageMirror>> entries;
     std::set<std::uint64_t> failed;
@@ -1380,7 +1381,7 @@ AddressBuildTiming& ThreadAddressTiming() {
 }
 
 struct AddressBuildTotals {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::uint64_t builds = 0;
     AddressBuildTiming sums;
     double snapshotsUs = 0;
@@ -1403,7 +1404,7 @@ struct SnapshotCopies {
     using Key = std::tuple<std::uint64_t, std::size_t, VkBufferUsageFlags>;
     static constexpr std::size_t Budget = std::size_t{16} << 20u;
     static constexpr std::size_t MaxEntries = 1024;
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     struct Entry {
         std::shared_ptr<Buffer> buffer;
@@ -1607,7 +1608,7 @@ private:
 
     inline static RefreshPool* instance = nullptr;
     unsigned helpers = 0;
-    std::mutex runMutex;
+    AgcDriver::Mutex runMutex;
     std::mutex mutex;
     std::condition_variable_any wake;
     std::condition_variable done;
@@ -2046,7 +2047,7 @@ void reportMirrors() {
 // waiter yields instead when its own thread holds the device lock (a driver thread mutating the
 // registry mid-packet, as the plain spin did) and reports whether it finished any work.
 struct LeaseState {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     LeaseStats stats;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
     // Under GuestMemory::GpuMutex: the recorder whose batches hold leases (serials restart with a
@@ -3201,7 +3202,7 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
             std::snprintf(text, sizeof(text), "guest snapshot differs from registered memory: snapshot 0x%llx+0x%zx (%s region 0x%llx+0x%llx%s%s%s) differs first at +0x%zx", static_cast<unsigned long long>(snapshot.address), snapshot.bytes.size(), live ? "live" : "snapshot-backed", static_cast<unsigned long long>(owner->begin), static_cast<unsigned long long>(owner->end - owner->begin), owner->writable ? ", writable" : "", owner->hostBacked ? ", host-backed" : "", owner->mirror != nullptr ? ", mirrored" : "", first);
             static const bool fatal = std::getenv("APS5_SNAPSHOT_CHECK_FATAL") != nullptr;
             if (!live || fatal) throw std::runtime_error(text);
-            static std::mutex reportMutex;
+            static AgcDriver::Mutex reportMutex;
             static std::uint64_t mismatches = 0;
             static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
             std::lock_guard lock(reportMutex);
@@ -3374,7 +3375,7 @@ std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes,
 void traceStaged(std::uint64_t begin, std::uint64_t end, bool atomic) {
     static const bool trace = std::getenv("APS5_TRACE_STAGING") != nullptr;
     if (!trace) return;
-    static std::mutex mutex;
+    static AgcDriver::Mutex mutex;
     static std::set<std::pair<std::uint64_t, std::uint64_t>> seen;
     std::lock_guard lock(mutex);
     if (!seen.insert({begin, end}).second) return;
@@ -3902,7 +3903,7 @@ void GuestBufferMemory::copyRegion(Region& region, bool addressable) {
     region.snapshot.clear();
     if (profile) readUs.fetch_add(microsecondsSince(readStart), std::memory_order_relaxed);
     if (profile) {
-        static std::mutex reasonsMutex;
+        static AgcDriver::Mutex reasonsMutex;
         static std::uint64_t uploads = 0, noImport = 0, noImportBytes = 0, misaligned = 0, misalignedBytes = 0, snapshotOnly = 0, snapshotBytes = 0;
         static std::uint64_t logicalBytes = 0, readTotalBytes = 0;
         static std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> outside;

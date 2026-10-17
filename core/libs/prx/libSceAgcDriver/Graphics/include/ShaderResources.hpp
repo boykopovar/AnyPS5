@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
@@ -98,7 +99,7 @@ private:
     PFN_vkDestroyDescriptorSetLayout destroyLayout;
     PFN_vkDestroyDescriptorPool destroyPool;
     PFN_vkResetDescriptorPool resetPool;
-    mutable std::mutex mutex;
+    mutable AgcDriver::Mutex mutex;
     std::map<std::vector<std::uint32_t>, VkDescriptorSetLayout> layouts;
     struct Pool {
         VkDescriptorPool handle = VK_NULL_HANDLE;
@@ -642,7 +643,7 @@ private:
             return static_cast<std::size_t>(hash);
         }
     };
-    mutable std::mutex mutex;
+    mutable AgcDriver::Mutex mutex;
     std::list<std::pair<Key, std::shared_ptr<ShaderResources>>> entries;
     std::unordered_map<Key, decltype(entries)::iterator, KeyHash> index;
 };

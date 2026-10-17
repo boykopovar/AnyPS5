@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/IndirectDispatch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdlib>
 
 namespace AgcDriver::DriverDetail {
@@ -8,7 +9,7 @@ namespace AgcDriver::DriverDetail {
 void Driver::countIndirect(int path, double readMs) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile || path < 0 || path >= IndirectPaths) return;
-    static std::mutex countsMutex;
+    static AgcDriver::Mutex countsMutex;
     static std::uint64_t counts[IndirectPaths] = {};
     static double readWaitedMs = 0;
     static auto lastReport = std::chrono::steady_clock::now();
