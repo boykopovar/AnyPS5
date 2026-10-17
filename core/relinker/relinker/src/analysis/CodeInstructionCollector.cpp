@@ -139,7 +139,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     };
     range(0, 64);
     if (const auto entry = Io::ReadU64(bytes, 24); entry != 0) addRoot(entry);
-    for (const auto tag : {12u, 13u}) if (const auto address = value(tag, 0x60000000 + tag); address && *address != 0) addRoot(*address);
+    if (const auto init = value(12, 0x6000000c)) addRoot(*init);
+    if (const auto fini = value(13, 0x6000000d); fini && *fini != 0) addRoot(*fini);
     const auto symbolBytes = value(0x6100003f, 0xffffffffffffffffull);
     std::uint64_t symbolCount = 0;
     if (symbolBytes) {

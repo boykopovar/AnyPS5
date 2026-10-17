@@ -323,9 +323,12 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     copyRelocations(7, 0x6100002f, 8, 0x61000031, image.Dynamic.RelaData, false);
     copyRelocations(23, 0x61000029, 2, 0x6100002d, image.Dynamic.RelaPltData, true);
     if (tags.contains(3) || tags.contains(0x61000027)) image.Got = get(3, 0x61000027);
-    if (tags.contains(12)) image.Init = tags.at(12);
+    if (tags.contains(12)) {
+        image.Init = tags.at(12);
+        image.HasInit = true;
+    }
     if (tags.contains(13)) image.Fini = tags.at(13);
-    if (image.Init != 0) mapped(image.Init, 1, 1);
+    if (image.HasInit) mapped(image.Init, 1, 1);
     if (image.Fini != 0) mapped(image.Fini, 1, 1);
     const auto readLifecycleArray = [&](std::uint64_t addressTag, std::uint64_t sizeTag, std::vector<std::uint64_t>& entries) {
         if (!tags.contains(addressTag) && !tags.contains(sizeTag)) return;
@@ -359,7 +362,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     };
     readLifecycleArray(25, 27, image.InitArray);
     readLifecycleArray(26, 28, image.FiniArray);
-    if (tags.contains(33) && tags.at(33) != 0 && image.Init == 0) fail("Guest PREINIT_ARRAY has no module initializer");
+    if (tags.contains(33) && tags.at(33) != 0 && !image.HasInit) fail("Guest PREINIT_ARRAY has no module initializer");
     image.Bytes = std::move(bytes);
     return image;
 } catch (Domain::RelinkerException& error) {

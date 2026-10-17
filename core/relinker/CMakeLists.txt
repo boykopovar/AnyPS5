@@ -537,6 +537,10 @@ if(BUILD_TESTING)
         add_asan_test_options(guest_module_fini verify_asan_link_order=0)
         add_test(NAME guest_needed_nested_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_needed_nested_modules.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_zero_initializer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_initializer.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
+        set_tests_properties(guest_zero_initializer PROPERTIES TIMEOUT 30)
         set(windows_stdio_host_arguments)
         if(WIN32)
             if(MINGW)
