@@ -30,7 +30,7 @@ private:
 
 namespace {
 
-void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress) {
+void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
     if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr)
         throw RelinkerException("Text section range exceeds the address space");
     const Codegen::X64InstructionDecoder decoder;
@@ -41,6 +41,7 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
 
     auto enqueue = [&](VirtualAddress va) {
         if (reachable.count(va) > 0) return;
+        if (isData && isData(va)) return;
         if (va < textVaddr || va - textVaddr >= text.size()) return;
         if (!visited.insert(va).second) return;
         worklist.push(va);
@@ -68,7 +69,7 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
         VirtualAddress va = worklist.front();
         worklist.pop();
 
-        while (va >= textVaddr && va - textVaddr < text.size() && !reachable.contains(va)) {
+        while (va >= textVaddr && va - textVaddr < text.size() && !reachable.contains(va) && !(isData && isData(va))) {
             std::size_t bufOff = static_cast<std::size_t>(va - textVaddr);
             std::size_t available = text.size() - bufOff;
             if (available == 0) throw RelinkerException("CFG: zero available bytes at target", va);
@@ -153,8 +154,8 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
 
 }
 
-std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress) {
-    buildGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, nullptr, followCodeAddresses, reachable, progress);
+std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
+    buildGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, nullptr, followCodeAddresses, reachable, progress, isData);
     return std::make_unique<ControlFlowGraph>(&reachable);
 }
 
@@ -191,7 +192,7 @@ std::unique_ptr<IControlFlowGraph> BuildAddressTakenControlFlowGraph(
     const std::vector<StrictDataRegion>& data
 ) {
     std::unordered_set<VirtualAddress> reachable;
-    buildGraph(std::span<const std::uint8_t>(text.data(), text.size()), textVaddr, entryVaddr, extraEntries, relativeRelocations, &data, false, reachable, {});
+    buildGraph(std::span<const std::uint8_t>(text.data(), text.size()), textVaddr, entryVaddr, extraEntries, relativeRelocations, &data, false, reachable, {}, {});
     return std::make_unique<ControlFlowGraph>(std::move(reachable));
 }
 

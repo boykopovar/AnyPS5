@@ -2,6 +2,7 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <io/BufferUtils.hpp>
@@ -111,7 +112,9 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     std::set<std::uint64_t> roots;
     std::map<std::uint64_t, std::uint64_t> functions;
-    const auto addRoot = [&](std::uint64_t address) { if (isCode(address)) roots.insert(address); };
+    std::map<std::uint64_t, std::uint64_t> tables;
+    const auto inTable = [&](std::uint64_t address) { const auto after = tables.upper_bound(address); return after != tables.begin() && address < std::prev(after)->second; };
+    const auto addRoot = [&](std::uint64_t address) { if (isCode(address) && !inTable(address)) roots.insert(address); };
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
         const auto displacement = std::bit_cast<std::int32_t>(Io::ReadU32(bytes, fileOffset(address, info.Length) + info.RipRelativeDispOffset));
@@ -241,6 +244,19 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         if (function.End <= function.Begin) throw Domain::RelinkerException("Code analysis: invalid unwind function range", function.Begin);
         addFunction(function.Begin, function.End - function.Begin, false);
         for (const auto target : function.ExtraTargets) addRoot(target);
+    }
+    if (sceBase) {
+        const std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges(functions.begin(), functions.end());
+        for (const auto& header : codeHeaders) {
+            if (header.Type != 1 || (header.Flags & 1) == 0) continue;
+            const std::span<const std::uint8_t> segment(bytes.data() + header.Offset, header.FileSize);
+            for (const auto& table : FindRelativeJumpTables(segment, header.MappedAddress, ranges)) {
+                tables.emplace(table.Begin, table.End);
+                auto& end = functions.at(table.Function);
+                end = std::min(end, table.Begin);
+            }
+        }
+        std::erase_if(roots, inTable);
     }
     if (roots.empty()) throw Domain::RelinkerException("Code analysis: no code entry points");
     std::set<std::uint64_t> instructions;
@@ -373,7 +389,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             for (const auto root : roots) if (root >= header.MappedAddress && root - header.MappedAddress < header.FileSize) entries.push_back(root);
             if (entries.empty()) continue;
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
-            const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, true, sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); });
+            const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, true, sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable);
             for (const auto address : graph->ReachableVaddrs()) {
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);

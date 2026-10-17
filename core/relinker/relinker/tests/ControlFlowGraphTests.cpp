@@ -1,4 +1,5 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/CodegenException.hpp>
 #include <cstring>
 #include <iostream>
@@ -176,6 +177,42 @@ void CheckHighVirtualAddress() {
     Require(graph->IsReachable(highVaddr + 4), "Missing high branch target address");
 }
 
+void CheckRelativeJumpTables() {
+    constexpr std::size_t tableOffset = 16;
+    Bytes text(32, 0x90);
+    text[0] = 0x48;
+    text[1] = 0x8d;
+    text[2] = 0x05;
+    SetDisplacement(text, 3, 7, TextAddress + tableOffset);
+    text[7] = 0xff;
+    text[8] = 0xe0;
+    const std::int32_t targets[]{-16, -9};
+    std::memcpy(text.data() + tableOffset, targets, sizeof(targets));
+    Require(Relinker::FindTrailingRelativeJumpTable(text) == tableOffset, "Relative jump table was not found");
+
+    const std::vector<std::pair<VirtualAddress, VirtualAddress>> functions{{TextAddress, TextAddress + 9}, {TextAddress + text.size(), TextAddress + text.size() + 8}};
+    const auto tables = Relinker::FindRelativeJumpTables(text, TextAddress, functions);
+    Require(tables.size() == 1, "Expected one relative jump table");
+    Require(tables[0].Function == TextAddress && tables[0].Begin == TextAddress + tableOffset && tables[0].End == TextAddress + text.size(), "Relative jump table range was incorrect");
+
+    Bytes oneEntry = text;
+    const std::int32_t singleTarget[]{-16};
+    std::memcpy(oneEntry.data() + tableOffset, singleTarget, sizeof(singleTarget));
+    const std::int32_t invalidSecondTarget[]{0x100};
+    std::memcpy(oneEntry.data() + tableOffset + 4, invalidSecondTarget, sizeof(invalidSecondTarget));
+    Require(Relinker::FindTrailingRelativeJumpTable(oneEntry) == oneEntry.size(), "Single-entry table was accepted");
+
+    Bytes invalidTarget = text;
+    const std::int32_t invalidTargets[]{0x100, 0x104};
+    std::memcpy(invalidTarget.data() + tableOffset, invalidTargets, sizeof(invalidTargets));
+    Require(Relinker::FindTrailingRelativeJumpTable(invalidTarget) == invalidTarget.size(), "Table with non-instruction targets was accepted");
+
+    Bytes nonPadding = text;
+    nonPadding.back() = 0x55;
+    Require(Relinker::FindTrailingRelativeJumpTable(nonPadding) == nonPadding.size(), "Table followed by non-padding bytes was accepted");
+
+}
+
 }
 
 int main() {
@@ -189,6 +226,7 @@ int main() {
         CheckBorrowedReachability();
         CheckAddressOverflow();
         CheckHighVirtualAddress();
+        CheckRelativeJumpTables();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {
