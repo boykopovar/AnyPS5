@@ -10,6 +10,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/HostErrno.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/File/include/KernelStatfs.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
@@ -372,10 +373,6 @@ static constexpr int GUEST_EISDIR = 21;
 static constexpr int GUEST_EWOULDBLOCK = 35;
 static constexpr int GUEST_EOPNOTSUPP = 45;
 static constexpr int GUEST_ENOTEMPTY = 66;
-static constexpr int GUEST_EDEADLK = 11;
-static constexpr int GUEST_ELOOP = 62;
-static constexpr int GUEST_EDQUOT = 69;
-static constexpr int GUEST_EOVERFLOW = 84;
 
 static int SceErrorFromErrno(int error);
 
@@ -390,23 +387,11 @@ static bool FailPosixPositionedGuestSocket(int descriptor) {
 }
 
 static int SceErrorFromErrno(int error) {
-    int guest = error > 0 && error <= 34 ? error : error == GUEST_ENOTEMPTY ? error : GUEST_EIO;
-    if (error == EAGAIN) guest = GUEST_EWOULDBLOCK;
-#ifdef EDEADLK
-    else if (error == EDEADLK) guest = GUEST_EDEADLK;
-#endif
-    else if (error == ENAMETOOLONG) guest = GUEST_ENAMETOOLONG;
-    else if (error == ENOTEMPTY) guest = GUEST_ENOTEMPTY;
-#ifdef ELOOP
-    else if (error == ELOOP) guest = GUEST_ELOOP;
-#endif
-#ifdef EDQUOT
-    else if (error == EDQUOT) guest = GUEST_EDQUOT;
-#endif
-#ifdef EOVERFLOW
-    else if (error == EOVERFLOW) guest = GUEST_EOVERFLOW;
-#endif
-    return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
+    return File::SceErrorFromHostErrno(error);
+}
+
+static int PathLookupFailure(const std::error_code& error) {
+    return File::IsPathLookupError(error) ? SceErrorFromErrno(error.default_error_condition().value()) : 0;
 }
 
 extern "C" int* APS5_VABI __error_nid_postfix();
@@ -1047,6 +1032,7 @@ int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
     std::error_code error;
     if (std::filesystem::exists(native, error)) return SceErrorFromErrno(GUEST_EEXIST);
+    if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::is_directory(WithoutTrailingSeparator(native).parent_path(), error)) {
         return SceErrorFromErrno(HasNonDirectoryPrefix(native) ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
@@ -1263,6 +1249,7 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
     if (const int error = ResolvePathError_nid_no_patch(from, source)) return SceKernelError(error);
     std::error_code error;
     const auto sourceStatus = std::filesystem::status(source, error);
+    if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::exists(sourceStatus)) return SceErrorFromErrno(GUEST_ENOENT);
     std::filesystem::path destination;
     if (const int result = ResolvePathError_nid_no_patch(to, destination)) return SceKernelError(result);
@@ -1272,6 +1259,7 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
     replacesFile = !std::filesystem::is_directory(sourceStatus) && std::filesystem::exists(destinationStatus) && !std::filesystem::is_directory(destinationStatus);
 #endif
     error = RenameNative_nid_no_patch(source, destination, replacesFile);
+    if (const int failure = PathLookupFailure(error)) return failure;
     if (error) return SceErrorFromErrno(GUEST_EIO);
     RecordWrittenPath_nid_no_patch(source);
     RecordWrittenPath_nid_no_patch(destination);
@@ -1285,6 +1273,7 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     std::error_code error;
     if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GUEST_ENOTDIR);
+    if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::is_directory(native, error)) {
         const bool blockedByFile = HasNonDirectoryPrefix(native) || std::filesystem::exists(WithoutTrailingSeparator(native), error);
         return SceErrorFromErrno(blockedByFile ? GUEST_ENOTDIR : GUEST_ENOENT);
@@ -1333,6 +1322,7 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
+    if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::exists(status)) return SceErrorFromErrno(GUEST_ENOENT);
     if (std::filesystem::is_directory(status)) return SceErrorFromErrno(GUEST_EISDIR);
     if (const int failure = NativeTruncate(native, length)) return SceErrorFromErrno(failure);

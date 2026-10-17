@@ -9,6 +9,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Equeue/src/Kqueue.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/DirectoryDescriptor.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/FileLock.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/File/src/HostErrno.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/NativeStat.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Terminal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Open.cpp
@@ -265,6 +266,11 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(UNIX)
+        add_test_executable(guest_path_errors_tests ${LIBS_INCLUDE_DIR}/tests/GuestPathErrors.cpp)
+        target_include_directories(guest_path_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_path_errors_tests PRIVATE libkernel libc)
+        add_test(NAME guest_path_errors COMMAND guest_path_errors_tests)
+        set_tests_properties(guest_path_errors PROPERTIES TIMEOUT 20)
         add_test_executable(guest_host_standard_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestHostStandardError.cpp)
         target_include_directories(guest_host_standard_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_host_standard_error_tests PRIVATE libkernel libc)

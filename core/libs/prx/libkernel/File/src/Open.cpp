@@ -1,4 +1,5 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/File/include/HostErrno.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
@@ -158,24 +159,11 @@ extern "C" int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...);
 static constexpr int GuestSetFlags = 4;
 
 static int SceErrorFromErrno(int error) {
-    constexpr int GuestEio = 5;
-    const int guest = error > 0 && error <= 34 ? error : GuestEio;
-    return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
+    return File::SceErrorFromHostErrno(error);
 }
 
 static int SceIoErrorFromErrno(int error) {
-    int guest = SceErrorFromErrno(error) & 0xffff;
-    if (error == EAGAIN) guest = 35;
-#ifdef EDEADLK
-    else if (error == EDEADLK) guest = 11;
-#endif
-#ifdef EDQUOT
-    else if (error == EDQUOT) guest = 69;
-#endif
-#ifdef EOVERFLOW
-    else if (error == EOVERFLOW) guest = 84;
-#endif
-    return static_cast<int>(0x80020000u | static_cast<unsigned>(guest));
+    return File::SceErrorFromHostErrno(error);
 }
 
 static int OpenNative(const std::filesystem::path& native, int flags, std::uint16_t mode) {
@@ -331,6 +319,7 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     }
     const auto status = std::filesystem::status(native, error);
     if (error == std::errc::not_a_directory) return SceErrorFromErrno(GuestEnotdir);
+    if (File::IsPathLookupError(error)) return SceErrorFromErrno(error.default_error_condition().value());
     if (!std::filesystem::exists(status)) {
         return SceErrorFromErrno(2);
     }
