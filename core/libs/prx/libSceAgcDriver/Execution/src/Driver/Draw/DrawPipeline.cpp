@@ -146,14 +146,47 @@ void DrawPipeline::run() {
             stopped = true;
             if (!shutdown) Driver::Get().ReportFailure(fatal);
         }
-        std::lock_guard lock(mutex);
-        items.pop_front();
-        ++commits;
-        commitNs += spent;
-        if (failed) ++commitErrors;
-        if (fatal != nullptr && failure == nullptr) failure = fatal;
-        outstanding.fetch_sub(1, std::memory_order_release);
-        if (idleWaiters != 0) idle.notify_all();
+        Item done;
+        {
+            std::lock_guard lock(mutex);
+            done = std::move(items.front());
+            items.pop_front();
+            ++commits;
+            commitNs += spent;
+            if (failed) ++commitErrors;
+            if (fatal != nullptr && failure == nullptr) failure = fatal;
+            outstanding.fetch_sub(1, std::memory_order_release);
+            if (idleWaiters != 0) idle.notify_all();
+        }
+        retire(std::move(done));
+    }
+}
+
+void DrawPipeline::retire(Item&& item) {
+    static const bool reaperEnabled = std::getenv("APS5_NO_COMMIT_REAPER") == nullptr;
+    if (!reaperEnabled) {
+        const Item dropped = std::move(item);
+        return;
+    }
+    constexpr std::size_t ReapBatch = 64;
+    std::lock_guard lock(retireMutex);
+    retired.push_back(std::move(item));
+    if (!reaper.joinable()) reaper = std::thread([this] { reap(); });
+    if (retired.size() >= ReapBatch && reaperWaiting) reapWake.notify_one();
+}
+
+void DrawPipeline::reap() {
+    for (;;) {
+        std::deque<Item> batch;
+        {
+            std::unique_lock lock(retireMutex);
+            reaperWaiting = true;
+            reapWake.wait_for(lock, std::chrono::milliseconds(2), [&] { return retired.size() >= 64; });
+            reaperWaiting = false;
+            if (retired.empty()) continue;
+            batch.swap(retired);
+        }
+        batch.clear();
     }
 }
 
