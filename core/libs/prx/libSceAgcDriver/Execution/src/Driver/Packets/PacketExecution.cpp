@@ -32,6 +32,14 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
         case 0x15: return orderedFills();
         case 0x63: case 0x64: case 0x9f:
             return packet.size() >= 5 && !DrawPipeline::Queue0().Overlaps(packet[1] | (static_cast<std::uint64_t>(packet[2]) << 32u), static_cast<std::size_t>(packet[4]) * 8);
+        case 0x3c: case 0x93: {
+            if (packet.size() < 5) return false;
+            const std::uint64_t awaited = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u);
+            const auto bytes = Pm4::WaitAwaitedBytes(packet);
+            if (DrawPipeline::Queue0().Overlaps(awaited, bytes)) return false;
+            GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), bytes, bytes);
+            return Pm4::WaitSatisfiedUnchecked(packet);
+        }
         case 0x10: {
             const auto operation = (header >> 2u) & 0x3fu;
             return operation == 0 || operation == 0x09 || operation == 0x0b || operation == 0x0c || operation == 0x1a;

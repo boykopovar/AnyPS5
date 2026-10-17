@@ -76,11 +76,14 @@ void AppendLabel(std::vector<std::uint32_t>& words, std::uint32_t* target, std::
 
 struct Blocker {
     std::atomic<bool> release{false};
-    void Enqueue() {
+    std::uint32_t* target = nullptr;
+    ~Blocker() { release = true; }
+    void Enqueue(std::vector<DrawPipeline::Range> writes = {}) {
         DrawPipeline::Queue0().Enqueue([this] {
             while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (target != nullptr) std::atomic_ref<std::uint32_t>(*target).store(1);
             std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
-        }, {});
+        }, std::move(writes));
     }
 };
 
@@ -157,6 +160,66 @@ void FillIntoFullPipeline() {
     for (std::size_t i = 0; i < Output.size(); ++i) Require(Output[i] == (i < 256 ? 0x5a5a5a5au : 0xcafebabeu), "a fill behind a full draw pipeline did not land at " + std::to_string(i));
 }
 
+void SatisfiedWaitKeepsUnrelatedQueuedWork() {
+    alignas(8) static std::uint32_t gate = 1;
+    alignas(8) static std::uint32_t marker = 0;
+    marker = 0;
+
+    Blocker blocker;
+    blocker.Enqueue();
+
+    const auto address = reinterpret_cast<std::uintptr_t>(&gate);
+    std::vector<std::uint32_t> words{
+        0xc0053c00u, 0x13u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u),
+        1u, 0xffffffffu, 0x19u};
+    AppendLabel(words, &marker, 1);
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    AgcDriver::Submit(&packet, 0);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (DrawPipeline::Queue0().Outstanding() < 2 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool keptQueued = DrawPipeline::Queue0().Outstanding() >= 2;
+    blocker.release = true;
+    Finish();
+    Require(keptQueued, "a satisfied WAIT_REG_MEM drained unrelated queued work");
+    Require(marker == 1, "a label after a satisfied WAIT_REG_MEM did not execute");
+}
+
+void SatisfiedWaitDrainsOverlappingQueuedWork() {
+    alignas(8) static std::uint32_t gate = 1;
+    alignas(8) static std::uint32_t marker = 0;
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    marker = 0;
+
+    Blocker blocker;
+    blocker.target = &gate;
+    const auto address = reinterpret_cast<std::uintptr_t>(&gate);
+    blocker.Enqueue({{address, address + sizeof(gate)}});
+
+    std::vector<std::uint32_t> words{
+        0xc0053c00u, 0x13u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u),
+        1u, 0xffffffffu, 0x19u};
+    AppendLabel(words, &marker, 1);
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    const auto drainsBefore = DrawPipeline::DrainRequestsByOpcode(0x3c);
+    auto submitted = std::async(std::launch::async, [&] { AgcDriver::Submit(&packet, 0); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (DrawPipeline::DrainRequestsByOpcode(0x3c) == drainsBefore &&
+           DrawPipeline::Queue0().Outstanding() < 2 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool drained = DrawPipeline::DrainRequestsByOpcode(0x3c) > drainsBefore;
+    const bool labelQueuedEarly = DrawPipeline::Queue0().Outstanding() >= 2;
+    blocker.release = true;
+    Require(submitted.wait_for(std::chrono::seconds(20)) == std::future_status::ready,
+            "WAIT_REG_MEM submission did not finish after the overlapping write");
+    submitted.get();
+    Finish();
+    Require(drained && !labelQueuedEarly, "a satisfied WAIT_REG_MEM skipped an overlapping queued write");
+    Require(marker == 1, "a label after an overlapping WAIT_REG_MEM did not execute");
+}
+
 }
 
 int main() {
@@ -172,6 +235,8 @@ int main() {
         }
         InputsAfterQueuedLabels();
         FillIntoFullPipeline();
+        SatisfiedWaitKeepsUnrelatedQueuedWork();
+        SatisfiedWaitDrainsOverlappingQueuedWork();
         AgcDriverShutdown_nid_postfix();
         std::puts("pipelined fill tests passed");
         return 0;
