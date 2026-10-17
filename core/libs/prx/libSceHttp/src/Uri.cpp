@@ -315,6 +315,40 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
     return 0;
 }
 
+int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* src, void* pool, size_t prepare, size_t* require) {
+    if (!src) return ERROR_INVALID_URL;
+    const bool write = out && pool;
+    if (!write && !require) return ERROR_INVALID_VALUE;
+
+    const char* const fields[] = {src->scheme, src->hostname, src->path, src->username, src->password};
+    SceHttpUriElement copy{};
+    char** const slots[] = {&copy.scheme, &copy.hostname, &copy.path, &copy.username, &copy.password};
+    if (write) std::memset(pool, 0, prepare);
+    size_t used = 0;
+    for (size_t i = 0; i < 5; ++i) {
+        const size_t length = fields[i] ? std::strlen(fields[i]) : 0;
+        const size_t needed = length + 1;
+        if (write) {
+            if (needed > prepare - used) {
+                *out = {};
+                std::memset(pool, 0, prepare);
+                return ERROR_OUT_OF_MEMORY;
+            }
+            char* next = static_cast<char*>(pool) + used;
+            if (length != 0) std::memcpy(next, fields[i], length);
+            next[length] = '\0';
+            *slots[i] = next;
+        }
+        used += needed;
+    }
+    if (write) {
+        copy.port = src->port;
+        *out = copy;
+    }
+    if (require) *require = used;
+    return 0;
+}
+
 int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize) {
     if (srcSize == 0) return 0;
     if (!dst || !src) return ERROR_INVALID_VALUE;
