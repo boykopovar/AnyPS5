@@ -92,7 +92,7 @@ VkConservativeRasterizationModeEXT decodeConservativeRasterization(const QueueSt
         requireConservativeTriangles((domain == 1u || domain == 2u) && (topology == 2u || topology == 3u), topology == 0u ? "points" : topology == 1u || domain == 0u ? "lines" : "other primitive types", "VGT_TF_PARAM", parameters);
     } else {
         const auto primitive = read(queue.userConfig, 0x242, RegisterBank::UserConfig);
-        requireConservativeTriangles(primitive == 4u || primitive == 5u || primitive == 6u, primitive == 1u ? "points" : primitive == 2u || primitive == 3u ? "lines" : primitive == 7u || primitive == 17u ? "rectangles" : "other primitive types", "VGT_PRIMITIVE_TYPE", primitive);
+        requireConservativeTriangles(primitive == 4u || primitive == 5u || primitive == 6u || primitive == 21u, primitive == 1u ? "points" : primitive == 2u || primitive == 3u ? "lines" : primitive == 7u || primitive == 17u ? "rectangles" : "other primitive types", "VGT_PRIMITIVE_TYPE", primitive);
     }
     Require((read(cx, 0x1b3) & 0x44u) == 0, "conservative rasterization with centroid interpolation is unsupported");
     return VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT;
@@ -118,6 +118,7 @@ std::uint32_t inactiveVertexPointSize(const QueueState& queue) {
         case 6:
         case 7:
         case 17:
+        case 21:
             return 1u << 16u;
         default:
             return 0;
@@ -401,7 +402,7 @@ std::string nonTriangleRejection(const QueueState& queue, const char* message, b
             const auto topology = (*parameters >> 5u) & 7u;
             if ((domain != 1u && domain != 2u) || (topology != 2u && topology != 3u)) return zeroMessage(0x2db, *parameters, message);
         }
-    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && !(rectangles && (*primitive == 7u || *primitive == 17u))) {
+    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u))) {
         return zeroMessage(0x242, *primitive, message);
     }
     return {};
@@ -1029,7 +1030,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             break;
         case 9: result.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST; break;
         case 4: result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;
-        case 5: result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN; break;
+        case 5:
+        case 21:
+            result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+            break;
         case 6: result.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
         default: throw std::runtime_error("AGC graphics: unsupported primitive type " + std::to_string(primitive));
     }
@@ -1685,7 +1689,7 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     if (indexed && value(queue.userConfig, 0x24b, word) && word != 0) {
         std::uint32_t primitive = 0;
         std::uint32_t resetIndex = 0;
-        if (value(queue.userConfig, 0x242, primitive) && (primitive & 0x3fu) != 1 && (primitive & 0x3fu) != 2 && (primitive & 0x3fu) != 3 && (primitive & 0x3fu) != 4 && (primitive & 0x3fu) != 5 && (primitive & 0x3fu) != 6) return "AGC graphics: primitive restart is only supported for point, line and triangle topologies";
+        if (value(queue.userConfig, 0x242, primitive) && (primitive & 0x3fu) != 1 && (primitive & 0x3fu) != 2 && (primitive & 0x3fu) != 3 && (primitive & 0x3fu) != 4 && (primitive & 0x3fu) != 5 && (primitive & 0x3fu) != 6 && (primitive & 0x3fu) != 21) return "AGC graphics: primitive restart is only supported for point, line and triangle topologies";
         if (value(cx, 0x103, resetIndex) && (resetIndex & 0xffffu) != 0xffffu) return "AGC graphics: primitive restart index other than all ones is unsupported";
     }
     if (auto reason = nonzero(cx, 0x207, ~(LayerExports | ClipCullExports | inactiveVertexPointSize(queue)), "layer, viewport or auxiliary vertex exports"); !reason.empty()) return reason;
