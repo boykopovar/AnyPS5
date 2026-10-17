@@ -26,6 +26,7 @@ struct SpirvTargetOptions {
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool robustBufferAccess2 = false;
 };
 
 struct SpirvEmitInfo {

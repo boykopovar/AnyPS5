@@ -1146,7 +1146,7 @@ void EmitProgram(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.meshGuestFunc != 0u ? state.meshGuestFunc : state.mainFunc, spv::FunctionControlMaskNone, TypeFunction(state));
     EmitLabel(state, state.entryLabel);
     if (state.requirements.functionLds) {
-        state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, LdsDwordCount(state)), state.ldsVariable, spv::StorageClassFunction);
+        state.module.AddFunction(spv::OpVariable, TypeU32ArrayPointer(state, spv::StorageClassFunction, LdsStorageDwords(state)), state.ldsVariable, spv::StorageClassFunction);
     }
     if (state.requirements.functionScratch) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {

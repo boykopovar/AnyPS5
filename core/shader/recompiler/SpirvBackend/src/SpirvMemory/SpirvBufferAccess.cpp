@@ -20,7 +20,7 @@ namespace {
         if (ShaderWorkgroupInput(state) == nullptr) {
             FailEmit("function LDS was not prepared before function emission");
         }
-        state.ldsVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, LdsDwordCount(state) + (state.requirements.ldsLock ? 1u : 0u)), spv::StorageClassWorkgroup);
+        state.ldsVariable = state.module.DefineGlobalVariable(TypeU32ArrayPointer(state, spv::StorageClassWorkgroup, LdsStorageDwords(state)), spv::StorageClassWorkgroup);
         state.module.AddName(state.ldsVariable, "lds_dwords");
     }
 
@@ -171,6 +171,26 @@ std::uint32_t EmitMemoryElementInBounds(SpirvEmitterState& state, const MemoryRe
 bool InFunctionStorage(const SpirvEmitterState& state, ResourceKind kind) {
     if (kind == ResourceKind::Scratch) return true;
     return kind == ResourceKind::Lds && !LdsInDeviceMemory(state) && ShaderWorkgroupInput(state) == nullptr;
+}
+
+std::uint32_t EmitValueOrZero(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t value) {
+    return Select(state, TypeU32(state), condition, value, ConstantU32(state, 0u));
+}
+
+std::uint32_t LdsStorageDwords(const SpirvEmitterState& state) {
+    return LdsDwordCount(state) + (state.requirements.ldsLock ? 1u : 0u);
+}
+
+bool LoadsSelectable(const SpirvEmitterState& state, const MemoryResourceAccess& access) {
+    if (access.kind == ResourceKind::Scratch) return true;
+    if (access.kind == ResourceKind::Lds) return false;
+    return state.robustBufferAccess2;
+}
+
+std::uint32_t GuardedElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t condition, std::uint32_t index) {
+    if (access.kind == ResourceKind::Lds) FailEmit("LDS loads keep their branch and have no guarded element");
+    const auto fallback = access.kind == ResourceKind::Scratch ? 0u : 0xfffffffeu;
+    return Select(state, TypeU32(state), condition, index, ConstantU32(state, fallback));
 }
 
 std::uint32_t EmitMemoryElementPointer(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t index) {

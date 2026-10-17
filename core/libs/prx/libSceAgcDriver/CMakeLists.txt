@@ -498,6 +498,34 @@ target_link_libraries(agc_vertex_input_tests PRIVATE shader_recompiler_agc_drive
 set_target_properties(agc_vertex_input_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_vertex_input_tests)
 
+add_test_executable(agc_guarded_memory_loads_tests EXCLUDE_FROM_ALL tests/GuardedMemoryLoads.cpp)
+target_link_libraries(agc_guarded_memory_loads_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_guarded_memory_loads_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_guarded_memory_loads_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_guarded_memory_loads_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_guarded_memory_loads COMMAND agc_guarded_memory_loads_tests)
+    set_tests_properties(agc_guarded_memory_loads PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_guarded_memory_loads PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_lds_lock_budget_tests EXCLUDE_FROM_ALL tests/LdsLockBudget.cpp)
+target_link_libraries(agc_lds_lock_budget_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_lds_lock_budget_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_lds_lock_budget_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_lds_lock_budget_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_lds_lock_budget COMMAND agc_lds_lock_budget_tests)
+    set_tests_properties(agc_lds_lock_budget PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_lds_lock_budget PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_shared_write_tests EXCLUDE_FROM_ALL tests/SharedWrites.cpp)
 target_include_directories(agc_shared_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(agc_shared_write_tests PRIVATE libSceAgcDriver libkernel libc)
@@ -1627,6 +1655,13 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_sparse_buffer_holes PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_lds_lock_budget COMMAND agc_driver_lds_mixed_width_atomics_tests --lock-budget)
+    set_tests_properties(agc_driver_lds_lock_budget PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_driver_lds_lock_budget PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test(NAME agc_driver_emulated_color_compare_srgb_decode COMMAND agc_driver_emulated_color_compare_tests)
     set_tests_properties(agc_driver_emulated_color_compare_srgb_decode PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_SRGB_SHADER_DECODE=1"

@@ -6,9 +6,13 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -182,14 +186,41 @@ void Check(const char* name, std::uint64_t operations, std::uint32_t run) {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const char* name, std::uint64_t operations, std::uint32_t repeats) {
+std::uint64_t WorkgroupBytes(std::span<const std::uint32_t> words) {
+    std::unordered_map<std::uint32_t, std::span<const std::uint32_t>> types;
+    std::unordered_map<std::uint32_t, std::uint32_t> constants;
+    std::vector<std::uint32_t> pointers;
+    for (std::size_t at = 5; at < words.size();) {
+        const auto count = words[at] >> 16u;
+        Require(count != 0u && count <= words.size() - at, "lds lock budget: malformed SPIR-V");
+        const auto instruction = words.subspan(at, count);
+        const auto opcode = instruction[0] & 0xffffu;
+        if (opcode == spv::OpTypeInt || opcode == spv::OpTypeArray || opcode == spv::OpTypePointer) types[instruction[1]] = instruction;
+        if (opcode == spv::OpConstant) constants[instruction[2]] = instruction[3];
+        if (opcode == spv::OpVariable && instruction[3] == spv::StorageClassWorkgroup) pointers.push_back(instruction[1]);
+        at += count;
+    }
+    std::uint64_t total = 0;
+    for (const auto pointer : pointers) {
+        const auto definition = types.at(pointer);
+        Require((definition[0] & 0xffffu) == spv::OpTypePointer, "lds lock budget: Workgroup storage has no pointer type");
+        const auto array = types.at(definition[3]);
+        Require((array[0] & 0xffffu) == spv::OpTypeArray, "lds lock budget: unexpected Workgroup allocation shape");
+        const auto element = types.at(array[2]);
+        Require((element[0] & 0xffffu) == spv::OpTypeInt && element[2] == 32u, "lds lock budget: Workgroup array is not dwords");
+        total += static_cast<std::uint64_t>(constants.at(array[3])) * sizeof(std::uint32_t);
+    }
+    return total;
+}
+
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const char* name, std::uint64_t operations, std::uint32_t repeats, std::uint32_t ldsDwords = LdsDwords, std::optional<std::uint32_t> expectedDeviceDwords = std::nullopt) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, LdsDwords, {false, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, ldsDwords, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
@@ -198,20 +229,46 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    if (expectedDeviceDwords) {
+        const auto bytes = WorkgroupBytes(result.spirv.Words());
+        const auto limit = request.target.maxWorkgroupSharedMemoryBytes;
+        Require(bytes <= limit, "lds lock budget: guest LDS and lock exceed the device limit before dispatch");
+        Require(result.workgroupMemoryDwords == *expectedDeviceDwords, "lds lock budget: unexpected device-backed LDS allocation before dispatch");
+        if (*expectedDeviceDwords == 0u) Require(bytes == limit, "lds lock budget: exact-fit case did not retain its lock");
+        std::printf("lds lock budget: %s declarations verified; guest=%u; workgroup=%llu; device=%u\n", name, ldsDwords * 4u, static_cast<unsigned long long>(bytes), result.workgroupMemoryDwords);
+    }
     for (std::uint32_t run = 0; run < repeats; ++run) {
         Output.fill(0xdeadbeefu);
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
         device.WaitIdle();
         Check(name, operations, run);
     }
+    if (expectedDeviceDwords) std::printf("lds lock budget: %s GPU readback verified across 256 lanes\n", name);
+}
+
+void LockBudget(AgcDriver::VulkanDevice& device) {
+    const auto target = device.Target();
+    const auto limit = target.maxWorkgroupSharedMemoryBytes;
+    std::printf("lds lock budget: robustBufferAccess2=%u; maxWorkgroupSharedMemoryBytes=%u\n", static_cast<unsigned>(target.robustBufferAccess2), limit);
+    if (std::getenv("ANYPS5_REQUIRE_ROBUST2") != nullptr) Require(target.robustBufferAccess2, "lds lock budget: robustBufferAccess2 was not enabled");
+    Require(limit >= 32u && limit % 4u == 0u, "lds lock budget: unexpected device shared-memory limit");
+    const auto operations = static_cast<std::uint64_t>(Threads) * Iterations;
+    Run(device, UniformCode, "limit", operations, 1, limit / 4u, limit / 4u + 1u);
+    Run(device, UniformCode, "limit-4", operations, 1, (limit - 4u) / 4u, 0u);
+    std::puts("lds lock budget tests passed");
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--lock-budget") {
+            LockBudget(*device);
+            return 0;
+        }
+        Require(argc == 1, "lds mixed width atomics: unexpected argument");
         Run(*device, UniformCode, "uniform", static_cast<std::uint64_t>(Threads) * Iterations, 1);
         Run(*device, DivergentCode, "divergent", static_cast<std::uint64_t>(Threads) / 2u * Iterations, 1);
         Run(*device, ParityCode, "split lanes", Threads / 2u, Repeats);
