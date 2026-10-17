@@ -39,8 +39,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-module-dir-") as directory:
         work = Path(directory)
 
-        def convert(case, windows, options, executable=None, cwd=None):
-            (case / "sce_module").mkdir(parents=True, exist_ok=True)
+        def convert(case, windows, options, executable=None, cwd=None, standard=True):
+            case.mkdir(parents=True, exist_ok=True)
+            if standard:
+                (case / "sce_module").mkdir(exist_ok=True)
             source = case / "input.elf"
             source.write_bytes(main_fixture() if executable is None else executable)
             output = case / ("output.exe" if windows else "output.elf")
@@ -49,6 +51,26 @@ def main():
             return result, output
 
         for windows in (False, True):
+            for relative in (".", "Media/Plugins"):
+                case = work / f"{windows}-explicit-only-{relative == '.'}"
+                modules = case / relative
+                modules.mkdir(parents=True)
+                module = modules / "plugin.prx"
+                original = bytes(module_with_symbol(True))
+                module.write_bytes(original)
+                result, output = convert(case, windows, [], standard=False)
+                assert result.returncode == 2 and "was not found" in result.stderr, result.stderr
+                assert not output.exists()
+                result, output = convert(case, windows, ["--module-dir", relative], standard=False)
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                artifact = case / "app0" / relative / "plugin.prx.guest.prx"
+                assert artifact.read_bytes().startswith(b"MZ" if windows else b"\x7fELF")
+                assert module.read_bytes() == original
+                assert not (case / "sce_module").exists()
+                for invalid in ("missing", "../outside"):
+                    failed, _ = convert(case, windows, ["--module-dir", invalid], standard=False)
+                    assert failed.returncode == 2, (invalid, failed.stdout, failed.stderr)
+
             case = work / f"{windows}-plugins"
             plugins = case / "Media" / "Plugins"
             plugins.mkdir(parents=True)

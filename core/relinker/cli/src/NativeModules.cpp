@@ -25,7 +25,7 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     const bool hasPlural = std::filesystem::exists(plural);
     const bool hasPrx = std::filesystem::exists(prx);
     if (hasSingular && hasPlural) throw Domain::RelinkerException("Both sce_module and sce_modules exist in the guest module parent directory");
-    if (!hasSingular && !hasPlural && !hasPrx) throw Domain::RelinkerException(missingModuleMessage);
+    if (!hasSingular && !hasPlural && !hasPrx && moduleDirectories.empty()) throw Domain::RelinkerException(missingModuleMessage);
     std::vector<std::filesystem::path> directories;
     if (hasSingular || hasPlural) directories.push_back(hasSingular ? singular : plural);
     if (hasPrx) directories.push_back(prx);
