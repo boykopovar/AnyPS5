@@ -294,9 +294,20 @@ struct VertexCopyPlan {
 
 inline VertexCopyPlan PlanVertexCopies(std::span<const VertexFetch> fetches) {
     VertexCopyPlan plan;
+    if (fetches.empty()) return plan;
+    if (fetches.size() == 1) {
+        const auto& fetch = fetches[0];
+        Require(fetch.begin < fetch.end && fetch.alignment != 0, "empty vertex fetch range");
+        plan.copyOf = {0};
+        plan.offsets = {0};
+        plan.copies.emplace_back(fetch.begin, fetch.end);
+        plan.alignments.push_back(fetch.alignment);
+        return plan;
+    }
     plan.copyOf.assign(fetches.size(), 0);
     plan.offsets.assign(fetches.size(), 0);
-    std::vector<std::size_t> order(fetches.size());
+    thread_local std::vector<std::size_t> order;
+    order.resize(fetches.size());
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
         const auto& x = fetches[a];

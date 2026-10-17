@@ -4605,35 +4605,53 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     }
     if (selected.empty()) return {};
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
-    std::array<std::vector<VkDescriptorSetLayoutBinding>, 2> descriptions;
-    std::array<std::map<VkDescriptorType, std::uint32_t>, 2> counts;
+    struct DescriptorCounts {
+        std::array<std::uint32_t, 16> standard{};
+        std::vector<std::pair<VkDescriptorType, std::uint32_t>> extended;
+        void Add(VkDescriptorType type, std::uint32_t count) {
+            if (static_cast<std::size_t>(type) < standard.size()) standard[type] += count;
+            else {
+                for (auto& [t, c] : extended) {
+                    if (t == type) { c += count; return; }
+                }
+                extended.emplace_back(type, count);
+            }
+        }
+        std::vector<VkDescriptorPoolSize> Sizes() const {
+            std::vector<VkDescriptorPoolSize> sizes;
+            for (std::size_t i = 0; i < standard.size(); ++i) {
+                if (standard[i] != 0) sizes.push_back({static_cast<VkDescriptorType>(i), standard[i]});
+            }
+            for (const auto& [type, count] : extended) {
+                if (count != 0) sizes.push_back({type, count});
+            }
+            return sizes;
+        }
+    };
+    std::array<bool, 2> hasBindings{false, false};
+    std::array<DescriptorCounts, 2> counts;
     for (const auto& binding : bindings) {
         const auto set = setOf(binding);
-        descriptions[set].push_back(binding.layout);
-        counts[set][binding.layout.descriptorType] += (binding.flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) != 0 ? std::max(1u, static_cast<std::uint32_t>(binding.imageAllocations.size())) : binding.layout.descriptorCount;
+        hasBindings[set] = true;
+        const auto count = (binding.flags & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) != 0 ? std::max(1u, static_cast<std::uint32_t>(binding.imageAllocations.size())) : binding.layout.descriptorCount;
+        counts[set].Add(binding.layout.descriptorType, count);
     }
-    const auto sizesOf = [&](std::size_t set) {
-        std::vector<VkDescriptorPoolSize> sizes;
-        for (const auto& [type, count] : counts[set]) {
-            if (count != 0) sizes.push_back({type, count});
-        }
-        return sizes;
-    };
     const auto variableOf = [&](std::size_t set) { return tableBindings[set] != std::numeric_limits<std::size_t>::max() ? std::optional<std::uint32_t>(std::max(1u, static_cast<std::uint32_t>(bindings[tableBindings[set]].imageAllocations.size()))) : std::nullopt; };
     result->cache = context.descriptorCache;
-    if (!descriptions[0].empty() || splitSets) {
-        result->allocation = result->cache->AllocateRewritten(_layout, sizesOf(0), updateAfterBind, variableOf(0));
+    if (hasBindings[0] || splitSets) {
+        result->allocation = result->cache->AllocateRewritten(_layout, counts[0].Sizes(), updateAfterBind, variableOf(0));
         result->layout = _layout;
         Require(result->allocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
-    if (!descriptions[1].empty() || splitSets) {
-        result->fragmentAllocation = result->cache->AllocateRewritten(fragment.layout, sizesOf(1), updateAfterBind, variableOf(1));
+    if (hasBindings[1] || splitSets) {
+        result->fragmentAllocation = result->cache->AllocateRewritten(fragment.layout, counts[1].Sizes(), updateAfterBind, variableOf(1));
         result->fragmentLayout = fragment.layout;
         Require(result->fragmentAllocation.set != VK_NULL_HANDLE, "draw snapshot descriptor allocation failed");
     }
     auto buffers = descriptorBuffers;
     auto writes = descriptorWrites;
-    std::vector<std::size_t> snapshotIndices(allocations.size(), selected.size());
+    thread_local std::vector<std::size_t> snapshotIndices;
+    snapshotIndices.assign(allocations.size(), selected.size());
     for (std::size_t index = 0; index < selected.size(); ++index) snapshotIndices[selected[index]] = index;
     auto nextWrite = writes.begin();
     for (const auto& binding : bindings) {
