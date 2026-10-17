@@ -253,7 +253,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             image.Symbols.push_back({{}, 0, 0, 0, 0, 0});
             continue;
         }
-        if (offset != 0 && ((info >> 4) > 2 || (visibility & ~3u) != 0 || ((info & 15) != 0 && (info & 15) != 1 && (info & 15) != 2 && (info & 15) != 6))) fail("Unsupported symbol attributes: " + name);
+        if (offset != 0 && ((info >> 4) > 2 || (visibility & ~3u) != 0 || ((info & 15) != 0 && (info & 15) != 1 && (info & 15) != 2 && info != 3 && (info & 15) != 6))) fail("Unsupported symbol attributes: " + name);
         if (section != 0 && (info >> 4) != 0 && visibility != 1 && visibility != 2) {
             const auto [found, inserted] = exports.emplace(name, image.Symbols.size());
             if (name.empty() || (!inserted && (!windows || !IdenticalOrdinaryFunctionExport(image.Symbols[found->second], symbol)))) fail("Duplicate or empty export after stripping #: " + name);
@@ -305,7 +305,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             if ((next != relocationTargets.end() && next->first < target + 8) || (next != relocationTargets.begin() && std::prev(next)->second > target)) fail("Overlapping guest relocations");
             relocationTargets.emplace(target, target + 8);
             if (relocation == 8) {
-                if ((info >> 32) != 0) fail("RELATIVE relocation has a symbol");
+                if ((info >> 32) != 0) {
+                    const auto& symbol = image.Symbols[info >> 32];
+                    if (symbol.Info != 3 || symbol.Value != 0) fail("RELATIVE relocation has a symbol");
+                }
                 mapped(addend, 0, 0);
             } else if (relocation == 1 || relocation == 6 || relocation == 7) {
                 const auto& symbol = image.Symbols[info >> 32];
@@ -314,7 +317,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 const auto& symbol = image.Symbols[info >> 32];
                 if (((info >> 32) == 0 && tls == nullptr) || ((info >> 32) != 0 && (symbol.Info & 15) != 6) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
+            const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
+            if (relocation == 8) Io::WriteU64(output, position + 8, 8);
         }
     };
     if (tags.contains(7) || tags.contains(0x6100002f)) {
