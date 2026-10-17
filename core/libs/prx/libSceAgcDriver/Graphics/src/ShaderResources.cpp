@@ -1714,6 +1714,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         // collects cost the same wherever they run.
         if (precollectImages()) phase(BuildPhase::Precollect);
         if (drawBuild && !usesBda && std::all_of(allocations.begin(), allocations.end(), [&](const Allocation& allocation) { return !allocation.guest || allocation.pushByte >= 0 || (allocation.dataAllocation >= 0 && allocation.dataByte < allocations[static_cast<std::size_t>(allocation.dataAllocation)].size); })) guestMemory.AllowAdjustedRegions();
+        requireGuestBuffers();
         guestMemory.UploadPrepare(usesBda);
         timing.uploadMs = phase(BuildPhase::Upload);
         splitSets = SplitsSets(context, shaders);
@@ -1923,6 +1924,7 @@ void ShaderResources::buildComplete() {
         Require(textures.size() == plannedSampledImages && storageTextures.size() == plannedStorageImages, "image lookups disagree with the descriptor plan");
         resolveImageTables();
         timing.bindingsMs += phase(BuildPhase::Images);
+        requireGuestBuffers();
         guestMemory.UploadFinish(usesBda);
         timing.uploadMs += phase(BuildPhase::Upload);
         if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory);
@@ -4527,6 +4529,7 @@ std::size_t ShaderResources::MaxDrawSnapshotBytes() {
 }
 
 std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved) const {
+    requireGuestBuffers(moved);
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
     const auto reads = guestMemory.InPlaceReads();
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
@@ -4658,7 +4661,19 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     return result;
 }
 
+void ShaderResources::requireGuestBuffers(std::span<const MovedBuffer> moved) const {
+    for (std::size_t index = 0; index < allocations.size(); ++index) {
+        const auto& item = allocations[index];
+        if (!item.guest) continue;
+        const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
+        const auto address = override != moved.end() ? override->address : item.address;
+        const auto bytes = override != moved.end() ? override->size : item.size;
+        RequireNoMultisampleTarget(address, bytes, "a shader buffer access");
+    }
+}
+
 void ShaderResources::Bind(VkCommandBuffer commands, VkPipelineBindPoint bindPoint, VkPipelineLayout layout) const {
+    requireGuestBuffers();
     if (_set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, 0, 1, &_set, 0, nullptr);
     if (fragment.set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragment.set, 0, nullptr);
 }
