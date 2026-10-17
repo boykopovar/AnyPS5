@@ -124,18 +124,12 @@ int main() {
     QueryAddress(17);
     QueryAddress(18);
 
-    for (const int code : {12, 13, 20}) {
+    for (const int code : {5, 6, 12, 13, 20}) {
         std::memset(&info, 0x5a, sizeof(info));
         Require(sceNetCtlGetInfo(code, &info) == 0 && info.opaque[0] == 0);
     }
 
-    for (const int code : {5, 6, 7, 8, 9, 10, 21}) {
-        bool threw = false;
-        try {
-            sceNetCtlGetInfo(code, &info);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw);
+    for (const int code : {7, 8, 9, 10, 21}) {
+        Require(QueryWord(code) == 0);
     }
 }

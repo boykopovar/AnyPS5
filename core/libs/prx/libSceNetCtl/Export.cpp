@@ -42,6 +42,12 @@ static constexpr int NET_CTL_INFO_DEVICE = 1;
 static constexpr int NET_CTL_INFO_ETHER_ADDR = 2;
 static constexpr int NET_CTL_INFO_MTU = 3;
 static constexpr int NET_CTL_INFO_LINK = 4;
+static constexpr int NET_CTL_INFO_BSSID = 5;
+static constexpr int NET_CTL_INFO_SSID = 6;
+static constexpr int NET_CTL_INFO_WIFI_SECURITY = 7;
+static constexpr int NET_CTL_INFO_RSSI_DBM = 8;
+static constexpr int NET_CTL_INFO_RSSI_PERCENTAGE = 9;
+static constexpr int NET_CTL_INFO_CHANNEL = 10;
 static constexpr int NET_CTL_INFO_IP_CONFIG = 11;
 static constexpr int NET_CTL_INFO_DHCP_HOSTNAME = 12;
 static constexpr int NET_CTL_INFO_PPPOE_AUTH_NAME = 13;
@@ -352,9 +358,16 @@ int APS5_VABI sceNetCtlGetInfo(int code, NetCtlInfo* info) {
         case NET_CTL_INFO_PRIMARY_DNS: WriteInfoAddress(info, host.dns.size() > 0 ? host.dns[0] : in_addr{}); break;
         case NET_CTL_INFO_SECONDARY_DNS: WriteInfoAddress(info, host.dns.size() > 1 ? host.dns[1] : in_addr{}); break;
         case NET_CTL_INFO_HTTP_PROXY_CONFIG: WriteInfoWord(info, NET_CTL_HTTP_PROXY_OFF); break;
+        case NET_CTL_INFO_BSSID:
+        case NET_CTL_INFO_SSID:
         case NET_CTL_INFO_DHCP_HOSTNAME:
         case NET_CTL_INFO_PPPOE_AUTH_NAME:
         case NET_CTL_INFO_HTTP_PROXY_SERVER: std::memset(info->opaque, 0, sizeof(info->opaque)); break;
+        case NET_CTL_INFO_WIFI_SECURITY:
+        case NET_CTL_INFO_RSSI_DBM:
+        case NET_CTL_INFO_RSSI_PERCENTAGE:
+        case NET_CTL_INFO_CHANNEL:
+        case NET_CTL_INFO_HTTP_PROXY_PORT: WriteInfoWord(info, 0); break;
         default: throw std::runtime_error("sceNetCtlGetInfo: info code " + std::to_string(code) + " is not implemented");
     }
     return 0;
