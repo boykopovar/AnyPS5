@@ -173,10 +173,17 @@ class Check:
         result = subprocess.run(["git", "-c", "core.quotePath=false", "grep", "-nE", "--full-name", pattern, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
         hits = [line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))]
         self.read(path for path, _, _ in hits)
+        sources = {}
         for path, number, text in hits:
-            name = EXPORT.search(text).group(1)
+            if path not in sources:
+                sources[path] = cpp_text(self.show(path)).split("\n")
+            source = sources[path]
+            match = next((match for match in EXPORT.finditer(source[int(number) - 1]) if match.group(1) in exports), None)
+            if match is None:
+                continue
+            name = match.group(1)
             own, own_number = exports[name]
-            if library(path) != library(own) and "tests" not in PurePosixPath(path).parts and function_body(self.show(path).splitlines(), int(number) - 1) is not None:
+            if library(path) != library(own) and "tests" not in PurePosixPath(path).parts and function_body(source, int(number) - 1) is not None:
                 self.report("duplicate-export", own, own_number, f"{name} is also in {library(path)}")
 
     def build(self):
