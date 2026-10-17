@@ -31,7 +31,9 @@
 #include <string>
 #include <vector>
 #elif defined(__EMSCRIPTEN__)
+#include <link.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #else
 #include <windows.h>
 

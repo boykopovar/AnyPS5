@@ -173,6 +173,8 @@ add_library(aps5_wasm_gpu_state OBJECT
 target_include_directories(aps5_wasm_gpu_state PRIVATE ${ANYPS5_WASM_RECOMPILER_INCLUDES} ${PROJECT_SOURCE_DIR}/3rdparty/Vulkan-Headers/include)
 target_compile_definitions(aps5_wasm_gpu_state PRIVATE ANYPS5_ENABLE_SPIRV_TOOLS=0)
 
+include(${PROJECT_SOURCE_DIR}/cmake/ZArchive.cmake)
+list(APPEND ANYPS5_WASM_libc_INCLUDES ${ZARCHIVE_SOURCE_DIR}/include)
 anyps5_wasm_library(libc)
 anyps5_wasm_library(libkernel)
 set(ANYPS5_WASM_libSceAgcDriver_SOURCES
@@ -221,6 +223,7 @@ add_library(aps5_wasm_null_platform OBJECT platform/NullPlatform.cpp)
 target_include_directories(aps5_wasm_null_platform PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 anyps5_wasm_runtime_executable(anyps5-runtime-node ${ANYPS5_WASM_LIBRARY_OBJECTS} $<TARGET_OBJECTS:aps5_wasm_recompiler> $<TARGET_OBJECTS:aps5_wasm_gpu_state> $<TARGET_OBJECTS:aps5_wasm_null_backend> $<TARGET_OBJECTS:aps5_wasm_null_platform>)
+target_link_libraries(anyps5-runtime-node PRIVATE zarchive)
 target_link_options(anyps5-runtime-node PRIVATE -sNODERAWFS -sENVIRONMENT=node)
 
 add_library(aps5_wasm_webgpu_backend OBJECT gpu/WebGpuBackend.cpp)
@@ -231,6 +234,7 @@ add_library(aps5_wasm_web_platform OBJECT platform/WebInput.cpp platform/WebAudi
 target_include_directories(aps5_wasm_web_platform PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/platform ${ANYPS5_LIBS_DIR})
 
 anyps5_wasm_runtime_executable(anyps5-runtime-web ${ANYPS5_WASM_LIBRARY_OBJECTS} $<TARGET_OBJECTS:aps5_wasm_recompiler> $<TARGET_OBJECTS:aps5_wasm_gpu_state> $<TARGET_OBJECTS:aps5_wasm_webgpu_backend> $<TARGET_OBJECTS:aps5_wasm_web_platform>)
+target_link_libraries(anyps5-runtime-web PRIVATE zarchive)
 target_link_options(anyps5-runtime-web PRIVATE
         --use-port=emdawnwebgpu
         -sENVIRONMENT=web,worker
