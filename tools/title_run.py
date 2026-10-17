@@ -249,6 +249,7 @@ if os.name == "nt":
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, *(ctypes.POINTER(ctypes.c_ulonglong),) * 4)
     kernel32.QueryInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p)
     WindowCallback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user32.EnumWindows.argtypes = (WindowCallback, wintypes.LPARAM)
@@ -308,10 +309,14 @@ class Session:
 
     def exit_code(self):
         if os.name == "nt" and not self.process_ids():
-            for handle in reversed(list(self.handles.values())):
-                code = wintypes.DWORD()
-                if handle and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259:
-                    return code.value
+            last = None
+            for handle in self.handles.values():
+                code, times = wintypes.DWORD(), [ctypes.c_ulonglong() for _ in range(4)]
+                if (handle and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
+                        and kernel32.GetProcessTimes(handle, *map(ctypes.byref, times)) and (last is None or times[0].value >= last[0])):
+                    last = (times[0].value, code.value)
+            if last:
+                return last[1]
         return self.process.poll()
 
     def move_windows_offscreen(self):
