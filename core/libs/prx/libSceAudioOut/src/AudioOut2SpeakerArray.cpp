@@ -100,14 +100,15 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(AudioOut2Speaker
 }
 
 int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius) {
-    (void)handle;
     (void)pos;
     (void)spread;
-    (void)coefficients;
-    (void)num_coefficients;
     (void)height_aware;
     (void)downmix_spread_radius;
-    NotImplemented_nid_no_patch(__func__);
+    const SpeakerArray& array = Array(handle);
+    if (coefficients == nullptr || num_coefficients != array.numSpeakers) APS5_INVALID_ARG_EX;
+    std::fill_n(coefficients, array.numSpeakers, 0.0f);
+    if (array.numSpeakers > 0) coefficients[0] = 1.0f;
+    if (array.numSpeakers > 1) coefficients[1] = 1.0f;
     return 0;
 }
 

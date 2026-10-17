@@ -16,6 +16,7 @@ int APS5_VABI sceAudioInInit();
 int APS5_VABI sceAudioInOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAudioInHqOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAudioInAsyncOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
+int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t);
 int APS5_VABI sceAudioInInput(int, void*);
 int APS5_VABI sceAudioInGetSilentState(int);
 int APS5_VABI sceAudioInClose(int);
@@ -64,14 +65,20 @@ void TestValidation() {
     Require(sceAudioInAsyncOpen(user, 2, 0, 128, 48000, 2) == invalidType);
     Require(sceAudioInAsyncOpen(user, 0, 1, 128, 48000, 2) == invalidParam);
     Require(sceAudioInAsyncOpen(user, 0, 0, 385, 48000, 2) == invalidSize);
+    Require(sceAudioInAsyncOpen(user, 0, 0, 200, 48000, 2) == invalidSize);
     Require(sceAudioInAsyncOpen(user, 0, 0, 256, 44100, 2) == invalidFreq);
     Require(sceAudioInAsyncOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
-    Require(ReportsNotImplemented("sceAudioInHqOpen", [] { sceAudioInHqOpen(user, 0, 0, 256, 48000, 2); }));
-    Require(ReportsNotImplemented("sceAudioInHqOpen", [] { sceAudioInHqOpen(user, 0, 0, 128, 16000, 2); }));
-    Require(ReportsNotImplemented("sceAudioInAsyncOpen", [] { sceAudioInAsyncOpen(user, 0, 0, 384, 48000, 2); }));
-    Require(ReportsNotImplemented("sceAudioInOpen", [] { sceAudioInOpen(user, 0, 0, 256, 48000, 0x10); }));
-    Require(ReportsNotImplemented("sceAudioInHqOpen", [] { sceAudioInHqOpen(user, 0, 0, 128, 48000, 0x10); }));
-    Require(ReportsNotImplemented("sceAudioInAsyncOpen", [] { sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 0x10); }));
+    Require(sceAudioInHqOpen(user, 0, 0, 256, 48000, 2) == invalidSize);
+    Require(sceAudioInHqOpen(user, 0, 0, 128, 16000, 2) == invalidFreq);
+    int port = sceAudioInAsyncOpen(user, 0, 0, 384, 48000, 2);
+    Require(port > 0 && sceAudioInClose(port) == 0);
+    port = sceAudioInOpen(user, 0, 0, 256, 48000, 0x10);
+    Require(port > 0 && sceAudioInClose(port) == 0);
+    port = sceAudioInHqOpen(user, 0, 0, 128, 48000, 0x10);
+    Require(port > 0 && sceAudioInClose(port) == 0);
+    port = sceAudioInAsyncOpen(user, 0, 0, 384, 48000, 0x10);
+    Require(port > 0 && sceAudioInClose(port) == 0);
+    Require(ReportsNotImplemented("sceAudioInIsPadEmbeddedMic", [] { sceAudioInIsPadEmbeddedMic(1); }));
 }
 
 void TestCapture() {
