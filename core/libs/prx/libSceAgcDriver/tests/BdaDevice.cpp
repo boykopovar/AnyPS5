@@ -1,12 +1,15 @@
 #include "BdaShader.hpp"
 #include "ColorTransferTests.hpp"
+#include "HostImportFailure.hpp"
 #include <fstream>
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <SDL_loadso.h>
+#include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -23,7 +26,7 @@ using namespace AgcDriver::Graphics;
 
 class Device {
 public:
-    Device() {
+    explicit Device(bool importHostMemory = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #else
@@ -86,11 +89,13 @@ public:
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
             address.pNext = &bytes;
-            const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            std::vector<const char*> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
+            const bool externalHost = importHostMemory && std::any_of(available.begin(), available.end(), [](const auto& item) { return std::strcmp(item.extensionName, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) == 0; });
+            if (externalHost) extensionsEnabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos = &queue;
-            device.enabledExtensionCount = 2;
+            device.enabledExtensionCount = static_cast<std::uint32_t>(extensionsEnabled.size());
             device.ppEnabledExtensionNames = extensionsEnabled.data();
             device.pEnabledFeatures = &enabled;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
@@ -99,6 +104,13 @@ public:
             VkPhysicalDeviceProperties properties{};
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
             context.limits = properties.limits;
+            if (externalHost) {
+                VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+                VkPhysicalDeviceProperties2 extended{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &host};
+                function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &extended);
+                context.hostImportAlignment = host.minImportedHostPointerAlignment;
+            }
+            if (importHostMemory) std::printf("host import device %s vendor=0x%04x device=0x%04x driver=0x%08x alignment=%llu\n", properties.deviceName, properties.vendorID, properties.deviceID, properties.driverVersion, static_cast<unsigned long long>(context.hostImportAlignment));
             context.bufferDeviceAddress = true;
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
             VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -142,7 +154,8 @@ private:
 int main(int argc, char** argv) {
     try {
         RunBdaContractTests();
-        if (argc == 2) {
+        const bool importFailures = argc == 2 && std::strcmp(argv[1], "--host-import-failures") == 0;
+        if (argc == 2 && !importFailures) {
             const auto shader = MakeBdaTestShader(0x7fff12340000ULL, 32);
             std::ofstream file(argv[1], std::ios::binary);
             file.write(reinterpret_cast<const char*>(shader.data()), static_cast<std::streamsize>(shader.size() * sizeof(std::uint32_t)));
@@ -151,11 +164,19 @@ int main(int argc, char** argv) {
         }
         std::unique_ptr<Device> device;
         try {
-            device = std::make_unique<Device>();
+            device = std::make_unique<Device>(importFailures);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
             return 77;
+        }
+        if (importFailures) {
+            if (device->GetContext().hostImportAlignment == 0) {
+                std::cout << "skipped, no external host memory import support\n";
+                return 77;
+            }
+            AgcDriver::Tests::RunHostImportFailureTests(device->GetContext(), true);
+            return 0;
         }
         Buffer buffer(device->GetContext(), 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         Require(buffer.DeviceAddress() != 0 && buffer.Bytes().size() == 256, "invalid real BDA buffer");
