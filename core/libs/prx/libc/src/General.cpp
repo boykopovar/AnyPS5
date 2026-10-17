@@ -111,12 +111,39 @@ std::filesystem::path PathOrRelinkedModule(const std::filesystem::path& path) {
     return RelinkedModulePath_nid_no_patch(path);
 }
 
-std::filesystem::path ResolveHostPath(std::filesystem::path root, const std::filesystem::path& relative, bool module = false) {
-    const auto direct = root / relative;
+std::vector<std::string> SplitNames(std::string_view text) {
+    std::vector<std::string> names;
+    while (!text.empty()) {
+        const auto separator = text.find('/');
+        names.emplace_back(text.substr(0, separator));
+        if (separator == std::string_view::npos) break;
+        text.remove_prefix(separator + 1);
+        if (text.empty()) names.emplace_back();
+    }
+    return names;
+}
+
+std::string JoinNames(const std::vector<std::string>& names) {
+    std::string joined;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i != 0) joined += '/';
+        joined += names[i];
+    }
+    return joined;
+}
+
+std::filesystem::path Child(std::filesystem::path parent, const std::string& name) {
+    parent /= "";
+    parent += name;
+    return parent;
+}
+
+std::filesystem::path ResolveHostPath(std::filesystem::path root, const std::vector<std::string>& relative, bool module = false) {
+    const auto direct = Child(root, JoinNames(relative));
     std::error_code error;
     if (std::filesystem::exists(direct, error)) return direct;
     for (auto part = relative.begin(); part != relative.end(); ++part) {
-        const auto candidate = root / *part;
+        const auto candidate = Child(root, *part);
         const auto status = std::filesystem::symlink_status(candidate, error);
         if (std::filesystem::exists(status) || (error && error != std::errc::no_such_file_or_directory)) {
             root = candidate;
@@ -124,7 +151,7 @@ std::filesystem::path ResolveHostPath(std::filesystem::path root, const std::fil
         }
         const bool last = module && std::next(part) == relative.end();
         const auto relinked = RelinkedModuleName(candidate);
-        NameMatch names[] = {{part->string()}, {relinked.filename().string()}};
+        NameMatch names[] = {{*part}, {relinked.filename().string()}};
         error = MatchNames(root, std::span(names, last ? 2 : 1));
         if (names[0].ambiguous) throw std::runtime_error("Ambiguous case-insensitive guest path: " + candidate.string());
         const bool matched = !error && names[0].path;
@@ -152,12 +179,12 @@ std::optional<std::filesystem::path> ResolveAlias(const std::string& guestPath, 
         }
 #ifndef _WIN32
         if (guestPath.back() == '/') {
-            auto result = ResolveHostPath(host, relative.substr(prefix.size() + 1));
+            auto result = ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1)));
             result /= "";
             return module ? PathOrRelinkedModule(result) : result;
         }
 #endif
-        return ResolveHostPath(host, relative.substr(prefix.size() + 1), module).make_preferred();
+        return ResolveHostPath(host, SplitNames(std::string_view(relative).substr(prefix.size() + 1)), module).make_preferred();
     }
     return std::nullopt;
 }
@@ -171,8 +198,8 @@ WorkingDirectory& Directories() {
     static auto* state = new WorkingDirectory;
     return *state;
 }
-std::optional<std::filesystem::path> ProvidedPath(const WorkingDirectory& state, const std::filesystem::path& guest) {
-    const auto relative = TrimSlashes(guest.relative_path().generic_string().c_str());
+std::optional<std::filesystem::path> ProvidedPath(const WorkingDirectory& state, const std::vector<std::string>& names) {
+    const auto relative = TrimSlashes(JoinNames(names).c_str());
     PathProvider provide = nullptr;
     {
         auto& aliases = Aliases();
@@ -182,20 +209,20 @@ std::optional<std::filesystem::path> ProvidedPath(const WorkingDirectory& state,
         }
     }
     if (provide == nullptr) return std::nullopt;
-    const auto supplied = ResolveHostPath(state.root, guest.relative_path());
+    const auto supplied = ResolveHostPath(state.root, names);
     std::error_code error;
     if (std::filesystem::exists(supplied, error) || error) return supplied;
     auto provided = provide(state.root);
     if (provided.empty()) return std::nullopt;
     return provided.make_preferred();
 }
-std::filesystem::path HostPath(WorkingDirectory& state, const std::filesystem::path& guest, bool module = false) {
-    if (auto aliased = ResolveAlias(guest.relative_path().generic_string(), module)) return *aliased;
-    if (auto provided = ProvidedPath(state, guest)) return *provided;
-    return ResolveHostPath(state.root, guest.relative_path(), module).make_preferred();
+std::filesystem::path HostPath(WorkingDirectory& state, const std::vector<std::string>& names, bool module = false) {
+    if (auto aliased = ResolveAlias(JoinNames(names), module)) return *aliased;
+    if (auto provided = ProvidedPath(state, names)) return *provided;
+    return ResolveHostPath(state.root, names, module).make_preferred();
 }
-void RequireHostDirectory(WorkingDirectory& state, const std::filesystem::path& guest) {
-    const auto host = HostPath(state, guest);
+void RequireHostDirectory(WorkingDirectory& state, const std::vector<std::string>& names) {
+    const auto host = HostPath(state, names);
     std::error_code error;
     const auto status = std::filesystem::status(host, error);
     if (std::filesystem::is_directory(status)) return;
@@ -213,25 +240,32 @@ void RequireHostDirectory(WorkingDirectory& state, const std::filesystem::path& 
 #endif
     throw std::filesystem::filesystem_error("Guest path component is not a directory", host, error);
 }
+std::vector<std::string> WithTrailingSeparator(std::vector<std::string> names, bool trailing) {
+    if (trailing && !names.empty()) names.emplace_back();
+    return names;
+}
 std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool module = false, bool archived = false) {
     std::string text(path);
     for (auto& character : text) if (character == '\\') character = '/';
-    std::filesystem::path input(text);
 #ifdef _WIN32
     // Preserve the existing ability to pass explicit native drive paths.
-    if (input.has_root_name()) return module ? PathOrRelinkedModule(input) : input;
+    if (std::filesystem::path input(text); input.has_root_name()) return module ? PathOrRelinkedModule(input) : input;
 #endif
-    const auto current = std::filesystem::path("/") / state.current.lexically_relative(state.root);
-    const auto relative = (input.is_absolute() ? input : current / input).relative_path();
-    std::filesystem::path guest("/");
-    for (auto part = relative.begin(); part != relative.end(); ++part) {
-        if (*part == "..") {
-            const auto parent = guest.lexically_normal();
-            if (parent.has_relative_path() && !(archived && AppArchiveHasDirectory_nid_no_patch(HostPath(state, parent)))) RequireHostDirectory(state, parent);
+    if (text.empty() || text.front() != '/') text = state.current.lexically_relative(state.root).generic_string() + "/" + text;
+    std::vector<std::string> names;
+    bool trailing = true;
+    const auto parts = SplitNames(text);
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const auto& name = parts[i];
+        if (name.empty() && i + 1 != parts.size()) continue;
+        if (name == ".." && !names.empty()) {
+            if (!(archived && AppArchiveHasDirectory_nid_no_patch(HostPath(state, names)))) RequireHostDirectory(state, WithTrailingSeparator(names, trailing));
+            names.pop_back();
         }
-        guest /= *part;
+        trailing = name.empty() || name == "." || name == "..";
+        if (!trailing) names.push_back(name);
     }
-    return HostPath(state, guest.lexically_normal(), module);
+    return HostPath(state, WithTrailingSeparator(std::move(names), trailing), module);
 }
 #ifdef _WIN32
 using WriteMark = FILETIME;
