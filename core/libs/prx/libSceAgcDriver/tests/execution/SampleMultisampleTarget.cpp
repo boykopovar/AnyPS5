@@ -32,6 +32,11 @@
 #include <string_view>
 #include <vector>
 #include <mutex>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace AgcDriver {
 
@@ -62,6 +67,9 @@ constexpr std::uint32_t TileRenderTarget = 0x1b;
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Words = 32;
 constexpr std::uint32_t LoadResult = 12;
+constexpr std::uint32_t BdaThreads = 64;
+constexpr std::uint32_t BdaLoadBase = 0x100;
+constexpr std::uint32_t BdaOutputBase = 0x8000;
 constexpr std::array<float, 4> Drawn{0.25f, 0.5f, 0.125f, 1.0f};
 constexpr double EdgeMargin = 1.0 / 32.0;
 constexpr std::uint32_t FillOnes = 0x3c003c00u;
@@ -96,11 +104,53 @@ struct SampleWrite {
     std::uint32_t sample;
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 17> BdaSpanCode{
+    0x34040084, 0x4a0404ff, BdaLoadBase, 0x34080081, 0x36080882, 0x4a040504, 0x34060083, 0x4a0606ff,
+    BdaOutputBase, 0xdc388ff8, 0x04000002, 0xbf8c3f70, 0xdc708000, 0x00000503, 0xdc708004, 0x00000703, 0xbf810000,
+};
+
 constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {0.83f, -1.0f, 0.5f, 1.0f}, {-1.0f, 0.71f, 0.5f, 1.0f}
 }};
 
 alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
 
 struct Block {
     explicit Block(std::size_t bytes) : bytes(bytes) {
@@ -442,6 +492,55 @@ void StoreWords(const Block& block, std::uint64_t bytes, std::uint32_t word) {
     for (std::uint64_t offset = 0; offset < bytes; offset += sizeof(word)) std::memcpy(block.data + offset, &word, sizeof(word));
 }
 
+ShaderRecompiler::RecompileResult CompileBdaSpan(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    const std::span<const std::uint32_t> code(BdaSpanCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{BdaThreads, 1, 1}, 0, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    Require(std::ranges::any_of(result.bindings, [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; }), "the native multisample BDA test has no address-table binding");
+    return result;
+}
+
+void CheckBdaSpan(AgcDriver::VulkanDevice& device, const Block& block, std::size_t offset, bool refused) {
+    std::vector<std::uint8_t> before(block.bytes);
+    for (std::size_t index = 0; index < before.size(); ++index) before[index] = static_cast<std::uint8_t>(index * 37u + 11u);
+    const auto output = offset + 0x8000u;
+    std::fill(before.begin() + static_cast<std::ptrdiff_t>(output), before.begin() + static_cast<std::ptrdiff_t>(output + BdaThreads * 8u), 0xcdu);
+    std::memcpy(block.data, before.data(), before.size());
+    auto expected = before;
+    for (std::uint32_t tid = 0; tid < BdaThreads; ++tid) {
+        const auto load = offset + BdaLoadBase + tid * 16u + (tid & 1u) * 2u - 8u;
+        std::memcpy(expected.data() + output + tid * 8u, before.data() + load + 4u, sizeof(std::uint32_t));
+        std::memcpy(expected.data() + output + tid * 8u + 4u, before.data() + load + 12u, sizeof(std::uint32_t));
+    }
+    std::string failure;
+    StderrCapture log;
+    try {
+        const auto address = block.Address() + offset;
+        device.Dispatch(CompileBdaSpan(device, address), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BdaSpanCode.data()));
+        device.WaitIdle();
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    const auto deferred = log.Finish();
+    if (failure.empty()) failure = deferred;
+    if (refused) {
+        Require(failure.find("BDA access failed:") != std::string::npos, "BDA access to a resident native multisample range was not refused: " + failure);
+        Require(std::equal(before.begin(), before.end(), block.data), "a refused BDA access changed guest memory");
+    } else {
+        Require(failure.empty(), "BDA access to an ordinary neighboring range failed: " + failure);
+        Require(std::equal(expected.begin(), expected.end(), block.data), "the ordinary BDA span did not preserve its reads, writes or boundaries");
+    }
+}
+
 void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what) {
     std::string refusal;
     try {
@@ -582,10 +681,15 @@ int main(int argc, char** argv) {
         Block block(4u * BlockBytes);
         Block other(BlockBytes);
         const auto color = DecodeTarget(block);
-        const auto state = TargetState(color);
-        Draw(*device, state);
-        CheckSamples(state, LoadSamples(*device, block), {});
         const auto colorBytes = AgcDriver::Graphics::MultisampledColorBytes(color);
+        Require(colorBytes == BlockBytes, "the native color target does not occupy exactly one BDA block");
+        const auto state = TargetState(color);
+        CheckBdaSpan(*device, block, 0, false);
+        CheckBdaSpan(*device, block, BlockBytes, false);
+        Draw(*device, state);
+        CheckBdaSpan(*device, block, 0, true);
+        CheckBdaSpan(*device, block, BlockBytes, false);
+        CheckSamples(state, LoadSamples(*device, block), {});
         Require(colorBytes != 0 && colorBytes <= block.bytes, "the 4x target's color memory does not fit its block");
         AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), static_cast<std::size_t>(colorBytes), FillOnes);
         CheckUniform(LoadSamples(*device, block), Ones, "after a fill of the target's color memory with half-float ones");
@@ -616,6 +720,10 @@ int main(int argc, char** argv) {
         std::memcpy(mixedStore.data + colorBytes - sizeof(odd), &odd, sizeof(odd));
         RequireStoreRefused(*device, TargetDescriptor(mixedStore, SampleShift), "writing the 16x16 multisampled texture", "storing to a multisampled texture no draw rendered to whose color memory is not uniform");
         std::puts("stores to one sample of each pixel of a drawn 4x target and to samples of zeroed color memory no draw rendered to reach exactly those samples, and a store to non-uniform color memory no draw rendered to is refused");
+        device->WaitIdle();
+        AgcDriver::Graphics::ClearMultisampleTargets(device->Device());
+        CheckBdaSpan(*device, block, 0, false);
+        Draw(*device, TargetState(DecodeTarget(block)));
         std::puts("every sample of a 4x color target loaded through its multisampled texture descriptor matches the triangle drawn into it, then the fill of its color memory; a surface no draw rendered to loads the value its color memory repeats and keeps it under a later draw");
         Block destination(BlockBytes);
         struct ReleaseIndexDevice {
