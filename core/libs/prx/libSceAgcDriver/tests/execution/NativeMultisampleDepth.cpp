@@ -920,6 +920,8 @@ void CheckEligibility(Context context) {
         invalid.address = unwatched.Address();
         Require(DepthSurfaceView(context, invalid) != VK_NULL_HANDLE, "unwatched sampling memory must preserve attachment rendering");
         TargetRefuses([&] { lookup(invalid); }, "watched accessible guest memory");
+        NoteDepthMetadataFill(invalid.htileAddress, HtileMetadataBytes(extent), 0u);
+        TargetRefuses([&] { lookup(invalid); }, "watched accessible guest memory");
         clear();
     }
     DepthSurfaceView(context, target);
