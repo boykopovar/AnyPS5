@@ -635,6 +635,71 @@ void RunUntrackedReuse(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
     Require(image->Refresh(), "the GPU-edited image was uploaded twice");
 }
 
+void RunClearKeepsSnapshot(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    std::memset(texels, 0x55, SurfaceBytes);
+    std::memset(keys, 0x00, KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto texture = TextureDescriptor(texels, keys);
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(texture.begin(), texture.end(), writeData.begin() + 4);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Dispatch(device, WriteCode, writeData);
+    const auto image = StorageTexture::FindPending(surface, SurfaceBytes);
+    Require(image != nullptr, "clear snapshot: the written surface has no pending image");
+    if (AgcDriver::GuestMemory::Watched(surface, SurfaceBytes)) {
+        std::puts("the unwatched block is write-watched: the fast-clear snapshot is not tested");
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
+        device.WaitIdle();
+        return;
+    }
+    const auto writeAndSettle = [&] {
+        Dispatch(device, WriteCode, writeData);
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+        device.WaitIdle();
+        for (int settle = 0; settle < 2; ++settle) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            image->Refresh();
+        }
+    };
+    const auto clear = [&](const char* what) {
+        const std::array<std::uint32_t, 4> pattern{0u, 0u, 0u, 0u};
+        Require(StorageTexture::NoteKeysFill(AddressOf(keys), KeyBytes, 0x00) == 1, "clear snapshot: the key fill did not cover the surface");
+        if (!device.FillBuffer(AddressOf(keys), KeyBytes, pattern)) {
+            device.WaitIdle();
+            const std::vector<std::byte> filled(KeyBytes, std::byte{0});
+            AgcDriver::GuestMemory::Write(AddressOf(keys), filled);
+        }
+        AgcDriver::Graphics::NoteKeysFillOnGpu(AddressOf(keys), KeyBytes, DccKeys::Clear0000);
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+        device.WaitIdle();
+        const auto snapshots = StorageTexture::GuestSnapshots();
+        image->Refresh();
+        char message[256];
+        std::snprintf(message, sizeof(message), "clear snapshot: %s: the image was uploaded under %s keys, not cleared", what, AgcDriver::Graphics::DccKeysName(image->UploadedKeys()));
+        Require(image->UploadedKeys() == DccKeys::Clear0000, message);
+        return StorageTexture::GuestSnapshots() - snapshots;
+    };
+    writeAndSettle();
+    char message[192];
+    const auto unchanged = clear("a clear over unchanged memory");
+    std::snprintf(message, sizeof(message), "clear snapshot: a clear over unchanged unwatched memory copied its guest bytes %llu times", static_cast<unsigned long long>(unchanged));
+    Require(unchanged == 0, message);
+    Require(image->GuestSnapshotValid(), "clear snapshot: the cleared image kept no guest bytes to compare");
+    writeAndSettle();
+    texels[SurfaceBytes - 1] = 0x33;
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(clear("a clear after a CPU store") == 1, "clear snapshot: a clear after a CPU store did not copy the guest bytes once");
+    Dispatch(device, WriteCode, writeData);
+    const auto version = image->Version();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(image->Refresh() && image->Version() == version, "clear snapshot: the copy taken by the clear missed the CPU store, so a refresh uploaded the image");
+    StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test clear snapshot");
+    device.WaitIdle();
+}
+
 #ifndef _WIN32
 // An import window stamps the pages whose write protection it saw resolved as a possible CPU
 // store. A driver that pins imported pages for writing (NVIDIA on Linux) resolves it without
@@ -796,6 +861,9 @@ int main() {
         Run(*device, block->Data());
         untracked.emplace(false);
         RunUntrackedReuse(*device, untracked->Data());
+        std::optional<GuestBlock> cleared;
+        cleared.emplace(false);
+        RunClearKeepsSnapshot(*device, cleared->Data());
         std::optional<GuestBlock> reused;
         reused.emplace(false);
         RunReusedKeys(*device, reused->Data());
