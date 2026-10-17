@@ -559,4 +559,109 @@ char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** contex
     return SonyStrtokS(str, delim, context);
 }
 
+int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    if (!dest) return GuestEinval;
+    if (destsz > RsizeMax) return GuestErange;
+    if (!src || count > destsz) {
+        wmemset_nid_postfix(dest, 0, destsz);
+        return src ? GuestErange : GuestEinval;
+    }
+    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
+    const auto source = reinterpret_cast<std::uintptr_t>(src);
+    const auto distance = destination < source ? source - destination : destination - source;
+    if (count != 0 && distance < count * sizeof(char16_t)) {
+        wmemset_nid_postfix(dest, 0, destsz);
+        return GuestEinval;
+    }
+    if (count != 0) std::memcpy(dest, src, count * sizeof(char16_t));
+    return 0;
+}
+
+int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    if (!dest) return GuestEinval;
+    if (destsz > RsizeMax) return GuestErange;
+    if (!src || count > destsz) {
+        wmemset_nid_postfix(dest, 0, destsz);
+        return src ? GuestErange : GuestEinval;
+    }
+    if (count != 0) std::memmove(dest, src, count * sizeof(char16_t));
+    return 0;
+}
+
+int APS5_VABI wcsncpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    if (!dest || destsz == 0) return GuestEinval;
+    if (destsz > RsizeMax) return GuestErange;
+    if (!src) {
+        dest[0] = 0;
+        return GuestEinval;
+    }
+    size_t length = 0;
+    while (length < count && src[length] != 0) ++length;
+    if (length >= destsz) {
+        dest[0] = 0;
+        return GuestErange;
+    }
+    const auto destination = reinterpret_cast<std::uintptr_t>(dest);
+    const auto source = reinterpret_cast<std::uintptr_t>(src);
+    const auto distance = destination < source ? source - destination : destination - source;
+    if (length != 0 && distance < (length + 1) * sizeof(char16_t)) {
+        dest[0] = 0;
+        return GuestEinval;
+    }
+    std::memcpy(dest, src, length * sizeof(char16_t));
+    dest[length] = 0;
+    return 0;
+}
+
+char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, size_t n) {
+    const size_t dest_len = Length(dest);
+    size_t index = 0;
+    for (; index < n && src[index] != 0; ++index) dest[dest_len + index] = src[index];
+    dest[dest_len + index] = 0;
+    return dest;
+}
+
+int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    if (!dest || destsz == 0) return GuestEinval;
+    if (destsz > RsizeMax) return GuestErange;
+    size_t used = 0;
+    while (used < destsz && dest[used] != 0) ++used;
+    if (used == destsz || !src) {
+        dest[0] = 0;
+        return used == destsz ? GuestErange : GuestEinval;
+    }
+    size_t length = 0;
+    while (length < count && src[length] != 0) ++length;
+    if (length >= destsz - used) {
+        dest[0] = 0;
+        return GuestErange;
+    }
+    const auto destination = reinterpret_cast<std::uintptr_t>(dest + used);
+    const auto source = reinterpret_cast<std::uintptr_t>(src);
+    const auto distance = destination < source ? source - destination : destination - source;
+    if (length != 0 && distance < (length + 1) * sizeof(char16_t)) {
+        dest[0] = 0;
+        return GuestEinval;
+    }
+    std::memcpy(dest + used, src, length * sizeof(char16_t));
+    dest[used + length] = 0;
+    return 0;
+}
+
+int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src) {
+    return wcsncat_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+}
+
 }
