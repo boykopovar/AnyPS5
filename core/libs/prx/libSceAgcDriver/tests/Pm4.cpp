@@ -805,6 +805,22 @@ void testEventWrite() {
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x24}), 0x20); }, "compute queue");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x424}), 0); }, "VGT_FLUSH event index");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x46, {0x1e, 0x1000, 0}), 0); }, "event type 30");
+    for (const auto eventType : {0x01u, 0x02u, 0x03u, 0x20u}) {
+        AgcDriver::Pm4::Validate(makePacket(0x46, {eventType}), 0);
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {eventType}), 0x20); }, "compute queue");
+        for (std::uint32_t index = 1; index < 8; ++index) {
+            if (index == 3) continue;
+            expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {(index << 8u) | eventType}), 0); }, "stream-out statistics event index");
+        }
+        for (const auto index : {3u, 8u, 9u, 10u, 11u}) {
+            expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {(index << 8u) | eventType, 0x1000, 0x2}), 0); }, "stream-out statistics sampling to memory is not implemented");
+            expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {(index << 8u) | eventType}), 0); }, "stream-out statistics sampling to memory is not implemented");
+        }
+        for (const auto index : {12u, 13u, 14u, 15u}) {
+            expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {(index << 8u) | eventType}), 0); }, "reserved bits");
+        }
+        expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x46, {eventType, 0x1000, 0x2}), 0); }, "packet size");
+    }
 }
 
 void testAcquireMem() {
@@ -909,6 +925,8 @@ void testDriverSubmission() {
         makePacket(0x46, {0x2a}),
         makePacket(0x46, {0x72c}),
         makePacket(0x46, {0x2e}),
+        makePacket(0x46, {0x01}),
+        makePacket(0x46, {0x20}),
         makePacket(0x58, {0x02007fc0, 0, 0, 0, 0, 10, 0x200}),
         makePacket(0x58, {0x00800000, 0xffffffff, 0, 0, 0, 10}),
         makePacket(0x83, {0, 1, low(destination.data()), high(destination.data())})

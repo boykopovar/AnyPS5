@@ -378,9 +378,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[1] & 0x7fffffffu) == 0 && (packet[2] & 0x7fffffffu) == 0, "CONTEXT_CONTROL register loading and shadowing are not implemented");
             break;
         case 0x46: {
-            require((packet[1] & ~0x73fu) == 0, "unsupported EVENT_WRITE flags or reserved bits");
             const auto eventType = packet[1] & 0x3fu;
-            const auto eventIndex = (packet[1] >> 8u) & 7u;
+            const auto eventIndex = (packet[1] >> 8u) & 0xfu;
+            const auto streamOutStatistics = (eventType >= 0x01u && eventType <= 0x03u) || eventType == 0x20u;
+            require(!streamOutStatistics || (eventIndex != 3 && (eventIndex < 8 || eventIndex > 11)), "stream-out statistics sampling to memory is not implemented");
+            require((packet[1] & ~0x73fu) == 0, "unsupported EVENT_WRITE flags or reserved bits");
             switch (eventType) {
                 case 0x07: case 0x0f: case 0x10:
                     size(2);
@@ -400,6 +402,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     graphics();
                     size(2);
                     require(eventIndex == 0, "invalid VGT_FLUSH event index");
+                    break;
+                case 0x01: case 0x02: case 0x03: case 0x20:
+                    graphics();
+                    size(2);
+                    require(eventIndex == 0, "invalid stream-out statistics event index");
                     break;
                 case 0x39:
                     graphics();
