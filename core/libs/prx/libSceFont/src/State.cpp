@@ -18,6 +18,7 @@
 namespace {
 
 std::mutex stateMutex;
+std::mutex faceMutex;
 std::unordered_map<FontHandle, std::unique_ptr<Font::FontState>> fontStates;
 std::mutex glyphMutex;
 std::unordered_set<FontGlyph> generatedGlyphs;
@@ -53,7 +54,10 @@ void ReleaseWord(std::uint32_t& word, std::uint32_t previous) {
 }
 
 Font::FontState::~FontState() {
-    if (face) FT_Done_Face(face);
+    if (face) {
+        std::lock_guard lock(faceMutex);
+        FT_Done_Face(face);
+    }
 }
 
 void Font::Backoff() {
@@ -249,6 +253,7 @@ void Font::RemoveState(FontHandle handle) {
 }
 
 void Font::LoadStateFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex) {
+    std::lock_guard lock(faceMutex);
     if (state.face) {
         FT_Done_Face(state.face);
         state.face = nullptr;
