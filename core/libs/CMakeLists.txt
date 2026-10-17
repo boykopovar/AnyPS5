@@ -334,6 +334,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSigninDialog>")
     endif()
 
+    add_test_executable(guest_game_live_streaming_tests tests/GuestGameLiveStreaming.cpp)
+    target_include_directories(guest_game_live_streaming_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_game_live_streaming_tests PRIVATE libSceGameLiveStreaming libc)
+    configure_windows_unwind(guest_game_live_streaming_tests)
+    add_test(NAME guest_game_live_streaming COMMAND guest_game_live_streaming_tests)
+    if(WIN32)
+        set_tests_properties(guest_game_live_streaming PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGameLiveStreaming>")
+    endif()
+
     add_test_executable(guest_netctl_ap_dialog_tests tests/GuestNetCtlApDialog.cpp)
     target_include_directories(guest_netctl_ap_dialog_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_netctl_ap_dialog_tests PRIVATE libSceNetCtlApDialog libc)
