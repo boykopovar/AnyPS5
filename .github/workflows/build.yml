@@ -84,9 +84,10 @@ jobs:
               };
             };
             const relinkerHosts = (full, linux) => JSON.stringify([
-              ...(full && linux ? [] : [{ os: 'ubuntu-latest', compiler: 'g++' }]),
-              ...(full ? [] : [{ os: 'windows-latest', compiler: 'g++' }]),
-              { os: 'macos-latest', compiler: 'clang++' },
+              ...(full && linux ? [] : [{ os: 'ubuntu-latest', compiler: 'g++', architectures: '' }]),
+              ...(full ? [] : [{ os: 'windows-latest', compiler: 'g++', architectures: '' }]),
+              { os: 'macos-latest', compiler: 'clang++', architectures: '' },
+              { os: 'macos-latest', compiler: 'clang++', architectures: 'x86_64' },
             ]);
             if (context.eventName === 'push') {
               if (context.ref !== 'refs/heads/main') {
@@ -259,7 +260,9 @@ jobs:
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - if: runner.os == 'Windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
+      - if: ${{ matrix.architectures == 'x86_64' }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON -DCMAKE_OSX_ARCHITECTURES="${{ matrix.architectures }}"
       - run: cmake --build build-relinker --parallel 3
       - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
 
