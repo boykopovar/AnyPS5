@@ -388,8 +388,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         if (section.Characteristics & Windows::SectionWrite) protection |= VmProtWrite;
         if (section.Characteristics & Windows::SectionExecute) protection |= VmProtExecute;
         auto name = section.Name == ".amdstub" ? std::string("__AMDSTUB") : "__ELF" + std::to_string(segments.size() - guestSegments);
-        guestEnd = std::max<std::uint64_t>(guestEnd, section.Rva + section.Data.size());
-        segments.push_back({std::move(name), section.Rva, section.Data.size(), protection, std::move(section.Data), {}});
+        guestEnd = std::max<std::uint64_t>(guestEnd, section.Rva + section.MemorySize());
+        segments.push_back({std::move(name), section.Rva, section.MemorySize(), protection, std::move(section.Data), {}});
     }
 
     const auto metaRva = static_cast<std::uint32_t>(AlignUp(guestEnd, PageSize));

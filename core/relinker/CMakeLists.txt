@@ -476,6 +476,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_tls_thread_pointer.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_bss COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_bss.py $<TARGET_FILE:relinker>)
+        add_test(NAME windows_sparse_load COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_sparse_load.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_icon COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_icon.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_desktop_entry_output COMMAND ${Python3_EXECUTABLE}

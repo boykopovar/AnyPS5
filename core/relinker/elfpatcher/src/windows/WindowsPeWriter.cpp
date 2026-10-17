@@ -44,14 +44,14 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
     bool foundEntry = false;
     for (std::size_t index = 0; index < sections.size(); ++index) {
         const auto& section = sections[index];
-        if (section.Name.empty() || section.Name.size() > 8 || section.Data.empty() || section.Rva != endRva)
+        if (section.Name.empty() || section.Name.size() > 8 || section.MemorySize() == 0 || section.Rva != endRva)
             throw Domain::RelinkerException("Invalid PE section layout: " + section.Name, section.Rva);
         const auto initialized = static_cast<std::size_t>(std::find_if(section.Data.rbegin(), section.Data.rend(), [](const std::uint8_t value) { return value != 0; }).base() - section.Data.begin());
         const auto rawSize = Io::AlignUp(CheckedRva(initialized), FileAlignment);
         const auto rawOffset = rawSize == 0 ? 0u : CheckedRva(result.size());
         const auto header = sectionTable + index * 40;
         std::copy(section.Name.begin(), section.Name.end(), result.begin() + static_cast<std::ptrdiff_t>(header));
-        Io::WriteU32(result, header + 8, CheckedRva(section.Data.size()));
+        Io::WriteU32(result, header + 8, CheckedRva(section.MemorySize()));
         Io::WriteU32(result, header + 12, section.Rva);
         Io::WriteU32(result, header + 16, rawSize);
         Io::WriteU32(result, header + 20, rawOffset);
@@ -68,7 +68,7 @@ std::vector<std::uint8_t> WindowsPeWriter::Write(const std::vector<PeSection>& s
             result.insert(result.end(), section.Data.begin(), section.Data.begin() + static_cast<std::ptrdiff_t>(initialized));
             result.resize(static_cast<std::size_t>(rawOffset) + rawSize);
         }
-        endRva = AlignRva(section.Rva + static_cast<std::uint64_t>(section.Data.size()));
+        endRva = AlignRva(section.Rva + section.MemorySize());
     }
     if (!foundEntry)
         throw Domain::RelinkerException("PE entry point is not inside executable section data", entryRva);
