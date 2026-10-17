@@ -1508,13 +1508,19 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     color.surfaceExtent = color.extent;
     color.mipCount = maxMip + 1u;
     color.mip = viewMip;
+    std::uint32_t firstTailLevel = maxMip + 1u;
     if (maxMip != 0) {
-        // A mipmapped surface is addressed like a texture; the view renders into one mip of it.
         const auto mips = ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.extent.width, color.extent.height, maxMip + 1u);
         const auto& mip = mips.at(viewMip);
         mipOffset = mip.tiledOffset;
         color.mipTail = mip.tail;
         color.extent = {mip.width, mip.height};
+        for (std::uint32_t level = 0; level < mips.size(); ++level) {
+            if (mips[level].tail) {
+                firstTailLevel = level;
+                break;
+            }
+        }
     }
     const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     const auto high = read(cx, 0x390 + slot);
@@ -1550,16 +1556,36 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
     }
     if (((info & 0x2000u) != 0 || (color.samples > 1 && (info & 0x4000u) != 0)) && (color.samples > 1 || viewMip == 0)) {
-        Require(color.samples > 1 || (maxMip == 0 && !volume && slice == 0), "CMASK fast clears of a mipmapped, 3D or array color target are unsupported");
+        Require(color.samples > 1 || (!volume && slice == 0 && color.arrayLastSlice == 0), "CMASK fast clears of a 3D or array color target are unsupported");
         Require(((attrib3 >> 19u) & 0x1fu) == 0x18u && (attrib3 & 0x4000000u) != 0, "CMASK fast clears need pipe-aligned SW_64KB_Z_X metadata (CB_COLOR_ATTRIB3 FMASK_SW_MODE 24, CMASK_PIPE_ALIGNED)");
-        if (color.samples == 1) Require(color.elementBytes <= 8, "CMASK fast clears of texels over 64 bits are unsupported");
+        if (color.samples == 1) {
+            Require(color.elementBytes <= 8, "CMASK fast clears of texels over 64 bits are unsupported");
+            if (maxMip != 0) Require(color.elementBytes > 2, "CMASK fast clears of mipmapped color targets with 8 or 16 bpp are unsupported");
+        }
         const auto cmaskHigh = find(cx, 0x398 + slot);
         const auto cmask = ((cmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(cmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u);
         Require((info & 0x2000u) == 0 || cmask != 0, "CMASK fast clears without a CMASK address are unsupported");
         if (cmask != 0) {
-            color.cmaskAddress = cmask;
+            std::size_t precedingBlocks = 0;
+            std::size_t totalBlocks = static_cast<std::size_t>((color.surfaceExtent.width + 1023u) / 1024u) * ((color.surfaceExtent.height + 511u) / 512u);
+            if (maxMip != 0) {
+                if (firstTailLevel > 0) {
+                    precedingBlocks = firstTailLevel < color.mipCount ? 1u : 0u;
+                    for (auto level = firstTailLevel; level-- > 1u;) {
+                        const auto w = std::max((color.surfaceExtent.width + (1u << level) - 1u) >> level, 1u);
+                        const auto h = std::max((color.surfaceExtent.height + (1u << level) - 1u) >> level, 1u);
+                        precedingBlocks += static_cast<std::size_t>((w + 1023u) / 1024u) * ((h + 511u) / 512u);
+                    }
+                    totalBlocks += precedingBlocks;
+                } else {
+                    totalBlocks = 1u;
+                }
+            }
+            const auto cmaskMip0Offset = precedingBlocks * CmaskLayout::Alignment;
+            const auto totalCmaskBytes = totalBlocks * CmaskLayout::Alignment;
+            color.cmaskAddress = cmask + cmaskMip0Offset;
             color.cmaskBytes = CmaskBytes(color.extent.width, color.extent.height);
-            if (color.samples == 1) GuestMemory::CheckRange(reinterpret_cast<const void*>(color.cmaskAddress), color.cmaskBytes, CmaskLayout::Alignment, true);
+            if (color.samples == 1) GuestMemory::CheckRange(reinterpret_cast<const void*>(cmask), totalCmaskBytes, CmaskLayout::Alignment, true);
         }
         color.cmaskFastClear = (info & 0x2000u) != 0;
     }
