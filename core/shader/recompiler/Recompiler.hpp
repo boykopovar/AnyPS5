@@ -380,7 +380,8 @@ enum class DescriptorImageShape {
     ImageCube,
     Image3D,
     Image1DArray,
-    Image2DMultisample
+    Image2DMultisample,
+    Image2DMultisampleArray
 };
 
 enum class DescriptorRole {
