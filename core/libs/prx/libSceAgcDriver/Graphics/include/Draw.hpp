@@ -94,6 +94,15 @@ bool DrawRecipes();
 enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, Count };
 void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten = false);
 std::array<std::uint64_t, static_cast<std::size_t>(IndirectDrawPath::Count)> IndirectDrawCounts();
+
+struct DrawPassCounts {
+    std::uint64_t draws = 0;
+    std::uint64_t passesBegun = 0;
+    std::uint64_t passesContinued = 0;
+    std::uint64_t keyStoreFlushes = 0;
+    std::uint64_t storeFlushes = 0;
+};
+std::array<DrawPassCounts, 2> DrawPassTotals();
 const char* IndirectDrawPathName(IndirectDrawPath path);
 
 // Draw packets that drew nothing, for the [draws] line: Nothing (an empty count, or no color writes
