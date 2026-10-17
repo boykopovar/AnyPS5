@@ -28,6 +28,7 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 
 #ifdef __linux__
 #include <stdio_ext.h>
@@ -318,9 +319,15 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
 int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode) {
     constexpr int GuestEinval = 22;
     constexpr int GuestEnoent = 2;
-    if (!result) return GuestEinval;
+    if (!result) {
+        SonyInvokeConstraintHandler("fopen_s", result, GuestEinval);
+        return GuestEinval;
+    }
     *result = nullptr;
-    if (!filename || !mode) return GuestEinval;
+    if (!filename || !mode) {
+        SonyInvokeConstraintHandler("fopen_s", result, GuestEinval);
+        return GuestEinval;
+    }
     *result = fopen_nid_postfix(filename, mode);
     return *result ? 0 : GuestEnoent;
 }

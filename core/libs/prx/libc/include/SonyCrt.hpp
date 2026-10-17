@@ -20,35 +20,19 @@
 
 extern "C" GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
 
-namespace {
-
 using SonyConstraintHandler = void (*)(const char* message, void* pointer, int error);
 
-inline void SonyDefaultConstraintHandler(const char* message, void* pointer, int error) {
-    (void)message;
-    (void)pointer;
-    (void)error;
-    std::abort();
-}
+enum class SonyLconvVariant { Ampr48, Compact0 };
 
-inline std::mutex& SonyConstraintMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
-
-inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
-    static SonyConstraintHandler handler = SonyDefaultConstraintHandler;
-    return handler;
-}
-
-inline void SonyInvokeConstraintHandler(const char* message, void* pointer, int error) {
-    SonyConstraintHandler handler = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(SonyConstraintMutex());
-        handler = SonyConstraintHandlerSlot();
-    }
-    if (handler) handler(message, pointer, error);
-}
+// The handler slot and the lconv tables have a single definition in libc
+// (SonyCrt.cpp). libSceAmpr links libc, so both modules observe the same
+// state instead of per-TU copies.
+std::mutex& SonyConstraintMutex();
+SonyConstraintHandler& SonyConstraintHandlerSlot();
+void SonyDefaultConstraintHandler(const char* message, void* pointer, int error);
+void SonyInvokeConstraintHandler(const char* message, void* pointer, int error);
+void* SonyLconvFor(SonyLconvVariant variant);
+void* SonyLocaleconvEx(SonyLconvVariant variant);
 
 inline char* SonyStrtokS(char* str, const char* delim, char** context) {
     if (!delim || !context) return nullptr;
@@ -92,18 +76,8 @@ inline int SonyAsctimeS(char* buffer, std::size_t size, const GuestTm* time) {
     return SonyFormatAsctime(buffer, size, *time);
 }
 
-inline void SonyIgnoreHandlerS(const char* message, void* pointer, int error) {
-    (void)message;
-    (void)pointer;
-    (void)error;
-}
-
-inline void* SonySetConstraintHandlerS(void* handler) {
-    std::lock_guard<std::mutex> lock(SonyConstraintMutex());
-    void* previous = reinterpret_cast<void*>(SonyConstraintHandlerSlot());
-    SonyConstraintHandlerSlot() = handler ? reinterpret_cast<SonyConstraintHandler>(handler) : SonyDefaultConstraintHandler;
-    return previous;
-}
+void SonyIgnoreHandlerS(const char* message, void* pointer, int error);
+void* SonySetConstraintHandlerS(void* handler);
 
 inline int SonyWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
     if (!dest || !src || size == 0) {
@@ -136,28 +110,9 @@ inline std::size_t SonyMbstowcs(std::uint16_t* dest, const char* src, std::size_
     return converted;
 }
 
-inline SonyLconv* SonyLocaleconv(void) {
-    static char empty[] = "";
-    static char point[] = ".";
-    static char falseText[] = "false";
-    static char trueText[] = "true";
-    static SonyLconv value = [] {
-        SonyLconv init{};
-        for (auto& pointer : init.monetary) pointer = empty;
-        for (auto& byte : init.chars) byte = CHAR_MAX;
-        init.decimal_point = point;
-        init.grouping = empty;
-        init.thousands_sep = empty;
-        init.frac_grouping = empty;
-        init.frac_sep = empty;
-        init.false_text = falseText;
-        init.true_text = trueText;
-        init.no_text = empty;
-        init.yes_text = empty;
-        return init;
-    }();
-    return &value;
-}
+// Fixed C-locale table defined once in SonyCrt.cpp so libc and libSceAmpr
+// return the same object.
+SonyLconv* SonyLocaleconv(void);
 
 inline int SonyFpclassifyd(double value) {
     if (std::isnan(value)) return 2;
@@ -224,8 +179,6 @@ inline __int128 SonyDivti3(__int128 dividend, __int128 divisor) {
         : (unsigned __int128)divisor;
     const unsigned __int128 magnitude = SonyUdivti3(magnitudeDividend, magnitudeDivisor);
     return (__int128)(negative ? (unsigned __int128)0 - magnitude : magnitude);
-}
-
 }
 
 #endif
