@@ -47,8 +47,14 @@ struct RuntimeImageModeMatch {
     std::string detail;
 };
 
+struct ViewLevelsPastChain {
+    std::uint32_t levels = 0;
+    bool base = false;
+};
+
 class ResourceMaterializer {
 public:
+    static ViewLevelsPastChain LevelsPastChain(const DescriptorValue& descriptor);
     static std::uint32_t EmulatedCompareState(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t index);
     void ApplyStaticInterface(IrProgram& program, bool nativeSampleOffsets = true) const;
     static std::vector<ImageResource> RuntimeImageModes(const ImageResource& image);

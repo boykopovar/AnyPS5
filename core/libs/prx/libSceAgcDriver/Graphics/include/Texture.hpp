@@ -324,6 +324,8 @@ public:
     // False, naming why, when the copy must be a transfer.
     bool CopyFrom(StorageTexture& source, const char*& refusal);
     VkImage Image() const { return image; }
+    VkImage Image(std::uint32_t mip) const;
+    std::uint32_t ImageMipLevel(std::uint32_t mip) const;
     const GuestTextureResource& Descriptor() const { return descriptor; }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
@@ -355,6 +357,11 @@ public:
 
 private:
     StorageTexture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
+    void allocateExtraMipImages(VkImageCreateInfo info);
+    void imageBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags flags, std::uint32_t memoryCount, const VkMemoryBarrier* memoryBarriers, std::uint32_t bufferCount, const VkBufferMemoryBarrier* bufferBarriers, std::uint32_t imageCount, const VkImageMemoryBarrier* imageBarriers) const;
+    void copyBufferToImage(VkCommandBuffer commands, VkBuffer source, VkImage destination, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) const;
+    void copyImageToBuffer(VkCommandBuffer commands, VkImage source, VkImageLayout layout, VkBuffer destination, std::uint32_t count, const VkBufferImageCopy* regions) const;
+    void clearColorImage(VkCommandBuffer commands, VkImage destination, VkImageLayout layout, const VkClearColorValue* value, std::uint32_t count, const VkImageSubresourceRange* ranges) const;
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     // Uploads the surface, or only the tracked layers `layers` selects (the direct path; the others
@@ -571,6 +578,7 @@ private:
     // write here bumps the pending serial although the image was pending already.
     bool lent = false;
     VkImage image = VK_NULL_HANDLE;
+    std::vector<std::unique_ptr<OwnedImage>> extraMipImages;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize memoryBytes = 0;
     VkImageView view = VK_NULL_HANDLE;

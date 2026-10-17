@@ -32,6 +32,7 @@ inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
 inline constexpr std::uint32_t MipCountBase = 8320u;
+inline constexpr std::uint32_t LevelsPastViewBase = 8384u;
 inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
