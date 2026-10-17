@@ -360,10 +360,10 @@ def read_modules(directories):
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
-def nid_of(name, aliases):
+def nids_of(name, aliases):
     if name in aliases:
         return aliases[name]
-    return nid_names.compute_nid(name.removesuffix(NID_POSTFIX))
+    return {nid_names.compute_nid(name.removesuffix(NID_POSTFIX))}
 
 
 def source_stubs(source):
@@ -375,14 +375,13 @@ def source_stubs(source):
         aliases = {}
         for file in library.rglob("*.cpp"):
             for nid, name in nid_names.source_aliases(file.read_text(errors="ignore")):
-                aliases[name] = nid
+                aliases.setdefault(name, set()).add(nid)
         group = progress.scan_library(library)
         if "shared_sources" in group:
             shared[library.name] = group["shared_sources"]
-        done = {nid_of(name, aliases) for name in group["done_names"]}
+        done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
         for name in group["todo_names"]:
-            nid = nid_of(name, aliases)
-            if nid not in done:
+            for nid in nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
     for library, owner in shared.items():
         chain = [library]

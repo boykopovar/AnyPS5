@@ -934,6 +934,19 @@ class ImportAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(import_audit.AuditError, "shared source cycle.*libA.*libB"):
             import_audit.source_stubs(source)
 
+    def test_multiple_aliases_of_one_function_keep_the_same_classification(self):
+        aliases = 'APS5_EXPORT("AAAAAAAAAAA", sceExample);\nAPS5_EXPORT("BBBBBBBBBBB", sceExample);\n'
+        for body, classification in ((STUB_SOURCE, "stub"), (DONE_SOURCE, "implemented")):
+            with self.subTest(classification=classification):
+                write_source(self.work.source, "libSceExample", aliases + body.format(name="sceExample"))
+                stubs = import_audit.source_stubs(self.work.source)
+                records, _ = import_audit.audit(
+                    [(nid, "libSceExample.prx", False) for nid in ("AAAAAAAAAAA", "BBBBBBBBBBB")],
+                    {nid: ["libSceExample.prx"] for nid in ("AAAAAAAAAAA", "BBBBBBBBBBB")}, stubs,
+                    {"libSceExample.prx"}, set())
+                self.assertEqual([record["class"] for record in records], [classification, classification])
+
+
     def test_formatted_export_aliases_remain_stubs(self):
         work = self.work
         nid = "AAAAAAAAAAA"
