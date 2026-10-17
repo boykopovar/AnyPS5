@@ -70,6 +70,10 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `--sce-module-path <path>`    | Parent of the module directories, not the module directory itself. Default: input ELF parent; relative input paths resolve from the process working directory. Explicit absolute path: used directly. Explicit relative path (including `.` and `..`): relative to the process working directory. Output path has no effect. Requires one nonempty value; repeats, nonexistent or nondirectory paths, access failures, and combination with `--skip-sce-module` are errors. |
 | `--module-dir <dir>`          | Relink the ELF modules of a directory under the module parent directory, besides `sce_module`/`sce_modules`/`prx`; outputs keep the relative path. A module the executable or another module needs is initialized at startup, any other when the title loads it with `sceKernelLoadStartModule`, with its start arguments (for example Unity plugins in `Media/Plugins`). Repeatable; `.` is the parent itself, without the input ELF. Conflicts with `--skip-sce-module`.  |
 | `--executable <path>`         | Also convert another executable of the title, which it starts with `sceSystemServiceLoadExec`; the path is relative to the module parent directory, for example `picker/picker.bin`. It is written beside the output, named after the path with `/` replaced by `.` and given the output's extension (`picker.picker.bin.exe`), and uses the same `libs/`, `app0/` and guest modules. It is an error if a guest module converts differently for it. Repeatable. Conflicts with `--skip-sce-module`. |
+| `--patches <file>`            | Apply the byte patches of this file during conversion, see [game patches](#game-patches). Overrides `relinker-patches.toml` discovery. Conflicts with `--no-patches`. |
+| `--no-patches`                | Do not apply patches, and do not load `relinker-patches.toml` from the input directory. |
+| `--verify-patches <file>`     | Check a patch file against `<path>` without writing anything, see [game patches](#game-patches). Takes one path and no output path. |
+| `--verify-output`             | With `--verify-patches`, treat `<path>` as a converted Linux output instead of an input executable. |
 | `--skip-sce-module`           | Deprecated. Disable bundled module processing and module directory checks. Conflicts with explicit `--sce-module-path`.                                                                                                                                                                                                                                                                                                                                                     |
 | `--exclude-sce-module <file>` | Deprecated. Exclude a bundled module by exact filename, not path. Repeat for multiple files; a missing filename is an error. Conflicts with `--skip-sce-module`.                                                                                                                                                                                                                                                                                                            |
 | `--skip-syscall-check`        | Deprecated. Disable syscall scanning in the executable and bundled modules.                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -81,6 +85,58 @@ Specify `unused-filter=0|1|2` without `--`, at most once. Unknown options and ex
 The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, and `--lazy-binding` flags are deprecated. If the application runs with these flags enabled, it will be extremely unstable and unsuitable for general use. These flags are only for debugging.
 
 `--trap-sdk-syscall-stubs` is also for debugging. It preserves a runtime failure if a syscall wrapper is called; it does not implement FreeBSD syscalls or make these applications generally safe to run.
+
+## Game patches
+
+A patch file changes bytes of the input executable or of a bundled module before conversion, for a title that hard-codes a value the host cannot meet. The relinker checks the bytes it replaces, so a patch for another version of the title fails instead of corrupting it. With no patch file the output is unchanged.
+
+`relinker-patches.toml` in the directory of the input executable is loaded automatically and announced as `Patches: <path>`. `--patches <file>` names another file, and `--no-patches` loads none. Each applied patch is reported:
+
+```
+Patch: <target> [<name>] va=0x<address> off=0x<offset> <old> -> <new> (<description>)
+```
+
+The file is a subset of TOML; any other TOML syntax is an error that names the line. It is UTF-8, with blank lines, `#` comments outside strings, `[[patch]]` entries and `key = value` lines. Integers are decimal or `0x` hexadecimal, strings are double-quoted without escapes, and keys match `[A-Za-z0-9_]+`.
+
+```toml
+format = 1
+
+[[patch]]
+name        = "pool_size"
+target      = "eboot.elf"
+va          = 0x1234
+type        = "i32"
+expected    = 0x10000000
+value       = 0x18000000
+max         = 0x7f000000
+align       = 0x1000
+description = "pool size"
+```
+
+`format = 1` is required. The top-level keys `relinker_version`, `relinker_commit`, `config`, `config_sha256`, `main_target`, `settings` and `settings_sha256` are accepted in any file; only `main_target` is used, by `--verify-output`. Any other top-level key is an error.
+
+| Entry key | Meaning |
+|-----------|---------|
+| `name` | Optional. A setting name of `[a-z0-9_]`, unique within the file and not one of the reserved top-level key names (`format` and the seven keys above), used by a later `--set` option. Shown in the progress line, the manifest and the verify report. |
+| `target` | Required. The main executable's file name, or for `--executable` files and bundled modules the path relative to the module parent directory, for example `sce_module/libc.prx`. |
+| `va` | Required. The virtual address of the ELF as a disassembler shows it. |
+| `type` | Optional: `u8 u16 u32 u64 i8 i16 i32 i64`. Then `expected`, `value`, `min`, `max` and `align` are integers, range-checked and written little-endian. Without it, `expected` and `value` are hexadecimal byte strings of the same length. |
+| `expected` | Required. The bytes the input must hold. |
+| `value` | Required. The bytes to write. |
+| `min`, `max`, `align` | Optional, typed entries only; checked against `value`. |
+| `description` | Optional. Reported and copied to the manifest. |
+
+x86 `mov r/m64, imm32` and `add`/`sub`/`cmp r/m64, imm32` sign-extend their immediate. To patch a 64-bit field through an imm32 use `type = "i32"`, and add `min` to keep negative values out.
+
+Entries apply in file order. A patch range must lie in the file bytes of one `PT_LOAD` and outside the ELF header and program header table. The conversion fails before writing any output if bytes differ from `expected`, a range is not valid, two entries overlap, a target matches no file or more than one file, or a range overlaps bytes the relinker itself rewrites (`--to-intel` replacements and trampolines, relinker patches, syscall traps) or the 8-byte target of a relocation of the file.
+
+When at least one patch is applied, `<output-stem>.patches.toml` is written beside the output. It lists every applied entry for every converted file, with `main_target` and `config` (the patch file path in forward-slash form, reduced to its file name when the path holds a `"`, backslash or control character; the conversion fails before writing any output when even that cannot be held); typed entries keep their `type`, integers and `min`, `max` and `align`, and `--patches` accepts it to reproduce the conversion. The manifest must not replace the patch file it was read from.
+
+`--verify-patches <file> <path>` writes nothing and exits `0` when no entry is a mismatch. Without `--verify-output`, `<path>` is the input executable of any type, modules are found as in a conversion (module options and `--executable` apply), and each entry is `applicable` (the input holds `expected`) or `mismatch`. A target that matches nothing is an error that suggests `--verify-output`.
+
+With `--verify-output`, `<path>` is a converted Linux ELF (`ET_DYN`); `ET_EXEC` output from `--linux-fixed-base`, PE and Mach-O outputs are refused. The file must have `main_target`, so verify the generated manifest, not a hand-written file. The entry whose target is `main_target` is checked against `<path>`, and entries for the `--executable` strings given are checked against the output file derived as in a conversion; an entry holding `value` is `applied`. Every other entry is `not-checked (module, or executable not named with --executable)`, including a mistyped module target. Two targets with the same name, such as an `--executable` equal to `main_target`, are an `ambiguous patch target` error. Module discovery options are rejected with `--verify-output`.
+
+Verify mode rejects the conversion options (`--windows`, `--macos`, `--to-intel`, `--rpath`, `--patches`, `--no-patches` and the like) and a second path.
 
 ## Runtime layout
 
@@ -236,7 +292,7 @@ With `APS5_STALL_WATCHDOG_SECS=<n>`, a queue that has waited `n` seconds without
 
 ## Exit codes
 
-`0`: conversion succeeded or help was displayed. `1`: invalid arguments. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
+`0`: conversion succeeded or help was displayed. `1`: invalid arguments, or a `--verify-patches` entry that is a mismatch. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
 
 ## Import audit
 

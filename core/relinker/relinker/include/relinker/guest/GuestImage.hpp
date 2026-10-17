@@ -4,6 +4,7 @@
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <relinker/domain/ISyscallScanner.hpp>
+#include <relinker/patching/GamePatch.hpp>
 #include <filesystem>
 #include <domain/IProgress.hpp>
 #include <set>
@@ -43,6 +44,7 @@ struct GuestImage {
     std::vector<std::string> ModuleNames;
     std::vector<std::uint8_t> Bytes;
     std::vector<Codegen::TrampolineSite> Trampolines;
+    std::vector<GamePatch::PatchedRange> PatchedRanges;
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
@@ -72,6 +74,7 @@ struct GuestArtifact {
 struct GuestModuleInput {
     std::filesystem::path Path;
     std::vector<std::uint8_t> Bytes;
+    std::vector<GamePatch::PatchedRange> PatchedRanges;
 };
 
 class GuestModuleBuilder {
