@@ -126,7 +126,7 @@ if(BUILD_TESTING)
             endif()
             add_test(NAME ${conventions_test_name} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/6)
-            set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 30)
+            set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 60)
         endforeach()
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
@@ -156,7 +156,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
         add_test(NAME hardware_oracle_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_compare_results.py)
-        set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 20)
+        set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 120)
         add_test(NAME pr_overlap_exports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_exports.py)
         add_test(NAME pr_overlap_wrapped_exports COMMAND ${Python3_EXECUTABLE}

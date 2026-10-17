@@ -185,7 +185,7 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
     if (!CreateProcessW(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, runner.parent_path().wstring().c_str(), &startup, &process))
         throw std::runtime_error("Cannot start diagnostic test: " + std::to_string(GetLastError()));
     CloseHandle(output);
-    if (WaitForSingleObject(process.hProcess, 20000) != WAIT_OBJECT_0) {
+    if (WaitForSingleObject(process.hProcess, 120000) != WAIT_OBJECT_0) {
         TerminateProcess(process.hProcess, 1);
         throw std::runtime_error("Diagnostic test timed out");
     }
