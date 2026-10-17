@@ -17,10 +17,11 @@ using HostSharedMemory = int;
 #endif
 
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut);
-void DirectMemoryFree(int64_t start, size_t len);
+bool DirectMemoryFree(int64_t start, size_t len);
 bool DirectMemoryCheckedFree(int64_t start, size_t len);
 void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType);
 bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end, std::uint64_t* offset, int* memoryType);
+[[nodiscard]] bool TryForgetDirectMemory(int64_t start, size_t len);
 void ForgetDirectMemory(int64_t start, size_t len);
 
 struct DirectMemoryView {

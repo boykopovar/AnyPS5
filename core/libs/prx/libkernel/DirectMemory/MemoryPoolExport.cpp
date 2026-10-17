@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <exception>
+#include <limits>
 #include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -25,11 +26,14 @@ bool PageAligned(uint64_t v) { return (v & (PS5_PAGE_SIZE - 1)) == 0; }
 
 int PoolCommit(void* addr, uint64_t len, int type, int prot) {
     if (!addr || len == 0 || !PageAligned(reinterpret_cast<uintptr_t>(addr)) || !PageAligned(len)) return SCE_KERNEL_ERROR_EINVAL;
+    if (len > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return SCE_KERNEL_ERROR_EINVAL;
     const int ret = DoMtypeprotect(addr, static_cast<size_t>(len), type, prot);
     if (ret == 0) {
         PoolState& pool = Pool();
         std::lock_guard<std::mutex> lock(pool.mutex);
-        pool.committedBytes += static_cast<size_t>(len);
+        const size_t add = static_cast<size_t>(len);
+        if (add > std::numeric_limits<size_t>::max() - pool.committedBytes) pool.committedBytes = std::numeric_limits<size_t>::max();
+        else pool.committedBytes += add;
     }
     return ret;
 }

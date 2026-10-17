@@ -468,6 +468,37 @@ static void CheckReleaseDirectMemoryRejectsInvalidRanges() {
     Require(sceKernelReleaseDirectMemory(DIRECT_MEMORY_SIZE, page) == SCE_KERNEL_ERROR_EINVAL);
 }
 
+static void CheckReleaseUnknownRangeReturnsAccessError() {
+    // Single-threaded error-behavior pin: releasing an unknown range reports
+    // EACCES instead of throwing; misaligned free returns false; mapping an
+    // unknown range still throws invalid_argument.
+    constexpr std::size_t page = 0x4000;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 2, 3, 0, phys, 0) == 0);
+    Require(sceKernelMunmap(mapped, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == SCE_KERNEL_ERROR_EACCES);
+    std::int64_t probe = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &probe) == 0);
+    Require(!DirectMemoryCheckedFree(probe + 1, page));
+    Require(DirectMemoryCheckedFree(probe, page * 2));
+    void* bad = nullptr;
+    bool threw = false;
+    try {
+        sceKernelMapDirectMemory(&bad, page, 3, 0, phys, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && bad == nullptr);
+    std::uintptr_t s = 0;
+    std::uintptr_t e = 0;
+    std::uint64_t off = 0;
+    int mt = 0;
+    Require(!QueryDirectMapping(static_cast<std::uintptr_t>(-1), &s, &e, &off, &mt));
+}
+
 static void CheckFixedMappingReplacesPartialOverlap() {
     constexpr std::size_t page = 0x4000;
     std::int64_t phys = 0;
@@ -2659,6 +2690,7 @@ int main(int argc, char** argv) {
     CheckSparseDirectMemoryBacking();
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
+    CheckReleaseUnknownRangeReturnsAccessError();
     CheckFixedMappingReplacesPartialOverlap();
     CheckFixedMappingOverHoleInsideAllocation();
     CheckDirectMemoryGpuProtBits();

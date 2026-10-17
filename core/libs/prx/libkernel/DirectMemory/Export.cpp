@@ -287,8 +287,9 @@ int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {
  if ((static_cast<std::uint64_t>(start) & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 ||
      len > DIRECT_MEMORY_SIZE || static_cast<std::uint64_t>(start) > DIRECT_MEMORY_SIZE - len)
      return SCE_KERNEL_ERROR_EINVAL;
+ if (!TryForgetDirectMemory(start, len)) return SCE_KERNEL_ERROR_EACCES;
  const auto views = DirectMemoryViews(start, len);
- DirectMemoryFree(start, len);
+ if (!DirectMemoryFree(start, len)) return SCE_KERNEL_ERROR_EACCES;
  UnmapDirectMemoryViews(views);
  return 0;
 }

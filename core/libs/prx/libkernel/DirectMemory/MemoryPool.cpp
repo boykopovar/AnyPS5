@@ -197,6 +197,10 @@ private:
         for (size_t i = 0; i < count; ++i) _used[first + i] = used;
     }
 
+    static void ForgetWhileHoldingPoolMutex(uint64_t lo, size_t bytes) {
+        ForgetDirectMemory(static_cast<int64_t>(lo), bytes);
+    }
+
     void _commit(uint64_t start, uint64_t len, int type) {
         std::pair<BlockMap::iterator, bool> ins = _blocks.emplace(start, Block{start + len, type});
         if (!ins.second) throw std::logic_error("DirectMemory pool: block map and page flags disagree");
@@ -212,6 +216,7 @@ private:
     }
 
     bool _release(uint64_t start, size_t len, bool requireAllocated) {
+        if (len == 0 || (start & (kPage - 1)) != 0 || (len & (kPage - 1)) != 0) return false;
         uint64_t lo, hi;
         if (!PageSpan(start, len, lo, hi)) return false;
         const size_t first = static_cast<size_t>(lo / kPage);
@@ -224,7 +229,20 @@ private:
         bool splitHi = false;
         try {
             splitHi = _splitAt(hi);
-            ForgetDirectMemory(static_cast<int64_t>(lo), static_cast<size_t>(hi - lo));
+            if (!requireAllocated) {
+                bool any = false;
+                for (BlockMap::iterator it = _blocks.lower_bound(lo); it != _blocks.end() && it->first < hi; ++it) any = true;
+                if (!any) {
+                    if (splitHi) _unsplitAt(hi);
+                    if (splitLo) _unsplitAt(lo);
+                    return false;
+                }
+                std::vector<std::pair<uint64_t, uint64_t>> targets;
+                for (BlockMap::iterator it = _blocks.lower_bound(lo); it != _blocks.end() && it->first < hi; ++it) targets.emplace_back(it->first, it->second.end);
+                for (const auto& target : targets) ForgetWhileHoldingPoolMutex(target.first, static_cast<size_t>(target.second - target.first));
+            } else {
+                ForgetWhileHoldingPoolMutex(lo, static_cast<size_t>(hi - lo));
+            }
         } catch (...) {
             if (splitHi) _unsplitAt(hi);
             if (splitLo) _unsplitAt(lo);
@@ -270,8 +288,8 @@ int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t
     }
 }
 
-void DirectMemoryFree(int64_t start, size_t len) {
-    (void)PhysicalMemoryPool::Instance().Free(static_cast<uint64_t>(start), len);
+bool DirectMemoryFree(int64_t start, size_t len) {
+    return PhysicalMemoryPool::Instance().Free(static_cast<uint64_t>(start), len);
 }
 
 bool DirectMemoryCheckedFree(int64_t start, size_t len) {

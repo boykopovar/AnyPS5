@@ -1221,12 +1221,30 @@ void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType) {
 }
 
 void ForgetDirectMemory(int64_t start, size_t len) {
+    if (start < 0 || len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) throw std::invalid_argument("Invalid direct memory release range");
     const auto first = static_cast<std::uint64_t>(start);
+    if ((first & (PS5_PAGE_SIZE - 1)) != 0) throw std::invalid_argument("Invalid direct memory release range");
+    if (first >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - first) throw std::invalid_argument("Invalid direct memory release range");
     std::lock_guard lock(g_directLock);
-    ValidatePhysicalRange(first, len);
+    for (std::size_t offset = 0; offset < len; offset += PS5_PAGE_SIZE) {
+        if (!g_physPages.contains(first + offset)) throw std::system_error(EACCES, std::generic_category(), "direct memory range is not allocated");
+    }
     g_physPages.erase(g_physPages.lower_bound(first), g_physPages.lower_bound(first + len));
     ErasePhysMappings(first, first + len);
     Trace("release physical 0x%llx+0x%zx", static_cast<unsigned long long>(first), len);
+}
+
+bool TryForgetDirectMemory(int64_t start, size_t len) {
+    if (start < 0 || len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return false;
+    const auto first = static_cast<std::uint64_t>(start);
+    if ((first & (PS5_PAGE_SIZE - 1)) != 0) return false;
+    if (first >= DIRECT_MEMORY_SIZE) return false;
+    if (len > DIRECT_MEMORY_SIZE - first) return false;
+    std::lock_guard lock(g_directLock);
+    for (std::size_t offset = 0; offset < len; offset += PS5_PAGE_SIZE) {
+        if (!g_physPages.contains(first + offset)) return false;
+    }
+    return true;
 }
 
 bool GuestReservation(std::uintptr_t addr, std::uintptr_t* start, std::uintptr_t* end) {
