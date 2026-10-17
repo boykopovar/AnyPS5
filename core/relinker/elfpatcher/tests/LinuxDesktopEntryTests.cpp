@@ -108,6 +108,15 @@ void run(const std::filesystem::path& root) {
     requireField(untitledFields, "Name", "100% $HOME");
     requireField(untitledFields, "Exec", "\"" + (root / "untitled" / "out").string() + "/100%% \\\\$HOME\"");
 
+    const auto leadingSpace = root / "untitled" / "out" / "  game";
+    for (const bool emptyTitle : {false, true}) {
+        if (emptyTitle) writeText(untitledSceSys / "param.json", param("™®©"));
+        write(untitledSceSys, leadingSpace);
+        const auto leadingSpaceFields = readEntry(leadingSpace.string() + ".desktop");
+        requireField(leadingSpaceFields, "Name", "\\s\\sgame");
+        requireField(leadingSpaceFields, "Exec", "\"" + leadingSpace.string() + "\"");
+    }
+
     const auto badPngSceSys = root / "badpng" / "game" / "sce_sys";
     writeText(badPngSceSys / "icon0.png", "GIF89a" + std::string(40, '\0'));
     std::filesystem::create_directories(root / "badpng" / "out");
