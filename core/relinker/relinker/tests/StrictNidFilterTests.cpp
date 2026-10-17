@@ -187,6 +187,14 @@ void relativeTableAndWholeFunction() {
     require(AnalyzeStrictReachability(input).ImportSlots.contains(0x2000), "Unknown switch target inside a live function was removed");
 }
 
+void indexedTableImports() {
+    auto input = fixture();
+    ripOperand(input, 0, {0x48, 0x8D, 0x05}, 0x2000);
+    emit(input, 7, {0xFF, 0x14, 0xF8, 0xC3});
+    input.Data.push_back({0x2000, std::vector<std::uint8_t>(16)});
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x2000, 0x2008}, "Import slot reached by indexing a live table base was removed");
+}
+
 void exceptionLeb128Bounds() {
     const auto check = [](const std::vector<std::uint8_t>& codeAlignment, const std::vector<std::uint8_t>& dataAlignment, bool overflowing) {
         std::vector<std::uint8_t> bytes(0x400);
@@ -679,6 +687,7 @@ int main() {
         conservativeIndirectTargets();
         isolatedFunctionCycle();
         relativeTableAndWholeFunction();
+        indexedTableImports();
         exceptionLeb128Bounds();
         vectorInstructionLengths();
         exceptionLandingPads();

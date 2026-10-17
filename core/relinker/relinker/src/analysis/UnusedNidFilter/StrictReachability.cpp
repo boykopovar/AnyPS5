@@ -202,6 +202,7 @@ private:
 
     void collectRelativeTables() {
         for (const auto base : tableBases) {
+            for (auto slot = base; input.ImportSlots.contains(slot) || input.Pointers.contains(slot); slot += sizeof(std::uint64_t)) addAddressTaken(slot);
             for (const auto target : ReadRelativeTableTargets(input.Data, base, input.TextVaddr, input.Text.size())) addAddressTaken(target);
         }
     }
