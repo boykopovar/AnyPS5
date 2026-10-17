@@ -39,6 +39,13 @@ bool Same(const Affine& left, const Affine& right) {
     return !left.dynamic && !right.dynamic && left == right;
 }
 
+std::optional<Affine> CommonMultiple(const Affine& left, const Affine& right) {
+    if (left.vertex != right.vertex || left.relative != right.relative || left.constant != right.constant) return std::nullopt;
+    const auto multiple = std::gcd(left.dynamic ? left.dynamicScale : 0, right.dynamic ? right.dynamicScale : 0);
+    if (multiple == 0) return std::nullopt;
+    return Affine{left.vertex, left.relative, left.constant, true, multiple, nullptr};
+}
+
 [[noreturn]] void Fail(const char* reason, std::uint32_t pc) {
     char text[256];
     std::snprintf(text, sizeof(text), "tessellation lowering: %s at pc 0x%x", reason, pc);
@@ -412,7 +419,7 @@ private:
         case IrOpcode::ShiftLeftLogical32: {
             const auto lhs = argument(0);
             const auto shift = scalar(1);
-            if (!lhs || !shift || *shift >= 31) return std::nullopt;
+            if (!lhs || !shift || *shift < 0 || *shift >= 31) return std::nullopt;
             return scale(*lhs, 1ll << *shift);
         }
         case IrOpcode::ShiftRightLogical32: {
@@ -440,7 +447,7 @@ private:
             const auto source = argument(0);
             const auto offset = scalar(1);
             const auto count = scalar(2);
-            if (!source || !offset || !count) return std::nullopt;
+            if (!source || !offset || !count || *count < 0) return std::nullopt;
             if (*count == 0) return Affine{};
             const auto shifted = shiftRight(*source, *offset);
             if (!shifted || *count >= 32) return shifted;
@@ -450,18 +457,22 @@ private:
             if (active != nullptr && Implies(active, value->Argument(0))) return argument(1);
             const auto lhs = argument(1);
             const auto rhs = argument(2);
-            return lhs && rhs && Same(*lhs, *rhs) ? lhs : std::nullopt;
+            if (!lhs || !rhs) return std::nullopt;
+            if (Same(*lhs, *rhs)) return lhs;
+            return dynamic ? CommonMultiple(*lhs, *rhs) : std::nullopt;
         }
         default:
             break;
         }
         if (!value->IsPhi() || value->ArgumentCount() == 0) return std::nullopt;
-        const auto first = argument(0);
-        for (std::size_t index = 1; first && index < value->ArgumentCount(); ++index) {
+        auto result = argument(0);
+        for (std::size_t index = 1; result && index < value->ArgumentCount(); ++index) {
             const auto other = argument(index);
-            if (!other || !Same(*other, *first)) return std::nullopt;
+            if (!other) return std::nullopt;
+            if (Same(*result, *other)) continue;
+            result = dynamic ? CommonMultiple(*result, *other) : std::nullopt;
         }
-        return first && !first->dynamic ? first : std::nullopt;
+        return result && (dynamic || !result->dynamic) ? result : std::nullopt;
     }
 
     std::uint32_t vertexCount;
@@ -877,7 +888,10 @@ private:
     }
 
     IrValue& componentAddress(const Access& access, std::uint32_t component) {
-        if (access.address.dynamic) return insert(access, IrOpcode::IAdd32, IrType::U32, {access.addressValue, &constant(access.memoryOffset + 4u * component)});
+        if (access.address.dynamic) {
+            const std::uint32_t byteOffset = access.memoryOffset + 4u * component;
+            return byteOffset == 0u ? *access.addressValue : insert(access, IrOpcode::IAdd32, IrType::U32, {access.addressValue, &constant(byteOffset)});
+        }
         auto address = access.address.constant + 4 * static_cast<std::int64_t>(component);
         if (access.kind == TessellationAttribute::PatchOutput || access.kind == TessellationAttribute::PatchInput) address -= FloorDiv(address, patchStride) * patchStride;
         IrValue& offset = constant(static_cast<std::uint32_t>(address));
