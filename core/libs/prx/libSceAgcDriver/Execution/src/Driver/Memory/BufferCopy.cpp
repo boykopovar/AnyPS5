@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -58,7 +59,7 @@ void Driver::countCopy(int path, std::size_t bytes, std::chrono::steady_clock::t
     copyPathCounts[path].fetch_add(1, std::memory_order_relaxed);
     if (!profile) return;
     using Outcome = VulkanDevice::CopyOutcome;
-    static std::mutex countsMutex;
+    static AgcDriver::Mutex countsMutex;
     static std::uint64_t counts[CopyPaths] = {};
     static std::uint64_t refused[Outcome::Refusals] = {};
     static std::uint64_t cpuBytes = 0, gpuBytes = 0, aliasedBytes = 0, syncs = 0, settledBySignal = 0, sourceWaits = 0;

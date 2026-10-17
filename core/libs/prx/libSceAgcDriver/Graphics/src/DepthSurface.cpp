@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
@@ -918,8 +919,8 @@ bool sameSurface(const DepthTarget& a, const DepthTarget& b) {
     return a.address == b.address && a.stencilAddress == b.stencilAddress && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && a.samples == b.samples && (a.samples == 1u || (a.htileAddress == b.htileAddress && a.htileStencil == b.htileStencil && a.depthSwizzle == b.depthSwizzle && a.pipeBankXor == b.pipeBankXor && a.firstSlice == b.firstSlice && a.lastSlice == b.lastSlice && a.iterate256 == b.iterate256 && a.htilePipeAligned == b.htilePipeAligned && a.htileVrsEncoding == b.htileVrsEncoding && a.htileDepthOnly == b.htileDepthOnly));
 }
 
-std::mutex& surfacesMutex() {
-    static std::mutex mutex;
+AgcDriver::Mutex& surfacesMutex() {
+    static AgcDriver::Mutex mutex;
     return mutex;
 }
 
@@ -1145,7 +1146,7 @@ bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std
 
 VkFormat HostDepthFormat(const Context& context, VkFormat format) {
     if (format != VK_FORMAT_D16_UNORM_S8_UINT) return format;
-    static std::mutex mutex;
+    static AgcDriver::Mutex mutex;
     static std::map<VkPhysicalDevice, VkFormat> chosen;
     std::lock_guard lock(mutex);
     if (const auto found = chosen.find(context.physical); found != chosen.end()) return found->second;

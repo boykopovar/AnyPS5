@@ -3,7 +3,9 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -95,7 +97,7 @@ std::atomic<std::uint64_t> refreshesProved{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
 
 struct StorageTraffic {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> writeBacks;
     std::array<std::pair<std::uint64_t, std::uint64_t>, 4> uploads{};
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploadReasons;
@@ -165,7 +167,7 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct) {
 // Every storage image alive, for the fill HLE's cover check (StorageTexture::ClassifyFill): the
 // storage cache indexes surfaces by key, not by address range. Its mutex is a leaf.
 struct LiveImages {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::vector<StorageTexture*> textures;
 };
 
@@ -413,7 +415,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             else ++Profile().recordedUploads;
             if (profile) Profile().gpu += timer.lap();
             if (dump) {
-                static std::mutex dumpMutex;
+                static AgcDriver::Mutex dumpMutex;
                 static std::map<std::uint64_t, int> dumped;
                 std::lock_guard lock(dumpMutex);
                 auto& count = dumped[descriptor.baseAddress];
@@ -911,7 +913,7 @@ VkBufferMemoryBarrier WholeBufferBarrier(VkBuffer buffer, VkAccessFlags from, Vk
 // remembered as VK_FORMAT_UNDEFINED when the format has no storage form.
 VkFormat StorageFormatOrUndefined(const Context& context, VkFormat format) {
     struct Table {
-        std::mutex mutex;
+        AgcDriver::Mutex mutex;
         std::unordered_map<std::uint64_t, VkFormat> formats;
     };
     static Table table;
@@ -1040,7 +1042,7 @@ VkFormat SrgbTwinFormat(const Context& context, VkFormat format) {
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format) {
     if (format != VK_FORMAT_R8_SRGB) return VK_FORMAT_UNDEFINED;
     struct Table {
-        std::mutex mutex;
+        AgcDriver::Mutex mutex;
         std::unordered_map<VkPhysicalDevice, VkFormat> formats;
     };
     static Table table;
@@ -1362,7 +1364,8 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
 
 // The image being validated by Refresh: its own pending results are what the next dispatch wants,
 // so the comparison with guest memory must not flush them.
-thread_local const StorageTexture* refreshing = nullptr;
+struct RefreshingTag;
+using Refreshing = HostThreadSlot<const StorageTexture*, RefreshingTag>;
 
 void FlushHook(std::uint64_t address, std::size_t bytes) {
     StorageTexture::FlushPending(address, bytes);
@@ -1384,7 +1387,7 @@ bool AdjacentGenerationEnabled() {
 }
 
 bool ClearKeepsDenormals(const Context& context, VkFormat format) {
-    static std::mutex mutex;
+    static AgcDriver::Mutex mutex;
     static std::map<std::pair<VkDevice, VkFormat>, bool> known;
     std::lock_guard lock(mutex);
     if (const auto found = known.find({context.device, format}); found != known.end()) return found->second;
@@ -1734,11 +1737,11 @@ bool StorageTexture::Refresh() {
     refreshProof = {};
     struct Exempt {
         const StorageTexture* previous;
-        ~Exempt() { refreshing = previous; }
-    } exempt{refreshing};
+        ~Exempt() { Refreshing::Set(previous); }
+    } exempt{Refreshing::Get()};
     // This image's own pending results stay on the GPU, where the next dispatch wants them (the
     // flush below and the compare through the hook skip it).
-    refreshing = this;
+    Refreshing::Set(this);
     NoteProved();
     // Results of other images pending in this memory must reach it first, except an alias's: its
     // units are taken on the device below (borrowUnits), so it stays pending. The keys read for
@@ -2114,9 +2117,9 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
     if (!originalHolds(address, bytes)) return false;
     struct Exempt {
         const StorageTexture* previous;
-        ~Exempt() { refreshing = previous; }
-    } exempt{refreshing};
-    refreshing = this;
+        ~Exempt() { Refreshing::Set(previous); }
+    } exempt{Refreshing::Get()};
+    Refreshing::Set(this);
     Require(address >= descriptor.baseAddress && bytes <= guestBytes && address - descriptor.baseAddress <= guestBytes - bytes, "texture comparison exceeds its snapshot");
     Require(original.size() == guestBytes, "texture comparison has no complete snapshot");
     GuestMemory::FlushGpuWrites(address, bytes);
@@ -3219,7 +3222,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
-        const auto* exempt = refreshing;
+        const auto* exempt = Refreshing::Get();
         for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
             auto* texture = *it;
             if (texture != except && texture != exempt && texture->overlaps(address, bytes)) {
@@ -3603,7 +3606,7 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
     auto& pending = Pending();
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return overlapping;
-    const auto* exempt = refreshing;
+    const auto* exempt = Refreshing::Get();
     for (auto* texture : pending.textures) {
         if (texture == exempt || !texture->overlaps(address, bytes) || !texture->pendingUnitInside(address, bytes)) continue;
         if (auto alive = texture->weak_from_this().lock()) overlapping.push_back(std::move(alive));
@@ -3784,7 +3787,7 @@ std::size_t StorageTexture::DiscardPendingInside(std::uint64_t address, std::siz
     std::lock_guard lock(pending.mutex);
     std::size_t discarded = 0;
     const auto end = address + bytes;
-    const auto* exempt = refreshing;
+    const auto* exempt = Refreshing::Get();
     for (auto it = pending.textures.begin(); it != pending.textures.end();) {
         auto* texture = *it;
         const auto begin = texture->descriptor.baseAddress;
