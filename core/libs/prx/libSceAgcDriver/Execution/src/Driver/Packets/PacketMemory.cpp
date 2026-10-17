@@ -54,7 +54,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
             }
             if (reason == 0 || reason == 5) {
                 const auto queueId = submission.queue;
-                interruptDeferred = localDevice->AfterRecordedWork([queueId] { AgcDriverDeliverEopInterrupt(queueId); }, submission.queue == 0);
+                interruptDeferred = localDevice->AfterRecordedWork([this, queueId] { deliverGuestEopInterrupt(queueId); }, submission.queue == 0);
                 if (interruptDeferred && workOpen) localDevice->SubmitRecorded(submission.queue == 0);
                 wroteOnGpu = true;
             } else if (reason == 1) {
@@ -397,10 +397,10 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
     if (endOfPipeInterrupt) {
         bool deferred = false;
         if (localDevice != nullptr && (reason == 0 || reason == 5 || reason == 6)) {
-            deferred = localDevice->AfterRecordedWork([queue] { AgcDriverDeliverEopInterrupt(queue); }, queue == 0);
+            deferred = localDevice->AfterRecordedWork([this, queue] { deliverGuestEopInterrupt(queue); }, queue == 0);
             if (deferred && workOpen) localDevice->SubmitRecorded(queue == 0);
         }
-        if (!deferred) AgcDriverDeliverEopInterrupt(queue);
+        if (!deferred) deliverGuestEopInterrupt(queue);
     }
     submitDueAfterCommit(localDevice.get());
 }

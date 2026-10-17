@@ -1541,8 +1541,10 @@ if(BUILD_TESTING)
     endforeach()
     add_test(NAME agc_driver_readonly_resummarize COMMAND agc_driver_tests --readonly-resummarize)
     set_tests_properties(agc_driver_readonly_resummarize PROPERTIES TIMEOUT 10)
+    add_test(NAME agc_driver_eop_interrupts COMMAND agc_driver_tests --eop-interrupts)
+    set_tests_properties(agc_driver_eop_interrupts PROPERTIES TIMEOUT 60)
     if(WIN32)
-        set_tests_properties(agc_driver_readonly_resummarize PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_readonly_resummarize agc_driver_eop_interrupts PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_shader_mode_register COMMAND agc_shader_mode_register_tests)

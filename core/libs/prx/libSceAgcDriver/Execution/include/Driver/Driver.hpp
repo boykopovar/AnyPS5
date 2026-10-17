@@ -314,6 +314,8 @@ private:
     FrameTiming* frameTiming();
     FrameTiming* includeTimingSubmission(const Submission& submission, bool firstSegment);
     void execute(const Submission& submission);
+    void deliverGuestEopInterrupt(std::uint32_t queue);
+    void deliverFlipEopInterrupt(std::uint32_t queue);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
     void reapCompletionLabels();
@@ -330,6 +332,9 @@ private:
     std::atomic<std::uint64_t> flipsCounted{0};
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
+
+    std::mutex eopSelfSignalMutex;
+    std::unordered_set<std::uint32_t> eopSelfSignalQueues;
 
     alignas(64) std::atomic<int> packetsInFlight{0};
     std::atomic<std::uint64_t> packetsDone{0};
