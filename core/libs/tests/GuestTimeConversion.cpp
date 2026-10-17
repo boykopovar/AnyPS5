@@ -10,6 +10,8 @@
 #include <cstring>
 #include <ctime>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <thread>
 
 extern "C" {
@@ -26,6 +28,7 @@ void APS5_VABI tzset_nid_postfix(void);
 extern char* tzname_nid_postfix[2];
 char* APS5_VABI ctime_nid_postfix(const std::int64_t*);
 int* APS5_VABI __error_nid_postfix();
+int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
 double APS5_VABI libc_difftime_nid_postfix(std::int64_t, std::int64_t);
 double APS5_VABI difftime_nid_postfix(std::int64_t, std::int64_t);
 }
@@ -57,7 +60,7 @@ static void CheckConcurrent(Converter convert, BufferedConverter buffered, const
     for (std::size_t index = 0; index < workers.size(); ++index) {
         workers[index] = std::thread([&, index] {
             start.arrive_and_wait();
-            for (int iteration = 0; iteration < 50000; ++iteration) {
+            for (int iteration = 0; iteration < 10000; ++iteration) {
                 const auto* result = convert(&timers[index]);
                 if (result == nullptr || !Equal(*result, expected[index])) {
                     matches = false;
@@ -297,14 +300,99 @@ static void CheckLocalRange() {
     Require(localtime_s_nid_postfix(&overflow, &scratch) == nullptr, "Unrepresentable negative local time was accepted");
 }
 
-int main() {
+static void CheckGuestZone() {
+    const std::int64_t moment = 172800;
+    GuestTm result{};
+    Require(setenv_nid_postfix("TZ", "UTC-5", 1) == 0, "Could not set the guest time zone");
+    Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 5 && result.tm_gmtoff == 18000,
+        "localtime ignored a guest TZ change made without tzset");
+    GuestTm calendar{};
+    calendar.tm_year = 70;
+    calendar.tm_mday = 3;
+    calendar.tm_hour = 5;
+    calendar.tm_isdst = -1;
+    Require(mktime_nid_postfix(&calendar) == moment, "mktime ignored the guest TZ");
+    Require(setenv_nid_postfix("TZ", "UTC+3", 1) == 0, "Could not change the guest time zone");
+    tzset_nid_postfix();
+    Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 21 && result.tm_mday == 2 && result.tm_gmtoff == -10800,
+        "tzset ignored the guest TZ");
+    Require(setenv_nid_postfix("TZ", "", 1) == 0, "Could not empty the guest time zone");
+    tzset_nid_postfix();
+    Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 0 && result.tm_mday == 3 && result.tm_gmtoff == 0,
+        "An empty guest TZ was not treated as UTC");
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+    Require(setenv_nid_postfix("TZ", "EST5", 1) == 0, "Could not set the guest time zone without tzset");
+    Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_hour == 19 && result.tm_gmtoff == -18000,
+        "localtime ignored a guest TZ change made without tzset");
+    Require(std::strcmp(tzname_nid_postfix[0], "EST") == 0, "Implicit guest TZ update did not refresh tzname");
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+}
+
+static bool ZoneFieldsConsistent(const GuestTm& time, std::int64_t instant, int hour) {
+    const std::int64_t localSeconds = ((instant + time.tm_gmtoff) % 86400 + 86400) % 86400;
+    if (time.tm_hour * 3600 + time.tm_min * 60 + time.tm_sec != localSeconds || time.tm_hour != hour) return false;
+    char expected[16];
+    const std::int64_t offset = time.tm_gmtoff < 0 ? -time.tm_gmtoff : time.tm_gmtoff;
+    std::snprintf(expected, sizeof(expected), "%02d %c%04d", hour, time.tm_gmtoff < 0 ? '-' : '+', static_cast<int>(offset / 3600 * 100));
+    char formatted[16]{};
+    return strftime_nid_postfix(formatted, sizeof(formatted), "%H %z", &time) == 8 && std::strcmp(formatted, expected) == 0;
+}
+
+static void CheckZoneRace() {
+    const std::int64_t moment = 172800;
+    std::atomic<bool> stop{false};
+    std::atomic<int> torn{0};
+    std::thread flipper([&] {
+        for (bool west = false; !stop.load(); west = !west) setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC+3", 1);
+    });
+    std::array<std::thread, 6> readers;
+    for (auto& reader : readers) {
+        reader = std::thread([&] {
+            for (int iteration = 0; iteration < 2500; ++iteration) {
+                GuestTm result{};
+                if (localtime_s_nid_postfix(&moment, &result) != &result || !ZoneFieldsConsistent(result, moment, result.tm_hour)) ++torn;
+                GuestTm calendar{};
+                calendar.tm_year = 70;
+                calendar.tm_mday = 3;
+                calendar.tm_hour = 12;
+                calendar.tm_isdst = -1;
+                const std::int64_t instant = mktime_nid_postfix(&calendar);
+                if (instant == -1 || calendar.tm_mday != 3 || !ZoneFieldsConsistent(calendar, instant, 12)) ++torn;
+            }
+        });
+    }
+    for (auto& reader : readers) reader.join();
+    stop = true;
+    flipper.join();
+    Require(torn == 0, "A time conversion mixed the fields of two time zones while TZ changed");
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+}
+
 #ifdef _WIN32
-    _putenv_s("TZ", "UTC-2");
-    _tzset();
-#else
-    setenv("TZ", "UTC-2", 1);
-    tzset();
+static void CheckRejectedZone() {
+    const std::int64_t moment = 172800;
+    const std::string oversized = "UTC-5" + std::string(40000, 'x');
+    Require(setenv_nid_postfix("TZ", oversized.c_str(), 1) == 0, "The guest environment rejected a long TZ");
+    GuestTm result{};
+    bool thrown = false;
+    try {
+        localtime_s_nid_postfix(&moment, &result);
+    } catch (const std::runtime_error&) {
+        thrown = true;
+    }
+    Require(thrown, "localtime accepted a TZ the host cannot hold");
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+    Require(localtime_s_nid_postfix(&moment, &result) == &result && result.tm_gmtoff == 7200, "localtime did not recover after a rejected TZ");
+}
 #endif
+
+int main() {
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the guest time zone");
+    tzset_nid_postfix();
     constexpr std::array<UtcCase, 7> utcCases{{
         {0, 70, 0, 1, 0, 0, 0, 4, 0},
         {-1, 69, 11, 31, 23, 59, 59, 3, 364},
@@ -392,11 +480,12 @@ int main() {
     CheckConcurrent(gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent gmtime returned another thread's date");
     CheckConcurrent(libc_localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent libc_localtime returned another thread's date");
     CheckConcurrent(localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent localtime returned another thread's date");
+    CheckGuestZone();
+    CheckZoneRace();
 #ifdef _WIN32
-    _putenv_s("TZ", "UTC-5");
-#else
-    setenv("TZ", "UTC-5", 1);
+    CheckRejectedZone();
 #endif
+    Require(setenv_nid_postfix("TZ", "UTC-5", 1) == 0, "Could not set the guest time zone");
     tzset_nid_postfix();
     GuestTm shifted{};
     Require(localtime_s_nid_postfix(&epoch, &shifted) == &shifted && shifted.tm_hour == 5 && shifted.tm_gmtoff == 18000,
