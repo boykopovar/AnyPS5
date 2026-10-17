@@ -50,7 +50,7 @@ struct SemaphoreWaitCleanupContext {
     bool waiterRegistered = false;
 };
 
-void APS5_VABI CleanupSemaphoreWait(void* argument) {
+static const auto CleanupSemaphoreWait = [](void* argument) APS5_VABI {
     auto* context = static_cast<SemaphoreWaitCleanupContext*>(argument);
     if (!context || !context->owner)
         return;
@@ -62,7 +62,7 @@ void APS5_VABI CleanupSemaphoreWait(void* argument) {
         context->waiterRegistered = false;
     }
     context->owner.reset();
-}
+};
 
 void finishSemaphoreWait(PthreadSemPrivate* sem, SemaphoreWaitCleanupContext& context, void* cleanupMark) {
     if (context.waiterRegistered) {
@@ -217,7 +217,7 @@ int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value) {
     return 0;
 }
 
-int APS5_VABI APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
+int APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
     std::shared_ptr<PthreadSemPrivate> owner;
     try {
         owner = resolveSem(sem);
@@ -228,17 +228,17 @@ int APS5_VABI APS5_Test_GetPthreadSemWaiterCount(PthreadSem* sem) {
     return owner->_destroyed ? -1 : owner->_waiters;
 }
 
-void APS5_VABI APS5_Test_SetPthreadSemApiPause(int kind) {
+void APS5_Test_SetPthreadSemApiPause(int kind) {
     semApiPauseEntered.store(0, std::memory_order_relaxed);
     semApiPauseReleased.store(false, std::memory_order_relaxed);
     semApiPauseTarget.store(kind, std::memory_order_release);
 }
 
-int APS5_VABI APS5_Test_GetPthreadSemApiPauseCount() {
+int APS5_Test_GetPthreadSemApiPauseCount() {
     return semApiPauseEntered.load(std::memory_order_acquire);
 }
 
-void APS5_VABI APS5_Test_ReleasePthreadSemApiPause() {
+void APS5_Test_ReleasePthreadSemApiPause() {
     semApiPauseReleased.store(true, std::memory_order_release);
     semApiPauseTarget.store(0, std::memory_order_release);
 }
