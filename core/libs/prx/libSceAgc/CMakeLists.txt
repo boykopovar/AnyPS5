@@ -415,6 +415,7 @@ configure_windows_unwind(agc_shader_helpers_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_shader_helpers_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
     add_test(NAME agc_shader_helpers COMMAND agc_shader_helpers_tests)
+    set_tests_properties(agc_shader_helpers PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(agc_shader_helpers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
