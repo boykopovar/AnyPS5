@@ -1,8 +1,11 @@
 #include "SceTypes.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 
 extern "C" {
 int APS5_VABI sceKernelCreateSema(KernelSema*, const char*, std::uint32_t, int, int, void*);
@@ -36,6 +39,10 @@ int APS5_VABI sceKernelClearEventFlag(KernelEventFlag ef, std::uint64_t bit_patt
 int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t set_pattern, int* num_wait_threads);
 int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat);
 int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat, KernelUseconds* timeout);
+int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle);
+void APS5_Test_SetEventFlagApiPause(int kind);
+int APS5_Test_GetEventFlagApiPauseCount();
+void APS5_Test_ReleaseEventFlagApiPause();
 }
 
 static constexpr int SCE_OK = 0;
@@ -45,6 +52,7 @@ static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
 static constexpr int SCE_KERNEL_ERROR_EDEADLK = static_cast<int>(0x8002000B);
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
+static constexpr int SCE_KERNEL_ERROR_EACCES = static_cast<int>(0x8002000D);
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
 static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
@@ -63,6 +71,22 @@ static constexpr int MUTEX_TYPE_ADAPTIVE = 4;
 static constexpr int POSIX_EDEADLK = 11;
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static void WaitForEventFlagWaiters(KernelEventFlag handle, int expected) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (APS5_Test_GetEventFlagWaiterCount(handle) != expected) {
+        if (std::chrono::steady_clock::now() >= deadline) Require(false);
+        std::this_thread::yield();
+    }
+}
+
+static void WaitForEventFlagApiPause() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (APS5_Test_GetEventFlagApiPauseCount() != 1) {
+        if (std::chrono::steady_clock::now() >= deadline) Require(false);
+        std::this_thread::yield();
+    }
+}
 
 int main() {
     constexpr int maximum = std::numeric_limits<int>::max();
@@ -236,4 +260,69 @@ int main() {
 
     Require(sceKernelCreateEventFlag(&ef, "single", EVF_ATTR_SINGLE | 0x02u, 0, nullptr) == SCE_OK);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "imm_sat", EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
+    pattern = 0;
+    Require(sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT, &pattern, nullptr) == SCE_OK);
+    Require(pattern == 0x05);
+    Require(sceKernelPollEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pattern) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelPollEventFlag(ef, 0x04, EVF_WAITMODE_AND, &pattern) == SCE_OK);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "multi_race", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+    std::atomic<int> t1Res{-1};
+    std::atomic<int> t2Res{-1};
+    std::uint64_t pat1 = 0;
+    std::uint64_t pat2 = 0;
+    std::thread t1([&] {
+        t1Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT, &pat1, nullptr);
+    });
+    std::thread t2([&] {
+        t2Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL, &pat2, nullptr);
+    });
+    WaitForEventFlagWaiters(ef, 2);
+    Require(sceKernelSetEventFlag(ef, 0x01) == SCE_OK);
+    t1.join();
+    t2.join();
+    Require(t1Res == SCE_OK);
+    Require(t2Res == SCE_OK);
+    Require(pat1 == 0x01);
+    Require(pat2 == 0x01);
+    Require(sceKernelPollEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pattern) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "del_waiters", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+    std::atomic<int> delRes1{-1};
+    std::atomic<int> delRes2{-1};
+    std::thread delT1([&] {
+        delRes1 = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, nullptr, nullptr);
+    });
+    std::thread delT2([&] {
+        delRes2 = sceKernelWaitEventFlag(ef, 0x02, EVF_WAITMODE_AND, nullptr, nullptr);
+    });
+    WaitForEventFlagWaiters(ef, 2);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+    delT1.join();
+    delT2.join();
+    Require(delRes1 == SCE_KERNEL_ERROR_EACCES);
+    Require(delRes2 == SCE_KERNEL_ERROR_EACCES);
+
+    for (int apiKind = 1; apiKind <= 2; ++apiKind) {
+        Require(sceKernelCreateEventFlag(&ef, "api_delete_race", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
+        APS5_Test_SetEventFlagApiPause(apiKind);
+        std::atomic<int> apiResult{-1};
+        std::thread apiCall([&] {
+            if (apiKind == 1) {
+                apiResult = sceKernelSetEventFlag(ef, 0x01);
+            } else {
+                std::uint64_t observed = 0;
+                apiResult = sceKernelPollEventFlag(ef, 0x01, EVF_WAITMODE_AND, &observed);
+            }
+        });
+        WaitForEventFlagApiPause();
+        Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+        APS5_Test_ReleaseEventFlagApiPause();
+        apiCall.join();
+        Require(apiResult == SCE_KERNEL_ERROR_ESRCH);
+    }
 }
