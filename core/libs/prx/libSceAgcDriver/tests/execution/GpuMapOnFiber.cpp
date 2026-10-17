@@ -34,7 +34,11 @@ using AgcDriver::Graphics::Require;
 constexpr std::size_t HostStackContextBytes = 16 * 1024;
 constexpr std::size_t ContextBytes = 64 * 1024;
 constexpr std::size_t MappingBytes = 4 * 65536;
+#ifdef ANYPS5_ENABLE_ASAN
+constexpr std::size_t FiberStackLimit = 16 * 1024;
+#else
 constexpr std::size_t FiberStackLimit = 8 * 1024;
+#endif
 constexpr std::uint64_t Fill = 0x5aa5c33c5aa5c33cull;
 
 alignas(16) std::array<std::uint64_t, ContextBytes / sizeof(std::uint64_t)> FiberContext;

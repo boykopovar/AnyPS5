@@ -458,8 +458,8 @@ void RunDepthSurfaceReuseTests() {
     const auto otherWithA = pairing(otherDepth, stencilA);
     Require(imageCopies.size() == 1 && imageCopies[0] == std::make_tuple(withA, otherWithA, static_cast<VkImageAspectFlags>(VK_IMAGE_ASPECT_STENCIL_BIT)), "a stencil plane paired with another depth plane must carry its stencil over");
     {
-        constexpr std::uint64_t arrayBase = 0x80000000;
-        constexpr std::uint64_t htile = 0x81000000;
+        constexpr std::uint64_t arrayBase = 0x30000000;
+        constexpr std::uint64_t htile = 0x31000000;
         constexpr VkExtent2D extent{1024, 512};
         const auto sliceHtile = HtileMetadataBytes(extent);
         DepthTarget first{arrayBase, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};

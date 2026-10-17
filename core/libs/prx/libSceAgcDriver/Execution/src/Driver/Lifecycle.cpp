@@ -73,8 +73,7 @@ bool StackHoldsImport() {
     const auto low = bounds.low;
     const auto high = bounds.high;
 #endif
-    const volatile unsigned char marker = 0;
-    const auto frame = reinterpret_cast<std::uintptr_t>(&marker);
+    const auto frame = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     return frame >= low && frame < high && frame - low >= InlineImportStackBytes;
 }
 

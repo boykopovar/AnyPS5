@@ -657,8 +657,7 @@ bool onOwnLiveStack(std::uintptr_t address, std::size_t bytes) {
         }
     };
     thread_local const Bounds bounds;
-    const volatile unsigned char marker = 0;
-    const auto frame = reinterpret_cast<std::uintptr_t>(&marker);
+    const auto frame = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
     return bounds.high != 0 && frame >= bounds.low && frame < bounds.high && address >= frame && address < bounds.high && bytes <= bounds.high - address;
 }
 
@@ -2100,8 +2099,25 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
         if (trace) std::fprintf(stderr, "[unreadable]   read from +0x%llx\n", ModuleOffset(__builtin_return_address(0)));
         throw;
     }
-    std::memcpy(destination.data(), source, destination.size());
+    CopyGuestBytes(destination.data(), source, destination.size());
 }
+
+#ifdef ANYPS5_ENABLE_ASAN
+[[gnu::no_sanitize("address")]] void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    auto* to = static_cast<unsigned char*>(destination);
+    const auto* from = static_cast<const unsigned char*>(source);
+    std::size_t index = 0;
+    for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
+        const std::uint64_t word = *reinterpret_cast<const volatile std::uint64_t*>(from + index);
+        std::memcpy(to + index, &word, sizeof(word));
+    }
+    for (; index < bytes; ++index) to[index] = static_cast<const volatile unsigned char*>(from)[index];
+}
+#else
+void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+}
+#endif
 
 namespace {
 

@@ -219,7 +219,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     const auto index = static_cast<std::size_t>((address % PageBytes) / sizeof(*value));
     if (!page.valid.Test(index) && page.lazy) {
         const auto first = index / BlockWords * BlockWords;
-        std::memcpy(&page.words[first], reinterpret_cast<const void*>((address & ~static_cast<std::uint64_t>(PageBytes - 1)) + first * sizeof(std::uint32_t)), BlockWords * sizeof(std::uint32_t));
+        GuestMemory::CopyGuestBytes(&page.words[first], reinterpret_cast<const void*>((address & ~static_cast<std::uint64_t>(PageBytes - 1)) + first * sizeof(std::uint32_t)), BlockWords * sizeof(std::uint32_t));
         page.valid.SetBlock(index);
     }
     if (!page.valid.Test(index)) {
