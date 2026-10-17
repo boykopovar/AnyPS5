@@ -629,12 +629,17 @@ public:
     static std::uint64_t Touches();
     void Clear();
     std::size_t Size() const;
+    std::size_t Capacity() const;
     std::uint64_t TableElements() const;
     static std::uint64_t TableElementBudget();
+    static constexpr std::size_t InitialEntries = 1024;
+    static constexpr std::size_t MaximumEntries = 16384;
 
 private:
     void erase(const Key& key);
     void noteMiss(const Key& key);
+    void noteEvicted(const Key& key);
+    void noteReturn(const Key& key);
     struct KeyHash {
         std::size_t operator()(const Key& key) const noexcept {
             std::uint64_t hash = 14695981039346656037ull;
@@ -645,6 +650,12 @@ private:
     mutable std::mutex mutex;
     std::list<std::pair<Key, std::shared_ptr<ShaderResources>>> entries;
     std::unordered_map<Key, decltype(entries)::iterator, KeyHash> index;
+    std::size_t capacity = 0;
+    bool fixedCapacity = false;
+    std::list<std::size_t> evictedOrder;
+    std::unordered_map<std::size_t, decltype(evictedOrder)::iterator> evictedKeys;
+    std::size_t evictionsSinceCheck = 0;
+    std::size_t returnsSinceCheck = 0;
 };
 
 // The process-wide cache the device and the draw path share (keys name the device; a device clears
