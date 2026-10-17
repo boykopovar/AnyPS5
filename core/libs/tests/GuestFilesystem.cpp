@@ -82,6 +82,10 @@ std::int64_t APS5_VABI read_nid_postfix(int, void*, std::size_t);
 std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
 int APS5_VABI sceKernelDebugOutText(int, const char*);
 }
+#ifdef _WIN32
+static bool g_invalidParameter = false;
+static void RecordInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, std::uintptr_t) { g_invalidParameter = true; }
+#endif
 static void Check(bool value, int line) {
     if (!value) {
 #ifdef _WIN32
@@ -612,6 +616,17 @@ int main() {
     Require(sceKernelFsync(socket) == static_cast<int>(0x80020009u));
     Require(sceKernelFdatasync(0x7fffffff) == static_cast<int>(0x80020009u));
     Require(sceKernelFsync(0x7fffffff) == static_cast<int>(0x80020009u));
+#ifdef _WIN32
+    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
+    FileStat closedStatus{};
+    Require(sceKernelFstat(descriptor, &closedStatus) == static_cast<int>(0x80020009u));
+    Require(sceKernelFstat(socket, &closedStatus) == static_cast<int>(0x80020009u));
+    Require(sceKernelFstat(0x7fffffff, &closedStatus) == static_cast<int>(0x80020009u));
+#ifdef _WIN32
+    _set_invalid_parameter_handler(previousParameterHandler);
+    Require(!g_invalidParameter);
+#endif
     Require(remove_nid_postfix(sized.string().c_str()) == 0);
     const auto present = root / "present.txt";
     const auto presentName = present.string();
