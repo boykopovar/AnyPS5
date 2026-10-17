@@ -1,7 +1,9 @@
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/System/include/HostCpu.hpp"
+#include "SceTypes.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +11,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -25,6 +28,7 @@ struct SceKernelSystemSwVersion {
     char versionString[0x1C];
     std::uint32_t version;
 };
+extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
 
 namespace {
 
@@ -45,6 +49,49 @@ int CopyOut(const void* value, std::size_t size, void* oldValue, std::size_t* ol
 
 bool IsLeafMib(const int* name) {
     return (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && name[1] == 37);
+}
+
+constexpr std::int32_t VmEntryDefaultType = 1;
+
+struct GuestVmEntry {
+    std::int32_t structSize;
+    std::int32_t type;
+    std::uint64_t start;
+    std::uint64_t end;
+    std::uint64_t offset;
+    std::uint64_t vnodeFileId;
+    std::uint32_t vnodeFsid;
+    std::int32_t flags;
+    std::int32_t resident;
+    std::int32_t privateResident;
+    std::int32_t protection;
+    std::int32_t referenceCount;
+    std::int32_t shadowCount;
+    std::int32_t vnodeType;
+    std::uint64_t vnodeSize;
+    std::uint32_t vnodeDevice;
+    std::uint16_t vnodeMode;
+    std::uint16_t status;
+    std::int32_t spare[12];
+    char path[8];
+};
+static_assert(offsetof(GuestVmEntry, start) == 8 && offsetof(GuestVmEntry, protection) == 56 && offsetof(GuestVmEntry, path) == 136 && sizeof(GuestVmEntry) == 144);
+
+std::vector<GuestVmEntry> GuestVmEntries() {
+    std::vector<GuestVmEntry> entries;
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    for (std::uintptr_t cursor = 0; GuestArena::GuestArenaNextUsed_nid_no_patch(cursor, &start, &end); cursor = end) {
+        GuestVmEntry entry{};
+        entry.structSize = sizeof(entry);
+        entry.type = VmEntryDefaultType;
+        entry.start = start;
+        entry.end = end;
+        VirtualQueryInfo info{};
+        if (sceKernelVirtualQuery(reinterpret_cast<const void*>(start), 0, &info, sizeof(info)) == 0) entry.protection = info.protection & 7;
+        entries.push_back(entry);
+    }
+    return entries;
 }
 
 }
@@ -153,6 +200,22 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         }
         static constexpr char path[] = "/app0/eboot.bin";
         return CopyOut(path, sizeof(path), oldValue, oldLength);
+    }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 32) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength != 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        if (name[3] != getpid_nid_postfix()) {
+            *__error_nid_postfix() = 3;
+            return -1;
+        }
+        const auto entries = GuestVmEntries();
+        return CopyOut(entries.data(), entries.size() * sizeof(GuestVmEntry), oldValue, oldLength);
     }
     if (nameLength == 2 && name[0] == 1 && name[1] == 37) {
         if (newValue != nullptr) {
