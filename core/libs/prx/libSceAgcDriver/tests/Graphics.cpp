@@ -2059,7 +2059,8 @@ void DepthStencilTests() {
     const auto firstSlice = AgcDriver::Graphics::DecodeState(queue);
     Require(firstSlice.color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()), "a color view of several slices did not retain its first slice");
     queue.context[0x207] = 1u << 18u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "layered draws into a color view of several array slices");
+    const auto layeredSingle = AgcDriver::Graphics::DecodeState(queue);
+    Require(layeredSingle.color.address == firstSlice.color.address && layeredSingle.color.arrayAddress == firstSlice.color.address && layeredSingle.color.arrayLastSlice == 1u && layeredSingle.color.layers == 2u && layeredSingle.renderLayers == 2u, "a layered draw into slices 0 to 1 of a surface of one slice did not render them as a two-slice array");
     queue.context[0x207] = 0;
     const auto sliced = reinterpret_cast<std::uintptr_t>(sliceMemory.data());
     queue.context[0x318] = static_cast<std::uint32_t>(sliced >> 8u);
@@ -2074,7 +2075,8 @@ void DepthStencilTests() {
     const auto range = AgcDriver::Graphics::DecodeState(queue);
     Require(range.color.address == sliced && range.color.bytes == 1024u, "a color view of slices 0 to 1 of a 2D array target did not render into its first slice");
     queue.context[0x207] = 1u << 18u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "layered draws into a color view of several array slices");
+    const auto layeredArray = AgcDriver::Graphics::DecodeState(queue);
+    Require(layeredArray.color.address == sliced && layeredArray.color.arraySlice == 0u && layeredArray.color.layers == 2u && layeredArray.renderLayers == 2u && layeredArray.layerExports != 0u, "a layeredArray draw into slices 0 to 1 of a 2D array target did not render two layers");
     queue.context[0x207] = 0;
     queue.context[0x31b] = 2u | (2u << 13u);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "beyond the array surface");

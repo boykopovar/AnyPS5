@@ -184,7 +184,7 @@ public:
     void WriteBack();
     // Deferred write-back (APS5_EAGER_WRITEBACK=1 stores at once instead).
     void MarkDirty();
-    void MarkSliceDirty(std::uint32_t slice);
+    void MarkSliceDirty(std::uint32_t slice, std::uint32_t count = 1);
     void Flush();
     // Stores every pending image overlapping the range, except `except`; returns whether any was.
     // Stores into host-imported memory are recorded (not waited for): a CPU reader syncs afterwards.

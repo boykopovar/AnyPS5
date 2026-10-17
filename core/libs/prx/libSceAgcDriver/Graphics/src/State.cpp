@@ -1508,7 +1508,13 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     }
     if (!volume && lastSlice != slice) {
         const auto exports = find(cx, 0x207);
-        Require(exports == cx.end() || (exports->second & (1u << 18u)) == 0, "layered draws into a color view of several array slices are unsupported");
+        if (exports != cx.end() && (exports->second & (1u << 18u)) != 0) {
+            if (color.arrayLastSlice == 0) {
+                color.arrayLastSlice = lastSlice;
+                color.arraySlice = slice;
+            }
+            color.layers = lastSlice + 1u - slice;
+        }
     }
     color.extent = {((attrib2 >> 14u) & 0x3fffu) + 1u, (attrib2 & 0x3fffu) + 1u};
     color.elementBytes = decoded.elementBytes;
