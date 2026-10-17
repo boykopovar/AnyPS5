@@ -89,8 +89,9 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_SPV);
-        moduleInfo.pCode = TEXTURE_DETILE_SPV;
+        const auto textureDetileCode = CacheKeyedSpirv(context.graphicsPipelineLibrary, TEXTURE_DETILE_SPV, sizeof(TEXTURE_DETILE_SPV));
+        moduleInfo.codeSize = textureDetileCode.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = textureDetileCode.data();
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
@@ -161,8 +162,9 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     }
     if (image && imageModule == VK_NULL_HANDLE) {
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_IMAGE_SPV);
-        moduleInfo.pCode = TEXTURE_DETILE_IMAGE_SPV;
+        const auto textureDetileImageCode = CacheKeyedSpirv(context.graphicsPipelineLibrary, TEXTURE_DETILE_IMAGE_SPV, sizeof(TEXTURE_DETILE_IMAGE_SPV));
+        moduleInfo.codeSize = textureDetileImageCode.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = textureDetileImageCode.data();
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &imageModule), "vkCreateShaderModule");
     }
     std::array<VkSpecializationMapEntry, 22> entries{};
@@ -292,8 +294,9 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
         pipelineLayoutInfo.pPushConstantRanges = &pushRange;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &cmaskPipelineLayout), "vkCreatePipelineLayout CMASK clear");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        moduleInfo.codeSize = sizeof(CMASK_CLEAR_SPV);
-        moduleInfo.pCode = CMASK_CLEAR_SPV;
+        const auto cmaskClearCode = CacheKeyedSpirv(context.graphicsPipelineLibrary, CMASK_CLEAR_SPV, sizeof(CMASK_CLEAR_SPV));
+        moduleInfo.codeSize = cmaskClearCode.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = cmaskClearCode.data();
         VkShaderModule cmaskModule = VK_NULL_HANDLE;
         Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &cmaskModule), "vkCreateShaderModule CMASK clear");
         VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
