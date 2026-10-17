@@ -392,6 +392,12 @@ bool GuestSockets::WaitAny(const std::vector<Interest>& interests, std::uint64_t
     return true;
 }
 
+std::intptr_t GuestSockets::NativeDescriptor(int descriptor) {
+    std::lock_guard lock(socketsMutex);
+    const auto found = sockets.find(descriptor);
+    return found == sockets.end() ? -1 : static_cast<std::intptr_t>(found->second->value);
+}
+
 bool GuestSockets::IsOpen(int descriptor) {
     std::lock_guard lock(socketsMutex);
     return sockets.contains(descriptor);

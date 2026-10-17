@@ -1,4 +1,5 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/Equeue/include/EdgeWatch.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
@@ -127,6 +128,40 @@ int DescriptorFilterError(int kqueueDescriptor, std::uintptr_t ident) {
     return descriptor == kqueueDescriptor ? GUEST_EINVAL : 0;
 }
 
+bool PollEdge(KernelEqueueEvent* e) {
+    auto& watch = *static_cast<EdgeWatch::Watch*>(e->filter.data);
+    if (watch.TakeEdge()) {
+        watch.armed = true;
+    }
+    if (!watch.armed) {
+        return false;
+    }
+    std::int64_t data = 0;
+    bool eof = false;
+    if (!GuestSockets::Ready(static_cast<int>(e->event.ident), e->event.filter == EVFILT_WRITE, &data, &eof)) {
+        watch.armed = false;
+        return false;
+    }
+    e->event.data = static_cast<intptr_t>(data);
+    e->event.flags = static_cast<std::uint16_t>(eof ? (e->event.flags | EV_EOF) : (e->event.flags & ~EV_EOF));
+    return true;
+}
+
+void ResetEdge(KernelEqueueEvent* e) {
+    static_cast<EdgeWatch::Watch*>(e->filter.data)->armed = false;
+    e->triggered = false;
+}
+
+void WatchEdges(KernelEqueueEvent& event, bool socket) {
+    const int descriptor = static_cast<int>(event.event.ident);
+    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, event.event.filter == EVFILT_WRITE);
+    event.filter.data = watch.get();
+    event.filter.waitDescriptor = watch->Descriptor();
+    event.filter.owner = std::move(watch);
+    event.filter.pollFunc = PollEdge;
+    event.filter.resetFunc = ResetEdge;
+}
+
 int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     const int descriptor = static_cast<int>(change.ident);
     if (IsKqueueDescriptor(descriptor)) {
@@ -145,10 +180,10 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
     if ((change.fflags & NOTE_LOWAT) != 0) {
         NotImplemented_nid_no_patch("kevent: NOTE_LOWAT");
     }
-    if ((flags & EV_CLEAR) != 0) {
-        NotImplemented_nid_no_patch(pipe ? "kevent: EV_CLEAR on a pipe" : "kevent: EV_CLEAR on a socket");
-    }
     auto event = EqueueDescriptorEvent(descriptor, change.filter, flags, change.udata);
+    if ((flags & EV_CLEAR) != 0) {
+        WatchEdges(event, socket);
+    }
     change.fflags = 0;
     change.data = 0;
     return GuestErrno(queue->AddEvent(event));
@@ -236,6 +271,9 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
         if ((change.flags & EV_FORCEONESHOT) != 0) {
             event.event.flags = static_cast<std::uint16_t>(event.event.flags | EV_ONESHOT);
             event.triggered = true;
+        }
+        if (event.enabled && event.filter.pollFunc == PollEdge) {
+            static_cast<EdgeWatch::Watch*>(event.filter.data)->armed = true;
         }
         if (change.filter == EVFILT_USER) {
             TouchUserKnote(event, change);

@@ -98,8 +98,15 @@ void KernelEqueuePrivate::WakePollers() {
 
 void KernelEqueuePrivate::WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos) {
     std::vector<GuestSockets::Interest> interests;
+    std::vector<std::shared_ptr<void>> held;
     for (const auto& e : m_events) {
-        if (e.enabled && e.filter.pollFunc != nullptr) {
+        if (!e.enabled || e.filter.pollFunc == nullptr) {
+            continue;
+        }
+        if (e.filter.waitDescriptor >= 0) {
+            interests.push_back({e.filter.waitDescriptor, false});
+            held.push_back(e.filter.owner);
+        } else {
             interests.push_back({static_cast<int>(e.event.ident), e.event.filter == EVFILT_WRITE});
         }
     }

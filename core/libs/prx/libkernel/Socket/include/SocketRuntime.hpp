@@ -16,6 +16,7 @@ int Close(int descriptor);
 void Forget(int descriptor);
 bool IsOpen(int descriptor);
 int Family(int descriptor);
+std::intptr_t NativeDescriptor(int descriptor);
 std::int64_t Read(int descriptor, void* buffer, std::size_t length);
 std::int64_t Write(int descriptor, const void* buffer, std::size_t length);
 int Stat(int descriptor, FileStat* status);
