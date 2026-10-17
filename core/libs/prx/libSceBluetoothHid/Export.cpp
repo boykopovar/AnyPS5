@@ -49,4 +49,49 @@ int APS5_VABI sceBluetoothHidSetOutputReport() {
     return 0;
 }
 
+int APS5_VABI sceBluetoothHidDebugGetVersion() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidDisconnectDevice() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidGetDeviceInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidGetFeatureReport() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidGetReportDescriptor() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidInterruptOutput() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidParamInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidSetFeatureReport() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceBluetoothHidThreadParamInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
