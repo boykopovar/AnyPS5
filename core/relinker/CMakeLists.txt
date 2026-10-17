@@ -660,6 +660,19 @@ if(BUILD_TESTING)
     )
     add_test(NAME entry_stub COMMAND entry_stub_tests)
 
+    if(WIN32)
+        add_test_executable(windows_entry_stub_bounds_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsEntryStubBoundsTests.cpp
+        )
+        target_link_libraries(windows_entry_stub_bounds_tests PRIVATE relinker_core)
+        add_test(NAME windows_entry_stub_bounds COMMAND windows_entry_stub_bounds_tests)
+        add_test(NAME windows_entry_stub_endpoint_guard
+            COMMAND ${CMAKE_COMMAND}
+                "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsEntryStubEndpointGuard.cmake"
+        )
+    endif()
+
     add_test_executable(control_flow_graph_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ControlFlowGraphTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/ControlFlowGraph.cpp
