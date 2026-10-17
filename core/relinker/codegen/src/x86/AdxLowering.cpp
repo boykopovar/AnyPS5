@@ -214,7 +214,7 @@ void EmitAdx(StubBodyBuilder& body, const AdxOperands& operands) {
     _emitImmediate(epilogue, 0x81, 4, scratch, 1);
     if (operands.Overflow) {
         _appendRex(epilogue, static_cast<std::uint8_t>(kRexBase | kRexW | ((scratch & 8) != 0 ? kRexB : 0)));
-        epilogue.insert(epilogue.end(), {0xC1, static_cast<std::uint8_t>(0xC0 | (scratch & 7)), 11});
+        epilogue.insert(epilogue.end(), {0xC1, static_cast<std::uint8_t>(0xE0 | (scratch & 7)), 11});
     }
     _emitRegMemory(epilogue, 0x09, scratch, kStackRegister, 8);
     _emitStackPushPopFlags(epilogue);
