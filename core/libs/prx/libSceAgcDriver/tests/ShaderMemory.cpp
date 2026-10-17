@@ -5167,6 +5167,49 @@ void verifyVolumeArrayLoadMode() {
     expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(store, descriptor, ResourceMaterializer::RuntimeImageModes(store))); }, "incompatible with the static runtime image interface", "2D-array image atomic on a 3D T# was accepted");
 }
 
+void verifyVolumeBiasTableRejection() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.singleMipPlaneBiasCompatible = true;
+    const DescriptorValue volume{{0x100u, TableFormat8888UNorm << 20u, 0u, (TableType3D << 28u) | 0xfacu, 0u, 0u, 0u, 0u}, 8u, 0xffu};
+    const auto directModes = ResourceMaterializer::RuntimeImageModes(image);
+    require(directModes[ResourceMaterializer::RuntimeImageMode(image, volume, directModes)].dimension == RdnaImageDimension::Dim3D, "volume bias: a supported direct one-slice volume was rejected");
+    image.table = 0u;
+    image.tableOperation = TableOperation::Supported;
+    ShaderInfo info{};
+    info.images.push_back(image);
+    info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    ResourceSnapshot snapshot{};
+    snapshot.tables.tables.resize(1u);
+    auto& column = snapshot.tables.tables.front();
+    column.records = 2u;
+    column.keys = 2u;
+    column.codes = {0u, 1u};
+    auto plane = volume;
+    plane.dwords[3] = (TableType2D << 28u) | 0xfacu;
+    for (const auto [word, bits] : {std::pair{4u, 1u}, std::pair{3u, 1u << 12u}, std::pair{3u, 1u << 16u}, std::pair{5u, 1u << 4u}}) {
+        auto invalid = volume;
+        invalid.dwords[word] |= bits;
+        snapshot.tables.words = {plane, invalid};
+        const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto good = resolved.map.at(mapStart);
+        const auto bad = resolved.map.at(mapStart + 1u);
+        require(resolved.elements.size() == 1u && (resolved.map.at(good + Abi::ImageRecordFlags) & Abi::PoisonFlag) == 0u, "volume bias: an unsupported table neighbour prevented the valid plane binding");
+        const auto fault = resolved.map.at(bad + Abi::ImageRecordFlags);
+        require((fault & Abi::PoisonFlag) != 0u && resolved.faults == 1u, "volume bias: an unsupported volume was not marked to fault on selection");
+        const auto& poison = resolved.poison.at(fault & ~Abi::PoisonFlag);
+        require(poison.reason == Abi::PoisonReason::Dimension && poison.words == invalid.dwords, "volume bias: the table fault lost its reason or descriptor");
+        image.table = NoTable;
+        const auto match = ResourceMaterializer::TryRuntimeImageMode(image, invalid, directModes);
+        require(!match.mode.has_value() && match.reason == Abi::PoisonReason::Dimension, "volume bias: an unsupported direct descriptor selected a mode");
+        expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, invalid, directModes)); }, "one slice and mip level zero only", "volume bias: direct use of an unsupported descriptor was accepted");
+    }
+}
+
 void verifySrgbDepthCompareModes() {
     using namespace ShaderRecompiler;
     for (const auto decodeFormats : {0u, 1u, 2u, 3u}) {
@@ -5286,6 +5329,7 @@ int main(int argc, char** argv) {
         verifyGuardedNullPointers();
         verifyCubeDepthCompareMode();
         verifyVolumeArrayLoadMode();
+        verifyVolumeBiasTableRejection();
         verifySrgbDepthCompareModes();
         verifyQuadMaskNeighbourReads();
         verifyCoherentGds();
