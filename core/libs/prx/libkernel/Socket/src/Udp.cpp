@@ -1380,9 +1380,9 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     socklen_t size = sizeof(native);
     if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
     std::int64_t received = 0;
+#ifndef _WIN32
     std::vector<int> passed;
     bool controlTruncated = false;
-#ifndef _WIN32
     if (passing) {
         std::vector<char> control(CMSG_SPACE(MostPassedDescriptors * sizeof(int)));
         iovec vector{buffer.data(), buffer.size()};
