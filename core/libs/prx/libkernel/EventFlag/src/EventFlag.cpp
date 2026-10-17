@@ -295,24 +295,24 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
 
 }
 
-extern "C" int APS5_VABI APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle) {
+extern "C" int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle) {
     const auto keepAlive = ResolveEventFlag(handle);
     if (!keepAlive) return -1;
     std::lock_guard lock(keepAlive->_mutex);
     return keepAlive->_waiters;
 }
 
-extern "C" void APS5_VABI APS5_Test_SetEventFlagApiPause(int kind) {
+extern "C" void APS5_Test_SetEventFlagApiPause(int kind) {
     eventFlagApiPauseEntered.store(0, std::memory_order_relaxed);
     eventFlagApiPauseReleased.store(false, std::memory_order_relaxed);
     eventFlagApiPauseTarget.store(kind, std::memory_order_release);
 }
 
-extern "C" int APS5_VABI APS5_Test_GetEventFlagApiPauseCount() {
+extern "C" int APS5_Test_GetEventFlagApiPauseCount() {
     return eventFlagApiPauseEntered.load(std::memory_order_acquire);
 }
 
-extern "C" void APS5_VABI APS5_Test_ReleaseEventFlagApiPause() {
+extern "C" void APS5_Test_ReleaseEventFlagApiPause() {
     eventFlagApiPauseReleased.store(true, std::memory_order_release);
     eventFlagApiPauseTarget.store(0, std::memory_order_release);
 }

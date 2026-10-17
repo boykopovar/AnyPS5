@@ -39,10 +39,10 @@ int APS5_VABI sceKernelClearEventFlag(KernelEventFlag ef, std::uint64_t bit_patt
 int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, std::uint64_t set_pattern, int* num_wait_threads);
 int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat);
 int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, std::uint64_t bit_pattern, std::uint32_t wait_mode, std::uint64_t* result_pat, KernelUseconds* timeout);
-int APS5_VABI APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle);
-void APS5_VABI APS5_Test_SetEventFlagApiPause(int kind);
-int APS5_VABI APS5_Test_GetEventFlagApiPauseCount();
-void APS5_VABI APS5_Test_ReleaseEventFlagApiPause();
+int APS5_Test_GetEventFlagWaiterCount(KernelEventFlag handle);
+void APS5_Test_SetEventFlagApiPause(int kind);
+int APS5_Test_GetEventFlagApiPauseCount();
+void APS5_Test_ReleaseEventFlagApiPause();
 }
 
 static constexpr int SCE_OK = 0;
@@ -275,7 +275,7 @@ int main() {
     std::uint64_t pat1 = 0;
     std::uint64_t pat2 = 0;
     std::thread t1([&] {
-        t1Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND, &pat1, nullptr);
+        t1Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT, &pat1, nullptr);
     });
     std::thread t2([&] {
         t2Res = sceKernelWaitEventFlag(ef, 0x01, EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL, &pat2, nullptr);
