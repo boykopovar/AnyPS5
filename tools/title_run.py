@@ -137,7 +137,7 @@ def render_markdown(summary, previous=None):
     build, machine = summary["build"], summary["machine"]
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
     header += f". {machine['os']}, {machine['gpu']}, driver {machine['driver']}, CPU {machine['cpu']}."
-    header += f" {summary['runs']} runs per title, {summary['seconds']} s each."
+    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
     lines = [header, ""]
     columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error"] + (["Before"] if previous else [])
     if previous:
