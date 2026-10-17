@@ -439,6 +439,9 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME tls_diagnostics COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_diagnostics.py $<TARGET_FILE:relinker>)
+        add_test(NAME macos_tls_alu COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_tls_alu.py $<TARGET_FILE:relinker>)
+        set_tests_properties(macos_tls_alu PROPERTIES TIMEOUT 60)
         add_test(NAME linux_load_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_load_alignment.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_eh_frame_header COMMAND ${Python3_EXECUTABLE}

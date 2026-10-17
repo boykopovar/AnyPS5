@@ -200,7 +200,12 @@ struct TlsAccess {
     std::uint32_t Immediate;
     std::uint8_t Register;
     std::uint32_t Displacement;
+    std::uint8_t AluOpcode;
 };
+
+bool IsAluReadOpcode(std::uint8_t opcode) {
+    return opcode == 0x03 || opcode == 0x0b || opcode == 0x13 || opcode == 0x1b || opcode == 0x23 || opcode == 0x2b || opcode == 0x33 || opcode == 0x3b;
+}
 
 struct TlsScan {
     const Domain::ProgramHeader* Tls = nullptr;
@@ -239,14 +244,15 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
             const auto loadRegister = info.Length - position == 7 ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1)) : std::uint8_t{4};
             const bool loadValue = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && bytes[position] == 0x8b && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
             const bool storeImmediate = supportedPrefixes && !hasOperandSizePrefix && (info.RexPrefix == 0 || info.RexPrefix == 0x40) && info.Length - position == 11 && bytes[position] == 0xc7 && bytes[position + 1] == 0x04 && bytes[position + 2] == 0x25 && Io::ReadU32(source, header.Offset + offset + position + 3) == 0x28;
-            if (!loadValue && !storeImmediate) {
+            const bool aluRead = supportedPrefixes && (info.RexPrefix == 0x48 || info.RexPrefix == 0x4c) && loadRegister != 4 && IsAluReadOpcode(bytes[position]) && (bytes[position + 1] & 0xc7) == 0x04 && bytes[position + 2] == 0x25;
+            if (!loadValue && !storeImmediate && !aluRead) {
                 std::ostringstream message;
                 message << "Unsupported macOS guest TLS instruction (bytes:" << std::hex << std::setfill('0');
                 for (std::size_t index = 0; index < info.Length; ++index) message << ' ' << std::setw(2) << static_cast<unsigned int>(bytes[index]);
                 message << ')';
                 throw Domain::RelinkerException(message.str(), header.Offset + offset);
             }
-            scan.Accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3)});
+            scan.Accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}});
         }
     }
     return scan;
@@ -481,8 +487,13 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             const auto stub = code.GetRva();
             const bool preserveAccumulator = access.StoreImmediate || access.Register != 0;
             code.Emit({0x48, 0x8d, 0x64, 0x24, 0x80});
-            code.Emit({0x9c});
-            if (preserveAccumulator) code.Emit({0x50});
+            if (access.AluOpcode != 0) {
+                code.Emit({0x50});
+                code.Emit({0x9c});
+            } else {
+                code.Emit({0x9c});
+                if (preserveAccumulator) code.Emit({0x50});
+            }
             code.Rip({0x48, 0x8b, 0x05}, metaRva + static_cast<std::uint32_t>(MetaTlsKey));
             code.Emit({0x65, 0x48, 0x8b, 0x04, 0xc5, 0, 0, 0, 0});
             code.Emit({0x48, 0x85, 0xc0});
@@ -497,10 +508,21 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
                 code.Emit({0x48, 0x8b, 0x80});
                 code.U32(access.Displacement);
             }
-            if (!access.StoreImmediate && access.Register != 0)
-                code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
-            if (preserveAccumulator) code.Emit({0x58});
-            code.Emit({0x9d});
+            if (access.AluOpcode != 0 && access.Register == 0) {
+                code.Emit({0x9d});
+                code.Emit({0x48, 0x87, 0x04, 0x24});
+                code.Emit({0x48, access.AluOpcode, 0x04, 0x24});
+                code.Emit({0x48, 0x8d, 0x64, 0x24, 0x08});
+            } else if (access.AluOpcode != 0) {
+                code.Emit({0x9d});
+                code.Emit({static_cast<std::uint8_t>(0x48 | ((access.Register >> 3) << 2)), access.AluOpcode, static_cast<std::uint8_t>(0xc0 | ((access.Register & 7) << 3))});
+                code.Emit({0x58});
+            } else {
+                if (!access.StoreImmediate && access.Register != 0)
+                    code.Emit({static_cast<std::uint8_t>(0x48 | (access.Register >> 3)), 0x89, static_cast<std::uint8_t>(0xc0 | (access.Register & 7))});
+                if (preserveAccumulator) code.Emit({0x58});
+                code.Emit({0x9d});
+            }
             code.Emit({0x48, 0x8d, 0xa4, 0x24, 0x80, 0, 0, 0});
             code.Rip({0xe9}, static_cast<std::uint32_t>(access.Rva + access.Length));
 
