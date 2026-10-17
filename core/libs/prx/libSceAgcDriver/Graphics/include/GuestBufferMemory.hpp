@@ -40,6 +40,7 @@ struct HostImport {
     bool joined = false;
     std::shared_ptr<void> chunk;
     mutable std::uint64_t lastUse = 0;
+    mutable std::uint64_t spaceSerial = 0;
 };
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };

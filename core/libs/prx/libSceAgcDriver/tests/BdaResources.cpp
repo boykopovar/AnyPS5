@@ -1522,6 +1522,57 @@ void sparseHeapTests(const Context& context, const BdaTestAccess& access) {
     releaseSparse(block, reserved);
 }
 
+void spaceCommittedPagesTests(const Context& context, const BdaTestAccess& access) {
+    if (!AddressSpaceCounters().enabled) return;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t reserved = 3 * unit;
+    auto* block = reserveSparse(reserved, unit);
+    std::memset(block, 0x31, unit);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    auto copying = context;
+    copying.hostImportAlignment = 0;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, reserved, true, false, true);
+    }
+    const auto build = [&](std::byte expected, bool hit, const char* step) {
+        const auto before = AddressSpaceCounters();
+        GuestBufferMemory leased(copying);
+        leased.AcquireRegistered();
+        leased.AddReadable(base, 16);
+        leased.AddReadable(base + 2 * unit, 16);
+        leased.Upload(true);
+        std::uint32_t adjustment = 0;
+        const auto head = leased.Descriptor(base, 16, adjustment);
+        const auto headBytes = access.bytes(head.buffer);
+        Require(head.offset + adjustment < headBytes.size() && headBytes[head.offset + adjustment] == std::byte{0x31}, std::string("the committed head of a registered sparse range was not read: ") + step);
+        const auto tail = leased.Descriptor(base + 2 * unit, 16, adjustment);
+        const auto tailBytes = access.bytes(tail.buffer);
+        Require(tail.offset + adjustment < tailBytes.size() && tailBytes[tail.offset + adjustment] == expected, std::string("a cached address space served another commit state of its pages: ") + step);
+        leased.WriteBack();
+        const auto after = AddressSpaceCounters();
+        if (hit) Require(after.hits == before.hits + 1, std::string("the unchanged registry did not hit the cached address space: ") + step);
+    };
+    build(std::byte{}, false, "first build");
+    build(std::byte{}, true, "hit before the commit");
+    {
+        GuestAllocations::Mutation mutation;
+#ifdef _WIN32
+        Require(VirtualAlloc(block + 2 * unit, unit, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot commit the sparse range tail");
+#else
+        Require(mprotect(block + 2 * unit, unit, PROT_READ | PROT_WRITE) == 0, "cannot commit the sparse range tail");
+#endif
+        std::memset(block + 2 * unit, 0x72, unit);
+    }
+    build(std::byte{0x72}, false, "first build after the commit");
+    build(std::byte{0x72}, true, "hit after the commit");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    releaseSparse(block, reserved);
+}
+
 bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& access) {
     constexpr std::size_t unit = 65536;
     constexpr std::size_t copied = 3 * unit;
@@ -1945,6 +1996,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     gpuMappingTests(context);
     stridedOverhangTests(context, access);
     sparseHeapTests(context, access);
+    spaceCommittedPagesTests(context, access);
     hostWriteWatchExclusionTests();
     sparseHeapMirrorTests(context, access);
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
