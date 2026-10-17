@@ -1547,6 +1547,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_readonly_resummarize PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_driver_small_copy_sync COMMAND agc_driver_tests --small-copy-sync)
+    set_tests_properties(agc_driver_small_copy_sync PROPERTIES TIMEOUT 30 ENVIRONMENT "APS5_COPY_SYNC=1")
+    if(WIN32)
+        set_tests_properties(agc_driver_small_copy_sync PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_shader_mode_register COMMAND agc_shader_mode_register_tests)
     set_tests_properties(agc_shader_mode_register PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 20)
     if(WIN32)

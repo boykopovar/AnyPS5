@@ -2441,42 +2441,61 @@ std::atomic<std::uint64_t> copiesAliased{0}, copyAliasCreated{0}, copyAliasNoSou
 // source range must be exactly a live image's surface, and the destination range either exactly
 // a live image of the same shape or none (one is made from the source's descriptor rebased). Under
 // GuestMemory::GpuMutex. Debug aid: APS5_NO_COPY_ALIAS=1 keeps every such copy a transfer.
-bool AliasCopy(const Graphics::Context& context, std::uint64_t destination, std::uint64_t source, std::size_t bytes) {
+bool CopyAliasDisabled() {
     static const bool disabled = std::getenv("APS5_NO_COPY_ALIAS") != nullptr;
-    if (disabled) return false;
-    auto from = Graphics::StorageTexture::FindLive(source, bytes);
-    if (from == nullptr) {
+    return disabled;
+}
+
+struct AliasPlan {
+    std::shared_ptr<Graphics::StorageTexture> from;
+    std::shared_ptr<Graphics::StorageTexture> to;
+    const char* refusal = nullptr;
+};
+
+AliasPlan PlanAlias(const Graphics::Context& context, std::uint64_t destination, std::uint64_t source, std::size_t bytes) {
+    AliasPlan plan;
+    plan.from = Graphics::StorageTexture::FindLive(source, bytes);
+    if (plan.from == nullptr) {
+        plan.refusal = "no source";
+        return plan;
+    }
+    plan.to = Graphics::StorageTexture::FindLive(destination, bytes);
+    plan.refusal = Graphics::StorageTexture::CopyRefusal(context, plan.to.get(), *plan.from, destination);
+    return plan;
+}
+
+bool AliasCopy(const Graphics::Context& context, std::uint64_t destination, std::uint64_t source, std::size_t bytes) {
+    if (CopyAliasDisabled()) return false;
+    auto plan = PlanAlias(context, destination, source, bytes);
+    if (plan.from == nullptr) {
         copyAliasNoSource.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    auto to = Graphics::StorageTexture::FindLive(destination, bytes);
-    if (to != nullptr && !to->SameSurfaceShape(*from)) {
-        copyAliasShape.fetch_add(1, std::memory_order_relaxed);
+    if (plan.refusal != nullptr) {
+        if (plan.to != nullptr && !plan.to->SameSurfaceShape(*plan.from)) {
+            copyAliasShape.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            static std::atomic<int> reported{0};
+            if (reported.fetch_add(1) < 8) std::fprintf(stderr, "[copy] image copy 0x%llx -> 0x%llx (0x%zx bytes) refused: %s\n", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, plan.refusal);
+            copyAliasRefused.fetch_add(1, std::memory_order_relaxed);
+        }
         return false;
     }
-    if (to == nullptr) {
-        auto resource = from->Descriptor();
+    if (plan.to == nullptr) {
+        auto resource = plan.from->Descriptor();
         resource.baseAddress = destination;
         resource.dccAddress = 0;
-        try {
-            to = Graphics::CachedStorageSurface(context, resource);
-        } catch (const std::exception& error) {
-            static std::atomic<int> reported{0};
-            if (reported.fetch_add(1) < 8) std::fprintf(stderr, "[copy] no storage image for the copy destination 0x%llx: %s\n", static_cast<unsigned long long>(destination), error.what());
-            copyAliasRefused.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
+        plan.to = Graphics::CachedStorageSurface(context, resource);
         copyAliasCreated.fetch_add(1, std::memory_order_relaxed);
     }
     const char* refusal = nullptr;
-    if (!to->CopyFrom(*from, refusal)) {
-        static std::atomic<int> reported{0};
-        if (reported.fetch_add(1) < 8) std::fprintf(stderr, "[copy] image copy 0x%llx -> 0x%llx (0x%zx bytes) refused: %s\n", static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), bytes, refusal);
-        copyAliasRefused.fetch_add(1, std::memory_order_relaxed);
-        return false;
-    }
+    if (!plan.to->CopyFrom(*plan.from, refusal)) throw std::runtime_error(std::string("AGC graphics: an image copy its check allowed was refused: ") + refusal);
     copiesAliased.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+bool AliasCopyPossible(const Graphics::Context& context, std::uint64_t destination, std::uint64_t source, std::size_t bytes) {
+    return !CopyAliasDisabled() && PlanAlias(context, destination, source, bytes).refusal == nullptr;
 }
 
 }
@@ -2498,21 +2517,34 @@ VulkanDevice::CopyAliasing VulkanDevice::CopyAliasCounts() {
     return {copiesAliased.load(std::memory_order_relaxed), copyAliasCreated.load(std::memory_order_relaxed), copyAliasNoSource.load(std::memory_order_relaxed), copyAliasShape.load(std::memory_order_relaxed), copyAliasRefused.load(std::memory_order_relaxed)};
 }
 
+bool VulkanDevice::completionStoresOver(std::uint64_t address, std::size_t bytes) const {
+    static const bool alwaysSync = std::getenv("APS5_COPY_SYNC") != nullptr;
+    if (alwaysSync || state->CopiedWriterOverlaps(address, bytes)) return true;
+    return Graphics::Recorder::PendingCompletionLabels() != 0 && state->recorder->CompletionLabelIn(address, bytes);
+}
+
+bool VulkanDevice::copyWaitsOnCompletions(std::uint64_t address, std::size_t bytes) const {
+    return state->recorder->PendingWriteOverlaps(address, bytes) && completionStoresOver(address, bytes);
+}
+
+bool VulkanDevice::GpuCopyPossible(std::uint64_t destination, std::uint64_t source, std::size_t bytes) const {
+    if (!state->recorder || bytes == 0 || copyWaitsOnCompletions(source, bytes) || copyWaitsOnCompletions(destination, bytes)) return false;
+    const auto context = graphicsContext();
+    if (AliasCopyPossible(context, destination, source, bytes)) return true;
+    return Graphics::HostImportFor(context, destination, bytes) != nullptr && Graphics::HostImportFor(context, source, bytes) != nullptr;
+}
+
 VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, std::uint64_t source, std::size_t bytes, std::size_t cpuMax, std::size_t gpuMax, std::size_t knownMax, std::uint64_t programAddress, std::uint32_t queue, const CopyWriterNote& noteWriter) {
     CopyOutcome outcome{2, false, 0, CopyOutcome::None, false, false, 0, 0, 0, 0, false};
     if (!state->recorder || bytes == 0) return outcome;
     auto& recorder = *state->recorder;
     // Finished batches were retired by the caller (Driver.cpp copyBuffer, on the graphics worker
     // only, as WriteLabelOnGpu reaps), so their writes neither refuse the CPU copy nor force a wait.
-    static const bool alwaysSync = std::getenv("APS5_COPY_SYNC") != nullptr;
     static const bool waitForSource = std::getenv("APS5_COPY_WAIT_SOURCE") != nullptr;
     static const bool verify = std::getenv("APS5_COPY_VERIFY") != nullptr;
     // A store a batch's completion makes on the CPU over the range (a copied buffer's write-back,
     // a completion-deferred label): it lands only when that batch is reaped, whatever its fence.
-    const auto completionStoreOverlaps = [&](std::uint64_t address) {
-        if (alwaysSync || state->CopiedWriterOverlaps(address, bytes)) return true;
-        return Graphics::Recorder::PendingCompletionLabels() != 0 && recorder.CompletionLabelIn(address, bytes);
-    };
+    const auto completionStoreOverlaps = [&](std::uint64_t address) { return completionStoresOver(address, bytes); };
     // The CPU decision (see the header): pure queries, in the order that makes the first failing
     // test the reason; a signaled writer of the source is fine (its in-place stores are final in
     // host memory) as long as no completion store or label of it is still to land.
@@ -2590,8 +2622,8 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     // before the transfer (or the device copy below) by its barrier; a store a batch's completion
     // makes on the CPU must land before the copy reads the source or writes the destination, so
     // the copy waits for that batch (SyncThrough) first.
-    const bool waitSource = recorder.PendingWriteOverlaps(source, bytes) && completionStoreOverlaps(source);
-    const bool waitDestination = recorder.PendingWriteOverlaps(destination, bytes) && completionStoreOverlaps(destination);
+    const bool waitSource = copyWaitsOnCompletions(source, bytes);
+    const bool waitDestination = copyWaitsOnCompletions(destination, bytes);
     if (waitSource || waitDestination) {
         outcome.synced = true;
         const auto syncStart = std::chrono::steady_clock::now();
