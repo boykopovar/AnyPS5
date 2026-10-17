@@ -620,6 +620,7 @@ struct ShaderInvocation {
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
     std::vector<VertexAttribute> vertexAttributes;
+    std::uint64_t userDataRegisterReads = 0;
     std::uint32_t poisonedSrtReads = 0;
     std::vector<ImageTableEntryPoison> imageTablePoison;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
