@@ -115,6 +115,7 @@ struct State {
     std::vector<VkPipelineColorBlendAttachmentState> blends;
     bool hasColorTarget;
     bool rectList = false;
+    bool quadList = false;
     bool dualSourceBlend = false;
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
