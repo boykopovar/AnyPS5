@@ -106,6 +106,7 @@ inline constexpr std::int64_t DT_FLAGS = 30;
 inline constexpr std::int64_t DT_PREINIT_ARRAY = 32;
 inline constexpr std::int64_t DT_PREINIT_ARRAYSZ = 33;
 inline constexpr std::uint64_t DF_BIND_NOW = 0x8;
+inline constexpr std::uint64_t DF_SYMBOLIC = 0x2;
 
 inline constexpr std::int64_t DT_OS_INIT = 0x6000000c;
 inline constexpr std::int64_t DT_OS_FINI = 0x6000000d;

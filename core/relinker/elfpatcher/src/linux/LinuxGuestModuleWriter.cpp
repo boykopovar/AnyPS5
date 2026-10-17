@@ -179,7 +179,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     if (!image.FiniArray.empty()) { tag(26, image.FiniArray.front()); tag(28, image.FiniArray.size() * 8); }
     if (init != 0) tag(12, init);
     if (fini != 0) tag(13, fini);
-    tag(30, 8);
+    tag(30, DF_BIND_NOW | (image.Symbolic ? DF_SYMBOLIC : 0));
     tag(0, 0);
     const auto dynamicSize = bytes.size() - dynamicOffset;
     using namespace Codegen::Amd64OnlySubstitutionTable;
