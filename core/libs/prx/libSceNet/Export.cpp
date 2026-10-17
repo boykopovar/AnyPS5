@@ -874,6 +874,14 @@ int APS5_VABI sceNetAccept(int s, void* addr, uint32_t* addrlen) {
         std::lock_guard lk(g_mutex);
         g_socks.emplace(descriptor, connection);
     }
+    if (listener.nonblock) {
+        const int enabled = 1;
+        if (sceNetSetsockopt(descriptor, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled)) != 0) {
+            const int error = *errno_slot();
+            sceNetSocketClose(descriptor);
+            return fail(error);
+        }
+    }
     if (addr && !native_to_guest_address(peer, addr, addrlen)) {
         sceNetSocketClose(descriptor);
         return fail(NET_EAFNOSUPPORT);

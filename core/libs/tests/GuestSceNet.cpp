@@ -920,6 +920,71 @@ static void CheckUnspecifiedIpv6() {
     Require(sceNetSocketClose(receiver) == 0);
 }
 
+static void CheckAcceptedNonblocking(int family, bool nonblocking) {
+    const auto addressSize = family == 2 ? 16u : 28u;
+    std::array<std::uint8_t, 28> address{};
+    address[0] = static_cast<std::uint8_t>(addressSize);
+    address[1] = static_cast<std::uint8_t>(family);
+    if (family == 2) { address[4] = 127; address[7] = 1; }
+    else address[23] = 1;
+    const int listener = sceNetSocket("accept-mode", family, 1, 6);
+    Require(listener >= 0 && sceNetBind_nid_postfix(listener, address.data(), addressSize) == 0);
+    Require(sceNetListen(listener, 1) == 0);
+    const int mode = nonblocking ? 1 : 0;
+    Require(sceNetSetsockopt(listener, 0xffff, 0x1200, &mode, sizeof(mode)) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0 && size == addressSize);
+    const int client = sceNetSocket("accept-client", family, 1, 6);
+    Require(client >= 0 && sceNetConnect(client, address.data(), addressSize) == 0);
+    int accepted = -1;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    do {
+        accepted = sceNetAccept(listener, nullptr, nullptr);
+        if (accepted >= 0) break;
+        Require(nonblocking && Failed(accepted, 35));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    } while (std::chrono::steady_clock::now() < deadline);
+    Require(accepted >= 0);
+    int inherited = -1;
+    size = sizeof(inherited);
+    Require(sceNetGetsockopt(accepted, 0xffff, 0x1200, &inherited, &size) == 0 && size == sizeof(inherited));
+    const int status = fcntl_nid_postfix(accepted, 3);
+    std::printf("Accepted IPv%d mode=%d SO_NBIO=%d F_GETFL=%d\n", family == 2 ? 4 : 6, mode, inherited, status);
+    std::fflush(stdout);
+    Require(inherited == mode && status == (2 | (nonblocking ? 4 : 0)));
+    const int changed = 1 - mode;
+    Require(sceNetSetsockopt(listener, 0xffff, 0x1200, &changed, sizeof(changed)) == 0);
+    size = sizeof(inherited);
+    Require(sceNetGetsockopt(accepted, 0xffff, 0x1200, &inherited, &size) == 0 && inherited == mode);
+    struct ReceiveResult { std::int64_t bytes; int error; char value; };
+    auto receive = std::async(std::launch::async, [accepted] {
+        char byte = '?';
+        const auto received = sceNetRecv(accepted, &byte, sizeof(byte), 0);
+        return ReceiveResult{received, *sceNetErrnoLoc(), byte};
+    });
+    const bool ready = receive.wait_for(nonblocking ? std::chrono::milliseconds(2000) : std::chrono::milliseconds(50)) == std::future_status::ready;
+    const char payload = 'n';
+    Require(sceNetSend(client, &payload, sizeof(payload), 0) == sizeof(payload));
+    const auto received = receive.get();
+    Require(ready == nonblocking);
+    if (nonblocking) {
+        Require(received.bytes == static_cast<int>(0x80410123) && received.error == 35 && received.value == '?');
+        char byte = '?';
+        std::int64_t count = -1;
+        const auto arrival = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do {
+            count = sceNetRecv(accepted, &byte, sizeof(byte), 0);
+            if (count >= 0) break;
+            Require(Failed(count, 35));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < arrival);
+        Require(count == sizeof(byte) && byte == payload);
+    } else {
+        Require(received.bytes == sizeof(payload) && received.value == payload);
+    }
+    for (const int descriptor : {accepted, client, listener}) Require(sceNetSocketClose(descriptor) == 0);
+}
+
 static void CheckIpv6SocketsAreIpv6Only() {
     const int inet = sceNetSocket("ipv4-any", 2, 2, 17);
     Require(inet >= 0);
@@ -1037,6 +1102,11 @@ int main() {
     CheckUnboundDatagramTimeoutAfterAddress();
     CheckUnspecifiedIpv6();
     if (!ipv6Unavailable) CheckIpv6SocketsAreIpv6Only();
+    for (const int family : {2, 28}) {
+        if (family == 28 && ipv6Unavailable) continue;
+        CheckAcceptedNonblocking(family, false);
+        CheckAcceptedNonblocking(family, true);
+    }
     CheckDatagramDisconnect();
 
     const int closed = sceNetSocket("closed-by-kernel", 2, 2, 17);
