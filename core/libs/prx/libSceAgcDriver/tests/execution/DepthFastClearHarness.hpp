@@ -40,6 +40,7 @@ struct Surface {
     bool htileStencil;
     VkFormat format;
     std::uint32_t slice = 0;
+    std::uint8_t clearStencil = 0;
 };
 
 struct DrawOptions {
@@ -105,18 +106,18 @@ inline Shaders Compile(AgcDriver::VulkanDevice& device) {
     return shaders;
 }
 
-inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options) {
-    Pixels.fill(std::byte{0});
+inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, const Surface& surface, const DrawOptions& options, VkExtent2D extent = {Width, Height}, std::span<std::byte> pixels = Pixels) {
+    std::fill(pixels.begin(), pixels.end(), std::byte{0});
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &compiled.vertex, 0},
         {ShaderStage::Fragment, &compiled.pixel, PixelPushOffset(compiled.vertexPush, device.Target())}
     }};
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
+    state.color = {reinterpret_cast<std::uintptr_t>(pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, pixels.size(), 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
-    state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, {Width, Height}, surface.format, 1.0f, 0, surface.htile, surface.htileStencil};
+    state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, extent, surface.format, 1.0f, surface.clearStencil, surface.htile, surface.htileStencil};
     state.depth->firstSlice = surface.slice;
     state.depthTest = options.depthTest;
     state.depthWrite = options.depthWrite;
@@ -124,11 +125,11 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.stencilTest = options.stencilTest;
     state.stencilFront = options.stencil;
     state.stencilBack = options.stencil;
-    state.renderExtent = {Width, Height};
+    state.renderExtent = extent;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.viewport = {0, static_cast<float>(extent.height), static_cast<float>(extent.width), -static_cast<float>(extent.height), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Width, Height}};
+    state.scissor = {{0, 0}, extent};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
@@ -138,8 +139,8 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     device.Draw(state, draw, shaders);
     device.WaitIdle();
     std::uint32_t covered = 0;
-    for (std::size_t pixel = 0; pixel < Pixels.size() / 4u; ++pixel) {
-        if (std::to_integer<std::uint8_t>(Pixels[pixel * 4u]) == 255u) ++covered;
+    for (std::size_t pixel = 0; pixel < pixels.size() / 4u; ++pixel) {
+        if (std::to_integer<std::uint8_t>(pixels[pixel * 4u]) == 255u) ++covered;
     }
     return covered;
 }
