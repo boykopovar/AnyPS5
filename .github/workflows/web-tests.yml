@@ -31,7 +31,9 @@ jobs:
       - name: Check browser module syntax
         run: |
           node --check demo/web/app.mjs
+          node --check demo/web/archive.mjs
+          node --check demo/web/batch.mjs
           node --check demo/web/output-directory.mjs
           node --check demo/web/worker.mjs
-      - name: Test folder output recovery
-        run: node --test demo/web/tests/output-directory.test.mjs
+      - name: Test browser converter helpers
+        run: node --test demo/web/tests/batch.test.mjs demo/web/tests/output-directory.test.mjs

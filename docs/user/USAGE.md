@@ -6,6 +6,10 @@
 
 The online converter can save Linux output as an uncompressed folder in supported browsers. It does not overwrite an existing destination folder. If conversion fails or is cancelled, it aborts the active file and attempts to remove the newly created output folder. If the browser prevents cleanup, the error names the folder that may contain incomplete files.
 
+### Browser batch conversion
+
+Select or drop multiple app ZIP archives to convert them into one ZIP bundle. The converter inspects each app separately and puts its executable, libraries and `app0/` files in a numbered folder, so archives with the same filename remain separate. Batch output uses ZIP mode; saving to an uncompressed folder remains available for one Linux app at a time. The 256 MiB memory-download limit applies to the whole bundle, so use **Save ZIP to disk** for larger batches. If a batch is cancelled or any app fails, the converter aborts the incomplete bundle; any cleanup failure is reported instead of offering it as a completed result.
+
 ## Input and conversion
 
 Use a clean ELF executable. Place its bundled ELF modules in `sce_module/`, `sce_modules/`, or `prx/` beside the input executable, or under the parent directory selected with `--sce-module-path <path>`. The option accepts absolute paths and paths relative to the current working directory; do not include the `sce_module` directory itself. Only files directly inside the module directories are processed. SELF/fSELF containers are skipped with a warning; unwrap them before relinking if they need to be included. `tools/unwrap_self.py <input.self> <output.elf>` does that for a decrypted container: it places the segments at the offsets of the SELF segment records and restores `p_offset % p_align == p_vaddr % p_align`, and it refuses a container whose load segments all look encrypted. `prx/` can coexist with either `sce_module/` or `sce_modules/`. Both `sce_module/` and `sce_modules/` present, or all three absent, is an error.
