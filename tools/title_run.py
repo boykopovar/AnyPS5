@@ -122,7 +122,11 @@ def render_markdown(summary, previous=None):
             if changes:
                 names = ", ".join(f"{summary['titles'][title_id]['name']} ({title_id}) {before} -> {now}" for title_id, before, now in changes)
                 lines += [f"{label}: {names}", ""]
-    lines += ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+        missing = sorted(title_id for title_id in previous["titles"] if title_id not in summary["titles"])
+        if missing:
+            names = ", ".join(f"{previous['titles'][title_id]['name']} ({title_id})" for title_id in missing)
+            lines += [f"Missing: {names}", ""]
+    lines +=["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     for title_id, title in sorted(summary["titles"].items()):
         runs = title["runs"]
         error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering"), "")
