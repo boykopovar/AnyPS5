@@ -60,7 +60,10 @@ def index(build, root):
 
 
 def changed(root, base):
-    result = capture(["git", "-C", str(root), "diff", "--name-only", "--diff-filter=ACMR", "-z", base])
+    fork = capture(["git", "-C", str(root), "merge-base", base, "HEAD"])
+    if fork.returncode != 0:
+        raise ValueError(f"git merge-base {base}: {fork.stderr.strip()}")
+    result = capture(["git", "-C", str(root), "diff", "--name-only", "--diff-filter=ACMR", "-z", fork.stdout.strip()])
     if result.returncode != 0:
         raise ValueError(f"git diff {base}: {result.stderr.strip()}")
     untracked = capture(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"])
