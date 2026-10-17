@@ -177,6 +177,14 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("no base ref found", result.stderr)
 
+    def test_explicit_base_is_fetched_before_it_is_resolved(self):
+        with tempfile.TemporaryDirectory() as other:
+            subprocess.run(["git", "clone", "-q", self.directory.name, other], check=True, capture_output=True)
+            self.repo.git("remote", "add", "upstream", other)
+            result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--base", "upstream/main", "--fetch"], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("merge: clean", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
