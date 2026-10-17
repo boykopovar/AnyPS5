@@ -1,6 +1,7 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
@@ -140,6 +141,17 @@ std::int64_t DescriptorLowWater(const KernelEvent& change) {
     return change.data;
 }
 
+int AddStandardInputKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = flags;
+    event.event.fflags = 0;
+    event.event.data = 0;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
 int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     const int descriptor = static_cast<int>(change.ident);
     if (IsKqueueDescriptor(descriptor)) {
@@ -147,6 +159,9 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
             return GUEST_EINVAL;
         }
         NotImplemented_nid_no_patch("kevent: EVFILT_READ on a kqueue descriptor");
+    }
+    if (descriptor == 0 && change.filter == EVFILT_READ && File::IsHostStream(descriptor)) {
+        return AddStandardInputKnote(queue, change, flags);
     }
     const bool socket = GuestSockets::IsOpen(descriptor);
     std::int64_t data = 0;

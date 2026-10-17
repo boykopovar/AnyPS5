@@ -710,7 +710,29 @@ static void Timeout() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void StandardInput() {
+    const int copy = dup_nid_postfix(0);
+    if (copy < 0) {
+        Require(*__error_nid_postfix() == GuestEbadf);
+        return;
+    }
+    Require(close_nid_postfix(copy) == 0);
+    const int kq = kqueue_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    Require(Apply(kq, Change(0, EvfiltRead, EvAdd, 0, 0, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    const KernelTimespec brief{0, 20000000};
+    Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &brief) == 0);
+    Require(Apply(kq, Change(0, EvfiltRead, EvAdd, 0, 0, &marker)) == 0);
+    Require(Apply(kq, Change(0, EvfiltRead, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(0, EvfiltRead, EvDelete)), GuestEnoent);
+    Require(ThrownMessage([kq] { Apply(kq, Change(0, EvfiltWrite, EvAdd)); }).find("EVFILT_WRITE on a non-socket descriptor") != std::string::npos);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 int main() {
+    StandardInput();
     CreateAndClose();
     Timers();
     PipeRead();
