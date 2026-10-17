@@ -81,3 +81,55 @@ def classify(relinked, exit_code, summary_age, last_frame_uniform):
     if last_frame_uniform:
         return "blank"
     return "rendering"
+
+
+def cell(runs, cache):
+    outcomes = [entry["outcome"] for entry in runs if entry["cache"] == cache]
+    if not outcomes:
+        return "-"
+    if len(outcomes) == 1:
+        return outcomes[0]
+    return ", ".join(f"{outcome} {outcomes.count(outcome)}/{len(outcomes)}" for outcome in sorted(set(outcomes), key=OUTCOMES.index))
+
+
+def worst(runs):
+    return min((entry["outcome"] for entry in runs), key=OUTCOMES.index)
+
+
+def compare(summary, previous):
+    regressions, improvements = [], []
+    for title_id, title in summary["titles"].items():
+        if title_id not in previous["titles"]:
+            continue
+        before, now = worst(previous["titles"][title_id]["runs"]), worst(title["runs"])
+        if OUTCOMES.index(now) < OUTCOMES.index(before):
+            regressions.append((title_id, before, now))
+        elif OUTCOMES.index(now) > OUTCOMES.index(before):
+            improvements.append((title_id, before, now))
+    return regressions, improvements
+
+
+def render_markdown(summary, previous=None):
+    build, machine = summary["build"], summary["machine"]
+    header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
+    header += f". {machine['os']}, {machine['gpu']}, driver {machine['driver']}, CPU {machine['cpu']}."
+    header += f" {summary['runs']} runs per title, {summary['seconds']} s each."
+    lines = [header, ""]
+    columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error"] + (["Before"] if previous else [])
+    if previous:
+        regressions, improvements = compare(summary, previous)
+        for label, changes in (("Regressions", regressions), ("Improvements", improvements)):
+            if changes:
+                names = ", ".join(f"{summary['titles'][title_id]['name']} ({title_id}) {before} -> {now}" for title_id, before, now in changes)
+                lines += [f"{label}: {names}", ""]
+    lines += ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    for title_id, title in sorted(summary["titles"].items()):
+        runs = title["runs"]
+        error = next((entry["first_error"] for entry in runs if entry["outcome"] != "rendering"), "")
+        row = [title["name"], title_id, title["version"], cell(runs, "cold"), cell(runs, "warm"), f"{runs[-1]['fps']:.1f}",
+               error[:120].replace("|", "\\|")]
+        if previous:
+            old = previous["titles"].get(title_id)
+            row.append(worst(old["runs"]) if old else "new")
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines + [""])

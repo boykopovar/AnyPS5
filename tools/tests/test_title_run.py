@@ -106,5 +106,49 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(title_run.classify(*arguments), outcome, arguments)
 
 
+def run(outcome, cache="cold", fps=0.0, error=""):
+    return {"outcome": outcome, "cache": cache, "fps": fps, "first_error": error}
+
+
+def summary(titles):
+    return {"build": {"commit": "abc1234", "dirty": False, "note": "main + #6814"},
+            "machine": {"os": "Windows 11", "gpu": "Radeon 860M", "driver": "32.0.13058.8001", "cpu": "Ryzen AI 7 350"},
+            "runs": 2, "seconds": 60, "titles": titles}
+
+
+class ReportTests(unittest.TestCase):
+    def test_cell(self):
+        runs = [run("crashed"), run("rendering", "warm"), run("crashed", "warm")]
+        self.assertEqual(title_run.cell(runs, "cold"), "crashed")
+        self.assertEqual(title_run.cell(runs, "warm"), "crashed 1/2, rendering 1/2")
+        self.assertEqual(title_run.cell([run("rendering", "warm"), run("rendering", "warm")], "warm"), "rendering 2/2")
+        self.assertEqual(title_run.cell([run("rendering")], "warm"), "-")
+
+    def test_worst_and_compare(self):
+        now = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("crashed"), run("crashed", "warm")]},
+                       "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("rendering"), run("rendering", "warm")]}})
+        before = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
+                          "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
+        self.assertEqual(title_run.worst(now["titles"]["PPSA85300"]["runs"]), "crashed")
+        self.assertEqual(title_run.compare(now, before),
+                         ([("PPSA85300", "rendering", "crashed")], [("PPSA97358", "stalled", "rendering")]))
+
+    def test_render_markdown(self):
+        now = summary({"PPSA85300": {"name": "VLC", "version": "0.4",
+                                     "runs": [run("crashed", error="what(): unsupported MIB 1.1 | x"), run("rendering", "warm", 31.0)]}})
+        before = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
+        self.assertEqual(title_run.render_markdown(now, before), "\n".join([
+            "AnyPS5 `abc1234`, main + #6814. Windows 11, Radeon 860M, driver 32.0.13058.8001, CPU Ryzen AI 7 350. 2 runs per title, 60 s each.",
+            "",
+            "Regressions: VLC (PPSA85300) rendering -> crashed",
+            "",
+            "| Title | ID | Version | Cold | Warm | FPS | First error | Before |",
+            "|---|---|---|---|---|---|---|---|",
+            "| VLC | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
+            "",
+        ]))
+        self.assertNotIn("Before", title_run.render_markdown(now))
+
+
 if __name__ == "__main__":
     unittest.main()
