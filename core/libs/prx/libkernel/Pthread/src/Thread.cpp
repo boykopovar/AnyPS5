@@ -317,6 +317,7 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     priority.store(explicitSched || !parent ? attrPriority : parent->priority.load(std::memory_order_relaxed), std::memory_order_relaxed);
     if (registry.nextThread > static_cast<int>(CPU_CLOCK_ID_MASK))
         throw std::runtime_error("Guest thread CPU clock identifiers are exhausted");
+    if (attr) guardSize = attr->stackAddress ? 0 : attr->_guardsize;
     cpuClockThread = registry.nextThread++;
     registry.threads.emplace(cpuClockThread, this);
 }
