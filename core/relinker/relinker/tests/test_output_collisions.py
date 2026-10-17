@@ -25,6 +25,8 @@ def prepare(case, windows):
         "module": case / "app0/sce_module/sample.prx.guest.prx",
         "registry": case / "output.registry.json",
         "module-registry": case / "output.sample.prx.guest.prx.registry.json",
+        "needed": case / "output.needed.json",
+        "module-needed": case / "output.sample.prx.guest.prx.needed.json",
     }
     if windows:
         paths["diagnostics"] = case / "windows-diagnostics-imports.txt"
@@ -53,6 +55,34 @@ def main():
     checked = 0
     with tempfile.TemporaryDirectory(prefix="anyps5-output-collisions-") as directory:
         work = Path(directory)
+        for windows, existing in itertools.product((False, True), repeat=2):
+            case = work / f"needed-secondary-{windows}-{existing}"
+            case.mkdir()
+            source = case / "input.elf"
+            secondary = case / "output.needed"
+            source.write_bytes(main_fixture())
+            secondary.write_bytes(main_fixture())
+            module = case / "sce_module/sample.prx"
+            module.parent.mkdir()
+            module.write_bytes(guest_fixture(PLAIN_SITE))
+            outputs = [case / name for name in ("output.json", "output.needed.json", "output.registry.json",
+                                                "output.needed.registry.json", "output.needed.needed.json",
+                                                "app0/sce_module/sample.prx.guest.prx",
+                                                "output.sample.prx.guest.prx.registry.json",
+                                                "output.sample.prx.guest.prx.needed.json")]
+            if existing:
+                for path in outputs:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"previous output")
+            result = subprocess.run([str(relinker), *(["--windows"] if windows else []), "--registry",
+                                     "--executable", secondary.name, str(source), str(outputs[0])], cwd=case,
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 2 and "Output paths collide" in result.stderr, (
+                windows, existing, result.returncode, result.stdout, result.stderr)
+            for path in outputs:
+                assert path.read_bytes() == b"previous output" if existing else not path.exists(), path
+            assert source.read_bytes() == secondary.read_bytes() == main_fixture()
+            assert module.read_bytes() == guest_fixture(PLAIN_SITE)
         for windows in (False, True):
             command, paths, inputs = prepare(work / f"{windows}-control", windows)
             links = paths["executable"].parent / "separate-links"
@@ -65,7 +95,7 @@ def main():
             assert result.returncode == 0, (result.stdout, result.stderr)
             for name in ("executable", "module"):
                 assert paths[name].read_bytes().startswith(b"MZ" if windows else b"\x7fELF")
-            for name in ("registry", "module-registry"):
+            for name in ("registry", "module-registry", "needed", "module-needed"):
                 json.loads(paths[name].read_text())
             for path, original in inputs.items():
                 assert path.read_bytes() == original

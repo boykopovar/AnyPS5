@@ -20,6 +20,7 @@ def prepare_secondary(case, windows):
         options.extend(["--executable", source.name])
         paths[name] = case / f"{source.name}{paths['executable'].suffix}"
         paths[f"{name}-registry"] = case / f"{source.name}.registry.json"
+        paths[f"{name}-needed"] = case / f"{source.name}.needed.json"
     if not windows:
         icon = case / "sce_sys/icon0.png"
         inputs[icon] = icon.read_bytes()
@@ -46,7 +47,7 @@ def main():
             for name in ("executable", "module", *sorted(secondary)):
                 assert paths[name].read_bytes().startswith(b"MZ" if windows else b"\x7fELF"), paths[name]
             for name, path in paths.items():
-                if "registry" in name:
+                if "registry" in name or "needed" in name:
                     json.loads(path.read_text())
             for path, original in inputs.items():
                 assert path.read_bytes() == original, path

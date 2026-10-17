@@ -290,6 +290,7 @@ int Run(const int argc, char* argv[]) {
         for (const auto& executable : executables) outputPaths.push_back(Io::NativePath(executable.OutputPath));
         for (const auto& artifact : guestArtifacts) outputPaths.push_back(artifact.Path);
         outputPaths.insert(outputPaths.end(), registryPaths.begin(), registryPaths.end());
+        outputPaths.insert(outputPaths.end(), neededPaths.begin(), neededPaths.end());
         if (desktopEntry) {
             outputPaths.push_back(desktopEntry->IconPath);
             outputPaths.push_back(desktopEntry->EntryPath);
