@@ -140,6 +140,8 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     if (product->pixel.ancillary) product->pixel.rasterPrimitive = Graphics::RasterPrimitiveOf(product->state);
     if (product->pixel.ancillary) product->pixel.layerExported = product->state.layerExports != 0;
     product->pixel.ditheredAlphaToCoverage = product->state.ditheredAlphaToCoverage;
+    product->pixel.iteratesSamples = product->state.perSampleShading;
+    product->pixel.sampleLocations = Graphics::PixelSampleLocations(product->state, product->pixel);
     return product;
 }
 

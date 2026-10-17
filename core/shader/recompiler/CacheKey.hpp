@@ -193,6 +193,9 @@ private:
         append(key, value.ditheredAlphaToCoverage);
         append(key, value.quadPixelMask);
         append(key, value.quadSampleMask);
+        append(key, value.iteratesSamples);
+        append(key, value.positionLocation);
+        append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
     }
 

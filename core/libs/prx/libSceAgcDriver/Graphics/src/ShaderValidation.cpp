@@ -268,6 +268,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     (vertex && capability == spv::CapabilityDrawParameters) ||
                     (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
                     (fragment && sampleRateShading && capability == spv::CapabilitySampleRateShading) ||
+                    (fragment && sampleRateShading && capability == spv::CapabilityInterpolationFunction) ||
                     capability == spv::CapabilityImageMSArray ||
                     capability == spv::CapabilityStorageImageMultisample ||
                     ((vertex || mesh) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||

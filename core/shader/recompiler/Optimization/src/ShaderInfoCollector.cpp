@@ -172,6 +172,14 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                                 return Fail("typed barycentric component is out of range");
                             }
                             break;
+                        case StageInputKind::BaryCoordSmoothCenter:
+                        case StageInputKind::BaryCoordNoPerspectiveCenter:
+                        case StageInputKind::BaryCoordSmoothSample:
+                        case StageInputKind::BaryCoordNoPerspectiveSample:
+                            if (program.Resources().stage != IrShaderStage::Pixel || component >= 2u) {
+                                return Fail("typed offset barycentric input is invalid");
+                            }
+                            break;
                         case StageInputKind::TessCoord:
                         case StageInputKind::WorkgroupId:
                         case StageInputKind::LocalInvocationId:
@@ -237,7 +245,7 @@ bool IsPixelParameterFlat(const ShaderPixelInputInfo& pixel, std::uint32_t input
 }
 
 void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pixel, ShaderInfo& info) {
-    if (pixel->HasPositionInput() || pixel->psDitheredAlphaToCoverage || pixel->QuadMasked()) {
+    if (pixel->HasPositionInput() || pixel->psDitheredAlphaToCoverage || pixel->QuadMasked() || pixel->SampleLocationsVary()) {
         AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
     }
     if (pixel->psFrontFace) {
@@ -372,10 +380,16 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     AddInput(info, kind, 0, 1, "gl_SampleID");
                     break;
                 case StageInputKind::BaryCoordSmooth:
-                    AddInput(info, kind, 0, 3, "gl_BaryCoordKHR");
+                case StageInputKind::BaryCoordSmoothCenter:
+                case StageInputKind::BaryCoordSmoothSample:
+                    AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
+                    if (kind == StageInputKind::BaryCoordSmoothSample && program.Metadata().pixelIteratesSamples) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
                     break;
                 case StageInputKind::BaryCoordNoPerspective:
-                    AddInput(info, kind, 0, 3, "gl_BaryCoordNoPerspKHR");
+                case StageInputKind::BaryCoordNoPerspectiveCenter:
+                case StageInputKind::BaryCoordNoPerspectiveSample:
+                    AddInput(info, StageInputKind::BaryCoordNoPerspective, 0, 3, "gl_BaryCoordNoPerspKHR");
+                    if (kind == StageInputKind::BaryCoordNoPerspectiveSample && program.Metadata().pixelIteratesSamples) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
                     break;
                 case StageInputKind::WorkgroupId:
                     AddInput(info, kind, 0, 3, "gl_WorkGroupID");

@@ -150,6 +150,9 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
+        pixelStorage.psIteratesSamples = pixel.iteratesSamples;
+        pixelStorage.psPositionLocation = pixel.positionLocation;
+        pixelStorage.sampleLocations = pixel.sampleLocations;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
         return result;

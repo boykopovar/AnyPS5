@@ -344,18 +344,53 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         const auto* ps = options.inputInfo.pixel;
         const auto vgpr = [&](PixelInput input) { return ps->psInputVgpr[static_cast<std::uint32_t>(input)]; };
         const auto loaded = [&](PixelInput input) { return vgpr(input) != ShaderPixelInputInfo::NoPixelInputVgpr; };
-        for (const auto [input, kind] : {std::pair{PixelInput::PerspectiveSample, StageInputKind::BaryCoordSmooth}, std::pair{PixelInput::PerspectiveCenter, StageInputKind::BaryCoordSmooth},
-                                         std::pair{PixelInput::PerspectiveCentroid, StageInputKind::BaryCoordSmooth}, std::pair{PixelInput::LinearSample, StageInputKind::BaryCoordNoPerspective},
-                                         std::pair{PixelInput::LinearCenter, StageInputKind::BaryCoordNoPerspective}, std::pair{PixelInput::LinearCentroid, StageInputKind::BaryCoordNoPerspective}}) {
+        const bool iterated = ps->psIteratesSamples;
+        program.Metadata().pixelIteratesSamples = iterated;
+        const bool offsets = options.interpolationFunctions && options.fragmentShaderBarycentricEnabled;
+        const bool centers = iterated && offsets;
+        const bool sampleOffsets = offsets && ps->SampleLocationsOffCenter();
+        const auto smoothSample = sampleOffsets ? StageInputKind::BaryCoordSmoothSample : StageInputKind::BaryCoordSmooth;
+        const auto linearSample = sampleOffsets ? StageInputKind::BaryCoordNoPerspectiveSample : StageInputKind::BaryCoordNoPerspective;
+        const auto smoothCenter = centers ? StageInputKind::BaryCoordSmoothCenter : StageInputKind::BaryCoordSmooth;
+        const auto linearCenter = centers ? StageInputKind::BaryCoordNoPerspectiveCenter : StageInputKind::BaryCoordNoPerspective;
+        for (const auto [input, kind] : {std::pair{PixelInput::PerspectiveSample, smoothSample}, std::pair{PixelInput::PerspectiveCenter, smoothCenter},
+                                         std::pair{PixelInput::PerspectiveCentroid, StageInputKind::BaryCoordSmooth}, std::pair{PixelInput::LinearSample, linearSample},
+                                         std::pair{PixelInput::LinearCenter, linearCenter}, std::pair{PixelInput::LinearCentroid, StageInputKind::BaryCoordNoPerspective}}) {
             if (!loaded(input)) continue;
             setVector(static_cast<VectorReg>(vgpr(input)), builtin(kind, 0u));
             setVector(static_cast<VectorReg>(vgpr(input) + 1u), builtin(kind, 1u));
         }
+        const auto firstSampleOffset = [&](std::uint32_t component) -> IrValue& {
+            const auto& locations = ps->sampleLocations;
+            if (!ps->SampleLocationsVary()) return entryIr.ConstantF32(SampleLocationOffset(locations[0], component));
+            IrValue& x = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(builtin(StageInputKind::FragCoord, 0u))});
+            IrValue& y = entryIr.Emit(IrOpcode::ConvertU32F32, IrType::U32, {&entryIr.BitCastF32(builtin(StageInputKind::FragCoord, 1u))});
+            IrValue& quadPixel = entryIr.BitwiseOr(entryIr.BitwiseAnd(x, entryIr.Constant(1u)), entryIr.ShiftLeftLogical(entryIr.BitwiseAnd(y, entryIr.Constant(1u)), entryIr.Constant(1u)));
+            IrValue* offset = &entryIr.ConstantF32(SampleLocationOffset(locations[24], component));
+            for (std::uint32_t pixel = 3u; pixel-- > 0u;) {
+                offset = &entryIr.Select(entryIr.IEqual(quadPixel, entryIr.Constant(pixel)), entryIr.ConstantF32(SampleLocationOffset(locations[pixel * 8u], component)), *offset);
+            }
+            return *offset;
+        };
+        const auto position = [&](std::uint32_t component) -> IrValue& {
+            IrValue& coordinate = builtin(StageInputKind::FragCoord, component);
+            const auto location = ps->psPositionLocation;
+            if (location == PixelPositionLocation::Centroid || (location == PixelPositionLocation::Center && !iterated) || (location == PixelPositionLocation::Sample && (iterated || !ps->SampleLocationsOffCenter()))) {
+                return coordinate;
+            }
+            IrValue& value = entryIr.BitCastF32(coordinate);
+            if (location == PixelPositionLocation::Sample) {
+                return entryIr.BitCastU32(entryIr.Emit(IrOpcode::FPAdd32, IrOpcodeType(IrOpcode::FPAdd32), {&value, &firstSampleOffset(component)}));
+            }
+            IrValue& corner = entryIr.Emit(IrOpcode::FPFloor32, IrOpcodeType(IrOpcode::FPFloor32), {&value});
+            if (location == PixelPositionLocation::UpperLeft) return entryIr.BitCastU32(corner);
+            return entryIr.BitCastU32(entryIr.Emit(IrOpcode::FPAdd32, IrOpcodeType(IrOpcode::FPAdd32), {&corner, &entryIr.ConstantF32(0.5f)}));
+        };
         if (loaded(PixelInput::PositionX)) {
-            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionX)), builtin(StageInputKind::FragCoord, 0u));
+            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionX)), position(0u));
         }
         if (loaded(PixelInput::PositionY)) {
-            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionY)), builtin(StageInputKind::FragCoord, 1u));
+            setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionY)), position(1u));
         }
         if (loaded(PixelInput::PositionZ)) {
             setVector(static_cast<VectorReg>(vgpr(PixelInput::PositionZ)), builtin(StageInputKind::FragCoord, 2u));

@@ -185,10 +185,24 @@ struct ShaderPixelInputInfo {
     bool psDitheredAlphaToCoverage = false;
     std::uint8_t quadPixelMask = 0xf;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
+    bool psIteratesSamples = false;
+    PixelPositionLocation psPositionLocation = PixelPositionLocation::Center;
+    std::array<std::uint8_t, 32> sampleLocations{};
     ShaderStageRuntime stage;
 
     bool HasPositionInput() const {
         return psPosX || psPosY || psPosZ || psPosW;
+    }
+
+    [[nodiscard]] bool SampleLocationsOffCenter() const {
+        return std::ranges::any_of(sampleLocations, [](std::uint8_t location) { return location != 0u; });
+    }
+
+    [[nodiscard]] bool SampleLocationsVary() const {
+        for (std::size_t index = 8; index < sampleLocations.size(); ++index) {
+            if (sampleLocations[index] != sampleLocations[index % 8u]) return true;
+        }
+        return false;
     }
 
     [[nodiscard]] bool QuadSampleMaskPartial() const {

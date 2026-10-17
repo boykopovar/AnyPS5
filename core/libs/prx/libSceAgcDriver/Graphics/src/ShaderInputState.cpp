@@ -145,6 +145,15 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
     const bool sampleMaskExportEnable = ((shaderControl >> 8u) & 0x1u) != 0;
     const bool stencilRefExportEnable = ((shaderControl >> 1u) & 0x1u) != 0;
     const auto loaded = [&](PixelInput input) { return (activeInputs & PixelInputBit(input)) != 0; };
+    std::uint32_t positionControl = 0;
+    if (loaded(PixelInput::PositionX) || loaded(PixelInput::PositionY)) {
+        NoteRegisterRead(RegisterBank::Context, spiBarycCntl);
+        if (const auto it = context.find(spiBarycCntl); it != context.end()) positionControl = it->second;
+    }
+    const auto floatLocation = (positionControl >> 16u) & 0x3u;
+    if (floatLocation == 3u) {
+        throw std::runtime_error("AGC graphics: SPI_BARYC_CNTL.POS_FLOAT_LOCATION uses the reserved value 3");
+    }
     return ShaderRecompiler::ShaderPixelStageInfo{
         .interpolatorCount = inputNum,
         .interpolatorSettings = interpolatorSettings,
@@ -171,7 +180,8 @@ ShaderRecompiler::ShaderPixelStageInfo DecodePixelStageInfo(const Registers& con
         .orderedPixelShader = ((shaderControl >> 16u) & 0x1u) != 0,
         .targetOutputMode = targetOutputMode,
         .targetExportMapping = nullProgram ? std::array<std::uint8_t, 8>{} : exportMappings,
-        .stencilRefExportEnable = stencilRefExportEnable
+        .stencilRefExportEnable = stencilRefExportEnable,
+        .positionLocation = (positionControl & 0x100000u) != 0u ? ShaderRecompiler::PixelPositionLocation::UpperLeft : static_cast<ShaderRecompiler::PixelPositionLocation>(floatLocation)
     };
 }
 

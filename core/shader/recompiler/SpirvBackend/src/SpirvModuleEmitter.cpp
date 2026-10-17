@@ -38,7 +38,63 @@ const ShaderWorkgroupInputInfo* ShaderWorkgroupInputFor(const SpirvEmitterState&
     }
 }
 
+std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component);
+
+std::uint32_t EmitQuadPixel(SpirvEmitterState& state) {
+    const auto coordinate = [&](std::uint32_t component) {
+        const auto value = Unary(state, spv::OpBitcast, TypeF32(state), EmitBuiltinU32(state, StageInputKind::FragCoord, component));
+        return EmitBinaryU32(state, spv::OpBitwiseAnd, Unary(state, spv::OpConvertFToU, TypeU32(state), value), ConstantU32(state, 1u));
+    };
+    return EmitBinaryU32(state, spv::OpBitwiseOr, coordinate(0u), EmitBinaryU32(state, spv::OpShiftLeftLogical, coordinate(1u), ConstantU32(state, 1u)));
+}
+
+std::uint32_t InterpolationOffset(SpirvEmitterState& state, std::uint8_t location) {
+    const std::array<std::uint32_t, 2> components{ConstantF32Value(state, SampleLocationOffset(location, 0u)), ConstantF32Value(state, SampleLocationOffset(location, 1u))};
+    return state.module.Constant(spv::OpConstantComposite, TypeF32Vector(state, 2u), std::span<const std::uint32_t>(components));
+}
+
+std::uint32_t EmitSampleOffset(SpirvEmitterState& state) {
+    const auto& locations = state.inputInfo.pixel->sampleLocations;
+    const bool vary = state.inputInfo.pixel->SampleLocationsVary();
+    const bool iterated = state.program.Metadata().pixelIteratesSamples;
+    if (!iterated && !vary) return InterpolationOffset(state, locations[0]);
+    const auto count = vary ? static_cast<std::uint32_t>(locations.size()) : 8u;
+    std::array<std::uint32_t, 32> offsets{};
+    for (std::uint32_t index = 0; index < count; ++index) offsets[index] = InterpolationOffset(state, locations[index]);
+    const auto array = state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 2u), ConstantU32(state, count));
+    const auto table = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, array), spv::StorageClassPrivate);
+    state.module.AddFunction(spv::OpStore, table, state.module.Constant(spv::OpConstantComposite, array, std::span<const std::uint32_t>(offsets.data(), count)));
+    auto index = iterated ? EmitBuiltinU32(state, StageInputKind::SampleId, 0u) : ConstantU32(state, 0u);
+    if (vary) index = EmitBinaryU32(state, spv::OpBitwiseOr, index, EmitBinaryU32(state, spv::OpShiftLeftLogical, EmitQuadPixel(state), ConstantU32(state, 3u)));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, TypeF32Vector(state, 2u)), pointer, table, index);
+    const auto offset = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeF32Vector(state, 2u), offset, pointer);
+    return offset;
+}
+
+std::uint32_t EmitOffsetBarycentricU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component) {
+    const auto variable = InputVariableForKind(state, BarycentricInputOf(kind));
+    if (variable == 0u) {
+        throw std::runtime_error("an offset barycentric read lacks its barycentric input");
+    }
+    if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInterpolationFunction)) == state.supportedCapabilities.end()) {
+        throw std::runtime_error("barycentrics away from the fragment's default position need the device's sampleRateShading");
+    }
+    state.module.EmitCapability(spv::CapabilityInterpolationFunction);
+    const bool center = kind == StageInputKind::BaryCoordSmoothCenter || kind == StageInputKind::BaryCoordNoPerspectiveCenter;
+    const auto offset = center ? InterpolationOffset(state, 0u) : EmitSampleOffset(state);
+    const auto weights = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeF32Vector(state, 3u), weights, GlslStd450(state), GLSLstd450InterpolateAtOffset, variable, offset);
+    const auto weight = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), weight, weights, component + 1u);
+    return Unary(state, spv::OpBitcast, TypeU32(state), weight);
+}
+
 std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component) {
+    if (BarycentricInputOf(kind) != kind) {
+        return EmitOffsetBarycentricU32(state, kind, component);
+    }
     if (kind == StageInputKind::LocalInvocationIndex) {
         return EmitLocalInvocationIndex(state);
     }
@@ -1192,11 +1248,7 @@ void EmitProgram(SpirvEmitterState& state) {
     EmitMemoryOffsets(state);
     if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->QuadMasked()) {
         const auto& pixel = *state.inputInfo.pixel;
-        const auto coordinate = [&](std::uint32_t component) {
-            const auto value = Unary(state, spv::OpBitcast, TypeF32(state), EmitBuiltinU32(state, StageInputKind::FragCoord, component));
-            return EmitBinaryU32(state, spv::OpBitwiseAnd, Unary(state, spv::OpConvertFToU, TypeU32(state), value), ConstantU32(state, 1u));
-        };
-        const auto quad = EmitBinaryU32(state, spv::OpBitwiseOr, coordinate(0u), EmitBinaryU32(state, spv::OpShiftLeftLogical, coordinate(1u), ConstantU32(state, 1u)));
+        const auto quad = EmitQuadPixel(state);
         auto bit = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, pixel.quadPixelMask), quad), ConstantU32(state, 1u));
         if (pixel.QuadSampleMaskPartial()) {
             const auto top = ConstantU32(state, static_cast<std::uint32_t>(pixel.quadSampleMask[0]) | (static_cast<std::uint32_t>(pixel.quadSampleMask[1]) << 16u));

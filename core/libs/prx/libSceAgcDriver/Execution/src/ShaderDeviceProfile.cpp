@@ -52,6 +52,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilityImageGatherExtended, core.shaderImageGatherExtended == VK_TRUE, "shaderImageGatherExtended");
     checkFeature(spv::CapabilityClipDistance, core.shaderClipDistance == VK_TRUE, "shaderClipDistance");
     checkFeature(spv::CapabilityMinLod, core.shaderResourceMinLod == VK_TRUE, "shaderResourceMinLod");
+    checkFeature(spv::CapabilityInterpolationFunction, core.sampleRateShading == VK_TRUE, "sampleRateShading");
     checkFeature(spv::CapabilityStorageImageMultisample, core.shaderStorageImageMultisample == VK_TRUE, "shaderStorageImageMultisample");
     checkFeature(spv::CapabilityStorageImageReadWithoutFormat, core.shaderStorageImageReadWithoutFormat == VK_TRUE, "shaderStorageImageReadWithoutFormat");
     checkFeature(spv::CapabilityStorageImageWriteWithoutFormat, core.shaderStorageImageWriteWithoutFormat == VK_TRUE, "shaderStorageImageWriteWithoutFormat");
