@@ -411,6 +411,39 @@ class ReleaseAssetsTests(unittest.TestCase):
                 self.assertEqual((output / name).read_bytes(), b"old " + name.encode())
 
 
+class ReleaseNoteDestinationsTests(unittest.TestCase):
+    def test_directory_body_preserves_existing_full_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = root / "notes.json", root / "body", root / "full.md"
+            source.write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+            body.mkdir()
+            full.write_bytes(b"previous full notes")
+            with self.assertRaises(OSError):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(full.read_bytes(), b"previous full notes")
+            self.assertEqual(list(body.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "nt", "Windows read-only output semantics")
+    def test_readonly_output_preserves_both_note_files(self):
+        for target in ("body.md", "full.md"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, body, full = root / "notes.json", root / "body.md", root / "full.md"
+                source.write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+                body.write_bytes(b"previous body")
+                full.write_bytes(b"previous full notes")
+                readonly = root / target
+                readonly.chmod(stat.S_IREAD)
+                try:
+                    with self.assertRaises(OSError):
+                        prepare_release_notes.prepare_notes(source, body, full)
+                    self.assertEqual(body.read_bytes(), b"previous body")
+                    self.assertEqual(full.read_bytes(), b"previous full notes")
+                finally:
+                    readonly.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     def test_short_notes_are_unchanged_including_unicode_at_limit(self):
         for notes in ("", "## What's Changed\n* Fix\n", "я" * 125000):
