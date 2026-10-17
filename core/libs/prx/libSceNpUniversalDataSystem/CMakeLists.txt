@@ -5,6 +5,7 @@ add_library(libSceNpUniversalDataSystem SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/EventPropertyObject.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/EventPropertyArray.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Export.cpp
 )
 
 target_include_directories(libSceNpUniversalDataSystem PRIVATE

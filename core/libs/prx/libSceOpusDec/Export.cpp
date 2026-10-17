@@ -26,4 +26,54 @@ int APS5_VABI sceOpusDecDecode(void* state, const std::uint8_t* data, int bytes,
 
 int APS5_VABI sceOpusDecDestroy(void* state) { return library.Destroy(state); }
 
+int APS5_VABI sceOpusDecCancel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecCreate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecCtl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecDecodeCancelForTimeout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecDecodeFloat(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecDecodeFloatWithPriority(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecDecodeFloatWithPriorityAndTimeout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecDecodeWithPriority(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecDecodeWithPriorityAndTimeout(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceOpusDecGetAjmContext(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

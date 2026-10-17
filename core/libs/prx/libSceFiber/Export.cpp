@@ -559,5 +559,9 @@ int32_t APS5_VABI sceFiberStopContextSizeCheck(void) {
     return g_contextSizeCheck.compare_exchange_strong(expected, false) ? SCE_OK : SCE_FIBER_ERROR_STATE;
 }
 
+int32_t APS5_VABI sceFiberInitialize(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, const void* opt_param) {
+    return _sceFiberInitializeImpl_nid_postfix(object, name, entry, arg_on_initialize, addr_context, size_context, opt_param, 0);
+}
+
 }
 

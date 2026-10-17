@@ -197,4 +197,19 @@ int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gesture_han
     return 0;
 }
 
+int APS5_VABI sceSystemGesture(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemGestureDebugGetVersion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSystemGestureSetTouchAreaInformation(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

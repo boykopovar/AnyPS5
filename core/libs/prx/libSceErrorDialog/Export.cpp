@@ -92,4 +92,47 @@ int APS5_VABI sceErrorDialogTerminate(void) {
  return kErrOk;
 }
 
+int APS5_VABI sceErrorDialog(void) {
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogDetailParamInitialize(void* param) {
+ if (param == nullptr) return kErrParam;
+ std::memset(param, 0, 0x80);
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogOpenDetail(const void* param) {
+ (void)param;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogOpenWithReport(const void* param) {
+ (void)param;
+ NotImplemented_nid_no_patch(__func__);
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogParamInit(void* param) {
+ if (param == nullptr) return kErrParam;
+ std::memset(param, 0, kParamSize);
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogParamInitialize(void* param) {
+ if (param == nullptr) return kErrParam;
+ std::memset(param, 0, kParamSize);
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogServiceInitialize(void) {
+ return 0;
+}
+
+int APS5_VABI sceErrorDialogServiceTerminate(void) {
+ return 0;
+}
+
 }
