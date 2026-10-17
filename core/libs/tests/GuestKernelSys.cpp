@@ -151,10 +151,36 @@ int main() {
 #ifndef _WIN32
     Require(readlink_nid_postfix((root / std::string(300, 'n')).string().c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
 #endif
+    for (const std::size_t length : {std::size_t{1023}, std::size_t{1024}, std::size_t{1025}}) {
+        const auto longPath = root.generic_string() + std::string(length - root.generic_string().size(), '/');
+        std::memset(buffer, '#', sizeof(buffer));
+        const int expected = length < 1024 ? 22 : 63;
+        Require(readlink_nid_postfix(longPath.c_str(), buffer, sizeof(buffer)) == -1 && Error() == expected);
+        Require(readlinkat_nid_postfix(-100, longPath.c_str(), buffer, sizeof(buffer)) == -1 && Error() == expected);
+        Require(buffer[0] == '#');
+    }
+    const int pathLimitDirectory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(pathLimitDirectory >= 0);
+    for (const std::size_t length : {std::size_t{1023}, std::size_t{1024}, std::size_t{1025}}) {
+        const auto longPath = std::string(".") + std::string(length - 1, '/');
+        const int expected = length < 1024 ? 22 : 63;
+        Require(readlinkat_nid_postfix(pathLimitDirectory, longPath.c_str(), buffer, sizeof(buffer)) == -1 && Error() == expected);
+        Require(buffer[0] == '#');
+    }
+    Require(sceKernelClose(pathLimitDirectory) == 0);
+    const auto oversizedPath = std::string(1024, '/');
+    Require(readlinkat_nid_postfix(-1, oversizedPath.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
+    const auto oversizedRelativePath = std::string(".") + std::string(1023, '/');
+    Require(readlinkat_nid_postfix(-1, oversizedRelativePath.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
     std::error_code error;
     const auto link = (root / "link").string();
+#ifdef _WIN32
+    const bool createdLink = CreateSymbolicLinkW(std::filesystem::path(link).wstring().c_str(), L"sub\\target.txt", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+#else
     std::filesystem::create_symlink("sub/target.txt", link, error);
-    if (!error) {
+    const bool createdLink = !error;
+#endif
+    if (createdLink) {
         std::memset(buffer, '#', sizeof(buffer));
         Require(readlink_nid_postfix(link.c_str(), buffer, sizeof(buffer)) == 14);
         Require(std::memcmp(buffer, "sub/target.txt", 14) == 0 && buffer[14] == '#');
