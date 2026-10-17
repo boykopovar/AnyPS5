@@ -23,6 +23,27 @@ bool matchesBufferPatternFillKernel(std::span<const std::uint32_t> code) {
     return code.size() >= kernel.size() && std::equal(kernel.begin(), kernel.end(), code.begin());
 }
 
+bool matchesDwordPatternFillKernel(std::span<const std::uint32_t> code) {
+    static constexpr std::array<std::uint32_t, 69> kernel{
+        0xbfa00003u, 0xd7460002u, 0x04010c0au, 0x7da80408u, 0xbf88003fu, 0x7e000c09u, 0xbf070980u, 0x858a807eu,
+        0x7e005700u, 0x100000ffu, 0x4f800000u, 0x7e060f00u, 0xd5766a00u, 0x02020609u, 0x7d8a0280u, 0x4c020080u,
+        0x02000101u, 0xd56a0001u, 0x00020700u, 0x4c000303u, 0x4a020303u, 0x02000101u, 0xd56a0000u, 0x00020500u,
+        0xd5690001u, 0x00020009u, 0x4c060302u, 0x7d860609u, 0x7d8c02f9u, 0x06068c02u, 0x87ea6a0cu, 0x50000080u,
+        0xd5286a00u, 0x003200c1u, 0xd5010000u, 0x002a00c1u, 0xd5690000u, 0x00020009u, 0x4c000102u, 0x7d0a0080u,
+        0xbe88246au, 0xbf880015u, 0x7d0a0081u, 0xbe8a246au, 0xbf88000cu, 0x7d0a0082u, 0xbeea246au, 0xbf880003u,
+        0x7e000207u, 0xe0102000u, 0x80000002u, 0x8afe7e6au, 0xbf880003u, 0x7e000206u, 0xe0102000u, 0x80000002u,
+        0xbefe046au, 0x8afe7e0au, 0xbf880003u, 0x7e000205u, 0xe0102000u, 0x80000002u, 0xbefe040au, 0x8afe7e08u,
+        0xbf880003u, 0x7e000204u, 0xe0102000u, 0x80000002u, 0xbf810000u};
+    static constexpr std::size_t comparesAt = 27;
+    static constexpr std::array<std::uint32_t, 3> comparesSwapped{0x7d8c02f9u, 0x06068c02u, 0x7d860609u};
+    if (code.size() < kernel.size()) return false;
+    const auto before = std::span(kernel).first(comparesAt);
+    const auto after = std::span(kernel).subspan(comparesAt + comparesSwapped.size());
+    const auto compares = code.subspan(comparesAt, comparesSwapped.size());
+    if (!std::equal(before.begin(), before.end(), code.begin()) || !std::equal(after.begin(), after.end(), code.begin() + comparesAt + comparesSwapped.size())) return false;
+    return std::equal(compares.begin(), compares.end(), kernel.begin() + comparesAt) || std::equal(compares.begin(), compares.end(), comparesSwapped.begin());
+}
+
 }
 
 bool Driver::matchesFillKernel(std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
@@ -45,17 +66,7 @@ bool Driver::matchesFillKernel(std::span<const std::uint32_t> code, const std::v
 std::optional<DwordPatternFill> MatchDwordPatternFill(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const ShaderRecompiler::ShaderComputeStageInfo& compute) {
     static const bool enabled = std::getenv("APS5_NO_FILL_HLE") == nullptr;
     if (!enabled || userData.size() != 10 || packet.size() < 5 || !compute.groupIdEnable[0] || compute.numThreads[0] != 64 || compute.numThreads[1] != 1 || compute.numThreads[2] != 1) return std::nullopt;
-    static constexpr std::array<std::uint32_t, 69> kernel{
-        0xbfa00003u, 0xd7460002u, 0x04010c0au, 0x7da80408u, 0xbf88003fu, 0x7e000c09u, 0xbf070980u, 0x858a807eu,
-        0x7e005700u, 0x100000ffu, 0x4f800000u, 0x7e060f00u, 0xd5766a00u, 0x02020609u, 0x7d8a0280u, 0x4c020080u,
-        0x02000101u, 0xd56a0001u, 0x00020700u, 0x4c000303u, 0x4a020303u, 0x02000101u, 0xd56a0000u, 0x00020500u,
-        0xd5690001u, 0x00020009u, 0x4c060302u, 0x7d860609u, 0x7d8c02f9u, 0x06068c02u, 0x87ea6a0cu, 0x50000080u,
-        0xd5286a00u, 0x003200c1u, 0xd5010000u, 0x002a00c1u, 0xd5690000u, 0x00020009u, 0x4c000102u, 0x7d0a0080u,
-        0xbe88246au, 0xbf880015u, 0x7d0a0081u, 0xbe8a246au, 0xbf88000cu, 0x7d0a0082u, 0xbeea246au, 0xbf880003u,
-        0x7e000207u, 0xe0102000u, 0x80000002u, 0x8afe7e6au, 0xbf880003u, 0x7e000206u, 0xe0102000u, 0x80000002u,
-        0xbefe046au, 0x8afe7e0au, 0xbf880003u, 0x7e000205u, 0xe0102000u, 0x80000002u, 0xbefe040au, 0x8afe7e08u,
-        0xbf880003u, 0x7e000204u, 0xe0102000u, 0x80000002u, 0xbf810000u};
-    if (code.size() < kernel.size() || !std::equal(kernel.begin(), kernel.end(), code.begin())) return std::nullopt;
+    if (!matchesDwordPatternFillKernel(code)) return std::nullopt;
     const auto stride = (userData[1] >> 16u) & 0x3fffu;
     const bool swizzled = ((userData[1] >> 31u) & 1u) != 0;
     const bool addTid = ((userData[3] >> 23u) & 1u) != 0;
