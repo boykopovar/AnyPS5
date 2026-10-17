@@ -208,6 +208,16 @@ int KernelEqueuePrivate::GetTriggeredEvents(KernelEvent* ev, int num) {
     return CollectTriggered(ev, num);
 }
 
+bool KernelEqueuePrivate::HasTriggeredEvents() {
+    std::unique_lock lock(m_mutex);
+    if (m_closed) {
+        return false;
+    }
+    TriggerExpiredTimers(MonotonicNs());
+    PollEvents();
+    return std::any_of(m_events.begin(), m_events.end(), [](const KernelEqueueEvent& event) { return event.enabled && event.triggered; });
+}
+
 int KernelEqueuePrivate::WaitForEvents(KernelEvent* ev, int num, uint32_t micros) {
     return WaitForEventsUntil(ev, num, micros == 0 ? 0 : TimedWait::DeadlineNanos(micros));
 }

@@ -303,6 +303,12 @@ bool IsKqueueDescriptor(int descriptor) {
     return static_cast<bool>(FindKqueue(descriptor));
 }
 
+std::optional<bool> KqueueReadable(int descriptor) {
+    const auto queue = FindKqueue(descriptor);
+    if (!queue) return std::nullopt;
+    return queue->HasTriggeredEvents();
+}
+
 void KqueueDescriptorClosed(int descriptor) {
     KernelEqueueRef closed;
     std::vector<KernelEqueueRef> queues;

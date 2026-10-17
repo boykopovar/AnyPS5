@@ -572,4 +572,16 @@ bool Appends(int fd) {
     return found != g_entries.end() && found->second.status && (*found->second.status & Append) != 0;
 }
 
+bool IsVnode(int fd) {
+    if (fd < 0 || File::IsRandomDevice(fd)) return false;
+    if (File::IsArchivedFile(fd)) return true;
+#ifdef _WIN32
+    if (!DescriptorIsOpen_nid_no_patch(fd)) return false;
+    return File::DirectoryDescriptorPath(fd) || ::GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_DISK;
+#else
+    struct stat status{};
+    return ::fstat(fd, &status) == 0 && (S_ISREG(status.st_mode) || S_ISDIR(status.st_mode));
+#endif
+}
+
 }
