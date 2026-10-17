@@ -207,7 +207,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
         }
 
         if (opcode == OneByteCallRel32 || opcode == OneByteJmpRel32) {
-            immediateSize = ImmSize32;
+            immediateSize = operandImmediateSize;
         }
 
         if (opcode == OneByteJmpRel8 || opcode == OneByteJrcxz ||
@@ -241,7 +241,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
             }
             hasModRm = true;
         } else if (opcode >= TwoByteJccRel32Min && opcode <= TwoByteJccRel32Max) {
-            immediateSize = ImmSize32;
+            immediateSize = operandImmediateSize;
         } else if (opcode == TwoByteMovImm8ModRm || opcode == TwoByte3DNow) {
             hasModRm = true;
             immediateSize = ImmSize8;
@@ -355,6 +355,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
     info.Length = Decode(data, available);
 
     std::size_t pos = 0;
+    bool operandSizeOverride = false;
 
     while (pos < info.Length) {
         std::uint8_t b = data[pos];
@@ -371,6 +372,8 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
                 info.SegmentPrefix = b;
             if (b == PrefixAddressSize)
                 info.AddressSize32 = true;
+            if (b == PrefixOperandSize)
+                operandSizeOverride = true;
             info.RexPrefix = 0;
             ++pos;
             continue;
@@ -416,6 +419,19 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
 
     info.Opcode = op;
     info.IsTwoByteOpcode = twoByteOpcode;
+
+    const bool relativeNearBranch = twoByteOpcode
+        ? op >= TwoByteJccRel32Min && op <= TwoByteJccRel32Max
+        : op == OneByteCallRel32 || op == OneByteJmpRel32 || op == OneByteJmpRel8 ||
+          (op >= OneByteJccRel8Min && op <= OneByteJccRel8Max) ||
+          op == OneByteJrcxz || (op >= OneByteLoop && op <= OneByteLoopMax);
+    if (relativeNearBranch && operandSizeOverride && (info.RexPrefix & RexWBit) == 0) {
+        info.TruncatesBranchTarget = true;
+        info.FlowKind = twoByteOpcode || (op != OneByteCallRel32 && op != OneByteJmpRel32 && op != OneByteJmpRel8)
+            ? ControlFlowKind::ConditionalBranch
+            : op == OneByteCallRel32 ? ControlFlowKind::Call : ControlFlowKind::UnconditionalJump;
+        return info;
+    }
 
     if (!twoByteOpcode) {
         if (op == OneByteCallRel32) {

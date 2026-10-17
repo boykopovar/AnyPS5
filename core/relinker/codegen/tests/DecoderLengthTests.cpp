@@ -99,6 +99,20 @@ int main() {
             require(info.HasBranchTarget == testCase.HasBranchTarget, "Wrong branch target presence for " + name);
             require(!testCase.HasBranchTarget || info.BranchDisp == testCase.BranchDisp, "Wrong branch displacement for " + name);
         }
+        for (const auto& testCase : kDecoderTruncatedBranchCases) {
+            const std::string name = testCase.Bytes;
+            auto bytes = parse(testCase.Bytes);
+            require(bytes.size() == testCase.Length, "Truncated branch case " + name + " does not hold its own length");
+            bytes.insert(bytes.end(), 15, 0x90);
+            const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
+            require(info.Length == testCase.Length, "Wrong length for " + name);
+            require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
+            require(info.TruncatesBranchTarget && !info.HasBranchTarget, "Branch target of " + name + " was reported without its 16-bit truncation");
+        }
+        for (const auto& testCase : kDecoderBranchCases) {
+            const auto bytes = parse(testCase.Bytes);
+            require(!decoder.DecodeInstruction(bytes.data(), bytes.size()).TruncatesBranchTarget, "Branch target of " + std::string(testCase.Bytes) + " was reported as truncated");
+        }
         const auto threeDNow = parse("0f0f0d11223344a6");
         const auto threeDNowInfo = decoder.DecodeInstruction(threeDNow.data(), threeDNow.size());
         require(threeDNowInfo.HasModRm && threeDNowInfo.ModRmByte == 0x0d, "3DNow! ModRM was not reported");
