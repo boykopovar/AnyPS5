@@ -18,9 +18,10 @@ constexpr int CES_ERROR_UNASSIGNED_CODE = static_cast<int>(0x805C0020);
 constexpr int CES_ERROR_INVALID_DST_BUFFER = static_cast<int>(0x805C0030);
 constexpr int CES_ERROR_DST_BUFFER_END = static_cast<int>(0x805C0031);
 
-constexpr uint8_t PROFILES[2] = {0, 1};
+constexpr uint8_t PROFILES[3] = {0, 1, 2};
 constexpr const uint8_t* CP1252_PROFILE = &PROFILES[0];
 constexpr const uint8_t* CP1251_PROFILE = &PROFILES[1];
+constexpr const uint8_t* CP1250_PROFILE = &PROFILES[2];
 
 constexpr uint16_t CP1252_HIGH[32] = {
     0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
@@ -38,8 +39,26 @@ constexpr uint16_t CP1251_HIGH[128] = {
     0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, 0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F,
 };
 
+constexpr uint16_t CP1250_HIGH[128] = {
+    0x20AC, 0x0081, 0x201A, 0x0083, 0x201E, 0x2026, 0x2020, 0x2021, 0x0088, 0x2030, 0x0160, 0x2039, 0x015A, 0x0164, 0x017D, 0x0179,
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0098, 0x2122, 0x0161, 0x203A, 0x015B, 0x0165, 0x017E, 0x017A,
+    0x00A0, 0x02C7, 0x02D8, 0x0141, 0x00A4, 0x0104, 0x00A6, 0x00A7, 0x00A8, 0x00A9, 0x015E, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x017B,
+    0x00B0, 0x00B1, 0x02DB, 0x0142, 0x00B4, 0x00B5, 0x00B6, 0x00B7, 0x00B8, 0x0105, 0x015F, 0x00BB, 0x013D, 0x02DD, 0x013E, 0x017C,
+    0x0154, 0x00C1, 0x00C2, 0x0102, 0x00C4, 0x0139, 0x0106, 0x00C7, 0x010C, 0x00C9, 0x0118, 0x00CB, 0x011A, 0x00CD, 0x00CE, 0x010E,
+    0x0110, 0x0143, 0x0147, 0x00D3, 0x00D4, 0x0150, 0x00D6, 0x00D7, 0x0158, 0x016E, 0x00DA, 0x0170, 0x00DC, 0x00DD, 0x0162, 0x00DF,
+    0x0155, 0x00E1, 0x00E2, 0x0103, 0x00E4, 0x013A, 0x0107, 0x00E7, 0x010D, 0x00E9, 0x0119, 0x00EB, 0x011B, 0x00ED, 0x00EE, 0x010F,
+    0x0111, 0x0144, 0x0148, 0x00F3, 0x00F4, 0x0151, 0x00F6, 0x00F7, 0x0159, 0x016F, 0x00FA, 0x0171, 0x00FC, 0x00FD, 0x0163, 0x02D9,
+};
+
+constexpr uint16_t CP932_IBM_HEAD[28] = {
+    0x2170, 0x2171, 0x2172, 0x2173, 0x2174, 0x2175, 0x2176, 0x2177, 0x2178, 0x2179,
+    0x2160, 0x2161, 0x2162, 0x2163, 0x2164, 0x2165, 0x2166, 0x2167, 0x2168, 0x2169,
+    0xFFE2, 0xFFE4, 0xFF07, 0xFF02, 0x3231, 0x2116, 0x2121, 0x2235,
+};
+
 uint32_t sbcToUnicode(const uint8_t* profile, uint8_t sbc) {
     if (profile == CP1251_PROFILE) return sbc >= 0x80 ? CP1251_HIGH[sbc - 0x80] : sbc;
+    if (profile == CP1250_PROFILE) return sbc >= 0x80 ? CP1250_HIGH[sbc - 0x80] : sbc;
     return sbc >= 0x80 && sbc < 0xA0 ? CP1252_HIGH[sbc - 0x80] : sbc;
 }
 
@@ -51,6 +70,19 @@ bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
         }
         for (uint32_t i = 0; i < 128; ++i) {
             if (CP1251_HIGH[i] == code) {
+                sbc = static_cast<uint8_t>(0x80 + i);
+                return true;
+            }
+        }
+        return false;
+    }
+    if (profile == CP1250_PROFILE) {
+        if (code < 0x80) {
+            sbc = static_cast<uint8_t>(code);
+            return true;
+        }
+        for (uint32_t i = 0; i < 128; ++i) {
+            if (CP1250_HIGH[i] == code) {
                 sbc = static_cast<uint8_t>(0x80 + i);
                 return true;
             }
@@ -109,13 +141,18 @@ uint32_t encodeUtf8(uint32_t code, uint8_t* utf8) {
 }
 
 constexpr uint8_t EUC_JP_TAG[8] = {'E', 'U', 'C', 'J', 'P', '9', '3', '2'};
+constexpr uint8_t SJIS_TAG[8] = {'S', 'J', 'I', 'S', '1', '9', '9', '7'};
 
 bool isEucJp(const void* profile) {
     return profile != nullptr && std::memcmp(profile, EUC_JP_TAG, sizeof(EUC_JP_TAG)) == 0;
 }
 
+bool isSjis(const void* profile) {
+    return profile != nullptr && std::memcmp(profile, SJIS_TAG, sizeof(SJIS_TAG)) == 0;
+}
+
 bool isSbc(const void* profile) {
-    return profile == CP1252_PROFILE || profile == CP1251_PROFILE;
+    return profile == CP1252_PROFILE || profile == CP1251_PROFILE || profile == CP1250_PROFILE;
 }
 
 const void* contextProfile(const void* context) {
@@ -130,6 +167,56 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
         length = 1;
         code = sbcToUnicode(static_cast<const uint8_t*>(profile), lead);
         return 0;
+    }
+    if (isSjis(profile)) {
+        if (lead < 0x80) {
+            length = 1;
+            code = lead;
+            return 0;
+        }
+        if (lead >= 0xA1 && lead <= 0xDF) {
+            length = 1;
+            code = 0xFF61 + (lead - 0xA1);
+            return 0;
+        }
+        if ((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC)) {
+            if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+            const uint8_t trail = mbcs[1];
+            if (trail < 0x40 || trail == 0x7F || trail > 0xFC) return CES_ERROR_INVALID_ENCODE;
+            if (lead >= 0xFA) {
+                const uint32_t trailIdx = trail < 0x7F ? trail - 0x40 : trail - 0x41;
+                const uint32_t offset = (lead - 0xFA) * 188 + trailIdx;
+                if (offset <= 387) {
+                    if (offset < 28) {
+                        code = CP932_IBM_HEAD[offset];
+                        length = 2;
+                        return 0;
+                    }
+                    const uint32_t kanjiIdx = offset - 28;
+                    const int row = 89 + kanjiIdx / 94;
+                    const int cell = 1 + kanjiIdx % 94;
+                    code = JisX0208::TO_UCS2[(row - 1) * 94 + (cell - 1)];
+                    if (code == 0) return CES_ERROR_UNASSIGNED_CODE;
+                    length = 2;
+                    return 0;
+                }
+                return CES_ERROR_UNASSIGNED_CODE;
+            }
+            int row = (lead <= 0x9F) ? (lead - 0x81) * 2 + 1 : (lead - 0xE0) * 2 + 63;
+            int cell = 0;
+            if (trail >= 0x9F) {
+                row += 1;
+                cell = trail - 0x9E;
+            } else {
+                cell = (trail > 0x7E) ? trail - 0x40 : trail - 0x3F;
+            }
+            if (row < 1 || row > 94 || cell < 1 || cell > 94) return CES_ERROR_UNASSIGNED_CODE;
+            code = JisX0208::TO_UCS2[(row - 1) * 94 + (cell - 1)];
+            if (code == 0) return CES_ERROR_UNASSIGNED_CODE;
+            length = 2;
+            return 0;
+        }
+        return CES_ERROR_INVALID_ENCODE;
     }
     if (lead < 0x80) {
         length = 1;
@@ -173,6 +260,33 @@ int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& leng
         length = 1;
         return unicodeToSbc(static_cast<const uint8_t*>(profile), code, mbcs[0]) ? 0 : CES_ERROR_UNASSIGNED_CODE;
     }
+    if (isSjis(profile)) {
+        if (code < 0x80) {
+            length = 1;
+            mbcs[0] = static_cast<uint8_t>(code);
+            return 0;
+        }
+        if (code >= 0xFF61 && code <= 0xFF9F) {
+            length = 1;
+            mbcs[0] = static_cast<uint8_t>(0xA1 + (code - 0xFF61));
+            return 0;
+        }
+        if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
+        const auto& reverse = jisX0208Reverse();
+        const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const std::pair<uint16_t, uint16_t>& entry, uint16_t value) { return entry.first < value; });
+        if (found == reverse.end() || found->first != code) return CES_ERROR_UNASSIGNED_CODE;
+        const int row = found->second / 94 + 1;
+        const int cell = found->second % 94 + 1;
+        if (row % 2 != 0) {
+            mbcs[0] = static_cast<uint8_t>(row < 63 ? 0x81 + (row - 1) / 2 : 0xE0 + (row - 63) / 2);
+            mbcs[1] = static_cast<uint8_t>(cell <= 63 ? cell + 0x3F : cell + 0x40);
+        } else {
+            mbcs[0] = static_cast<uint8_t>(row < 63 ? 0x81 + (row - 2) / 2 : 0xE0 + (row - 64) / 2);
+            mbcs[1] = static_cast<uint8_t>(cell + 0x9E);
+        }
+        length = 2;
+        return 0;
+    }
     if (code < 0x80) {
         length = 1;
         mbcs[0] = static_cast<uint8_t>(code);
@@ -209,7 +323,7 @@ template<typename Source, typename Decode>
 int toMbcs(const void* context, const Source* source, uint32_t sourceMax, uint32_t* sourceLen, uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, Decode decode) {
     if (!context) return CES_ERROR_INVALID_PARAMETER;
     const void* profile = contextProfile(context);
-    if (!isEucJp(profile) && !isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (!isEucJp(profile) && !isSjis(profile) && !isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!source) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t read = 0;
     uint32_t written = 0;
@@ -236,7 +350,7 @@ template<typename Target, typename Encode>
 int fromMbcs(const void* context, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, Target* target, uint32_t targetMax, uint32_t* targetLen, Encode encode) {
     if (!context) return CES_ERROR_INVALID_PARAMETER;
     const void* profile = contextProfile(context);
-    if (!isEucJp(profile) && !isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (!isEucJp(profile) && !isSjis(profile) && !isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!mbcs) return CES_ERROR_INVALID_SRC_BUFFER;
     uint32_t read = 0;
     uint32_t written = 0;
@@ -270,13 +384,13 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1251(void) {
     return CP1251_PROFILE;
 }
 
-const void* APS5_VABI sceCesRefersUcsProfileCp1250(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1250(void) {
+    return CP1250_PROFILE;
 }
 
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
     if (!sheet) return nullptr;
+    std::memcpy(sheet, SJIS_TAG, sizeof(SJIS_TAG));
     return sheet;
 }
 
@@ -342,7 +456,7 @@ int APS5_VABI sceCesEucJpToUcs2(const void* profile, const uint8_t* euc, uint32_
 }
 
 int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len) {
-    if (profile != CP1252_PROFILE && profile != CP1251_PROFILE) return CES_ERROR_INVALID_PARAMETER;
+    if (profile != CP1252_PROFILE && profile != CP1251_PROFILE && profile != CP1250_PROFILE) return CES_ERROR_INVALID_PARAMETER;
     if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
 
     uint8_t encoded[3];
@@ -354,7 +468,7 @@ int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8
 }
 
 int APS5_VABI sceCesUtf8ToSbc(const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8_len, const uint8_t* profile, uint8_t* sbc) {
-    if (profile != CP1252_PROFILE && profile != CP1251_PROFILE) return CES_ERROR_INVALID_PARAMETER;
+    if (profile != CP1252_PROFILE && profile != CP1251_PROFILE && profile != CP1250_PROFILE) return CES_ERROR_INVALID_PARAMETER;
     if (!utf8) return CES_ERROR_INVALID_SRC_BUFFER;
     if (utf8max == 0) return CES_ERROR_SRC_BUFFER_END;
     if (!sbc) return CES_ERROR_INVALID_DST_BUFFER;
