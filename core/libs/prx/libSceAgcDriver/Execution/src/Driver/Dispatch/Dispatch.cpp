@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -412,6 +413,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             groups[axis] = (groups[axis] + threads - 1) / threads;
         }
     }
+    const auto borderColorTable = Graphics::BorderColorTableBase(queue.userConfig, Graphics::ComputeBorderColorBase);
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
@@ -513,7 +515,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::shared_ptr<PreparedDispatch> prepared;
         if (recipeHit == nullptr || VulkanDevice::VerifyRecipes()) {
             try {
-                prepared = localDevice->PrepareDispatch(compiled, snapshots, dispatchThreads, address);
+                prepared = localDevice->PrepareDispatch(compiled, snapshots, dispatchThreads, address, borderColorTable);
             } catch (const std::exception& error) {
                 if (rethrow(error)) return;
             }
@@ -557,10 +559,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
                 }
                 if (indirectArguments != 0) countIndirect(outcome.cpuReason, outcome.argumentReadMs);
             } else if (indirectArguments != 0) {
-                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, snapshots, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr);
+                const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, snapshots, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr, borderColorTable);
                 countIndirect(outcome.cpuReason, outcome.argumentReadMs);
             } else {
-                localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], snapshots, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr);
+                localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], snapshots, address, std::move(prepared), attachTo != nullptr ? &builtRecipe : nullptr, borderColorTable);
             }
         } catch (const std::exception& error) {
             if (rethrow(error)) return;

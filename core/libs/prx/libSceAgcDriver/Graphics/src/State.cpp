@@ -1009,6 +1009,14 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     return {blend, routing->code};
 }
 
+std::optional<std::uint64_t> BorderColorTableBase(const Registers& registers, std::uint32_t low) {
+    const auto address = registers.find(low);
+    if (address == registers.end()) return std::nullopt;
+    const auto high = registers.find(low + 1u);
+    const auto upper = high == registers.end() ? 0u : high->second & 0xffu;
+    return (static_cast<std::uint64_t>(address->second) << 8u) | (static_cast<std::uint64_t>(upper) << 40u);
+}
+
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (auto reason = DepthMaintenanceRejection(queue); !reason.empty()) throw std::runtime_error(reason);
     const auto& cx = queue.context;
