@@ -4,6 +4,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
+
+extern "C" {
+int APS5_VABI sceHmdDistortionInitialize();
+int APS5_VABI sceHmdDistortionGet2dVrCommand();
+int APS5_VABI sceHmdGetFieldOfView();
+}
 
 namespace {
 
@@ -79,5 +86,23 @@ int main() {
         Require(sceHmdTerminate() == Hmd::NotInitialized, "duplicate terminate");
         Require(sceHmdGetDeviceInformation(&info) == Hmd::NotInitialized, "query after terminate");
         CheckDisconnected();
+    }
+
+    try {
+        sceHmdDistortionInitialize();
+        Require(false, "sceHmdDistortionInitialize should throw");
+    } catch (const std::runtime_error&) {
+    }
+
+    try {
+        sceHmdDistortionGet2dVrCommand();
+        Require(false, "sceHmdDistortionGet2dVrCommand should throw");
+    } catch (const std::runtime_error&) {
+    }
+
+    try {
+        sceHmdGetFieldOfView();
+        Require(false, "sceHmdGetFieldOfView should throw");
+    } catch (const std::runtime_error&) {
     }
 }

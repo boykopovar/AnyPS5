@@ -1,4 +1,5 @@
 #include "Hmd.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <atomic>
 
@@ -65,6 +66,86 @@ std::int32_t APS5_VABI sceHmdInternalGetDeviceStatus(Hmd::DeviceStatus* status) 
 }
 
 std::int32_t APS5_VABI sceHmdInternalMmapIsConnect() {
+    return 0;
+}
+
+int APS5_VABI sceHmdDistortionInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdDistortionGet2dVrCommand() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdDistortionGetCorrectionCommand() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdDistortionGetWorkMemorySize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdDistortionGetWorkMemoryAlign() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdFillDistortionBuffer() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGet2DEyeOffset() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGet2dDistortionMap() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGet2dVrCommand() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetDistortionCorrectionCommand() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetDistortionMap() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetDistortionParams() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetDistortionWorkMemoryAlign() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetDistortionWorkMemorySize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetEyeStatus() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceHmdGetFieldOfView() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
