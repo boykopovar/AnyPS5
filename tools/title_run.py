@@ -1,9 +1,17 @@
 import json
+import os
 import re
+import shutil
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+
+import unwrap_self
+from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "blank", "rendering")
 TITLE_FIELDS = {"name": str, "relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "input": list}
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
@@ -137,3 +145,76 @@ def render_markdown(summary, previous=None):
             row.append(worst(old["runs"]) if old else "new")
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines + [""])
+
+
+def discover(directories):
+    found = {}
+    for directory in directories:
+        for param in sorted(Path(directory).glob("**/sce_sys/param.json")):
+            package = param.parent.parent
+            if not (package / "eboot.bin").is_file():
+                continue
+            data = json.loads(param.read_text(encoding="utf-8-sig"))
+            title_id = data["titleId"]
+            if title_id in found:
+                raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
+            localized = data.get("localizedParameters", {})
+            name = localized.get(localized.get("defaultLanguage", "en-US"), {}).get("titleName", title_id)
+            found[title_id] = {"package": package, "version": data.get("contentVersion", ""), "name": name}
+    return found
+
+
+def unwrap_or_copy(source, target):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.read_bytes()[:4] == b"\x7fELF":
+        shutil.copyfile(source, target)
+    else:
+        unwrap_self.unwrap(source, target)
+
+
+def link_file(source, target):
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def link_tree(source, target, skip):
+    for path in sorted(source.rglob("*")):
+        relative = path.relative_to(source)
+        if relative.parts[0] in skip:
+            continue
+        if path.is_dir():
+            (target / relative).mkdir(parents=True, exist_ok=True)
+        else:
+            (target / relative).parent.mkdir(parents=True, exist_ok=True)
+            link_file(path, target / relative)
+
+
+def prepare(title_id, found, entry, platform, build, work):
+    package = found["package"]
+    shutil.rmtree(work, ignore_errors=True)
+    source = work / "input"
+    (source / "sce_module").mkdir(parents=True)
+    unwrap_or_copy(package / "eboot.bin", source / "eboot.elf")
+    for module in sorted((package / "sce_module").glob("*.prx")):
+        unwrap_or_copy(module, source / "sce_module" / module.name)
+    for executable in entry.get("executables", []):
+        unwrap_or_copy(package / executable, source / executable)
+    executable = work / (title_id + (".exe" if platform == "windows" else ""))
+    relinker = build / "core/relinker" / ("relinker.exe" if platform == "windows" else "relinker")
+    with (work / "relink.log").open("w", encoding="utf-8") as log:
+        relinked = subprocess.run([str(relinker), *relink_args(entry, platform), str(source / "eboot.elf"), str(executable)],
+                                  stdout=log, stderr=subprocess.STDOUT)
+    if relinked.returncode != 0:
+        return None
+    link_tree(package, work / "app0", {"sce_module"})
+    libs = work / "libs"
+    libs.mkdir()
+    for library in sorted((build / "core/libs/libs").glob("*.prx")):
+        link_file(library, libs / library.name)
+    if platform == "windows":
+        runtime = windows_runtime(build)
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            link_file(runtime / name, libs / name)
+    return executable

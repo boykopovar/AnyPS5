@@ -156,5 +156,50 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Missing: XPSemu (PPSA97358)", title_run.render_markdown(now, before))
 
 
+def package(root, title_id, version="01.000.000", name="Game"):
+    (root / "sce_sys").mkdir(parents=True)
+    (root / "eboot.bin").write_bytes(b"\x7fELF" + bytes(60))
+    params = {"titleId": title_id, "contentVersion": version,
+              "localizedParameters": {"defaultLanguage": "en-US", "en-US": {"titleName": name}}}
+    (root / "sce_sys/param.json").write_text(json.dumps(params), encoding="utf-8")
+    return root
+
+
+class PreparationTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def test_discover(self):
+        package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
+        package(self.root / "b/PPSA00002", "PPSA00002")
+        found = title_run.discover([self.root])
+        self.assertEqual(sorted(found), ["PPSA00001", "PPSA00002"])
+        self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
+        self.assertEqual(found["PPSA00001"]["name"], "Light")
+
+    def test_discover_refuses_duplicates(self):
+        package(self.root / "a/PPSA00001", "PPSA00001")
+        package(self.root / "b/PPSA00001", "PPSA00001")
+        with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
+            title_run.discover([self.root])
+
+    def test_unwrap_or_copy_keeps_an_elf(self):
+        source = self.root / "eboot.bin"
+        source.write_bytes(b"\x7fELF" + bytes(60))
+        title_run.unwrap_or_copy(source, self.root / "out/eboot.elf")
+        self.assertEqual((self.root / "out/eboot.elf").read_bytes(), source.read_bytes())
+
+    def test_link_tree_skips(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "sce_module").mkdir()
+        (source / "sce_module/libc.prx").write_bytes(b"x")
+        title_run.link_tree(source, self.root / "app0", {"sce_module"})
+        self.assertTrue((self.root / "app0/sce_sys/param.json").is_file())
+        self.assertTrue((self.root / "app0/eboot.bin").is_file())
+        self.assertFalse((self.root / "app0/sce_module").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
