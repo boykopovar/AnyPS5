@@ -19,8 +19,7 @@ bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void) {
     return false;
 }
 
-int APS5_VABI sceAgcDriverRequestCaptureStart(const char* path) {
-    (void)path;
+int APS5_VABI sceAgcDriverRequestCaptureStart(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
