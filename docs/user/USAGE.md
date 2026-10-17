@@ -84,6 +84,10 @@ The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, 
 
 ## Runtime layout
 
+### Display resolution and window size
+
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override; use a game's own display setting when it offers one.
+
 For an executable that assumes its image starts at `0x400000`, use `relinker --windows --windows-fixed-base 0x400000 source/input.elf app.exe`. This maps its lowest ELF load page there; the PE headers occupy the preceding 64 KiB. Use this option only when the executable requires an exact address. Without it, the Windows executable has no `DYNAMIC_BASE` and loads at its preferred base `0x140000000`; relocations are kept, so Windows relocates it if that range is taken. Modules keep `DYNAMIC_BASE`. This option does not change macOS output.
 
 For an executable that assumes its image starts at `0x400000`, as Ruffle (PPSA68091), VLC (PPSA85300) and XPSemu (PPSA97358) do when they read their `app0/imports.txt`, use `relinker --linux-fixed-base 0x400000 source/input.elf app.elf` on Linux. Use this option only when the executable requires a fixed address. Without it, Linux output is a position-independent executable as before.
