@@ -19,6 +19,7 @@ extern "C" std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBu
 extern "C" int APS5_VABI sceAgcSuspendPoint();
 extern "C" int APS5_VABI sceAgcInit(std::uint32_t version);
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
+extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version);
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaultsInternal();
 extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version);
 extern "C" int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size);
@@ -657,6 +658,47 @@ void testDefaults() {
     expectFailure([] { Agc::Command::GetRegisterDefaults(0xffffffffu, true, __func__); });
 }
 
+struct DefaultsType {
+    std::uint32_t key;
+    std::uint32_t bankIndex;
+};
+
+std::uint32_t colourTargetBlock(const void* root) {
+    const auto* bytes = static_cast<const unsigned char*>(root);
+    ShaderRegister** contextBlocks = nullptr;
+    const DefaultsType* types = nullptr;
+    std::uint32_t count = 0;
+    std::memcpy(&contextBlocks, bytes, sizeof(contextBlocks));
+    std::memcpy(&types, bytes + 0x30, sizeof(types));
+    std::memcpy(&count, bytes + 0x38, sizeof(count));
+    check(contextBlocks != nullptr && types != nullptr && count > 0, "register defaults root has no context blocks or types");
+    std::uint32_t contexts = 0;
+    std::uint32_t matches = 0;
+    std::uint32_t block = 0;
+    for (std::uint32_t entry = 0; entry < count; ++entry) {
+        if ((types[entry].bankIndex & 3u) == 0)
+            ++contexts;
+        if (types[entry].key != 0x38e92c91u)
+            continue;
+        check((types[entry].bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
+        block = types[entry].bankIndex >> 2;
+        ++matches;
+    }
+    check(matches == 1 && block < contexts && contextBlocks[block] != nullptr, "MRT0 defaults key is missing, repeated or outside the context blocks");
+    constexpr std::array<std::uint32_t, 16> offsets{0x318, 0x31b, 0x31c, 0x31d, 0x31e, 0x31f, 0x321, 0x323, 0x324, 0x325, 0x390, 0x398, 0x3a0, 0x3a8, 0x3b0, 0x3b8};
+    for (std::size_t i = 0; i < offsets.size(); ++i)
+        check(contextBlocks[block][i].offset == offsets[i], "MRT0 defaults block does not hold the colour target registers");
+    return block;
+}
+
+void testDefaultsTypes() {
+    check(sceAgcGetRegisterDefaults() == sceAgcGetRegisterDefaults2(13), "legacy register defaults are not the newest public table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults()) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(10)) == 73, "MRT0 defaults are not block 73 of the 128-entry table");
+    for (std::uint32_t version = 4; version < 14; ++version)
+        colourTargetBlock(sceAgcGetRegisterDefaults2(version));
+}
+
 void testEventWrite() {
     Storage storage;
     const auto* samplePacket = sceAgcDcbEventWrite(&storage.buffer, 0x38, reinterpret_cast<const void*>(0x1000));
@@ -704,6 +746,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::strcmp(argv[1], "defaults") == 0) {
             testDefaults();
+            testDefaultsTypes();
             LibcRunShutdown_nid_postfix();
             std::puts("AGC initialization tests passed");
             return 0;
@@ -727,6 +770,7 @@ int main(int argc, char** argv) {
         testAtomicGds();
         testDebugRaiseException();
         testDefaults();
+        testDefaultsTypes();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC command tests passed");
         return 0;
