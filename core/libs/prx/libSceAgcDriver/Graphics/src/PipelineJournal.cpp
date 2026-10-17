@@ -35,8 +35,8 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 752, "State changed: update CanonicalPipelineState and the recipe codec");
-static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
+static_assert(sizeof(State) == 824, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(ShaderStages) == 160, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
 #endif
@@ -44,7 +44,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 3u;
+constexpr std::uint32_t FileFormat = 4u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -159,6 +159,7 @@ void encodeTessellation(Writer& writer, const ShaderRecompiler::TessellationConf
     writer.Bool(tessellation.breakAtInstance);
     writer.U32(tessellation.instancePatches);
     writer.Bool(tessellation.drawParameters);
+    writer.Bool(tessellation.mergedHull);
 }
 
 void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfiguration& tessellation) {
@@ -166,6 +167,7 @@ void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfigurat
     tessellation.breakAtInstance = reader.Bool();
     tessellation.instancePatches = reader.U32();
     tessellation.drawParameters = reader.Bool();
+    tessellation.mergedHull = reader.Bool();
 }
 
 void encodeState(Writer& writer, const State& state) {
@@ -174,6 +176,8 @@ void encodeState(Writer& writer, const State& state) {
     writer.U32(state.stages.fragmentWaveSize);
     encodeOptional(writer, state.stages.mesh, encodeMesh);
     encodeOptional(writer, state.stages.tessellation, encodeTessellation);
+    writer.U32(state.stages.hullWaveSize);
+    encodeOptional(writer, state.stages.tessellationGeometry, encodeMesh);
     writer.Bool(state.depth.has_value());
     if (state.depth) {
         writer.U32(static_cast<std::uint32_t>(state.depth->format));
@@ -216,6 +220,7 @@ void encodeState(Writer& writer, const State& state) {
     writer.Bool(state.sampleLocationGrid);
     writer.Bool(state.perSampleShading);
     for (const auto mask : state.quadSampleMask) writer.Raw(mask);
+    writer.Bool(state.rasterizerDiscard);
 }
 
 void decodeState(Reader& reader, State& state) {
@@ -225,6 +230,8 @@ void decodeState(Reader& reader, State& state) {
     state.stages.fragmentWaveSize = reader.U32();
     if (reader.Bool()) decodeMesh(reader, state.stages.mesh.emplace());
     if (reader.Bool()) decodeTessellation(reader, state.stages.tessellation.emplace());
+    state.stages.hullWaveSize = reader.U32();
+    if (reader.Bool()) decodeMesh(reader, state.stages.tessellationGeometry.emplace());
     if (reader.Bool()) {
         auto& depth = state.depth.emplace();
         depth.format = static_cast<VkFormat>(reader.U32());
@@ -274,6 +281,7 @@ void decodeState(Reader& reader, State& state) {
     state.sampleLocationGrid = reader.Bool();
     state.perSampleShading = reader.Bool();
     for (auto& mask : state.quadSampleMask) mask = reader.Raw<std::uint16_t>();
+    state.rasterizerDiscard = reader.Bool();
 }
 
 void encodeRecipe(Writer& writer, const GraphicsPipelineRecipe& recipe) {
@@ -993,6 +1001,8 @@ State CanonicalPipelineState(const State& state) {
     canonical.stages.fragmentWaveSize = state.stages.fragmentWaveSize;
     canonical.stages.mesh = state.stages.mesh;
     canonical.stages.tessellation = state.stages.tessellation;
+    canonical.stages.hullWaveSize = state.stages.hullWaveSize;
+    canonical.stages.tessellationGeometry = state.stages.tessellationGeometry;
     if (state.depth) {
         DepthTarget depth{};
         depth.format = state.depth->format;
@@ -1037,6 +1047,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.sampleLocationGrid = state.sampleLocationGrid;
     canonical.perSampleShading = state.perSampleShading;
     canonical.quadSampleMask = state.quadSampleMask;
+    canonical.rasterizerDiscard = state.rasterizerDiscard;
     return canonical;
 }
 

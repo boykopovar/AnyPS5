@@ -45,9 +45,34 @@ void InitializeMerged(const QueueState& queue, DrawProgram& program, std::uint32
     const auto address = static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32u);
     require(address != 0 || !pointerRequired, "merged shader user-data address is null");
     if (address == 0) return;
-    GuestMemory::CheckRange(reinterpret_cast<const void*>(address), 8, 4);
+    if (pointerRequired) GuestMemory::CheckRange(reinterpret_cast<const void*>(address), 8, 4);
     program.userData[0] = low;
     program.userData[1] = high;
+}
+
+std::vector<ShaderRecompiler::MemoryRegion> ProgramMemory(const std::vector<DrawProgram>& programs) {
+    std::vector<ShaderRecompiler::MemoryRegion> memory;
+    for (const auto& program : programs) {
+        for (const auto& region : program.memory) {
+            if (region.bytes.empty()) continue;
+            const bool listed = std::any_of(memory.begin(), memory.end(), [&](const ShaderRecompiler::MemoryRegion& known) { return known.guestAddress == region.guestAddress && known.bytes.data() == region.bytes.data() && known.bytes.size() == region.bytes.size(); });
+            if (!listed) memory.push_back(region);
+        }
+    }
+    return memory;
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> UserDataWords(const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, std::uint32_t location) {
+    using Role = ShaderRecompiler::ProgramRole;
+    require(roles.size() == programs.size(), "draw program roles are incomplete");
+    std::vector<std::pair<std::size_t, std::size_t>> words;
+    if (location == 0x280u) return words;
+    for (std::size_t i = 0; i < programs.size(); ++i) {
+        if (roles[i] == Role::Fragment || roles[i] == Role::GeometryBack || location < programs[i].userDataBase) continue;
+        const auto word = location - programs[i].userDataBase + (8u - programs[i].firstUserSgpr);
+        if (word < programs[i].userData.size()) words.emplace_back(i, static_cast<std::size_t>(word));
+    }
+    return words;
 }
 
 void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const ShaderRegistry& registry, bool staticAbi, bool includeFragment) {
@@ -94,12 +119,27 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             programs.push_back(prepare(programAddress(base), type, stage, resources, users));
             roles.push_back(role);
         };
-        const auto& graphics = product->state;
-        if (graphics.stages.path == Graphics::ShaderPath::Tessellation) {
-            if (!staticAbi || programAddress(0x148) != 0) append(0x148, 5, Stage::Local, 0x10b, 0x10c, Role::Local);
-            append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
-            InitializeMerged(queue, programs.back(), 0x102, true, staticAbi);
+        auto& graphics = product->state;
+        if (graphics.stages.path == Graphics::ShaderPath::Tessellation || graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
+            const auto localAddress = programAddress(0x148);
+            const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
+            const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;
+            require(graphics.stages.tessellation.has_value(), "tessellation draw has no tessellation configuration");
+            graphics.stages.tessellation->mergedHull = mergedHull;
+            if (mergedHull) {
+                append(0x148, 3, Stage::Local, 0x10b, 0x10c, Role::Local);
+                append(0x148, 3, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            } else {
+                if (local != nullptr) append(0x148, 5, Stage::Local, 0x10b, 0x10c, Role::Local);
+                append(0x108, 7, Stage::TessellationControl, 0x10b, 0x10c, Role::Hull);
+            }
+            InitializeMerged(queue, programs.back(), 0x102, !mergedHull, staticAbi);
             append(0x0c8, 2, Stage::TessellationEvaluation, 0x08b, 0x08c, Role::Domain);
+            if (graphics.stages.path == Graphics::ShaderPath::TessellationGeometry) {
+                InitializeMerged(queue, programs.back(), 0x82, false, staticAbi);
+                append(0x0c8, 2, Stage::Mesh, 0x08b, 0x08c, Role::Main);
+                InitializeMerged(queue, programs.back(), 0x82, false, staticAbi);
+            }
         } else if (graphics.stages.path == Graphics::ShaderPath::Geometry) {
             const auto frontAddress = programAddress(0xc8);
             const auto front = ProgramSnapshot(registry, frontAddress, {2, 4});
