@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <string>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -74,7 +75,7 @@ static int RunThrowChild() {
     return 100;
 }
 
-static void testUnhandledThrowSite() {
+static std::string RunChild(const wchar_t* argument, DWORD& exitCode) {
     SECURITY_ATTRIBUTES attributes{};
     attributes.nLength = sizeof(attributes);
     attributes.bInheritHandle = TRUE;
@@ -84,7 +85,6 @@ static void testUnhandledThrowSite() {
     RequireHandle(SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0) != 0);
     std::array<wchar_t, 32768> image{};
     RequireHandle(GetModuleFileNameW(nullptr, image.data(), static_cast<DWORD>(image.size())) != 0);
-    const wchar_t* argument = L"\" throw-uncaught";
     std::array<wchar_t, 32768> command{};
     const std::size_t imageLength = std::wcslen(image.data());
     const std::size_t argumentLength = std::wcslen(argument);
@@ -110,20 +110,43 @@ static void testUnhandledThrowSite() {
     }
     CloseHandle(readPipe);
     RequireHandle(WaitForSingleObject(child.hProcess, 20000) == WAIT_OBJECT_0);
-    DWORD exitCode = 0;
     RequireHandle(GetExitCodeProcess(child.hProcess, &exitCode) != 0);
     CloseHandle(child.hProcess);
     output[outputLength < output.size() ? outputLength : output.size() - 1] = 0;
+    return std::string(output.data());
+}
+
+static void testUnhandledThrowSite() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" throw-uncaught", exitCode);
     RequireHandle(exitCode == 0xC0000409);
-    const char* probeMarker = std::strstr(output.data(), "probe ");
+    const char* probeMarker = std::strstr(output.c_str(), "probe ");
     RequireHandle(probeMarker != nullptr);
     const auto probe = static_cast<std::uintptr_t>(std::strtoull(probeMarker + 6, nullptr, 16));
     RequireHandle(probe != 0);
-    const char* marker = std::strstr(output.data(), "thrown from ");
+    const char* marker = std::strstr(output.c_str(), "thrown from ");
     RequireHandle(marker != nullptr);
     const auto logged = static_cast<std::uintptr_t>(std::strtoull(marker + 13, nullptr, 16));
     RequireHandle(logged != 0);
     if (logged <= probe || logged - probe >= 0x1000) throw std::runtime_error("unhandled exception named the wrapper instead of the throw site");
+}
+
+[[gnu::noinline, noreturn]] static void GuestAbortProbe() {
+    __asm__ volatile("int $0x45");
+    __builtin_unreachable();
+}
+
+static int RunAbortChild() {
+    std::fprintf(stderr, "abort probe\n");
+    std::fflush(stderr);
+    GuestAbortProbe();
+}
+
+static void testGuestAbortReport() {
+    DWORD exitCode = 0;
+    const std::string output = RunChild(L"\" guest-abort", exitCode);
+    RequireHandle(exitCode == 0xC0000005);
+    if (output.find("guest abort() (int 0x45)") == std::string::npos) throw std::runtime_error("crash report did not name the guest abort");
 }
 
 static int destroyed;
@@ -273,10 +296,12 @@ static void testUnwindThroughRuntimeModules() {
 int main(int argc, char** argv) {
     if (argc > 1) {
         if (std::strcmp(argv[1], "throw-uncaught") == 0) return RunThrowChild();
+        if (std::strcmp(argv[1], "guest-abort") == 0) return RunAbortChild();
         return 100;
     }
     TestTypeInfoVtables();
     testUnhandledThrowSite();
+    testGuestAbortReport();
     testExceptionPointer();
     testFutureException();
     testMadeExceptionPointer();
