@@ -51,6 +51,8 @@ struct MockDevice {
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     std::uint64_t attempts = 0;
     VkResult mapResult = VK_SUCCESS;
+    VkResult bindResult = VK_SUCCESS;
+    unsigned binds = 0;
     unsigned maps = 0;
     unsigned unmaps = 0;
 };
@@ -91,6 +93,8 @@ VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAlloca
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockBindBufferMemory(VkDevice, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize offset) {
+    ++mock.binds;
+    if (mock.bindResult != VK_SUCCESS) return mock.bindResult;
     if (offset + mock.sizes.at(buffer) > mock.memoryBytes.at(memory)) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     mock.bound[buffer] = {memory, offset};
     return VK_SUCCESS;
@@ -626,6 +630,37 @@ void PartialSlabDoesNotRetry() {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "partial slab failure leaked a resource");
 }
 
+void DeviceBindingFailures() {
+    constexpr auto bytes = 3 * MiB;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    for (const auto result : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}) {
+        mock = MockDevice{};
+        {
+            auto context = mockContext();
+            mock.bindResult = result;
+            bool threw = false;
+            try {
+                DeviceBuffer failed(context, bytes, usage);
+            } catch (const std::runtime_error& error) {
+                threw = std::string(error.what()).find("Vulkan result " + std::to_string(result)) != std::string::npos;
+            }
+            const auto retained = mock.liveBytes;
+            Expect(threw && mock.binds == 1, "a failed device buffer bind lost its error");
+            Expect(retained == 0 && mock.liveBuffers.empty(), "a failed device buffer was retained for reuse");
+            mock.bindResult = VK_SUCCESS;
+            unsigned invalid = 0;
+            for (unsigned retry = 0; retry < 3; ++retry) {
+                DeviceBuffer recovered(context, bytes, usage);
+                if (!mock.bound.contains(recovered.Handle())) ++invalid;
+            }
+            Expect(invalid == 0, "a retry reused an unbound device buffer");
+            Expect(mock.binds == 2 && mock.allocations == 2, "successfully bound device buffers stopped being reused");
+            std::printf("device bind result=%d retained=%llu invalid retries=%u binds=%u\n", static_cast<int>(result), static_cast<unsigned long long>(retained), invalid, mock.binds);
+        }
+        Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "device bind recovery leaked a resource");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -643,6 +678,7 @@ int main(int argc, char** argv) {
         SmallDeviceClasses();
         SlabMetadataFailure();
         SlabMapFailure();
+        DeviceBindingFailures();
         Slabs();
         for (const auto result : {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY}) {
             AllocationRecovery(result, false);

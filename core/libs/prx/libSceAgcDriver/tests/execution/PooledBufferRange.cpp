@@ -37,6 +37,10 @@ PFN_vkAllocateMemory RealAllocateMemory = nullptr;
 PFN_vkFreeMemory RealFreeMemory = nullptr;
 PFN_vkMapMemory RealMapMemory = nullptr;
 PFN_vkUnmapMemory RealUnmapMemory = nullptr;
+PFN_vkBindBufferMemory RealBindBufferMemory = nullptr;
+VkResult BindFailure = VK_SUCCESS;
+unsigned BindAttempts = 0;
+unsigned SuccessfulBinds = 0;
 
 struct Allocation {
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -110,7 +114,20 @@ VKAPI_ATTR VkResult VKAPI_CALL CountedCreateBuffer(VkDevice device, const VkBuff
     return RealCreateBuffer(device, info, allocator, buffer);
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL CountedBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize offset) {
+    ++BindAttempts;
+    if (BindFailure != VK_SUCCESS) {
+        const auto result = BindFailure;
+        BindFailure = VK_SUCCESS;
+        return result;
+    }
+    const auto result = RealBindBufferMemory(device, buffer, memory, offset);
+    if (result == VK_SUCCESS) ++SuccessfulBinds;
+    return result;
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL CountingDeviceProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkBindBufferMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&CountedBindBufferMemory);
     if (std::strcmp(name, "vkCreateBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&CountedCreateBuffer);
     if (std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&CountedAllocateMemory);
     if (std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&CountedFreeMemory);
@@ -187,6 +204,8 @@ public:
             RealFreeMemory = reinterpret_cast<PFN_vkFreeMemory>(RealDeviceProc(context.device, "vkFreeMemory"));
             RealMapMemory = reinterpret_cast<PFN_vkMapMemory>(RealDeviceProc(context.device, "vkMapMemory"));
             RealUnmapMemory = reinterpret_cast<PFN_vkUnmapMemory>(RealDeviceProc(context.device, "vkUnmapMemory"));
+            RealBindBufferMemory = reinterpret_cast<PFN_vkBindBufferMemory>(RealDeviceProc(context.device, "vkBindBufferMemory"));
+            Require(RealBindBufferMemory != nullptr, "missing vkBindBufferMemory");
             Require(RealAllocateMemory != nullptr && RealFreeMemory != nullptr && RealMapMemory != nullptr && RealUnmapMemory != nullptr, "missing Vulkan memory functions");
             context.deviceProc = &CountingDeviceProc;
             function<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(context.physical, &context.memory);
@@ -293,6 +312,58 @@ void SlabMetadataFailures(const Context& context) {
     std::printf("slab metadata total leaked bytes=%llu\n", static_cast<unsigned long long>(LiveBytes));
     Require(AllocationErrors == 0, "slab cleanup used an invalid memory handle or mapping");
     Require(failures == 0, "slab metadata allocation failure leaked native Vulkan memory or published an unusable block");
+}
+
+void DeviceBindingFailures(const Context& context) {
+    constexpr std::size_t bytes = std::size_t{3} << 20u;
+    constexpr std::size_t copiedBytes = 256;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    unsigned failures = 0;
+    for (const auto result : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}) {
+        const auto initialBytes = LiveBytes;
+        {
+            auto probe = context;
+            probe.bufferPool = std::make_shared<BufferPool>(probe);
+            AgcDriver::Graphics::Buffer upload(probe, copiedBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            AgcDriver::Graphics::Buffer readback(probe, copiedBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            const auto before = LiveBytes;
+            const auto attempts = BindAttempts;
+            const auto bound = SuccessfulBinds;
+            BindFailure = result;
+            bool threw = false;
+            try {
+                AgcDriver::Graphics::DeviceBuffer failed(probe, bytes, usage);
+            } catch (const std::runtime_error& error) {
+                threw = std::string(error.what()).find("Vulkan result " + std::to_string(result)) != std::string::npos;
+            }
+            BindFailure = VK_SUCCESS;
+            const auto retained = LiveBytes - before;
+            const bool rejected = threw && BindAttempts == attempts + 1 && SuccessfulBinds == bound;
+            unsigned invalid = 0;
+            for (unsigned retry = 0; retry < 3; ++retry) {
+                AgcDriver::Graphics::DeviceBuffer recovered(probe, bytes, usage);
+                if (SuccessfulBinds != bound + 1) {
+                    ++invalid;
+                    continue;
+                }
+                std::memset(upload.Bytes().data(), 0x21 + retry, copiedBytes);
+                std::memset(readback.Bytes().data(), 0, copiedBytes);
+                AgcDriver::Graphics::CommandBatch batch(probe);
+                AgcDriver::Graphics::RecordMemoryBarrier(probe, batch.Handle(), VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+                AgcDriver::Graphics::CopyBuffer(probe, batch.Handle(), upload.Handle(), 0, recovered.Handle(), 0, copiedBytes);
+                AgcDriver::Graphics::RecordMemoryBarrier(probe, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+                AgcDriver::Graphics::CopyBuffer(probe, batch.Handle(), recovered.Handle(), 0, readback.Handle(), 0, copiedBytes);
+                AgcDriver::Graphics::RecordMemoryBarrier(probe, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                batch.SubmitAndWait();
+                readback.Invalidate();
+                Require(std::memcmp(upload.Bytes().data(), readback.Bytes().data(), copiedBytes) == 0, "a recovered device buffer returned incorrect GPU copy data");
+            }
+            if (!rejected || retained != 0 || invalid != 0 || BindAttempts != attempts + 2) ++failures;
+            std::printf("device bind result=%d retained=%llu invalid retries=%u binds=%u\n", static_cast<int>(result), static_cast<unsigned long long>(retained), invalid, BindAttempts - attempts);
+        }
+        Require(LiveBytes == initialBytes && AllocationErrors == 0, "device bind failure cleanup leaked native Vulkan memory");
+    }
+    Require(failures == 0, "a failed device buffer bind retained or reused an unbound buffer");
 }
 
 void Emit(std::vector<std::uint32_t>& words, std::uint32_t opcode, std::initializer_list<std::uint32_t> operands) {
@@ -481,6 +552,7 @@ int main() {
         }
         SlabMetadataFailures(device->GetContext());
         RobustReadPastEnd(device->GetContext());
+        DeviceBindingFailures(device->GetContext());
         ExactSizes(device->GetContext());
         device.reset();
         Require(AllocationErrors == 0 && LiveBytes == 0, "native buffer cleanup left an invalid memory state");

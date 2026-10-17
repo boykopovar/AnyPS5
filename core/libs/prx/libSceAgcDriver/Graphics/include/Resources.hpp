@@ -64,6 +64,7 @@ private:
     VkBufferUsageFlags usage;
     std::shared_ptr<BufferPool> cache;
     bool hostPlaced = false;
+    bool ready = false;
 };
 
 // Records a whole-range buffer copy.
