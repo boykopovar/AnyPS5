@@ -828,6 +828,23 @@ void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) 
             const auto success = tryFoldValue(program, *inst);
         }
     }
+    std::vector<IrValue*> phis;
+    for (IrBlock* block : blocks) {
+        for (IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() == IrOpcode::Phi) {
+                phis.push_back(inst);
+            }
+        }
+    }
+    bool folded = true;
+    while (folded) {
+        folded = false;
+        for (IrValue* phi : phis) {
+            if (phi->Opcode() == IrOpcode::Phi && foldPhi(*phi)) {
+                folded = true;
+            }
+        }
+    }
     std::vector<IrValue*> words;
     for (IrBlock* block : blocks) {
         for (IrValue* inst : block->Instructions()) {

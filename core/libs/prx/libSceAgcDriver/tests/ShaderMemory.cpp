@@ -1951,6 +1951,20 @@ void verifyDescriptorPhis() {
     sequential.context.memory = sequentialMemory.Regions();
     static_cast<void>(Recompile(sequential, *sequentialCapture));
 
+    const auto planRestoredSampler = [&](std::span<const std::uint32_t> code, const char* message) {
+        auto request = makeRequest(code);
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.samplers.size() == 1u && plan->info.sampledPairs.size() == 1u, message);
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        request.context.memory = memory.Regions();
+        static_cast<void>(Recompile(request, *capture));
+    };
+    std::vector<std::uint32_t> restoredSamplerCode{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xbe930380u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20400u, 0xbe900380u, 0xbe910380u, 0xbe9c0414u, 0xbe9e0416u, 0xbf068011u, 0xbf850001u, 0x80128112u, 0xbe94041cu, 0xbe96041eu, 0x80118111u, 0xbf0a8211u, 0xbf85fff6u, 0xf09c0f08u, 0x00a20000u, 0x80108110u, 0xbf0a8210u, 0xbf85fff0u, 0x80138113u, 0xbf0a8213u, 0xbf85ffecu, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xe0700000u, 0x80060400u, 0x7d880090u, 0xbea23c6au, 0x4a020081u, 0xe0700000u, 0x80060100u, 0xbf810000u};
+    planRestoredSampler(restoredSamplerCode, "descriptor Phi: an S# copied out and back in three nested loops was planned as more than one sampler");
+    restoredSamplerCode.erase(restoredSamplerCode.end() - 6, restoredSamplerCode.end() - 1);
+    planRestoredSampler(restoredSamplerCode, "descriptor Phi: an S# copied out and back in three nested loops without a masked write was planned as more than one sampler");
+
     const auto entryWrites = [&](std::initializer_list<std::uint32_t> words) {
         auto code = loopCode;
         code.insert(code.begin() + 8, words);
