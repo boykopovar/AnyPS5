@@ -168,4 +168,14 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out2_shutdown audio_out2_waiting_push_shutdown audio_out2_advance_shutdown audio_out_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
+
+    add_test_executable(audio_out_system_state_tests tests/AudioOutSystemState.cpp)
+    target_include_directories(audio_out_system_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_system_state_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out_system_state_tests)
+    add_test(NAME audio_out_system_state COMMAND audio_out_system_state_tests)
+    if(WIN32)
+        set_tests_properties(audio_out_system_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
 endif()

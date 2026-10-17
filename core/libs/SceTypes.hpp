@@ -572,6 +572,12 @@ struct AudioOutPortState {
     std::uint64_t activeState;
 };
 
+struct AudioOutSystemState {
+    float loudness;
+    std::uint32_t pad;
+    std::uint64_t reserved[7];
+};
+
 struct Audio3dOpenParameters {
     std::uint64_t size_this;
     std::uint32_t granularity;
