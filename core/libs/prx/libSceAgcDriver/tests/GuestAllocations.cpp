@@ -253,6 +253,33 @@ void RunUnmappedGapTests() {
         mutation.Unmap(guest + page, page, release);
     }
     Require(!GuestMemory::Accessible(guest, page) && !GuestMemory::Accessible(guest + page, page), "unmapped arena pages are still accessible");
+    Require(mmap(guest, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == guest, "cannot reserve the arena test page");
+    Require(!GuestMemory::Accessible(guest, page), "a reserved arena page is accessible");
+    Require(mprotect(guest, page, PROT_READ | PROT_WRITE) == 0, "cannot open the reserved arena test page behind the registry");
+    Require(!GuestMemory::Accessible(guest, page), "a checked inaccessible arena page was queried again instead of read from the page table");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(guest, page, true, true, true);
+    }
+    Require(GuestMemory::Accessible(guest, page, true), "an arena page added through the registry kept its inaccessible state");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(guest, page, [](const void* pointer, std::size_t bytes, const void*, bool) { Require(munmap(const_cast<void*>(pointer), bytes) == 0, "cannot unmap the arena test page"); });
+    }
     GuestArena::GuestArenaRelease_nid_postfix(guest, 2 * page);
+    constexpr std::uint32_t ReadWriteProtection = 0x04;
+    auto* spare = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(page, page));
+    const auto spareAddress = reinterpret_cast<std::uintptr_t>(spare);
+    Require(!GuestMemory::Accessible(spare, page), "a reserved arena page is accessible");
+    GuestArena::GuestArenaCommit_nid_postfix(spare, page, ReadWriteProtection, page);
+    Require(GuestMemory::Accessible(spare, page, true), "an arena page committed outside the registry kept its inaccessible state");
+    GuestArena::GuestArenaReset_nid_postfix(spare, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
+    Require(!GuestMemory::Accessible(spare, page), "a reset arena page is still accessible");
+    GuestArena::GuestArenaSetProtection_nid_postfix(spareAddress, page, ReadWriteProtection);
+    Require(GuestMemory::Accessible(spare, page, true), "an arena page opened outside the registry kept its inaccessible state");
+    GuestArena::GuestArenaReset_nid_postfix(spare, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
+    GuestArena::GuestArenaRelease_nid_postfix(spare, page);
 #endif
 }
