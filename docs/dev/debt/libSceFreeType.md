@@ -1,0 +1,9 @@
+# libSceFreeType technical debt
+
+### Unknown function info
+
+- [FT_Init_FreeType, FT_New_Face, FT_Set_Pixel_Sizes, FT_Get_Char_Index, FT_Load_Glyph, FT_Render_Glyph](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - the PS4 library is taken to be FreeType 2 built for LP64: the face, size, charmap, glyph slot, bitmap and outline layouts follow the public headers of the bundled FreeType 2.13.3 with a 64-bit `long`, which matches the offsets the OpenOrbis samples read (`face->glyph` at 0x98, `slot->advance` at 0x80, `slot->bitmap` at 0x98, `slot->bitmap_left` at 0xc0). Which FreeType version and options the console library is built with is unknown, so the behaviour and error codes are those of FreeType 2.13.3. The OpenOrbis font, keyboard, threading, system and SDL2 samples import these six functions
+
+### Functional
+
+- [libSceFreeType](../../../core/libs/prx/libSceFreeType/src/GuestObjects.cpp) (libSceFreeType) - the guest reads copies of the bundled FreeType's face, size and glyph slot, updated after each call that changes them. Their private fields (`driver`, `memory`, `stream`, `sizes_list`, `extensions`) are null, and `subglyphs` is null whatever `num_subglyphs` reports. The outline points are copied as 64-bit coordinates; changes the guest makes to them and to the outline flags are written back before `FT_Render_Glyph`, while replacing the outline arrays, or a coordinate the host `FT_Pos` cannot hold, throws. `FT_New_Face` resolves the guest path and reads the whole file into memory; on Windows, where FreeType's `long` is 32 bits, a font of 2 GiB or more throws. Libraries and faces are never freed, since `FT_Done_Face` and `FT_Done_FreeType` are not exported. The bundled FreeType's own functions are kept out of the exports with `--exclude-libs` on Windows and Linux only; on macOS they stay exported, so a guest import of another FreeType function could resolve to them instead of failing at start-up
