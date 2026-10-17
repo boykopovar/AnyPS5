@@ -117,7 +117,7 @@ VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
 
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
     const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
-    const bool always = forced != nullptr && std::strcmp(forced, "1") == 0;
+    const bool always = forced != nullptr && (std::strcmp(forced, "1") == 0 || std::strcmp(forced, "copy") == 0);
     const auto sampled = [&](ShaderRecompiler::IrBufferFormat format) {
         VkFormatProperties properties{};
         formatProperties(physical, ResolveTextureFormat(static_cast<std::uint32_t>(format)), &properties);
@@ -134,6 +134,26 @@ VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat)
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
     return ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format)));
+}
+
+std::uint32_t SrgbCopyFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical, std::uint32_t decodeFormats) {
+    const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
+    if (forced != nullptr && std::strcmp(forced, "1") == 0) return 0u;
+    VkFormatProperties target{};
+    formatProperties(physical, VK_FORMAT_R8G8B8A8_UNORM, &target);
+    if ((target.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0) return 0u;
+    std::uint32_t formats = 0;
+    for (const auto format : {ShaderRecompiler::IrBufferFormat::Format8Srgb, ShaderRecompiler::IrBufferFormat::Format8_8Srgb}) {
+        if ((decodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) continue;
+        VkFormatProperties source{};
+        formatProperties(physical, ResolveTextureFormat(static_cast<std::uint32_t>(ShaderRecompiler::SrgbUnormFormat(format))), &source);
+        if ((source.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0) formats |= ShaderRecompiler::SrgbDecodeBit(format);
+    }
+    return formats;
+}
+
+bool SrgbExpandsToRgba8(const Context& context, std::uint32_t guestFormat) {
+    return (context.srgbCopyFormats & ShaderRecompiler::SrgbDecodeBit(static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat))) != 0u;
 }
 
 bool IsSrgbTextureFormat(std::uint32_t guestFormat) {
