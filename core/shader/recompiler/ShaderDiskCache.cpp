@@ -149,7 +149,7 @@ static_assert(fieldCount<IrResourcePlan>() == 23, "IrResourcePlan changed: updat
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 31, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 15, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 17, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 4, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -1043,6 +1043,8 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         });
         out.Value(column.unkeyed);
         out.Value(column.indirect);
+        out.Value(column.laneKey);
+        out.Value(column.implicitDerivatives);
         out.Value(column.indirectOffset);
         out.Value(column.indirectImmediate);
         out.Value(column.foldedAddend);
@@ -1198,6 +1200,8 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         });
         in.Value(column.unkeyed);
         in.Value(column.indirect);
+        in.Value(column.laneKey);
+        in.Value(column.implicitDerivatives);
         in.Value(column.indirectOffset);
         in.Value(column.indirectImmediate);
         in.Value(column.foldedAddend);

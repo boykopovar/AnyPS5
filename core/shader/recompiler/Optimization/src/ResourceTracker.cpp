@@ -113,6 +113,7 @@ public:
         if (!m_program.Resources().srtPlanComplete) {
             fail("SRT plan is not ready");
         }
+        FoldWaterfallDescriptors();
         SplitDescriptorPhis();
         PlanTableColumns();
         std::unordered_map<const IrBlock*, std::uint32_t> blockIndices;
@@ -751,6 +752,352 @@ private:
 
     static constexpr std::uint32_t phiSearchDepth = 8u;
 
+    struct LaneTableRead {
+        IrValue* written = nullptr;
+        IrValue* other = nullptr;
+        IrValue* load = nullptr;
+        std::uint32_t component = 0;
+    };
+
+    static bool MatchLaneTableRead(IrValue* value, LaneTableRead& read) {
+        value = value->Resolve();
+        read = LaneTableRead {};
+        if (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u) {
+            read.written = value->Argument(0)->Resolve();
+            read.other = value->Argument(2)->Resolve();
+            value = value->Argument(1)->Resolve();
+        }
+        const auto extract = value->Opcode();
+        const bool extracted = extract == IrOpcode::CompositeExtractU32x2 || extract == IrOpcode::CompositeExtractU32x3 || extract == IrOpcode::CompositeExtractU32x4;
+        if (extracted) {
+            if (value->ArgumentCount() != 2u || !immediateU32(value->Argument(1), read.component)) {
+                return false;
+            }
+            value = value->Argument(0)->Resolve();
+        }
+        const auto load = value->Opcode();
+        const bool wide = load == IrOpcode::LoadBufferU32x2 || load == IrOpcode::LoadBufferU32x3 || load == IrOpcode::LoadBufferU32x4;
+        if ((wide != extracted) || (!wide && load != IrOpcode::LoadBufferU32) || value->ArgumentCount() != 5u) {
+            return false;
+        }
+        read.load = value;
+        return true;
+    }
+
+    bool SameBufferAddress(const IrValue& left, const IrValue& right) const {
+        if (&left == &right) {
+            return true;
+        }
+        const IrValue* leftHandle = left.Argument(0)->Resolve();
+        const IrValue* rightHandle = right.Argument(0)->Resolve();
+        if (leftHandle != rightHandle) {
+            if (leftHandle->Opcode() != IrOpcode::GetBufferResource || rightHandle->Opcode() != IrOpcode::GetBufferResource || leftHandle->ArgumentCount() != 4u || rightHandle->ArgumentCount() != 4u) {
+                return false;
+            }
+            for (std::size_t dword = 0; dword < 4u; dword++) {
+                if (!EquivalentValue(m_program.Resources(), leftHandle->Argument(dword), rightHandle->Argument(dword))) {
+                    return false;
+                }
+            }
+        }
+        for (std::size_t argument = 1; argument < 4u; argument++) {
+            if (!EquivalentValue(m_program.Resources(), left.Argument(argument), right.Argument(argument))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool MayHoldDescriptor(std::array<IrValue*, 8> tuple, std::uint32_t depth, std::vector<std::array<IrValue*, 8>>& visited) const {
+        for (IrValue*& value : tuple) {
+            value = value->Resolve();
+        }
+        if (std::ranges::find(visited, tuple) != visited.end()) {
+            return false;
+        }
+        visited.push_back(tuple);
+        if (std::ranges::all_of(tuple, [](const IrValue* value) { return value->HasImmediate() && value->Type() == IrType::U32 && value->ImmediateU32() == 0u; })) {
+            return false;
+        }
+        constexpr SrtWalker walker;
+        LaneTableRead read;
+        const bool runtime = std::ranges::all_of(tuple, [&](const IrValue* value) { return value->Type() == IrType::U32 && walker.ValidateRuntimeValue(m_program.Resources(), value); });
+        if (runtime || std::ranges::all_of(tuple, [&](IrValue* value) { return MatchLaneTableRead(value, read); })) {
+            return true;
+        }
+        if (depth == phiSearchDepth) {
+            return true;
+        }
+        const IrValue& first = *tuple[0];
+        if (first.Opcode() == IrOpcode::SelectU32 && first.ArgumentCount() == 3u) {
+            const IrValue* condition = first.Argument(0)->Resolve();
+            std::array<IrValue*, 8> selected {};
+            std::array<IrValue*, 8> kept {};
+            for (std::size_t dword = 0; dword < tuple.size(); dword++) {
+                const IrValue& value = *tuple[dword];
+                if (value.Opcode() != IrOpcode::SelectU32 || value.ArgumentCount() != 3u || value.Argument(0)->Resolve() != condition) {
+                    return false;
+                }
+                selected[dword] = value.Argument(1);
+                kept[dword] = value.Argument(2);
+            }
+            return MayHoldDescriptor(selected, depth + 1u, visited) || MayHoldDescriptor(kept, depth + 1u, visited);
+        }
+        if (!first.IsPhi()) {
+            return false;
+        }
+        for (std::size_t edge = 0; edge < first.ArgumentCount(); edge++) {
+            std::array<IrValue*, 8> incoming {};
+            for (std::size_t dword = 0; dword < tuple.size(); dword++) {
+                if (!tuple[dword]->IsPhi() || tuple[dword]->Parent() != first.Parent()) {
+                    return false;
+                }
+                incoming[dword] = PhiIncoming(*tuple[dword], first.PhiBlock(edge));
+                if (incoming[dword] == nullptr) {
+                    return true;
+                }
+            }
+            if (MayHoldDescriptor(incoming, depth + 1u, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool TryMakeLaneTableColumn(IrValue& handle, bool implicitDerivatives, TableColumnPlan& plan) {
+        if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || handle.Parent() == nullptr) {
+            return false;
+        }
+        const auto& memoryInfo = m_program.Resources().memoryInfo;
+        std::array<LaneTableRead, 8> reads {};
+        const MemoryInfo* first = nullptr;
+        std::uint64_t firstPosition = 0;
+        for (std::uint32_t dword = 0; dword < reads.size(); dword++) {
+            auto& read = reads[dword];
+            if (!MatchLaneTableRead(handle.Argument(dword), read) || read.written != reads[0].written) {
+                return false;
+            }
+            const auto index = read.load->Flags<MemoryFlags>().index;
+            if (index >= memoryInfo.size()) {
+                return false;
+            }
+            const auto& memory = memoryInfo[index];
+            if (memory.kind != ResourceKind::Buffer || memory.dataBits != 32u || memory.formatted || memory.typed || !memory.idxen || read.component >= memory.dataDwords) {
+                return false;
+            }
+            const std::uint64_t position = static_cast<std::uint64_t>(memory.offset) + sizeof(std::uint32_t) * read.component;
+            if (dword == 0u) {
+                first = &memory;
+                firstPosition = position;
+            } else if (memory.offen != first->offen || position != firstPosition + sizeof(std::uint32_t) * dword || !SameBufferAddress(*reads[0].load, *read.load)) {
+                return false;
+            }
+        }
+        if (reads[0].other != nullptr) {
+            std::array<IrValue*, 8> others {};
+            std::ranges::transform(reads, others.begin(), &LaneTableRead::other);
+            std::vector<std::array<IrValue*, 8>> visited;
+            if (MayHoldDescriptor(others, 0u, visited)) {
+                return false;
+            }
+        }
+        const IrValue& load = *reads[0].load;
+        std::uint32_t voffset = 0;
+        std::uint32_t soffset = 0;
+        if (!immediateU32(load.Argument(3), soffset) || !immediateU32(load.Argument(2), voffset)) {
+            return false;
+        }
+        const std::uint64_t entryOffset = firstPosition + voffset;
+        IrValue* key = load.Argument(1)->Resolve();
+        if (entryOffset > std::numeric_limits<std::uint32_t>::max() || key->Type() != IrType::U32) {
+            return false;
+        }
+        DescriptorSource heapSource;
+        std::uint32_t heapIndex = 0;
+        if (!MakeRuntimeSource(*load.Argument(0)->Resolve(), IrOpcode::GetBufferResource, 4u, heapIndex, heapSource)) {
+            return false;
+        }
+        TableColumn column;
+        column.heapSource = heapIndex;
+        column.addend = soffset;
+        column.offset = static_cast<std::uint32_t>(entryOffset);
+        column.dwordCount = 8u;
+        column.maxKey = possibleU32Bits(key);
+        column.unkeyed = true;
+        column.laneKey = true;
+        column.implicitDerivatives = implicitDerivatives;
+        if (reads[0].written != nullptr) {
+            const std::array<IrValue*, 3> arguments {reads[0].written, key, &m_builder.Constant(std::numeric_limits<std::uint32_t>::max())};
+            key = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
+        }
+        DescriptorSource columnSource = heapSource;
+        columnSource.tableColumn = column;
+        plan.handle = &handle;
+        plan.source = InternSource(columnSource);
+        plan.offset = key;
+        auto& shared = *m_sources[plan.source].tableColumn;
+        shared.maxKey = std::max(shared.maxKey, column.maxKey);
+        return true;
+    }
+
+    bool ImplicitDerivatives(const IrValue& inst) const {
+        if (inst.Opcode() == IrOpcode::ImageQueryLod) {
+            return true;
+        }
+        const auto& memoryInfo = m_program.Resources().memoryInfo;
+        const auto index = inst.Flags<MemoryFlags>().index;
+        return inst.Opcode() == IrOpcode::ImageSampleRaw && (index >= memoryInfo.size() || !ImageSampleExplicitLod(memoryInfo[index].imageSampleFlags, m_program.Resources().stage));
+    }
+
+    static bool LaneRead(const IrValue& value) {
+        return (value.Opcode() == IrOpcode::ReadLane || value.Opcode() == IrOpcode::ReadFirstLane) && value.ArgumentCount() == 2u;
+    }
+
+    static bool FoldableImageRead(IrOpcode op) {
+        switch (op) {
+            case IrOpcode::ImageSampleRaw:
+            case IrOpcode::ImageGatherRaw:
+            case IrOpcode::ImageQueryLod:
+            case IrOpcode::ImageQueryDimensions:
+            case IrOpcode::ImageRead: return true;
+            default: return false;
+        }
+    }
+
+    static IrValue* ObservingCondition(const IrValue& inst) {
+        IrValue* condition = nullptr;
+        std::vector<const IrValue*> pending {&inst};
+        while (!pending.empty()) {
+            const IrValue* value = pending.back();
+            pending.pop_back();
+            for (const IrUse& use : value->OperandUses()) {
+                const IrValue* user = use.user;
+                if (user->IsIdentity() || (user->Opcode() == IrOpcode::CompositeExtractU32x4 && use.operand == 0u)) {
+                    pending.push_back(user);
+                    continue;
+                }
+                if (user->Opcode() != IrOpcode::SelectU32 || user->ArgumentCount() != 3u || use.operand != 1u) {
+                    return nullptr;
+                }
+                IrValue* selector = user->Argument(0)->Resolve();
+                if (condition != nullptr && selector != condition) {
+                    return nullptr;
+                }
+                condition = selector;
+            }
+        }
+        return condition;
+    }
+
+    using Equalities = std::vector<std::pair<const IrValue*, const IrValue*>>;
+
+    static Equalities ImpliedEqualities(IrValue* condition) {
+        constexpr std::size_t limit = 1024u;
+        Equalities equal;
+        std::vector<std::pair<IrValue*, bool>> pending {{condition, true}};
+        for (std::size_t visited = 0; !pending.empty() && visited < limit; visited++) {
+            auto [value, holds] = pending.back();
+            pending.pop_back();
+            value = value->Resolve();
+            const auto op = value->Opcode();
+            if (op == IrOpcode::LogicalNot && value->ArgumentCount() == 1u) {
+                pending.emplace_back(value->Argument(0), !holds);
+            } else if (((op == IrOpcode::LogicalAnd && holds) || (op == IrOpcode::LogicalOr && !holds)) && value->ArgumentCount() == 2u) {
+                pending.emplace_back(value->Argument(0), holds);
+                pending.emplace_back(value->Argument(1), holds);
+            } else if (((op == IrOpcode::IEqual32 && holds) || (op == IrOpcode::INotEqual32 && !holds)) && value->ArgumentCount() == 2u) {
+                equal.emplace_back(value->Argument(0)->Resolve(), value->Argument(1)->Resolve());
+            } else if (((op == IrOpcode::IEqual64 && holds) || (op == IrOpcode::INotEqual64 && !holds)) && value->ArgumentCount() == 2u) {
+                const IrValue* left = value->Argument(0)->Resolve();
+                const IrValue* right = value->Argument(1)->Resolve();
+                if (left->Opcode() != IrOpcode::CompositeConstructU64 || right->Opcode() != IrOpcode::CompositeConstructU64 || left->ArgumentCount() != 2u || right->ArgumentCount() != 2u) {
+                    continue;
+                }
+                for (std::size_t half = 0; half < 2u; half++) {
+                    equal.emplace_back(left->Argument(half)->Resolve(), right->Argument(half)->Resolve());
+                }
+            }
+        }
+        return equal;
+    }
+
+    void FoldLaneReads(IrValue& inst, std::uint32_t slot, IrOpcode expected, std::size_t width, const Equalities& equal) {
+        IrValue* handle = inst.Argument(slot)->Resolve();
+        if (handle->Opcode() != expected || handle->ArgumentCount() != width) {
+            return;
+        }
+        constexpr SrtWalker walker;
+        std::vector<IrValue*> dwords;
+        bool valid = true;
+        bool folded = false;
+        for (std::size_t dword = 0; dword < width; dword++) {
+            IrValue* value = handle->Argument(dword)->Resolve();
+            valid = valid && value->Type() == IrType::U32 && walker.ValidateRuntimeValue(m_program.Resources(), value);
+            if (!LaneRead(*value)) {
+                dwords.push_back(value);
+                continue;
+            }
+            IrValue* source = value->Argument(0)->Resolve();
+            const bool proven = std::ranges::any_of(equal, [&](const auto& pair) {
+                return (pair.first == value && pair.second == source) || (pair.first == source && pair.second == value);
+            });
+            if (!proven) {
+                return;
+            }
+            dwords.push_back(source);
+            folded = true;
+        }
+        if (valid || !folded) {
+            return;
+        }
+        IrValue* copy = EmitCopy(*handle, dwords, inst);
+        bool accepted = std::ranges::all_of(dwords, [&](IrValue* value) {
+            return value->Type() == IrType::U32 && walker.ValidateRuntimeValue(m_program.Resources(), value);
+        });
+        static const bool tables = std::getenv("APS5_NO_IMAGE_TABLES") == nullptr;
+        TableColumnPlan plan;
+        if (!accepted && tables && expected == IrOpcode::GetImageResource && TryMakeLaneTableColumn(*copy, ImplicitDerivatives(inst), plan)) {
+            m_tableColumns.push_back(std::move(plan));
+            accepted = true;
+        }
+        if (!accepted) {
+            copy->Invalidate();
+            copy->Parent()->RemoveInstruction(copy);
+            return;
+        }
+        inst.ReplaceArgument(slot, copy);
+        m_foldedHandles.push_back(copy);
+    }
+
+    void FoldWaterfallDescriptors() {
+        std::vector<IrValue*> candidates;
+        for (auto& block : m_program.Blocks()) {
+            for (IrValue* inst : block->Instructions()) {
+                if (FoldableImageRead(inst->Opcode())) {
+                    candidates.push_back(inst);
+                }
+            }
+        }
+        for (IrValue* inst : candidates) {
+            const bool sampler = ImageOpcodeInfoOf(inst->Opcode()).needsSampler;
+            if (inst->Parent() == nullptr || inst->ArgumentCount() < (sampler ? 2u : 1u)) {
+                continue;
+            }
+            IrValue* condition = ObservingCondition(*inst);
+            if (condition == nullptr) {
+                continue;
+            }
+            const Equalities equal = ImpliedEqualities(condition);
+            if (equal.empty()) {
+                continue;
+            }
+            FoldLaneReads(*inst, 0u, IrOpcode::GetImageResource, 8u, equal);
+            if (sampler) {
+                FoldLaneReads(*inst, 1u, IrOpcode::GetSamplerResource, 4u, equal);
+            }
+        }
+    }
+
     static bool SplittableImageRead(const IrValue& inst) {
         switch (inst.Opcode()) {
             case IrOpcode::ImageSampleRaw:
@@ -1263,6 +1610,9 @@ private:
             }
         }
         for (IrValue* inst : candidates) {
+            if (std::ranges::find(m_foldedHandles, inst->Argument(0)->Resolve()) != m_foldedHandles.end()) {
+                continue;
+            }
             SplitDescriptorPhi(*inst);
         }
     }
@@ -1726,6 +2076,7 @@ private:
     std::vector<TableColumnPlan> m_tableColumns;
     std::vector<const IrValue*> m_tablePlanningReads;
     std::vector<std::uint32_t> m_tablePlanningMemory;
+    std::vector<const IrValue*> m_foldedHandles;
     struct EdgeSelectorEntry {
         IrBlock* block = nullptr;
         std::vector<bool> edges;
