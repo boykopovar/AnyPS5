@@ -166,6 +166,7 @@ void Driver::execute(const Submission& submission) {
         const auto header = submission.commands[cursor];
         if (Pm4::FillerPacket(header)) { ++cursor; continue; }
         const auto count = Pm4::PacketWords(header);
+        if (Pm4::PureNopPacket(header)) { cursor += count; continue; }
         const auto packet = std::span(submission.commands).subspan(cursor, count);
         const auto opcode = (header >> 8u) & 0xffu;
         auto nextCursor = cursor + count;

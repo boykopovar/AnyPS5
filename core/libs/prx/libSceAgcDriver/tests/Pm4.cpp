@@ -104,6 +104,11 @@ void testNopPad() {
     largest[0] = 0xfffe1000u;
     check(AgcDriver::Pm4::PacketWords(largest[0]) == largest.size(), "the largest counted NOP is not sized by its count");
     AgcDriver::Pm4::Validate(largest, 0);
+    check(AgcDriver::Pm4::PureNopPacket(makePacket(0x10, {0})[0]), "makePacket NOP was not detected as pure NOP");
+    check(AgcDriver::Pm4::PureNopPacket(0xc0021000u), "counted NOP was not detected as pure NOP");
+    check(!AgcDriver::Pm4::PureNopPacket(0xffff1000u), "type 2 filler was incorrectly flagged as pure NOP");
+    check(!AgcDriver::Pm4::PureNopPacket(makePacket(0x10, {0}, 0x0b << 2)[0]), "marker NOP was incorrectly flagged as pure NOP");
+    check(!AgcDriver::Pm4::PureNopPacket(0xc0001001u), "predicated NOP was incorrectly flagged as pure NOP");
 }
 
 void testRegisters() {
@@ -1080,7 +1085,7 @@ void testConditionalSubmission() {
 
 void testNopPadSubmission() {
     alignas(8) static std::uint32_t zero = 0;
-    static std::array<std::uint32_t, 3> results{};
+    static std::array<std::uint32_t, 5> results{};
     results.fill(0);
     auto words = joinPackets({{0xffff1000u, 0xc0027904u, 0x342u, 0xce200000u, 0u, 0xc0017904u, 0x342u, 0xcea00000u}, writeWord(results[0], 81), {0xffff1000u}});
     submitWords(words);
@@ -1090,6 +1095,10 @@ void testNopPadSubmission() {
     submitWords(words);
     AgcDriverWaitIdle_nid_postfix();
     check(results[1] == 0 && results[2] == 83, "COND_EXEC did not count a one-dword NOP as one dword");
+    words = joinPackets({makePacket(0x10, {0, 0}), writeWord(results[3], 84), makePacket(0x10, {0, 0, 0, 0}), writeWord(results[4], 85)});
+    submitWords(words);
+    AgcDriverWaitIdle_nid_postfix();
+    check(results[3] == 84 && results[4] == 85, "counted pure NOPs stopped the packets after them");
 }
 
 std::vector<std::uint32_t> branch(std::uint32_t mode, std::uint32_t function, const std::vector<std::uint32_t>* first, const std::vector<std::uint32_t>* second) {

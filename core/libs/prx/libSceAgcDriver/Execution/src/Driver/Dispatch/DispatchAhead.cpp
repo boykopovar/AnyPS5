@@ -132,6 +132,10 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
         }
         const auto count = Pm4::PacketWords(header);
         if (cursor + count > commands.size()) break;
+        if (Pm4::PureNopPacket(header)) {
+            cursor += count;
+            continue;
+        }
         const auto packet = std::span(commands).subspan(cursor, count);
         const auto opcode = (header >> 8u) & 0xffu;
         const auto next = cursor + count;
