@@ -472,6 +472,23 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
 #endif
 }
 
+static int FormatSecure(char* buffer, size_t size, const char* format, const void* args) {
+    constexpr size_t RsizeMax = SIZE_MAX >> 1;
+    int result = -1;
+    if (buffer != nullptr && format != nullptr && args != nullptr && size != 0 && size <= RsizeMax) {
+        try {
+            result = LibcDetail::FormatWindows(buffer, size, format, args, nullptr, true);
+        } catch (const LibcDetail::FormatConstraintViolation&) {
+        }
+    }
+    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
+    return result;
+}
+
+int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
+    return FormatSecure(buffer, size, format, args);
+}
+
 #ifdef _WIN32
 
 int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaList* args) {
@@ -479,14 +496,10 @@ int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaLi
     return ScanGuest(buffer, format, true, [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<unsigned int>(); });
 }
 
-int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    return LibcDetail::FormatWindows(buffer, size, format, args);
-}
-
 int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
+    const int result = FormatSecure(buffer, size, format, args);
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -505,15 +518,6 @@ int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaLi
     RejectGuestWideScan(format);
     LibcDetail::FormatArguments arguments(args);
     return ScanGuest(buffer, format, true, [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<unsigned int>(); });
-}
-
-int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    if (HasGuestWideFormat(format)) return LibcDetail::FormatWindows(buffer, size, format, args);
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
-    const int result = std::vsnprintf(buffer, size, format, copy);
-    va_end(copy);
-    return result;
 }
 
 int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
@@ -536,7 +540,7 @@ int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* forma
 int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = HasGuestWideFormat(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, size, format, args);
+    const int result = FormatSecure(buffer, size, format, args);
     va_end(args);
     return result;
 }
