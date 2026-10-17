@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <sys/mman.h>
 #endif
@@ -33,6 +34,72 @@ constexpr wchar_t HostHoleMode[] = L"--host-hole";
 void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
+
+#ifdef _WIN32
+bool CheckMetadataCommit() {
+    std::uintptr_t arena = 0;
+    std::size_t bytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &bytes);
+    if (bytes == 0 || !GuestArena::GuestArenaWriteWatched_nid_postfix()) return false;
+    PROCESS_MEMORY_COUNTERS_EX before{};
+    PROCESS_MEMORY_COUNTERS_EX after{};
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&before), sizeof(before)), "cannot measure private commit before tracking");
+    Require(WriteWatched(), "the arena is not write watched");
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&after), sizeof(after)), "cannot measure private commit after tracking");
+    const auto committed = after.PrivateUsage > before.PrivateUsage ? after.PrivateUsage - before.PrivateUsage : 0;
+    std::cout << "write-tracker initialization: " << committed / 1024 << " KiB private commit for " << (bytes >> 30u) << " GiB guest arena\n";
+    Require(committed < (64u << 20u), "write tracking committed dense generation tables for untouched guest ranges");
+    const auto generation = TrackerGeneration();
+    for (std::uint64_t offset = 0; offset + Block <= bytes; offset += std::uint64_t{1} << 32u) {
+        Require(NewestStamp(arena + offset, Block) == 0 && UnchangedSince(arena + offset, Block, generation), "an untouched leaf has a write stamp");
+    }
+    PROCESS_MEMORY_COUNTERS_EX queried{};
+    Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&queried), sizeof(queried)), "cannot measure private commit after empty-range queries");
+    Require(queried.PrivateUsage < after.PrivateUsage + (4u << 20u), "queries allocated untouched tracking leaves");
+    return true;
+}
+
+void CheckSparseLeafBoundaries() {
+    constexpr std::uintptr_t LeafBytes = std::uintptr_t{1} << 32;
+    std::uintptr_t arena = 0;
+    std::size_t arenaBytes = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&arena, &arenaBytes);
+    const auto boundary = arena + (arenaBytes / (2 * LeafBytes)) * LeafBytes;
+    constexpr std::size_t bytes = 4 * Block;
+    void* memory = GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(boundary - Block, bytes, Block);
+    struct Release {
+        void* memory;
+        ~Release() {
+            GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+        }
+    } release{memory};
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    Require(base == boundary - Block, "the sparse tracking fixture did not straddle its 4 GiB leaf boundary");
+    GuestArena::GuestArenaCommit_nid_postfix(memory, bytes, PAGE_READWRITE, bytes);
+    std::memset(memory, 0x11, bytes);
+    BumpCollectEpoch();
+    const auto collected = CollectWrites(base, bytes);
+    Require(collected != 0, "the cross-leaf range was not collected");
+    MarkWritten(boundary, 4);
+    Require(UnchangedSince(base, Block, collected) && !UnchangedSince(base, bytes, collected), "a driver store across a leaf boundary did not stamp exactly its block");
+    Require(UnchangedSinceCollected(boundary, Block, collected), "the cross-leaf driver store became a CPU store");
+    static_cast<volatile std::uint8_t*>(memory)[0] = 0x22;
+    CollectWritesUncached(base, bytes);
+    Require(!UnchangedSinceCollected(base, Block, collected), "a CPU store before the leaf boundary was missed");
+    Require(UnchangedSinceCollected(boundary, 3 * Block, collected), "the CPU store stamped the other leaf");
+    Unwatch(base, bytes);
+    const auto hint = UntrackedHint(base, bytes);
+    Require(hint != 0, "the cross-leaf untracked range has no hint");
+    static_cast<volatile std::uint8_t*>(memory)[0] = 0x33;
+    static_cast<volatile std::uint8_t*>(memory)[3 * Block] = 0x44;
+    BumpCollectEpoch();
+    const auto changed = UntrackedHint(base, bytes);
+    Require(changed > hint, "cross-leaf CPU stores did not change their untracked hint");
+    Require(UntrackedHint(base, Block) == changed && UntrackedHint(base + 3 * Block, Block) == changed, "a cross-leaf hint store was missed");
+    Require(UntrackedHint(boundary, 2 * Block) == hint, "hint stores changed untouched blocks in the other leaf");
+}
+#endif
 
 void* AllocateWatched(std::size_t bytes, bool crossLeaf = false) {
 #ifdef _WIN32
@@ -920,6 +987,11 @@ void CheckCommittedRanges() {
 
 int main() {
     try {
+#ifdef _WIN32
+        if (std::wstring_view(GetCommandLineW()).ends_with(L"--metadata-commit")) {
+            return CheckMetadataCommit() ? 0 : 77;
+        }
+#endif
         if (!WriteWatched()) {
             std::cout << "no write watching: skipped\n";
             return 77;
@@ -936,6 +1008,7 @@ int main() {
         CheckUnwatch();
         CheckNewestStamp();
 #ifdef _WIN32
+        CheckSparseLeafBoundaries();
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
         CheckUntrackedHint();

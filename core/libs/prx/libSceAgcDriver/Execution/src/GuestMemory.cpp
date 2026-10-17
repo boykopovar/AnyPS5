@@ -758,25 +758,21 @@ struct WriteTracker {
     std::mutex mutex;
     bool initialized = false;
     bool watched = false;
-#ifdef _WIN32
-    std::uintptr_t base = 0;
-    std::size_t size = 0;
-    // Generation of the last collected write per 64 KiB block of the arena.
-    std::vector<std::uint32_t> blocks;
-    // The same, stamped by collects only (dirty pages = CPU stores), never by MarkWritten: the
-    // late label rule asks whether the CPU touched a label's block, and the driver's own GPU label
-    // records in the same block (the title's per-job slots are 0x20 apart) must not count.
-    std::vector<std::uint32_t> cpuBlocks;
-    WriteWatchCoverage coverage;
-    std::vector<std::uint32_t> hintBlocks;
-#else
     static constexpr std::size_t LeafBlocks = std::size_t{1} << 16;
-    static constexpr std::size_t LeafCount = std::size_t{1} << 15;
     struct Leaf {
         std::array<std::uint32_t, LeafBlocks> blocks{};
         std::array<std::uint32_t, LeafBlocks> cpuBlocks{};
+#ifdef _WIN32
+        std::array<std::uint32_t, LeafBlocks> hintBlocks{};
+#endif
     };
     std::vector<std::unique_ptr<Leaf>> leaves;
+#ifdef _WIN32
+    std::uintptr_t base = 0;
+    std::size_t size = 0;
+    WriteWatchCoverage coverage;
+#else
+    static constexpr std::size_t LeafCount = std::size_t{1} << 15;
 #endif
     // Atomic only so a per-thread memo hit can read it without the mutex (every mutation and every
     // stamp still happen under it): a hit must return the current value, including MarkWritten
@@ -808,10 +804,8 @@ struct WriteTracker {
         GuestArena::GuestArenaRange_nid_postfix(&base, &size);
         watched = size != 0 && GuestArena::GuestArenaWriteWatched_nid_postfix();
         if (!watched) return;
-        blocks.assign(size / WriteBlockBytes + 1, 0);
-        cpuBlocks.assign(size / WriteBlockBytes + 1, 0);
+        leaves.resize((size / WriteBlockBytes + LeafBlocks) / LeafBlocks);
         coverage.Initialize(base, size);
-        hintBlocks.assign(size / WriteBlockBytes + 1, 0);
         pages.resize(1u << 16);
         GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
 #else
@@ -854,21 +848,21 @@ struct WriteTracker {
             if (!coverage.Covers(blockBegin(block), 1)) continue;
             if (!started) ++generation;
             started = true;
-            hintBlocks[block] = generation;
+            stampHint(block);
         }
     }
 
     bool hinted(std::uint64_t first, std::uint64_t stop) const {
         if (first >= stop || first < base || stop > base + size) return false;
         for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) {
-            if (hintBlocks[block] == 0 || coverage.Covers(blockBegin(block), 1)) return false;
+            if (hintOf(block) == 0 || coverage.Covers(blockBegin(block), 1)) return false;
         }
         return !GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
     }
 
     std::uint32_t newestHint(std::uint64_t first, std::uint64_t stop) const {
         std::uint32_t newest = 0;
-        for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) newest = std::max(newest, hintBlocks[block]);
+        for (auto block = blockOf(first); block <= blockOf(stop - 1); ++block) newest = std::max(newest, hintOf(block));
         return newest;
     }
 #endif
@@ -934,13 +928,26 @@ struct WriteTracker {
         slot = {stampGeneration, from, to};
     }
 
-    std::uint32_t stampOf(std::uint64_t block) const {
+    Leaf& leafFor(std::uint64_t block) {
+        auto& leaf = leaves[block / LeafBlocks];
+        if (leaf == nullptr) leaf = std::make_unique<Leaf>();
+        return *leaf;
+    }
+
 #ifdef _WIN32
-        return blocks[block];
-#else
+    void stampHint(std::uint64_t block) {
+        leafFor(block).hintBlocks[block % LeafBlocks] = generation;
+    }
+
+    std::uint32_t hintOf(std::uint64_t block) const {
+        const auto& leaf = leaves[block / LeafBlocks];
+        return leaf != nullptr ? leaf->hintBlocks[block % LeafBlocks] : 0;
+    }
+#endif
+
+    std::uint32_t stampOf(std::uint64_t block) const {
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->blocks[block % LeafBlocks] : 0;
-#endif
     }
 
     static constexpr std::size_t UnstampedSlots = 1u << 16;
@@ -980,9 +987,6 @@ struct WriteTracker {
     bool unchanged(std::uint64_t first, std::uint64_t last, std::uint64_t since) const {
         if (first == last) return stampOf(first) <= since;
         const auto newer = [since](std::uint32_t stamp) { return stamp > since; };
-#ifdef _WIN32
-        return std::none_of(blocks.begin() + first, blocks.begin() + last + 1, newer);
-#else
         while (first <= last) {
             const auto index = first / LeafBlocks;
             const auto end = std::min<std::uint64_t>(last + 1, (index + 1) * LeafBlocks);
@@ -993,30 +997,19 @@ struct WriteTracker {
             first = end;
         }
         return true;
-#endif
     }
 
     std::uint32_t cpuStampOf(std::uint64_t block) const {
-#ifdef _WIN32
-        return cpuBlocks[block];
-#else
         const auto& leaf = leaves[block / LeafBlocks];
         return leaf != nullptr ? leaf->cpuBlocks[block % LeafBlocks] : 0;
-#endif
     }
 
     void stamp(std::uint64_t block, std::uint32_t stampGeneration, StampKind kind) {
         const bool cpu = kind == StampKind::Cpu || kind == StampKind::ImportWindow;
         const bool stored = kind != StampKind::ImportWindow;
-#ifdef _WIN32
-        if (stored) blocks[block] = stampGeneration;
-        if (cpu) cpuBlocks[block] = stampGeneration;
-#else
-        auto& leaf = leaves[block / LeafBlocks];
-        if (leaf == nullptr) leaf = std::make_unique<Leaf>();
-        if (stored) leaf->blocks[block % LeafBlocks] = stampGeneration;
-        if (cpu) leaf->cpuBlocks[block % LeafBlocks] = stampGeneration;
-#endif
+        auto& leaf = leafFor(block);
+        if (stored) leaf.blocks[block % LeafBlocks] = stampGeneration;
+        if (cpu) leaf.cpuBlocks[block % LeafBlocks] = stampGeneration;
     }
 };
 
@@ -1611,7 +1604,7 @@ bool walkHints(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop) {
         if (!GuestArena::GuestArenaCollectWrites_nid_postfix(static_cast<std::uintptr_t>(cursor), static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, true)) return false;
         if (count != 0 && !marked) ++tracker.generation;
         marked = marked || count != 0;
-        for (std::size_t i = 0; i < count; ++i) tracker.hintBlocks[tracker.blockOf(reinterpret_cast<std::uintptr_t>(tracker.pages[i]))] = tracker.generation;
+        for (std::size_t i = 0; i < count; ++i) tracker.stampHint(tracker.blockOf(reinterpret_cast<std::uintptr_t>(tracker.pages[i])));
         if (count < tracker.pages.size()) break;
         cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
     }
