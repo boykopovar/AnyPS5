@@ -19,6 +19,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Time.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileLock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
@@ -182,6 +183,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_wide_strings COMMAND guest_wide_string_tests)
     if(WIN32)
         set_tests_properties(guest_wide_strings PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_atomic_builtins_tests ${LIBS_INCLUDE_DIR}/tests/GuestAtomicBuiltins.cpp)
+    target_include_directories(guest_atomic_builtins_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_atomic_builtins_tests PRIVATE libc)
+    configure_windows_unwind(guest_atomic_builtins_tests)
+    add_test(NAME guest_atomic_builtins COMMAND guest_atomic_builtins_tests)
+    if(WIN32)
+        set_tests_properties(guest_atomic_builtins PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_wide_conversion_tests ${LIBS_INCLUDE_DIR}/tests/GuestWideConversion.cpp)
