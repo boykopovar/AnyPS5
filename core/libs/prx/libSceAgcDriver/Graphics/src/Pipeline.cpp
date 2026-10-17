@@ -105,6 +105,51 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
         }
         return;
     }
+    const auto readsProvokingVertex = [](const ShaderRecompiler::RecompileResult& program) {
+        if (std::any_of(program.fragmentParameters.begin(), program.fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) {
+            return parameter.flat || parameter.perVertex || parameter.custom || parameter.flatP10;
+        })) return true;
+        const auto words = program.spirv.Words();
+        if (words.size() < 5) return true;
+        constexpr std::uint32_t NoMember = 0xffffffffu;
+        const auto key = [](std::uint32_t target, std::uint32_t member) { return (static_cast<std::uint64_t>(target) << 32u) | member; };
+        std::unordered_map<std::uint64_t, std::uint32_t> builtIns;
+        std::vector<std::uint64_t> perVertexValues;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            if (count == 0 || count > words.size() - cursor) return true;
+            const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            const std::size_t decoration = op == spv::OpDecorate ? 2 : op == spv::OpMemberDecorate ? 3 : 0;
+            if (decoration != 0 && count > decoration) {
+                const auto target = key(words[cursor + 1], op == spv::OpMemberDecorate ? words[cursor + 2] : NoMember);
+                if (words[cursor + decoration] == spv::DecorationFlat || words[cursor + decoration] == spv::DecorationPerVertexKHR) perVertexValues.push_back(target);
+                if (words[cursor + decoration] == spv::DecorationBuiltIn && count > decoration + 1) builtIns[target] = words[cursor + decoration + 1];
+            }
+            cursor += count;
+        }
+        return std::any_of(perVertexValues.begin(), perVertexValues.end(), [&](std::uint64_t target) {
+            const auto builtIn = builtIns.find(target);
+            if (builtIn == builtIns.end()) return true;
+            switch (builtIn->second) {
+            case spv::BuiltInFragCoord:
+            case spv::BuiltInPointCoord:
+            case spv::BuiltInFrontFacing:
+            case spv::BuiltInSampleId:
+            case spv::BuiltInSamplePosition:
+            case spv::BuiltInSampleMask:
+            case spv::BuiltInHelperInvocation:
+            case spv::BuiltInSubgroupSize:
+            case spv::BuiltInSubgroupLocalInvocationId:
+                return false;
+            default:
+                return true;
+            }
+        });
+    };
+    const bool observed = std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
+        return shader.stage == ShaderRecompiler::ShaderStage::Fragment && (shader.program == nullptr || readsProvokingVertex(*shader.program));
+    });
+    if (!context.provokingVertexLast && !observed) return;
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
     Require(!state.rectList && state.stages.path == ShaderPath::Vertex && !state.stages.mesh && !state.stages.tessellation, "last provoking vertex is unsupported for generated primitive pipelines");
     Require(state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "last provoking vertex is unsupported for this primitive topology");
