@@ -546,4 +546,106 @@ int APS5_VABI sceRtcTickAddYears(RtcTick* dst, const RtcTick* src, int16_t years
     return addMonths(dst, src, static_cast<std::int64_t>(years) * 12);
 }
 
+int APS5_VABI sceRtcInit(void) {
+    return 0;
+}
+
+int APS5_VABI sceRtcEnd(void) {
+    return 0;
+}
+
+int APS5_VABI sceRtcCompareTick(const RtcTick* first, const RtcTick* second) {
+    if (!first || !second) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (first->tick < second->tick) return -1;
+    return first->tick > second->tick ? 1 : 0;
+}
+
+int APS5_VABI sceRtcGetCurrentRawNetworkTick(RtcTick* tick) {
+    return sceRtcGetCurrentTick(tick);
+}
+
+int APS5_VABI sceRtcGetCurrentAdNetworkTick(RtcTick* tick) {
+    return sceRtcGetCurrentTick(tick);
+}
+
+int APS5_VABI sceRtcGetCurrentDebugNetworkTick(RtcTick* tick) {
+    return sceRtcGetCurrentTick(tick);
+}
+
+static int checkSettableTick(const RtcTick* tick) {
+    if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
+    return tick->tick < UNIX_EPOCH_TICK ? SCE_RTC_ERROR_INVALID_VALUE : 0;
+}
+
+int APS5_VABI sceRtcSetCurrentTick(const RtcTick* tick) {
+    if (const int result = checkSettableTick(tick); result != 0) return result;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRtcSetCurrentNetworkTick(const RtcTick* tick) {
+    if (const int result = checkSettableTick(tick); result != 0) return result;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRtcSetCurrentAdNetworkTick(const RtcTick* tick) {
+    if (const int result = checkSettableTick(tick); result != 0) return result;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRtcSetCurrentDebugNetworkTick(const RtcTick* tick) {
+    if (const int result = checkSettableTick(tick); result != 0) return result;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRtcSetConf(int first, int second, int third, int fourth) {
+    (void)first;
+    (void)second;
+    (void)third;
+    (void)fourth;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, int time_zone_minutes, int precision) {
+    if (!date_time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcTick now{};
+    if (!utc) {
+        now.tick = currentTick();
+        utc = &now;
+    }
+    if (time_zone_minutes < -1439 || time_zone_minutes > 1439 || precision < 0 || precision > 6) return SCE_RTC_ERROR_INVALID_VALUE;
+    RtcTick local{};
+    if (const int result = addTicks(&local, utc, time_zone_minutes, TICKS_PER_MINUTE); result != 0) return result;
+    const RtcDateTime time = fromTick(local.tick);
+    int written = std::snprintf(date_time, 20, "%04u-%02u-%02uT%02u:%02u:%02u", time.year, time.month, time.day, time.hour, time.minute, time.second);
+    if (precision != 0) {
+        std::uint32_t divisor = 1;
+        for (int digits = precision; digits < 6; ++digits) divisor *= 10;
+        written += std::snprintf(date_time + written, 8, ".%0*u", precision, time.microsecond / divisor);
+    }
+    if (time_zone_minutes == 0) {
+        std::snprintf(date_time + written, 2, "Z");
+    } else {
+        const int offset = time_zone_minutes < 0 ? -time_zone_minutes : time_zone_minutes;
+        std::snprintf(date_time + written, 7, "%c%02d:%02d", time_zone_minutes < 0 ? '-' : '+', offset / 60, offset % 60);
+    }
+    return 0;
+}
+
+int APS5_VABI sceRtcFormatRFC3339PreciseLocalTime(char* date_time, const RtcTick* utc, int precision) {
+    if (!date_time) return SCE_RTC_ERROR_INVALID_POINTER;
+    RtcTick now{};
+    if (!utc) {
+        now.tick = currentTick();
+        utc = &now;
+    }
+    if (precision < 0 || precision > 6) return SCE_RTC_ERROR_INVALID_VALUE;
+    if (utc->tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    return sceRtcFormatRFC3339Precise(date_time, utc, localOffsetMinutes(*utc), precision);
+}
+
 }
