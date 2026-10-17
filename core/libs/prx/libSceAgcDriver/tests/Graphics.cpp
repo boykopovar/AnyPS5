@@ -6871,6 +6871,14 @@ void unorm10_11_11TargetTests() {
     auto plainState = state;
     plainState.colors[0].packing = ColorExportPacking::None;
     expectFailure([&] { validate(packed, plainState); }, "float4 colors");
+    auto targetless = plainState;
+    targetless.colors.clear();
+    targetless.blends.clear();
+    Require(validate(packed, targetless) == std::set<std::uint32_t>{0u}, "a uint4 export from a draw with no color target was refused");
+    auto gap = plainState;
+    gap.blends.insert(gap.blends.begin(), gap.blends.front());
+    gap.colors[0].exportIndex = 1;
+    Require(validate(packed, gap) == std::set<std::uint32_t>{0u}, "a uint4 export into the unused slot below a color target was refused");
     auto uintExport = request;
     uintExport.context.pixel->targetOutputMode[0] = 7;
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(uintExport)); }, "fragment output 0 has no 10_11_11 unorm packing path");
