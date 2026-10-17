@@ -115,7 +115,7 @@ struct Module {
             return;
         }
         // One gl_ClipDistance array holds the guest clip distances and the recompiler's all-zero position distance.
-        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::Mesh)))) {
+        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::Mesh)))) {
             const auto signature = Signature(type);
             auto& count = value == spv::BuiltInClipDistance ? clipDistances : cullDistances;
             Require(count == 0 && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']', "invalid or duplicate clip or cull distance output");
@@ -131,7 +131,8 @@ struct Module {
                 return;
             }
             if (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation) {
-                Require(input && ((value == spv::BuiltInPosition && signature == "f32x4") || (value == spv::BuiltInTessCoord && stage == Stage::TessellationEvaluation && signature == "f32x3") || ((value == spv::BuiltInInvocationId || value == spv::BuiltInPrimitiveId || value == spv::BuiltInPatchVertices) && (signature == "i32" || signature == "u32"))), "unsupported tessellation built-in");
+                const bool clipInput = value == spv::BuiltInClipDistance && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']';
+                Require(input && (clipInput || (value == spv::BuiltInPosition && signature == "f32x4") || (value == spv::BuiltInTessCoord && stage == Stage::TessellationEvaluation && signature == "f32x3") || ((value == spv::BuiltInInvocationId || value == spv::BuiltInPrimitiveId || value == spv::BuiltInPatchVertices) && (signature == "i32" || signature == "u32"))), "unsupported tessellation built-in");
                 return;
             }
             if (!input && value == spv::BuiltInPrimitiveLineIndicesEXT) primitiveIndices = 2u;
@@ -252,7 +253,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     fragment &&
                     capability == spv::CapabilityStencilExportEXT;
 
-                if ((vertex || evaluation || mesh) && (capability == spv::CapabilityClipDistance || capability == spv::CapabilityCullDistance)) {
+                if ((vertex || control || evaluation || mesh) && (capability == spv::CapabilityClipDistance || capability == spv::CapabilityCullDistance)) {
                     char word[16];
                     std::snprintf(word, sizeof(word), "0x%08x", state.paClVsOutCntl);
                     Require(capability == spv::CapabilityClipDistance ? shaderClipDistance : (vertex || mesh) && shaderCullDistance, std::string("vertex clip or cull distance needs shaderClipDistance or shaderCullDistance, which the device lacks (PA_CL_VS_OUT_CNTL=") + word + ")");
@@ -264,7 +265,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityImage1D ||
                     capability == spv::CapabilityImageGatherExtended ||
                     capability == spv::CapabilityImageQuery ||
-                    ((vertex || evaluation || mesh) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
+                    ((vertex || control || evaluation || mesh) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
                     (vertex && capability == spv::CapabilityDrawParameters) ||
                     (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
                     (fragment && sampleRateShading && capability == spv::CapabilitySampleRateShading) ||

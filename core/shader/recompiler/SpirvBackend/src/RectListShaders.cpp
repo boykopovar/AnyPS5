@@ -1,6 +1,7 @@
 #include "Recompiler.hpp"
 #include "BdaAbi.hpp"
 #include "RuntimeAbi.hpp"
+#include "SpirvBackend/SpirvClipDistances.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -31,7 +32,7 @@ void require(bool condition, const char* message) {
 
 class RectListEmitter {
 public:
-    RectListEmitter(const std::vector<Parameter>& parameters, spv::ExecutionModel model, std::uint32_t version, std::uint32_t faultBinding) : builder(version), faultBinding(faultBinding), version(version), parameters(parameters) {
+    RectListEmitter(const std::vector<Parameter>& parameters, spv::ExecutionModel model, std::uint32_t version, std::uint32_t faultBinding, std::uint32_t clipDistances) : builder(version), faultBinding(faultBinding), version(version), clipDistances(clipDistances), parameters(parameters) {
         builder.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
 
         voidType = type(spv::OpTypeVoid);
@@ -41,7 +42,14 @@ public:
         vec4FloatType = type(spv::OpTypeVector, floatType, 4u);
         functionType = type(spv::OpTypeFunction, voidType);
 
-        perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpMemberDecorate, {0u, spv::DecorationInvariant}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType);
+        if (clipDistances != 0u) {
+            clipArrayType = array(floatType, clipDistances);
+            perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpMemberDecorate, {0u, spv::DecorationInvariant}}, {spv::OpMemberDecorate, {1u, spv::DecorationBuiltIn, spv::BuiltInClipDistance}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType, clipArrayType);
+            ptrInputClip = pointer(spv::StorageClassInput, clipArrayType);
+            ptrOutputClip = pointer(spv::StorageClassOutput, clipArrayType);
+        } else {
+            perVertexType = builder.DecoratedType(spv::OpTypeStruct, {{spv::OpMemberDecorate, {0u, spv::DecorationBuiltIn, spv::BuiltInPosition}}, {spv::OpMemberDecorate, {0u, spv::DecorationInvariant}}, {spv::OpDecorate, {spv::DecorationBlock}}}, vec4FloatType);
+        }
 
         ptrInputVec4Float = pointer(spv::StorageClassInput, vec4FloatType);
         ptrOutputVec4Float = pointer(spv::StorageClassOutput, vec4FloatType);
@@ -116,6 +124,20 @@ public:
 
         const auto position = result(spv::OpSelect, vec4FloatType, isFourth, position3, load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0))));
         store(access(ptrOutputVec4Float, glOut, invocation, intConstant(0)), position);
+        if (clipDistances != 0u) {
+            std::array<std::uint32_t, 3> clips {};
+            for (std::uint32_t i = 0; i < clips.size(); i++) clips[i] = load(clipArrayType, access(ptrInputClip, glIn, intConstant(i), intConstant(1)));
+            const auto own = load(clipArrayType, access(ptrInputClip, glIn, index, intConstant(1)));
+            std::vector<std::uint32_t> values;
+            for (std::uint32_t k = 0; k < clipDistances; k++) {
+                auto sum = constant(floatType, 0);
+                for (std::uint32_t i = 0; i < clips.size(); i++) sum = result(spv::OpFAdd, floatType, sum, result(spv::OpFMul, floatType, result(spv::OpCompositeExtract, floatType, clips[i], k), barycentric[i]));
+                values.push_back(result(spv::OpSelect, floatType, fourth, sum, result(spv::OpCompositeExtract, floatType, own, k)));
+            }
+            const auto clip = builder.AllocateId();
+            builder.AddFunction(spv::OpCompositeConstruct, clipArrayType, clip, std::span<const std::uint32_t>(values));
+            store(access(ptrOutputClip, glOut, invocation, intConstant(1)), clip);
+        }
 
         for (std::uint32_t i = 0; i < parameters.size(); i++) {
             if (parameters[i].missing) {
@@ -149,6 +171,7 @@ public:
 
         const auto position = load(vec4FloatType, access(ptrInputVec4Float, glIn, index, intConstant(0)));
         store(access(ptrOutputVec4Float, glOut, intConstant(0)), position);
+        if (clipDistances != 0u) store(access(ptrOutputClip, glOut, intConstant(1)), load(clipArrayType, access(ptrInputClip, glIn, index, intConstant(1))));
         for (std::uint32_t i = 0; i < parameters.size(); i++) {
             store(outputs[i], load(vec4FloatType, access(ptrInputVec4Float, inputs[i], index)));
         }
@@ -271,6 +294,7 @@ private:
     void defineEntry(spv::ExecutionModel model) {
         builder.EmitCapability(spv::CapabilityShader);
         builder.EmitCapability(spv::CapabilityTessellation);
+        if (clipDistances != 0u) builder.EmitCapability(spv::CapabilityClipDistance);
         main = result(spv::OpFunction, voidType, spv::FunctionControlMaskNone, functionType);
         if (model == spv::ExecutionModelTessellationControl) {
             builder.AddExecutionMode(main, spv::ExecutionModeOutputVertices, 4u);
@@ -343,6 +367,7 @@ private:
     SpirvModule builder;
     std::uint32_t faultBinding;
     std::uint32_t version;
+    std::uint32_t clipDistances;
     std::uint32_t fault = 0;
     const std::vector<Parameter>& parameters;
     std::vector<std::uint32_t> interfaces;
@@ -360,6 +385,9 @@ private:
     std::uint32_t vec4FloatType = 0;
     std::uint32_t functionType = 0;
     std::uint32_t perVertexType = 0;
+    std::uint32_t clipArrayType = 0;
+    std::uint32_t ptrInputClip = 0;
+    std::uint32_t ptrOutputClip = 0;
     std::uint32_t ptrInputFloat = 0;
     std::uint32_t ptrInputVec4Float = 0;
     std::uint32_t ptrOutputFloat = 0;
@@ -394,9 +422,11 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     }
     const auto components = static_cast<std::uint32_t>((parameters.size() + 1) * 4);
     require(limits.maxPatchSize >= 4 && components <= limits.maxControlPerVertexInputComponents && components <= limits.maxControlPerVertexOutputComponents && components <= limits.maxEvaluationInputComponents && components <= limits.maxEvaluationOutputComponents && limits.maxControlPerPatchOutputComponents >= 6 && components * 4 + 6 <= limits.maxControlTotalOutputComponents, "tessellation interface exceeds device limits");
+    const auto clipDistances = VertexClipDistanceCount(vertex.spirv.Words());
+    require(clipDistances == 0u || std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityClipDistance) != target.supportedCapabilities.end(), "the vertex clip distances need shaderClipDistance");
     const auto faultBinding = RuntimeAbi::BindingNumber(RuntimeAbi::Stage::TessellationControl, RuntimeAbi::Binding::FaultBuffer);
-    RectListEmitter control(parameters, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding);
-    RectListEmitter evaluation(parameters, spv::ExecutionModelTessellationEvaluation, target.spirvVersion, faultBinding);
+    RectListEmitter control(parameters, spv::ExecutionModelTessellationControl, target.spirvVersion, faultBinding, clipDistances);
+    RectListEmitter evaluation(parameters, spv::ExecutionModelTessellationEvaluation, target.spirvVersion, faultBinding, clipDistances);
     RectListShaders shaders;
     shaders.control.spirv = control.EmitControl();
     shaders.control.bindings.push_back({DescriptorKind::StorageBuffer, DescriptorRole::FaultBuffer, 0, faultBinding, 1, {}});
