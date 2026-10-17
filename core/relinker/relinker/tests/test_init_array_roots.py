@@ -40,7 +40,7 @@ def image(array_tag=None, array_size_tag=None, array_va=0, slots=(), relative=()
     elf[0x200] = 0xC3
     elf[FUNCTION:FUNCTION + 8] = b"\x48\x8b\x05" + struct.pack("<i", GOT_SLOT - (FUNCTION + 7)) + b"\xc3"
     if array_tag is not None:
-        tags = [(array_tag, array_va), (array_size_tag, 8 * len(slots)), (0, 0)]
+        tags = [(array_tag, array_va)] + ([(array_size_tag, 8 * len(slots))] if array_size_tag is not None else []) + [(0, 0)]
         for index, tag in enumerate(tags):
             struct.pack_into("<qQ", elf, DYNAMIC + 13 * 16 + index * 16, *tag)
         struct.pack_into("<Q", elf, 120 + 32, 16 * 16)
@@ -82,6 +82,8 @@ def main():
             ("init-after-dynamic", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, AFTER_DYNAMIC, [FUNCTION]), KEPT),
             ("init-os-tags", image(DT_OS_INIT_ARRAY, DT_OS_INIT_ARRAYSZ, BEFORE_DYNAMIC, [FUNCTION]), KEPT),
             ("init-second-slot", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, BEFORE_DYNAMIC, [0, FUNCTION]), KEPT),
+            ("init-without-size", image(DT_INIT_ARRAY, None, BEFORE_DYNAMIC, [FUNCTION]), DROPPED),
+            ("init-without-size-unread", image(DT_INIT_ARRAY, None, BEFORE_DYNAMIC, [0x7FFF0000]), DROPPED),
             ("init-terminators", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, BEFORE_DYNAMIC, [(1 << 64) - 1, 0]), DROPPED),
             ("init-relative-addend", image(DT_INIT_ARRAY, DT_INIT_ARRAYSZ, BEFORE_DYNAMIC, [0],
                                            [(BEFORE_DYNAMIC, FUNCTION)]), KEPT),
