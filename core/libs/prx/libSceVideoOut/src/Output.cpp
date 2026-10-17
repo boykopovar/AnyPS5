@@ -406,4 +406,65 @@ int APS5_VABI sceVideoOutAddVrrStatusFlagsPrivilege() {
     return 0;
 }
 
+int APS5_VABI sceVideoOutGetCurrentOutputMode_(uint64_t bus, void* mode) try {
+    if (mode == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (bus != 0x7000 && bus != 0) return VIDEO_OUT_ERROR_INVALID_BUS;
+    auto cfg = VideoOutDriver::Get().GetConfig(VIDEO_OUT_BUS_TYPE_MAIN + 1);
+    uint32_t width = VIDEO_OUT_DEFAULT_WIDTH;
+    uint32_t height = VIDEO_OUT_DEFAULT_HEIGHT;
+    uint64_t refreshRate = VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    if (cfg != nullptr) {
+        std::unique_lock lock(cfg->mutex);
+        width = cfg->width;
+        height = cfg->height;
+        refreshRate = (cfg->outputMode == VIDEO_OUT_OUTPUT_MODE_119_88HZ) ? VIDEO_OUT_REFRESH_RATE_119_88HZ : VIDEO_OUT_REFRESH_RATE_59_94HZ;
+    } else if (VideoOutDriver::Get().GetDisplayRefreshRate() >= 120) {
+        refreshRate = VIDEO_OUT_REFRESH_RATE_119_88HZ;
+    }
+    const bool hdr = AgcDriver::CurrentHostHdr().available;
+    uint64_t resolution = 0x0b;
+    if (width >= 3840 || height >= 2160) {
+        resolution = 0x0c;
+    } else if (width >= 2560 || height >= 1440) {
+        resolution = 0x0f;
+    } else if (width >= 1920 || height >= 1080) {
+        resolution = 0x0b;
+    } else if (width >= 1280 || height >= 720) {
+        resolution = 0x09;
+    }
+    struct OutputModeLayout {
+        uint32_t size;
+        uint8_t encoding;
+        uint8_t range;
+        uint8_t colorimetry;
+        uint8_t depth;
+        uint64_t refresh;
+        uint64_t resolution;
+        uint64_t reserved;
+    };
+    static_assert(sizeof(OutputModeLayout) == 32);
+    OutputModeLayout out{};
+    out.size = sizeof(OutputModeLayout);
+    out.encoding = 0;
+    out.range = hdr ? static_cast<uint8_t>(VIDEO_OUT_DYNAMIC_RANGE_HDR) : static_cast<uint8_t>(VIDEO_OUT_DYNAMIC_RANGE_SDR);
+    out.colorimetry = 0;
+    out.depth = hdr ? 10 : 8;
+    out.refresh = refreshRate;
+    out.resolution = resolution;
+    out.reserved = 0;
+    std::memcpy(mode, &out, sizeof(out));
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
+int APS5_VABI sceVideoOutGetHdmiRawEdid_(void* buffer, unsigned long size) try {
+    if (buffer == nullptr) return VIDEO_OUT_ERROR_INVALID_ADDRESS;
+    if (size == 0) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    std::memset(buffer, 0, size);
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 }

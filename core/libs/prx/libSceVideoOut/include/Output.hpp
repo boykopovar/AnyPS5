@@ -37,6 +37,8 @@ int APS5_VABI sceVideoOutAdjustColorSpaceConversion_(int handle, const VideoOutC
 int APS5_VABI sceVideoOutSetGlobalBlendSpace(int handle, uint32_t space, uint32_t option);
 int APS5_VABI sceVideoOutVrrPegToFixedRate(int handle, uint64_t arg1, uint64_t arg2);
 int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle);
+int APS5_VABI sceVideoOutGetCurrentOutputMode_(uint64_t bus, void* mode);
+int APS5_VABI sceVideoOutGetHdmiRawEdid_(void* buffer, unsigned long size);
 
 }
 
