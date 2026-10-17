@@ -52,6 +52,35 @@ therefore tests the previous binaries and can show no effect at all.
 
 [Relinker usage and runtime layout](../user/USAGE.md).
 
+## Windows setup and troubleshooting
+
+The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
+
+In PowerShell, prepend the supported WinLibs toolchain and Git for Windows to the current session's `PATH`. Adjust the paths for the installed locations; a Portable Git installation can be used in place of `C:\Program Files\Git`.
+
+```powershell
+$env:PATH = "C:\tools\winlibs\mingw64\bin;C:\Program Files\Git\cmd;C:\Program Files\Git\usr\bin;$env:PATH"
+```
+
+If configuration reports `Could NOT find Python3` or selects an unusable interpreter, pass the absolute path to a working Python 3 executable:
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DPython3_EXECUTABLE="C:/path/to/python.exe"
+```
+
+If `gen-describe.ps1` fails while generating libusb's `version_describe.h`, check the Bash path printed in the build output. A WindowsApps or System32 `bash.exe` can launch WSL and fail with `WSL_E_DEFAULT_DISTRO_NOT_FOUND` when no distribution is installed. Install Git for Windows with Bash, or use Portable Git, and put its `cmd` and `usr\bin` directories on `PATH` before retrying the build. Use Bash and `cygpath.exe` from the same Git installation.
+
+After `cmake --build build --target libs --parallel` succeeds, copy the toolchain's runtime DLLs beside the patched libraries:
+
+```powershell
+$toolchainBin = "C:\tools\winlibs\mingw64\bin"
+foreach ($runtimeName in @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")) {
+    Copy-Item -LiteralPath (Join-Path $toolchainBin $runtimeName) -Destination "build/core/libs/libs"
+}
+```
+
+When preparing a title's `libs/` directory, copy these DLLs with the patched `.prx` files. The Windows runtime loader does not search `PATH` for these dependencies; missing DLLs can cause error 126 even when the `.prx` is present. See [runtime layout](../user/USAGE.md#runtime-layout).
+
 ## CMake flags
 
 Project switches accept `ON` or `OFF`:
