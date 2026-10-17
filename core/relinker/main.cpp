@@ -144,12 +144,11 @@ bool SameOutputDestination(const std::filesystem::path& first, const std::filesy
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
 #ifdef _WIN32
-    auto firstName = Io::Utf8Path(firstPath.filename());
-    auto secondName = Io::Utf8Path(secondPath.filename());
-    for (auto* name : {&firstName, &secondName})
-        for (auto& character : *name)
-            if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
-    if (firstName == secondName && std::filesystem::exists(firstPath.parent_path()) &&
+    const auto firstName = firstPath.filename().native();
+    const auto secondName = secondPath.filename().native();
+    const auto comparison = CompareStringOrdinal(firstName.c_str(), -1, secondName.c_str(), -1, TRUE);
+    if (comparison == 0) throw Domain::RelinkerException("Cannot compare output filenames");
+    if (comparison == CSTR_EQUAL && std::filesystem::exists(firstPath.parent_path()) &&
         std::filesystem::exists(secondPath.parent_path()) && std::filesystem::equivalent(firstPath.parent_path(), secondPath.parent_path())) {
         OutputIdentityDirectory probe(firstPath.parent_path());
         auto alternateName = Io::Utf8Path(probe.GetDirectory().filename());
