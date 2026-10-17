@@ -168,6 +168,8 @@ struct FileHeader {
     std::uint64_t payloadHash;
 };
 
+static_assert(sizeof(FileHeader) == ShaderDiskCache::EntryHeaderBytes);
+
 std::size_t PayloadOffset(std::size_t keyBytes) {
     constexpr std::size_t alignment = 8;
     return (sizeof(FileHeader) + keyBytes + alignment - 1) / alignment * alignment;
@@ -1717,6 +1719,27 @@ std::vector<std::byte> EncodeEntry(std::span<const std::byte> key, const Compile
     encodeInfo(writer, variant.info);
     encodeAllocation(writer, variant.bindings);
     return wrapEntry(key, payload);
+}
+
+std::span<const std::byte> EntryKey(std::span<const std::byte> file) {
+    if (file.size() < sizeof(FileHeader)) return {};
+    FileHeader header;
+    std::memcpy(&header, file.data(), sizeof(header));
+    if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion()) return {};
+    if (header.keyBytes == 0 || header.keyBytes > file.size() - sizeof(header)) return {};
+    const auto payloadOffset = PayloadOffset(static_cast<std::size_t>(header.keyBytes));
+    if (payloadOffset > file.size() || header.payloadBytes != file.size() - payloadOffset) return {};
+    const auto key = file.subspan(sizeof(header), static_cast<std::size_t>(header.keyBytes));
+    return HashBytes(key) == header.keyHash ? key : std::span<const std::byte>{};
+}
+
+bool IsCurrentEntryHeader(std::span<const std::byte> bytes, std::uint64_t fileBytes) {
+    if (bytes.size() < sizeof(FileHeader) || fileBytes < sizeof(FileHeader)) return false;
+    FileHeader header;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion() || header.keyBytes == 0) return false;
+    const auto payloadOffset = PayloadOffset(static_cast<std::size_t>(header.keyBytes));
+    return payloadOffset <= fileBytes && header.payloadBytes == fileBytes - payloadOffset;
 }
 
 LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byte> key, CompiledVariant& variant, std::shared_ptr<const void> owner) {

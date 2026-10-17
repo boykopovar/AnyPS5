@@ -26,6 +26,7 @@ struct PackLoadTimings {
 };
 
 [[nodiscard]] std::array<std::uint64_t, 2> PackKeyHash(std::span<const std::byte> key);
+[[nodiscard]] std::span<const std::byte> EntryKey(std::span<const std::byte> file);
 [[nodiscard]] std::vector<std::filesystem::path> PrebuiltCachePaths(const std::filesystem::path& cacheRoot);
 
 class CachePack {
