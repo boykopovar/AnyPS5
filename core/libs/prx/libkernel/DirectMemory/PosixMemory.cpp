@@ -15,6 +15,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#include "prx/libc/include/WindowsDescriptor.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/File/include/RandomDevice.hpp"
 #endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
@@ -22,6 +26,9 @@ extern "C" int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t
 extern "C" int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
 extern "C" int APS5_VABI sceKernelMunlockall_nid_postfix();
 extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
+extern "C" std::int64_t APS5_VABI sceKernelPread(int descriptor, void* buffer, std::size_t length, std::int64_t offset);
+extern "C" int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept;
+extern "C" int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
@@ -89,6 +96,50 @@ bool Mapped(std::uintptr_t address) {
     VirtualQueryInfo info{};
     return sceKernelVirtualQuery(reinterpret_cast<const void*>(address), 0, &info, sizeof(info)) == 0;
 }
+
+#ifdef _WIN32
+int DescriptorAccess(HANDLE handle, int descriptor) noexcept {
+    try {
+        return WindowsDescriptorAccess_nid_no_patch(handle, descriptor, "mmap");
+    } catch (const std::exception&) {
+        return -1;
+    }
+}
+
+template <typename Failed>
+void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int placement, std::size_t alignment, HANDLE handle,
+                         int descriptor, std::int64_t offset, int accessMode, Failed failed) noexcept {
+    if (accessMode == 1) return failed(GuestNotSupported);
+    LARGE_INTEGER fileBytes{};
+    if (!GetFileSizeEx(handle, &fileBytes)) return failed(GuestBadDescriptor);
+    const auto size = static_cast<std::uint64_t>(fileBytes.QuadPart);
+    const auto start = static_cast<std::uint64_t>(offset);
+    if (start + rounded > ((size + PS5_PAGE_SIZE - 1) & ~static_cast<std::uint64_t>(PS5_PAGE_SIZE - 1))) return failed(GuestNotSupported);
+    void* mapped = address;
+    try {
+        if (DoMapAnon(&mapped, rounded, 3, placement, alignment, false) != 0) return failed(GuestNoMemory);
+    } catch (const std::invalid_argument&) {
+        return failed(GuestInvalid);
+    } catch (const std::exception&) {
+        return failed(GuestNoMemory);
+    }
+    const auto copied = std::min<std::uint64_t>(rounded, size - start);
+    for (std::uint64_t done = 0; done < copied;) {
+        const auto read = sceKernelPread(descriptor, static_cast<unsigned char*>(mapped) + done, static_cast<std::size_t>(copied - done), static_cast<std::int64_t>(start + done));
+        if (read <= 0) {
+            munmap_nid_postfix(mapped, rounded);
+            return failed(read < 0 ? static_cast<int>(read & 0xffff) : GuestIoError);
+        }
+        done += static_cast<std::uint64_t>(read);
+    }
+    if (protection != 3 && mprotect_nid_postfix(mapped, rounded, protection) != 0) {
+        const int error = *__error_nid_postfix();
+        munmap_nid_postfix(mapped, rounded);
+        return failed(error);
+    }
+    return mapped;
+}
+#endif
 }
 
 extern "C" {
@@ -150,6 +201,21 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if ((protection & 1) != 0 && accessMode == O_WRONLY) return failed(GuestAccess);
     if (kind == GuestShared && (protection & 2) != 0 && accessMode == O_RDONLY) return failed(GuestAccess);
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
+#elif defined(_WIN32)
+    const int mappingDescriptor = descriptor;
+    if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) {
+        const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
+        if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
+        if (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK) return failed(GuestNotSupported);
+        const int accessMode = DescriptorAccess(handle, mappingDescriptor);
+        if (accessMode < 0) return failed(GuestBadDescriptor);
+        if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
+        if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
+        if (kind == GuestPrivate) {
+            const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
+            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, offset, accessMode, failed);
+        }
+    }
 #else
     const int mappingDescriptor = descriptor;
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) return failed(GuestNotSupported);
