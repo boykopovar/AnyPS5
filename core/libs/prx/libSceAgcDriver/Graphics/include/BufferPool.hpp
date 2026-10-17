@@ -133,6 +133,9 @@ private:
     PFN_vkFreeMemory freeMemory;
     PFN_vkAllocateMemory allocateMemory;
     PFN_vkMapMemory mapMemory;
+    VkPhysicalDevice physical;
+    VkPhysicalDeviceMemoryProperties memoryProperties;
+    PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2;
     std::mutex mutex;
     // Not `small`/`large`: <rpcndr.h> (via <windows.h>) defines `small` as a macro.
     Tier smallTier;
