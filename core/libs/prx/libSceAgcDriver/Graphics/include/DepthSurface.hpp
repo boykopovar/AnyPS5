@@ -48,6 +48,49 @@ float HostDepthBiasConstant(const Context& context, VkFormat format, float const
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage);
 
+struct StorageImageClear {
+    std::array<std::uint32_t, 8> image{};
+    std::array<std::uint32_t, 4> color{};
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+};
+std::optional<StorageImageClear> MatchStorageImageClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::array<std::uint32_t, 3>& groups);
+std::uint64_t StorageImageClearAddress(const StorageImageClear& clear);
+struct DepthPlaneOverwrite {
+    std::array<std::uint32_t, 8> image{};
+    GuestTextureResource view{};
+    std::uint32_t bits = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t raw = 0;
+    std::uint64_t colorAddress = 0;
+    std::uint32_t colorBits = 0;
+    float depth = 0.0f;
+};
+class DepthPlaneClear {
+public:
+    explicit DepthPlaneClear(const StorageImageClear& clear);
+    ~DepthPlaneClear();
+    DepthPlaneClear(const DepthPlaneClear&) = delete;
+    DepthPlaneClear& operator=(const DepthPlaneClear&) = delete;
+    bool Active() const { return installed; }
+
+private:
+    DepthPlaneOverwrite value;
+    DepthPlaneOverwrite* previous = nullptr;
+    bool installed = false;
+};
+struct DepthClearStatistics {
+    std::uint64_t matched = 0;
+    std::uint64_t taken = 0;
+    std::uint64_t copiesSkipped = 0;
+    std::uint64_t clears = 0;
+    std::uint64_t bytesSkipped = 0;
+    std::array<std::uint64_t, 8> declined{};
+};
+DepthClearStatistics DepthClearCounts();
+void SetDepthPlaneClearForTest(bool enabled);
+
 }
 
 #endif

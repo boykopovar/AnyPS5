@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cmath>
 #include <limits>
 #include <shared_mutex>
 #include <cstdio>
@@ -117,6 +118,104 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     for (const auto& range : state.initial) GuestMemory::CollectWritesUncached(range.address, range.bytes);
     if (!GuestMemory::UnchangedSinceAll(state.initial)) return refuse("guest writes raced native multisample depth import");
     return state;
+}
+
+std::atomic<bool> depthPlaneClearEnabled{true};
+
+enum DepthClearDecline : std::size_t { DeclineLayers, DeclineFormat, DeclineValue, DeclineColor, DeclinePending, DeclineCoverage, DeclineSize, DeclineCount };
+static_assert(DeclineCount <= 8, "DepthClearStatistics::declined holds eight reasons");
+
+struct DepthClearCounters {
+    std::atomic<std::uint64_t> matched{0};
+    std::atomic<std::uint64_t> taken{0};
+    std::atomic<std::uint64_t> copiesSkipped{0};
+    std::atomic<std::uint64_t> clears{0};
+    std::atomic<std::uint64_t> bytesSkipped{0};
+    std::array<std::atomic<std::uint64_t>, 8> declined{};
+};
+
+DepthClearCounters& depthClearCounters() {
+    static DepthClearCounters counters;
+    return counters;
+}
+
+thread_local DepthPlaneOverwrite* currentOverwrite = nullptr;
+
+std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clear) {
+    auto& counters = depthClearCounters();
+    ++counters.matched;
+    const auto decline = [&](DepthClearDecline why) -> std::optional<DepthPlaneOverwrite> {
+        ++counters.declined[why];
+        return std::nullopt;
+    };
+    DepthPlaneOverwrite overwrite;
+    overwrite.image = clear.image;
+    try {
+        overwrite.view = DecodeTextureResource(clear.image);
+    } catch (...) {
+        return decline(DeclineFormat);
+    }
+    const auto& view = overwrite.view;
+    const bool oneLayer = view.dimension == TextureDimension::k2D || (view.dimension == TextureDimension::k2DArray && view.baseArray == 0 && view.depthOrLastArray == 0);
+    if (!oneLayer || view.baseLevel != 0) return decline(DeclineLayers);
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    try {
+        format = ResolveTextureFormat(view.format);
+    } catch (...) {
+        return decline(DeclineFormat);
+    }
+    enum class Kind { Unorm16, Uint16, Float32, Uint32 };
+    Kind kind;
+    switch (format) {
+        case VK_FORMAT_R16_UNORM: kind = Kind::Unorm16; break;
+        case VK_FORMAT_R16_UINT: kind = Kind::Uint16; break;
+        case VK_FORMAT_R32_SFLOAT: kind = Kind::Float32; break;
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_R32_SINT: kind = Kind::Uint32; break;
+        default: return decline(DeclineFormat);
+    }
+    const std::uint64_t base = clear.color[0] | (static_cast<std::uint64_t>(clear.color[1] & 0xffffu) << 32u);
+    const std::uint64_t stride = (clear.color[1] >> 16u) & 0x3fffu;
+    const std::uint64_t extent = stride == 0 ? clear.color[2] : static_cast<std::uint64_t>(clear.color[2]) * stride;
+    if (base == 0 || (base & 3u) != 0u || extent < 16u || !GuestMemory::Accessible(reinterpret_cast<const void*>(base), 16)) return decline(DeclineColor);
+    if (const auto* recorder = Recorder::Active(); recorder != nullptr && recorder->PendingWriteOverlaps(base, 16)) return decline(DeclinePending);
+    const std::pair<std::uint64_t, std::uint64_t> colorRange{base, base + 16u};
+    if (StorageTexture::AnyPendingOverlaps(std::span(&colorRange, 1))) return decline(DeclinePending);
+    std::uint32_t c0 = 0;
+    try {
+        GuestMemory::Read(base, std::as_writable_bytes(std::span(&c0, 1)), 4);
+    } catch (...) {
+        return decline(DeclineColor);
+    }
+    switch (kind) {
+        case Kind::Unorm16:
+            if (c0 == 0u || c0 == 0x80000000u) overwrite.raw = 0u;
+            else if (c0 == 0x3f800000u) overwrite.raw = 0xffffu;
+            else return decline(DeclineValue);
+            overwrite.bits = 16u;
+            overwrite.depth = static_cast<float>(overwrite.raw) / 65535.0f;
+            break;
+        case Kind::Uint16:
+            if (c0 != 0u && c0 != 0xffffu) return decline(DeclineValue);
+            overwrite.raw = c0;
+            overwrite.bits = 16u;
+            overwrite.depth = static_cast<float>(overwrite.raw) / 65535.0f;
+            break;
+        case Kind::Float32:
+        case Kind::Uint32: {
+            const auto depth = std::bit_cast<float>(c0);
+            if (c0 != 0u && !(std::isnormal(depth) && depth > 0.0f && depth <= 1.0f)) return decline(DeclineValue);
+            overwrite.raw = c0;
+            overwrite.bits = 32u;
+            overwrite.depth = depth;
+            break;
+        }
+    }
+    overwrite.colorAddress = base;
+    overwrite.colorBits = c0;
+    overwrite.width = clear.width;
+    overwrite.height = clear.height;
+    return overwrite;
 }
 
 class DepthSurface {
@@ -249,6 +348,10 @@ public:
     }
 
     void RecordClear(VkImageAspectFlags aspects) {
+        RecordClearValue(aspects, clearDepth, clearStencil);
+    }
+
+    void RecordClearValue(VkImageAspectFlags aspects, float depth, std::uint8_t stencil) {
         written = ++depthWrites;
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
@@ -257,7 +360,7 @@ public:
         const VkImageSubresourceRange range{aspects, 0, 1, 0, 1};
         constexpr VkAccessFlags access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, access, VK_ACCESS_TRANSFER_WRITE_BIT);
-        const VkClearDepthStencilValue clear{clearDepth, clearStencil};
+        const VkClearDepthStencilValue clear{depth, stencil};
         context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, access);
         if (batch) batch->SubmitAndWait();
@@ -400,6 +503,7 @@ public:
             throw std::runtime_error(text);
         }
         RequireStorable(resource);
+        auto* overwrite = stencil ? nullptr : PlaneOverwritten(words);
         ApplyFastClear();
         auto& plane = stencil ? stencilPlane : depthPlane;
         if (plane.storage == nullptr || plane.storage->Descriptor().format != resource.format || plane.storage->Descriptor().tileMode != resource.tileMode || plane.storage->Descriptor().baseAddress != resource.baseAddress || plane.storage->Descriptor().dimension != resource.dimension) {
@@ -407,15 +511,67 @@ public:
             if (plane.storage != nullptr) plane.replaced.push_back(plane.storage);
             plane.storage = StorageTexture::Create(context, *context.detiler, resource, 0);
         }
-        copyPlane(plane, plane.storage, stencil, true);
+        if (overwrite != nullptr) {
+            ++depthClearCounters().copiesSkipped;
+        } else {
+            copyPlane(plane, plane.storage, stencil, true);
+        }
         return plane.storage;
+    }
+
+    bool OverwritesWholePlane(const DepthPlaneOverwrite& overwrite) const {
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        return overwrite.bits == (d16 ? 16u : 32u) && overwrite.width >= target.extent.width && overwrite.height >= target.extent.height;
+    }
+
+    DepthPlaneOverwrite* PlaneOverwritten(std::span<const std::uint32_t> words) const {
+        auto* overwrite = currentOverwrite;
+        if (overwrite == nullptr || words.size() < overwrite->image.size() || !std::equal(overwrite->image.begin(), overwrite->image.end(), words.begin())) return nullptr;
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        auto& declined = depthClearCounters().declined;
+        if (overwrite->bits != (d16 ? 16u : 32u)) {
+            ++declined[DeclineSize];
+            return nullptr;
+        }
+        if (overwrite->width < target.extent.width || overwrite->height < target.extent.height) {
+            ++declined[DeclineCoverage];
+            return nullptr;
+        }
+        return overwrite;
+    }
+
+    bool StoreOverwrite(const StorageTexture& mirror) {
+        auto* overwrite = currentOverwrite;
+        if (overwrite == nullptr || !OverwritesWholePlane(*overwrite)) return false;
+        const auto& described = mirror.Descriptor();
+        const auto& view = overwrite->view;
+        if (described.baseAddress != view.baseAddress || described.format != view.format || described.tileMode != view.tileMode || described.dimension != view.dimension) return false;
+        std::uint32_t current = 0;
+        try {
+            GuestMemory::Read(overwrite->colorAddress, std::as_writable_bytes(std::span(&current, 1)), 4);
+        } catch (...) {
+            return false;
+        }
+        if (current != overwrite->colorBits) return false;
+        auto* recorder = RecorderFor(context);
+        Require(recorder != nullptr, "depth surface storage clears need the recorder of the surface's device");
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const auto bytes = static_cast<std::size_t>(target.extent.width) * target.extent.height * (d16 ? 2u : 4u);
+        recorder->Commands();
+        const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
+        RecordClearValue(VK_IMAGE_ASPECT_DEPTH_BIT, overwrite->depth, clearStencil);
+        recorder->EndGpuTiming(timing, bytes);
+        auto& counters = depthClearCounters();
+        ++counters.clears;
+        counters.bytesSkipped += 2u * bytes;
+        return true;
     }
 
     bool StoreBack(const StorageTexture& candidate) {
         for (const bool stencil : {false, true}) {
             auto& plane = stencil ? stencilPlane : depthPlane;
             if (plane.storage.get() == &candidate) {
-                copyPlane(plane, plane.storage, stencil, false);
+                if (stencil || !StoreOverwrite(candidate)) copyPlane(plane, plane.storage, stencil, false);
                 written = ++depthWrites;
                 return true;
             }
@@ -1263,6 +1419,64 @@ void NoteMemoryValueFill(const MemoryValueFill& fill) {
     std::uint32_t value = 0;
     GuestMemory::Read(fill.valueAddress, std::as_writable_bytes(std::span(&value, 1)), 4);
     NoteDepthMetadataFill(fill.address, fill.bytes, value);
+}
+
+std::optional<StorageImageClear> MatchStorageImageClear(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::array<std::uint32_t, 3>& groups) {
+    static constexpr std::array<std::uint32_t, 15> kernel{0xd7460004u, 0x0401060cu, 0xf4280204u, 0xfa000000u, 0xd7460005u, 0x0405060du, 0x7e0c020eu, 0xbf8cc07fu, 0x7e000208u, 0x7e020209u, 0x7e04020au, 0x7e06020bu, 0xf0200f28u, 0x00000004u, 0xbf810000u};
+    if (code.size() < kernel.size() || code[0] != kernel[0] || !std::equal(kernel.begin(), kernel.end(), code.begin())) return std::nullopt;
+    if (userData.size() != 12u) return std::nullopt;
+    if (compute.numThreads != std::array<std::uint32_t, 3>{8u, 8u, 1u}) return std::nullopt;
+    if (!compute.groupIdEnable[0] || !compute.groupIdEnable[1] || !compute.groupIdEnable[2]) return std::nullopt;
+    if (compute.threadIdComponentCount < 2u) return std::nullopt;
+    std::array<std::uint64_t, 3> covered{};
+    for (std::size_t axis = 0; axis < 3u; ++axis) covered[axis] = compute.partialThreads[axis] != 0u ? compute.partialThreads[axis] : static_cast<std::uint64_t>(groups[axis]) * compute.numThreads[axis];
+    if (covered[0] == 0u || covered[1] == 0u || covered[2] != 1u) return std::nullopt;
+    StorageImageClear clear;
+    std::copy_n(userData.begin(), clear.image.size(), clear.image.begin());
+    std::copy_n(userData.begin() + static_cast<std::ptrdiff_t>(clear.image.size()), clear.color.size(), clear.color.begin());
+    clear.width = static_cast<std::uint32_t>(std::min<std::uint64_t>(covered[0], std::numeric_limits<std::uint32_t>::max()));
+    clear.height = static_cast<std::uint32_t>(std::min<std::uint64_t>(covered[1], std::numeric_limits<std::uint32_t>::max()));
+    return clear;
+}
+
+std::uint64_t StorageImageClearAddress(const StorageImageClear& clear) {
+    try {
+        return DecodeTextureResource(clear.image).baseAddress;
+    } catch (...) {
+        return 0u;
+    }
+}
+
+DepthPlaneClear::DepthPlaneClear(const StorageImageClear& clear) {
+    if (!depthPlaneClearEnabled.load(std::memory_order_relaxed)) return;
+    const auto decoded = decodeOverwrite(clear);
+    if (decoded) {
+        value = *decoded;
+        previous = currentOverwrite;
+        currentOverwrite = &value;
+        installed = true;
+        ++depthClearCounters().taken;
+    }
+}
+
+DepthPlaneClear::~DepthPlaneClear() {
+    if (installed) currentOverwrite = previous;
+}
+
+DepthClearStatistics DepthClearCounts() {
+    const auto& counters = depthClearCounters();
+    DepthClearStatistics statistics;
+    statistics.matched = counters.matched.load();
+    statistics.taken = counters.taken.load();
+    statistics.copiesSkipped = counters.copiesSkipped.load();
+    statistics.clears = counters.clears.load();
+    statistics.bytesSkipped = counters.bytesSkipped.load();
+    for (std::size_t reason = 0; reason < statistics.declined.size(); ++reason) statistics.declined[reason] = counters.declined[reason].load();
+    return statistics;
+}
+
+void SetDepthPlaneClearForTest(bool enabled) {
+    depthPlaneClearEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 std::size_t HtileDepthClearBytes_nid_no_patch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments) {
