@@ -208,6 +208,17 @@ class UnwrapTest(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(output.read_bytes(), b"previous output")
 
+    def test_unsupported_inner_elf_class_and_byte_order_are_refused(self):
+        for offset, value in ((4, 1), (5, 2)):
+            with self.subTest(offset=offset, value=value):
+                container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                container[ELF_HEADER_OFFSET + offset] = value
+                result, output = self.convert(bytes(container))
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("inner ELF is not 64-bit little-endian", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(output.exists())
+
     def test_a_container_whose_load_segments_look_encrypted_is_refused(self):
         random_like = bytes(range(256)) * 4
         segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x400, PAGE), (PT_LOAD, 4, 0x1500, 0x1000, 0x400, PAGE)]
