@@ -206,14 +206,16 @@ extern "C" void* APS5_VABI scriptingGetMem_nid_postfix(std::size_t alignment, st
     alignment = std::max<std::size_t>(alignment, 16);
     if ((alignment & (alignment - 1)) != 0) return nullptr;
     try {
-        return ApplicationHeapAlign_nid_no_patch(alignment, bytes);
+        return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
     } catch (const std::bad_alloc&) {
+        return nullptr;
+    } catch (const std::length_error&) {
         return nullptr;
     }
 }
 
 extern "C" void APS5_VABI scriptingFreeMem_nid_postfix(void* pointer) {
-    ApplicationHeapFree_nid_no_patch(pointer);
+    GuestHeap::GuestHeapFree_nid_postfix(pointer);
 }
 
 void* ApplicationHeapRealign_nid_no_patch(void* pointer, std::size_t bytes, std::size_t alignment) {
