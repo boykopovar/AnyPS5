@@ -218,3 +218,91 @@ def prepare(title_id, found, entry, platform, build, work):
         for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
             link_file(runtime / name, libs / name)
     return executable
+
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.QueryInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p)
+    WindowCallback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = (WindowCallback, wintypes.LPARAM)
+    user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+    user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+    user32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT)
+    user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+    class ProcessIdList(ctypes.Structure):
+        _fields_ = [("assigned", wintypes.DWORD), ("listed", wintypes.DWORD), ("ids", ctypes.c_size_t * 256)]
+
+
+class Session:
+    def __init__(self, command, cwd, env, stdout, stderr):
+        if os.name == "nt":
+            self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+            self.job = kernel32.CreateJobObjectW(None, None)
+            kernel32.AssignProcessToJobObject(self.job, int(self.process._handle))
+        else:
+            self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+
+    def process_ids(self):
+        listing = ProcessIdList()
+        kernel32.QueryInformationJobObject(self.job, 3, ctypes.byref(listing), ctypes.sizeof(listing), None)
+        return set(listing.ids[:listing.listed])
+
+    def windows(self):
+        ids, found = self.process_ids(), []
+
+        def visit(window, _):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
+            if owner.value in ids and user32.IsWindowVisible(window):
+                found.append(window)
+            return True
+
+        user32.EnumWindows(WindowCallback(visit), 0)
+        return found
+
+    def alive(self):
+        self.process.poll()
+        if os.name == "nt":
+            return bool(self.process_ids())
+        try:
+            os.killpg(self.process.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    def exit_code(self):
+        return self.process.poll()
+
+    def lower_windows(self):
+        if os.name == "nt":
+            for window in self.windows():
+                user32.SetWindowPos(window, wintypes.HWND(1), 0, 0, 0, 0, 0x13)
+
+    def close(self):
+        if os.name == "nt":
+            for window in self.windows():
+                user32.PostMessageW(window, 0x10, 0, 0)
+        else:
+            try:
+                os.killpg(self.process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+    def kill(self):
+        if os.name == "nt":
+            kernel32.TerminateJobObject(self.job, 1)
+        else:
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.process.wait()
