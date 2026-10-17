@@ -7,9 +7,12 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
+#include <cpuid.h>
 #include <sys/mman.h>
 #endif
 
@@ -85,15 +88,13 @@ struct Run {
     std::uint64_t Stack;
 };
 
-Run execute(const Bytes& site, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource = 0) {
-    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
-    const auto match = matcher->Match(site.data(), site.size());
-    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "An ADX trampoline was not produced");
-    auto codeBytes = match->StubBody;
+Run executeCode(Bytes codeBytes, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource = 0, const std::optional<std::size_t> returnBranchOffset = std::nullopt) {
     const auto ret = codeBytes.size();
+    if (returnBranchOffset) {
+        const auto displacement = static_cast<std::int32_t>(ret - (*returnBranchOffset + 5));
+        std::memcpy(codeBytes.data() + *returnBranchOffset + 1, &displacement, sizeof(displacement));
+    }
     codeBytes.push_back(0xC3);
-    const auto displacement = static_cast<std::int32_t>(ret - (match->ReturnBranchOffset + 5));
-    std::memcpy(codeBytes.data() + match->ReturnBranchOffset + 1, &displacement, sizeof(displacement));
     auto* code = static_cast<std::uint8_t*>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     require(code != MAP_FAILED, "Cannot allocate executable memory for an ADX stub");
     std::memcpy(code, codeBytes.data(), codeBytes.size());
@@ -120,6 +121,21 @@ Run execute(const Bytes& site, const std::uint64_t destination, const std::uint6
     return result;
 }
 
+Run execute(const Bytes& site, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags, const std::uint64_t memorySource = 0) {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "An ADX trampoline was not produced");
+    return executeCode(match->StubBody, destination, source, initialFlags, memorySource, match->ReturnBranchOffset);
+}
+
+Run executeNative(const bool wide, const bool adox, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags) {
+    Bytes instruction{static_cast<std::uint8_t>(adox ? 0xF3 : 0x66)};
+    if (wide)
+        instruction.push_back(0x48);
+    instruction.insert(instruction.end(), {0x0F, 0x38, 0xF6, 0xC1, 0xC3});
+    return executeCode(std::move(instruction), destination, source, initialFlags);
+}
+
 std::uint64_t expectedResult(const bool wide, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t carry) {
     if (wide)
         return destination + source + carry;
@@ -129,27 +145,54 @@ std::uint64_t expectedResult(const bool wide, const std::uint64_t destination, c
 void execution() {
     for (const bool wide : {false, true}) {
         for (const bool adox : {false, true}) {
-            const auto initial = std::uint64_t{0xA03};
             Bytes site{static_cast<std::uint8_t>(adox ? 0xF3 : 0x66)};
             if (wide)
                 site.push_back(0x48);
             site.insert(site.end(), {0x0F, 0x38, 0xF6, 0xC1});
-            const auto destination = wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull;
-            const auto source = wide ? 0ull : 0ull;
-            const auto inputFlag = adox ? ((initial >> 11) & 1) : (initial & 1);
-            const auto run = execute(site, destination, source, initial);
-            const auto expected = expectedResult(wide, destination, source, inputFlag);
-            require(run.Value == expected, "ADX register lowering produced the wrong sum");
-            const auto sign = wide ? (std::uint64_t{1} << 63) : (std::uint64_t{1} << 31);
             const auto mask = wide ? std::numeric_limits<std::uint64_t>::max() : std::uint64_t{0xFFFFFFFF};
-            const auto result = expected & mask;
-            const bool overflow = ((~(destination ^ source) & (destination ^ result) & sign) != 0);
-            const bool carry = wide
-                ? (result < destination || (inputFlag != 0 && result == destination))
-                : ((static_cast<std::uint64_t>(static_cast<std::uint32_t>(destination)) + static_cast<std::uint32_t>(source) + inputFlag) >> 32) != 0;
-            const auto flagMask = adox ? std::uint64_t{0x800} : std::uint64_t{1};
-            const auto expectedFlags = (initial & ~flagMask) | ((adox ? overflow : carry) ? flagMask : 0);
-            require((run.Flags & 0x8D5) == (expectedFlags & 0x8D5), "ADX lowering changed an unrelated arithmetic flag");
+            const auto high = wide ? std::numeric_limits<std::uint64_t>::max() : std::uint64_t{0xFFFFFFFF};
+            const std::array<std::uint64_t, 4> values{0, 1, wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull, high};
+            for (const auto destination : values) {
+                for (const auto source : values) {
+                    for (const auto inputFlag : {std::uint64_t{0}, std::uint64_t{1}}) {
+                        const auto flagMask = adox ? std::uint64_t{0x800} : std::uint64_t{1};
+                        const auto initial = (std::uint64_t{0x8D7} & ~flagMask) | (inputFlag ? flagMask : 0);
+                        const auto run = execute(site, destination, source, initial);
+                        const auto expected = expectedResult(wide, destination, source, inputFlag) & mask;
+                        require(run.Value == expected, "ADX register lowering produced the wrong sum");
+                        const bool carry = wide
+                            ? (expected < destination || (inputFlag != 0 && expected == destination))
+                            : ((static_cast<std::uint64_t>(static_cast<std::uint32_t>(destination)) + static_cast<std::uint32_t>(source) + inputFlag) >> 32) != 0;
+                        const auto expectedFlags = (initial & ~flagMask) | (carry ? flagMask : 0);
+                        require((run.Flags & 0x8D5) == (expectedFlags & 0x8D5), "ADX lowering produced the wrong carry flag or changed an unrelated arithmetic flag");
+                    }
+                }
+            }
+        }
+    }
+    unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
+    const bool hasAdx = __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) != 0 && (ebx & (1u << 19)) != 0;
+    if (hasAdx) {
+        for (const bool wide : {false, true}) {
+            for (const bool adox : {false, true}) {
+                const auto high = wide ? std::numeric_limits<std::uint64_t>::max() : std::uint64_t{0xFFFFFFFF};
+                const std::array<std::uint64_t, 4> values{0, 1, wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull, high};
+                for (const auto destination : values) {
+                    for (const auto source : values) {
+                        for (const auto inputFlag : {std::uint64_t{0}, std::uint64_t{1}}) {
+                            const auto flagMask = adox ? std::uint64_t{0x800} : std::uint64_t{1};
+                            const auto initial = (std::uint64_t{0x8D7} & ~flagMask) | (inputFlag ? flagMask : 0);
+                            Bytes site{static_cast<std::uint8_t>(adox ? 0xF3 : 0x66)};
+                            if (wide)
+                                site.push_back(0x48);
+                            site.insert(site.end(), {0x0F, 0x38, 0xF6, 0xC1});
+                            const auto lowered = execute(site, destination, source, initial);
+                            const auto native = executeNative(wide, adox, destination, source, initial);
+                            require(lowered.Value == native.Value && (lowered.Flags & 0x8D5) == (native.Flags & 0x8D5), "ADX lowering differs from native ADX");
+                        }
+                    }
+                }
+            }
         }
     }
     const Bytes stackSource{0x66, 0x48, 0x0F, 0x38, 0xF6, 0x44, 0x24, 0x08};
