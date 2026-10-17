@@ -713,6 +713,28 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto classes = Run(device, TableCode, 6, Lanes, 64);
     Require(!Faulted(classes), "image table: valid entries faulted:\n" + classes.log);
     Require(classes.imageTableCount == 3u, "image table: the table binding does not hold one element per distinct T# (" + std::to_string(classes.imageTableCount) + ")");
+
+    const auto invariantPhiCode = [] {
+        std::array<std::uint32_t, 39> code{};
+        std::copy_n(TableCode.begin(), 19, code.begin());
+        code[19] = 0xbea80380u;
+        std::copy_n(TableCode.begin() + 19, 8, code.begin() + 20);
+        const std::array<std::uint32_t, 11> tail{0xbf068028u, 0xbf850003u, 0xf42c0802u, 0x24000000u, 0xbf820002u, 0xf42c0802u, 0x24000000u, 0x80288128u, 0xbf0a8228u, 0xbf85ffeeu, 0xbf810000u};
+        std::copy(tail.begin(), tail.end(), code.begin() + 28);
+        return code;
+    }();
+    const auto controlPhiCode = [&] {
+        std::array<std::uint32_t, 32> code{};
+        std::copy_n(invariantPhiCode.begin(), 28, code.begin());
+        const std::array<std::uint32_t, 4> tail{0x80288128u, 0xbf0a8228u, 0xbf85fff5u, 0xbf810000u};
+        std::copy(tail.begin(), tail.end(), code.begin() + 28);
+        return code;
+    }();
+    const auto controlPhi = Run(device, controlPhiCode, 6, Lanes, 64);
+    const auto invariantPhi = Run(device, invariantPhiCode, 6, Lanes, 64);
+    Require(!Faulted(invariantPhi) && !Faulted(controlPhi), "image table: invariant descriptor Phis faulted");
+    Require(invariantPhi.imageTableCount == classes.imageTableCount, "image table: invariant descriptor Phis changed the distinct table elements");
+    Require(invariantPhi.words == controlPhi.words, "image table: invariant descriptor Phis changed GPU sample results");
     for (std::uint32_t group = 0; group < 6; ++group) {
         if (group == 4u) continue;
         const auto* words = Table.data() + group * (Stride / 4u);
