@@ -66,6 +66,7 @@ def main():
             libraries.mkdir()
             provider = libraries / 'libc.prx'
             shutil.copyfile(host, provider)
+            shutil.copyfile(host, libraries / 'libkernel.prx')
             events = work / 'events.txt'
             run = subprocess.run([sys.executable, __file__, '--load', str(provider), str(converted)],
                                  env={**os.environ, 'ANYPS5_GUEST_MODULE_ARGS': str(events)},

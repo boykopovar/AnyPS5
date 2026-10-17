@@ -292,14 +292,27 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     for (std::size_t index = 0; index < images.size(); ++index) visit(index);
     std::vector<std::string> hostLibraries;
+    std::vector<std::vector<std::string>> moduleHostLibraries(images.size());
     std::set<std::string> uniqueHosts;
-    const auto addHost = [&](const std::string& name) {
+    const auto addHost = [&](const std::string& name, const bool startup) {
         if (findGuest(name) != guestNames.end()) return;
         if (name.empty() || name.find_first_of("/\\:$") != std::string::npos) throw Domain::RelinkerException("Invalid host dependency: " + name);
-        if (uniqueHosts.insert(name).second) hostLibraries.push_back(name);
+        if (startup && uniqueHosts.insert(name).second) hostLibraries.push_back(name);
     };
-    for (const auto& name : neededNames) addHost(name);
-    for (const auto& image : images) for (const auto& dependency : image.Dependencies) addHost(dependency);
+    for (const auto& name : neededNames) addHost(name, true);
+    for (std::size_t index = 0; index < images.size(); ++index) {
+        auto& hosts = moduleHostLibraries[index];
+        for (const auto& dependency : images[index].Dependencies) {
+            addHost(dependency, windows || !deferred(index));
+            if (findGuest(dependency) == guestNames.end()) hosts.push_back(dependency);
+        }
+        if (!windows && !macos && images[index].Init != 0) {
+            if (std::find(hosts.begin(), hosts.end(), "libkernel.prx") == hosts.end()) hosts.push_back("libkernel.prx");
+            if (!deferred(index) && uniqueHosts.insert("libkernel.prx").second) hostLibraries.push_back("libkernel.prx");
+        }
+        if (std::find(hosts.begin(), hosts.end(), "libSceLibcInternal.prx") != hosts.end() &&
+            std::find(hosts.begin(), hosts.end(), "libc.prx") == hosts.end()) hosts.push_back("libc.prx");
+    }
     if (uniqueHosts.contains("libSceLibcInternal.prx") && uniqueHosts.insert("libc.prx").second) hostLibraries.push_back("libc.prx");
     dynamic.NeededLibraries = hostLibraries;
     dynamic.DynamicSegmentData.clear();
@@ -313,12 +326,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     if (!windows && runPath != "$ORIGIN" && !runPath.starts_with("$ORIGIN/") && !runPath.starts_with("$ORIGIN:") && !runPath.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
     const auto outputDirectory = outputPath.parent_path().lexically_normal();
     std::vector<GuestArtifact> artifacts;
-    std::vector<std::string> moduleHostLibraries;
-    std::set<std::string> uniqueModuleHosts;
-    for (const auto& image : images) for (const auto& dependency : image.Dependencies) {
-        if (findGuest(dependency) == guestNames.end() && uniqueModuleHosts.insert(dependency).second) moduleHostLibraries.push_back(dependency);
-    }
-    if (uniqueModuleHosts.contains("libSceLibcInternal.prx") && uniqueModuleHosts.insert("libc.prx").second) moduleHostLibraries.push_back("libc.prx");
     for (const auto index : order) {
         auto& image = images[index];
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
@@ -363,7 +370,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 const auto dependencyPath = images[dependency].SourcePath.parent_path() / images[dependency].OutputName;
                 needed.push_back("$ORIGIN/" + dependencyPath.lexically_relative(image.SourcePath.parent_path()).generic_string());
             }
-            needed.insert(needed.end(), moduleHostLibraries.begin(), moduleHostLibraries.end());
+            needed.insert(needed.end(), moduleHostLibraries[index].begin(), moduleHostLibraries[index].end());
             output = macos ? Elfpatcher::GuestModuleWriter().WriteMacOs(image, needed, guestRunPath) : Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath);
         }
         if (windows) {
