@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstdint>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -289,24 +290,23 @@ bool forwardsWord(const IrUse& use) {
     return use.user->Opcode() == IrOpcode::Identity || use.user->Opcode() == IrOpcode::Phi || (use.user->Opcode() == IrOpcode::SelectU32 && use.operand != 0u);
 }
 
-void collectReaders(IrValue& value, std::vector<IrUse>& readers, std::vector<const IrValue*>& visited) {
-    if (std::ranges::find(visited, &value) != visited.end()) {
-        return;
-    }
-    visited.push_back(&value);
-    const std::vector<IrUse> uses = value.OperandUses();
-    for (const IrUse& use : uses) {
-        if (forwardsWord(use)) {
-            collectReaders(*use.user, readers, visited);
-        } else {
+void collectReaders(IrValue& value, std::vector<IrUse>& readers) {
+    std::unordered_set<const IrValue*> visited{&value};
+    std::vector<std::pair<std::vector<IrUse>, std::size_t>> pending;
+    pending.emplace_back(value.OperandUses(), 0u);
+    while (!pending.empty()) {
+        auto& [uses, next] = pending.back();
+        if (next == uses.size()) {
+            pending.pop_back();
+            continue;
+        }
+        const IrUse use = uses[next++];
+        if (!forwardsWord(use)) {
             readers.push_back(use);
+        } else if (visited.insert(use.user).second) {
+            pending.emplace_back(use.user->OperandUses(), 0u);
         }
     }
-}
-
-void collectReaders(IrValue& value, std::vector<IrUse>& readers) {
-    std::vector<const IrValue*> visited;
-    collectReaders(value, readers, visited);
 }
 
 constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 2> packedFields {{{8u, 4u}, {16u, 13u}}};

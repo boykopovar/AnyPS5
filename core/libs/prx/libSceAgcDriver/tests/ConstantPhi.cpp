@@ -2,6 +2,8 @@
 #include "Optimization/ConstantFolder.hpp"
 #include "Optimization/DeadCodeEliminator.hpp"
 #include <cstdio>
+#include <pthread.h>
+#include <string>
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
@@ -77,11 +79,54 @@ void CheckDiamond(unsigned mode) {
     }
 }
 
+void CheckLongAncillaryForwarding() {
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.BlockOrder().push_back(&block);
+    BlockInfo info;
+    info.id = 0u;
+    info.terminator.kind = TerminatorKind::Return;
+    program.Metadata().blockInfo.push_back(info);
+    program.SetEntryBlock(block);
+    IrBuilder builder(program);
+    builder.SetInsertionPoint(block);
+    auto& ancillary = builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(StageInputKind::PackedAncillary)), &builder.Constant(0u)});
+    auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+    auto& condition = builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &builder.Constant(16u)});
+    auto& zero = builder.Constant(0u);
+    IrValue* forwarded = &ancillary;
+    for (std::uint32_t link = 0; link < 20000u; ++link) forwarded = &builder.Emit(IrOpcode::SelectU32, IrType::U32, {&condition, &zero, forwarded});
+    auto& field = builder.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {forwarded, &builder.Constant(8u), &builder.Constant(4u)});
+    builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&field});
+    struct Run {
+        IrProgram& program;
+        std::string error;
+    } run{program, {}};
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setstacksize(&attributes, 256u * 1024u);
+    pthread_t thread;
+    const auto body = +[](void* argument) -> void* {
+        auto& state = *static_cast<Run*>(argument);
+        try {
+            ConstantFolder{}.Fold(state.program);
+        } catch (const std::exception& error) {
+            state.error = error.what();
+        }
+        return nullptr;
+    };
+    Require(pthread_create(&thread, &attributes, body, &run) == 0, "long ancillary forwarding: cannot start the folding thread");
+    pthread_join(thread, nullptr);
+    pthread_attr_destroy(&attributes);
+    Require(run.error.empty(), "long ancillary forwarding: folding failed");
+}
+
 }
 
 int main() {
     try {
         for (unsigned mode = 0; mode < 5u; ++mode) CheckDiamond(mode);
+        CheckLongAncillaryForwarding();
         std::puts("constant phi dominance tests passed");
         return 0;
     } catch (const std::exception& error) {
