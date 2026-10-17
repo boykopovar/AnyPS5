@@ -19,6 +19,11 @@
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" int APS5_VABI getpid_nid_postfix();
 extern "C" std::uint64_t APS5_VABI sceKernelGetTscFrequency(void);
+struct GuestRlimit {
+    std::int64_t rlim_cur;
+    std::int64_t rlim_max;
+};
+extern "C" int APS5_VABI getrlimit_nid_postfix(int resource, GuestRlimit* limit);
 
 struct SceKernelSystemSwVersion {
     std::uint64_t size;
@@ -55,11 +60,24 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
     const int saved = *__error_nid_postfix();
     std::int64_t result = -1;
     switch (name) {
+        case 1: // _SC_ARG_MAX
+            result = 262144;
+            break;
         case 3: // _SC_CLK_TCK
             result = 128;
             break;
+        case 5: { // _SC_OPEN_MAX
+            GuestRlimit limit{};
+            if (getrlimit_nid_postfix(8, &limit) == 0) {
+                result = limit.rlim_cur;
+            }
+            break;
+        }
         case 47: // _SC_PAGESIZE
             result = PS5_PAGE_SIZE;
+            break;
+        case 56: // _SC_IOV_MAX
+            result = 1024;
             break;
         case 57: // _SC_NPROCESSORS_CONF
         case 58: // _SC_NPROCESSORS_ONLN
