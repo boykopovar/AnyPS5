@@ -252,6 +252,16 @@ bool Listening(const Socket& socket) {
     socklen_t size = sizeof(listening);
     return ::getsockopt(socket.value, SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&listening), &size) == 0 && listening != 0;
 }
+bool ZeroPortConnect(const Socket& socket, const void* address, std::uint32_t length) {
+    if (!address || (socket.type != 1 && socket.type != 2) || (socket.family != 2 && socket.family != 28)) return false;
+    const auto* bytes = static_cast<const unsigned char*>(address);
+    if (length < (socket.family == 2 ? 16u : 28u) || bytes[1] != socket.family || (bytes[2] | bytes[3]) != 0) return false;
+    sockaddr_storage peer{};
+    socklen_t peerSize = sizeof(peer);
+    if (::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &peerSize) == 0) return false;
+    Fail(49);
+    return true;
+}
 int Disconnect(const Socket& socket) {
     sockaddr_storage peer{};
     socklen_t peerSize = sizeof(peer);
@@ -994,6 +1004,7 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->family != GuestUnix && socket->type == 2 && address && length >= 2 && static_cast<const unsigned char*>(address)[1] == 0
         && Disconnect(*socket) != 0)
         return -1;
+    if (ZeroPortConnect(*socket, address, length)) return -1;
     sockaddr_storage native{};
     socklen_t size;
     if (!Address(address, length, native, size)) return -1;
