@@ -153,6 +153,10 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
             const auto* replacement = read<const void*>(libcParameters, 0x30);
             if (read<std::uint64_t>(replacement, 0) != 0x78 || read<std::uint64_t>(replacement, 8) != 2) throw std::runtime_error("application heap: unsupported allocator replacement table");
             std::array<void*, 10> api;
+            if (ApplicationGuestHeapApi_nid_no_patch(api.data())) {
+                ApplicationHeapRegister_nid_no_patch(api.data());
+                return;
+            }
             std::memcpy(api.data(), static_cast<const std::byte*>(replacement) + 0x20, sizeof(api));
             ApplicationHeapRegister_nid_no_patch(api.data());
             const auto initialize = read<Initialize>(replacement, 0x10);

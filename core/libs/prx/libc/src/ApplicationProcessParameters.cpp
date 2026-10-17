@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <array>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -11,7 +12,45 @@
 #include <windows.h>
 #elif defined(__linux__)
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include <dlfcn.h>
 #endif
+
+bool ApplicationGuestHeapApi_nid_no_patch(void** api) {
+#ifdef __linux__
+    static const auto guest = [] {
+        constexpr std::array<const char*, 10> names{
+            "gQX+4GDQjpM#guest", "tIhsqj0qsFE#guest", "2X5agFjKxMc#guest", "Y7aJ1uydPMo#guest",
+            "Ujf3KzMvRmI#guest", "OGybVuPAhAY#guest", "cVSk9y8URbc#guest", "CC-BLMBu9-I#guest",
+            "KuOuD58hqn4#guest", "NDcSfcYZRC8#guest"
+        };
+        std::array<void*, 10> result{};
+        bool found = false;
+        for (std::size_t index = 0; index < names.size(); ++index) {
+            result[index] = ::dlsym(RTLD_DEFAULT, names[index]);
+            found |= result[index] != nullptr;
+        }
+        if (!found) return result;
+        if (result[0] == nullptr) throw std::runtime_error("application heap: incomplete guest allocator API");
+        Dl_info owner{};
+        if (!::dladdr(result[0], &owner) || owner.dli_fbase == nullptr || owner.dli_fname == nullptr)
+            throw std::runtime_error("application heap: cannot identify guest allocator owner");
+        for (std::size_t index = 1; index < names.size(); ++index) {
+            Dl_info info{};
+            if (result[index] == nullptr || !::dladdr(result[index], &info) || info.dli_fbase != owner.dli_fbase)
+                throw std::runtime_error("application heap: incomplete or mixed guest allocator API");
+        }
+        if (::dlopen(owner.dli_fname, RTLD_LAZY | RTLD_NOLOAD) == nullptr)
+            throw std::runtime_error("application heap: cannot retain guest allocator owner");
+        return result;
+    }();
+    if (guest[0] == nullptr) return false;
+    std::memcpy(api, guest.data(), sizeof(guest));
+    return true;
+#else
+    (void)api;
+    return false;
+#endif
+}
 
 const void* ApplicationProcessParameters_nid_no_patch() {
 #ifdef _WIN32

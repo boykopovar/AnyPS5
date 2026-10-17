@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <source_location>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -15,6 +16,7 @@
 #include <windows.h>
 #elif defined(__linux__)
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -53,13 +55,17 @@ std::size_t lastSize = 0;
 std::size_t lastAlignment = 0;
 unsigned posixCalls = 0;
 unsigned initializes = 0;
+unsigned finalizes = 0;
 unsigned frees = 0;
 bool fail = false;
 bool recurse = false;
 bool nullPosixResult = false;
 
-void require(bool condition) {
-    if (!condition) throw std::runtime_error("application heap test failed");
+void require(bool condition, std::source_location location = std::source_location::current()) {
+    if (!condition) {
+        std::fprintf(stderr, "application heap test failed at line %u\n", location.line());
+        throw std::runtime_error("application heap test failed");
+    }
 }
 
 void installProcessParameters() {
@@ -119,7 +125,7 @@ void reject(TAction action) {
 }
 
 void APS5_VABI initialize() { ++initializes; }
-void APS5_VABI finalize() { require(initializes == 1); }
+void APS5_VABI finalize() { require(initializes == 1 && ++finalizes == 1); }
 void APS5_VABI exitCallbackAllocates() {
     if (ApplicationHeapAllocate_nid_no_patch(16) != storage.data()) throw std::runtime_error("application heap test failed");
 }
@@ -171,6 +177,17 @@ void write(std::array<std::byte, TSize>& data, std::size_t offset, TValue value)
 
 }
 
+#ifdef __linux__
+extern "C" void HeapTestSdkInitialize() { initialize(); }
+extern "C" void HeapTestSdkFinalize() { finalize(); }
+extern "C" void* HeapTestAllocatorEntry(unsigned index) {
+    require(index < 7);
+    void* result;
+    std::memcpy(&result, replacement.data() + 0x20 + index * sizeof(result), sizeof(result));
+    return result;
+}
+#endif
+
 int main(int argc, char** argv) {
     reject([] { ApplicationHeapAllocate_nid_no_patch(64); });
     reject([] { ApplicationHeapRegister_nid_no_patch(nullptr); });
@@ -190,6 +207,38 @@ int main(int argc, char** argv) {
     write(replacement, 0x40, &align);
     write(replacement, 0x48, &realign);
     write(replacement, 0x50, &posixAlign);
+#ifdef __linux__
+    if (argc > 1 && (std::strcmp(argv[1], "sdk") == 0 || std::strcmp(argv[1], "sdk-partial") == 0)) {
+        require(argc == 3);
+        void* sdk = dlopen(argv[2], RTLD_NOW | RTLD_GLOBAL);
+        require(sdk != nullptr && initializes == 1 && finalizes == 0);
+        if (std::strcmp(argv[1], "sdk-partial") == 0) {
+            reject([] { ApplicationHeapInitialize_nid_no_patch(process.data()); });
+            require(initializes == 1);
+            require(dlclose(sdk) == 0);
+            return 0;
+        }
+        const auto sdkAllocate = reinterpret_cast<void* (*)(std::size_t)>(dlsym(sdk, "gQX+4GDQjpM#guest"));
+        require(sdkAllocate != nullptr);
+        auto* live = static_cast<unsigned char*>(sdkAllocate(32));
+        require(live == reinterpret_cast<unsigned char*>(storage.data()));
+        std::memset(live, 0x5a, 32);
+        ApplicationHeapInitialize_nid_no_patch(process.data());
+        require(initializes == 1);
+        for (unsigned index = 0; index < 32; ++index) require(live[index] == 0x5a);
+        ApplicationHeapFree_nid_no_patch(live);
+        require(frees == 1);
+        require(scriptingGetMem_nid_postfix(64, 48) == storage.data());
+        require(lastSize == 48 && lastAlignment == 64);
+        scriptingFreeMem_nid_postfix(storage.data());
+        require(frees == 2);
+        require(dlclose(sdk) == 0 && finalizes == 0);
+        require(ApplicationHeapAllocate_nid_no_patch(24) == storage.data() && lastSize == 24);
+        ApplicationHeapFree_nid_no_patch(storage.data());
+        require(frees == 3 && initializes == 1);
+        return 0;
+    }
+#endif
     if (argc > 1 && std::strcmp(argv[1], "lazy") == 0) {
         installProcessParameters();
         require(initializes == 0);
