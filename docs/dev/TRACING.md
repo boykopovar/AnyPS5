@@ -76,3 +76,7 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 ## Shader registers
 
 `APS5_TRACE_SHADER_REGS=all` prints register snapshots for every shader. Set it to a shader code address in hexadecimal to print one shader's registers.
+
+## Running titles repeatably
+
+`python tools/title_run.py --games <directory> [ID ...]` relinks and runs extracted title packages found under `--games` (a directory holding `eboot.bin` and `sce_sys/param.json`) and writes `summary.json` and a fixed-format `summary.md` under `--out` (default `title-runs/<commit>-<time>/`). Each title runs `--runs` times (default 2): the first with empty AnyPS5 and Mesa or NVIDIA shader caches, the next ones keeping them. AMD's Windows `VkCache` is not isolated. On Windows the title's windows are kept past the right edge of the desktop, without focus and without being minimized, so a run does not show up on screen; elsewhere run it under a virtual display if that matters. A run ends as `relink-failed`, `crashed`, `exited`, `stalled` (no present in the last 20 s), `blank` (the last frame is one colour) or `rendering`; the first, middle and last dumped frames are kept. `--compare <summary.json>` lists regressions and improvements against an earlier run. Per-title relink flags, run length and environment live in `tools/titles.json`.
