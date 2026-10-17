@@ -848,9 +848,15 @@ std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uin
 
 std::atomic<std::uint64_t> importWindow{0};
 
-ImportRun importRun(const GuestAllocations::Lease& lease, std::uint64_t address) {
-    const auto index = leasedIndexContaining(lease, address);
-    if (index == lease.size()) return {};
+struct RunBounds {
+    std::size_t index = 0;
+    std::size_t first = 0;
+    std::size_t last = 0;
+    bool found = false;
+    bool single = false;
+};
+
+RunBounds walkRunBounds(const GuestAllocations::Lease& lease, std::uint64_t address, std::size_t index) {
     const auto& containing = *lease[index];
     std::uint64_t low = 0;
     std::uint64_t high = std::numeric_limits<std::uint64_t>::max();
@@ -868,9 +874,56 @@ ImportRun importRun(const GuestAllocations::Lease& lease, std::uint64_t address)
     auto last = index;
     while (last + 1 < lease.size() && lease[last + 1]->address + lease[last + 1]->bytes <= high && continuesRun(*lease[last], *lease[last + 1])) ++last;
     if (window != 0 && (lease[first]->address != low || lease[last]->address + lease[last]->bytes != high)) first = last = index;
-    if (first != last && Imports().unaliasedSpans.contains(lease[first]->address)) return {lease[index]->address, lease[index]->bytes, {lease[index]}};
-    ImportRun run{lease[first]->address, lease[last]->address + lease[last]->bytes - lease[first]->address, {}};
-    run.ranges.assign(lease.begin() + static_cast<std::ptrdiff_t>(first), lease.begin() + static_cast<std::ptrdiff_t>(last) + 1);
+    return {index, first, last, true, false};
+}
+
+RunBounds importRunBounds(const GuestAllocations::Lease& lease, std::uint64_t address) {
+    const auto index = leasedIndexContaining(lease, address);
+    if (index == lease.size()) return {};
+    static const bool memo = std::getenv("APS5_NO_RUN_MEMO") == nullptr;
+    const auto window = importWindow.load(std::memory_order_relaxed);
+    RunBounds bounds;
+    if (!memo) {
+        bounds = walkRunBounds(lease, address, index);
+    } else {
+        struct Memo {
+            const void* ranges = nullptr;
+            std::size_t size = 0;
+            std::size_t index = 0;
+            std::uint64_t window = 0;
+            std::uint64_t windowBlock = 0;
+            const void* first = nullptr;
+            const void* last = nullptr;
+            RunBounds bounds;
+        };
+        static thread_local std::array<Memo, 1024> memos{};
+        const void* ranges = &lease[0];
+        const auto windowBlock = window != 0 ? address / window : 0;
+        const auto slot = (reinterpret_cast<std::uintptr_t>(ranges) / 16u ^ index * 0x9e3779b1u ^ windowBlock * 0x85ebca6bu) % memos.size();
+        auto& entry = memos[slot];
+        if (entry.ranges == ranges && entry.size == lease.size() && entry.index == index && entry.window == window && entry.windowBlock == windowBlock && entry.bounds.last < lease.size() && lease[entry.bounds.first].get() == entry.first && lease[entry.bounds.last].get() == entry.last) {
+            bounds = entry.bounds;
+        } else {
+            bounds = walkRunBounds(lease, address, index);
+            entry = Memo{ranges, lease.size(), index, window, windowBlock, lease[bounds.first].get(), lease[bounds.last].get(), bounds};
+        }
+    }
+    bounds.single = bounds.first != bounds.last && Imports().unaliasedSpans.contains(lease[bounds.first]->address);
+    return bounds;
+}
+
+std::pair<std::uint64_t, std::uint64_t> runSpan(const GuestAllocations::Lease& lease, const RunBounds& bounds) {
+    if (!bounds.found) return {0, 0};
+    if (bounds.single) return {lease[bounds.index]->address, lease[bounds.index]->bytes};
+    return {lease[bounds.first]->address, lease[bounds.last]->address + lease[bounds.last]->bytes - lease[bounds.first]->address};
+}
+
+ImportRun importRun(const GuestAllocations::Lease& lease, std::uint64_t address) {
+    const auto bounds = importRunBounds(lease, address);
+    if (!bounds.found) return {};
+    if (bounds.single) return {lease[bounds.index]->address, lease[bounds.index]->bytes, {lease[bounds.index]}};
+    ImportRun run{lease[bounds.first]->address, lease[bounds.last]->address + lease[bounds.last]->bytes - lease[bounds.first]->address, {}};
+    run.ranges.assign(lease.begin() + static_cast<std::ptrdiff_t>(bounds.first), lease.begin() + static_cast<std::ptrdiff_t>(bounds.last) + 1);
     return run;
 }
 
@@ -933,7 +986,18 @@ bool sameRange(const HostImport& entry, const GuestAllocations::Lease& lease) {
         const auto current = leasedRangeOwner(lease, entry.base, entry.base + entry.bytes);
         return current != nullptr && !entry.ranges.front().owner_before(current) && !current.owner_before(entry.ranges.front());
     }
-    return sameRun(entry, entry.joined ? joinedRun(lease, entry.base, entry.base + entry.bytes) : importRun(lease, entry.base));
+    if (entry.joined) return sameRun(entry, joinedRun(lease, entry.base, entry.base + entry.bytes));
+    const auto bounds = importRunBounds(lease, entry.base);
+    if (!bounds.found) return false;
+    const auto [base, bytes] = runSpan(lease, bounds);
+    if (base != entry.base || bytes != entry.bytes) return false;
+    const auto first = bounds.single ? bounds.index : bounds.first;
+    const auto last = bounds.single ? bounds.index : bounds.last;
+    if (entry.ranges.size() != last - first + 1) return false;
+    for (std::size_t index = 0; index < entry.ranges.size(); ++index) {
+        if (entry.ranges[index].owner_before(lease[first + index]) || lease[first + index].owner_before(entry.ranges[index])) return false;
+    }
+    return true;
 }
 
 bool pointerHeld(const HostImports& state, const HostImport& entry) {
@@ -1045,12 +1109,14 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     } else if (!fresh) {
         if (const auto* current = findImport(state, address, address + 1); current != nullptr && current->joined && sameRange(*current, lease)) return current;
     }
-    auto run = importRun(lease, address);
     // Without an end the caller views the whole run through the import (AcquireRegistered): a window that holds the
     // first byte is shorter than that, so only an import of the whole run is a hit; a window is replaced below.
     if (fresh && end == 0) {
-        if (const auto* current = findImport(state, address, run.ranges.empty() ? address + 1 : run.base + run.bytes)) return current;
+        const auto bounds = importRunBounds(lease, address);
+        const auto [base, bytes] = runSpan(lease, bounds);
+        if (const auto* current = findImport(state, address, !bounds.found ? address + 1 : base + bytes)) return current;
     }
+    auto run = importRun(lease, address);
     if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment);
     if (run.ranges.empty()) return nullptr;
     return importRunAt(context, state, std::move(run), false, address, lease, end, evict);

@@ -235,6 +235,37 @@ void importSpanTests(const Context& context) {
     ::operator delete(block, std::align_val_t{piece});
 }
 
+void importRunGrowthTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    void* block = ::operator new(2 * piece, std::align_val_t{piece});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    std::memset(block, 0x3c, 2 * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    const auto change = [&](void* range, std::size_t bytes, bool add) {
+        GuestAllocations::Mutation mutation;
+        if (add) mutation.Add(range, bytes, true, false, true);
+        else mutation.Remove(range);
+    };
+    const auto build = [&](std::size_t pieces, const std::string& step) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(first + 64, 16);
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        leased.WriteBack();
+        Require(std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= first && first + pieces * piece <= range.end; }), "the import of a run does not cover its " + std::to_string(pieces) + " registered pieces " + step);
+    };
+    change(guest, piece, true);
+    build(1, "before its neighbour was registered");
+    change(guest + piece, piece, true);
+    build(2, "after its neighbour was registered");
+    change(guest, 0, false);
+    change(guest + piece, 0, false);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void spaceWritableWritesTests(const Context& context) {
     if (!AddressSpaceCounters().enabled) return;
     constexpr std::size_t piece = 65536;
@@ -1923,6 +1954,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     addressTableKeyTests();
     snapshotTableTests(context, access);
     importSpanTests(context);
+    importRunGrowthTests(context);
     failedImportRemapTests(context, access);
     spaceImportRunTests(context);
     spaceWritableWritesTests(context);
