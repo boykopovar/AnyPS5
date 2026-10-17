@@ -6,6 +6,12 @@
 #include <cstring>
 #include <stdexcept>
 
+extern "C" {
+int APS5_VABI sceAudioPropagationPathGetNumPoints();
+int APS5_VABI sceAudioPropagationSystemLock();
+int APS5_VABI sceAudioPropagationMaterialInit();
+}
+
 namespace {
 
 void Require(bool condition, const char* message) {
@@ -226,6 +232,10 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemDestroy(system); }, "destroy twice");
     Require(sceAudioPropagationSystemCreate(options, &memory, &system) == 0, "memory reuse after destroy failed");
     Require(sceAudioPropagationSystemDestroy(system) == 0, "second destroy failed");
+
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationPathGetNumPoints(); }, "path get num points throw");
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(); }, "system lock throw");
+    RequireThrows<std::runtime_error>([&] { sceAudioPropagationMaterialInit(); }, "material init throw");
 
     std::puts("AudioPropagation tests passed");
     return 0;

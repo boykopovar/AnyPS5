@@ -1,4 +1,5 @@
 #include "AudioPropagation.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -312,6 +313,106 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         if (info.format != RenderFormat) throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " is unknown");
     }
     for (std::uint32_t index = 0; index < count; ++index) std::memset(infos[index].output, 0, infos[index].outputSize);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationPathGetNumPoints() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationReportApi() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationResetAttributes() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSourceQueryInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystemLock() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystemQueryInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationAudioPathInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationAudioPathPointInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationMaterialInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationPortalSettingsInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationRayInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSourceRenderInfoInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSourceSetAudioPathsParamInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystem() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystemMemoryInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystemOptionInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationReportRegisterHandler() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationReportUnregisterHandler() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystemEnumHandles() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioPropagationSystemUnlock() {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
