@@ -12,6 +12,7 @@ static constexpr int SCE_NP_ERROR_SIGNED_OUT = static_cast<int>(0x80550006);
 static constexpr int SCE_NP_ERROR_USER_NOT_FOUND = static_cast<int>(0x80550007);
 static constexpr int SCE_NP_ERROR_CALLBACK_ALREADY_REGISTERED = static_cast<int>(0x80550008);
 static constexpr int SCE_NP_ERROR_CALLBACK_NOT_REGISTERED = static_cast<int>(0x80550009);
+static constexpr int SCE_NP_ERROR_INVALID_SIZE = static_cast<int>(0x80550011);
 static constexpr int SCE_NP_ERROR_REQUEST_NOT_FOUND = static_cast<int>(0x80550014);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
@@ -23,6 +24,9 @@ namespace {
 std::mutex reachabilityMutex;
 void* reachabilityCallback = nullptr;
 void* reachabilityUserdata = nullptr;
+std::mutex gamePresenceMutex;
+void* gamePresenceCallback = nullptr;
+void* gamePresenceUserdata = nullptr;
 std::mutex requestMutex;
 std::unordered_set<int> liveRequests;
 
@@ -138,9 +142,9 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
 }
 
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
- (void)callback;
- (void)userdata;
- NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(gamePresenceMutex);
+    gamePresenceCallback = callback;
+    gamePresenceUserdata = userdata;
 }
 
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
@@ -179,9 +183,12 @@ int APS5_VABI sceNpRegisterStateCallback(void* callback, void* userdata) {
 }
 
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction* restriction) {
- (void)restriction;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    constexpr std::int32_t maxAgeRestrictions = 0x100;
+    if (!restriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (restriction->size != sizeof(NpContentRestriction)) return SCE_NP_ERROR_INVALID_SIZE;
+    if (restriction->defaultAgeRestriction < 0 || restriction->ageRestrictionCount > maxAgeRestrictions) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (restriction->ageRestrictionCount > 0 && !restriction->ageRestriction) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 int APS5_VABI sceNpSetNpTitleId(const NpTitleId* title_id, const NpTitleSecret* title_secret) {

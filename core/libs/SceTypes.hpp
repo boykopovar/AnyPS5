@@ -1322,7 +1322,20 @@ struct Http2AsyncOption {
 
 struct NpTitleId { char data[13]; char pad[3]; };
 struct NpTitleSecret { std::uint8_t data[128]; };
-struct NpContentRestriction { std::uint8_t opaque[128]; };
+struct NpAgeRestriction {
+    char countryCode[4];
+    std::int8_t age;
+    std::uint8_t padding[3];
+};
+struct NpContentRestriction {
+    std::uint64_t size;
+    std::int8_t defaultAgeRestriction;
+    std::uint8_t padding[3];
+    std::int32_t ageRestrictionCount;
+    const NpAgeRestriction* ageRestriction;
+};
+static_assert(sizeof(NpAgeRestriction) == 8);
+static_assert(sizeof(NpContentRestriction) == 0x18);
 struct NpOnlineId { char data[17]; char pad[3]; };
 
 struct SharePlayConnectionInfoA {
