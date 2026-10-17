@@ -1,9 +1,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "SceTypes.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <thread>
 
 struct GuestTimeval {
     std::int64_t seconds;
@@ -36,6 +38,8 @@ std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
 std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI unlink_nid_postfix(const char*);
+int APS5_VABI kqueue_nid_postfix();
+int APS5_VABI kevent_nid_postfix(int, const KernelEvent*, int, KernelEvent*, int, const KernelTimespec*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -44,8 +48,62 @@ static void Require(bool value) { if (!value) std::abort(); }
 constexpr int GuestEbadf = 9;
 constexpr int GuestEinval = 22;
 constexpr int GuestDescriptorLimit = 1024;
+constexpr std::int16_t EvfiltUser = -11;
+constexpr std::uint16_t EvAdd = 0x0001;
+constexpr std::uint16_t EvClear = 0x0020;
+constexpr std::uint32_t NoteTrigger = 0x01000000;
+
+static int SelectAll(int descriptor, GuestDescriptorSet& read, GuestDescriptorSet& write, GuestDescriptorSet& except, const GuestTimeval& limit) {
+    read = {};
+    write = {};
+    except = {};
+    read.Add(descriptor);
+    write.Add(descriptor);
+    except.Add(descriptor);
+    return select_nid_postfix(descriptor + 1, read.words.data(), write.words.data(), except.words.data(), &limit);
+}
+
+static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
+    KernelEvent change{};
+    change.ident = 7;
+    change.filter = EvfiltUser;
+    change.flags = flags;
+    change.fflags = fflags;
+    return change;
+}
+
+static void Kqueues() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0 && kq < GuestDescriptorLimit);
+    GuestDescriptorSet read{};
+    GuestDescriptorSet write{};
+    GuestDescriptorSet except{};
+    const GuestTimeval none{0, 0};
+    Require(SelectAll(kq, read, write, except, none) == 0);
+    Require(!read.Has(kq) && !write.Has(kq) && !except.Has(kq));
+    const auto added = UserEvent(EvAdd | EvClear, 0);
+    Require(kevent_nid_postfix(kq, &added, 1, nullptr, 0, nullptr) == 0);
+    Require(SelectAll(kq, read, write, except, none) == 0);
+    std::thread trigger([kq] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const auto triggered = UserEvent(0, NoteTrigger);
+        Require(kevent_nid_postfix(kq, &triggered, 1, nullptr, 0, nullptr) == 0);
+    });
+    const GuestTimeval second{1, 0};
+    Require(SelectAll(kq, read, write, except, second) == 1);
+    trigger.join();
+    Require(read.Has(kq) && !write.Has(kq) && !except.Has(kq));
+    Require(SelectAll(kq, read, write, except, none) == 1 && read.Has(kq));
+    KernelEvent events[1]{};
+    const KernelTimespec zero{0, 0};
+    Require(kevent_nid_postfix(kq, nullptr, 0, events, 1, &zero) == 1);
+    Require(SelectAll(kq, read, write, except, none) == 0);
+    Require(close_nid_postfix(kq) == 0);
+}
 
 int main() {
+    Kqueues();
+
     int descriptors[2]{-1, -1};
     Require(pipe_nid_postfix(descriptors) == 0);
     const int reader = descriptors[0];
