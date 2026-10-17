@@ -138,7 +138,6 @@ int APS5_VABI scePthreadRwlockTimedwrlock(PthreadRwlock* rwlock, KernelUseconds 
     const bool acquired = lock->_changed.WaitUntil(state, deadline, [&] { return WriterMayEnter(lock); });
     --lock->_waitingWriters;
     if (acquired) return EnterWrite(lock);
-    state.unlock();
     lock->_changed.NotifyAll();
     return SCE_KERNEL_ERROR_ETIMEDOUT;
 }
@@ -155,7 +154,6 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
         if (readLocksHeld != 0) --readLocksHeld;
         if (lock->_readers.fetch_sub(1, std::memory_order_acq_rel) != 1) return SCE_OK;
     }
-    state.unlock();
     lock->_changed.NotifyAll();
     return SCE_OK;
 }
