@@ -4652,6 +4652,17 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
 
 VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut) {
     startJournalReplay();
+    for (const auto& binding : shader.bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        for (std::size_t at = 0; at + 4u <= binding.guestDescriptor.size(); at += 4u) {
+            const auto* words = binding.guestDescriptor.data() + at;
+            const auto base = static_cast<std::uint64_t>(words[0]) | (static_cast<std::uint64_t>(words[1] & 0xffffu) << 32u);
+            const auto stride = (words[1] >> 16u) & 0x3fffu;
+            const auto records = static_cast<std::uint64_t>(words[2]);
+            const auto bytes = stride != 0 ? records * stride : records;
+            if (base != 0 && bytes != 0) static_cast<void>(Graphics::FlushDepthPlanes(base, static_cast<std::size_t>(bytes)));
+        }
+    }
     state->recorder->BoundKeptBytes();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.Dispatch");

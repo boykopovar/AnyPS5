@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -3225,6 +3226,7 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 }
 
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published) {
+    static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
     // The images stay alive across the scan: their last owner may be a batch's kept list, which
     // another thread releases outside the GPU mutex once the batch completed.
