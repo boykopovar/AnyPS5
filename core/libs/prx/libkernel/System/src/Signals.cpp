@@ -37,6 +37,7 @@ using GuestHandler = void (APS5_VABI *)(int);
 constexpr int MaxSignal = 128;
 constexpr int GuestSigkill = 9;
 constexpr int GuestSigstop = 17;
+constexpr int GuestSigalrm = 14;
 constexpr int SaRestart = 0x2;
 constexpr int SaSiginfo = 0x40;
 std::atomic<GuestHandler> handlers[MaxSignal + 1]{};
@@ -112,8 +113,7 @@ bool TakePending(int guest) {
     auto& word = pending.words[SignalWord(guest)];
     const std::uint32_t bit = SignalBit(guest);
     if ((word.load(std::memory_order_relaxed) & bit) == 0) return false;
-    word.fetch_and(~bit, std::memory_order_relaxed);
-    return true;
+    return (word.fetch_and(~bit, std::memory_order_relaxed) & bit) != 0;
 }
 
 bool PendingInSet(const GuestSignalSet& set, int* guest) {
@@ -187,8 +187,18 @@ bool CaughtByGuest(int guest) {
     return Disposition(guest).handler > 1;
 }
 
+bool TerminatesWithoutHandler(int guest) {
+    return guest == GuestSigalrm && Disposition(guest).handler == 0;
+}
+
+[[noreturn]] void TerminateBySigalrm(const char* cause) {
+    std::fprintf(stderr, "SIGALRM: %s with the default disposition; the process terminates\n", cause);
+    std::fflush(stderr);
+    std::_Exit(128 + GuestSigalrm);
+}
+
 bool Deliverable(int guest) {
-    return NativeSignal(guest) != 0 || CaughtByGuest(guest);
+    return NativeSignal(guest) != 0 || CaughtByGuest(guest) || TerminatesWithoutHandler(guest);
 }
 
 bool TakePendingUnblocked(int* guest) {
@@ -205,6 +215,7 @@ bool DeliverPendingSignal(int guest) {
     const GuestSigaction action = Disposition(guest);
     if (action.handler == 1) return false;
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("signal: SA_SIGINFO handlers are not delivered");
+    if (guest == GuestSigalrm && action.handler == 0) TerminateBySigalrm("a pending SIGALRM was unblocked");
     const int native = NativeSignal(guest);
     if (native != 0) {
         if (std::raise(native) != 0) throw std::runtime_error("signal: delivering the signal to the host failed");
@@ -260,7 +271,6 @@ extern "C" int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet*
 }
 
 namespace {
-constexpr int GuestSigalrm = 14;
 struct AlarmState {
     std::mutex lock;
     std::condition_variable changed;
@@ -288,13 +298,14 @@ void ExpireAlarm(std::chrono::microseconds interval) {
         handler = dispositions[GuestSigalrm].handler;
     }
     if (handler == 1) return;
-    if (SignalBlocked(GuestSigalrm))
-        throw std::runtime_error("ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired while SIGALRM is blocked: pending signals are not implemented");
-    if (handler == 0) {
-        std::fprintf(stderr, "SIGALRM: the alarm expired with the default disposition; the process terminates\n");
-        std::fflush(stderr);
-        std::_Exit(128 + GuestSigalrm);
+    if (SignalBlocked(GuestSigalrm)) {
+        MarkPending(GuestSigalrm);
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+        if (SignalBlocked(GuestSigalrm) || !TakePending(GuestSigalrm)) return;
+        handler = Disposition(GuestSigalrm).handler;
+        if (handler == 1) return;
     }
+    if (handler == 0) TerminateBySigalrm("the alarm expired");
     throw std::runtime_error("ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented");
 }
 
@@ -553,6 +564,7 @@ int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, Guest
             }
         }
     }
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     for (int guest = 1; guest <= MaxSignal; ++guest) {
         if (SignalBlocked(guest) || !Deliverable(guest) || !TakePending(guest)) continue;
         DeliverPendingSignal(guest);

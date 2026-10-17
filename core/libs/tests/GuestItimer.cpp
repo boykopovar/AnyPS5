@@ -17,6 +17,13 @@ struct GuestItimerval {
     KernelTimeval value;
 };
 static_assert(sizeof(GuestItimerval) == 32 && offsetof(GuestItimerval, value) == 16);
+struct GuestSignalSet {
+    std::uint32_t bits[4];
+};
+struct GuestTimespec {
+    std::int64_t seconds;
+    std::int64_t nanoseconds;
+};
 
 using Handler = void (APS5_VABI *)(int);
 using TerminateHandler = void (*)();
@@ -25,6 +32,9 @@ int APS5_VABI setitimer_nid_postfix(int, const GuestItimerval*, GuestItimerval*)
 int APS5_VABI getitimer_nid_postfix(int, GuestItimerval*);
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 Handler APS5_VABI signal_nid_postfix(int, Handler);
+int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
+int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet*, void*, const GuestTimespec*);
+int APS5_VABI sigpending_nid_postfix(GuestSignalSet*);
 int* APS5_VABI __error_nid_postfix();
 void* APS5_VABI __cxa_current_primary_exception_nid_postfix();
 std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix();
@@ -64,6 +74,19 @@ static void APS5_VABI OnAlarm(int signal) {
     delivered = signal;
 }
 
+static bool AlarmPending() {
+    GuestSignalSet pending{{0, 0, 0, 0}};
+    Require(sigpending_nid_postfix(&pending) == 0, "sigpending failed");
+    return (pending.bits[0] & (1u << 13)) != 0;
+}
+
+static const GuestItimerval once{{0, 0}, {0, 20000}};
+
+static void ExpireOnce() {
+    Require(setitimer_nid_postfix(0, &once, nullptr) == 0, "arming the blocked timer failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+}
+
 static void OnTerminate() {
     const auto* type = __cxa_current_exception_type_nid_postfix();
     const auto* error = static_cast<const std::runtime_error*>(__cxa_current_primary_exception_nid_postfix());
@@ -77,7 +100,18 @@ static void OnTerminate() {
     std::_Exit(1);
 }
 
-int main() {
+static int UnblockPendingDefault() {
+    const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, nullptr) == 0, "blocking SIGALRM failed");
+    ExpireOnce();
+    Require(AlarmPending(), "a blocked expiry with the default disposition was not left pending");
+    Require(_sigprocmask_nid_postfix(2, &alarmSet, nullptr) == 0, "unblocking SIGALRM failed");
+    std::fprintf(stderr, "unblocking a pending SIGALRM with the default disposition did not terminate\n");
+    return 1;
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "pending-default") == 0) return UnblockPendingDefault();
     const auto ignore = reinterpret_cast<Handler>(std::uintptr_t{1});
     Require(signal_nid_postfix(14, ignore) == nullptr, "SIGALRM was not initially defaulted");
     const GuestItimerval valid{{0, 0}, {30, 0}};
@@ -153,6 +187,36 @@ int main() {
     Require(Micros(alarmed.interval) == 0 && Micros(alarmed.value) > 4000000 && Micros(alarmed.value) <= 5000000, "alarm did not replace the timer");
     Require(setitimer_nid_postfix(0, &zero, &previous) == 0 && Micros(previous.value) > 0, "disarming the alarm failed");
     Require(GuestAlarm_nid_no_patch(0) == 0, "setitimer did not cancel the alarm");
+
+    const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
+    const GuestTimespec poll{0, 0};
+    const GuestTimespec patience{2, 0};
+    GuestSignalSet unblocked{};
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, &unblocked) == 0, "blocking SIGALRM failed");
+    ExpireOnce();
+    Require(!AlarmPending(), "an ignored expiry was left pending");
+    Require(signal_nid_postfix(14, nullptr) == ignore, "SIGALRM was not defaulted");
+    Require(setitimer_nid_postfix(0, &once, nullptr) == 0, "arming the waited timer failed");
+    Require(sigtimedwait_nid_postfix(&alarmSet, nullptr, &patience) == 14, "sigtimedwait did not take the blocked expiry");
+    Require(!AlarmPending(), "the taken expiry is still pending");
+    const GuestItimerval frequent{{0, 20000}, {0, 20000}};
+    Require(setitimer_nid_postfix(0, &frequent, nullptr) == 0, "arming the frequent timer failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    Require(setitimer_nid_postfix(0, &zero, nullptr) == 0, "disarming the frequent timer failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(sigtimedwait_nid_postfix(&alarmSet, nullptr, &poll) == 14, "the repeated expiries were not left pending");
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&alarmSet, nullptr, &poll) == -1 && *__error_nid_postfix() == 35,
+        "the repeated expiries were not merged into one pending signal");
+    Require(signal_nid_postfix(14, OnAlarm) == nullptr, "SIGALRM handler was not installed while blocked");
+    ExpireOnce();
+    Require(delivered == 0 && AlarmPending(), "a blocked expiry with a handler was not left pending");
+    Require(_sigprocmask_nid_postfix(3, &unblocked, nullptr) == 0, "unblocking SIGALRM failed");
+    Require(delivered == 14, "unblocking SIGALRM did not run its handler");
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, nullptr) == 0 && !AlarmPending(), "the delivered expiry is still pending");
+    Require(_sigprocmask_nid_postfix(3, &unblocked, nullptr) == 0, "restoring the signal mask failed");
+    delivered = 0;
+    Require(signal_nid_postfix(14, ignore) == OnAlarm, "SIGALRM was not ignored again");
 
     Require(signal_nid_postfix(14, OnAlarm) == ignore, "SIGALRM handler was not installed");
     _ZSt13set_terminatePFvvE_nid_postfix(OnTerminate);
