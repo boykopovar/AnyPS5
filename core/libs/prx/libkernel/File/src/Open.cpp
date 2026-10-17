@@ -165,7 +165,7 @@ static int SceErrorFromErrno(int error) {
 
 static int SceStatErrorFromErrno(int error) {
 #ifdef ELOOP
-    if (error == ELOOP) return SceKernelError(62);
+    if (error == ELOOP) return SCE_KERNEL_ERROR_ELOOP;
 #endif
     return SceErrorFromErrno(error);
 }
@@ -338,6 +338,7 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     }
     const auto status = std::filesystem::status(native, error);
     if (error == std::errc::not_a_directory) return SceErrorFromErrno(GuestEnotdir);
+    if (error == std::errc::too_many_symbolic_link_levels) return SceStatErrorFromErrno(ELOOP);
     if (!std::filesystem::exists(status)) {
         return SceErrorFromErrno(2);
     }
