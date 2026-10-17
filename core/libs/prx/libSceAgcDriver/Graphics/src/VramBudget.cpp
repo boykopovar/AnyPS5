@@ -41,23 +41,16 @@ VramBudget::VramBudget(const Context& context) : query(context.memoryProperties2
         return;
     }
     static const VkDeviceSize forcedLimit = mibSetting("APS5_VRAM_BUDGET_MIB");
-    static const VkDeviceSize forcedHeadroom = mibSetting("APS5_VRAM_HEADROOM_MIB");
     limit = forcedLimit != 0 ? std::min(forcedLimit, heapBytes) : heapBytes;
-    headroom = forcedHeadroom != 0 ? forcedHeadroom : HeadroomFor(limit);
 }
 
-VkDeviceSize VramBudget::HeadroomFor(VkDeviceSize size) {
-    return std::clamp<VkDeviceSize>(size / 16u, 256 * MiB, 1024 * MiB);
-}
-
-VkDeviceSize VramBudget::TargetFor(VkDeviceSize size, VkDeviceSize available, VkDeviceSize reserve) {
-    const auto floor = std::min<VkDeviceSize>(size / 4u, 1024 * MiB);
-    return std::max<VkDeviceSize>(available > reserve ? available - reserve : 0, floor);
+VkDeviceSize VramBudget::TargetFor(VkDeviceSize size, VkDeviceSize available) {
+    return std::max<VkDeviceSize>(available, std::min<VkDeviceSize>(size / 4u, 1024 * MiB));
 }
 
 VkDeviceSize VramBudget::target() const {
     const auto reported = budget.load(std::memory_order_relaxed);
-    return TargetFor(heapBytes, reported != 0 ? std::min(reported, limit) : limit, headroom);
+    return TargetFor(heapBytes, reported != 0 ? std::min(reported, limit) : limit);
 }
 
 void VramBudget::Refresh() {
@@ -74,7 +67,7 @@ void VramBudget::Refresh() {
     readAt.store(ticks(), std::memory_order_relaxed);
     if (announced) return;
     announced = true;
-    std::fprintf(stderr, "[vram] device-local heap %u of %llu MiB: VK_EXT_memory_budget budget %llu MiB, usage %llu MiB; released device buffers are not pooled above %llu MiB (headroom %llu MiB)\n", *heap, static_cast<unsigned long long>(heapBytes / MiB), static_cast<unsigned long long>(reported.heapBudget[*heap] / MiB), static_cast<unsigned long long>(reported.heapUsage[*heap] / MiB), static_cast<unsigned long long>(target() / MiB), static_cast<unsigned long long>(headroom / MiB));
+    std::fprintf(stderr, "[vram] device-local heap %u of %llu MiB: VK_EXT_memory_budget budget %llu MiB, usage %llu MiB; over %llu MiB the device pool keeps only what was taken from it in the last second\n", *heap, static_cast<unsigned long long>(heapBytes / MiB), static_cast<unsigned long long>(reported.heapBudget[*heap] / MiB), static_cast<unsigned long long>(reported.heapUsage[*heap] / MiB), static_cast<unsigned long long>(target() / MiB));
 }
 
 VkDeviceSize VramBudget::Excess() {

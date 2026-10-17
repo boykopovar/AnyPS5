@@ -240,16 +240,18 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
             AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] small: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB); large: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB)%s; device: %llu hits, %llu misses, %llu evictions, %zu retained (%.0f MiB of %llu)\n", static_cast<unsigned long long>(smallTier.hits), static_cast<unsigned long long>(smallTier.misses), static_cast<unsigned long long>(smallTier.evictions), smallTier.slots, smallTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(largeTier.hits), static_cast<unsigned long long>(largeTier.misses), static_cast<unsigned long long>(largeTier.evictions), largeTier.slots, largeTier.retainedBytes / 1048576.0, sharedTiers() ? " (shared)" : "", static_cast<unsigned long long>(deviceTier.hits), static_cast<unsigned long long>(deviceTier.misses), static_cast<unsigned long long>(deviceTier.evictions), deviceTier.slots, deviceTier.retainedBytes / 1048576.0, static_cast<unsigned long long>(deviceTier.budget >> 20u));
             if (vram.Enabled()) {
                 const auto report = vram.Report();
-                AgcDriver::ProfilePrint_nid_no_patch("[vram] heap %u: budget %llu MiB, usage %llu MiB, target %llu MiB; %llu released device buffers (%.0f MiB) not pooled over the target\n", report.heap, static_cast<unsigned long long>(report.budget >> 20u), static_cast<unsigned long long>(report.usage >> 20u), static_cast<unsigned long long>(report.target >> 20u), static_cast<unsigned long long>(vramDropped), vramDroppedBytes / 1048576.0);
+                AgcDriver::ProfilePrint_nid_no_patch("[vram] heap %u: budget %llu MiB, usage %llu MiB, target %llu MiB; %llu released device buffers (%.0f MiB) not pooled over the target, demand floor %.0f MiB, %llu device allocations while dropping; %llu allocations (%llu MiB) placed in host memory\n", report.heap, static_cast<unsigned long long>(report.budget >> 20u), static_cast<unsigned long long>(report.usage >> 20u), static_cast<unsigned long long>(report.target >> 20u), static_cast<unsigned long long>(vramDropped), vramDroppedBytes / 1048576.0, demandFloor() / 1048576.0, static_cast<unsigned long long>(vramChurn), static_cast<unsigned long long>(HostPlacements().count.load()), static_cast<unsigned long long>(HostPlacements().bytes.load() >> 20u));
             }
         }
     }
     auto& tier = tierFor(capacity, properties);
+    if (&tier == &deviceTier) noteDemand(capacity);
     const auto largest = &tier == &deviceTier && !exactSizes() && bytes <= std::numeric_limits<std::size_t>::max() / 2 ? std::max(capacity, bytes * 2) : capacity;
     auto found = tier.free.end();
     for (auto size = capacity; size <= largest && found == tier.free.end(); size = NextCapacity(size)) found = tier.free.find({size, usage, properties});
     if (found == tier.free.end() || found->second.empty()) {
         ++tier.misses;
+        if (&tier == &deviceTier && vramDropping) ++vramChurn;
         return std::nullopt;
     }
     auto result = found->second.back().allocation;
@@ -329,9 +331,12 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
         if (DeviceTiered(allocation.properties)) excess = vram.Excess();
         std::lock_guard lock(mutex);
         auto& tier = tierFor(allocation.bytes, allocation.properties);
+        const auto floor = &tier == &deviceTier ? std::min(demandFloor(), vram.Report().heapBytes / 16u) : 0;
+        if (excess != 0 && tier.retainedBytes + allocation.allocationBytes <= floor) excess = 0;
+        if (&tier == &deviceTier) vramDropping = excess != 0;
         if (excess != 0 && &tier == &deviceTier) {
             auto dropped = allocation.allocationBytes;
-            while (tier.slots != 0 && dropped < excess) {
+            while (tier.slots != 0 && dropped < excess && tier.retainedBytes > floor) {
                 evictOldest(tier, evicted);
                 dropped += evicted.back().allocationBytes;
             }
@@ -352,6 +357,25 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
     VkDeviceSize freed = 0;
     for (const auto& gone : evicted) freed += destroy(gone);
     if (excess != 0) vram.Released(freed);
+}
+
+void BufferPool::noteDemand(VkDeviceSize bytes) {
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const auto slot = now / (DemandWindow.count() / static_cast<std::int64_t>(demand.size()));
+    if (slot != demandSlot) {
+        if (demandSlot < 0 || slot - demandSlot >= static_cast<std::int64_t>(demand.size())) demand.fill(0);
+        else for (auto next = demandSlot + 1; next <= slot; ++next) demand[static_cast<std::size_t>(next) % demand.size()] = 0;
+        demandSlot = slot;
+    }
+    demand[static_cast<std::size_t>(slot) % demand.size()] += bytes;
+}
+
+VkDeviceSize BufferPool::demandFloor() const {
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const auto oldest = now / (DemandWindow.count() / static_cast<std::int64_t>(demand.size())) - static_cast<std::int64_t>(demand.size()) + 1;
+    VkDeviceSize total = 0;
+    for (auto slot = std::max<std::int64_t>({oldest, demandSlot - static_cast<std::int64_t>(demand.size()) + 1, 0}); slot <= demandSlot; ++slot) total += demand[static_cast<std::size_t>(slot) % demand.size()];
+    return total;
 }
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {

@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using namespace AgcDriver::Graphics;
@@ -196,7 +197,7 @@ void HostPlacement() {
 }
 
 constexpr VkDeviceSize HeapBytes = VkDeviceSize{8} << 30u;
-constexpr VkDeviceSize HeapTarget = HeapBytes - 512 * MiB;
+constexpr VkDeviceSize HeapTarget = HeapBytes;
 constexpr VkBufferUsageFlags BudgetUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
 Context budgetContext(bool integrated = false) {
@@ -218,12 +219,13 @@ void releaseFour(const Context& context) {
 }
 
 void VramTargets() {
-    Expect(VramBudget::HeadroomFor(VkDeviceSize{16} << 30u) == 1024 * MiB, "a 16 GiB heap does not keep 1 GiB of headroom");
-    Expect(VramBudget::HeadroomFor(HeapBytes) == 512 * MiB, "an 8 GiB heap does not keep a sixteenth of it as headroom");
-    Expect(VramBudget::HeadroomFor(VkDeviceSize{2} << 30u) == 256 * MiB, "a 2 GiB heap keeps less than 256 MiB of headroom");
-    Expect(VramBudget::TargetFor(HeapBytes, HeapBytes, 512 * MiB) == HeapTarget, "the target is not the budget less the headroom");
-    Expect(VramBudget::TargetFor(HeapBytes, 1024 * MiB, 512 * MiB) == 1024 * MiB, "a small budget took the target of an 8 GiB heap below 1 GiB");
-    Expect(VramBudget::TargetFor(VkDeviceSize{2} << 30u, 256 * MiB, 256 * MiB) == 512 * MiB, "the target fell below a quarter of a 2 GiB heap");
+    Expect(VramBudget::TargetFor(HeapBytes, HeapBytes) == HeapBytes, "the target is not the budget");
+    Expect(VramBudget::TargetFor(HeapBytes, 1024 * MiB) == 1024 * MiB, "a small budget took the target of an 8 GiB heap below 1 GiB");
+    Expect(VramBudget::TargetFor(VkDeviceSize{2} << 30u, 256 * MiB) == 512 * MiB, "the target fell below a quarter of a 2 GiB heap");
+}
+
+void waitOutDemand() {
+    std::this_thread::sleep_for(BufferPool::DemandWindow + std::chrono::milliseconds(200));
 }
 
 void VramUnderTargetPools() {
@@ -236,14 +238,40 @@ void VramUnderTargetPools() {
     Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "released device buffers under the budget target were not pooled (" + std::to_string(mock.frees) + " freed)");
 }
 
+std::vector<std::unique_ptr<DeviceBuffer>> takeFourUnderTarget(const Context& context) {
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    std::vector<std::unique_ptr<DeviceBuffer>> live;
+    for (int i = 0; i < 4; ++i) live.push_back(std::make_unique<DeviceBuffer>(context, 64 * MiB, BudgetUsage));
+    mock.otherUsage = HeapTarget;
+    GetBufferPool(context)->Vram().Refresh();
+    return live;
+}
+
+void VramOverTargetKeepsDemand() {
+    mock = MockDevice{};
+    mock.heapBudget = HeapBytes;
+    auto context = budgetContext();
+    waitOutDemand();
+    auto live = takeFourUnderTarget(context);
+    live.clear();
+    Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "over the budget target the pool did not keep the device buffers taken in the last second (" + std::to_string(mock.frees) + " freed)");
+    const auto made = mock.allocations;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
+    DeviceBuffer again(context, 64 * MiB, BudgetUsage);
+    Expect(mock.allocations == made, "a device buffer kept by the demand floor was not reused");
+}
+
 void VramOverTargetReleases() {
     mock = MockDevice{};
     mock.heapBudget = HeapBytes;
-    mock.otherUsage = HeapTarget;
     auto context = budgetContext();
-    releaseFour(context);
-    Expect(mock.frees == 4 && mock.liveBytes == 0, "released device buffers were pooled over the budget target (" + std::to_string(mock.liveBytes / MiB) + " MiB retained)");
+    auto live = takeFourUnderTarget(context);
+    waitOutDemand();
+    GetBufferPool(context)->Vram().Refresh();
+    live.clear();
+    Expect(mock.frees == 4 && mock.liveBytes == 0, "released device buffers nobody asked for in the last second were pooled over the budget target (" + std::to_string(mock.liveBytes / MiB) + " MiB retained)");
     const auto made = mock.allocations;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
     DeviceBuffer again(context, 64 * MiB, BudgetUsage);
     Expect(mock.allocations == made + 1, "a device buffer was served from a pool that released everything over the target");
 }
@@ -257,6 +285,7 @@ void VramTrimsPool() {
     Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "released device buffers under the budget target were not pooled");
     mock.otherUsage = HeapTarget - 64 * MiB;
     GetBufferPool(context)->Vram().Refresh();
+    waitOutDemand();
     const auto made = mock.allocations;
     {
         DeviceBuffer reused(context, 64 * MiB, BudgetUsage);
@@ -268,10 +297,12 @@ void VramTrimsPool() {
 void VramIntegratedKeepsPool() {
     mock = MockDevice{};
     mock.heapBudget = HeapBytes;
-    mock.otherUsage = HeapTarget;
+    mock.otherUsage = HeapTarget - 1024 * MiB;
     auto context = budgetContext(true);
+    Expect(!GetBufferPool(context)->Vram().Enabled(), "an integrated GPU's pool followed the device-local heap's budget");
+    waitOutDemand();
     releaseFour(context);
-    Expect(mock.budgetQueries == 0 && mock.frees == 0 && mock.liveBytes == 256 * MiB, "an integrated GPU's pool followed the device-local heap's budget");
+    Expect(mock.frees == 0 && mock.liveBytes == 256 * MiB, "an integrated GPU's pool did not keep its released device buffers");
 }
 
 void SizeClassesAndDirections() {
@@ -638,6 +669,7 @@ int main() {
         HostPlacement();
         VramTargets();
         VramUnderTargetPools();
+        VramOverTargetKeepsDemand();
         VramOverTargetReleases();
         VramTrimsPool();
         VramIntegratedKeepsPool();

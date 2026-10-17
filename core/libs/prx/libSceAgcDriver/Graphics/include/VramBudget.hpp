@@ -22,8 +22,7 @@ public:
     explicit VramBudget(const Context& context);
     VramBudget(const VramBudget&) = delete;
     VramBudget& operator=(const VramBudget&) = delete;
-    static VkDeviceSize HeadroomFor(VkDeviceSize size);
-    static VkDeviceSize TargetFor(VkDeviceSize size, VkDeviceSize available, VkDeviceSize reserve);
+    static VkDeviceSize TargetFor(VkDeviceSize size, VkDeviceSize available);
     bool Enabled() const { return heap.has_value(); }
     void Refresh();
     VkDeviceSize Excess();
@@ -37,7 +36,6 @@ private:
     std::optional<std::uint32_t> heap;
     VkDeviceSize heapBytes = 0;
     VkDeviceSize limit = 0;
-    VkDeviceSize headroom = 0;
     std::mutex refreshMutex;
     bool announced = false;
     std::atomic<std::int64_t> readAt{0};

@@ -3,6 +3,8 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VramBudget.hpp"
+#include <array>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -71,6 +73,7 @@ public:
     VkDeviceSize PutSlot(VkDeviceMemory memory, VkDeviceSize offset) noexcept;
     std::size_t SlabBlocks();
     VramBudget& Vram() { return vram; }
+    static constexpr std::chrono::milliseconds DemandWindow{1000};
 
 private:
     struct SlabBlock {
@@ -147,6 +150,12 @@ private:
     VramBudget vram;
     std::uint64_t vramDropped = 0;
     VkDeviceSize vramDroppedBytes = 0;
+    std::array<VkDeviceSize, 8> demand{};
+    std::int64_t demandSlot = -1;
+    std::uint64_t vramChurn = 0;
+    bool vramDropping = false;
+    void noteDemand(VkDeviceSize bytes);
+    VkDeviceSize demandFloor() const;
     static constexpr VkDeviceSize budget = 512ull * 1024 * 1024;
     // The small tier's own budget (slots of at most half a MiB each): pinned host memory the large
     // tier's budget does not count.
