@@ -4467,6 +4467,152 @@ void descriptorSnapshotTests() {
     }
 }
 
+alignas(16) std::array<std::uint32_t, 8> guestMovedFirst{0x51515151, 0x52525252, 0x53535353, 0x54545454, 0x55555555, 0x56565656, 0x57575757, 0x58585858};
+alignas(16) std::array<std::uint32_t, 8> guestMovedSecond{0x61616161, 0x62626262, 0x63636363, 0x64646464, 0x65656565, 0x66666666, 0x67676767, 0x68686868};
+
+void dispatchMoveTests() {
+    using AgcDriver::Graphics::CompiledShader;
+    using AgcDriver::Graphics::DescriptorCache;
+    using AgcDriver::Graphics::Recorder;
+    using AgcDriver::Graphics::ShaderResources;
+    using Refusal = ShaderResources::MoveRefusal;
+    mock = MockVulkan{};
+    mock.allowCopies = true;
+    auto context = mockContext();
+    {
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(context);
+        ShaderRecompiler::RecompileResult built;
+        auto inputs = makeBinding(Role::GuestBuffers, 0, 2, join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)));
+        inputs.bufferWritten = {false, false};
+        built.bindings.push_back(inputs);
+        auto output = makeBinding(Role::GuestBuffers, 4, 1, vsharp(guestThird.data(), 8));
+        output.bufferWritten = {true};
+        built.bindings.push_back(output);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &built, 0};
+        ShaderResources resources(context, shader);
+        const auto moveTo = [&](std::size_t element, const void* where, std::uint32_t bytes) {
+            auto program = built;
+            const auto words = vsharp(where, bytes);
+            std::copy(words.begin(), words.end(), program.bindings[0].guestDescriptor.begin() + static_cast<std::ptrdiff_t>(element) * 4);
+            return program;
+        };
+        const auto prove = [&](const ShaderRecompiler::RecompileResult& program, std::size_t maxBytes, ShaderResources::MoveProof& proof) {
+            return resources.MovedDispatchBuffers(CompiledShader{ShaderRecompiler::ShaderStage::Compute, &program, 0}, &recorder, maxBytes, proof);
+        };
+        const auto refuses = [&](const ShaderRecompiler::RecompileResult& program, std::size_t maxBytes, Refusal why, const char* what) {
+            ShaderResources::MoveProof refusal;
+            const auto listed = prove(program, maxBytes, refusal);
+            Require(!listed.has_value() && refusal.refusal == why, what);
+        };
+
+        ShaderResources::MoveProof proof;
+        auto moved = prove(built, 0, proof);
+        Require(moved.has_value() && moved->empty() && proof.refusal == Refusal::None && proof.buffers == 0, "a dispatch with every buffer where it was built moved something");
+
+        const auto relocated = moveTo(1, guestMovedSecond.data(), 24);
+        const CompiledShader relocatedShader{ShaderRecompiler::ShaderStage::Compute, &relocated, 0};
+        Require(ShaderResources::ContentKey(shader, false, true) == ShaderResources::ContentKey(relocatedShader, false, true), "moving a read-only buffer changed the movable content key");
+        Require(ShaderResources::ContentKey(shader, false, false) != ShaderResources::ContentKey(relocatedShader, false, false), "the fixed content key ignored a moved buffer");
+
+        moved = prove(relocated, 0, proof);
+        Require(moved.has_value() && moved->size() == 1 && proof.refusal == Refusal::None && proof.buffers == 1 && proof.bytes >= 24, "a moved read-only buffer was not listed");
+        Require(moved->front().address == reinterpret_cast<std::uintptr_t>(guestMovedSecond.data()) && moved->front().size == 24 && moved->front().words.empty(), "the listed buffer is not the moved range");
+
+        moved = prove(moveTo(0, guestFirst.data(), 8), 0, proof);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == reinterpret_cast<std::uintptr_t>(guestFirst.data()) && moved->front().size == 8, "a buffer that only changed its size was not listed");
+
+        auto both = relocated;
+        const auto firstWords = vsharp(guestMovedFirst.data(), 12);
+        std::copy(firstWords.begin(), firstWords.end(), both.bindings[0].guestDescriptor.begin());
+        moved = prove(both, 1024, proof);
+        Require(moved.has_value() && moved->size() == 2 && proof.buffers == 2 && proof.bytes >= 36, "two moved buffers were not both listed");
+        refuses(both, 30, Refusal::Limit, "moved buffers past the byte budget together were served");
+
+        auto written = relocated;
+        written.bindings[0].bufferWritten[1] = true;
+        refuses(written, 0, Refusal::Written, "a moved buffer the dispatch writes was served");
+        refuses(moveTo(1, guestMovedSecond.data(), 20000), 0, Refusal::Written, "a moved buffer over the storage buffer range that no registered allocation holds was served");
+        refuses(relocated, 16, Refusal::Limit, "a moved buffer over the byte budget was served");
+        refuses(moveTo(1, reinterpret_cast<const void*>(std::uintptr_t{0x10}), 24), 0, Refusal::Inaccessible, "a moved buffer over unmapped memory was served");
+        refuses(moveTo(1, guestThird.data(), 8), 0, Refusal::Overlap, "a moved buffer over the dispatch's own written range was served");
+        auto shaped = relocated;
+        shaped.bindings[0].guestDescriptor.resize(4);
+        refuses(shaped, 0, Refusal::Shape, "a dispatch with another binding shape was served");
+        recorder.Sync();
+    }
+    {
+        constexpr std::size_t blockBytes = 65536;
+        void* block = ::operator new(blockBytes, std::align_val_t{blockBytes});
+        std::memset(block, 0x5a, blockBytes);
+        {
+            auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, blockBytes, true, true, true);
+            GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+        }
+        const auto* end = static_cast<const std::byte*>(block) + blockBytes;
+        const auto strided = [](const void* pointer, std::uint32_t stride, std::uint32_t records) {
+            auto words = vsharp(pointer, records);
+            words[1] |= stride << 16u;
+            return words;
+        };
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(context);
+        const auto proveAgainst = [&](const ShaderRecompiler::RecompileResult& built, const std::vector<std::uint32_t>& incoming, ShaderResources::MoveProof& proof, std::optional<std::vector<ShaderResources::MovedBuffer>>& moved) {
+            const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &built, 0};
+            ShaderResources resources(context, shader);
+            auto program = built;
+            program.bindings[0].guestDescriptor = incoming;
+            moved = resources.MovedDispatchBuffers(CompiledShader{ShaderRecompiler::ShaderStage::Compute, &program, 0}, &recorder, 0, proof);
+        };
+        const auto readOnly = [&](const std::vector<std::uint32_t>& words) {
+            ShaderRecompiler::RecompileResult built;
+            auto binding = makeBinding(Role::GuestBuffers, 0, 1, words);
+            binding.bufferWritten = {false};
+            built.bindings.push_back(binding);
+            return built;
+        };
+        const auto address = [](const void* pointer) { return reinterpret_cast<std::uintptr_t>(pointer); };
+        ShaderResources::MoveProof proof;
+        std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
+
+        const auto* tail = end - 8192;
+        const auto* nearEnd = end - 4096;
+        const auto oversized = readOnly(vsharp(tail, 0xffffffffu));
+        proveAgainst(oversized, vsharp(tail, 0xffffffffu), proof, moved);
+        Require(moved.has_value() && moved->empty() && proof.refusal == Refusal::None && proof.buffers == 0, "an unchanged V# the build cut to its allocation end was not an exact hit");
+        proveAgainst(oversized, vsharp(nearEnd, 0xffffffffu), proof, moved);
+        Require(moved.has_value() && moved->size() == 1 && proof.buffers == 1 && proof.bytes == 4096 && moved->front().address == address(nearEnd) && moved->front().size == 4096, "a moved V# past the range limit was not snapshotted at its clamped range");
+        proveAgainst(oversized, vsharp(nearEnd, 0xfffffff0u), proof, moved);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().size == 4096, "another oversized size over the same allocation end listed another range");
+        proveAgainst(oversized, vsharp(tail, 4096), proof, moved);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == address(tail) && moved->front().size == 4096, "a V# that now fits the range limit was not listed at its own size");
+
+        proveAgainst(oversized, vsharp(block, 0xffffffffu), proof, moved);
+        Require(!moved.has_value() && proof.refusal == Refusal::Limit, "a moved V# the allocation holds past the range limit was served");
+
+        const auto overhang = readOnly(strided(tail, 24, 342));
+        proveAgainst(overhang, strided(tail, 24, 342), proof, moved);
+        Require(moved.has_value() && moved->empty() && proof.refusal == Refusal::None, "an unchanged V# with a stride overhang past the allocation was not an exact hit");
+        proveAgainst(overhang, strided(nearEnd, 24, 171), proof, moved);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == address(nearEnd) && moved->front().size == 4096 && proof.bytes == 4096, "a moved V# with a stride overhang was snapshotted past the allocation end");
+        proveAgainst(overhang, strided(nearEnd, 24, 100), proof, moved);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().size == 2400, "a moved V# inside the allocation was not listed at its own size");
+        recorder.Sync();
+        {
+            auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+            GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+        }
+        ::operator delete(block, std::align_val_t{blockBytes});
+    }
+    Require(mock.live == 0, "dispatch move resources leaked Vulkan objects");
+}
+
 void resourceTests() {
     mock = MockVulkan{};
     const auto context = mockContext();
@@ -8218,6 +8364,7 @@ int main(int argc, char** argv) {
         oversizedDescriptorTests();
         guestBufferViewBytesTests();
         descriptorSnapshotTests();
+        dispatchMoveTests();
         descriptorCacheTests();
         bufferBudgetPlacementTests();
         imageTableAllocationTests();

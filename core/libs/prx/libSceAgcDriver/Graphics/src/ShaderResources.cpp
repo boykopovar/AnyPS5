@@ -2072,6 +2072,7 @@ void mixDataWords(std::uint64_t& hash, std::span<const std::uint32_t> words) {
 // ResourceCache::Find and Touch calls (the [rescache] line).
 std::atomic<std::uint64_t> resourceCacheFinds{0};
 std::atomic<std::uint64_t> resourceCacheTouches{0};
+std::atomic<std::uint64_t> depthGuardRefusals{0};
 
 }
 
@@ -2112,6 +2113,10 @@ void ShaderResources::noteReusable() {
         }
     }
     reusable = true;
+}
+
+std::uint64_t ShaderResources::DepthGuardRefusals() {
+    return depthGuardRefusals.load(std::memory_order_relaxed);
 }
 
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
@@ -2584,6 +2589,10 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto& own = image->Descriptor();
         const auto address = own.baseAddress;
         const auto bytes = static_cast<std::size_t>(image->GuestBytes());
+        if (DepthSurfaceOverlaps(context.device, address, bytes)) {
+            depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
+            return fail(FastFail::Depth);
+        }
         if (GuestMemory::CollectWrites(address, bytes) == 0) return fail(FastFail::Collect);
         if (own.dccAddress != 0) {
             // Refresh's unchanged branch (its key compare against the keys the content was
@@ -2687,6 +2696,10 @@ bool ShaderResources::fastRevalidateEach() {
         if (own.dccAddress != 0) return false;
         const auto address = own.baseAddress;
         const auto bytes = static_cast<std::size_t>(image->GuestBytes());
+        if (DepthSurfaceOverlaps(context.device, address, bytes)) {
+            depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
         if (GuestMemory::CollectWrites(address, bytes) == 0) return false;
         if (PendingStorageOverlaps(address, bytes, image)) return false;
         if (!StorageImageCached(context, image)) return false;
@@ -3546,11 +3559,8 @@ DescriptorCache::Stats DescriptorCache::Counters() const {
     return stats;
 }
 
-std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read) {
-    Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
-    Require((words[1] & 0x40000000u) == 0, "buffer descriptor has reserved bits set");
+std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> words) const {
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
-    Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
     auto byteSize = descriptor.GetSize();
     if (byteSize > context.limits.maxStorageBufferRange) {
@@ -3558,22 +3568,33 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
         if (mappedEnd <= address) byteSize = 0;
         else if (mappedEnd - address < context.limits.maxStorageBufferRange) byteSize = mappedEnd - address;
     }
+    if (byteSize == 0 || address == 0) return 0;
+    if (const std::uint64_t stride = descriptor.Stride(); stride != 0 && byteSize <= context.limits.maxStorageBufferRange) {
+        constexpr std::uint64_t GuestPageBytes = 0x4000;
+        const auto end = address + byteSize;
+        const auto overhang = end % GuestPageBytes;
+        if (overhang != 0 && overhang < stride) {
+            const auto allocationEnd = RegisteredReadableEnd(address);
+            if (allocationEnd > address && allocationEnd < end && end - allocationEnd < stride) byteSize = allocationEnd - address;
+        }
+    }
+    return byteSize;
+}
+
+std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read) {
+    Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
+    Require((words[1] & 0x40000000u) == 0, "buffer descriptor has reserved bits set");
+    const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+    Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
+    const auto address = descriptor.Base48();
+    const auto byteSize = guestBufferBytes(words);
     if (byteSize == 0 || address == 0) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
         return allocations.size() - 1;
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
-    auto size = static_cast<std::size_t>(byteSize);
-    if (const std::uint64_t stride = descriptor.Stride(); stride != 0) {
-        constexpr std::uint64_t GuestPageBytes = 0x4000;
-        const auto end = address + size;
-        const auto overhang = end % GuestPageBytes;
-        if (overhang != 0 && overhang < stride) {
-            const auto allocationEnd = RegisteredReadableEnd(address);
-            if (allocationEnd > address && allocationEnd < end && end - allocationEnd < stride) size = static_cast<std::size_t>(allocationEnd - address);
-        }
-    }
+    const auto size = static_cast<std::size_t>(byteSize);
     Require(target == nullptr || !overlap(address, size, target->address, target->bytes), "shader buffer aliases the render target");
     // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
@@ -4520,13 +4541,71 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
     return moved;
 }
 
+const char* ShaderResources::MoveRefusalName(MoveRefusal refusal) {
+    switch (refusal) {
+        case MoveRefusal::None: return "none";
+        case MoveRefusal::Shape: return "bindings differ";
+        case MoveRefusal::NotGuest: return "not read in place";
+        case MoveRefusal::Written: return "written or emptied";
+        case MoveRefusal::Limit: return "over the limit";
+        case MoveRefusal::Inaccessible: return "unmapped";
+        case MoveRefusal::Overlap: return "pending write";
+        case MoveRefusal::Bindings: return "no bindings made";
+        case MoveRefusal::Count: break;
+    }
+    return "?";
+}
+
+std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedDispatchBuffers(const CompiledShader& shader, Recorder* recorder, std::size_t maxBytes, MoveProof& proof) const {
+    proof = {};
+    const auto refuse = [&](MoveRefusal why) {
+        proof.refusal = why;
+        return std::optional<std::vector<MovedBuffer>>{};
+    };
+    std::vector<MovedBuffer> moved;
+    if (shader.program == nullptr || usesBda) return refuse(MoveRefusal::Shape);
+    if (_set == VK_NULL_HANDLE) return moved;
+    for (const auto& binding : shader.program->bindings) {
+        if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
+        const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
+        if (kept == bindings.end() || kept->allocations.size() != binding.count || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) return refuse(MoveRefusal::Shape);
+        for (std::uint32_t element = 0; element < binding.count; ++element) {
+            const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+            const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+            const auto address = descriptor.Base48();
+            const auto size = guestBufferBytes(std::span<const std::uint32_t>(words, 4));
+            const auto& item = allocations[kept->allocations[element]];
+            const bool empty = size == 0 || address == 0;
+            if (!item.guest) {
+                if (empty) continue;
+                return refuse(MoveRefusal::NotGuest);
+            }
+            if (item.address == address && item.size == size) continue;
+            const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+            if (written || empty || item.written) return refuse(MoveRefusal::Written);
+            if (size > context.limits.maxStorageBufferRange) return refuse(MoveRefusal::Limit);
+            const auto begin = address - item.adjustment;
+            const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
+            if (maxBytes != 0 && proof.bytes + bytes > maxBytes) return refuse(MoveRefusal::Limit);
+            if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return refuse(MoveRefusal::Inaccessible);
+            const bool pending = recorder != nullptr ? recorder->PendingWriteOverlaps(begin, bytes) : Recorder::SnapshotWriteOverlaps(begin, bytes);
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{begin, begin + bytes}}};
+            if (guestMemory.WritesOverlap(begin, bytes) || pending || StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(begin, bytes)) return refuse(MoveRefusal::Overlap);
+            moved.push_back({kept->allocations[element], address, static_cast<std::size_t>(size)});
+            ++proof.buffers;
+            proof.bytes += bytes;
+        }
+    }
+    return moved;
+}
+
 std::size_t ShaderResources::MaxDrawSnapshotBytes() {
     const char* text = std::getenv("APS5_DRAW_SNAPSHOT_MAX_MIB");
     const auto mib = text != nullptr ? std::strtoull(text, nullptr, 10) : 64ull;
     return static_cast<std::size_t>(mib * 1024ull * 1024ull);
 }
 
-std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved) const {
+std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved, bool movedOnly) const {
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return {};
     const auto reads = guestMemory.InPlaceReads();
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
@@ -4566,7 +4645,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             address = override->address;
             size = override->size;
         } else {
-            if (!item.guest || item.written || guestMemory.WritesOverlap(item.address, item.size)) continue;
+            if (movedOnly || !item.guest || item.written || guestMemory.WritesOverlap(item.address, item.size)) continue;
             const bool direct = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
             if (!direct || recorder.PendingWriteOverlaps(item.address, item.size)) continue;
         }

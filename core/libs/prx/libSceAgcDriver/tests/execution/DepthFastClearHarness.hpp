@@ -48,6 +48,8 @@ struct DrawOptions {
     VkCompareOp depthCompare = VK_COMPARE_OP_LESS;
     bool stencilTest = false;
     VkStencilOpState stencil{};
+    float minDepth = 0.0f;
+    float maxDepth = 1.0f;
 };
 
 inline std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -126,7 +128,7 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.stencilBack = options.stencil;
     state.renderExtent = {Width, Height};
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), options.minDepth, options.maxDepth};
     state.negativeOneToOne = false;
     state.scissor = {{0, 0}, {Width, Height}};
     state.cullMode = VK_CULL_MODE_NONE;
