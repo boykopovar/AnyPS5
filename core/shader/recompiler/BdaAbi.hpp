@@ -56,7 +56,9 @@ inline constexpr std::uint32_t WrittenOverflowWord = sizeof(Fault) / sizeof(std:
 inline constexpr std::uint32_t WrittenCountWord = WrittenOverflowWord + 1;
 inline constexpr std::uint32_t WrittenSlotsWord = WrittenCountWord + 1;
 inline constexpr std::uint32_t WrittenListWord = WrittenSlotsWord + 2 * WrittenPageSlots;
-inline constexpr std::size_t FaultBufferBytes = (WrittenListWord + WrittenPageSlots) * sizeof(std::uint32_t);
+inline constexpr std::uint32_t SrtGuardWord = WrittenListWord + WrittenPageSlots;
+inline constexpr std::uint32_t SrtGuardStageShift = 24;
+inline constexpr std::size_t FaultBufferBytes = (SrtGuardWord + 1) * sizeof(std::uint32_t);
 static_assert((WrittenPageSlots & (WrittenPageSlots - 1)) == 0);
 static_assert(WrittenChunkPages == 32);
 
