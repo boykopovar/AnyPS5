@@ -61,7 +61,7 @@ public:
     // The size a buffer for `bytes` is created with: its size class, or `bytes` itself when large.
     static std::size_t Capacity(std::size_t bytes, VkMemoryPropertyFlags properties);
     static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
-    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation);
+    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr);
     std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void Put(const BufferAllocation& allocation) noexcept;
     static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
@@ -153,6 +153,7 @@ private:
 };
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context);
+VkDeviceMemory AllocateAttachmentMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation);
 
 }
 

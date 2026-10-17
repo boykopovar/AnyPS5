@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
@@ -301,15 +302,42 @@ struct Context {
         const auto budget = reported.heapBudget[heap];
         const auto usage = reported.heapUsage[heap];
         if (budget == 0 || (usage < budget && bytes <= budget - usage)) return type;
+        const auto host = HostMemoryType(mask);
+        if (!host) return type;
+        static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
+        const auto count = placements.fetch_add(1) + 1;
+        const auto total = placedBytes.fetch_add(bytes) + bytes;
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        return *host;
+    }
+
+    std::optional<std::uint32_t> HostMemoryType(std::uint32_t mask) const {
         for (std::uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
-            if ((mask & (1u << i)) == 0 || (memory.memoryHeaps[memory.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) continue;
-            static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
-            const auto count = placements.fetch_add(1) + 1;
-            const auto total = placedBytes.fetch_add(bytes) + bytes;
-            if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local heap %u uses %llu of its %llu MiB budget, %llu bytes placed in host memory type %u; %llu such allocations, %llu MiB\n", what, heap, static_cast<unsigned long long>(usage >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(bytes), i, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
-            return i;
+            if ((mask & (1u << i)) != 0 && (memory.memoryHeaps[memory.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return i;
         }
-        return type;
+        return std::nullopt;
+    }
+
+    std::optional<std::uint32_t> RefusedDeviceMemoryFallback(std::uint32_t mask, std::uint32_t refused, VkDeviceSize bytes, const char* what) const {
+        if (refused >= memory.memoryTypeCount || (memory.memoryHeaps[memory.memoryTypes[refused].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return std::nullopt;
+        const auto host = HostMemoryType(mask);
+        if (!host) return std::nullopt;
+        static std::atomic<std::uint64_t> refusals{0}, refusedBytes{0};
+        const auto count = refusals.fetch_add(1) + 1;
+        const auto total = refusedBytes.fetch_add(bytes) + bytes;
+        if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] %s: device-local memory type %u is out of device memory for %llu bytes; placed in host memory type %u; %llu such allocations, %llu MiB\n", what, refused, static_cast<unsigned long long>(bytes), *host, static_cast<unsigned long long>(count), static_cast<unsigned long long>(total >> 20u));
+        return host;
+    }
+
+    VkResult AllocateDeviceMemory(VkMemoryAllocateInfo& allocation, std::uint32_t mask, VkDeviceMemory& allocated, const char* what) const {
+        const auto allocate = Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+        auto result = allocate(device, &allocation, nullptr, &allocated);
+        if (result != VK_ERROR_OUT_OF_DEVICE_MEMORY) return result;
+        const auto host = RefusedDeviceMemoryFallback(mask, allocation.memoryTypeIndex, allocation.allocationSize, what);
+        if (!host) return result;
+        allocation.memoryTypeIndex = *host;
+        allocated = VK_NULL_HANDLE;
+        return allocate(device, &allocation, nullptr, &allocated);
     }
 };
 
