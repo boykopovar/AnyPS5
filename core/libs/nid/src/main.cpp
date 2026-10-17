@@ -19,6 +19,8 @@ void _writeFile(const std::string& path, const std::vector<std::uint8_t>& data) 
     std::ofstream f(Nid::Internal::NativePath(path), std::ios::binary);
     if (!f) throw std::runtime_error("cannot write: " + path);
     f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    f.close();
+    if (!f) throw std::runtime_error("cannot write: " + path);
 }
 
 }

@@ -1,10 +1,16 @@
 import subprocess
+import signal
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from test_macho_nids import build_dylib, exports_of, nid
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 PATCHER = Path(sys.argv.pop(1)).resolve()
 
@@ -50,6 +56,27 @@ class NativePathTests(unittest.TestCase):
             self.assertIn(str(missing), result.stderr)
             self.assertFalse(missing.exists())
             self.assertEqual(existing.read_bytes(), b"unchanged")
+
+    @unittest.skipUnless(resource is not None and hasattr(signal, "SIGXFSZ"), "requires POSIX file size limits")
+    def test_failed_file_write_is_reported_without_success(self):
+        for limit in (0, 1024):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as temporary:
+                file = Path(temporary) / "library.prx"
+                original = build_dylib([("_puts_nid_postfix", 0, 0x100)], [])
+                file.write_bytes(original)
+
+                def restrict_output():
+                    signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+                    resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
+
+                result = subprocess.run([str(PATCHER), "libtest", str(file)], capture_output=True,
+                                        encoding="utf-8", errors="replace", timeout=10,
+                                        preexec_fn=restrict_output)
+                self.assertEqual(file.stat().st_size, limit)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("cannot write", result.stderr)
+                self.assertIn(str(file), result.stderr)
+                self.assertNotIn("OK:", result.stdout)
 
 
 if __name__ == "__main__":
