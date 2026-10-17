@@ -2,6 +2,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 extern "C" {
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id);
@@ -10,9 +11,11 @@ int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color);
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, std::uint64_t* account_id);
 int APS5_VABI sceUserServiceGetAgeLevel(int user_id, std::uint32_t* age_level);
 int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, std::int32_t* value);
+int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable();
 int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int user_id, std::int32_t* value);
 int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int user_id, std::int32_t* value);
 int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, std::int32_t* value);
+int APS5_VABI sceUserServiceGetAccessibilityZoom();
 int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int user_id, std::int32_t* value);
 int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, std::int32_t* value);
 }
@@ -83,4 +86,19 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    bool threwKeyremap = false;
+    try {
+        sceUserServiceGetAccessibilityKeyremapEnable();
+    } catch (const std::runtime_error&) {
+        threwKeyremap = true;
+    }
+    Require(threwKeyremap);
+
+    bool threwZoom = false;
+    try {
+        sceUserServiceGetAccessibilityZoom();
+    } catch (const std::runtime_error&) {
+        threwZoom = true;
+    }
+    Require(threwZoom);
 }
