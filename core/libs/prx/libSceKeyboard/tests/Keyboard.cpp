@@ -5,6 +5,7 @@
 #include "SDL_keyboard.h"
 
 #include <cstdlib>
+#include <stdexcept>
 
 extern "C" {
 int APS5_VABI sceKeyboardInit(void);
@@ -13,6 +14,8 @@ int APS5_VABI sceKeyboardClose(std::int32_t);
 int APS5_VABI sceKeyboardRead(std::int32_t, KeyboardData*, std::int32_t);
 int APS5_VABI sceKeyboardReadState(std::int32_t, KeyboardData*);
 int APS5_VABI sceKeyboardGetKey2Char(std::int32_t, std::int32_t, std::uint32_t, std::uint32_t, std::uint16_t, KeyboardCharData*);
+int APS5_VABI sceKeyboardConnectPort(void);
+int APS5_VABI sceKeyboardDisconnectAll(void);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -144,4 +147,20 @@ int main() {
     Require(sceKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_HANDLE);
     Require(sceKeyboardRead(KEYBOARD_HANDLE, data, 1) == 1 && data[0].length == 1 && data[0].key_code[0] == 0);
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
+
+    bool threwConnect = false;
+    try {
+        sceKeyboardConnectPort();
+    } catch (const std::runtime_error&) {
+        threwConnect = true;
+    }
+    Require(threwConnect);
+
+    bool threwDisconnect = false;
+    try {
+        sceKeyboardDisconnectAll();
+    } catch (const std::runtime_error&) {
+        threwDisconnect = true;
+    }
+    Require(threwDisconnect);
 }
