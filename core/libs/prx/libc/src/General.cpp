@@ -319,9 +319,25 @@ int SetWorkingDirectory(WorkingDirectory& state, const std::filesystem::path& re
     const auto canonical = std::filesystem::canonical(resolved, error);
     if (error) return DirectoryFailure(error);
     if (!std::filesystem::is_directory(canonical, error)) return error ? DirectoryFailure(error) : 20;
-    const auto relative = canonical.lexically_relative(state.root);
+    auto relative = canonical.lexically_relative(state.root);
+#ifdef _WIN32
+    if (relative.empty() || *relative.begin() == "..") {
+        auto ancestor = canonical;
+        while (!std::filesystem::equivalent(ancestor, state.root, error)) {
+            if (error) return DirectoryFailure(error);
+            const auto parent = ancestor.parent_path();
+            if (parent == ancestor) return 45;
+            ancestor = parent;
+        }
+        relative = canonical.lexically_relative(ancestor);
+    }
+#endif
     if (relative.empty() || *relative.begin() == "..") return 45;
+#ifdef _WIN32
+    state.current = relative == "." ? state.root : state.root / relative;
+#else
     state.current = canonical;
+#endif
     return 0;
 }
 }

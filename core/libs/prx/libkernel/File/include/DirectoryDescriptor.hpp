@@ -11,6 +11,7 @@ extern "C" int OpenInDirectory_nid_no_patch(int directory, const char* path, int
 namespace File {
 
 int OpenDirectoryDescriptor(const std::filesystem::path& path);
+bool IsDirectoryDescriptor(int fd);
 std::optional<std::filesystem::path> DirectoryDescriptorPath(int fd);
 void ForgetDirectoryDescriptor(int fd);
 void DuplicateDirectoryDescriptor(int from, int to);

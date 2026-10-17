@@ -87,8 +87,7 @@ static int NativeChmod(const std::filesystem::path& path, int mode) {
     RecordWrittenPath_nid_no_patch(path);
     return ::_wchmod(path.wstring().c_str(), mode);
 }
-static std::optional<std::filesystem::path> NativeDescriptorPath(int descriptor) {
-    if (auto directory = File::DirectoryDescriptorPath(descriptor)) return directory;
+std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(int descriptor) {
     const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
     if (handle == INVALID_HANDLE_VALUE) {
         errno = EBADF;
@@ -100,20 +99,27 @@ static std::optional<std::filesystem::path> NativeDescriptorPath(int descriptor)
         path.resize(length);
         length = ::GetFinalPathNameByHandleW(handle, path.data(), length, FILE_NAME_NORMALIZED);
     }
-    if (length == 0 || length >= path.size()) {
+    if (length == 0) {
+        errno = WindowsOpenError_nid_no_patch(GetLastError());
+        return std::nullopt;
+    }
+    if (length >= path.size()) {
         errno = EINVAL;
         return std::nullopt;
     }
     path.resize(length);
+    if (path.starts_with(LR"(\\?\UNC\)")) path.replace(0, 8, LR"(\\)");
+    else if (path.starts_with(LR"(\\?\)") && path.size() > 6 && path[5] == L':' && path[6] == L'\\') path.erase(0, 4);
     return path;
 }
 static int NativeFchmod(int descriptor, int mode) {
-    const auto path = NativeDescriptorPath(descriptor);
+    const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
     return path ? NativeChmod(*path, mode) : -1;
 }
 static int NativeFtruncate(int descriptor, std::int64_t length) {
     const int result = File::TruncateSharedMemory_nid_no_patch(descriptor, length);
     if (result != -2) return result;
+    if (File::IsDirectoryDescriptor(descriptor)) return EINVAL;
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
     if (handle == INVALID_HANDLE_VALUE) return EBADF;
     if (::GetFileType(handle) != FILE_TYPE_DISK) return EINVAL;
@@ -156,7 +162,7 @@ static int NativeFutimes(int descriptor, const KernelTimeval* times) {
     const int result = SetTimes(handle, times);
     CloseHandle(handle);
     if (result == 0) {
-        if (const auto path = NativeDescriptorPath(descriptor)) RecordWrittenPath_nid_no_patch(*path);
+        if (const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor)) RecordWrittenPath_nid_no_patch(*path);
     }
     return result;
 }
@@ -215,9 +221,13 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         errno = EBADF;
         return -1;
     }
+    if (File::IsDirectoryDescriptor(descriptor)) {
+        errno = write ? EBADF : EISDIR;
+        return -1;
+    }
     LARGE_INTEGER position{};
     if (::GetFileType(handle) != FILE_TYPE_DISK || !::SetFilePointerEx(handle, LARGE_INTEGER{}, &position, FILE_CURRENT)) {
-        errno = !File::DirectoryDescriptorPath(descriptor) ? ESPIPE : write ? EBADF : EISDIR;
+        errno = ESPIPE;
         return -1;
     }
     OVERLAPPED overlapped{};
@@ -430,7 +440,7 @@ static std::int64_t PosixResult(std::int64_t result) {
 
 #ifdef _WIN32
 static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
-    if (!File::DirectoryDescriptorPath(descriptor)) {
+    if (!File::IsDirectoryDescriptor(descriptor)) {
         const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
         if (handle == INVALID_HANDLE_VALUE) return GUEST_EBADF;
         const DWORD type = ::GetFileType(handle);
@@ -438,7 +448,7 @@ static int NativeFstatfs(int descriptor, KernelStatfs* fs) {
         if (type != FILE_TYPE_DISK)
             throw std::runtime_error("_fstatfs: descriptor " + std::to_string(descriptor) + " is not a file on a Windows volume");
     }
-    const auto path = NativeDescriptorPath(descriptor);
+    const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
     if (!path) throw std::runtime_error("_fstatfs: no path for descriptor " + std::to_string(descriptor) + ", errno=" + std::to_string(errno));
     std::wstring root(path->native().size() + 2, L'\0');
     if (!::GetVolumePathNameW(path->c_str(), root.data(), static_cast<DWORD>(root.size())))
@@ -1152,7 +1162,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* iov, int iovcnt, co
         const auto result = offset != nullptr ? NativePositionedTransfer(d, &none, 0, *offset, write) : NativeTransferBuffer(d, &none, 0, write);
         return result < 0 ? SceErrorFromErrno(errno) : 0;
     }
-    if (!write && offset == nullptr && File::DirectoryDescriptorPath(d)) return SceErrorFromErrno(GUEST_EISDIR);
+    if (!write && offset == nullptr && File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
     if (write && offset == nullptr && iovcnt > 1 && total <= static_cast<std::size_t>(std::numeric_limits<int>::max()) && File::Appends(d)) {
         std::vector<char> gathered;
         gathered.reserve(total);

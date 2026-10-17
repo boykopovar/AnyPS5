@@ -141,7 +141,7 @@ const char* KindName(Kind kind) {
 #ifdef _WIN32
 std::optional<Kind> Classify(int fd, const char* function) {
     if (fd < 0 || !DescriptorIsOpen_nid_no_patch(fd)) return std::nullopt;
-    if (File::DirectoryDescriptorPath(fd)) return Kind::Directory;
+    if (File::IsDirectoryDescriptor(fd)) return Kind::Directory;
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
     if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
     switch (::GetFileType(WindowsDescriptorHandle_nid_no_patch(fd))) {

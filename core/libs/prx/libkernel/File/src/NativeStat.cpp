@@ -1,5 +1,4 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
-#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -43,7 +42,6 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return result;
 }
 static int DoFstat(int fd, NativeStat* st) {
-    if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
     if (_fstat64(fd, st) != 0) return -1;
     return ReadHandleInfo(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), st);
 }
