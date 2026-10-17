@@ -197,7 +197,8 @@ def main(argv=None):
             for row in rows:
                 print("%-40s %s" % (row["name"], row["nid"]))
         return 0
-    for nid in args.nid or []:
+    args.nid = [nid.split("#", 1)[0] for nid in args.nid or []]
+    for nid in args.nid:
         if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
             parser.error(f"invalid NID {nid!r}: expected 11 characters from A-Z, a-z, 0-9, + or -")
 

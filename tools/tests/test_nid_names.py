@@ -168,6 +168,18 @@ class NidArgumentTests(unittest.TestCase):
         row, = json.loads(output.getvalue())["rows"]
         self.assertEqual((row["nid"], row["status"]), ("AAAAAAAAAA+", "unknown"))
 
+    def test_nid_with_library_module_suffix_matches_the_bare_nid(self):
+        results = []
+        for nid in ("ZjtRqSMJwdw", "ZjtRqSMJwdw#C#D"):
+            output = io.StringIO()
+            with patch.object(nid_names, "load_db", return_value={"ZjtRqSMJwdw": "sinh"}), \
+                    patch.object(nid_names, "collect_real_names", return_value=set()), \
+                    contextlib.redirect_stdout(output):
+                self.assertEqual(nid_names.main(["--nid=" + nid, "--json"]), 0)
+            results.append(json.loads(output.getvalue())["rows"])
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[1][0]["nid"], "ZjtRqSMJwdw")
+
     def normalize(self, arguments):
         return nid_names.nid_arguments(arguments, self.options)
 
