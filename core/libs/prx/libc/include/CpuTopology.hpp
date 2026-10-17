@@ -86,7 +86,9 @@ inline const Layout& Get() {
             highest = cls;
         }
         if (lowest < 0 || lowest == highest) return result;
-        result.efficient = byClass[lowest];
+        for (int cls = 0; cls < highest; ++cls) {
+            if (seen[cls]) result.efficient |= byClass[cls];
+        }
         result.performant = byClass[highest];
         result.hybrid = result.efficient != 0 && result.performant != 0;
 #elif defined(__linux__)

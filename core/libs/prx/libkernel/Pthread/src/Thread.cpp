@@ -587,9 +587,10 @@ static constexpr const char* JOB_WORKER_PREFIX = "BPE JobWorkerThread";
 static std::uint64_t JobWorkerMask() {
     static const std::uint64_t mask = [] {
         if (std::getenv("APS5_NO_JOB_AFFINITY") != nullptr) return std::uint64_t{0};
+        const char* affinityEnv = std::getenv("APS5_JOB_AFFINITY");
+        if (affinityEnv != nullptr && std::strcmp(affinityEnv, "0") == 0) return std::uint64_t{0};
         const auto requested = CpuTopology::MaskFromEnvironment("APS5_JOB_AFFINITY_MASK");
         if (requested != 0) return requested;
-        if (std::getenv("APS5_JOB_AFFINITY") == nullptr) return std::uint64_t{0};
         const auto& layout = CpuTopology::Get();
         return layout.hybrid ? layout.efficient : std::uint64_t{0};
     }();
