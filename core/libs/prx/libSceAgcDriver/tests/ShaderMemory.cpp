@@ -5148,6 +5148,11 @@ void verifySrgbDepthCompareModes() {
 
 int main(int argc, char** argv) {
     try {
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
         using namespace ShaderRecompiler;
         if (argc == 2 && std::string_view(argv[1]) == "--quad-mask-no-demote") {
             verifyQuadMaskNeighbourReads();
