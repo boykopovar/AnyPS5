@@ -231,4 +231,55 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
     throw std::runtime_error("ShaderInputInfoBuilder: unexpected stage");
 }
 
+void ValidateVertexStageInputs(ShaderStageKind stage, const GuestContext& context, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation) {
+    if (!context.vertex.has_value()) {
+        throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.vertex is not set");
+    }
+    const auto& vertex = *context.vertex;
+    if (vertex.resourcesNum > vertex.resources.size()) throw std::runtime_error("ShaderInputInfoBuilder: invalid vertex resource count");
+    struct Buffer {
+        std::uint64_t addr;
+        std::uint32_t stride;
+        std::uint32_t numRecords;
+        std::uint32_t fetchIndex;
+        int attrNum;
+    };
+    std::array<Buffer, ShaderVertexInputInfo::MaxResources> buffers;
+    int buffersNum = 0;
+    const std::array<std::uint32_t, 4> embedded{};
+    for (std::uint32_t ri = 0; ri < vertex.resourcesNum; ++ri) {
+        const auto& fields = vertex.fetchEmbedded ? embedded : vertex.resources[ri].fields;
+        const std::uint16_t stride = static_cast<std::uint16_t>((fields[1] >> 16u) & 0x3fffu);
+        const std::uint64_t base = (static_cast<std::uint64_t>(fields[0]) | (static_cast<std::uint64_t>(fields[1]) << 32u)) & 0xffffffffffffull;
+        const std::uint32_t numRecords = fields[2];
+        const std::uint32_t fetchIndex = vertex.fetchEmbedded ? 0u : vertex.resourcesDst[ri].fetchIndex;
+        bool merged = false;
+        for (int bi = 0; bi < buffersNum; ++bi) {
+            auto& b = buffers[bi];
+            if (b.stride != stride || b.fetchIndex != fetchIndex) continue;
+            const auto low = base < b.addr ? base : b.addr;
+            if (base - low >= stride || b.addr - low >= stride) continue;
+            if (b.numRecords != numRecords) throw std::runtime_error("ShaderInputInfoBuilder: merged vertex buffers disagree on record count");
+            b.addr = low;
+            if (b.attrNum >= ShaderVertexInputBuffer::MaxAttributes) throw std::runtime_error("ShaderInputInfoBuilder: vertex buffer attribute count exceeds the supported domain");
+            ++b.attrNum;
+            merged = true;
+            break;
+        }
+        if (merged) continue;
+        if (buffersNum >= ShaderVertexInputInfo::MaxResources) throw std::runtime_error("ShaderInputInfoBuilder: vertex buffer count exceeds the supported domain");
+        buffers[buffersNum++] = {base, stride, numRecords, fetchIndex, 1};
+    }
+    if (stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation) {
+        if (tessellation == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: tessellation configuration is missing");
+        if (tessellation->inputControlPoints == 0u || tessellation->inputControlPoints > 32u || tessellation->outputControlPoints == 0u || tessellation->outputControlPoints > 32u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation control-point counts");
+        if ((tessellation->domain != 1u && tessellation->domain != 2u) || (tessellation->partitioning != 0u && tessellation->partitioning != 2u && tessellation->partitioning != 3u) || (tessellation->outputTopology != 2u && tessellation->outputTopology != 3u)) throw std::runtime_error("ShaderInputInfoBuilder: unsupported tessellation configuration");
+        if (tessellation->patchesPerGroup == 0u || tessellation->patchesPerGroup > 256u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation patches per group");
+    }
+    if (stage == ShaderStageKind::Mesh) {
+        if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
+        if (mesh->threadsPerGroup == 0u || mesh->maxVertices == 0u || mesh->maxPrimitives == 0u || mesh->provokingVertex > 2u) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
+    }
+}
+
 }
