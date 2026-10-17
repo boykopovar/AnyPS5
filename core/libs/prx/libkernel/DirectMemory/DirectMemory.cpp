@@ -1251,14 +1251,46 @@ bool GuestProtection(uintptr_t addr, int* prot) {
 }
 
 void GuestPageTableUsage(std::uint64_t granularity, std::uint64_t* cpuEntries, std::uint64_t* gpuEntries) {
+    constexpr std::uint64_t GpuDirectorySpan = 1ULL << 30;
+    struct DirectSpan {
+        std::uintptr_t start;
+        std::uintptr_t end;
+        std::uint64_t phys;
+    };
+    std::vector<DirectSpan> direct;
+    {
+        std::lock_guard lock(g_directLock);
+        direct.reserve(g_directMappings.size());
+        for (const auto& [start, mapping] : g_directMappings) direct.push_back({start, mapping.end, mapping.phys});
+    }
+    const auto largePage = [&](std::uintptr_t granule) {
+        const auto next = std::upper_bound(direct.begin(), direct.end(), granule, [](std::uintptr_t address, const DirectSpan& span) { return address < span.start; });
+        if (next == direct.begin()) return false;
+        const auto& span = *std::prev(next);
+        return granule + granularity <= span.end && (span.phys + (granule - span.start)) % granularity == 0;
+    };
     std::uint64_t cpu = 0;
     std::uint64_t gpu = 0;
+    std::uint64_t cpuNext = 0;
+    std::uint64_t gpuNext = 0;
+    std::uint64_t directoryNext = 0;
     std::lock_guard lock(g_protectionLock);
     for (const auto& [start, range] : g_protections) {
         if (range.end <= start) continue;
-        const auto entries = (range.end - 1) / granularity - start / granularity + 1;
-        if (range.prot & 0x7) cpu += entries;
-        if (range.prot & GuestProtGpuReadWrite) gpu += entries;
+        const auto first = start / granularity;
+        const auto last = (range.end - 1) / granularity;
+        if (last + 1 > std::max(first, cpuNext)) cpu += last + 1 - std::max(first, cpuNext);
+        cpuNext = std::max(cpuNext, last + 1);
+        if ((range.prot & GuestProtGpuReadWrite) == 0) continue;
+        const auto firstDirectory = start / GpuDirectorySpan;
+        const auto lastDirectory = (range.end - 1) / GpuDirectorySpan;
+        if (lastDirectory + 1 > std::max(firstDirectory, directoryNext)) gpu += lastDirectory + 1 - std::max(firstDirectory, directoryNext);
+        directoryNext = std::max(directoryNext, lastDirectory + 1);
+        for (auto granule = std::max(first, gpuNext); granule <= last; ++granule) {
+            const auto address = static_cast<std::uintptr_t>(granule * granularity);
+            if (address < start || address + granularity > range.end || !largePage(address)) ++gpu;
+        }
+        gpuNext = std::max(gpuNext, last + 1);
     }
     *cpuEntries = cpu;
     *gpuEntries = gpu;

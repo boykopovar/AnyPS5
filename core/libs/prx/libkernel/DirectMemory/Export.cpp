@@ -450,7 +450,7 @@ int APS5_VABI sceKernelClearVirtualRangeName(const void* addr, uint64_t len) {
 int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int* gpu_total, int* gpu_available) {
  if (!cpu_total || !cpu_available || !gpu_total || !gpu_available) return SCE_KERNEL_ERROR_EFAULT;
  constexpr std::uint64_t PageTableGranularity = 2ULL * 1024 * 1024;
- constexpr std::uint64_t PageTablePoolEntries = 2048;
+ constexpr std::uint64_t PageTablePoolEntries = 8192;
  std::uint64_t cpuUsed = 0;
  std::uint64_t gpuUsed = 0;
  GuestPageTableUsage(PageTableGranularity, &cpuUsed, &gpuUsed);
