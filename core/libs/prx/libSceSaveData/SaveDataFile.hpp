@@ -70,19 +70,21 @@ inline bool replace_file_with(const std::filesystem::path& path, const void* dat
     return replaced;
 }
 
-inline bool replace_file(const std::filesystem::path& path, const void* data, std::size_t size) {
+inline bool move_replacing(const std::filesystem::path& source, const std::filesystem::path& destination) {
 #ifdef _WIN32
-    return replace_file_with(path, data, size, [](const auto& temporary, const auto& destination) {
-        return ::MoveFileExW(temporary.c_str(), destination.c_str(),
-                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-    });
+    return ::MoveFileExW(source.c_str(), destination.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
-    return replace_file_with(path, data, size, [](const auto& temporary, const auto& destination) {
-        std::error_code error;
-        std::filesystem::rename(temporary, destination, error);
-        return !error;
-    });
+    std::error_code error;
+    std::filesystem::rename(source, destination, error);
+    return !error;
 #endif
+}
+
+inline bool replace_file(const std::filesystem::path& path, const void* data, std::size_t size) {
+    return replace_file_with(path, data, size, [](const auto& temporary, const auto& destination) {
+        return move_replacing(temporary, destination);
+    });
 }
 
 }

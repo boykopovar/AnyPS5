@@ -119,6 +119,90 @@ bool read_file_all(const std::string& path, std::vector<char>& out) {
     return static_cast<bool>(f);
 }
 
+constexpr char MEM_JOURNAL_MAGIC[] = {'A', 'P', 'S', '5', 'M', 'J', 'N', '1'};
+
+struct MemoryWrite {
+    std::uint64_t offset;
+    std::uint64_t size;
+    const char* data;
+};
+
+std::vector<char> encode_memory_journal(const std::vector<MemoryWrite>& writes) {
+    std::vector<char> bytes(std::begin(MEM_JOURNAL_MAGIC), std::end(MEM_JOURNAL_MAGIC));
+    for (const MemoryWrite& write : writes) {
+        const std::size_t at = bytes.size();
+        bytes.resize(at + sizeof(write.offset) + sizeof(write.size) + write.size);
+        std::memcpy(bytes.data() + at, &write.offset, sizeof(write.offset));
+        std::memcpy(bytes.data() + at + sizeof(write.offset), &write.size, sizeof(write.size));
+        std::memcpy(bytes.data() + at + sizeof(write.offset) + sizeof(write.size), write.data, write.size);
+    }
+    return bytes;
+}
+
+std::vector<MemoryWrite> decode_memory_journal(const std::string& journal, const std::vector<char>& bytes, std::size_t memory_size) {
+    const auto malformed = [&journal]() { return std::runtime_error("SaveData: memory journal " + journal + " is malformed"); };
+    if (bytes.size() < sizeof(MEM_JOURNAL_MAGIC) || std::memcmp(bytes.data(), MEM_JOURNAL_MAGIC, sizeof(MEM_JOURNAL_MAGIC)) != 0) {
+        throw malformed();
+    }
+    std::vector<MemoryWrite> writes;
+    std::size_t at = sizeof(MEM_JOURNAL_MAGIC);
+    while (at != bytes.size()) {
+        MemoryWrite write{};
+        if (bytes.size() - at < sizeof(write.offset) + sizeof(write.size)) {
+            throw malformed();
+        }
+        std::memcpy(&write.offset, bytes.data() + at, sizeof(write.offset));
+        std::memcpy(&write.size, bytes.data() + at + sizeof(write.offset), sizeof(write.size));
+        at += sizeof(write.offset) + sizeof(write.size);
+        if (write.size > bytes.size() - at || write.offset > memory_size || write.size > memory_size - write.offset) {
+            throw malformed();
+        }
+        write.data = bytes.data() + at;
+        at += write.size;
+        writes.push_back(write);
+    }
+    return writes;
+}
+
+void apply_memory_journal(std::fstream& memory, const std::string& journal, const std::vector<MemoryWrite>& writes) {
+    for (const MemoryWrite& write : writes) {
+        memory.seekp(static_cast<std::streamoff>(write.offset));
+        memory.write(write.data, static_cast<std::streamsize>(write.size));
+    }
+    memory.flush();
+    if (!memory) {
+        throw std::runtime_error("SaveData: cannot write memory journal " + journal + " into the save-data memory");
+    }
+    std::error_code ec;
+    if (!std::filesystem::remove(journal, ec)) {
+        throw std::runtime_error("SaveData: cannot remove memory journal " + journal);
+    }
+}
+
+void replay_memory_journal(std::int32_t user_id, std::uint32_t slot) {
+    const std::string journal = mem_path(user_id, slot, "journal");
+    std::error_code ec;
+    const bool pending = std::filesystem::exists(journal, ec);
+    if (ec) {
+        throw std::runtime_error("SaveData: cannot check memory journal " + journal);
+    }
+    if (!pending) {
+        return;
+    }
+    const std::string path = mem_path(user_id, slot, "bin");
+    std::vector<char> bytes;
+    std::size_t size = 0;
+    if (!read_file_all(journal, bytes) || !file_size_of(path, &size)) {
+        throw std::runtime_error("SaveData: cannot replay memory journal " + journal);
+    }
+    const std::vector<MemoryWrite> writes = decode_memory_journal(journal, bytes, size);
+    std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!memory) {
+        throw std::runtime_error("SaveData: cannot open " + path + " to replay memory journal " + journal);
+    }
+    apply_memory_journal(memory, journal, writes);
+}
+
 std::string param_path(const std::string& real_path) {
     return real_path + ".param";
 }
@@ -458,6 +542,7 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
+    replay_memory_journal(get_param->user_id, get_param->slot_id);
     const std::string path = mem_path(get_param->user_id, get_param->slot_id, "bin");
     std::size_t size = 0;
     if (!file_size_of(path, &size)) {
@@ -648,6 +733,7 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
+    replay_memory_journal(set_param->user_id, set_param->slot_id);
     const std::string path = mem_path(set_param->user_id, set_param->slot_id, "bin");
     std::size_t size = 0;
     if (!file_size_of(path, &size)) {
@@ -664,21 +750,27 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
-    if (n != 0) {
-        std::vector<char> memory;
-        if (!read_file_all(path, memory) || memory.size() != size) {
+    std::vector<MemoryWrite> writes;
+    for (std::uint32_t i = 0; i < n; i++) {
+        const SaveDataMemoryData& d = set_param->data[i];
+        if (d.buf_size != 0) {
+            writes.push_back({d.offset, d.buf_size, static_cast<const char*>(d.buf)});
+        }
+    }
+    if (!writes.empty()) {
+        std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
+        if (!memory) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
-        for (std::uint32_t i = 0; i < n; i++) {
-            const SaveDataMemoryData& d = set_param->data[i];
-            if (d.buf_size == 0) {
-                continue;
-            }
-            std::memcpy(memory.data() + d.offset, d.buf, d.buf_size);
-        }
-        if (!write_file_replace(path, memory)) {
+        const std::string journal = mem_path(set_param->user_id, set_param->slot_id, "journal");
+        const std::vector<char> bytes = encode_memory_journal(writes);
+        const bool staged = savedata::replace_file_with(path, bytes.data(), bytes.size(), [&journal](const auto& temporary, const auto&) {
+            return savedata::move_replacing(temporary, journal);
+        });
+        if (!staged) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
+        apply_memory_journal(memory, journal, writes);
     }
     if (set_param->param != nullptr) {
         std::vector<char> pd(sizeof(SaveDataParam));
@@ -707,6 +799,7 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
+    replay_memory_journal(setup_param->user_id, setup_param->slot_id);
     const std::string path = mem_path(setup_param->user_id, setup_param->slot_id, "bin");
     std::size_t existed = 0;
     const bool have = file_size_of(path, &existed);
@@ -760,6 +853,7 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
     const std::int32_t user_id = *static_cast<const std::int32_t*>(sync_param);
     const std::uint32_t slot_id = reinterpret_cast<const std::uint32_t*>(sync_param)[1];
     std::lock_guard<std::mutex> lk(g_mem_mutex);
+    replay_memory_journal(user_id, slot_id);
     std::size_t size = 0;
     if (!file_size_of(mem_path(user_id, slot_id, "bin"), &size)) {
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
