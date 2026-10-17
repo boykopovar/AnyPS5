@@ -481,6 +481,8 @@ long double APS5_VABI ldexpl_nid_postfix(long double x, int exp) { return std::l
 long double APS5_VABI truncl_nid_postfix(long double x) { return std::trunc(x); }
 double APS5_VABI logb_nid_postfix(double x) { return std::logb(x); }
 double APS5_VABI remainder_nid_postfix(double x, double y) { return std::remainder(x, y); }
+double APS5_VABI remquo_nid_postfix(double x, double y, int* quo) { return std::remquo(x, y, quo); }
+float APS5_VABI remquof_nid_postfix(float x, float y, int* quo) { return std::remquo(x, y, quo); }
 float APS5_VABI _FSinh_nid_postfix(float x, float y) { return y * std::sinh(x); }
 float APS5_VABI _FCosh_nid_postfix(float x, float y) { return y * std::cosh(x); }
 
