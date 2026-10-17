@@ -305,6 +305,8 @@ def main(arguments=None):
     parser.add_argument("--top", type=int, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
+    if options.summary and not Path(options.summary).is_file():
+        parser.error(f"summary file not found: {options.summary}")
     if options.trace.endswith(".jsonl"):
         result = digest_intervals(load_intervals(options.trace))
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))

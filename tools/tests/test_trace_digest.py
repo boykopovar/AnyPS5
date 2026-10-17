@@ -318,6 +318,15 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual([(entry[3], entry[4]) for entry in trace.slices[1]],
                          [(0, False), (1, True), (0, False)])
 
+    def test_missing_summary_file_is_an_error(self):
+        missing = Path(self.directory.name) / "missing.jsonl"
+        error = io.StringIO()
+        with contextlib.redirect_stderr(error), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                trace_digest.main([str(self.trace), "--summary", str(missing)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("summary file not found", error.getvalue())
+
 
 def interval_line(start, end, p99, gpu_ms, **changes):
     line = dict(SUMMARY, window={"spec": "summary_every 30", "first_present": 0, "ms": (end - start) * 1000.0}, interval_start_s=start, interval_end_s=end,
