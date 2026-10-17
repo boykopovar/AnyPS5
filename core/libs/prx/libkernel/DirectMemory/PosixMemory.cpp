@@ -119,6 +119,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         try {
             const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive);
             if (result != 0) return failed(GuestNoMemory);
+            if (fixedAnonymous) ReleaseFlexibleMappingRange(start, rounded);
             return mapped;
         } catch (const std::invalid_argument&) {
             return failed(fixedAnonymous ? GuestInvalid : GuestNoMemory);
@@ -160,6 +161,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         mapped = address;
         const auto result = DoMapFileBacked_nid_no_patch(&mapped, rounded, protection, kind | placement, mappingDescriptor, static_cast<std::uint64_t>(offset), alignment);
         if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
+        if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
         return mapped;
     } catch (const std::invalid_argument&) {
         return failed(GuestInvalid);

@@ -168,6 +168,10 @@ void ForgetLockedRange(uintptr_t start, uintptr_t end) {
 
 }
 
+void ReleaseFlexibleMappingRange(std::uintptr_t address, size_t len) {
+    _releaseFlexible(address, len);
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out) {
