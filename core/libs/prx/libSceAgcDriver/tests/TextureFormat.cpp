@@ -5,6 +5,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <array>
+#include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -96,6 +98,51 @@ void packedChannelTests() {
     Require(TextureComponentChannel(133, VK_COMPONENT_SWIZZLE_ONE) == VK_COMPONENT_SWIZZLE_ONE && TextureComponentChannel(56, VK_COMPONENT_SWIZZLE_R) == VK_COMPONENT_SWIZZLE_R, "constant selectors and other formats must keep their channels");
 }
 
+float unsignedSmallFloat(std::uint32_t bits, std::uint32_t mantissaBits) {
+    const auto exponent = bits >> mantissaBits;
+    const auto mantissa = bits & ((1u << mantissaBits) - 1u);
+    const auto scale = static_cast<float>(1u << mantissaBits);
+    if (exponent == 31u) return mantissa == 0u ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+    if (exponent == 0u) return std::ldexp(static_cast<float>(mantissa) / scale, -14);
+    return std::ldexp(1.0f + static_cast<float>(mantissa) / scale, static_cast<int>(exponent) - 15);
+}
+
+bool sameValue(float left, float right) {
+    return (std::isnan(left) && std::isnan(right)) || left == right;
+}
+
+void repackedFormatTests() {
+    constexpr std::uint32_t guest = 43u;
+    Require(IsRepackedTextureFormat(guest) && !IsRepackedTextureFormat(36u) && !IsRepackedTextureFormat(20u), "only texture format 43 is sampled through a repacked copy");
+    Context context{};
+    Require(SampledTextureFormat(context, guest) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(guest) == VK_FORMAT_R32_UINT, "format 43 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
+    const auto field = [](std::uint32_t word, VkComponentSwizzle channel) -> std::pair<std::uint32_t, std::uint32_t> {
+        switch (channel) {
+            case VK_COMPONENT_SWIZZLE_R: return {word & 0x7ffu, 6u};
+            case VK_COMPONENT_SWIZZLE_G: return {(word >> 11u) & 0x7ffu, 6u};
+            case VK_COMPONENT_SWIZZLE_B: return {word >> 22u, 5u};
+            default: throw std::runtime_error("B10G11R11 has no such channel");
+        }
+    };
+    const auto check = [&](std::uint32_t red, std::uint32_t green, std::uint32_t blue) {
+        const auto word = red | (green << 10u) | (blue << 21u);
+        const auto repacked = RepackTextureWord(word);
+        const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> expected{{{red, 5u}, {green, 6u}, {blue, 6u}}};
+        constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B};
+        for (std::size_t component = 0; component < components.size(); ++component) {
+            const auto [bits, mantissaBits] = field(repacked, TextureComponentChannel(guest, components[component]));
+            Require(bits == expected[component].first && mantissaBits == expected[component].second && sameValue(unsignedSmallFloat(bits, mantissaBits), unsignedSmallFloat(expected[component].first, expected[component].second)), "the repacked word " + std::to_string(repacked) + " does not read guest component " + std::to_string(component) + " of " + std::to_string(word));
+        }
+    };
+    for (std::uint32_t red = 0; red < 1024u; ++red) check(red, 0x5a5u, 0x2c3u);
+    for (std::uint32_t value = 0; value < 2048u; ++value) {
+        check(0x155u, value, 0x7c0u);
+        check(0x3e0u, 0x001u, value);
+    }
+    Require(std::isinf(unsignedSmallFloat(0x3e0u, 5u)) && std::isnan(unsignedSmallFloat(0x3e1u, 5u)) && unsignedSmallFloat(0x001u, 6u) == std::ldexp(1.0f, -20), "the reference decode misreads Inf, NaN or a denormal");
+    Require(TextureComponentChannel(guest, VK_COMPONENT_SWIZZLE_A) == VK_COMPONENT_SWIZZLE_A && TextureComponentChannel(guest, VK_COMPONENT_SWIZZLE_ZERO) == VK_COMPONENT_SWIZZLE_ZERO, "format 43 keeps alpha and constant selectors");
+}
+
 void convertedDccClearTests() {
     alignas(64) std::array<std::uint8_t, 16> keys{};
     GuestTextureResource resource{};
@@ -163,6 +210,7 @@ void RunTextureFormatTests() {
     srgbDecodeTests();
     srgbTwinTests();
     packedChannelTests();
+    repackedFormatTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
     Require(ResolveTextureFormat(2) == VK_FORMAT_R8_SNORM, "format 2 must resolve to R8_SNORM");
     Require(BytesPerElement(1) == 1u, "format 1 must be one byte wide");

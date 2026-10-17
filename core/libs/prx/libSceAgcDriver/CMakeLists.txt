@@ -83,6 +83,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcTextureRepackShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureRepack.comp)
+set(agcTextureRepackShaderSpv ${agcTextureDetileGeneratedDir}/TextureRepack.spv)
+set(agcTextureRepackShaderHeader ${agcTextureDetileGeneratedDir}/TextureRepack_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureRepackShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcTextureRepackShaderSpv}" "${agcTextureRepackShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureRepackShaderSpv} -DOUTPUT=${agcTextureRepackShaderHeader}
+        -DSYMBOL=TEXTURE_REPACK_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureRepackShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -233,6 +246,7 @@ set(agcDriverSources
         ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
         ${agcTextureDetileImageShaderHeader}
+        ${agcTextureRepackShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}

@@ -71,6 +71,9 @@ public:
     struct BlockCopyTag {};
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag);
     static bool CanBlockCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
+    struct RepackCopyTag {};
+    Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, RepackCopyTag);
+    static bool CanRepackCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor);
     bool IsDepthCopy() const { return perUseCopy == PerUseCopy::RefreshedOnReuse; }
     bool RefreshDepthCopy();
     struct DepthCopyCounts {
@@ -147,6 +150,7 @@ private:
     std::uint64_t copiedVersion = 0;
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     VkFormat blockFormat = VK_FORMAT_UNDEFINED;
+    bool repackCopy = false;
     std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0;
 };
 

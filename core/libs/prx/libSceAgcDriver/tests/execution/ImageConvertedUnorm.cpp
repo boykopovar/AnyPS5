@@ -322,6 +322,17 @@ void CheckFloatStore(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     }
 }
 
+void CheckFloatSample(AgcDriver::VulkanDevice& device, const std::uint8_t* texels, const std::array<std::uint32_t, 4>& expected, const std::string& what) {
+    Run(device, SampleLz, TextureDescriptor(texels, FloatFormat, SwizzleXYZ1, Threads), PointSampler, 1);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            const auto actual = Output[tid * 4u + component];
+            const bool nan = (expected[component] & 0x7f800000u) == 0x7f800000u && (expected[component] & 0x7fffffu) != 0u;
+            Require(nan ? std::isnan(std::bit_cast<float>(actual)) : actual == expected[component], what + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(expected[component]));
+        }
+    }
+}
+
 void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::uint8_t* texels, std::uint32_t swizzle, const std::array<std::uint32_t, 4>& extra, const std::string& reason, const std::string& what, std::uint32_t format = UnormFormat) {
     std::string refusal;
     try {
@@ -353,8 +364,10 @@ int main() {
         CheckStore(*device, texels + StoreOffset, StoreXyz, 0x7u, "image_store dmask:0x7");
         CheckStore(*device, texels + StoreOffset, StoreXz, 0x5u, "image_store dmask:0x5");
         CheckFloatStore(*device, texels + FloatOffset);
+        Run(*device, StoreXyz, TextureDescriptor(texels + FloatOffset, FloatFormat, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
+        CheckFloatSample(*device, texels + FloatOffset, {0u, 0u, 0x7fc00000u, 0x3f800000u}, "image_sample_lz of R10_G11_B11_FLOAT results still on the GPU");
         CheckFloatLoad(*device, texels + FloatOffset);
-        RequireRefused(*device, SampleLz, texels + FloatOffset, SwizzleXYZ1, PointSampler, "samples or gathers a converted float image", "image_sample_lz of R10_G11_B11_FLOAT", FloatFormat);
+        CheckFloatSample(*device, texels + FloatOffset, {0x7f800000u, 0x7f800000u, 0x387c0000u, 0x3f800000u}, "image_sample_lz of R10_G11_B11_FLOAT");
         RequireRefused(*device, SampleLz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_sample_lz");
         RequireRefused(*device, Gather4Lz, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_gather4_lz");
         RequireRefused(*device, GetLod, texels, SwizzleXYZ1, PointSampler, "sampling, gathering or querying LOD of a converted unorm image", "image_get_lod");

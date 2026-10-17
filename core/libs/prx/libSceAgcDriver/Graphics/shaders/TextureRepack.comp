@@ -1,0 +1,20 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { uint source[]; };
+layout(std430, set = 0, binding = 1) buffer Destination { uint destination[]; };
+
+layout(push_constant) uniform Push {
+    uint sourceBase;
+    uint destinationBase;
+    uint words;
+    uint rowWords;
+} push;
+
+void main() {
+    const uint index = gl_GlobalInvocationID.y * push.rowWords + gl_GlobalInvocationID.x;
+    if (gl_GlobalInvocationID.x >= push.rowWords || index >= push.words) return;
+    const uint word = source[push.sourceBase / 4u + index];
+    destination[push.destinationBase / 4u + index] = ((word >> 21u) & 0x7ffu) | (((word >> 10u) & 0x7ffu) << 11u) | ((word & 0x3ffu) << 22u);
+}

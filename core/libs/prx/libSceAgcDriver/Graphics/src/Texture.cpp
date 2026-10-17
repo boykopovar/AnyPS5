@@ -351,6 +351,16 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                     detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled->Handle(), guestLayerOffset + mip.tiledOffset, linear->Handle(), linearLayerOffset + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
+            if (IsRepackedTextureFormat(descriptor.format)) {
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+                    for (std::uint32_t level = 0; level < mips.size(); ++level) {
+                        if (!geometry.HasLayer(level, layer)) continue;
+                        const auto offset = geometry.LinearLayerOffset(layer) + mips[level].linearOffset;
+                        detiler.DispatchRepack(commands, linear->Handle(), offset, linear->Handle(), offset, mips[level].linearSize);
+                    }
+                }
+            }
 
             VkBufferMemoryBarrier linearReadBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
             linearReadBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -495,6 +505,73 @@ bool Texture::CanBlockCopyFrom(const StorageTexture& source, const GuestTextureR
     return geometry.imageDepth == 1 && source.ImageDepth() == 1 && source.ImageLayers() >= geometry.imageLayers;
 }
 
+bool Texture::CanRepackCopyFrom(const StorageTexture& source, const GuestTextureResource& descriptor) {
+    const auto& from = source.Descriptor();
+    if (!IsRepackedTextureFormat(descriptor.format) || descriptor.dimension == TextureDimension::k3D || ResolveTextureFormat(from.format) != ResolveTextureFormat(descriptor.format)) return false;
+    if (descriptor.baseAddress != from.baseAddress || descriptor.pipeBankXor != from.pipeBankXor || descriptor.width != from.width || descriptor.height != from.height || !ArrayLayersServeView(from, descriptor) || descriptor.tileMode != from.tileMode || descriptor.mipCount > from.mipCount) return false;
+    const auto geometry = DescribeSurface(descriptor);
+    return geometry.imageDepth == 1 && source.ImageDepth() == 1 && source.ImageLayers() >= geometry.imageLayers;
+}
+
+Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, RepackCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse), repackCopy(true) {
+    try {
+        Require(source != nullptr && CanRepackCopyFrom(*source, descriptor), "storage image cannot serve a repacked copy of the sampled texture");
+        const auto format = SampledTextureFormat(context, descriptor.format);
+        const auto geometry = DescribeSurface(descriptor);
+        copyWidth = descriptor.width;
+        copyHeight = descriptor.height;
+        copyLevels = descriptor.mipCount;
+        copyLayers = geometry.imageLayers;
+        copyElementBytes = BytesPerElement(descriptor.format);
+        AGC_LOG_DEFERRED(stdout, "Texture address=0x%llx %ux%u mips=%u layers=%u repacked copy of storage image (guest format %u -> vk %d)", static_cast<unsigned long long>(descriptor.baseAddress), descriptor.width, descriptor.height, descriptor.mipCount, copyLayers, descriptor.format, static_cast<int>(format));
+
+        VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        imageInfo.flags = descriptor.dimension == TextureDimension::kCube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u;
+        imageInfo.imageType = ImageTypeFor(descriptor.dimension);
+        imageInfo.format = format;
+        imageInfo.extent = {descriptor.width, descriptor.height, 1u};
+        imageInfo.mipLevels = copyLevels;
+        imageInfo.arrayLayers = copyLayers;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage repacked copy");
+        owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocationBytes = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &owned->memory), "vkAllocateMemory repacked copy");
+        Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, owned->memory, 0), "vkBindImageMemory repacked copy");
+
+        const auto viewLevelCount = std::min(descriptor.lastLevel, descriptor.mipCount - 1u) - descriptor.baseLevel + 1u;
+        const auto viewLayerCount = geometry.imageLayers - descriptor.baseArray;
+        if (descriptor.dimension == TextureDimension::kCube) {
+            Require(viewLayerCount % 6u == 0, "guest cube texture view does not contain a multiple of 6 array slices");
+        }
+        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        viewInfo.image = image;
+        viewInfo.viewType = ViewTypeFor(descriptor.dimension, viewLayerCount);
+        viewInfo.format = format;
+        viewFormat = format;
+        viewInfo.components = components;
+        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, descriptor.baseLevel, viewLevelCount, descriptor.baseArray, viewLayerCount};
+        VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
+        ChainMinLod(context, descriptor, viewInfo, minLod);
+        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView repacked copy");
+        viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
+        createFirstLayerView(descriptor, viewInfo);
+        prepareBaseLevelView(descriptor, viewInfo);
+    } catch (...) {
+        release();
+        throw;
+    }
+}
+
 Texture::Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, BlockCopyTag) : context(context), storageSource(source), perUseCopy(PerUseCopy::RefreshedOnReuse) {
     try {
         Require(source != nullptr && CanBlockCopyFrom(*source, descriptor), "storage image cannot serve a block copy of the sampled texture");
@@ -615,7 +692,7 @@ bool Texture::RefreshDepthCopy() {
     if (blockFormat != VK_FORMAT_UNDEFINED) return refreshBlockCopy();
     std::uint64_t linearBytes = 0;
     for (std::uint32_t level = 0; level < copyLevels; ++level) linearBytes += static_cast<std::uint64_t>(std::max(copyWidth >> level, 1u)) * std::max(copyHeight >> level, 1u) * copyElementBytes * copyLayers;
-    auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | (repackCopy ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u));
     std::vector<VkBufferImageCopy> fromSource, toDepth;
     std::uint64_t offset = 0;
     for (std::uint32_t level = 0; level < copyLevels; ++level) {
@@ -628,7 +705,7 @@ bool Texture::RefreshDepthCopy() {
         region.imageOffset = {0, 0, 0};
         region.imageExtent = extent;
         fromSource.push_back(region);
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        region.imageSubresource.aspectMask = repackCopy ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
         toDepth.push_back(region);
         offset += static_cast<std::uint64_t>(extent.width) * extent.height * copyElementBytes * copyLayers;
     }
@@ -654,7 +731,7 @@ bool Texture::RefreshDepthCopy() {
     toTransferDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toTransferDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toTransferDst.image = image;
-    toTransferDst.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, copyLevels, 0, copyLayers};
+    toTransferDst.subresourceRange = {static_cast<VkImageAspectFlags>(repackCopy ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT), 0, copyLevels, 0, copyLayers};
     barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &produced, 0, nullptr, 1, &toTransferDst);
     context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, storageSource->Image(), VK_IMAGE_LAYOUT_GENERAL, linear->Handle(), static_cast<std::uint32_t>(fromSource.size()), fromSource.data());
     VkBufferMemoryBarrier linearReady{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
@@ -665,7 +742,20 @@ bool Texture::RefreshDepthCopy() {
     linearReady.buffer = linear->Handle();
     linearReady.offset = 0;
     linearReady.size = VK_WHOLE_SIZE;
-    barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearReady, 0, nullptr);
+    if (repackCopy) {
+        Require(context.detiler != nullptr, "a repacked texture copy needs the texture detiler");
+        linearReady.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 1, &linearReady, 0, nullptr);
+        for (const auto& region : fromSource) {
+            const auto bytes = static_cast<std::uint64_t>(region.imageExtent.width) * region.imageExtent.height * copyElementBytes * copyLayers;
+            context.detiler->DispatchRepack(commands, linear->Handle(), region.bufferOffset, linear->Handle(), region.bufferOffset, bytes);
+        }
+        linearReady.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        linearReady.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearReady, 0, nullptr);
+    } else {
+        barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &linearReady, 0, nullptr);
+    }
     context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, linear->Handle(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(toDepth.size()), toDepth.data());
     VkImageMemoryBarrier toShaderRead{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     toShaderRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -680,7 +770,7 @@ bool Texture::RefreshDepthCopy() {
     if (batch) batch->SubmitAndWait();
     copiedOnce = true;
     copiedVersion = storageSource->Version();
-    depthCopyRefreshes.fetch_add(1, std::memory_order_relaxed);
+    if (!repackCopy) depthCopyRefreshes.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -738,6 +828,7 @@ bool Texture::CanCopyFrom(const StorageTexture& source, const GuestTextureResour
     if (IsBlockCompressed(descriptor.format) || IsBlockCompressed(from.format)) return false;
     // Same memory, same layout, same texel size: the GPU copy reinterprets the texels exactly as a
     // guest read through the sampled descriptor would.
+    if (IsRepackedTextureFormat(descriptor.format)) return false;
     return descriptor.baseAddress == from.baseAddress && descriptor.pipeBankXor == from.pipeBankXor && descriptor.width == from.width && descriptor.height == from.height && ArrayLayersServeView(from, descriptor) && descriptor.tileMode == from.tileMode && descriptor.mipCount <= from.mipCount && BytesPerElement(descriptor.format) == BytesPerElement(from.format) && BlockWidth(descriptor.format) == BlockWidth(from.format);
 }
 
