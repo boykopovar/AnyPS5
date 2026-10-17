@@ -46,3 +46,6 @@
 [submodule "3rdparty/ZArchive"]
 	path = 3rdparty/ZArchive
 	url = https://github.com/Exzap/ZArchive.git
+[submodule "3rdparty/vgmstream"]
+	path = 3rdparty/vgmstream
+	url = https://github.com/vgmstream/vgmstream.git

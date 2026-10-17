@@ -22,6 +22,13 @@ add_library(atrac9 STATIC EXCLUDE_FROM_ALL
 target_include_directories(atrac9 PRIVATE ${LIBATRAC9_DIR})
 set_target_properties(atrac9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+set(VGMSTREAM_ATRAC9_DIR ${CMAKE_SOURCE_DIR}/3rdparty/vgmstream/src/coding/libs)
+add_library(atrac9_vibration STATIC EXCLUDE_FROM_ALL
+        ${VGMSTREAM_ATRAC9_DIR}/atrac9_dec.c
+        ${VGMSTREAM_ATRAC9_DIR}/atrac9_internal.c
+)
+set_target_properties(atrac9_vibration PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+
 add_library(libSceAjm.native SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Ajm.cpp
@@ -30,8 +37,9 @@ add_library(libSceAjm.native SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceAjm.native PRIVATE
         ${LIBS_INCLUDE_DIR}
         ${LIBATRAC9_DIR}
+        ${VGMSTREAM_ATRAC9_DIR}
 )
-target_link_libraries(libSceAjm.native PRIVATE atrac9 ffmpeg libc libkernel)
+target_link_libraries(libSceAjm.native PRIVATE atrac9 atrac9_vibration ffmpeg libc libkernel)
 configure_windows_unwind(libSceAjm.native)
 
 if(BUILD_TESTING)
@@ -58,6 +66,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_ajm_tests PRIVATE libSceAjm.native libc)
     configure_windows_unwind(guest_ajm_tests)
     add_test(NAME guest_ajm COMMAND guest_ajm_tests)
+    add_test_executable(guest_ajm_vibration_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmVibration.cpp)
+    target_include_directories(guest_ajm_vibration_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajm_vibration_tests PRIVATE libSceAjm.native libc)
+    configure_windows_unwind(guest_ajm_vibration_tests)
+    add_test(NAME guest_ajm_vibration COMMAND guest_ajm_vibration_tests)
     if(UNIX)
         add_test_executable(guest_ajm_teardown_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmTeardown.cpp)
         target_include_directories(guest_ajm_teardown_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -66,7 +79,7 @@ if(BUILD_TESTING)
         add_test(NAME guest_ajm_teardown COMMAND guest_ajm_teardown_tests $<TARGET_FILE:libSceAjm.native>)
     endif()
     if(WIN32)
-        set_tests_properties(guest_ajm PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_ajm guest_ajm_vibration PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
     endif()
 endif()

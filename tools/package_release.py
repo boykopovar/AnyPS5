@@ -46,12 +46,15 @@ def package(platform, build, output, version):
         raise RuntimeError(f"Missing patched libraries: {', '.join(sorted(missing))}")
     executable = "relinker.exe" if platform == "windows" else "relinker"
     files = [library for library in libraries if library.name in expected]
+    licenses = []
+    if "libSceAjm.native.prx" in expected:
+        licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
     files.extend(tracy_runtime(platform, build))
     binary = build / "core/relinker" / executable
-    for file in [*files, binary]:
+    for file in [*files, binary, *(source for source, _ in licenses)]:
         if not file.is_file() or file.stat().st_size == 0:
             raise RuntimeError(f"Missing or empty release file: {file}")
     asset = f"relinker-{version}.exe" if platform == "windows" else f"relinker-{version}"
@@ -72,9 +75,13 @@ def package(platform, build, output, version):
         with zipfile.ZipFile(staging / f"prx-{platform}-{version}.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for file in files:
                 archive.write(file, arcname=f"libs/{file.name}")
+            for source, destination in licenses:
+                archive.write(source, arcname=destination)
         with tarfile.open(staging / f"prx-{platform}-{version}.tar.gz", "w:gz", compresslevel=9, dereference=True) as archive:
             for file in files:
                 archive.add(file, arcname=f"libs/{file.name}")
+            for source, destination in licenses:
+                archive.add(source, arcname=destination)
         shutil.copy2(binary, staging / asset)
         for file in sorted(staging.iterdir()):
             file.replace(output / file.name)
