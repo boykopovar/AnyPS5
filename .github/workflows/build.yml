@@ -59,7 +59,7 @@ jobs:
       full: ${{ steps.gate.outputs.full }}
       relinker-hosts: ${{ steps.gate.outputs.relinker-hosts }}
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         id: gate
         env:
           PR_NUMBER: ${{ inputs.pr }}
