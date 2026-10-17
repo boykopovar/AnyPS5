@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <chrono>
 #include <cstdint>
@@ -479,6 +480,6 @@ int main() {
         Require(!std::filesystem::exists(std::filesystem::symlink_status(throughLink)));
     }
 #endif
-    std::filesystem::remove_all(root);
+    RemoveTree(root);
     return 0;
 }
