@@ -4,7 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 
-struct NpTrophy2Progress { std::uint32_t value; };
+struct NpTrophy2Progress {
+    std::int32_t type;
+    std::uint8_t reserved[4];
+    std::uint64_t value;
+};
 
 struct NpTrophy2GameDetails {
     std::uint32_t num_groups;
@@ -66,5 +70,13 @@ struct NpTrophy2Data {
     NpTrophy2Progress progress;
     std::uint64_t timestamp_tick;
 };
+
+static_assert(sizeof(NpTrophy2Progress) == 16);
+static_assert(sizeof(NpTrophy2GameDetails) == 152);
+static_assert(sizeof(NpTrophy2GameData) == 24);
+static_assert(sizeof(NpTrophy2GroupDetails) == 152);
+static_assert(sizeof(NpTrophy2GroupData) == 32);
+static_assert(sizeof(NpTrophy2Details) == 1312);
+static_assert(sizeof(NpTrophy2Data) == 32);
 
 #endif
