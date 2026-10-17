@@ -33,6 +33,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <thread>
 #include <stop_token>
@@ -160,6 +161,14 @@ struct ImportFailure {
     GuestAllocations::Mapped ranges;
 };
 
+struct ImportRefusal {
+    std::uint64_t base;
+    std::uint64_t bytes;
+    GuestAllocations::Mapped ranges;
+    std::uint64_t liveBytes;
+    std::uint64_t budget;
+};
+
 // Imports persist across draws, keyed by allocation base, and are dropped when their allocation leaves
 // the registered set; a dropped import is destroyed once the recorded work that may read it completed.
 struct HostImports {
@@ -174,7 +183,8 @@ struct HostImports {
     std::map<std::uint64_t, ImportFailure> failedJoins;
     std::map<std::uint64_t, std::uint64_t> sparseRunEnds;
     std::map<std::uint64_t, std::uint32_t> sparseRunJoins;
-    std::set<std::uint64_t> unaliasedSpans;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, ImportFailure> failedBlocks;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, ImportRefusal> refusals;
     // Registry generation the imports were last reconciled with.
     std::uint64_t refreshedGeneration = 0;
     // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
@@ -194,6 +204,17 @@ struct HostImports {
     PFN_vkFreeMemory settleFreeMemory = nullptr;
     std::uint64_t useCounter = 0;
     std::uint64_t buildFloor = 0;
+    std::array<HostImportRequesterCounts, ImportRequesterCount> counts{};
+    VkPhysicalDevice reportedDevice = VK_NULL_HANDLE;
+    std::chrono::steady_clock::time_point reportedAt{};
+    std::uint64_t reportedBudget = 0;
+    std::uint32_t reportedHeap = 0;
+    std::uint64_t reportedHeapBudget = 0;
+    std::uint64_t reportedHeapUsage = 0;
+    std::uint64_t ceiling = 0;
+    std::uint32_t allocationFailures = 0;
+    bool allocationFailed = false;
+    std::uint8_t reportNoted = 0;
 };
 
 HostImports& Imports() {
@@ -848,30 +869,77 @@ std::size_t leasedIndexContaining(const GuestAllocations::Lease& lease, std::uin
 
 std::atomic<std::uint64_t> importWindow{0};
 
-ImportRun importRun(const GuestAllocations::Lease& lease, std::uint64_t address) {
+ImportRun leasedRun(const GuestAllocations::Lease& lease, std::size_t first, std::size_t last) {
+    ImportRun run{lease[first]->address, lease[last]->address + lease[last]->bytes - lease[first]->address, {}};
+    run.ranges.assign(lease.begin() + static_cast<std::ptrdiff_t>(first), lease.begin() + static_cast<std::ptrdiff_t>(last) + 1);
+    return run;
+}
+
+template<typename Remembered>
+const Remembered* rememberedRun(const std::map<std::pair<std::uint64_t, std::uint64_t>, Remembered>& runs, const GuestAllocations::Lease& lease, std::size_t first, std::size_t last) {
+    const auto base = lease[first]->address;
+    const auto found = runs.find({base, lease[last]->address + lease[last]->bytes - base});
+    if (found == runs.end() || found->second.ranges.size() != last - first + 1) return nullptr;
+    for (std::size_t index = first; index <= last; ++index) {
+        const auto& remembered = found->second.ranges[index - first];
+        if (remembered.owner_before(lease[index]) || lease[index].owner_before(remembered)) return nullptr;
+    }
+    return &found->second;
+}
+
+bool stillRefused(const HostImports& state, const ImportRefusal* refusal, std::uint64_t budget) {
+    return refusal != nullptr && budget != 0 && budget <= refusal->budget && state.liveBytes >= refusal->liveBytes;
+}
+
+ImportRun importRun(const GuestAllocations::Lease& lease, std::uint64_t address, std::uint64_t largest = std::numeric_limits<std::uint64_t>::max(), std::uint64_t budget = 0) {
     const auto index = leasedIndexContaining(lease, address);
     if (index == lease.size()) return {};
     const auto& containing = *lease[index];
+    const auto& state = Imports();
+    const auto window = importWindow.load(std::memory_order_relaxed);
     std::uint64_t low = 0;
     std::uint64_t high = std::numeric_limits<std::uint64_t>::max();
-    const auto window = importWindow.load(std::memory_order_relaxed);
     if (window != 0) {
         low = address / window * window;
         high = low + window;
-        if (containing.address < low || containing.address + containing.bytes > high) {
-            low = containing.address;
-            high = containing.address + containing.bytes;
-        }
+        if (containing.address < low || containing.address + containing.bytes > high) return leasedRun(lease, index, index);
     }
     auto first = index;
     while (first > 0 && lease[first - 1]->address >= low && continuesRun(*lease[first - 1], *lease[first])) --first;
     auto last = index;
     while (last + 1 < lease.size() && lease[last + 1]->address + lease[last + 1]->bytes <= high && continuesRun(*lease[last], *lease[last + 1])) ++last;
-    if (window != 0 && (lease[first]->address != low || lease[last]->address + lease[last]->bytes != high)) first = last = index;
-    if (first != last && Imports().unaliasedSpans.contains(lease[first]->address)) return {lease[index]->address, lease[index]->bytes, {lease[index]}};
-    ImportRun run{lease[first]->address, lease[last]->address + lease[last]->bytes - lease[first]->address, {}};
-    run.ranges.assign(lease.begin() + static_cast<std::ptrdiff_t>(first), lease.begin() + static_cast<std::ptrdiff_t>(last) + 1);
-    return run;
+    const auto skipped = [&](std::size_t from, std::size_t to) { return rememberedRun(state.failedBlocks, lease, from, to) != nullptr || stillRefused(state, rememberedRun(state.refusals, lease, from, to), budget); };
+    if (window == 0) return first == last || lease[last]->address + lease[last]->bytes - lease[first]->address > largest || skipped(first, last) ? leasedRun(lease, index, index) : leasedRun(lease, first, last);
+    const auto bounding = [&](std::size_t from, std::size_t to, std::uint64_t value, bool start) {
+        const auto found = std::lower_bound(lease.begin() + static_cast<std::ptrdiff_t>(from), lease.begin() + static_cast<std::ptrdiff_t>(to) + 1, value, [start](const auto& range, std::uint64_t wanted) { return (start ? range->address : range->address + range->bytes) < wanted; });
+        const auto position = static_cast<std::size_t>(found - lease.begin());
+        return position <= to && (start ? (*found)->address : (*found)->address + (*found)->bytes) == value ? position : lease.size();
+    };
+    for (auto size = window; size >= containing.bytes; size /= 2) {
+        if (size > largest) continue;
+        const auto blockLow = address / size * size;
+        const auto blockHigh = blockLow + size;
+        if (containing.address < blockLow || containing.address + containing.bytes > blockHigh) break;
+        if (blockLow < lease[first]->address || blockHigh > lease[last]->address + lease[last]->bytes) continue;
+        const auto blockFirst = bounding(first, index, blockLow, true);
+        const auto blockLast = bounding(index, last, blockHigh, false);
+        if (blockFirst == lease.size() || blockLast == lease.size()) continue;
+        if (blockFirst == blockLast) break;
+        if (skipped(blockFirst, blockLast)) continue;
+        return leasedRun(lease, blockFirst, blockLast);
+    }
+    return leasedRun(lease, index, index);
+}
+
+ImportRun exactRun(const GuestAllocations::Lease& lease, std::uint64_t base, std::uint64_t bytes) {
+    const auto first = leasedIndexContaining(lease, base);
+    if (first == lease.size() || lease[first]->address != base) return {};
+    auto last = first;
+    while (lease[last]->address + lease[last]->bytes < base + bytes) {
+        if (last + 1 == lease.size() || !continuesRun(*lease[last], *lease[last + 1])) return {};
+        ++last;
+    }
+    return lease[last]->address + lease[last]->bytes == base + bytes ? leasedRun(lease, first, last) : ImportRun{};
 }
 
 bool runCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end) {
@@ -928,12 +996,12 @@ bool wouldRetireImport(const HostImports& state, const ImportRun& run) {
     return previous.base + previous.bytes > run.base;
 }
 
-bool sameRange(const HostImport& entry, const GuestAllocations::Lease& lease) {
+bool sameRange(const HostImport& entry, const GuestAllocations::Lease& lease, std::uint64_t budget = 0) {
     if (entry.ranges.size() == 1 && !entry.joined && entry.bytes < entry.ranges.front()->bytes) {
         const auto current = leasedRangeOwner(lease, entry.base, entry.base + entry.bytes);
         return current != nullptr && !entry.ranges.front().owner_before(current) && !current.owner_before(entry.ranges.front());
     }
-    return sameRun(entry, entry.joined ? joinedRun(lease, entry.base, entry.base + entry.bytes) : importRun(lease, entry.base));
+    return sameRun(entry, entry.joined ? joinedRun(lease, entry.base, entry.base + entry.bytes) : importRun(lease, entry.base, std::numeric_limits<std::uint64_t>::max(), budget));
 }
 
 bool pointerHeld(const HostImports& state, const HostImport& entry) {
@@ -976,13 +1044,17 @@ std::atomic<std::uint64_t> budgetOverride{0};
 // Pinned imports count against the driver's system memory heap, which imports and type-3 mirrors share; past it
 // ordinary host allocations fail. The budget is APS5_HOST_IMPORT_MIB, else the larger of 6 GiB and half the physical
 // memory, at most the largest host heap less 2 GiB.
-std::uint64_t importBudget(const Context& context) {
+std::uint64_t configuredBudget() {
     if (const auto set = budgetOverride.load(std::memory_order_relaxed); set != 0) return set;
     static const std::uint64_t configured = []() -> std::uint64_t {
         const char* value = std::getenv("APS5_HOST_IMPORT_MIB");
         return value != nullptr ? std::strtoull(value, nullptr, 10) << 20u : 0u;
     }();
-    if (configured != 0) return configured;
+    return configured;
+}
+
+std::uint64_t importBudget(const Context& context) {
+    if (const auto configured = configuredBudget(); configured != 0) return configured;
     std::uint64_t hostHeap = 0;
     for (std::uint32_t index = 0; index < context.memory.memoryHeapCount; ++index) {
         if ((context.memory.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) hostHeap = std::max<std::uint64_t>(hostHeap, context.memory.memoryHeaps[index].size);
@@ -990,6 +1062,56 @@ std::uint64_t importBudget(const Context& context) {
     const auto fromMemory = std::max<std::uint64_t>(6144ull << 20u, physicalMemoryBytes() / 2);
     constexpr std::uint64_t reserve = 2048ull << 20u;
     return hostHeap > reserve ? std::min(fromMemory, hostHeap - reserve) : fromMemory;
+}
+
+std::optional<std::uint32_t> hostHeapIndex(const VkPhysicalDeviceMemoryProperties& memory) {
+    std::optional<std::uint32_t> heap;
+    for (std::uint32_t index = 0; index < memory.memoryHeapCount; ++index) {
+        if ((memory.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0 && (!heap || memory.memoryHeaps[index].size > memory.memoryHeaps[*heap].size)) heap = index;
+    }
+    return heap;
+}
+
+void noteReportedBudget(HostImports& state, std::uint64_t configured, bool set, std::uint64_t reported) {
+    if (reported >= configured || state.reportedHeapBudget == 0) return;
+    const std::uint8_t stage = !set && state.allocationFailed ? 2 : 1;
+    if (state.reportNoted >= stage) return;
+    state.reportNoted = stage;
+    const char* outcome = set ? "the setting stays, as the report never lowers it" : stage == 2 ? "imports are held to it since an import's vkAllocateMemory failed" : "the default stays until an import's vkAllocateMemory fails";
+    std::fprintf(stderr, "[gpu] host import budget: host heap %u reports a VK_EXT_memory_budget budget of %llu MiB and a usage of %llu MiB with %llu MiB of imports live, which leaves imports %llu MiB of the %llu MiB %s; %s\n", state.reportedHeap, static_cast<unsigned long long>(state.reportedHeapBudget >> 20u), static_cast<unsigned long long>(state.reportedHeapUsage >> 20u), static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(reported >> 20u), static_cast<unsigned long long>(configured >> 20u), set ? "APS5_HOST_IMPORT_MIB sets" : "of the default", outcome);
+}
+
+std::uint64_t effectiveBudget(const Context& context, HostImports& state) {
+    const auto configured = importBudget(context);
+    const bool set = configuredBudget() != 0;
+    auto reported = std::numeric_limits<std::uint64_t>::max();
+    if (context.memoryProperties2 != nullptr && context.physical != VK_NULL_HANDLE) {
+        const auto now = std::chrono::steady_clock::now();
+        if (state.reportedDevice != context.physical || now - state.reportedAt >= std::chrono::seconds(1)) {
+            VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+            VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &report};
+            context.memoryProperties2(context.physical, &properties);
+            state.reportedBudget = HostImportBudgetFor(context.memory, &report, std::numeric_limits<std::uint64_t>::max(), state.liveBytes);
+            const auto heap = hostHeapIndex(context.memory);
+            state.reportedHeap = heap.value_or(0);
+            state.reportedHeapBudget = heap ? report.heapBudget[*heap] : 0;
+            state.reportedHeapUsage = heap ? report.heapUsage[*heap] : 0;
+            state.reportedDevice = context.physical;
+            state.reportedAt = now;
+        }
+        reported = state.reportedBudget;
+    }
+    noteReportedBudget(state, configured, set, reported);
+    return HostImportBudgetWith(configured, set, reported, state.allocationFailed, state.ceiling);
+}
+
+std::string budgetSource(const Context& context, const HostImports& state, std::uint64_t budget) {
+    const auto configured = importBudget(context);
+    const char* source = state.ceiling != 0 && budget == state.ceiling ? "lowered after vkAllocateMemory failed" : budget < configured ? "the host heap's VK_EXT_memory_budget report" : configuredBudget() != 0 ? "APS5_HOST_IMPORT_MIB" : "the default";
+    if (state.reportedHeapBudget == 0) return source;
+    char text[192];
+    std::snprintf(text, sizeof(text), "%s; host heap %u reports a budget of %llu MiB and a usage of %llu MiB", source, state.reportedHeap, static_cast<unsigned long long>(state.reportedHeapBudget >> 20u), static_cast<unsigned long long>(state.reportedHeapUsage >> 20u));
+    return text;
 }
 
 std::atomic<std::uint64_t> rangeImportWindow{64ull << 20u};
@@ -1027,7 +1149,7 @@ ImportRun windowRun(const HostImports& state, ImportRun run, std::uint64_t begin
 
 const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint64_t end);
 bool importsStale(const Context& context, const HostImports& state);
-const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict);
+const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict, ImportRequester requester);
 
 // The bytes retireLeastRecent could free outside [begin, end).
 std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std::uint64_t end) {
@@ -1038,14 +1160,22 @@ std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std:
     return bytes;
 }
 
-const HostImport* importAllocation(const Context& context, HostImports& state, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end = 0, bool evict = true) {
+const HostImport* importAllocation(const Context& context, HostImports& state, std::uint64_t address, const GuestAllocations::Lease& lease, ImportRequester requester, std::uint64_t end = 0, bool evict = true, std::uint64_t largest = std::numeric_limits<std::uint64_t>::max()) {
     const bool fresh = !importsStale(context, state);
     if (fresh && end != 0) {
         if (const auto* current = findImport(state, address, end)) return current;
     } else if (!fresh) {
         if (const auto* current = findImport(state, address, address + 1); current != nullptr && current->joined && sameRange(*current, lease)) return current;
     }
-    auto run = importRun(lease, address);
+    const auto budget = evict ? 0 : effectiveBudget(context, state);
+    if (const auto index = leasedIndexContaining(lease, address); budget != 0 && index != lease.size() && stillRefused(state, rememberedRun(state.refusals, lease, index, index), budget) && findImport(state, address, address + 1) == nullptr) {
+        auto& counts = state.counts[static_cast<std::size_t>(requester)];
+        ++counts.refused;
+        counts.refusedBytes += lease[index]->bytes;
+        ++counts.remembered;
+        return nullptr;
+    }
+    auto run = importRun(lease, address, largest, budget);
     // Without an end the caller views the whole run through the import (AcquireRegistered): a window that holds the
     // first byte is shorter than that, so only an import of the whole run is a hit; a window is replaced below.
     if (fresh && end == 0) {
@@ -1053,7 +1183,7 @@ const HostImport* importAllocation(const Context& context, HostImports& state, s
     }
     if (end != 0) run = windowRun(state, std::move(run), address, end, context.hostImportAlignment);
     if (run.ranges.empty()) return nullptr;
-    return importRunAt(context, state, std::move(run), false, address, lease, end, evict);
+    return importRunAt(context, state, std::move(run), false, address, lease, end, evict, requester);
 }
 
 const HostImport* importJoined(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease) {
@@ -1062,13 +1192,15 @@ const HostImport* importJoined(const Context& context, HostImports& state, std::
     auto run = joinedRun(lease, begin, end);
     if (run.ranges.empty()) return nullptr;
     if (const auto failed = state.failedJoins.find(run.base); failed != state.failedJoins.end() && sameRun(failed->second, run)) return nullptr;
-    return importRunAt(context, state, std::move(run), true, begin, lease, end, true);
+    return importRunAt(context, state, std::move(run), true, begin, lease, end, true, ImportRequester::Join);
 }
 
-const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict) {
+const HostImport* importRunAt(const Context& context, HostImports& state, ImportRun run, bool joined, std::uint64_t address, const GuestAllocations::Lease& lease, std::uint64_t end, bool evict, ImportRequester requester) {
+    auto& counts = state.counts[static_cast<std::size_t>(requester)];
     const auto base = run.base;
     const auto bytes = run.bytes;
     auto& failures = joined ? state.failedJoins : state.failed;
+    const bool stepDown = !joined && run.ranges.size() > 1 && importWindow.load(std::memory_order_relaxed) != 0;
     const auto alignment = context.hostImportAlignment;
     if (joined && (alignment == 0 || base % alignment != 0 || bytes % alignment != 0)) {
         failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end())});
@@ -1076,7 +1208,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     if (const auto found = state.imports.find(base); found != state.imports.end() && sameRun(found->second, run)) return &found->second;
     if (alignment == 0 || base % alignment != 0 || bytes % alignment != 0) return nullptr;
-    if (const auto failed = failures.find(base); failed != failures.end()) {
+    if (const auto failed = failures.find(base); !stepDown && failed != failures.end()) {
         if (sameRun(failed->second, run)) return nullptr;
         failures.erase(failed);
     }
@@ -1092,21 +1224,37 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         return !expandedWindow || Recorder::Active() == nullptr;
     };
     for (auto it = first; it != state.imports.end() && it->first < base + bytes; ++it) {
-        if (held(it->second)) return nullptr;
+        if (held(it->second)) return stepDown ? importAllocation(context, state, address, lease, requester, end, evict, bytes / 2) : nullptr;
         replaced += it->second.bytes;
     }
-    const auto budget = importBudget(context);
+    const auto budget = effectiveBudget(context, state);
     const auto live = state.liveBytes - replaced;
-    if (live + bytes > budget && (!evict || live + bytes - evictableBytes(state, base, base + bytes) > budget)) {
+    const auto evictable = evict && live + bytes > budget ? evictableBytes(state, base, base + bytes) : 0;
+    if (live + bytes > budget + evictable) {
         // A refused import turns every later use of the range into CPU copies, so say so.
-        static std::uint64_t refused = 0, refusedBytes = 0;
         static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
-        ++refused;
-        refusedBytes += bytes;
+        ++counts.refused;
+        counts.refusedBytes += bytes;
+        const auto remember = [&](std::uint64_t at, std::uint64_t size, GuestAllocations::Mapped ranges) {
+            if (!evict && !joined) state.refusals.insert_or_assign(std::pair{at, size}, ImportRefusal{at, size, std::move(ranges), state.liveBytes, budget});
+        };
+        remember(base, bytes, GuestAllocations::Mapped(run.ranges.begin(), run.ranges.end()));
         if (std::chrono::steady_clock::now() - lastReport > std::chrono::seconds(10)) {
             lastReport = std::chrono::steady_clock::now();
-            std::fprintf(stderr, "[gpu] host import budget: %llu MiB live of %llu MiB (APS5_HOST_IMPORT_MIB); %llu imports (%llu MiB) refused so far, last 0x%llx+0x%llx\n", static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(budget >> 20u), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes));
+            std::uint64_t refused = 0;
+            std::uint64_t refusedBytes = 0;
+            std::uint64_t remembered = 0;
+            for (const auto& requested : state.counts) {
+                refused += requested.refused;
+                refusedBytes += requested.refusedBytes;
+                remembered += requested.remembered;
+            }
+            std::fprintf(stderr, "[gpu] host import budget: %llu MiB live of %llu MiB (%s); %llu imports (%llu MiB) refused so far, %llu of them remembered, last 0x%llx+0x%llx by %s\n", static_cast<unsigned long long>(state.liveBytes >> 20u), static_cast<unsigned long long>(budget >> 20u), budgetSource(context, state, budget).c_str(), static_cast<unsigned long long>(refused), static_cast<unsigned long long>(refusedBytes >> 20u), static_cast<unsigned long long>(remembered), static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), ImportRequesterName(requester));
         }
+        const auto containing = std::find_if(run.ranges.begin(), run.ranges.end(), [address](const auto& range) { return address >= range->address && address < range->address + range->bytes; });
+        const auto room = budget + evictable > live ? budget + evictable - live : 0;
+        if (stepDown && containing != run.ranges.end() && room >= (*containing)->bytes) return importAllocation(context, state, address, lease, requester, end, evict, std::min(bytes / 2, room));
+        if (containing != run.ranges.end() && run.ranges.size() > 1) remember((*containing)->address, (*containing)->bytes, GuestAllocations::Mapped{*containing});
         return nullptr;
     }
     for (auto it = first; it != state.imports.end() && it->first < base + bytes;) {
@@ -1118,6 +1266,17 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     HostImport entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0};
     entry.range = run.ranges.front();
     entry.ranges = std::move(run.ranges);
+    const auto failedBlockImport = [&]() -> const HostImport* {
+        ++counts.failed;
+        state.failedBlocks.insert_or_assign(std::pair{base, bytes}, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
+        return importAllocation(context, state, address, lease, requester, end, evict);
+    };
+    const auto failedImport = [&]() -> const HostImport* {
+        if (stepDown) return failedBlockImport();
+        ++counts.failed;
+        failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
+        return nullptr;
+    };
 #ifdef _WIN32
     // Drivers pin imported pages, so every page must be committed and accessible.
     bool writable = true;
@@ -1125,10 +1284,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     MEMORY_BASIC_INFORMATION refused{};
     for (std::uint64_t cursor = base; cursor < base + bytes;) {
         MEMORY_BASIC_INFORMATION info{};
-        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) == 0 || info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) {
-            failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
-            return nullptr;
-        }
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) == 0 || info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return failedImport();
         const auto protection = info.Protect & 0xffu;
         const bool pageWritable = (info.Type == MEM_PRIVATE || info.Type == MEM_IMAGE) && (protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE || protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_WRITECOPY);
         const bool pageReadOnly = info.Type != MEM_MAPPED && (protection == PAGE_READONLY || protection == PAGE_EXECUTE_READ);
@@ -1137,10 +1293,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         if (!pageWritable) writable = false;
         cursor = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
     }
-    if (!writable && readOnly) {
-        failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
-        return nullptr;
-    }
+    if (!writable && readOnly) return failedImport();
     if (!writable) {
         if (refused.BaseAddress != nullptr) {
             char text[256];
@@ -1151,19 +1304,11 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             entry.alias = GuestArena::GuestArenaMapAlias_nid_postfix(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         } catch (const std::runtime_error&) {
             if (entry.ranges.size() == 1) throw;
-            if (joined) {
-                failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
-                return nullptr;
-            }
-            state.unaliasedSpans.insert(base);
-            return importAllocation(context, state, address, lease, end, evict);
+            return joined ? failedImport() : failedBlockImport();
         }
     }
 #else
-    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), static_cast<std::size_t>(bytes), true)) {
-        failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
-        return nullptr;
-    }
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(base), static_cast<std::size_t>(bytes), true)) return failedImport();
 #endif
     decideImportWatch(context, state);
     VkResult result = VK_SUCCESS;
@@ -1212,8 +1357,14 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
-        failures.insert_or_assign(base, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
-        std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx failed at %s (%d); falling back to copies\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), step, static_cast<int>(result));
+        std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx failed at %s (%d); falling back to copies, requested by %s\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), step, static_cast<int>(result), ImportRequesterName(requester));
+        if (std::string_view(step) == "vkAllocateMemory") {
+            state.allocationFailed = true;
+            if (++state.allocationFailures >= 3 || state.liveBytes + bytes + budget / 8 >= budget) {
+                state.ceiling = std::max<std::uint64_t>(state.liveBytes, 1);
+                std::fprintf(stderr, "[gpu] host import budget lowered to the %.1f MiB live after vkAllocateMemory failed %s\n", state.liveBytes / 1048576.0, state.allocationFailures >= 3 ? "3 times in a row" : "within an eighth of the budget");
+            }
+        }
 #ifdef _WIN32
         static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
         for (std::uint64_t cursor = base; trace && cursor < base + bytes;) {
@@ -1236,13 +1387,17 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
             std::fclose(maps);
         }
 #endif
-        return nullptr;
+        return failedImport();
     }
     static std::uint64_t importedBytes = 0;
     importedBytes += bytes;
     static const bool trace = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
     state.liveBytes += bytes;
-    if (trace) std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx ok (%zu live, %.1f MiB live, %.1f MiB ever)%s\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), state.imports.size() + 1, state.liveBytes / 1048576.0, importedBytes / 1048576.0, joined ? ", joined at bind" : "");
+    state.allocationFailures = 0;
+    ++counts.made;
+    counts.madeBytes += bytes;
+    for (auto it = state.refusals.lower_bound({base, 0}); it != state.refusals.end() && it->first.first < base + bytes;) it = it->first.first + it->first.second <= base + bytes ? state.refusals.erase(it) : std::next(it);
+    if (trace) std::fprintf(stderr, "[gpu] host import of 0x%llx+0x%llx ok (%zu live, %.1f MiB live, %.1f MiB ever)%s by %s\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), state.imports.size() + 1, state.liveBytes / 1048576.0, importedBytes / 1048576.0, joined ? ", joined at bind" : "", ImportRequesterName(requester));
     entry.joined = joined;
     entry.lastUse = ++state.useCounter;
     return &state.imports.emplace(base, entry).first->second;
@@ -1273,6 +1428,12 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         state.liveBytes = 0;
         state.failed.clear();
         state.failedJoins.clear();
+        state.failedBlocks.clear();
+        state.refusals.clear();
+        state.ceiling = 0;
+        state.allocationFailures = 0;
+        state.allocationFailed = false;
+        state.reportNoted = 0;
         state.sparseRunEnds.clear();
         state.sparseRunJoins.clear();
         state.device = context.device;
@@ -1292,8 +1453,9 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
     };
     std::erase_if(state.sparseRunEnds, [&](const auto& entry) { return !starts(entry.first); });
     std::erase_if(state.sparseRunJoins, [&](const auto& entry) { return !starts(entry.first); });
+    const auto budget = effectiveBudget(context, state);
     for (auto it = state.imports.begin(); it != state.imports.end();) {
-        if (sameRange(it->second, lease)) {
+        if (sameRange(it->second, lease, budget)) {
             if (it->second.unwatched) GuestMemory::Unwatch(it->first, it->second.bytes);
             ++it;
             continue;
@@ -1304,8 +1466,10 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         retireImport(context.device, state, it, lease);
         it = next;
     }
-    for (auto it = state.failed.begin(); it != state.failed.end();) it = sameRun(it->second, importRun(lease, it->first)) ? std::next(it) : state.failed.erase(it);
+    for (auto it = state.failed.begin(); it != state.failed.end();) it = sameRun(it->second, importRun(lease, it->first, std::numeric_limits<std::uint64_t>::max(), budget)) ? std::next(it) : state.failed.erase(it);
     for (auto it = state.failedJoins.begin(); it != state.failedJoins.end();) it = sameRun(it->second, joinedRun(lease, it->second.base, it->second.base + it->second.bytes)) ? std::next(it) : state.failedJoins.erase(it);
+    for (auto it = state.failedBlocks.begin(); it != state.failedBlocks.end();) it = sameRun(it->second, exactRun(lease, it->first.first, it->first.second)) ? std::next(it) : state.failedBlocks.erase(it);
+    for (auto it = state.refusals.begin(); it != state.refusals.end();) it = stillRefused(state, &it->second, budget) && sameRun(it->second, exactRun(lease, it->first.first, it->first.second)) ? std::next(it) : state.refusals.erase(it);
 }
 
 const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint64_t end) {
@@ -1318,9 +1482,9 @@ const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint6
     return &entry;
 }
 
-const HostImport* importAccess(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease) {
+const HostImport* importAccess(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease, ImportRequester requester) {
     if (!runCovers(lease, begin, end)) return findImport(state, begin, end);
-    const auto* entry = importAllocation(context, state, begin, lease, end);
+    const auto* entry = importAllocation(context, state, begin, lease, requester, end);
     return entry != nullptr && findImport(state, begin, end) == entry ? entry : nullptr;
 }
 
@@ -2353,6 +2517,12 @@ void ClearHostImports(VkDevice device) {
     state.liveBytes = 0;
     state.failed.clear();
     state.failedJoins.clear();
+    state.failedBlocks.clear();
+    state.refusals.clear();
+    state.ceiling = 0;
+    state.allocationFailures = 0;
+    state.allocationFailed = false;
+    state.reportNoted = 0;
     state.device = VK_NULL_HANDLE;
     state.refreshedGeneration = 0;
     ++state.epoch;
@@ -2584,6 +2754,27 @@ void SetHostImportRangeWindow(std::uint64_t bytes) {
 
 void SetHostImportBudget(std::uint64_t bytes) {
     budgetOverride.store(bytes, std::memory_order_relaxed);
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    state.ceiling = 0;
+    state.allocationFailures = 0;
+    state.allocationFailed = false;
+    state.reportNoted = 0;
+}
+
+std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t configured, std::uint64_t liveBytes) {
+    const auto heap = hostHeapIndex(memory);
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return configured;
+    const auto granted = reported->heapBudget[*heap];
+    const auto others = reported->heapUsage[*heap] - std::min<std::uint64_t>(reported->heapUsage[*heap], liveBytes);
+    const auto held = others + granted / 8u;
+    constexpr std::uint64_t step = 64ull << 20u;
+    return std::min(configured, granted > held ? (granted - held) / step * step : 0u);
+}
+
+std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling) {
+    const auto budget = set || !allocationFailed ? configured : std::max<std::uint64_t>(std::min(configured, reported), 1);
+    return ceiling != 0 ? std::min(budget, ceiling) : budget;
 }
 
 std::uint64_t HostImportLiveBytes() {
@@ -2592,11 +2783,54 @@ std::uint64_t HostImportLiveBytes() {
     return state.liveBytes;
 }
 
+const char* ImportRequesterName(ImportRequester requester) {
+    switch (requester) {
+        case ImportRequester::Map: return "map";
+        case ImportRequester::Build: return "build";
+        case ImportRequester::Access: return "access";
+        case ImportRequester::Join: return "join";
+        case ImportRequester::Segment: return "segment";
+    }
+    return "unknown";
+}
+
+HostImportCounts HostImportCounters() {
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    return {state.imports.size(), state.liveBytes, state.counts};
+}
+
+std::string FormatHostImportCounts(const HostImportCounts& counts) {
+    HostImportRequesterCounts total;
+    std::string requesters;
+    for (std::size_t index = 0; index < counts.requesters.size(); ++index) {
+        const auto& requested = counts.requesters[index];
+        total.made += requested.made;
+        total.madeBytes += requested.madeBytes;
+        total.refused += requested.refused;
+        total.refusedBytes += requested.refusedBytes;
+        total.failed += requested.failed;
+        total.remembered += requested.remembered;
+        char part[96];
+        std::snprintf(part, sizeof(part), "%s%s %llu/%llu/%llu", index == 0 ? "" : ", ", ImportRequesterName(static_cast<ImportRequester>(index)), static_cast<unsigned long long>(requested.made), static_cast<unsigned long long>(requested.refused), static_cast<unsigned long long>(requested.failed));
+        requesters += part;
+    }
+    char text[256];
+    std::snprintf(text, sizeof(text), "%llu live (%.1f MiB); made %llu (%.1f MiB), refused %llu (%.1f MiB, %llu remembered), failed %llu; by requester (made/refused/failed): ", static_cast<unsigned long long>(counts.live), counts.liveBytes / 1048576.0, static_cast<unsigned long long>(total.made), total.madeBytes / 1048576.0, static_cast<unsigned long long>(total.refused), total.refusedBytes / 1048576.0, static_cast<unsigned long long>(total.remembered), static_cast<unsigned long long>(total.failed));
+    return text + requesters;
+}
+
+void ReportHostImports() {
+    const auto counts = HostImportCounters();
+    if (std::all_of(counts.requesters.begin(), counts.requesters.end(), [](const HostImportRequesterCounts& requested) { return requested.made == 0 && requested.refused == 0 && requested.failed == 0; })) return;
+    std::fprintf(stderr, "[gpu] host imports at shutdown: %s\n", FormatHostImportCounts(counts).c_str());
+}
+
 std::uint64_t HostImportsSettled() {
     return settledImports.load(std::memory_order_relaxed);
 }
 
-const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
+const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     ensurePinWaiter();
     auto& state = Imports();
@@ -2610,7 +2844,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     }
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
-    return importAccess(context, state, address, address + bytes, lease);
+    return importAccess(context, state, address, address + bytes, lease, requester);
 }
 
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
@@ -2641,11 +2875,14 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
         if (range == nullptr || leasedRangeOwner(current, range->address) != range) continue;
         try {
             if (!GuestMemory::GpuMutex().HeldByThisThread()) {
-                const auto run = importRun(current, range->address);
+                const auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
                 const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{run.base, run.base + run.bytes}}};
                 if (wouldRetireImport(state, run) || StorageTexture::AnyPendingOverlaps(span)) return false;
             }
-            if (importAllocation(context, state, range->address, current, 0, false) == nullptr && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != generation) state.failed.erase(importRun(current, range->address).base);
+            if (importAllocation(context, state, range->address, current, ImportRequester::Map, 0, false) == nullptr && GuestAllocations::GuestAllocationsGeneration_nid_postfix() != generation) {
+                state.failed.erase(importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state)).base);
+                state.failed.erase(range->address);
+            }
         } catch (const std::exception& error) {
             std::fprintf(stderr, "[gpu] import of GPU memory mapped at 0x%llx+0x%zx failed: %s\n", static_cast<unsigned long long>(range->address), range->bytes, error.what());
         }
@@ -2813,15 +3050,25 @@ void GuestBufferMemory::AcquireRegistered() {
         regions.reserve(lease.size());
         std::vector<AddressCopy> copies;
         std::vector<std::uint64_t> imported;
+        const HostImport* covering = nullptr;
+        std::uint64_t coveredBegin = 0;
+        std::uint64_t coveredEnd = 0;
         for (const auto& range : lease) {
             if (!range->readable || !range->gpu) continue;
             validate(range->address, range->bytes);
             Region region{range->address, range->address + range->bytes, range->writable, {}, nullptr};
             const HostImport* entry = nullptr;
-            if (importable) {
+            if (importable && covering != nullptr && range->address >= coveredBegin && range->address + range->bytes <= coveredEnd) {
+                entry = covering;
+            } else if (importable) {
                 auto& state = Imports();
                 std::lock_guard lock(state.mutex);
-                entry = importAllocation(context, state, range->address, lease, 0, false);
+                entry = importAllocation(context, state, range->address, lease, ImportRequester::Build, 0, false);
+                covering = entry;
+                if (entry != nullptr) {
+                    coveredBegin = entry->base;
+                    coveredEnd = entry->base + entry->bytes;
+                }
             }
             lap(timing.importsUs, at);
             if (entry != nullptr) {
@@ -3730,7 +3977,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
             if (entry == nullptr) entry = findImport(state, region.begin, region.end);
             const bool sparseRun = region.sparseHeap && region.sparse;
             if (entry == nullptr && !sparseRun) {
-                entry = importAccess(context, state, region.begin, region.end, importRanges());
+                entry = importAccess(context, state, region.begin, region.end, importRanges(), ImportRequester::Build);
             }
             bool runImport = false;
             if (entry == nullptr && sparseRun && !region.backed.empty() && region.backed.front().first == region.begin && !WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) {
@@ -3738,7 +3985,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                 const auto neededEnd = std::min(region.end, std::max(committedEnd, std::max(region.lastView, region.begin) + 4u));
                 const auto covers = [&](const HostImport* candidate) { return candidate != nullptr && candidate->base <= region.begin && candidate->base + candidate->bytes >= neededEnd; };
                 entry = findImport(state, region.begin, neededEnd);
-                if (entry == nullptr && runCovers(importRanges(), region.begin, neededEnd)) entry = importAllocation(context, state, region.begin, importRanges());
+                if (entry == nullptr && runCovers(importRanges(), region.begin, neededEnd)) entry = importAllocation(context, state, region.begin, importRanges(), ImportRequester::Build);
                 if (!covers(entry)) entry = nullptr;
                 const auto& lease = importRanges();
                 const auto index = leasedIndexContaining(lease, region.begin);

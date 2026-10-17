@@ -28,6 +28,7 @@
 
 #ifndef _WIN32
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 namespace {
 
@@ -697,6 +698,601 @@ void importAtMapOverBudgetTests(const Context& context) {
     Require(HostImportCovers(importing, keptAddress, 16) && !HostImportCovers(importing, reinterpret_cast<std::uintptr_t>(mapped), 16), "a range mapped at the budget was imported, or the import to keep was retired");
     for (auto* block : {kept, used, mapped}) change(block, false);
     for (auto* block : {kept, used, mapped}) ::operator delete(block, std::align_val_t{bytes});
+}
+
+void importRequesterTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t pieces = 8;
+    auto* block = static_cast<std::uint8_t*>(::operator new(pieces * piece, std::align_val_t{piece}));
+    std::memset(block, 0x2d, pieces * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(0);
+    const auto address = [&](std::size_t index) { return reinterpret_cast<std::uintptr_t>(block + index * piece); };
+    const auto change = [&](std::size_t index, bool add) {
+        GuestAllocations::Mutation mutation;
+        if (add) mutation.Add(block + index * piece, piece, true, index % 2 == 0, true);
+        else mutation.Remove(block + index * piece);
+    };
+    const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
+    const auto made = [&](ImportRequester requester) { return counted(requester).made; };
+    Require(std::string(ImportRequesterName(ImportRequester::Map)) == "map" && std::string(ImportRequesterName(ImportRequester::Build)) == "build" && std::string(ImportRequesterName(ImportRequester::Access)) == "access" && std::string(ImportRequesterName(ImportRequester::Join)) == "join" && std::string(ImportRequesterName(ImportRequester::Segment)) == "segment", "an import requester has the wrong name");
+    change(0, true);
+    {
+        GuestAllocations::Mapped ranges;
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        for (const auto& range : lease) {
+            if (range->address == address(0)) ranges.push_back(range);
+        }
+        Require(ranges.size() == 1, "the requester test's mapped range is not registered");
+        const auto before = made(ImportRequester::Map);
+        static_cast<void>(ImportMappedRanges(importing, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+        Require(made(ImportRequester::Map) == before + 1 && HostImportCovers(importing, address(0), piece), "a range imported at map time was not counted for the map requester");
+    }
+    change(1, true);
+    {
+        const auto before = made(ImportRequester::Access);
+        Require(HostImportFor(importing, address(1), 16) != nullptr && made(ImportRequester::Access) == before + 1, "a lookup's import was not counted for the access requester");
+    }
+    change(2, true);
+    {
+        const auto before = made(ImportRequester::Segment);
+        const auto access = made(ImportRequester::Access);
+        Require(HostImportFor(importing, address(2), 16, ImportRequester::Segment) != nullptr && made(ImportRequester::Segment) == before + 1 && made(ImportRequester::Access) == access, "a write-back segment's import was not counted for the segment requester");
+    }
+    change(3, true);
+    {
+        const auto before = counted(ImportRequester::Build);
+        const auto access = made(ImportRequester::Access);
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+        Require(made(ImportRequester::Build) > before.made && HostImportCovers(importing, address(3), piece) && made(ImportRequester::Access) == access, "an address-based build's import was not counted for the build requester");
+    }
+    {
+        const auto live = HostImportLiveBytes();
+        SetHostImportBudget(live);
+        change(4, true);
+        const auto before = counted(ImportRequester::Build);
+        {
+            GuestBufferMemory leased(importing);
+            leased.AcquireRegistered();
+            leased.Upload(true);
+            leased.WriteBack();
+        }
+        const auto after = counted(ImportRequester::Build);
+        SetHostImportBudget(0);
+        Require(after.refused > before.refused && after.refusedBytes >= before.refusedBytes + piece && after.made == before.made, "an address-based build's refusal was not counted for the build requester");
+    }
+    change(5, true);
+    {
+        const auto before = counted(ImportRequester::Access);
+        access.limitMemory(0);
+        const auto* failed = HostImportFor(importing, address(5), 16);
+        access.limitMemory(std::nullopt);
+        Require(failed == nullptr && counted(ImportRequester::Access).failed == before.failed + 1, "a lookup's failed import was not counted for the access requester");
+    }
+    {
+        constexpr std::size_t window = 2 * piece;
+        constexpr std::size_t large = 3 * piece;
+        auto* joined = static_cast<std::uint8_t*>(::operator new(2 * large, std::align_val_t{window}));
+        std::memset(joined, 0x1d, 2 * large);
+        SetHostImportWindow(window);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(joined, large, true, false, true);
+            mutation.Add(joined + large, large, true, false, true);
+        }
+        const auto before = made(ImportRequester::Join);
+        const auto second = reinterpret_cast<std::uintptr_t>(joined + large);
+        {
+            GuestBufferMemory leased(importing);
+            leased.AcquireRegistered();
+            leased.AddReadable(second - 16, 32);
+            leased.Upload(true);
+            leased.WriteBack();
+        }
+        Require(made(ImportRequester::Join) == before + 1, "a join at bind was not counted for the join requester");
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(joined);
+            mutation.Remove(joined + large);
+        }
+        SetHostImportWindow(0);
+        ::operator delete(joined, std::align_val_t{window});
+    }
+    const auto counts = HostImportCounters();
+    Require(counts.live >= 4 && counts.liveBytes == HostImportLiveBytes(), "the live import counts disagree with the live bytes");
+    for (std::size_t index = 0; index < 6; ++index) change(index, false);
+    ClearHostImports(importing.device);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+void hostImportReportTests() {
+    HostImportCounts counts;
+    counts.live = 3;
+    counts.liveBytes = 3u << 20u;
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Map)] = {2, 1u << 20u, 0, 0, 0};
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Build)] = {5, 4u << 20u, 7, 7u << 19u, 1, 4};
+    counts.requesters[static_cast<std::size_t>(ImportRequester::Segment)] = {1, 1u << 16u, 0, 0, 2};
+    const auto text = FormatHostImportCounts(counts);
+    Require(text == "3 live (3.0 MiB); made 8 (5.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2", "the host import report is wrong: " + text);
+}
+
+class PieceWindow {
+public:
+    static constexpr std::size_t Piece = 65536;
+    static constexpr std::size_t Window = std::size_t{8} << 20u;
+
+    explicit PieceWindow(const Context& context, bool views = false) : importing(context) {
+#ifndef _WIN32
+        if (views) {
+            reserved = mmap(nullptr, 2 * Window, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            Require(reserved != MAP_FAILED, "cannot reserve the block of 16 KiB views");
+            block = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(reserved) + Window - 1) / Window * Window);
+            file = memfd_create("anyps5-import-block-views", MFD_CLOEXEC);
+            Require(file >= 0 && ftruncate(file, static_cast<off_t>(Window)) == 0, "cannot create the file behind the 16 KiB views");
+            constexpr std::size_t view = 16384;
+            constexpr std::size_t count = Window / view;
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto offset = static_cast<off_t>((index % 4 * (count / 4) + index / 4) * view);
+                Require(mmap(block + index * view, view, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, offset) == block + index * view, "cannot map a 16 KiB view");
+            }
+        }
+#endif
+        if (block == nullptr) block = static_cast<std::uint8_t*>(::operator new(Window, std::align_val_t{Window}));
+        std::memset(block, 0x4b, Window);
+        importing.hostImportAlignment = Piece;
+        SetHostImportWindow(Window);
+        ClearHostImports(importing.device);
+    }
+    ~PieceWindow() {
+        for (const auto offset : registered) {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block + offset);
+        }
+        ClearHostImports(importing.device);
+        SetHostImportBudget(0);
+        SetHostImportWindow(0);
+#ifndef _WIN32
+        if (reserved != nullptr) {
+            munmap(reserved, 2 * Window);
+            close(file);
+            return;
+        }
+#endif
+        ::operator delete(block, std::align_val_t{Window});
+    }
+    PieceWindow(const PieceWindow&) = delete;
+    PieceWindow& operator=(const PieceWindow&) = delete;
+
+    void Add(std::size_t offset, std::size_t bytes, bool writable = true, bool gpu = true) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block + offset, bytes, true, writable, gpu);
+        registered.push_back(offset);
+    }
+    void AddPieces(std::size_t from, std::size_t to) {
+        for (auto offset = from; offset < to; offset += Piece) Add(offset, Piece);
+    }
+    void Remove(std::size_t offset) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block + offset);
+        registered.erase(std::find(registered.begin(), registered.end(), offset));
+    }
+    std::uintptr_t Address(std::size_t offset) const { return reinterpret_cast<std::uintptr_t>(block + offset); }
+    void Build() const {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    }
+    std::uint64_t Serial(std::size_t offset) const { return HostImportSerial(importing, Address(offset), Piece, false); }
+    std::size_t Imports(std::size_t from, std::size_t to) const {
+        std::vector<std::uint64_t> serials;
+        for (auto offset = from; offset < to; offset += Piece) {
+            if (const auto serial = Serial(offset); serial != 0) serials.push_back(serial);
+        }
+        std::sort(serials.begin(), serials.end());
+        return static_cast<std::size_t>(std::unique(serials.begin(), serials.end()) - serials.begin());
+    }
+    bool Covered(std::size_t from, std::size_t to) const {
+        for (auto offset = from; offset < to; offset += Piece) {
+            if (Serial(offset) == 0) return false;
+        }
+        return true;
+    }
+    bool Block(std::size_t offset, std::size_t bytes) const { return HostImportCovers(importing, Address(offset), bytes) && Serial(offset) == Serial(offset + bytes - Piece) && (offset == 0 || Serial(offset - Piece) != Serial(offset)) && (offset + bytes == Window || Serial(offset + bytes) != Serial(offset)); }
+
+    Context importing;
+
+private:
+    std::uint8_t* block = nullptr;
+    void* reserved = nullptr;
+    int file = -1;
+    std::vector<std::size_t> registered;
+};
+
+std::string blockText(const PieceWindow& window, std::size_t from, std::size_t to) {
+    return std::to_string(window.Imports(from, to)) + " imports";
+}
+
+void importBlockMapTests(const Context& context, bool views) {
+    PieceWindow window(context, views);
+    constexpr auto half = PieceWindow::Window / 2;
+    for (std::size_t offset = 0; offset < half; offset += PieceWindow::Piece) {
+        window.Add(offset, PieceWindow::Piece);
+        GuestAllocations::Mapped ranges;
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        for (const auto& range : lease) {
+            if (range->address == window.Address(offset)) ranges.push_back(range);
+        }
+        static_cast<void>(ImportMappedRanges(window.importing, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+    }
+    Require(HostImportFor(window.importing, window.Address(0), 16) != nullptr, "the first of 64 pieces mapped one by one was not imported");
+    Require(window.Imports(0, half) == 1 && window.Block(0, half), std::string(views ? "64 adjacent 64 KiB pieces of four 16 KiB views each" : "64 adjacent 64 KiB pieces") + " mapped one by one were not imported as one 4 MiB block: " + blockText(window, 0, half));
+}
+
+void importBlockBuildTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr auto half = PieceWindow::Window / 2;
+    window.AddPieces(half, PieceWindow::Window);
+    window.Build();
+    Require(window.Imports(half, PieceWindow::Window) == 1 && window.Block(half, half), "64 adjacent 64 KiB pieces were not imported as one 4 MiB block by an address-based build: " + blockText(window, half, PieceWindow::Window));
+    window.Add(0, half, false);
+    window.Build();
+    Require(window.Imports(0, PieceWindow::Window) == 2 && window.Block(0, half) && window.Block(half, half), "a 4 MiB read-only range and 64 writable 64 KiB pieces in one window were not imported as the range and one 4 MiB block: " + blockText(window, 0, PieceWindow::Window));
+}
+
+void importBlockHoleTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr auto half = PieceWindow::Window / 2;
+    window.Add(0, half);
+    window.AddPieces(half, PieceWindow::Window - PieceWindow::Piece);
+    window.Build();
+    constexpr std::size_t KiB = 1024;
+    Require(window.Imports(0, PieceWindow::Window) == 7, "a window whose last 64 KiB is unmapped was not imported as 7 blocks: " + blockText(window, 0, PieceWindow::Window));
+    Require(window.Block(0, half) && window.Block(half, 2048 * KiB) && window.Block(half + 2048 * KiB, 1024 * KiB) && window.Block(half + 3072 * KiB, 512 * KiB) && window.Block(half + 3584 * KiB, 256 * KiB) && window.Block(half + 3840 * KiB, 128 * KiB) && window.Block(half + 3968 * KiB, 64 * KiB), "a window whose last 64 KiB is unmapped was not split into the largest aligned blocks");
+}
+
+void importBlockUnalignedTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t KiB = 1024;
+    window.AddPieces(768 * KiB, 3840 * KiB);
+    window.Build();
+    Require(window.Imports(768 * KiB, 3840 * KiB) == 5, "48 pieces from 768 KiB were not imported as 5 aligned blocks: " + blockText(window, 768 * KiB, 3840 * KiB));
+    Require(window.Block(768 * KiB, 256 * KiB) && window.Block(1024 * KiB, 1024 * KiB) && window.Block(2048 * KiB, 1024 * KiB) && window.Block(3072 * KiB, 512 * KiB) && window.Block(3584 * KiB, 256 * KiB), "48 pieces from 768 KiB were not split into 256 KiB, 1 MiB, 1 MiB, 512 KiB and 256 KiB blocks");
+}
+
+void importBlockFlagTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr auto half = PieceWindow::Window / 2;
+    constexpr auto split = half / 2;
+    window.AddPieces(0, split);
+    window.Add(split, PieceWindow::Piece, true, false);
+    window.AddPieces(split + PieceWindow::Piece, half);
+    window.Build();
+    Require(window.Serial(split) == 0 && window.Imports(0, split) == 1 && window.Block(0, split), "pieces before a range that is not GPU mapped were not imported as one block: " + blockText(window, 0, split));
+    Require(window.Imports(split + PieceWindow::Piece, half) == 5 && window.Covered(split + PieceWindow::Piece, half), "pieces after a range that is not GPU mapped were not imported as the 5 aligned blocks after it: " + blockText(window, split + PieceWindow::Piece, half));
+}
+
+void importBlockRemapTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr auto half = PieceWindow::Window / 2;
+    window.AddPieces(0, half);
+    window.Build();
+    Require(window.Imports(0, half) == 1 && window.Block(0, half), "64 pieces were not imported as one block before the remap: " + blockText(window, 0, half));
+    const auto before = window.Serial(0);
+    constexpr auto remapped = 10 * PieceWindow::Piece;
+    window.Remove(remapped);
+    window.Add(remapped, PieceWindow::Piece);
+    window.Build();
+    Require(window.Imports(0, half) == 1 && window.Block(0, half) && window.Serial(0) != before, "a piece remapped inside a block did not retire the block and import it again whole: " + blockText(window, 0, half));
+}
+
+void importBlockFailureTests(const Context& context, const BdaTestAccess& access) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    constexpr auto half = PieceWindow::Window / 2;
+    window.AddPieces(0, PieceWindow::Window);
+    access.limitImports(half);
+    window.Build();
+    Require(window.Imports(0, PieceWindow::Window) == 2 && window.Block(0, half) && window.Block(half, half), "a window whose 8 MiB import failed did not step down to two 4 MiB blocks: " + blockText(window, 0, PieceWindow::Window));
+    const auto attempts = access.allocationAttempts();
+    window.Build();
+    Require(access.allocationAttempts() == attempts && window.Imports(0, PieceWindow::Window) == 2, "an unchanged failed block was tried again");
+    access.limitImports(std::nullopt);
+    constexpr auto remapped = 7 * MiB;
+    window.Remove(remapped);
+    window.Add(remapped, PieceWindow::Piece);
+    window.Build();
+    Require(window.Imports(0, PieceWindow::Window) == 1 && window.Block(0, PieceWindow::Window), "a block that failed was not tried again after one of its ranges was mapped again: " + blockText(window, 0, PieceWindow::Window));
+}
+
+void importBlockBudgetTests(const Context& context) {
+    PieceWindow window(context);
+    constexpr std::size_t MiB = std::size_t{1} << 20u;
+    constexpr auto half = PieceWindow::Window / 2;
+    window.AddPieces(0, half);
+    SetHostImportBudget(HostImportLiveBytes() + 3 * MiB);
+    window.Build();
+    Require(window.Imports(0, half) == 2 && window.Block(0, 2 * MiB) && window.Block(2 * MiB, MiB) && !window.Covered(3 * MiB, half), "a 4 MiB block over the budget did not step down to a 2 MiB and a 1 MiB block: " + blockText(window, 0, half));
+    const auto low = window.Serial(0);
+    const auto high = window.Serial(2 * MiB);
+    window.Add(6 * MiB, PieceWindow::Piece);
+    window.Build();
+    Require(window.Serial(0) == low && window.Serial(2 * MiB) == high && window.Imports(0, PieceWindow::Window) == 2, "blocks stepped down for the budget were imported again after an unrelated range was mapped: " + blockText(window, 0, PieceWindow::Window));
+}
+
+void importRefusalMemoryTests(const Context& context) {
+    constexpr std::size_t piece = 4096;
+    constexpr std::size_t count = 12000;
+    constexpr std::size_t fitting = count * 6 / 10;
+    constexpr std::size_t refused = count - fitting;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto* other = static_cast<std::uint8_t*>(::operator new(piece, std::align_val_t{piece}));
+    const auto at = [&](std::size_t index) { return block + 2 * index * piece; };
+    SetHostImportWindow(std::size_t{8} << 20u);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(at(index), piece, true, true, true);
+    }
+    const auto budget = HostImportLiveBytes() + fitting * piece;
+    SetHostImportBudget(budget);
+    bool added = false;
+    const auto rebuild = [&] {
+        {
+            GuestAllocations::Mutation mutation;
+            if (added) mutation.Remove(other);
+            else mutation.Add(other, piece, true, true, false);
+        }
+        added = !added;
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+    };
+    const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
+    const auto tries = [](const HostImportRequesterCounts& requested) { return requested.refused - requested.remembered; };
+    auto before = counted(ImportRequester::Build);
+    rebuild();
+    auto after = counted(ImportRequester::Build);
+    Require(after.made - before.made == fitting && tries(after) - tries(before) == refused, "a registry of 12000 ranges over a budget for 7200 of them was not imported and refused as expected: " + std::to_string(after.made - before.made) + " made, " + std::to_string(tries(after) - tries(before)) + " refused");
+    for (int round = 1; round <= 4; ++round) {
+        before = after;
+        rebuild();
+        after = counted(ImportRequester::Build);
+        Require(tries(after) == tries(before), "rebuild " + std::to_string(round) + " tried " + std::to_string(tries(after) - tries(before)) + " refused ranges again with the budget unchanged");
+        Require(after.refused - before.refused == refused && after.remembered - before.remembered == refused && after.made == before.made, "rebuild " + std::to_string(round) + " did not count its remembered refusals as refusals");
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(at(0));
+    }
+    before = after;
+    rebuild();
+    after = counted(ImportRequester::Build);
+    Require(after.made - before.made == 1 && HostImportCovers(importing, reinterpret_cast<std::uintptr_t>(at(fitting)), piece), "the budget a retired import freed was not used for a remembered refusal: " + std::to_string(after.made - before.made) + " made");
+    SetHostImportBudget(budget + piece);
+    before = after;
+    rebuild();
+    after = counted(ImportRequester::Build);
+    Require(after.made - before.made == 1 && HostImportCovers(importing, reinterpret_cast<std::uintptr_t>(at(fitting + 1)), piece), "a larger budget did not end the remembered refusals: " + std::to_string(after.made - before.made) + " made");
+    const auto lookups = counted(ImportRequester::Access);
+    static_cast<void>(HostImportFor(importing, reinterpret_cast<std::uintptr_t>(at(count - 1)), 16));
+    const auto looked = counted(ImportRequester::Access);
+    Require(looked.remembered == lookups.remembered && looked.made + looked.refused + looked.failed == lookups.made + lookups.refused + lookups.failed + 1, "a lookup that may evict was answered from the build's remembered refusals");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 1; index < count; ++index) mutation.Remove(at(index));
+        if (added) mutation.Remove(other);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    ::operator delete(other, std::align_val_t{piece});
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+void importDeviceBudgetTests() {
+    constexpr std::uint64_t MiB = std::uint64_t{1} << 20u;
+    constexpr std::uint64_t GiB = std::uint64_t{1} << 30u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[1] = {16 * GiB, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    const auto text = [](std::uint64_t bytes) { return std::to_string(bytes >> 20u) + " MiB"; };
+    Require(HostImportBudgetFor(memory, nullptr, 6 * GiB, 0) == 6 * GiB, "an import budget without a memory budget report is not the configured one");
+    Require(HostImportBudgetFor(memory, &reported, 6 * GiB, 0) == 6 * GiB, "a zero reported budget of the host heap did not leave the configured import budget");
+    reported.heapBudget[1] = 12 * GiB;
+    reported.heapUsage[1] = 5 * GiB;
+    const auto granted = HostImportBudgetFor(memory, &reported, 10 * GiB, 2 * GiB);
+    Require(granted == 7 * GiB + 512 * MiB, "a 12 GiB host heap budget using 3 GiB besides 2 GiB of imports did not give 7.5 GiB to imports: " + text(granted));
+    Require(HostImportBudgetFor(memory, &reported, 6 * GiB, 2 * GiB) == 6 * GiB, "a reported host heap budget raised the configured import budget");
+    reported.heapUsage[1] = 5 * GiB + 10 * MiB;
+    const auto rounded = HostImportBudgetFor(memory, &reported, 10 * GiB, 2 * GiB);
+    Require(rounded == 7 * GiB + 448 * MiB, "the import budget from a reported heap was not rounded down to 64 MiB: " + text(rounded));
+    reported.heapUsage[1] = 5 * GiB;
+    const auto uncounted = HostImportBudgetFor(memory, &reported, 64 * GiB, 8 * GiB);
+    Require(uncounted == 10 * GiB + 512 * MiB, "imports the heap usage does not count were taken from other usage: " + text(uncounted));
+    reported.heapBudget[1] = 4 * GiB;
+    reported.heapUsage[1] = 6 * GiB;
+    Require(HostImportBudgetFor(memory, &reported, 6 * GiB, GiB) == 0, "a host heap used past its reported budget left room for imports");
+    reported.heapBudget[0] = 1 * GiB;
+    reported.heapBudget[1] = 0;
+    Require(HostImportBudgetFor(memory, &reported, 6 * GiB, 0) == 6 * GiB, "the device-local heap's budget was taken for the host heap's");
+    constexpr auto unreported = std::numeric_limits<std::uint64_t>::max();
+    Require(HostImportBudgetWith(6400 * MiB, true, 4480 * MiB, false, 0) == 6400 * MiB, "a host heap report lowered a set import budget");
+    Require(HostImportBudgetWith(6400 * MiB, true, 4480 * MiB, true, 0) == 6400 * MiB, "a host heap report lowered a set import budget after a vkAllocateMemory failure");
+    Require(HostImportBudgetWith(6400 * MiB, true, 4480 * MiB, true, 3752 * MiB) == 3752 * MiB, "the ceiling after a vkAllocateMemory failure did not lower a set import budget");
+    Require(HostImportBudgetWith(5888 * MiB, false, 4480 * MiB, false, 0) == 5888 * MiB, "a host heap report lowered the default import budget before any vkAllocateMemory failure");
+    Require(HostImportBudgetWith(5888 * MiB, false, 4480 * MiB, true, 0) == 4480 * MiB, "the default import budget did not take a lower host heap report after a vkAllocateMemory failure");
+    Require(HostImportBudgetWith(5888 * MiB, false, 8 * GiB, true, 0) == 5888 * MiB, "a higher host heap report raised the default import budget");
+    Require(HostImportBudgetWith(5888 * MiB, false, unreported, true, 0) == 5888 * MiB, "a device without a memory budget report changed the default import budget");
+    Require(HostImportBudgetWith(5888 * MiB, false, 4480 * MiB, true, 3000 * MiB) == 3000 * MiB, "the ceiling below a host heap report did not hold the default import budget");
+    Require(HostImportBudgetWith(5888 * MiB, false, 0, true, 0) != 0, "a host heap report that leaves imports no room made the default import budget 0, which the refusal memory reads as no budget");
+}
+
+void importCeilingTests(const Context& context, const BdaTestAccess& access, bool nearBudget) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 24;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    std::size_t next = 0;
+    const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
+    const auto counted = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Access)]; };
+    const auto outcome = [](const HostImportRequesterCounts& before, const HostImportRequesterCounts& after) { return std::to_string(after.failed - before.failed) + " failed, " + std::to_string(after.refused - before.refused) + " refused"; };
+    if (nearBudget) {
+        SetHostImportBudget(HostImportLiveBytes() + 2 * piece);
+        Require(lookup(), "the ceiling test's first import was not made");
+        access.limitImports(0);
+        const auto before = counted();
+        for (int attempt = 0; attempt < 3; ++attempt) static_cast<void>(lookup());
+        const auto after = counted();
+        access.limitImports(std::nullopt);
+        Require(after.failed - before.failed == 1 && after.refused - before.refused == 2, "imports after a vkAllocateMemory failure within an eighth of the budget were not one failure and then refusals: " + outcome(before, after));
+    } else {
+        SetHostImportBudget(64 * piece);
+        Require(lookup(), "the ceiling test's first import was not made");
+        access.limitImports(0);
+        auto before = counted();
+        Require(!lookup(), "an import past the mock's import limit was made");
+        access.limitImports(std::nullopt);
+        Require(lookup() && counted().failed == before.failed + 1, "one vkAllocateMemory failure far below the import budget lowered it");
+        access.limitImports(0);
+        before = counted();
+        for (int attempt = 0; attempt < 5; ++attempt) static_cast<void>(lookup());
+        const auto after = counted();
+        access.limitImports(std::nullopt);
+        Require(after.failed - before.failed == 3 && after.refused - before.refused == 2, "five imports after vkAllocateMemory failures far below the budget were not three failures and then refusals: " + outcome(before, after));
+    }
+    Require(!lookup(), "an import was made over the lowered ceiling");
+    SetHostImportBudget(0);
+    Require(lookup(), "a new import budget did not lift the ceiling");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+    }
+    ClearHostImports(importing.device);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+std::uint64_t reportedHostHeapBudget = 0;
+std::uint64_t reportedHostHeapUsage = 0;
+
+void VKAPI_PTR reportHostHeap(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
+    for (auto* next = static_cast<VkBaseOutStructure*>(properties->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) continue;
+        auto* reported = reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(next);
+        reported->heapBudget[1] = reportedHostHeapBudget;
+        reported->heapUsage[1] = reportedHostHeapUsage;
+    }
+}
+
+void importReportFloorTests(const Context& context, const BdaTestAccess& access, bool setBudget) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 24;
+    constexpr std::uint64_t GiB = std::uint64_t{1} << 30u;
+    static std::uintptr_t physical = 0x1000;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    importing.memory.memoryHeapCount = 2;
+    importing.memory.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    importing.memory.memoryHeaps[1] = {16 * GiB, 0};
+    importing.memoryProperties2 = reportHostHeap;
+    importing.physical = reinterpret_cast<VkPhysicalDevice>(physical += 0x10);
+    reportedHostHeapBudget = 8 * (std::uint64_t{1} << 20u);
+    reportedHostHeapUsage = reportedHostHeapBudget;
+    SetHostImportWindow(0);
+    SetHostImportBudget(setBudget ? 64 * piece : 0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    std::size_t next = 0;
+    const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
+    const std::string budget = setBudget ? "a set import budget" : "the default import budget";
+    for (int made = 0; made < 3; ++made) Require(lookup(), budget + " was lowered below " + std::to_string(made + 1) + " imports by a host heap report that leaves imports no room, before any vkAllocateMemory failure");
+    access.limitImports(0);
+    Require(!lookup(), "an import past the mock's import limit was made");
+    access.limitImports(std::nullopt);
+    if (setBudget) Require(lookup(), "a set import budget took the host heap report's limit after a vkAllocateMemory failure far below it");
+    else Require(!lookup(), "the default import budget did not take the host heap report's limit after a vkAllocateMemory failure");
+    SetHostImportBudget(0);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+    }
+    ClearHostImports(importing.device);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+void importReportRefusalMemoryTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 24;
+    constexpr std::uint64_t GiB = std::uint64_t{1} << 30u;
+    static std::uintptr_t physical = 0x800000;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto* other = static_cast<std::uint8_t*>(::operator new(piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    importing.memory.memoryHeapCount = 2;
+    importing.memory.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    importing.memory.memoryHeaps[1] = {16 * GiB, 0};
+    importing.memoryProperties2 = reportHostHeap;
+    importing.physical = reinterpret_cast<VkPhysicalDevice>(physical += 0x10);
+    reportedHostHeapBudget = 8 * (std::uint64_t{1} << 20u);
+    reportedHostHeapUsage = reportedHostHeapBudget;
+    SetHostImportWindow(0);
+    SetHostImportBudget(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    access.limitImports(0);
+    Require(HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block), 16) == nullptr, "an import past the mock's import limit was made");
+    access.limitImports(std::nullopt);
+    bool added = false;
+    const auto rebuild = [&] {
+        {
+            GuestAllocations::Mutation mutation;
+            if (added) mutation.Remove(other);
+            else mutation.Add(other, piece, true, true, false);
+        }
+        added = !added;
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+    };
+    const auto counted = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Build)]; };
+    const auto tries = [](const HostImportRequesterCounts& requested) { return requested.refused - requested.remembered; };
+    auto before = counted();
+    rebuild();
+    auto after = counted();
+    Require(after.made == before.made && tries(after) > tries(before), "an address-based build under a host heap report that leaves imports no room imported or refused nothing: " + std::to_string(after.made - before.made) + " made, " + std::to_string(tries(after) - tries(before)) + " refused");
+    before = after;
+    rebuild();
+    after = counted();
+    Require(tries(after) == tries(before) && after.remembered > before.remembered, "a second address-based build under a host heap report that leaves imports no room tried " + std::to_string(tries(after) - tries(before)) + " refused ranges again instead of answering them from the refusal memory");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+        if (added) mutation.Remove(other);
+    }
+    ClearHostImports(importing.device);
+    ::operator delete(other, std::align_val_t{piece});
+    ::operator delete(block, std::align_val_t{piece});
 }
 
 void spaceReadAcrossImportsTests(const Context& context, const BdaTestAccess& access) {
@@ -1938,6 +2534,26 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importRefusedWholeRangeTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
+    importRequesterTests(context, access);
+    hostImportReportTests();
+    importBlockMapTests(context, false);
+#ifndef _WIN32
+    importBlockMapTests(context, true);
+#endif
+    importBlockBuildTests(context);
+    importBlockHoleTests(context);
+    importBlockUnalignedTests(context);
+    importBlockFlagTests(context);
+    importBlockRemapTests(context);
+    importBlockFailureTests(context, access);
+    importBlockBudgetTests(context);
+    importRefusalMemoryTests(context);
+    importDeviceBudgetTests();
+    importCeilingTests(context, access, false);
+    importCeilingTests(context, access, true);
+    importReportFloorTests(context, access, true);
+    importReportFloorTests(context, access, false);
+    importReportRefusalMemoryTests(context, access);
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();

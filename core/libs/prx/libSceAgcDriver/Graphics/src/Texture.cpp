@@ -2627,7 +2627,7 @@ std::vector<StorageTexture::ImportSegment> StorageTexture::importSegments() cons
         for (const auto& piece : pieces) {
             const auto from = std::max(piece.address, begin);
             const auto to = std::min(piece.address + piece.bytes, end);
-            const auto* import = HostImportFor(context, from, static_cast<std::size_t>(to - from));
+            const auto* import = HostImportFor(context, from, static_cast<std::size_t>(to - from), ImportRequester::Segment);
             if (import == nullptr) return {};
             if (!segments.empty() && segments.back().import == import) segments.back().end = to;
             else if (!segments.empty() && unitAligned && from % 65536 != 0) return {};

@@ -5,6 +5,7 @@
 #include "BdaAbi.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -62,15 +63,40 @@ ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 
+enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment };
+inline constexpr std::size_t ImportRequesterCount = 5;
+
+struct HostImportRequesterCounts {
+    std::uint64_t made = 0;
+    std::uint64_t madeBytes = 0;
+    std::uint64_t refused = 0;
+    std::uint64_t refusedBytes = 0;
+    std::uint64_t failed = 0;
+    std::uint64_t remembered = 0;
+};
+
+struct HostImportCounts {
+    std::uint64_t live = 0;
+    std::uint64_t liveBytes = 0;
+    std::array<HostImportRequesterCounts, ImportRequesterCount> requesters{};
+};
+
+const char* ImportRequesterName(ImportRequester requester);
+HostImportCounts HostImportCounters();
+std::string FormatHostImportCounts(const HostImportCounts& counts);
+void ReportHostImports();
+
 // The host import of the registered allocation containing [address, address + bytes), made on demand
 // (alignment and budget permitting), or null. Bytes at `address` are at `address - import->base` in
 // the import's buffer.
-const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
+std::uint64_t HostImportBudgetFor(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t configured, std::uint64_t liveBytes);
+std::uint64_t HostImportBudgetWith(std::uint64_t configured, bool set, std::uint64_t reported, bool allocationFailed, std::uint64_t ceiling);
 std::uint64_t HostImportLiveBytes();
 // Tests: how many imports settleImport has used on the settle queue.
 std::uint64_t HostImportsSettled();
