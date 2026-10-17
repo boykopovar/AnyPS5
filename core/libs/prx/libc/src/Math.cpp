@@ -512,6 +512,20 @@ short APS5_VABI _Dtest_nid_postfix(const double* value) {
     return Finite;
 }
 
+short APS5_VABI _FDsign_nid_postfix(const float* value) {
+    if (value == nullptr) throw std::invalid_argument("_FDsign: null value");
+    std::uint32_t bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    return static_cast<short>((bits >> 16) & 0x8000u);
+}
+
+short APS5_VABI _Dsign_nid_postfix(const double* value) {
+    if (value == nullptr) throw std::invalid_argument("_Dsign: null value");
+    std::uint64_t bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    return static_cast<short>((bits >> 48) & 0x8000u);
+}
+
 int APS5_VABI __isnanf_nid_postfix(float x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI isnanf_nid_postfix(float x) { return __isnanf_nid_postfix(x); }
 int APS5_VABI isnan_nid_postfix(double x) { return __isnan_nid_postfix(x); }
