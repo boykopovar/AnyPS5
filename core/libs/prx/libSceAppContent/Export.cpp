@@ -2,6 +2,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
 #include <cstring>
@@ -49,7 +50,7 @@ bool IsTemporaryMountPoint(const AppContentMountPoint* mountPoint) {
 }
 
 static void ClearDirectory(const std::filesystem::path& directory) {
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) std::filesystem::remove_all(entry.path());
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) RemoveTree(entry.path());
     RecordWrittenPath_nid_no_patch(directory);
 }
 
