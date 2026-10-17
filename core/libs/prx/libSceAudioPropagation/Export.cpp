@@ -311,7 +311,6 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
         require(info.output != nullptr && info.outputSize != 0, __func__);
         if (info.format != RenderFormat) throw std::runtime_error(std::string(__func__) + ": render format " + std::to_string(info.format) + " is unknown");
     }
-    for (std::uint32_t index = 0; index < count; ++index) std::memset(infos[index].output, 0, infos[index].outputSize);
     return 0;
 }
 

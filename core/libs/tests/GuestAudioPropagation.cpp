@@ -143,20 +143,16 @@ int main() {
     Require(sceAudioPropagationSourceCreate(system, &secondSource) == 0, "second source create failed");
 
     float outputs[2][64];
-    const auto fill = [&] { std::memset(outputs, 0xab, sizeof(outputs)); };
-    const auto zeroed = [&](int index) {
-        for (const float sample : outputs[index]) {
-            if (sample != 0.0f) return false;
+    float expected[2][64];
+    const auto fill = [&] {
+        for (std::size_t channel = 0; channel < 2; ++channel) {
+            for (std::size_t sample = 0; sample < 64; ++sample) {
+                outputs[channel][sample] = static_cast<float>(sample + 1) / (channel == 0 ? 128.0f : -128.0f);
+            }
         }
-        return true;
+        std::memcpy(expected, outputs, sizeof(outputs));
     };
-    const auto untouched = [&] {
-        const auto* bytes = reinterpret_cast<const std::uint8_t*>(outputs);
-        for (std::size_t index = 0; index < sizeof(outputs); ++index) {
-            if (bytes[index] != 0xab) return false;
-        }
-        return true;
-    };
+    const auto untouched = [&] { return std::memcmp(outputs, expected, sizeof(outputs)) == 0; };
     AudioPropagation::RenderInfo infos[2]{};
     const auto reset = [&] {
         infos[0] = {{AudioPropagation::RenderInfoId, AudioPropagation::RenderInfoSize}, source, outputs[0], sizeof(outputs[0]), AudioPropagation::RenderFormat, 0};
@@ -165,13 +161,26 @@ int main() {
     };
     reset();
     Require(sceAudioPropagationSourceRender(system, infos, 1) == 0, "render failed");
-    Require(zeroed(0), "render left the output unwritten");
-    const auto* tail = reinterpret_cast<const std::uint8_t*>(outputs[1]);
-    Require(tail[0] == 0xab, "render wrote past the output size");
+    Require(untouched(), "empty source erased an existing mix");
     reset();
     infos[0].outputSize = sizeof(float) * 16;
     Require(sceAudioPropagationSourceRender(system, infos, 2) == 0, "render of two sources failed");
-    Require(outputs[0][15] == 0.0f && outputs[0][16] != 0.0f && zeroed(1), "render did not write each output for its size");
+    Require(untouched(), "empty sources modified separate destination mixes or their tails");
+    reset();
+    infos[1].output = outputs[0];
+    Require(sceAudioPropagationSourceRender(system, infos, 2) == 0, "render into a shared mix failed");
+    Require(untouched(), "empty sources modified a shared destination mix");
+    reset();
+    infos[0].outputSize = sizeof(float) * 32;
+    infos[1].output = outputs[0] + 16;
+    infos[1].outputSize = sizeof(float) * 32;
+    Require(sceAudioPropagationSourceRender(system, infos, 2) == 0, "render into overlapping mixes failed");
+    Require(untouched(), "empty sources modified overlapping destination mixes");
+    reset();
+    std::memset(outputs, 0, sizeof(outputs));
+    std::memcpy(expected, outputs, sizeof(outputs));
+    Require(sceAudioPropagationSourceRender(system, infos, 2) == 0, "render into silence failed");
+    Require(untouched(), "empty sources modified a silent destination mix");
 
     reset();
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 0); }, "render without infos");
