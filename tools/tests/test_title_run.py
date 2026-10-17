@@ -73,6 +73,7 @@ class AnalysisTests(unittest.TestCase):
         text = "Transferring control\n  what():  sysctl_nid_postfix: unsupported MIB 1.1\nFATAL: abort()\n"
         self.assertEqual(title_run.first_error(text), "what():  sysctl_nid_postfix: unsupported MIB 1.1")
         self.assertEqual(title_run.first_error("radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s\nVkResult is ERROR_DEVICE_LOST\n"), "radv/ps5: the GPU has not reached submission 12 (at 11) in 10 s")
+        self.assertEqual(title_run.first_error("Converting\nFAIL: Forbidden syscall instruction at code offset 0x1\nInput: x\n"), "FAIL: Forbidden syscall instruction at code offset 0x1")
         self.assertEqual(title_run.first_error("all fine\n"), "")
 
     def test_warning_counts(self):
@@ -225,8 +226,8 @@ def wait_until(condition, seconds=10):
 
 
 class SessionTests(unittest.TestCase):
-    def start(self, code):
-        session = title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL)
+    def start(self, code, **options):
+        session = title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, **options)
         self.addCleanup(session.kill)
         return session
 
@@ -238,6 +239,13 @@ class SessionTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "LoadExec hand-over is Windows-specific")
     def test_exit_code_of_the_last_process(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])")
+        self.assertTrue(wait_until(lambda: not session.alive()))
+        self.assertEqual(session.exit_code(), 7)
+
+    @unittest.skipUnless(os.name == "nt", "job process list is Windows-specific")
+    def test_exit_code_ignores_processes_outside_owned(self):
+        child = "import subprocess, time; time.sleep(1); subprocess.run(['cmd.exe', '/c', 'exit 0']); raise SystemExit(7)"
+        session = self.start(f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])", owned=Path(sys.executable).parent)
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
