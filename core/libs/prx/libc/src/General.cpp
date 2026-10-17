@@ -504,7 +504,7 @@ extern "C" int SetWorkingDirectory_nid_no_patch(const char* resolved) {
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     try {
-        return SetWorkingDirectory(state, std::filesystem::u8path(resolved));
+        return SetWorkingDirectory(state, std::filesystem::path(reinterpret_cast<const char8_t*>(resolved)));
     } catch (const std::bad_alloc&) {
         return 12;
     } catch (const std::filesystem::filesystem_error& error) {
