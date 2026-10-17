@@ -41,6 +41,7 @@ struct Counters {
     std::uint64_t specializedMisses = 0;
     std::uint64_t specializedWrites = 0;
     std::uint64_t specializedLoadFailures = 0;
+    std::uint64_t specializedEvictions = 0;
     std::uint64_t bindingPlanHits = 0;
     std::uint64_t bindingPlanMisses = 0;
     std::uint64_t bindingPlanWrites = 0;
@@ -62,6 +63,8 @@ struct Counters {
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key);
 
 [[nodiscard]] std::string EntryName(std::span<const std::byte> key);
+
+[[nodiscard]] std::string SpecializedEntryName(std::span<const std::byte> key);
 
 void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out);
 [[nodiscard]] bool DecodeResult(std::span<const std::byte> bytes, RecompileResult& result, std::shared_ptr<const void> owner = nullptr);
