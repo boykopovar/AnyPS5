@@ -4582,6 +4582,102 @@ void verifyBdaReadFallbackFunctions() {
     }
 }
 
+void verifyBdaAnchors() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    alignas(256) static std::array<std::uint32_t, 32> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0u, 0u, static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 128u, 0x01016facu};
+    const auto compile = [&](std::uint32_t scalarBase, std::uint32_t stride) {
+        std::vector<std::uint32_t> code{0x7e020200u, 0x7e040201u};
+        for (std::uint32_t load = 0; load < scalarBase; ++load) {
+            code.push_back(0xdc308000u | (stride * load + 4u));
+            code.push_back(((3u + load) << 24u) | 0x00040000u);
+        }
+        code.push_back(0xdc308000u | 4u);
+        code.push_back(((3u + scalarBase) << 24u) | 0x007d0001u);
+        code.push_back(0xbf8c3f70u);
+        for (std::uint32_t load = 1; load <= scalarBase; ++load) code.push_back(0x4a060103u | ((3u + load) << 9u));
+        code.insert(code.end(), {0xe0700000u, 0x80010300u, 0xbf810000u});
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x60000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv;
+    };
+    for (const std::uint32_t stride : {4u, 32u}) {
+        for (const std::uint32_t loads : {0u, 1u, 2u, 4u}) {
+            const bool anchored = stride == 32u && loads >= 2u;
+            const auto words = compile(loads, stride);
+            std::map<std::uint32_t, std::string> names;
+            std::string function;
+            std::map<std::string, std::size_t> mainCalls;
+            std::size_t anchorFunctions = 0;
+            std::size_t branchesBeforeAnchor = 0;
+            std::size_t directLoads = 0;
+            for (std::size_t cursor = 5; cursor < words.size();) {
+                const auto length = words[cursor] >> 16u;
+                require(length != 0 && length <= words.size() - cursor, "BDA anchors: truncated SPIR-V instruction");
+                const auto op = words[cursor] & 0xffffu;
+                if (op == spv::OpName) names[words[cursor + 1]] = reinterpret_cast<const char*>(&words[cursor + 2]);
+                if (op == spv::OpFunction) {
+                    function = names[words[cursor + 2]];
+                    if (function == "bda_anchor_range") ++anchorFunctions;
+                }
+                if (op == spv::OpFunctionCall && function == "main") {
+                    const auto& callee = names[words[cursor + 3]];
+                    if (callee == "bda_anchor_range") require(mainCalls.empty(), "BDA anchors: the anchor is searched after a read");
+                    ++mainCalls[callee.starts_with("read_bda_span") ? std::string("read_bda_span") : callee];
+                }
+                if (op == spv::OpBranchConditional && function == "main" && mainCalls["bda_anchor_range"] == 0u) ++branchesBeforeAnchor;
+                if (op == spv::OpLoad && function == "main" && length > 4u && words[cursor + 4] == spv::MemoryAccessAlignedMask && words[cursor + 5] == 4u) ++directLoads;
+                cursor += length;
+            }
+            const auto spans = loads == 0u ? 1u : stride == 4u ? 2u : loads + 1u;
+            require(anchorFunctions == (anchored ? 1u : 0u), "BDA anchors: the anchor search is defined without anchored reads, or twice");
+            require(mainCalls["bda_anchor_range"] == (anchored ? 1u : 0u), "BDA anchors: the reads of one user data base do not share one anchor");
+            require(!anchored || branchesBeforeAnchor == 0u, "BDA anchors: the anchor is not searched at the program's entry");
+            require(mainCalls["read_bda_span"] == spans, "BDA anchors: a read lost its lookup path");
+            require(directLoads == (anchored ? loads : 0u), "BDA anchors: an anchored read does not load its dwords directly");
+        }
+    }
+    RecompileRequest plain{};
+    const std::vector<std::uint32_t> endOnly{0xbf810000u};
+    plain.shader = {ShaderStage::Compute, 0x60000u, endOnly, 0, {}};
+    plain.context.waveSize = 32;
+    plain.context.userDataBaseRegister = 0;
+    plain.context.userData = userData;
+    plain.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    plain.target.vulkanVersion = 0x00401000u;
+    plain.target.spirvVersion = 0x00010300u;
+    plain.target.subgroupSize = 32;
+    plain.target.bdaAbiVersion = BdaAbi::Version;
+    plain.target.fragmentShaderBarycentricEnabled = false;
+    plain.layout.pushConstantSizeBytes = 128;
+    plain.useCache = false;
+    const auto plainWords = Recompile(plain).spirv;
+    for (std::size_t cursor = 5; cursor < plainWords.size();) {
+        const auto length = plainWords[cursor] >> 16u;
+        require(length != 0 && length <= plainWords.size() - cursor, "BDA anchors: truncated SPIR-V instruction");
+        const auto op = plainWords[cursor] & 0xffffu;
+        require(!(op == spv::OpTypeInt && plainWords[cursor + 2] == 64u), "BDA anchors: a program without anchors declares a 64-bit integer type");
+        require(!(op == spv::OpCapability && plainWords[cursor + 1] == spv::CapabilityInt64), "BDA anchors: a program without anchors requires Int64");
+        cursor += length;
+    }
+}
+
 void verifyFunctionLdsBound() {
     using namespace ShaderRecompiler;
     const auto build = [](const auto& body) {
@@ -5280,6 +5376,7 @@ int main(int argc, char** argv) {
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
+        verifyBdaAnchors();
         verifyFunctionLdsBound();
         verifyFunctionLdsUpdates();
         verifySrtReadPatching();
