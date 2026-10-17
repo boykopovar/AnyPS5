@@ -4,6 +4,7 @@
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
+#include <relinker/analysis/InlineJumpTables.hpp>
 #include <algorithm>
 #include <sstream>
 
@@ -368,6 +369,12 @@ RelinkResult RelinkerPipeline::Relink() {
             static_cast<void>(segmentFileOffset);
             if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
                 segment.resize(*codeEnd - segmentVAddr);
+            for (const auto& function : functions) {
+                if (function.Begin < segmentVAddr || function.End <= function.Begin || function.End - segmentVAddr > segment.size()) continue;
+                const std::span<std::uint8_t> code(segment.data() + (function.Begin - segmentVAddr), function.End - function.Begin);
+                if (const auto tables = FindInlineJumpTables(code, function.Begin))
+                    std::fill(code.begin() + static_cast<std::ptrdiff_t>(*tables - function.Begin), code.end(), std::uint8_t{0x90});
+            }
         }
     }
 

@@ -2,6 +2,7 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
+#include <relinker/analysis/InlineJumpTables.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
 #include <io/BufferUtils.hpp>
@@ -111,6 +112,11 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     std::set<std::uint64_t> roots;
     std::map<std::uint64_t, std::uint64_t> functions;
+    std::map<std::uint64_t, std::uint64_t> inlineData;
+    const auto isInlineData = [&](std::uint64_t address) {
+        const auto data = inlineData.upper_bound(address);
+        return data != inlineData.begin() && address < std::prev(data)->second;
+    };
     const auto addRoot = [&](std::uint64_t address) { if (isCode(address)) roots.insert(address); };
     const auto addAddressTakenRoot = [&](std::uint64_t address, const std::uint8_t* code, const Codegen::DecodedInstructionInfo& info) {
         if (!info.HasRipRelativeDisp || code[info.OpcodeOffset] != 0x8d || !(info.RexPrefix & 8)) return;
@@ -251,8 +257,13 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     for (const auto& [begin, end] : functions) functionBytes += end - begin;
     std::uint64_t decodedBytes = 0;
     report(1000);
-    for (const auto& [begin, end] : functions) {
-        const auto offset = fileOffset(begin, end - begin);
+    for (const auto& [begin, functionEnd] : functions) {
+        const auto offset = fileOffset(begin, functionEnd - begin);
+        auto end = functionEnd;
+        if (const auto tables = FindInlineJumpTables(std::span<const std::uint8_t>(bytes.data() + offset, functionEnd - begin), begin)) {
+            end = *tables;
+            inlineData.emplace(end, functionEnd);
+        }
         for (auto address = begin; address < end;) {
             Codegen::DecodedInstructionInfo info;
             try {
@@ -363,6 +374,12 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     std::size_t previousRoots = 0;
     std::unordered_set<Domain::VirtualAddress> decodedInstructions;
     std::vector<std::unordered_set<Domain::VirtualAddress>> sectionReachable(codeHeaders.size());
+    for (std::size_t i = 0; i < codeHeaders.size(); ++i) {
+        for (const auto& [dataBegin, dataEnd] : inlineData) {
+            if (dataBegin < codeHeaders[i].MappedAddress || dataBegin - codeHeaders[i].MappedAddress >= codeHeaders[i].FileSize) continue;
+            for (auto slot = dataBegin; slot < dataEnd; slot += 4) sectionReachable[i].insert(slot);
+        }
+    }
     do {
         previousRoots = roots.size();
         for (std::size_t i = 0; i < codeHeaders.size(); ++i) {
@@ -375,7 +392,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
             const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, true, sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); });
             for (const auto address : graph->ReachableVaddrs()) {
-                if (!decodedInstructions.insert(address).second) continue;
+                if (isInlineData(address) || !decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;
                 const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
