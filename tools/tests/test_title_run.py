@@ -149,6 +149,12 @@ class ReportTests(unittest.TestCase):
         ]))
         self.assertNotIn("Before", title_run.render_markdown(now))
 
+    def test_render_markdown_lists_missing_titles(self):
+        now = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
+        before = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
+                          "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
+        self.assertIn("Missing: XPSemu (PPSA97358)", title_run.render_markdown(now, before))
+
 
 if __name__ == "__main__":
     unittest.main()
