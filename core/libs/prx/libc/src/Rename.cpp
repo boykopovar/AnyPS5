@@ -10,11 +10,11 @@
 #include <windows.h>
 #endif
 
-std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, [[maybe_unused]] bool replacesFile) {
+std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, [[maybe_unused]] bool replacesExisting) {
     namespace fs = std::filesystem;
     std::error_code error;
 #ifdef _WIN32
-    if (replacesFile) {
+    if (replacesExisting) {
         const auto target = fs::absolute(destination, error);
         if (error) return error;
         struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
@@ -28,7 +28,7 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
         info->flags = replaceExisting | posixSemantics | (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY) ? ignoreReadOnly : 0);
         info->nameBytes = static_cast<DWORD>(nameBytes);
         std::memcpy(info->name, target.c_str(), nameBytes);
-        const auto handle = CreateFileW(source.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        const auto handle = CreateFileW(source.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (handle == INVALID_HANDLE_VALUE) return std::error_code(static_cast<int>(GetLastError()), std::system_category());
         constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
         if (!SetFileInformationByHandle(handle, renameInfoEx, info, static_cast<DWORD>(buffer.size()))) error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
@@ -42,7 +42,6 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
 
 static int RenamePath_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination) {
     constexpr int GuestEnoent = 2;
-    constexpr int GuestEio = 5;
     constexpr int GuestEnotdir = 20;
     constexpr int GuestEisdir = 21;
     constexpr int GuestEinval = 22;
@@ -90,14 +89,7 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
-#ifdef _WIN32
-    if (!sameFile && sourceIsDirectory && destinationIsDirectory) {
-        error.clear();
-        if (!fs::remove(destination, error)) return error ? FilesystemError(error) : GuestEio;
-    }
-#endif
-
-    error = RenameNative_nid_no_patch(source, destination, destinationExists && !sourceIsDirectory && !destinationIsDirectory);
+    error = RenameNative_nid_no_patch(source, destination, destinationExists && (!sourceIsDirectory || !sameFile));
     return error ? FilesystemError(error) : 0;
 }
 

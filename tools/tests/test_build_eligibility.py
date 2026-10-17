@@ -9,9 +9,11 @@ from pathlib import Path
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/build.yml"
 
 HARNESS = r"""
+console.error("eligibility: harness-start", process.pid, process.version);
 const fs = require('fs');
 const scenario = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const script = fs.readFileSync(process.argv[3], 'utf8');
+console.error("eligibility: inputs-read", process.pid);
 const calls = [];
 const outputs = {};
 const warnings = [];
@@ -56,7 +58,10 @@ const core = {
 };
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 new AsyncFunction('github', 'context', 'core', script)(github, context, core).then(
-  () => process.stdout.write(JSON.stringify({ outputs, warnings, calls, summary })),
+  () => {
+    console.error("eligibility: gate-complete", process.pid);
+    process.stdout.write(JSON.stringify({ outputs, warnings, calls, summary }));
+  },
   (error) => { console.error(error); process.exit(1); }
 );
 """
@@ -93,8 +98,13 @@ class RelinkerEligibilityTests(unittest.TestCase):
         scenario.write_text(json.dumps({"commits": commits, "search": search, "files": list(files), "manual": manual}),
                             encoding="utf-8")
         environment = dict(os.environ, PR_NUMBER="7", GITHUB_TRIGGERING_ACTOR="maintainer")
-        result = subprocess.run([self.node, "harness.js", "scenario.json", "gate.js"], cwd=self.root,
-                                capture_output=True, text=True, env=environment, timeout=90)
+        try:
+            result = subprocess.run([self.node, "harness.js", "scenario.json", "gate.js"], cwd=self.root,
+                                    capture_output=True, text=True, env=environment, timeout=90)
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else error.stdout or ""
+            stderr = error.stderr.decode(errors="replace") if isinstance(error.stderr, bytes) else error.stderr or ""
+            self.fail(f"Node harness timed out after {error.timeout}s: {self.node}\nstdout:\n{stdout}\nstderr:\n{stderr}")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 

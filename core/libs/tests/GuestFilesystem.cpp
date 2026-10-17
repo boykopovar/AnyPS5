@@ -517,6 +517,63 @@ int main() {
         Require(rename_nid_postfix(name(targetFile).c_str(), name(targetFile).c_str()) == 0);
         Require(rename_nid_postfix(name(sourceDirectory).c_str(), name(emptyDirectory).c_str()) == 0);
         Require(!std::filesystem::exists(sourceDirectory) && std::filesystem::is_directory(emptyDirectory / "child"));
+        const auto kernelSource = area / "kernel_source";
+        const auto kernelTarget = area / "kernel_target";
+        Require(std::filesystem::create_directories(kernelSource / "child"));
+        Require(std::filesystem::create_directory(kernelTarget));
+        { std::ofstream stream(kernelSource / "marker"); stream << "kernel directory contents"; }
+        const int directoryResult = sceKernelRename(name(kernelSource).c_str(), name(kernelTarget).c_str());
+        if (directoryResult != 0)
+            std::fprintf(stderr, "kernel empty-directory replacement result=0x%08x, expected=0\n", static_cast<unsigned>(directoryResult));
+        Require(directoryResult == 0);
+        Require(!std::filesystem::exists(kernelSource) && std::filesystem::is_directory(kernelTarget / "child"));
+        { std::ifstream stream(kernelTarget / "marker"); std::string contents; std::getline(stream, contents);
+          Require(contents == "kernel directory contents"); }
+        const int parentResult = sceKernelRename(name(targetFile).c_str(), absentParent.c_str());
+        Require(parentResult == static_cast<int>(0x80020002u));
+        Require(std::filesystem::is_regular_file(targetFile) && !std::filesystem::exists(area / "absent"));
+        const int prefixResult = sceKernelRename(name(targetFile).c_str(), name(targetFile / "target").c_str());
+        Require(prefixResult == static_cast<int>(0x80020014u));
+        Require(std::filesystem::is_regular_file(targetFile));
+        const int fileDirectoryResult = sceKernelRename(name(targetFile).c_str(), name(fullDirectory).c_str());
+        Require(fileDirectoryResult == static_cast<int>(0x80020015u));
+        Require(std::filesystem::is_regular_file(targetFile) && std::filesystem::is_regular_file(fullDirectory / "entry"));
+        const int directoryFileResult = sceKernelRename(name(kernelTarget).c_str(), name(targetFile).c_str());
+        Require(directoryFileResult == static_cast<int>(0x80020014u));
+        Require(std::filesystem::is_regular_file(kernelTarget / "marker") && std::filesystem::is_regular_file(targetFile));
+        const int nonemptyResult = sceKernelRename(name(kernelTarget).c_str(), name(fullDirectory).c_str());
+        Require(nonemptyResult == static_cast<int>(0x80020042u));
+        Require(std::filesystem::is_regular_file(kernelTarget / "marker") && std::filesystem::is_regular_file(fullDirectory / "entry"));
+        const auto descendant = kernelTarget / "child" / "moved";
+        const int descendantResult = sceKernelRename(name(kernelTarget).c_str(), name(descendant).c_str());
+        Require(descendantResult == static_cast<int>(0x80020016u));
+        Require(std::filesystem::is_directory(kernelTarget / "child") && !std::filesystem::exists(descendant));
+        { std::ifstream stream(targetFile); std::string contents; std::getline(stream, contents); Require(contents == "source"); }
+        { std::ifstream stream(fullDirectory / "entry"); std::string contents; std::getline(stream, contents); Require(contents == "entry"); }
+        { std::ifstream stream(kernelTarget / "marker"); std::string contents; std::getline(stream, contents);
+          Require(contents == "kernel directory contents"); }
+#ifdef _WIN32
+        for (const bool kernel : {true, false}) {
+            const auto lockedSource = area / (kernel ? "locked_kernel_source" : "locked_libc_source");
+            const auto preservedTarget = area / (kernel ? "preserved_kernel_target" : "preserved_libc_target");
+            Require(std::filesystem::create_directory(lockedSource));
+            Require(std::filesystem::create_directory(preservedTarget));
+            const auto marker = lockedSource / "marker";
+            { std::ofstream stream(marker); stream << "preserved source contents"; }
+            const HANDLE held = CreateFileW(marker.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            Require(held != INVALID_HANDLE_VALUE);
+            const int result = kernel ? sceKernelRename(name(lockedSource).c_str(), name(preservedTarget).c_str()) :
+                rename_nid_postfix(name(lockedSource).c_str(), name(preservedTarget).c_str());
+            Require(CloseHandle(held) != 0);
+            Require(result != 0 && std::filesystem::is_regular_file(marker));
+            if (!std::filesystem::is_directory(preservedTarget))
+                std::fprintf(stderr, "failed %s directory rename removed its destination\n", kernel ? "kernel" : "libc");
+            Require(std::filesystem::is_directory(preservedTarget) && std::filesystem::is_empty(preservedTarget));
+            { std::ifstream stream(marker); std::string contents; std::getline(stream, contents);
+              Require(contents == "preserved source contents"); }
+        }
+#endif
         for (const bool kernel : {false, true}) {
             const auto incoming = name(area / "incoming.txt");
             const auto occupied = name(area / "occupied.txt");
