@@ -180,7 +180,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             }
         }
         for (const auto& [sourceIndex, read] : zeroedSources) {
-            const auto pc = read.read->Flags<MemoryFlags>().pc;
+            const auto pc = read.read->template Flags<MemoryFlags>().pc;
             if (std::none_of(poisoned.begin(), poisoned.end(), [&](const SrtReadPoison& entry) { return entry.pc == pc && entry.address == read.address; })) {
                 char address[64];
                 std::snprintf(address, sizeof(address), "0x%llx at pc 0x%x", static_cast<unsigned long long>(read.address), pc);
