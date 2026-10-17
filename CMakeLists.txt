@@ -165,6 +165,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_own_branch.py)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
+        add_test(NAME launcher COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_launcher.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_release.py)
         add_test(NAME web_library_assets COMMAND ${Python3_EXECUTABLE}

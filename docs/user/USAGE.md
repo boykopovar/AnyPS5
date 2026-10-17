@@ -261,3 +261,20 @@ The report also lists needed libraries that have no file in `--libs` or `--modul
 Exit codes: `0` nothing blocks loading, `1` there are `absent` imports or needed libraries without a file, `2` an input could not be read; the message names the file and the value.
 
 A module registry lists `nid`, `library` and `targetOffset` for each relocation against a function that no other bundled module exports, without the `#` suffix of the executable's NIDs.
+
+## Graphical launcher
+
+`tools/launcher/anyps5_launcher.py` (Python 3.8+, standard library and Tkinter only) is an optional front end for the steps above:
+
+- It lists the games in a folder, up to four levels deep. A game is a folder with `eboot.bin`/`eboot.elf` (or another ELF or SELF); its name, title ID and icon come from `sce_sys/param.json` and `sce_sys/icon0.png`.
+- **Play** converts the game on the first run. It takes decrypted ELF dumps only and rejects a SELF executable or module with a message. The relinker runs as `relinker [--windows] [--module-dir <dir>...] <eboot.elf> app.exe`, with `--module-dir` for every folder outside `sce_module/` that holds `.prx` modules (for Unity titles `Media/Modules` and `Media/Plugins`); the game files are hard-linked (copied across volumes) into `app0/`; and the built `.prx` libraries, with the MinGW runtime DLLs on Windows, are copied next to the executable. Later runs refresh the libraries and start the game. A changed executable, module, relinker or set of extra arguments converts it again.
+- **Reconvert** forces a new conversion. **Build AnyPS5** updates the submodules, configures, builds and builds the `libs` target. **Run with emulator** starts another emulator on the selected game with a command from Settings (`{elf}`, `{dir}` and `{id}` are replaced).
+- The game output is shown in the window and saved to `last_run.log` in the game's cache folder. An optional `tools/launcher/env.txt` adds `KEY=VALUE` lines to the game's environment (for the `APS5_*` switches).
+
+The original game folders are never modified. Settings are stored in `tools/launcher/config.json` and conversions in `tools/launcher/cache/<title id>-<hash of the game folder>/`; the relinker and the libraries are found under `build/`, and on Windows the MinGW runtime DLLs next to the compiler recorded in `build/CMakeCache.txt` (or on `PATH`); conversion fails with a message when they are missing.
+
+```sh
+python3 tools/launcher/anyps5_launcher.py
+```
+
+On Windows, `pyw -3 tools\launcher\anyps5_launcher.py` starts it without a console.
