@@ -112,23 +112,47 @@ Node& NodeOf(const Value& v) {
 
 void Construct(Value& v) { v.node = new Node(); }
 
-void CopyArray(Array& destination, const Array& source) {
-    Construct(destination);
-    for (const auto& item : *source.items) {
-        Value copy{};
-        CopyInto(copy, item);
-        destination.items->push_back(copy);
+template<typename TInitialize>
+void Construct(Value& destination, TInitialize initialize) {
+    Value pending{};
+    Construct(pending);
+    try {
+        initialize(*pending.node);
+    } catch (...) {
+        Destroy(pending);
+        throw;
     }
+    destination = pending;
+}
+
+void CopyArray(Array& destination, const Array& source) {
+    Array pending{};
+    Construct(pending);
+    try {
+        for (const auto& item : *source.items) {
+            CopyInto(pending.items->emplace_back(), item);
+        }
+    } catch (...) {
+        Destroy(pending);
+        throw;
+    }
+    destination = pending;
 }
 
 void CopyObject(Object& destination, const Object& source) {
-    Construct(destination);
-    for (const auto& pair : *source.items) {
-        Pair copy{};
-        Construct(copy.key, *pair.key.text);
-        CopyInto(copy.value, pair.value);
-        destination.items->push_back(copy);
+    Object pending{};
+    Construct(pending);
+    try {
+        for (const auto& pair : *source.items) {
+            auto& copy = pending.items->emplace_back();
+            Construct(copy.key, *pair.key.text);
+            CopyInto(copy.value, pair.value);
+        }
+    } catch (...) {
+        Destroy(pending);
+        throw;
     }
+    destination = pending;
 }
 
 void AssignNode(Node& destination, const Node& source) {
@@ -138,16 +162,20 @@ void AssignNode(Node& destination, const Node& source) {
     copy.integer = source.integer;
     copy.uinteger = source.uinteger;
     copy.real = source.real;
-    if (source.type == TypeString) Construct(copy.string, *source.string.text);
-    if (source.type == TypeArray) CopyArray(copy.array, source.array);
-    if (source.type == TypeObject) CopyObject(copy.object, source.object);
+    try {
+        if (source.type == TypeString) Construct(copy.string, *source.string.text);
+        if (source.type == TypeArray) CopyArray(copy.array, source.array);
+        if (source.type == TypeObject) CopyObject(copy.object, source.object);
+    } catch (...) {
+        Clear(copy);
+        throw;
+    }
     Clear(destination);
     destination = copy;
 }
 
 void CopyInto(Value& destination, const Value& source) {
-    Construct(destination);
-    AssignNode(*destination.node, NodeOf(source));
+    Construct(destination, [&](Node& node) { AssignNode(node, NodeOf(source)); });
 }
 
 void SetType(Node& n, ValueType type) {
@@ -560,7 +588,12 @@ void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);
-    self->items->push_back(copy);
+    try {
+        self->items->push_back(copy);
+    } catch (...) {
+        Destroy(copy);
+        throw;
+    }
 }
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) { result->it = self->items->begin(); return result; }
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) { result->it = self->items->end(); return result; }
@@ -624,24 +657,28 @@ void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Constr
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); self->node->type = TypeReal; self->node->real = value; }
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value: null text");
-    Construct(*self);
-    SetType(*self->node, TypeString);
-    *self->node->string.text = text;
+    Construct(*self, [text](Node& node) {
+        SetType(node, TypeString);
+        *node.string.text = text;
+    });
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value* self, const String* text) {
-    Construct(*self);
-    SetType(*self->node, TypeString);
-    *self->node->string.text = *text->text;
+    Construct(*self, [text](Node& node) {
+        SetType(node, TypeString);
+        *node.string.text = *text->text;
+    });
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value* self, const Array* array) {
-    Construct(*self);
-    self->node->type = TypeArray;
-    CopyArray(self->node->array, *array);
+    Construct(*self, [array](Node& node) {
+        node.type = TypeArray;
+        CopyArray(node.array, *array);
+    });
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value* self, const Object* object) {
-    Construct(*self);
-    self->node->type = TypeObject;
-    CopyObject(self->node->object, *object);
+    Construct(*self, [object](Node& node) {
+        node.type = TypeObject;
+        CopyObject(node.object, *object);
+    });
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) { CopyInto(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) { Destroy(*self); }
@@ -741,8 +778,7 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t in
     return &NullAccess(TypeNull, self);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type) {
-    Construct(*self);
-    SetType(*self->node, type);
+    Construct(*self, [type](Node& node) { SetType(node, type); });
 }
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) { return _ZNK3sce4Json5ValueixEm(self, index); }
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) {
