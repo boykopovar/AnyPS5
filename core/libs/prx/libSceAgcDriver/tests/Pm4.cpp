@@ -412,7 +412,13 @@ void testIndexAttributesIndirect() {
     check(sameDraw(indirectFromRecord, AgcDriver::Pm4::ResolveDraw(indirectDraw, direct)) && indirectFromRecord.indexAddress == indexAddress && indirectFromRecord.indexCount == 12 && indirectFromRecord.indexSize == 4, "an indexed indirect draw after INDEX_ATTRIBUTES_INDIRECT differs from the same draw after the direct packets");
     records[6] = 0x7fffffffu;
     execute(loaded, packet);
-    expectFailure([&] { AgcDriver::Pm4::ResolveDraw(indirectDraw, loaded); }, "guest");
+    const auto largeIndirect = AgcDriver::Pm4::ResolveDraw(indirectDraw, loaded);
+    check(largeIndirect.indexAddress == indexAddress && largeIndirect.indexCount == records[6] && largeIndirect.indexSize == 4, "an indirect draw did not preserve its declared index limit for record resolution");
+    loaded.indexBase = std::numeric_limits<std::uint64_t>::max() - 3u;
+    expectFailure([&] { AgcDriver::Pm4::ResolveDraw(indirectDraw, loaded); }, "index range size overflow");
+    loaded.indexBase = indexAddress + 1u;
+    expectFailure([&] { AgcDriver::Pm4::ResolveDraw(indirectDraw, loaded); }, "misaligned index base");
+    loaded.indexBase = indexAddress;
     records[6] = 12;
 
     static std::size_t flushed = 0;

@@ -844,13 +844,10 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
         draw.firstVertex = offset->second;
         indirect.indxOffset = offset->second;
     } else {
-        // The CP clamps firstIndex + indexCount to INDEX_BUFFER_SIZE: the declared range is the
-        // hardware's view of the index buffer, so that is what gets bound.
         const auto indexSize = indexSizeOf(queue);
         require(queue.indexBufferSize != 0, "INDEX_BUFFER_SIZE has not been set");
         const auto bytes = static_cast<std::uint64_t>(queue.indexBufferSize) * indexSize;
         require(bytes <= std::numeric_limits<std::size_t>::max() && bytes <= std::numeric_limits<std::uint64_t>::max() - queue.indexBase, "index range size overflow");
-        GuestMemory::CheckRange(reinterpret_cast<const void*>(queue.indexBase), static_cast<std::size_t>(bytes), indexSize);
         draw.indexAddress = queue.indexBase;
         draw.indexCount = queue.indexBufferSize;
         draw.indexSize = indexSize;
