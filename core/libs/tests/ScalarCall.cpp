@@ -198,7 +198,25 @@ static IrProgram TranslateCode(std::span<const std::uint32_t> code, const Swappc
     return InstructionTranslator{}.Translate(program, cfg, options);
 }
 
+static void CheckConstantTableCall() {
+    const std::vector<std::uint32_t> caller{0xbeea03ffu, 0xe0040000u, 0xbeeb038fu, 0xf4080135u, 0xfa000000u, 0xbf8cc07fu, 0xf4240382u, 0xfa000020u, 0xbf8cc07fu, 0xbf130e80u,
+        0xbf840004u, 0xf4240402u, 0xfa000028u, 0xbf8cc07fu, 0xbe8e210eu, 0xbf810000u};
+    const SwappcInfo swappc{false, 0u, 16u};
+    const auto calls = FindTableCalls(RdnaInstructionDecoder{}.Decode(caller), swappc);
+    Require(calls.size() == 1u);
+    Require(calls[0].constantPointer == std::optional<std::uint64_t>(0xfe0040000ull) && calls[0].descriptorOffset == 0u && calls[0].entryOffset == 0x20u && calls[0].entryStride == 0u);
+    Require(calls[0].linkRegister == 14u && calls[0].targetRegister == 14u);
+    auto changedHigh = caller;
+    changedHigh[2] = 0xbeeb0380u;
+    const auto zero = FindTableCalls(RdnaInstructionDecoder{}.Decode(changedHigh), swappc);
+    Require(zero.size() == 1u && zero[0].constantPointer == std::optional<std::uint64_t>(0xe0040000ull));
+    auto computed = caller;
+    computed[2] = 0xbeeb0302u;
+    Require(FindTableCalls(RdnaInstructionDecoder{}.Decode(computed), swappc).empty());
+}
+
 static void CheckTableCalls() {
+    CheckConstantTableCall();
     const SwappcInfo swappc{false, 0u, 16u};
     const auto caller = TableCaller();
     const auto program = RdnaInstructionDecoder{}.Decode(caller);
