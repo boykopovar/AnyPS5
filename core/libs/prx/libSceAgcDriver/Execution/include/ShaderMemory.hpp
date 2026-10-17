@@ -116,7 +116,7 @@ private:
 
     // Regions given at construction (the registered shader's code and header), referenced as given:
     // the caller keeps them alive for as long as the capture is used.
-    std::map<std::uint64_t, std::span<const std::byte>> initial;
+    std::vector<std::pair<std::uint64_t, std::span<const std::byte>>> initial;
     std::vector<std::pair<std::uint64_t, Page*>> pages;
     std::uint64_t lastBase = ~std::uint64_t{0};
     Page* lastPage = nullptr;

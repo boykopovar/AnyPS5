@@ -106,9 +106,9 @@ void ShaderMemory::SetWaitedMsProvider(WaitedMsProvider provider) {
 
 ShaderMemory::ShaderMemory(std::span<const ShaderRecompiler::MemoryRegion> regions, PendingWriteQuery pendingWrite, PendingWriteObserver observe, HookWaitCounter hookWaits) : pendingWrite(pendingWrite), observe(observe), hookWaits(hookWaits) {
     const ShaderRecompiler::RequestMemoryView validated(regions);
-    for (const auto& region : regions) {
-        initial.emplace(region.guestAddress, region.bytes);
-    }
+    initial.reserve(regions.size());
+    for (const auto& region : regions) initial.emplace_back(region.guestAddress, region.bytes);
+    std::sort(initial.begin(), initial.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
 }
 
 ShaderMemory::~ShaderMemory() {
@@ -203,7 +203,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
     }
     if (CaptureProfiled()) ++CaptureTotals().reads;
     if (!self.initial.empty() && address + sizeof(*value) > self.initial.begin()->first && address < InitialEnd(self.initial)) {
-        const auto next = self.initial.upper_bound(address);
+        const auto next = std::upper_bound(self.initial.begin(), self.initial.end(), address, [](std::uint64_t value, const auto& entry) { return value < entry.first; });
         if (next != self.initial.begin()) {
             const auto previous = std::prev(next);
             const auto offset = address - previous->first;
@@ -289,7 +289,7 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
 
 bool ShaderMemory::overlapsInitial(std::uint64_t begin, std::uint64_t end) const {
     if (initial.empty()) return false;
-    const auto after = initial.lower_bound(begin);
+    const auto after = std::lower_bound(initial.begin(), initial.end(), begin, [](const auto& entry, std::uint64_t value) { return entry.first < value; });
     if (after != initial.end() && after->first < end) return true;
     return after != initial.begin() && std::prev(after)->first + std::prev(after)->second.size() > begin;
 }
@@ -326,7 +326,7 @@ bool ShaderMemory::accessible(void* context, std::uint64_t address, std::uint64_
     const auto end = address + bytes;
     while (address < end) {
         if (!self.initial.empty() && address < InitialEnd(self.initial)) {
-            const auto next = self.initial.upper_bound(address);
+            const auto next = std::upper_bound(self.initial.begin(), self.initial.end(), address, [](std::uint64_t value, const auto& entry) { return value < entry.first; });
             if (next != self.initial.begin()) {
                 const auto previous = std::prev(next);
                 if (address - previous->first < previous->second.size()) {
