@@ -88,6 +88,8 @@ std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWrit
 // writeBackLayers), and pending units a DCC clear -> uncompressed key flip kept as the texels
 // (Refresh).
 std::atomic<std::uint64_t> pretestSkipped{0}, unregisteredDropped{0}, keyFlipKept{0};
+std::atomic<std::uint64_t> cpuWonStores{0};
+std::atomic<std::uint64_t> guestCompletions{0};
 // Images stored by a FlushPending after a hook skip of theirs (AccessKeptByCpu), of which by the
 // hook for the read site of the last skip; images evictStale dropped (the [hooksync] and [storage] lines).
 std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, staleEvicted{0};
@@ -2061,6 +2063,10 @@ std::uint64_t StorageTexture::UntrackedCompares() {
     return untrackedCompares.load(std::memory_order_relaxed);
 }
 
+std::uint64_t StorageTexture::CpuWonStores() {
+    return cpuWonStores.load(std::memory_order_relaxed);
+}
+
 bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
     const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
     const auto readFollowed = [&] {
@@ -3130,6 +3136,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         anyUnsaved = anyUnsaved || unsaved[layer];
     }
     if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) captureGuestBytes(&unsaved);
+    if (!anyLayerPending()) pendingSinceCompletion = guestCompletions.load(std::memory_order_acquire);
     for (std::uint32_t layer = first; layer < first + count; ++layer) layerPending[layer] = true;
     // Results of this image now cover the alias's results borrowed into these units: this image
     // stores them, the alias no longer has to (its results, unchanged since the borrow, are in
@@ -3496,6 +3503,22 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
 
 void StorageTexture::FlushAllPending(const char* reason) {
     static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason));
+}
+
+void StorageTexture::StoreBeforeGuestCompletion(const char* reason) {
+    static const bool deferred = std::getenv("APS5_DEFER_COMPARED_RESULTS") != nullptr;
+    if (!deferred) {
+        std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+        {
+            auto& pending = Pending();
+            std::lock_guard lock(pending.mutex);
+            for (const auto* texture : pending.textures) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
+        for (const auto& [address, bytes] : ranges) {
+            if (!GuestMemory::Watched(address, bytes)) static_cast<void>(FlushPending(address, bytes, nullptr, reason, PublishScope::None));
+        }
+    }
+    guestCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
 
 std::size_t StorageTexture::StoreSmallPending(const char* reason) {
@@ -4577,6 +4600,18 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     constexpr std::uint64_t block = 65536;
     const auto spanBegin = firstStored & ~(block - 1);
     const auto spanBlocks = static_cast<std::size_t>((lastStored - spanBegin + block - 1) / block);
+    static const bool recordedWriteBack = std::getenv("APS5_RECORDED_WRITEBACK") != nullptr;
+    std::vector<ImportSegment> segments;
+    if (recordedWriteBack || pendingSinceCompletion == guestCompletions.load(std::memory_order_acquire)) {
+        if (const auto* import = HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) segments.push_back({import, descriptor.baseAddress, descriptor.baseAddress + guestBytes});
+        else segments = importSegments();
+    }
+    if (segments.empty()) {
+        original.resize(static_cast<std::size_t>(guestBytes));
+        std::vector<bool> unsaved = layerOriginal;
+        unsaved.flip();
+        for (const auto& [begin, end] : unitRuns(unsaved)) GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
+    }
     // The keep-blocks decision must see every CPU write to the stored span up to now, so it
     // bypasses the per-packet collect memo (a Refresh collect earlier in the same packet would
     // satisfy it); the unselected layers keep their own generations and are collected by their
@@ -4656,7 +4691,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // own stamps, so every later import writer stamps newer.
     std::vector<ShadowedRange> shadowed;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imported;
-    std::vector<ImportSegment> segments;
     const auto markShadowed = [&](std::uint64_t generation) {
         for (const auto& segment : segments) {
             std::vector<ShadowedRange> ranges;
@@ -4692,8 +4726,6 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         settle(true);
         return;
     }
-    if (const auto* import = HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) segments.push_back({import, descriptor.baseAddress, descriptor.baseAddress + guestBytes});
-    else segments = importSegments();
     if (!segments.empty()) {
         Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
         // Outside the write watch the stored bytes are what the next store compares with.
@@ -4867,15 +4899,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         }
         return;
     }
-    original.resize(static_cast<std::size_t>(guestBytes));
-    // The store below compares against the guest bytes, read now when `original` does not hold
-    // them (a GPU clear, a dropped or kept unit). Reading them says nothing about the image: a
-    // stale unit (dropped, or kept for the CPU) still differs from them, so `original` vouches for
-    // the content again only where it did before, or once every unit is stored.
     Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
-    std::vector<bool> unsaved = layerOriginal;
-    unsaved.flip();
-    for (const auto& [begin, end] : unitRuns(unsaved)) GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
     DeviceBuffer linear(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -4949,7 +4973,15 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     for (const auto& [from, to] : keep) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
         const auto length = static_cast<std::size_t>(to - from);
-        GuestMemory::WriteChangedCommitted(from, current.subspan(offset, length), std::span<const std::byte>(original).subspan(offset, length));
+        if (!GuestMemory::WriteChangedOverOriginalCommitted(from, current.subspan(offset, length), std::span<const std::byte>(original).subspan(offset, length))) {
+            for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+                if (!layers[layer] || layerBegin(layer) >= to || layerBegin(layer) + layerBytes(layer) <= from) continue;
+                skippedLayer[layer] = true;
+            }
+            cpuWonStores.fetch_add(1, std::memory_order_relaxed);
+            static std::atomic<int> reports{0};
+            if (reports.fetch_add(1) < 8) std::fprintf(stderr, "[gpu] storage image 0x%llx: the CPU stored into 0x%llx+0x%zx during its write-back; keeping the CPU's bytes\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(from), length);
+        }
         std::memcpy(original.data() + offset, current.data() + offset, length);
     }
     // The texels now hold the whole image, so later reads must see them rather than a fast clear

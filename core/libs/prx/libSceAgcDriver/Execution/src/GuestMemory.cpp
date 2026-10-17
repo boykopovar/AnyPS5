@@ -2225,6 +2225,52 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     });
 }
 
+bool WriteChangedOverOriginal(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+    require(current.size() == original.size(), "write-back snapshot sizes differ");
+    if (current.empty()) return true;
+    const ReadSiteScope site(ReadSite::Store);
+    FlushGpuWrites(address, current.size());
+    const TimedAccess timed(CounterChangedWrite, current.size());
+    auto* destination = reinterpret_cast<std::byte*>(address);
+    CheckRange(destination, current.size(), 1, true);
+    const auto size = current.size();
+    bool complete = true;
+    storeOwn(address, size, [&] {
+        std::size_t firstChanged = size;
+        std::size_t lastChanged = 0;
+        const auto exchange = [&]<typename TPiece>(std::size_t at) {
+            TPiece expected, desired;
+            std::memcpy(&expected, original.data() + at, sizeof(TPiece));
+            std::memcpy(&desired, current.data() + at, sizeof(TPiece));
+            if (expected == desired) return;
+            if (!std::atomic_ref(*reinterpret_cast<TPiece*>(destination + at)).compare_exchange_strong(expected, desired, std::memory_order_relaxed)) {
+                complete = false;
+                return;
+            }
+            firstChanged = std::min(firstChanged, at);
+            lastChanged = std::max(lastChanged, at + sizeof(TPiece));
+        };
+        std::size_t at = 0;
+        for (; at < size && (address + at) % sizeof(std::uint64_t) != 0; ++at) exchange.template operator()<std::uint8_t>(at);
+        for (; at + sizeof(std::uint64_t) <= size; at += sizeof(std::uint64_t)) exchange.template operator()<std::uint64_t>(at);
+        for (; at < size; ++at) exchange.template operator()<std::uint8_t>(at);
+        return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
+    });
+    return complete;
+}
+
+bool WriteChangedOverOriginalCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+    require(current.size() == original.size(), "write-back snapshot sizes differ");
+    if (Accessible(reinterpret_cast<const void*>(address), current.size(), true)) return WriteChangedOverOriginal(address, current, original);
+    bool complete = true;
+    for (const auto& [begin, end] : CommittedRanges(address, current.size(), true)) {
+        const auto offset = static_cast<std::size_t>(begin - address);
+        const auto length = static_cast<std::size_t>(end - begin);
+        complete = WriteChangedOverOriginal(begin, current.subspan(offset, length), original.subspan(offset, length)) && complete;
+    }
+    return complete;
+}
+
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {
     if (source.empty()) return;
     // A store, as in WriteChanged.

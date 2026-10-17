@@ -196,6 +196,7 @@ public:
     // overlapping pending image, as before).
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr);
     static void FlushAllPending(const char* reason);
+    static void StoreBeforeGuestCompletion(const char* reason);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static std::size_t StoreSmallPending(const char* reason);
@@ -350,6 +351,7 @@ public:
     static std::uint64_t SinglePassMoves();
     static std::uint64_t RefreshesProved();
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t CpuWonStores();
     std::uint64_t GuestBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
@@ -591,6 +593,7 @@ private:
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
+    std::uint64_t pendingSinceCompletion = 0;
     std::uint64_t version = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
