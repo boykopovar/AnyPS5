@@ -23,7 +23,6 @@ LIMITATIONS = [
     "skipped, the device has no compute queue",
     "skipped, the device reports 4 lanes",
     "skipped, subgroup size 8",
-    "skipped, no display",
 ]
 
 OTHER = [
@@ -118,6 +117,25 @@ class CheckSkipsTests(unittest.TestCase):
                     self.assertIn("agc_disabled", result.stderr)
                     self.assertIn("disabled", result.stderr)
 
+    def test_ctest_skip_return_code_metadata_does_not_hide_high_refresh_reason(self):
+        reason = "current display does not provide 120 Hz"
+        report = (
+            '<skipped message="SKIP_RETURN_CODE=77"/>'
+            f'<system-out>skipped, {reason}</system-out>'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            junit.write_text(
+                f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>',
+                encoding="utf-8")
+            for job in ("linux", "windows"):
+                with self.subTest(job=job):
+                    result = subprocess.run(
+                        [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                        capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("1 test(s) skipped, all expected", result.stdout)
+
     def test_device_limitations_match(self):
         for message in LIMITATIONS:
             with self.subTest(message=message):
@@ -142,6 +160,16 @@ class CheckSkipsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("error: odd skipped", result.stdout)
         self.assertNotIn("error: geometry skipped", result.stdout)
+
+    def test_no_display_skip_is_unexpected_on_linux(self):
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            junit.write_text(
+                '<testsuite><testcase name="video_out_flip_eop"><skipped/><system-out>skipped, no display</system-out></testcase></testsuite>',
+                encoding="utf-8")
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("error: video_out_flip_eop skipped", result.stdout)
 
     def test_reason_on_its_own_line_inside_skipped_is_expected(self):
         for reason, job in (("the device lacks geometryShader", "linux"), ("no display", "windows")):
@@ -178,10 +206,10 @@ class SkipReportTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertRegex(found[0][1], check_skips.DEVICE_LIMITATION)
 
-    def test_stderr_preserves_the_device_reason(self):
+    def test_stderr_preserves_a_no_display_reason_without_excusing_linux_skip(self):
         found = self.skipped('<testsuite><testcase name="gpu"><skipped/><system-err>skipped, no display</system-err></testcase></testsuite>')
         self.assertEqual(len(found), 1)
-        self.assertRegex(found[0][1], check_skips.DEVICE_LIMITATION)
+        self.assertNotRegex(found[0][1], check_skips.DEVICE_LIMITATION)
 
     def test_unnamed_skipped_test_is_an_error(self):
         with self.assertRaises(ValueError):

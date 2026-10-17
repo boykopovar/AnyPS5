@@ -305,6 +305,8 @@ jobs:
       CCACHE_COMPILERCHECK: content
       MESA_SHADER_CACHE_DIR: /var/cache/anyps5/mesa
       MESA_SHADER_CACHE_MAX_SIZE: 4G
+      SDL_VIDEODRIVER: x11
+      ANYPS5_GPU: llvmpipe
     steps:
       - uses: actions/checkout@v7
         with:
@@ -338,6 +340,9 @@ jobs:
           ccache --show-config
           dpkg-query -W mesa-vulkan-drivers
           grep -m1 '^model name' /proc/cpuinfo
+      - name: Install Xvfb
+        run: |
+          command -v xvfb-run >/dev/null && command -v xauth >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb xauth; }
       - name: Install the wild linker
         shell: bash
         env:
@@ -383,7 +388,7 @@ jobs:
           echo "CCACHE_PREFIX=$GITHUB_WORKSPACE/tools/compile_slot.sh" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOT_DIR=$slot_dir" >> "$GITHUB_ENV"
           echo "ANYPS5_COMPILE_SLOTS=$slots" >> "$GITHUB_ENV"
-      - run: cmake -S . -B build $CONFIGURE -DANYPS5_ENABLE_SPIRV_TOOLS=ON "-DCMAKE_EXE_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_SHARED_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_MODULE_LINKER_FLAGS=$LINKER_FLAGS"
+      - run: cmake -S . -B build $CONFIGURE -DANYPS5_ENABLE_SPIRV_TOOLS=ON -DANYPS5_VIDEO_OUT_TEST_DRIVER=x11 "-DCMAKE_EXE_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_SHARED_LINKER_FLAGS=$LINKER_FLAGS" "-DCMAKE_MODULE_LINKER_FLAGS=$LINKER_FLAGS"
       - name: Check that every test executable is registered with ctest
         run: python3 tools/check_test_registration.py build
       - if: ${{ inputs.select }}
@@ -404,7 +409,7 @@ jobs:
           if [ -f build/select.ninja ]; then ninja -C build -f select.ninja -j "$CMAKE_BUILD_PARALLEL_LEVEL" -l "$(nproc)" selected; else cmake --build build -- -l "$(nproc)"; fi
       - id: libs
         run: cmake --build build --target libs -- -l "$(nproc)"
-      - run: python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
+      - run: xvfb-run -a -s '-screen 0 1920x1080x24 -nolisten tcp' python3 tools/select_tests.py ctest build --test-load "$(nproc)" --output-on-failure --timeout 120 --output-log ctest.log --output-junit ctest.xml
         env:
           ANYPS5_REQUIRE_VULKAN: 1
           GALLIUM_OVERRIDE_CPU_CAPS: avx
