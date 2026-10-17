@@ -4,6 +4,7 @@
 #ifndef VK_NO_PROTOTYPES
 #define VK_NO_PROTOTYPES
 #endif
+#include <array>
 #include <vulkan/vulkan.h>
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include <cstddef>
@@ -68,6 +69,7 @@ DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
 struct DccKeyProof {
     DccKeys keys = DccKeys::Uncompressed;
     std::uint64_t generation = 0;
+    std::array<std::uint64_t, 4> untracked{};
 };
 // TextureClearKeys with the scan skipped while the key range is unchanged since `proof` was taken
 // (CollectWrites over the keys, then UnchangedSince its generation), so a surface's keys are scanned
@@ -93,6 +95,7 @@ struct DccRangeProof {
     std::uint64_t count = 0;
     DccKeys keys = DccKeys::Uncompressed;
     std::uint64_t generation = 0;
+    std::array<std::uint64_t, 4> untracked{};
 };
 DccKeys ProvedCurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceBytes, DccRangeProof& proof);
 // A surface's texels as a read sees them: the guest bytes, or the clear value of fast-cleared keys.

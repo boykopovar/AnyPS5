@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -686,9 +687,20 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
         counters.proved.fetch_add(1, std::memory_order_relaxed);
         return proof.keys;
     }
+    const auto epoch = GuestMemory::CollectEpoch();
+    std::array<std::uint64_t, 4> untracked{};
+    if (count != 0 && collected == 0 && epoch != 0) {
+        const auto* recorder = Recorder::Active();
+        untracked = {epoch, GuestMemory::NewestStamp(resource.dccAddress, count), GuestMemory::ForgetStamp(resource.dccAddress, count), recorder != nullptr ? recorder->NewestWriteNote(resource.dccAddress, count) : 0};
+        if ((GuestMemory::ForgetSerial() & 1u) != 0) untracked = {};
+        if (untracked[0] != 0 && proof.untracked == untracked) {
+            counters.proved.fetch_add(1, std::memory_order_relaxed);
+            return proof.keys;
+        }
+    }
     bool memoized = false;
     const auto keys = textureClearKeys(resource, guestBytes, memoized);
-    bool stable = collected != 0 && !memoized;
+    bool stable = (collected != 0 || untracked[0] != 0) && !memoized;
     if (stable) {
         // After the scan: a write noted since the collect is stamped above it anyway; one noted
         // before it may still land after the bytes were read.
@@ -701,7 +713,7 @@ DccKeys ProvedClearKeys(const GuestTextureResource& resource, std::uint64_t gues
             stable = !Recorder::SnapshotWriteOverlaps(resource.dccAddress, count);
         }
     }
-    proof = stable ? DccKeyProof{keys, collected} : DccKeyProof{};
+    proof = stable ? DccKeyProof{keys, collected, collected != 0 ? std::array<std::uint64_t, 4>{} : untracked} : DccKeyProof{};
     counters.scanned.fetch_add(1, std::memory_order_relaxed);
     if (!stable) counters.unstable.fetch_add(1, std::memory_order_relaxed);
     return keys;
@@ -721,16 +733,28 @@ DccKeys ProvedCurrentDccKeys(std::uint64_t metaAddress, std::uint64_t surfaceByt
         counters.rangeProved.fetch_add(1, std::memory_order_relaxed);
         return proof.keys;
     }
+    std::array<std::uint64_t, 4> untracked{};
+    if (collected == 0) {
+        const auto epoch = GuestMemory::CollectEpoch();
+        if (epoch != 0 && (GuestMemory::ForgetSerial() & 1u) == 0) {
+            const auto* recorder = Recorder::Active();
+            untracked = {epoch, GuestMemory::NewestStamp(metaAddress, count), GuestMemory::ForgetStamp(metaAddress, count), recorder != nullptr ? recorder->NewestWriteNote(metaAddress, count) : 0};
+            if (proof.untracked == untracked && proof.address == metaAddress && proof.count == count) {
+                counters.rangeProved.fetch_add(1, std::memory_order_relaxed);
+                return proof.keys;
+            }
+        }
+    }
     bool memoized = false;
     const auto keys = currentDccKeys(metaAddress, count, memoized);
-    bool stable = collected != 0 && !memoized;
+    bool stable = (collected != 0 || untracked[0] != 0) && !memoized;
     if (stable) {
         if (auto* recorder = Recorder::Active(); recorder != nullptr) {
             const auto info = recorder->DescribePendingWrite(metaAddress, count);
             stable = !info.has_value() || info->signaled;
         }
     }
-    proof = stable ? DccRangeProof{metaAddress, count, keys, collected} : DccRangeProof{};
+    proof = stable ? DccRangeProof{metaAddress, count, keys, collected, collected != 0 ? std::array<std::uint64_t, 4>{} : untracked} : DccRangeProof{};
     counters.rangeScanned.fetch_add(1, std::memory_order_relaxed);
     return keys;
 }
