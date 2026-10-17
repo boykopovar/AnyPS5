@@ -194,6 +194,7 @@ struct MirrorStats {
     std::uint64_t sparseBinds = 0;
 };
 MirrorStats MirrorCounters();
+std::uint64_t SnapshotMismatches();
 void ClearSnapshotCopies(VkDevice device);
 std::vector<std::uint64_t> AddressTableKey(std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::span<const ShaderRecompiler::BdaAbi::Range> own);
 void ClearImageMirrors(VkDevice device);

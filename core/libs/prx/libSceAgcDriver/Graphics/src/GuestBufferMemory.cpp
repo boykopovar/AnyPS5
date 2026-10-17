@@ -2068,6 +2068,7 @@ LeaseState& Leases() {
 struct SnapshotStats {
     std::atomic<std::uint64_t> checked{0};
     std::atomic<std::uint64_t> skipped{0};
+    std::atomic<std::uint64_t> mismatched{0};
 };
 
 SnapshotStats& Snapshots() {
@@ -2291,6 +2292,10 @@ MirrorStats MirrorCounters() {
     MirrorStats stats{0, state.heapBytes, state.rebuilds, state.blocksCopied, state.heapRefills, state.sweeps, state.heapChecks, state.sparseBinds};
     for (const auto& [base, mirror] : state.entries) stats.heapMirrors += mirror->heap ? 1 : 0;
     return stats;
+}
+
+std::uint64_t SnapshotMismatches() {
+    return Snapshots().mismatched.load(std::memory_order_relaxed);
 }
 
 std::vector<std::uint64_t> AddressTableKey(std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::span<const ShaderRecompiler::BdaAbi::Range> own) {
@@ -3202,10 +3207,9 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
             static const bool fatal = std::getenv("APS5_SNAPSHOT_CHECK_FATAL") != nullptr;
             if (!live || fatal) throw std::runtime_error(text);
             static std::mutex reportMutex;
-            static std::uint64_t mismatches = 0;
             static auto lastReport = std::chrono::steady_clock::now() - std::chrono::seconds(60);
             std::lock_guard lock(reportMutex);
-            ++mismatches;
+            const auto mismatches = Snapshots().mismatched.fetch_add(1, std::memory_order_relaxed) + 1;
             const auto now = std::chrono::steady_clock::now();
             if (now - lastReport >= std::chrono::seconds(10)) {
                 lastReport = now;
