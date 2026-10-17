@@ -301,7 +301,8 @@ class CommentStateTests(unittest.TestCase):
 
     def run_step(self, report, comment):
         (self.root / "overlap" / "42.md").write_bytes(report.encode("utf-8"))
-        (self.root / "comment").write_bytes((json.dumps([5, comment]) + "\n" if comment else "").encode("utf-8"))
+        comment_data = json.dumps([5, comment]) + "\n" if comment else ""
+        (self.root / "comment").write_bytes(comment_data.encode("utf-8"))
         calls = self.root / "calls"
         calls.write_text("", encoding="utf-8")
         script = "\n".join([
