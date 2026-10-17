@@ -1,4 +1,6 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
@@ -10,6 +12,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -17,6 +20,7 @@
 namespace {
 
 using AgcDriver::Graphics::Require;
+using AgcDriver::Graphics::Recorder;
 using AgcDriver::Graphics::StorageTexture;
 using ShaderRecompiler::ShaderStage;
 
@@ -51,8 +55,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint64_t address) {
     };
 }
 
-std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface) {
-    const auto address = base + surface * Stride;
+void Record(AgcDriver::VulkanDevice& device, std::uint64_t address) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(address);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
@@ -67,17 +70,70 @@ std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint
     };
     request.useCache = true;
     const auto result = ShaderRecompiler::Recompile(request);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+}
+
+std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface) {
+    const auto address = base + surface * Stride;
+    Record(device, address);
     device.WaitIdle();
     StorageTexture::FlushPending(address, static_cast<std::size_t>(SurfaceBytes), nullptr, "test");
     device.WaitIdle();
     return StorageTexture::FindLive(address, SurfaceBytes);
 }
 
+int RetainedBatch() {
+#ifdef _WIN32
+    Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
+    Require(_putenv_s("APS5_NO_RESOURCE_CACHE", "1") == 0, "cannot disable the resource cache for the retained-batch test");
+#else
+    Require(setenv("APS5_TEXTURE_CACHE_MIB", "32", 1) == 0, "cannot set the test cache budget");
+    Require(setenv("APS5_NO_RESOURCE_CACHE", "1", 1) == 0, "cannot disable the resource cache for the retained-batch test");
+#endif
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return VulkanTestSkipped;
+    std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
+    auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
+    const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (MaxSurfaces - 1u) * Stride);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(texels, blockBytes, true, true, true);
+    }
+    const auto release = [&] {
+        device->WaitIdle();
+        AgcDriver::Graphics::ClearCachedTextures(device->Device());
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(texels);
+    };
+    try {
+        Record(*device, base);
+        auto retained = StorageTexture::FindLive(base, SurfaceBytes);
+        Require(retained != nullptr, "surface 0 has no cached storage image");
+        const auto retainedBytes = retained->BudgetBytes();
+        auto* recorder = Recorder::Active();
+        Require(recorder != nullptr && recorder->Recording(), "the surface dispatch was not left in an open batch");
+        const auto beforeEviction = recorder->OpenKeptBytes();
+        const auto capacity = static_cast<std::uint32_t>(TestBudget / retainedBytes);
+        Require(capacity + 1u < MaxSurfaces, "the eviction set exceeds the test storage");
+        retained.reset();
+        for (std::uint32_t surface = 1; surface <= capacity; ++surface) Record(*device, base + surface * Stride);
+        Require(StorageTexture::FindLive(base, SurfaceBytes) == nullptr, "surface 0 remained cached after the storage budget was exceeded");
+        Require(recorder->OpenKeptBytes() >= beforeEviction + retainedBytes, "an evicted storage image held by a batch without a shared resource-cache entry was not charged to that batch");
+    } catch (...) {
+        release();
+        throw;
+    }
+    release();
+    return 0;
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--retained-batch") return RetainedBatch();
 #ifdef _WIN32
         Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
 #else

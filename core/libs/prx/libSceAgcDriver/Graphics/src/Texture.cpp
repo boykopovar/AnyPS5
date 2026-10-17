@@ -63,6 +63,12 @@ TextureProfile& Profile() {
     return profile;
 }
 
+void keepStorageTexture(Recorder& recorder, std::shared_ptr<StorageTexture> texture) {
+    if (texture == nullptr) return;
+    if (!texture->Cached()) recorder.KeepBytes(texture.get(), static_cast<std::size_t>(texture->BudgetBytes()));
+    recorder.Keep(std::move(texture));
+}
+
 // APS5_PROFILE_DRAW, every 10 s on the [storage] line: storage image bytes uploaded by path
 // (recorded DCC clear, direct detile from the import, CPU) and written back by the reason of the
 // FlushPending that forced the write-back (the other callers name themselves: "refresh", "cache
@@ -2207,7 +2213,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (recorder != nullptr) {
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::DccClear);
-            if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+            if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
             ++Profile().storageRecordedClears;
             Recorder::CountBarriers(Recorder::CommandClass::DccClear, 2);
             if (Recorder::BarrierValidate()) {
@@ -2299,7 +2305,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
             if (linear) recorder->Keep(linear, linear->Size());
             // The image itself must outlive the recorded copy: the cache may evict it right after.
-            if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+            if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
             // The detile reads the tiled bytes from the import when the batch runs.
             recorder->NotePendingRead(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), Recorder::ReadKind::StorageUpload);
             Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, direct ? 2 : 3);
@@ -2727,7 +2733,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         for (const auto& source : sources) {
             if (source.slab != nullptr) recorder->Keep(source.slab);
         }
-        if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+        if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
         if (!reads.empty()) recorder->NotePendingReads(reads, Recorder::ReadKind::StorageUpload);
         Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, direct ? 2 : 3);
         if (Recorder::BarrierValidate()) {
@@ -2931,7 +2937,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
         recorder->Keep(tiledScratch, tiledScratch->Size());
         for (const auto& pieces : slabPieces) recorder->Keep(pieces.slab);
         for (const auto& slab : padding.slabs) recorder->Keep(slab);
-        if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+        if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
         Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, direct ? 3 : 4);
         if (Recorder::BarrierValidate()) {
             const std::pair<VkImage, bool> read{image, false};
@@ -3986,7 +3992,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     }
     const auto commands = recorder->Commands();
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::DccClear);
-    if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+    if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
     Recorder::CountBarriers(Recorder::CommandClass::DccClear, 2);
     if (Recorder::BarrierValidate()) {
         const std::pair<VkImage, bool> clearedImage{image, true};
@@ -4121,7 +4127,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
     const auto commands = recorder->Commands();
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::FillClear);
     Recorder::CountBarriers(Recorder::CommandClass::FillClear, 2);
-    if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+    if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
     if (Recorder::BarrierValidate()) {
         const std::pair<VkImage, bool> cleared{image, true};
         recorder->NoteAccess(Recorder::CommandClass::FillClear, Recorder::Access{{}, {}, std::span(&cleared, 1), VK_PIPELINE_STAGE_TRANSFER_BIT});
@@ -4248,8 +4254,8 @@ bool StorageTexture::CopyFrom(StorageTexture& source, const char*& refusal) {
     const auto commands = recorder->Commands();
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::Copy);
     Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
-    if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
-    if (auto other = source.weak_from_this().lock()) recorder->Keep(std::move(other));
+    if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
+    if (auto other = source.weak_from_this().lock()) keepStorageTexture(*recorder, std::move(other));
     if (Recorder::BarrierValidate()) {
         const std::array<std::pair<VkImage, bool>, 2> images{{{source.image, false}, {image, true}}};
         recorder->NoteAccess(Recorder::CommandClass::Copy, Recorder::Access{{}, {}, images, VK_PIPELINE_STAGE_TRANSFER_BIT});
@@ -4426,8 +4432,8 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     if (recorder != nullptr) {
         commands = recorder->Commands();
         timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageUpload);
-        if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
-        if (auto other = source.weak_from_this().lock()) recorder->Keep(std::move(other));
+        if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
+        if (auto other = source.weak_from_this().lock()) keepStorageTexture(*recorder, std::move(other));
         Recorder::CountBarriers(Recorder::CommandClass::StorageUpload, 2);
         if (Recorder::BarrierValidate()) {
             const std::array<std::pair<VkImage, bool>, 2> images{{{source.image, false}, {image, true}}};
@@ -4728,7 +4734,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             recorder->Keep(tiledScratch, tiledScratch->Size());
             for (const auto& slab : padding.slabs) recorder->Keep(slab);
             // The image itself must outlive the recorded retile: the cache may evict it right after.
-            if (auto self = weak_from_this().lock()) recorder->Keep(std::move(self));
+            if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
             Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, padding.copies.empty() ? 4 : 5);
             if (Recorder::BarrierValidate()) {
                 const std::pair<VkImage, bool> read{image, false};
@@ -5005,6 +5011,10 @@ void StorageTexture::release() noexcept {
 
 std::uint64_t StorageTexture::GuestBytes() const {
     return guestBytes;
+}
+
+std::uint64_t StorageTexture::BudgetBytes() const {
+    return std::max<std::uint64_t>(AllocationBytes(), GuestBytes());
 }
 
 VkImageView StorageTexture::View() const {

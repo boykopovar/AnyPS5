@@ -224,6 +224,7 @@ public:
     // ranges are fixed by the build), so a Revalidate's collects on the same worker are memo hits.
     void PrecollectSurfaces() const;
     bool Reusable() const { return reusable; }
+    void KeepStorageImageBytes(Recorder& recorder) const;
     const std::vector<std::uint64_t>& MultisampleSources() const { return multisampleSources; }
     static bool NeverReusable(std::span<const CompiledShader> shaders);
     const std::vector<std::shared_ptr<Texture>>& SampledTextures() const { return textures; }

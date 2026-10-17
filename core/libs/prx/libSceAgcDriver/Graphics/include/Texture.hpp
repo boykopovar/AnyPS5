@@ -350,6 +350,7 @@ public:
     static std::uint64_t RefreshesProved();
     static std::uint64_t UntrackedCompares();
     std::uint64_t GuestBytes() const;
+    std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
 
