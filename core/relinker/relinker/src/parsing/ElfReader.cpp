@@ -274,16 +274,6 @@ FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const 
     throw RelinkerException("Virtual address not mapped by any PT_LOAD segment", address);
 }
 
-std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) const {
-    if (!_rangeFits(header.Offset, header.SectionSize, _fileBuffer.size())) {
-        throw RelinkerException("Section offset out of bounds", header.Offset);
-    }
-
-    return std::vector<std::uint8_t>(
-        _fileBuffer.begin() + header.Offset,
-        _fileBuffer.begin() + header.Offset + header.SectionSize);
-}
-
 std::vector<std::uint8_t> ElfReader::ReadSegment(const ProgramHeader& header) const {
     if (!_rangeFits(header.Offset, header.FileSize, _fileBuffer.size())) {
         throw RelinkerException("Segment offset out of bounds", header.Offset);

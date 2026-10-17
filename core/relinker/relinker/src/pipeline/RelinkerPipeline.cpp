@@ -1,6 +1,5 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
-#include <relinker/analysis/ValidationPolicy.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
@@ -230,7 +229,6 @@ RelinkResult RelinkerPipeline::Relink() {
 
     std::vector<NidReference> nidRefs;
     std::vector<std::string> neededLibraries;
-    auto policy = std::dynamic_pointer_cast<ValidationPolicy>(validationPolicy);
 
     const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
@@ -261,7 +259,6 @@ RelinkResult RelinkerPipeline::Relink() {
     for (auto& [fst, snd] : neededLibraryNamesByStrOffset) {
         snd = readCStr(fst);
         neededLibraries.push_back(snd);
-        if (policy) policy->RegisterLibraryImport(snd);
     }
 
     std::map<std::uint64_t, std::string> importModules;
@@ -382,7 +379,6 @@ RelinkResult RelinkerPipeline::Relink() {
         }
     }
 
-    validationPolicy->ValidateSyscallAbsence();
 
     std::vector<std::pair<ByteCount, std::string>> exportedSymbols;
     std::vector<VirtualAddress> exportedFunctions;

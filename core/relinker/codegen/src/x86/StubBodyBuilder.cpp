@@ -100,10 +100,6 @@ void EmitSse(std::vector<std::uint8_t>& out, const std::uint8_t prefix, const st
     _emit(out, prefix, dst, src, opcode, static_cast<std::uint8_t>(kModRmRegister | ((dst & 7) << 3) | (src & 7)));
 }
 
-void EmitShiftImm(std::vector<std::uint8_t>& out, const std::uint8_t extension, const std::uint8_t reg, const std::uint8_t imm) {
-    _shiftImm(out, kShiftQwords, extension, reg, imm);
-}
-
 void StubBodyBuilder::Sse(const std::uint8_t prefix, const std::initializer_list<std::uint8_t> opcode, const std::uint8_t dst, const std::uint8_t src) {
     EmitSse(_bytes, prefix, opcode, dst, src);
 }
