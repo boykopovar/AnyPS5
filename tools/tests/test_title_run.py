@@ -1,8 +1,11 @@
 import json
+import os
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -199,6 +202,32 @@ class PreparationTests(unittest.TestCase):
         self.assertTrue((self.root / "app0/sce_sys/param.json").is_file())
         self.assertTrue((self.root / "app0/eboot.bin").is_file())
         self.assertFalse((self.root / "app0/sce_module").exists())
+
+
+def wait_until(condition, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+class SessionTests(unittest.TestCase):
+    def start(self, code):
+        return title_run.Session([sys.executable, "-c", code], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL)
+
+    def test_exit_code(self):
+        session = self.start("import sys; sys.exit(3)")
+        self.assertTrue(wait_until(lambda: not session.alive()))
+        self.assertEqual(session.exit_code(), 3)
+
+    def test_children_keep_it_alive_and_are_killed(self):
+        session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])")
+        self.assertTrue(wait_until(lambda: session.exit_code() == 0))
+        self.assertTrue(session.alive())
+        session.kill()
+        self.assertTrue(wait_until(lambda: not session.alive()))
 
 
 if __name__ == "__main__":
