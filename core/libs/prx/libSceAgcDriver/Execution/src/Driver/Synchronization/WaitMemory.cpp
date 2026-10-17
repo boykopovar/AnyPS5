@@ -367,14 +367,23 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         if (!warned && std::chrono::steady_clock::now() - start > std::chrono::milliseconds(waitTimeoutMs())) {
             warned = true;
             ++outcomes.timedOut;
+            bool firstReport = true;
             {
                 static std::mutex reportedMutex;
                 static std::set<std::uint64_t> reported;
                 static std::uint64_t timeouts = 0;
                 const std::lock_guard lock(reportedMutex);
                 if (++timeouts % 20 == 0) std::fprintf(stderr, "[gpu] %llu GPU waits have timed out\n", static_cast<unsigned long long>(timeouts));
-                if (!reported.insert(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u)).second) continue;
+                firstReport = reported.insert(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u)).second;
             }
+            if (std::getenv("APS5_SKIP_FAILED_SHADERS") != nullptr) {
+                if (firstReport) {
+                    std::fprintf(stderr, "[gpu] auto-skip WAIT_REG_MEM at 0x%llx after timeout (APS5_SKIP_FAILED_SHADERS)\n", static_cast<unsigned long long>(awaited));
+                    std::fflush(stderr);
+                }
+                return;
+            }
+            if (!firstReport) continue;
             const bool wide = ((packet[0] >> 8u) & 0xffu) == 0x93u;
             const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
             const std::uint64_t mask = wide ? packet[6] | (static_cast<std::uint64_t>(packet[7]) << 32u) : packet[5];
