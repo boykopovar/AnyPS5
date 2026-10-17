@@ -17,6 +17,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
+#include "ThreadOwned.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -739,7 +740,9 @@ bool MovableBuffers() {
 }
 
 ResourceCache::Key DrawResourceKey(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::uint64_t indexBytes, bool ranges) {
-    ResourceCache::Key key{0xffffffffu};
+    ResourceCache::Key key;
+    key.reserve(256);
+    key.push_back(0xffffffffu);
     const auto append64 = [&](std::uint64_t value) {
         key.push_back(static_cast<std::uint32_t>(value));
         key.push_back(static_cast<std::uint32_t>(value >> 32u));
@@ -747,9 +750,10 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
     append64(reinterpret_cast<std::uint64_t>(context.device));
     key.push_back(static_cast<std::uint32_t>(shaders.size()));
     for (const auto& shader : shaders) {
-        const auto part = ShaderResources::ContentKey(shader, true, MovableBuffers());
-        key.push_back(static_cast<std::uint32_t>(part.size()));
-        key.insert(key.end(), part.begin(), part.end());
+        const auto at = key.size();
+        key.push_back(0);
+        ShaderResources::AppendContentKey(shader, true, MovableBuffers(), key);
+        key[at] = static_cast<std::uint32_t>(key.size() - at - 1);
     }
     key.push_back(colorAttachments);
     if (ranges) {
@@ -1758,7 +1762,10 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool capture = CaptureInputsEnabled();
     const bool meshIndirect = state.stages.mesh && args != nullptr;
     const bool addressBased = resources.HoldsLease();
-    auto passReads = addressBased ? std::vector<std::pair<std::uint64_t, std::uint64_t>>{} : resources.DeviceReads();
+    thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* passReadsSlot = nullptr;
+    auto& passReads = ShaderRecompiler::ThreadOwned(passReadsSlot);
+    passReads.clear();
+    if (!addressBased) resources.DeviceReads(passReads);
     if (gpuIndirect) {
         passReads.emplace_back(args->arguments, args->arguments + args->RangeBytes());
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
