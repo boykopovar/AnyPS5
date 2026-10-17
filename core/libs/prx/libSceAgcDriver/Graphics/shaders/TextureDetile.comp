@@ -202,34 +202,27 @@ void copyElement(uint src, uint dst) {
 }
 #endif
 
-void main() {
-    uvec2 p = gl_GlobalInvocationID.xy + uvec2(params.columnBegin, params.rowBegin);
-    if (p.x >= params.width || p.y >= params.height) {
-        return;
-    }
-
+bool locate(uvec2 p, out uint src, out uint dst, out uint ranged) {
     uint linearOffset = p.y * params.pitchBytes + p.x * ELEMENT_BYTES;
 
     if (TILE_FAMILY == 0u) {
-        // kLinear: guest and host layouts match; a straight copy at the
-        // same pitch, no swizzle.
+        ranged = linearOffset;
         if (linearOffset < params.rangeBegin || linearOffset >= params.rangeEnd) {
-            return;
+            return false;
         }
 #ifdef LINEAR_IMAGE
-        if (RETILE != 0u) {
-            loadElement(p, params.dstBase + linearOffset - params.tiledBase);
-        } else {
-            storeElement(params.srcBase + linearOffset - params.tiledBase, p);
-        }
+        src = params.srcBase + linearOffset - params.tiledBase;
+        dst = params.dstBase + linearOffset - params.tiledBase;
 #else
         if (RETILE != 0u) {
-            copyElement(params.srcBase + linearOffset - params.linearBase, params.dstBase + linearOffset - params.tiledBase);
+            src = params.srcBase + linearOffset - params.linearBase;
+            dst = params.dstBase + linearOffset - params.tiledBase;
         } else {
-            copyElement(params.srcBase + linearOffset - params.tiledBase, params.dstBase + linearOffset - params.linearBase);
+            src = params.srcBase + linearOffset - params.tiledBase;
+            dst = params.dstBase + linearOffset - params.linearBase;
         }
 #endif
-        return;
+        return true;
     }
 
     uvec2 swizzle = p;
@@ -242,24 +235,106 @@ void main() {
 
     uint blockIndex = block.y * params.blocksPerRow + block.x;
     uint tiledOffset = blockIndex * BLOCK_BYTES + blockOffset(swizzle);
+    ranged = tiledOffset;
     if (tiledOffset < params.rangeBegin || tiledOffset >= params.rangeEnd) {
-        return;
+        return false;
     }
     tiledOffset -= params.tiledBase;
     linearOffset -= params.linearBase;
 
 #ifdef LINEAR_IMAGE
-    if (RETILE != 0u) {
-        loadElement(p, params.dstBase + tiledOffset);
-    } else {
-        storeElement(params.srcBase + tiledOffset, p);
-    }
+    src = params.srcBase + tiledOffset;
+    dst = params.dstBase + tiledOffset;
 #else
     if (RETILE != 0u) {
-        copyElement(params.srcBase + linearOffset, params.dstBase + tiledOffset);
+        src = params.srcBase + linearOffset;
+        dst = params.dstBase + tiledOffset;
     } else {
-        copyElement(params.srcBase + tiledOffset, params.dstBase + linearOffset);
+        src = params.srcBase + tiledOffset;
+        dst = params.dstBase + linearOffset;
     }
+#endif
+    return true;
+}
+
+void moveElement(uvec2 p) {
+    uint src;
+    uint dst;
+    uint ranged;
+    if (!locate(p, src, dst, ranged)) {
+        return;
+    }
+#ifdef LINEAR_IMAGE
+    if (RETILE != 0u) {
+        loadElement(p, dst);
+    } else {
+        storeElement(src, p);
+    }
+#else
+    copyElement(src, dst);
 #endif
 }
 
+#ifdef WORD_GROUPS
+shared uint groupWords[32];
+shared uint groupLanes[32];
+shared uint groupDestinations[64];
+
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy + uvec2(params.columnBegin, params.rowBegin);
+    bool inside = p.x < params.width && p.y < params.height;
+    uint lane = gl_LocalInvocationID.y * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    uint count = 4u / ELEMENT_BYTES;
+    uint slot = lane / count;
+    uint index = lane % count;
+    uint src = 0u;
+    uint dst = 0u;
+    uint ranged = 0u;
+    bool valid = inside && locate(p, src, dst, ranged);
+    if (index == 0u) {
+        groupWords[slot] = 0u;
+        groupLanes[slot] = 0u;
+    }
+    groupDestinations[lane] = dst;
+    barrier();
+    if (valid) {
+        uint mask = ELEMENT_BYTES == 1u ? 0xffu : 0xffffu;
+#ifdef LINEAR_IMAGE
+        uint value = imageLoad(linearImage, ivec2(p)).x & mask;
+#else
+        uint value = (inputBuffer.data[src >> 2] >> ((src & 3u) * 8u)) & mask;
+#endif
+        atomicOr(groupWords[slot], value << (index * ELEMENT_BYTES * 8u));
+        atomicOr(groupLanes[slot], 1u << index);
+    }
+    barrier();
+    uint first = groupDestinations[slot * count];
+    bool whole = groupLanes[slot] == (1u << count) - 1u && (first & 3u) == 0u;
+    for (uint i = 1u; i < count; ++i) {
+        whole = whole && groupDestinations[slot * count + i] == first + i * ELEMENT_BYTES;
+    }
+    if (whole) {
+        if (index == 0u) {
+#ifdef LINEAR_IMAGE
+            tiledBuffer.data[first >> 2] = groupWords[slot];
+#else
+            outputBuffer.data[first >> 2] = groupWords[slot];
+#endif
+        }
+    } else if (valid) {
+#ifdef LINEAR_IMAGE
+        loadElement(p, dst);
+#else
+        copyElement(src, dst);
+#endif
+    }
+}
+#else
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy + uvec2(params.columnBegin, params.rowBegin);
+    if (p.x >= params.width || p.y >= params.height) {
+        return;
+    }
+    moveElement(p);
+}
+#endif
