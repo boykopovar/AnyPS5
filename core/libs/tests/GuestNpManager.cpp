@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -9,6 +10,8 @@
 
 extern "C" {
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id);
+int APS5_VABI sceNpGetAccountIdA(int user_id, std::uint64_t* account_id);
+int APS5_VABI sceNpGetState(int user_id, std::uint32_t* state);
 int APS5_VABI sceNpGetUserIdByAccountId(std::uint64_t account_id, int* user_id);
 int APS5_VABI sceNpUnknown_8weiQyIdI3A(int userId, void* buffer);
 int APS5_VABI sceNpUnknown_WxLcN76q19o(void);
@@ -72,6 +75,15 @@ int main() {
     Require(sceNpGetNpId(0x10000, &npId) == SignedOut, "sceNpGetNpId must report the user as signed out");
     Require(std::memcmp(&npId, &untouched, sizeof(npId)) == 0, "sceNpGetNpId must leave the NpId untouched");
     Require(sceNpGetNpId(0x10000, nullptr) == InvalidArgument, "sceNpGetNpId must reject a null NpId");
+    std::uint64_t accountId = 0xdeadbeef;
+    Require(sceNpGetAccountIdA(USER_SERVICE_INITIAL_USER_ID, nullptr) == InvalidArgument, "sceNpGetAccountIdA must reject a null output");
+    Require(sceNpGetAccountIdA(USER_SERVICE_INITIAL_USER_ID, &accountId) == 0, "sceNpGetAccountIdA must return the offline profile account id");
+    Require(accountId == USER_SERVICE_INITIAL_ACCOUNT_ID, "sceNpGetAccountIdA must match the user service account id");
+    std::uint32_t npState = 0;
+    Require(sceNpGetState(USER_SERVICE_INITIAL_USER_ID, &npState) == 0 && npState == 1, "the offline account remains signed out of NP");
+    accountId = 0xdeadbeef;
+    Require(sceNpGetAccountIdA(0x1234, &accountId) == SignedOut, "sceNpGetAccountIdA must not expose the account to another user");
+    Require(accountId == 0xdeadbeef, "sceNpGetAccountIdA must leave an absent user's output untouched");
     int userId = 0x5a5a;
     Require(sceNpGetUserIdByAccountId(0, &userId) == InvalidArgument, "sceNpGetUserIdByAccountId must reject account id 0");
     Require(sceNpGetUserIdByAccountId(0x1234, nullptr) == InvalidArgument, "sceNpGetUserIdByAccountId must reject a null output");

@@ -1,3 +1,4 @@
+#include "prx/libSceUserService/UserService.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -93,9 +94,10 @@ int APS5_VABI sceNpGetAccountCountryA(int user_id, void* country_code) {
 }
 
 int APS5_VABI sceNpGetAccountIdA(int user_id, uint64_t* account_id) {
-    (void)user_id;
-    (void)account_id;
-    return SCE_NP_ERROR_SIGNED_OUT;
+    if (account_id == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    if (user_id != USER_SERVICE_INITIAL_USER_ID) return SCE_NP_ERROR_SIGNED_OUT;
+    *account_id = USER_SERVICE_INITIAL_ACCOUNT_ID;
+    return 0;
 }
 
 int APS5_VABI sceNpGetNpId(int user_id, NpId* np_id) {
