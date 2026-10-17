@@ -71,6 +71,9 @@ void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
 void SetHostImportRangeWindow(std::uint64_t bytes);
 void SetHostImportBudget(std::uint64_t bytes);
+// The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
+// that heap: the other half stays for the buffers, mirrors and textures that share it.
+std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
 std::uint64_t HostImportLiveBytes();
 // Tests: how many imports settleImport has used on the settle queue.
 std::uint64_t HostImportsSettled();
