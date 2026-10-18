@@ -483,6 +483,8 @@ def main(argv=None):
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
+    if previous and args.ids:
+        previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
     commit = git("rev-parse", "--short", "HEAD")
     output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
     summary = {"build": {"commit": commit, "dirty": bool(git("status", "--porcelain", "--untracked-files=no")), "note": args.note},
