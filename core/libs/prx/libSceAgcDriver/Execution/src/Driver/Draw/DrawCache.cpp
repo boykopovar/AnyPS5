@@ -257,16 +257,20 @@ void Driver::attachDrawRecipe(std::uint64_t key, const std::vector<std::shared_p
         if (found == drawCache.end()) return;
         entry = found->second;
     }
-    const auto old = entry->recipes.load();
-    auto records = std::make_shared<std::vector<DrawRecipeRecord>>();
-    records->push_back({std::vector<std::weak_ptr<const DispatchVariant>>(stages.begin(), stages.end()), std::move(recipe)});
-    if (old != nullptr) {
-        for (const auto& record : *old) {
-            if (record.Matches(stages) || record.Expired() || records->size() >= dispatchVariants()) continue;
-            records->push_back(record);
+    const DrawRecipeRecord attached{std::vector<std::weak_ptr<const DispatchVariant>>(stages.begin(), stages.end()), std::move(recipe)};
+    auto old = entry->recipes.load();
+    std::shared_ptr<const std::vector<DrawRecipeRecord>> records;
+    do {
+        auto next = std::make_shared<std::vector<DrawRecipeRecord>>();
+        next->push_back(attached);
+        if (old != nullptr) {
+            for (const auto& record : *old) {
+                if (record.Matches(stages) || record.Expired() || next->size() >= dispatchVariants()) continue;
+                next->push_back(record);
+            }
         }
-    }
-    entry->recipes.store(std::move(records));
+        records = std::move(next);
+    } while (!entry->recipes.compare_exchange_strong(old, records));
     VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Attach, VulkanDevice::RecipeKind::Draw);
 }
 
