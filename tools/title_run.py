@@ -449,8 +449,17 @@ def run_title(executable, work, run_dir, seconds, extra_env):
             "os": summary["os"], "cpu": cpu.group(1) if cpu else ""}
 
 
-def git(*args):
-    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True).stdout.strip()
+def source_root(build):
+    cache = Path(build) / "CMakeCache.txt"
+    if cache.is_file():
+        for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("CMAKE_HOME_DIRECTORY:"):
+                return Path(line.split("=", 1)[1])
+    return ROOT
+
+
+def git(root, *args):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
 
 
 def positive(text):
@@ -494,9 +503,10 @@ def main(argv=None):
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
     if previous and args.ids:
         previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
-    commit = git("rev-parse", "--short", "HEAD")
+    source = source_root(args.build)
+    commit = git(source, "rev-parse", "--short", "HEAD")
     output = args.out.resolve() / f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
-    summary = {"build": {"commit": commit, "dirty": bool(git("status", "--porcelain", "--untracked-files=no")), "note": args.note},
+    summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
     for title_id in ids:
