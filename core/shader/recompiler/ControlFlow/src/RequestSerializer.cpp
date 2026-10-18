@@ -903,6 +903,10 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.largePixelFunctionLdsBuffer);
     writer.WriteU32(request.target.pixelFunctionStorageDwords);
     writer.WriteBool(request.target.fragmentBarycentricBuiltins);
+    if (request.context.compute.has_value()) {
+        writer.WriteU32(request.context.compute->granulatedVgprCount);
+        writer.WriteU32(request.context.compute->sharedVgprBlocks);
+    }
     return base64Encode(buffer);
 }
 
@@ -971,6 +975,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.pixelFunctionStorageDwords = reader.ReadU32();
     }
     if (version >= 48u) result.request.target.fragmentBarycentricBuiltins = reader.ReadBool();
+    if (version >= 37u && result.request.context.compute.has_value()) {
+        result.request.context.compute->granulatedVgprCount = reader.ReadU32();
+        result.request.context.compute->sharedVgprBlocks = reader.ReadU32();
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

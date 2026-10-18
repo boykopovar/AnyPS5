@@ -4,6 +4,7 @@
 #include "Translation/InstructionTranslator.hpp"
 #include "Translation/RoundingMode.hpp"
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <initializer_list>
 #include <utility>
@@ -28,6 +29,7 @@ public:
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
+    void SetSharedVectorRegisters(std::uint32_t base, std::uint32_t count) { sharedVectorBase = base; sharedVectorCount = count; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
@@ -59,6 +61,9 @@ private:
     IrValue* readOperand(const RdnaOperand& operand, IrType type);
     IrU1 threadBit(const std::array<IrU32, 2>& mask);
     void writeRawU32(const RdnaOperand& operand, IrU32 value);
+    bool sharedVectorRegister(std::uint32_t reg) const { return reg >= sharedVectorBase && reg - sharedVectorBase < sharedVectorCount; }
+    IrU32 shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction);
+    void trackInactiveExecHalves(const RdnaInstruction& inst);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
     IrF32 applyF16ResultModifiers(const RdnaOperand& operand, IrF32 value);
@@ -393,6 +398,13 @@ private:
     bool float32DenormPreserve = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
+    std::uint32_t sharedVectorBase = 0;
+    std::uint32_t sharedVectorCount = 0;
+    const RdnaInstruction* currentInstruction = nullptr;
+    std::bitset<256> vectorsRead;
+    bool relativeVectorRead = false;
+    bool execLowInactive = false;
+    bool execHighInactive = false;
 };
 
 // Debug aid: APS5_PROBE=<pc hex>:<vgpr>[:<shift>] copies VGPR <vgpr> into v255 right after the
