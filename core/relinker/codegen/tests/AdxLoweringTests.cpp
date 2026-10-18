@@ -149,14 +149,13 @@ public:
         rspToCell(48);
         statePtrToCell(0);
         loadCellTo(0, 256);
+        push(0);
+        bytes.push_back(0x9D);
         bytes.insert(bytes.end(), {0x48, 0x8D, 0xA4, 0x24});
         append32(-128);
         bytes.insert(bytes.end(), {0x48, 0xB8});
         append64(preservationSentinel);
-        for (int slot = 0; slot < 16; ++slot) storeAtStack(0, slot * 8);
-        loadCellTo(0, 256);
-        push(0);
-        bytes.push_back(0x9D);
+        for (int slot = 0; slot < 16; ++slot) storeAtStack(0, -128 + slot * 8);
         rspToCell(72);
         for (std::uint8_t reg = 15; reg >= 1 && reg < 16; --reg) {
             if (reg == 4 || reg == 7) continue;
@@ -170,6 +169,12 @@ public:
         require(body.Relocations.empty(), "Register preservation sites must not need relocations");
         bytes.insert(bytes.end(), body.Bytes.begin(), body.Bytes.begin() + static_cast<std::ptrdiff_t>(body.ReturnBranchOffset));
         rspToCell(24);
+        raxToCell(80);
+        for (int slot = 0; slot < 16; ++slot) {
+            stackLoad(0, -128 + slot * 8);
+            raxToCell(96 + slot * 8);
+        }
+        loadCellTo(0, 80);
         rspFromCell(72);
         for (std::uint8_t reg = 0; reg < 16; ++reg) {
             if (reg == 4) continue;
@@ -185,7 +190,7 @@ public:
         loadCellTo(0, 24);
         store(0, 20 * 8);
         for (int slot = 0; slot < 16; ++slot) {
-            stackLoad(0, slot * 8);
+            loadCellTo(0, 96 + slot * 8);
             store(0, (34 + slot) * 8);
         }
         rspFromCell(48);
@@ -261,6 +266,10 @@ private:
     }
     void rspFromCell(const int slot) {
         bytes.insert(bytes.end(), {0x48, 0x8B, 0x25});
+        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
+    }
+    void raxToCell(const int slot) {
+        bytes.insert(bytes.end(), {0x48, 0x89, 0x05});
         append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
     }
     void statePtrToCell(const int slot) {
