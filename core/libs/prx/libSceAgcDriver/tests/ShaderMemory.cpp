@@ -7039,6 +7039,18 @@ void verifyLaneImageTable() {
     userData[1] = (userData[1] & 0xc000ffffu) | (28u << 16u);
     require(fault(CompileTable(swizzled)) == Abi::PoisonReason::LaneRecordLayout, "lane image table: records smaller than a T# were not a whole-table fault");
 
+    auto maskedCode = std::vector<std::uint32_t>(TableWaterfallCode.begin(), TableWaterfallCode.begin() + 4);
+    maskedCode.insert(maskedCode.end(), {0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, 0x7e0e0280u, 0x7e100280u, 0x7e120280u, 0xbe9c037eu, 0xe0302000u, 0x80011000u, 0xbf8c3f70u, 0x7daa2087u});
+    maskedCode.insert(maskedCode.end(), TableWaterfallCode.begin() + 4, TableWaterfallCode.begin() + 9);
+    maskedCode.push_back(0xbefe031cu);
+    maskedCode.insert(maskedCode.end(), TableWaterfallCode.begin() + 9, TableWaterfallCode.end());
+    auto maskedRequest = request(maskedCode, 4u);
+    userData[1] |= 1u << 31u;
+    const auto masked = CompileTable(maskedRequest);
+    const auto& maskedPlan = *masked.capture->plan;
+    require(maskedPlan.info.images.size() == 1u && maskedPlan.descriptorSources.at(maskedPlan.info.images.at(0).source).tableColumn.has_value() && maskedPlan.descriptorSources.at(maskedPlan.info.images.at(0).source).tableColumn->laneKey, "lane image table: masked descriptor loads with zero skipped values lost the lane table");
+    require(fault(masked) == Abi::PoisonReason::LaneRecordLayout && ScanTableSpirv(masked.result->spirv.Words()).nonUniform, "lane image table: the masked nonempty invalid table did not retain its runtime fault map");
+
     const auto mixed = request(lodCode, 4u);
     const auto lodPlan = GetResourcePlan(mixed);
     require(lodPlan->descriptorSources.at(lodPlan->info.images.at(0).source).tableColumn->implicitDerivatives, "lane image table: an LOD query did not mark the table");

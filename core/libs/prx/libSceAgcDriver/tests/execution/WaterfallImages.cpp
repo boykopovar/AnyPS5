@@ -41,6 +41,17 @@ alignas(256) constexpr std::array<std::uint32_t, 46> WholeWave32{
     0xbefe0318u, 0xbf85ffe0u, 0xbf8c3f70u, 0xe0702000u, 0x80010a00u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 60> MaskedTableWave32{
+    0x36020083u, 0x2c1c0082u, 0x7e1e0280u, 0x7e140280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0a0280u,
+    0x7e0c0280u, 0x7e0e0280u, 0x7e100280u, 0x7e120280u, 0xbe9c037eu, 0xe0302000u, 0x80011000u, 0xbf8c3f70u,
+    0x7daa2087u, 0xe0382000u, 0x80000201u, 0xe0382010u, 0x80000601u, 0xbf8c3f70u, 0xbefe031cu, 0xbe94037eu,
+    0xbe961314u, 0xd7600008u, 0x00002d02u, 0xd7600009u, 0x00002d03u, 0xd760000au, 0x00002d04u, 0xd760000bu,
+    0x00002d05u, 0xd760000cu, 0x00002d06u, 0xd760000du, 0x00002d07u, 0xd760000eu, 0x00002d08u, 0xd760000fu,
+    0x00002d09u, 0xbe98037eu, 0x7da40408u, 0x7da40609u, 0x7da4080au, 0x7da40a0bu, 0x7da40c0cu, 0x7da40e0du,
+    0x7da4100eu, 0x7da4120fu, 0xf0000f08u, 0x00020a0eu, 0xbe9a037eu, 0x8a141a14u, 0xbefe0318u, 0xbf85ffe0u,
+    0xbf8c3f70u, 0xe0702000u, 0x80010a00u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 50> PartialWave32{
     0x36020083u, 0x2c1c0082u, 0x7e1e0280u, 0x7e140280u, 0x36200087u, 0xbe9c037eu, 0x7daa2087u, 0xe0382000u,
     0x80000201u, 0xe0382010u, 0x80000601u, 0xbf8c3f70u, 0xbe94037eu, 0xbe961314u, 0xd7600008u, 0x00002d02u,
@@ -292,6 +303,25 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     }
 }
 
+void RunMaskedTable(AgcDriver::VulkanDevice& device, bool invalid) {
+    const std::string what = invalid ? "skipped descriptor loads from a nonempty swizzled table" : "skipped descriptor loads from a valid table";
+    auto& data = guest[0];
+    for (auto& record : data.table) record = Image(0u);
+    data.output.fill(7u);
+    const auto lanes = std::min(32u, device.Target().subgroupSize);
+    auto userData = UserData(data, lanes);
+    if (invalid) userData[1] |= 1u << 31u;
+    const std::array regions{MemoryRegion{reinterpret_cast<std::uintptr_t>(&data), std::as_bytes(std::span(&data, 1u))}};
+    auto request = Request(device, MaskedTableWave32, 32u, lanes, userData, regions);
+    request.useCache = false;
+    std::vector<RecompileResult> shaders;
+    shaders.push_back(Recompile(request));
+    Require(DecoratesNonUniform(shaders.front().spirv.Words()), what + ": the per-lane table slot is not decorated NonUniform");
+    const auto outcome = Dispatch(device, shaders);
+    Require(outcome.failure.empty() && !Faulted(outcome), what + " faulted although no descriptor load executed:\n" + outcome.Text());
+    for (std::uint32_t lane = 0u; lane < lanes; ++lane) Require(data.output[lane] == 0u, what + ": a skipped descriptor load did not preserve its zero T#");
+}
+
 void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& what) {
     auto& data = guest[0];
     const auto userData = UserData(data, 32u);
@@ -362,10 +392,17 @@ void RunLod(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Rec
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--masked-invalid-table-only"), "unknown waterfall test argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        RunMaskedTable(*device, false);
+        RunMaskedTable(*device, true);
+        if (argc == 2) {
+            std::cout << "masked invalid table tests passed\n";
+            return 0;
+        }
         Run(*device, WholeWave32, 32u, false, "wave32 waterfall over the whole wave");
         Run(*device, WholeWave32, 32u, false, "wave32 waterfall over a table V# with fewer records than keys", Records - 1u);
         Run(*device, PartialWave32, 32u, true, "wave32 waterfall under a partial EXEC");
