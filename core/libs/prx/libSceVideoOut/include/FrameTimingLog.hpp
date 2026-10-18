@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "prx/libc/include/HostThread.hpp"
 
 class FrameTimingLog {
 public:
@@ -25,7 +26,7 @@ public:
         file.exceptions(std::ios::badbit | std::ios::failbit);
         file.imbue(std::locale::classic());
         file.open("frame-timing.log", std::ios::out | std::ios::binary | std::ios::trunc);
-        worker = std::jthread([this](std::stop_token token) { run(token); });
+        worker = Libc::StartHostJThread([this](std::stop_token token) { run(token); });
     }
 
     ~FrameTimingLog() {
