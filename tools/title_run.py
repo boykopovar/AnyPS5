@@ -137,7 +137,9 @@ def compare(summary, previous):
 def render_markdown(summary, previous=None):
     build, machine = summary["build"], summary["machine"]
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
-    header += f". {machine['os']}, {machine['gpu']}, driver {machine['driver']}, CPU {machine['cpu']}."
+    parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
+    known = ", ".join(part for part in parts if part)
+    header += f". {known}." if known else "."
     header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
     lines = [header, ""]
     columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error"] + (["Before"] if previous else [])
