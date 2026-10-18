@@ -1196,6 +1196,7 @@ int main() {
     }
 
     const auto fullTarget = root / "junction-full-target";
+const auto fullTarget = root / "junction-full-target";
     const auto fullJunction = root / "junction-full";
     Require(std::filesystem::create_directory(fullTarget));
     FILE* const inside = std::fopen((fullTarget / "inside.txt").string().c_str(), "wb");
