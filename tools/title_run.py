@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import unwrap_self
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "blank", "rendering")
-TITLE_FIELDS = {"name": str, "relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "input": list}
+TITLE_FIELDS = {"name": str, "relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict}
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 
 
@@ -32,6 +32,9 @@ def load_titles(path):
                 raise ValueError(f"{path}: {title_id}: unknown field {key}")
             if not isinstance(value, TITLE_FIELDS[key]):
                 raise ValueError(f"{path}: {title_id}: {key} must be {TITLE_FIELDS[key].__name__}")
+            items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else []
+            if not all(isinstance(item, str) for item in items):
+                raise ValueError(f"{path}: {title_id}: {key} must hold strings")
     return titles
 
 
@@ -174,7 +177,9 @@ def discover(directories):
             if not (package / "eboot.bin").is_file():
                 continue
             data = json.loads(param.read_text(encoding="utf-8-sig"))
-            title_id = data["titleId"]
+            title_id = data.get("titleId")
+            if not isinstance(title_id, str):
+                raise ValueError(f"{param}: no titleId")
             if title_id in found:
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})

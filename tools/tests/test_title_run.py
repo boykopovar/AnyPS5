@@ -35,6 +35,12 @@ class TitlesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be int"):
             title_run.load_titles(self.write({"PPSA00001": {"seconds": "60"}}))
 
+    def test_non_string_items_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "PPSA00001: env must hold strings"):
+            title_run.load_titles(self.write({"PPSA00001": {"env": {"APS5_X": 1}}}))
+        with self.assertRaisesRegex(ValueError, "PPSA00001: relink must hold strings"):
+            title_run.load_titles(self.write({"PPSA00001": {"relink": [1]}}))
+
     def test_bad_id_is_refused(self):
         with self.assertRaisesRegex(ValueError, "VLC is not a title ID"):
             title_run.load_titles(self.write({"VLC": {}}))
@@ -201,6 +207,13 @@ class PreparationTests(unittest.TestCase):
         package(self.root / "a/PPSA00001", "PPSA00001")
         package(self.root / "b/PPSA00001", "PPSA00001")
         with self.assertRaisesRegex(ValueError, "PPSA00001 found more than once"):
+            title_run.discover([self.root])
+
+    def test_discover_refuses_a_package_without_title_id(self):
+        package(self.root / "a/PPSA00001", "PPSA00001")
+        param = self.root / "a/PPSA00001/sce_sys/param.json"
+        param.write_text(json.dumps({"contentVersion": "01.000.000"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "param.json: no titleId"):
             title_run.discover([self.root])
 
     def test_unwrap_or_copy_keeps_an_elf(self):
