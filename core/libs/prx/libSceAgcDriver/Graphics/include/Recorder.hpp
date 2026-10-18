@@ -202,6 +202,7 @@ public:
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
+    std::uint64_t OpenBatchSerial();
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     bool RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress source, VkDeviceAddress arguments, const std::array<std::uint32_t, 3>* threadGroup = nullptr);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
@@ -219,6 +220,7 @@ public:
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
+    void NoteDrawTraceToken(std::uint64_t token) noexcept;
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
@@ -677,6 +679,8 @@ private:
             std::uint64_t end;
         };
         std::vector<KeyStore> keyStores;
+        std::vector<std::uint64_t> drawTraceTokens;
+        std::unordered_set<std::uint64_t> drawTraceTokenSet;
     };
     struct LabelEntry {
         std::uint32_t value;
