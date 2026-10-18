@@ -250,20 +250,28 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.exit_code(), 7)
 
     @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
-    def test_new_windows_move_offscreen_without_polling(self):
+    def test_new_windows_go_behind_the_others_without_polling(self):
         window = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
                   "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
                   "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
         session = self.start(window)
-        right = title_run.user32.GetSystemMetrics(76) + title_run.user32.GetSystemMetrics(78)
+        user32 = title_run.user32
+        user32.GetWindow.restype = title_run.wintypes.HWND
+        user32.GetWindow.argtypes = (title_run.wintypes.HWND, title_run.wintypes.UINT)
+        name = title_run.ctypes.create_unicode_buffer(256)
 
-        def offscreen():
-            rects = [title_run.wintypes.RECT() for _ in session.windows()]
-            for found, rect in zip(session.windows(), rects):
-                title_run.user32.GetWindowRect(found, title_run.ctypes.byref(rect))
-            return bool(rects) and all(rect.left >= right for rect in rects)
+        def below(window):
+            classes, window = set(), user32.GetWindow(window, 2)
+            while window:
+                if user32.IsWindowVisible(window) and user32.GetClassNameW(window, name, 256):
+                    classes.add(name.value)
+                window = user32.GetWindow(window, 2)
+            return classes
 
-        self.assertTrue(wait_until(offscreen))
+        self.assertTrue(wait_until(lambda: session.windows() and all(below(found) <= {"Progman", "WorkerW"} for found in session.windows())))
+        rect = title_run.wintypes.RECT()
+        user32.GetWindowRect(session.windows()[0], title_run.ctypes.byref(rect))
+        self.assertEqual((rect.left, rect.top), (100, 100))
 
     def test_children_keep_it_alive_and_are_killed(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])")
