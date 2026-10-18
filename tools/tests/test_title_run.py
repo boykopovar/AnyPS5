@@ -203,6 +203,13 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
 
+    def test_source_root_follows_the_build(self):
+        build = self.root / "build"
+        build.mkdir()
+        self.assertEqual(title_run.source_root(build), title_run.ROOT)
+        (build / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Release\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/src/AnyPS5\n", encoding="utf-8")
+        self.assertEqual(title_run.source_root(build), Path("C:/src/AnyPS5"))
+
     def test_discover_refuses_duplicates(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         package(self.root / "b/PPSA00001", "PPSA00001")
