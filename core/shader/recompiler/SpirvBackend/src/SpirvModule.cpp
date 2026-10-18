@@ -220,7 +220,28 @@ void SpirvModule::AddName(std::uint32_t target, const std::string& name) {
 }
 
 void SpirvModule::AddFunction(std::span<const std::uint32_t> words) {
+    const auto offset = functionInstructions.size();
     AppendInstructionWords(functionInstructions, words);
+    noteFunctionResult(offset);
+}
+
+void SpirvModule::noteFunctionResult(std::size_t offset) {
+    if (functionInstructions.size() < offset + 3u) return;
+    const auto opcode = functionInstructions[offset] & spv::OpCodeMask;
+    const auto type = functionInstructions[offset + 1u];
+    const auto result = functionInstructions[offset + 2u];
+    resultTypes.emplace(result, type);
+    if (opcode == spv::OpBitcast && functionInstructions.size() >= offset + 4u) bitcastSources.emplace(result, functionInstructions[offset + 3u]);
+}
+
+std::uint32_t SpirvModule::ResultType(std::uint32_t id) const {
+    const auto found = resultTypes.find(id);
+    return found == resultTypes.end() ? 0u : found->second;
+}
+
+std::uint32_t SpirvModule::BitcastSource(std::uint32_t id) const {
+    const auto found = bitcastSources.find(id);
+    return found == bitcastSources.end() ? 0u : found->second;
 }
 
 void SpirvModule::AddSubgroupBallot(std::uint32_t type, std::uint32_t result, std::uint32_t scope, std::uint32_t predicate) {

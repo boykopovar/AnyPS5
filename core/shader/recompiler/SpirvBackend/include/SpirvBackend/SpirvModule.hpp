@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -137,8 +138,12 @@ public:
 
     template<typename... TOperands>
     void AddFunction(std::uint32_t opcode, const TOperands&... operands) {
+        const auto offset = functionInstructions.size();
         appendInstruction(functionInstructions, opcode, operands...);
+        noteFunctionResult(offset);
     }
+    [[nodiscard]] std::uint32_t ResultType(std::uint32_t id) const;
+    [[nodiscard]] std::uint32_t BitcastSource(std::uint32_t id) const;
 
 private:
     static constexpr std::size_t DeclarationCacheSize = 512;
@@ -239,6 +244,9 @@ private:
     std::uint32_t declareConstant(std::uint32_t opcode, std::vector<std::uint32_t> key);
     static void appendString(std::vector<std::uint32_t>& words, const std::string& text);
 
+    void noteFunctionResult(std::size_t offset);
+    std::unordered_map<std::uint32_t, std::uint32_t> resultTypes;
+    std::unordered_map<std::uint32_t, std::uint32_t> bitcastSources;
     std::uint32_t nextId = 1;
     std::uint32_t version = 0x00010300u;
     std::vector<std::uint32_t> extInstImports;

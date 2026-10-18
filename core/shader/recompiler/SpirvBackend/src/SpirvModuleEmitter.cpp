@@ -1771,6 +1771,9 @@ void EmitLabel(SpirvEmitterState& state, std::uint32_t label) {
 }
 
 std::uint32_t Unary(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t type, std::uint32_t value) {
+    if (opcode == spv::OpBitcast) {
+        if (const auto source = state.module.BitcastSource(value); source != 0u && state.module.ResultType(source) == type) return source;
+    }
     const auto result = state.module.AllocateId();
     state.module.AddFunction(opcode, type, result, value);
     return result;

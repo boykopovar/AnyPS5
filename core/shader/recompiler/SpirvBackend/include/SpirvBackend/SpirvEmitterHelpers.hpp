@@ -170,6 +170,10 @@ std::uint32_t AtomicFloatCompareSwap(SpirvEmitterState& state, std::uint32_t old
 
 template<std::uint32_t TOpcode, IrType TValueType, typename... TArguments>
 std::uint32_t EmitNative(SpirvEmitterState& state, TArguments... arguments) {
+    if constexpr (TOpcode == spv::OpBitcast && sizeof...(TArguments) == 1u) {
+        const std::uint32_t value = (arguments, ...);
+        if (const auto source = state.module.BitcastSource(value); source != 0u && state.module.ResultType(source) == TypeId(state, TValueType)) return source;
+    }
     const auto result = state.module.AllocateId();
     state.module.AddFunction(TOpcode, TypeId(state, TValueType), result, arguments...);
     return result;
