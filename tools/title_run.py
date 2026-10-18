@@ -270,11 +270,8 @@ if os.name == "nt":
     user32.GetMessageW.argtypes = (ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT)
     user32.PostThreadMessageW.argtypes = (wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 
-    def move_offscreen(window):
-        x = user32.GetSystemMetrics(76) + user32.GetSystemMetrics(78) + 64
-        rect = wintypes.RECT()
-        if user32.GetWindowRect(window, ctypes.byref(rect)) and rect.left < x:
-            user32.SetWindowPos(window, wintypes.HWND(1), x, user32.GetSystemMetrics(77), 0, 0, 0x4011)
+    def send_to_back(window):
+        user32.SetWindowPos(window, wintypes.HWND(1), 0, 0, 0, 0, 0x4013)
 
     class ProcessIdList(ctypes.Structure):
         _fields_ = [("assigned", wintypes.DWORD), ("listed", wintypes.DWORD), ("ids", ctypes.c_size_t * 256)]
@@ -291,6 +288,7 @@ class Session:
                 error = ctypes.get_last_error()
                 self.process.kill()
                 raise ctypes.WinError(error)
+            self.placed = set()
             ready = threading.Event()
             threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
             ready.wait()
@@ -322,10 +320,10 @@ class Session:
     def watch_windows(self, ready):
         def created(hook, event, window, kind, child, thread, at):
             if kind == 0 and child == 0 and user32.GetAncestor(window, 2) == window:
-                move_offscreen(window)
+                send_to_back(window)
 
         callback = WinEventCallback(created)
-        hook = user32.SetWinEventHook(0x8000, 0x800B, None, callback, self.process.pid, 0, 0)
+        hook = user32.SetWinEventHook(0x8000, 0x8002, None, callback, self.process.pid, 0, 0)
         self.watcher = kernel32.GetCurrentThreadId()
         ready.set()
         message = wintypes.MSG()
@@ -360,10 +358,11 @@ class Session:
                 return last[1]
         return self.process.poll()
 
-    def move_windows_offscreen(self):
+    def send_new_windows_to_back(self):
         if os.name == "nt":
-            for window in self.windows():
-                move_offscreen(window)
+            for window in set(self.windows()) - self.placed:
+                send_to_back(window)
+                self.placed.add(window)
 
     def close(self):
         if os.name == "nt":
@@ -416,7 +415,7 @@ def run_title(executable, work, run_dir, seconds, extra_env):
         session = Session([str(executable)], work, env, stdout, stderr, owned=work)
         try:
             while session.alive() and time.monotonic() - started < seconds:
-                session.move_windows_offscreen()
+                session.send_new_windows_to_back()
                 time.sleep(0.1 if time.monotonic() - started < 10 else 0.5)
             elapsed = round(time.monotonic() - started, 1)
             alive, ended = session.alive(), time.time()
