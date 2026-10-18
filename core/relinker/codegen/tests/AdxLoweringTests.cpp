@@ -128,6 +128,219 @@ Run execute(const Bytes& site, const std::uint64_t destination, const std::uint6
     return executeCode(match->StubBody, destination, source, initialFlags, memorySource, match->ReturnBranchOffset);
 }
 
+constexpr std::uint64_t preservationSentinel = 0xBADC0FFEE0DDF00Dull;
+
+struct PreservationState {
+    std::array<std::uint64_t, 16> Input{};
+    std::array<std::uint64_t, 16> Output{};
+    std::uint64_t InputFlags = 0;
+    std::uint64_t Flags = 0;
+    std::array<std::uint64_t, 16> RedZone{};
+    std::uint64_t EntryRsp = 0;
+};
+
+class PreservationExecution {
+public:
+    explicit PreservationExecution(const Bytes& site) {
+        const auto operands = Codegen::DecodeAdx(site.data(), site.size());
+        require(operands.has_value(), "Preservation site was not ADCX/ADOX");
+        push(0);
+        for (const auto reg : {3, 5, 12, 13, 14, 15}) push(static_cast<std::uint8_t>(reg));
+        rspToCell(48);
+        statePtrToCell(0);
+        loadCellTo(0, 256);
+        bytes.insert(bytes.end(), {0x48, 0x8D, 0xA4, 0x24});
+        append32(-128);
+        bytes.insert(bytes.end(), {0x48, 0xB8});
+        append64(preservationSentinel);
+        for (int slot = 0; slot < 16; ++slot) storeAtStack(0, slot * 8);
+        loadCellTo(0, 256);
+        push(0);
+        bytes.push_back(0x9D);
+        rspToCell(72);
+        for (std::uint8_t reg = 15; reg >= 1 && reg < 16; --reg) {
+            if (reg == 4 || reg == 7) continue;
+            load(reg, reg * 8);
+        }
+        load(0, 0);
+        load(7, 7 * 8);
+        Codegen::StubBodyBuilder builder;
+        Codegen::EmitAdx(builder, *operands);
+        const auto body = builder.Finish();
+        require(body.Relocations.empty(), "Register preservation sites must not need relocations");
+        bytes.insert(bytes.end(), body.Bytes.begin(), body.Bytes.begin() + static_cast<std::ptrdiff_t>(body.ReturnBranchOffset));
+        rspToCell(24);
+        rspFromCell(72);
+        for (std::uint8_t reg = 0; reg < 16; ++reg) {
+            if (reg == 4) continue;
+            push(reg);
+        }
+        bytes.push_back(0x9C);
+        statePtrFromCell(0);
+        popToState(33 * 8);
+        for (int reg = 15; reg >= 0; --reg) {
+            if (reg == 4) continue;
+            popToState((16 + reg) * 8);
+        }
+        loadCellTo(0, 24);
+        store(0, 20 * 8);
+        for (int slot = 0; slot < 16; ++slot) {
+            stackLoad(0, slot * 8);
+            store(0, (34 + slot) * 8);
+        }
+        rspFromCell(48);
+        for (const auto reg : {15, 14, 13, 12, 5, 3}) pop(static_cast<std::uint8_t>(reg));
+        pop(0);
+        bytes.push_back(0xC3);
+        require(bytes.size() < 4096, "Preservation wrapper exceeded its code page");
+        code = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        require(code != MAP_FAILED, "Cannot allocate preservation test pages");
+        std::memcpy(code, bytes.data(), bytes.size());
+        require(mprotect(code, 4096, PROT_READ | PROT_EXEC) == 0, "Cannot make preservation wrapper executable");
+    }
+
+    ~PreservationExecution() { if (code != MAP_FAILED) munmap(code, 8192); }
+
+    void Run(PreservationState& state) const {
+        std::memcpy(code + 4096 + 256, &state.InputFlags, sizeof(state.InputFlags));
+        reinterpret_cast<void (*)(PreservationState*)>(code)(&state);
+        std::memcpy(&state.EntryRsp, code + 4096 + 72, sizeof(state.EntryRsp));
+    }
+
+private:
+    Bytes bytes;
+    std::uint8_t* code = reinterpret_cast<std::uint8_t*>(MAP_FAILED);
+
+    void append32(const std::int32_t value) {
+        for (unsigned shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<std::uint8_t>(static_cast<std::uint32_t>(value) >> shift));
+    }
+    void append64(const std::uint64_t value) {
+        for (unsigned shift = 0; shift < 64; shift += 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
+    }
+    void push(const std::uint8_t reg) {
+        if (reg >= 8) bytes.push_back(0x41);
+        bytes.push_back(static_cast<std::uint8_t>(0x50 | (reg & 7)));
+    }
+    void pop(const std::uint8_t reg) {
+        if (reg >= 8) bytes.push_back(0x41);
+        bytes.push_back(static_cast<std::uint8_t>(0x58 | (reg & 7)));
+    }
+    void load(const std::uint8_t reg, const int displacement) {
+        bytes.push_back(static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1)));
+        bytes.push_back(0x8B);
+        bytes.push_back(static_cast<std::uint8_t>(0x80 | ((reg & 7) << 3) | 7));
+        append32(displacement);
+    }
+    void store(const std::uint8_t reg, const int displacement) {
+        bytes.push_back(static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1)));
+        bytes.push_back(0x89);
+        bytes.push_back(static_cast<std::uint8_t>(0x80 | ((reg & 7) << 3) | 7));
+        append32(displacement);
+    }
+    void stackLoad(const std::uint8_t reg, const int displacement) {
+        bytes.push_back(static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1)));
+        bytes.push_back(0x8B);
+        bytes.push_back(static_cast<std::uint8_t>(0x80 | ((reg & 7) << 3) | 4));
+        bytes.push_back(0x24);
+        append32(displacement);
+    }
+    void storeAtStack(const std::uint8_t reg, const int displacement) {
+        bytes.push_back(static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1)));
+        bytes.push_back(0x89);
+        bytes.push_back(static_cast<std::uint8_t>(0x80 | ((reg & 7) << 3) | 4));
+        bytes.push_back(0x24);
+        append32(displacement);
+    }
+    void popToState(const int displacement) {
+        pop(0);
+        store(0, displacement);
+    }
+    void rspToCell(const int slot) {
+        bytes.insert(bytes.end(), {0x48, 0x89, 0x25});
+        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
+    }
+    void rspFromCell(const int slot) {
+        bytes.insert(bytes.end(), {0x48, 0x8B, 0x25});
+        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
+    }
+    void statePtrToCell(const int slot) {
+        bytes.insert(bytes.end(), {0x48, 0x89, 0x3D});
+        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
+    }
+    void statePtrFromCell(const int slot) {
+        bytes.insert(bytes.end(), {0x48, 0x8B, 0x3D});
+        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
+    }
+    void loadCellTo(const std::uint8_t reg, const int slot) {
+        bytes.push_back(static_cast<std::uint8_t>(0x48 | ((reg & 8) >> 1)));
+        bytes.push_back(0x8B);
+        bytes.push_back(static_cast<std::uint8_t>(0x05 | ((reg & 7) << 3)));
+        append32(static_cast<std::int32_t>(4096 + slot - (bytes.size() + 4)));
+    }
+};
+
+Bytes registerSite(const bool wide, const bool overflow, const std::uint8_t destination, const std::uint8_t source) {
+    const auto rex = static_cast<std::uint8_t>((wide ? 8 : 0) | ((destination & 8) >> 1) | ((source & 8) >> 3));
+    Bytes bytes{static_cast<std::uint8_t>(overflow ? 0xF3 : 0x66)};
+    if (rex != 0) bytes.push_back(static_cast<std::uint8_t>(0x40 | rex));
+    bytes.insert(bytes.end(), {0x0F, 0x38, 0xF6, static_cast<std::uint8_t>(0xC0 | ((destination & 7) << 3) | (source & 7))});
+    return bytes;
+}
+
+void checkPreservation(const PreservationState& state, const Codegen::AdxOperands& operands) {
+    const auto mask = operands.Wide ? ~std::uint64_t{0} : std::uint64_t{0xFFFFFFFF};
+    const auto flagMask = operands.Overflow ? std::uint64_t{0x800} : std::uint64_t{1};
+    const auto carryIn = operands.Overflow ? (state.InputFlags >> 11) & 1 : state.InputFlags & 1;
+    const auto destination = state.Input[operands.Destination] & mask;
+    const auto source = operands.Source == 4 ? state.EntryRsp : state.Input[operands.Source];
+    const unsigned __int128 sum = static_cast<unsigned __int128>(destination) + (source & mask) + carryIn;
+    const auto expected = static_cast<std::uint64_t>(sum) & mask;
+    for (std::size_t reg = 0; reg < 16; ++reg) {
+        if (reg == 4) require(state.Output[reg] == state.EntryRsp, "ADX changed the guest stack pointer");
+        else require(state.Output[reg] == (reg == operands.Destination ? expected : state.Input[reg]), "ADX changed an unrelated guest register or produced the wrong destination");
+    }
+    const auto expectedFlags = (state.InputFlags & ~flagMask) | ((sum >> (operands.Wide ? 64 : 32)) != 0 ? flagMask : 0);
+    require((state.Flags & 0x8D5) == (expectedFlags & 0x8D5), "ADX changed unrelated arithmetic flags");
+    for (const auto value : state.RedZone) require(value == preservationSentinel, "ADX changed the caller red zone");
+}
+
+PreservationState initialPreservationState() {
+    PreservationState state;
+    for (std::size_t reg = 0; reg < 16; ++reg) state.Input[reg] = 0xABCD123456789000ull + reg * 0x1234567ull;
+    state.Input[4] = 0;
+    return state;
+}
+
+void preservationExecution() {
+    const std::array<std::uint64_t, 4> flags{0x2, 0x8D7, 0x3, 0x802};
+    const std::array<std::uint64_t, 3> variants{0x123456789ABCDEFull, 0, ~std::uint64_t{0}};
+    for (const bool wide : {false, true}) {
+        for (const bool overflow : {false, true}) {
+            for (std::uint8_t destination = 0; destination < 16; ++destination) {
+                if (destination == 4) continue;
+                for (std::uint8_t source = 0; source < 16; ++source) {
+                    const auto site = registerSite(wide, overflow, destination, source);
+                    PreservationExecution executable(site);
+                    const auto operands = Codegen::DecodeAdx(site.data(), site.size());
+                    require(operands.has_value(), "Generated ADX register site did not decode");
+                    for (const auto initialFlags : flags) {
+                        for (const auto variant : variants) {
+                            auto state = initialPreservationState();
+                            state.InputFlags = initialFlags;
+                            if (variant == 0) state.Input.fill(0);
+                            if (variant == ~std::uint64_t{0}) state.Input.fill(~std::uint64_t{0});
+                            state.Input[4] = 0;
+                            state.Output.fill(preservationSentinel);
+                            executable.Run(state);
+                            checkPreservation(state, *operands);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 Run executeNative(const bool wide, const bool adox, const std::uint64_t destination, const std::uint64_t source, const std::uint64_t initialFlags) {
     Bytes instruction{static_cast<std::uint8_t>(adox ? 0xF3 : 0x66)};
     if (wide)
@@ -207,6 +420,7 @@ void execution() {
     const Bytes highSource{0x66, 0x49, 0x0F, 0x38, 0xF6, 0xC1};
     const auto highRun = execute(highSource, 3, 5, 0x202);
     require(highRun.Value == 8, "ADX lowering did not preserve the high source-register extension");
+    preservationExecution();
 }
 
 #else
