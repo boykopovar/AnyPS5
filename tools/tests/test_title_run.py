@@ -164,6 +164,8 @@ class ReportTests(unittest.TestCase):
             "",
         ]))
         self.assertNotIn("Before", title_run.render_markdown(now))
+        now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
+        self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
     def test_render_markdown_lists_missing_titles(self):
         now = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
