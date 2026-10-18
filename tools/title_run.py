@@ -282,7 +282,7 @@ if os.name == "nt":
 
 class Session:
     def __init__(self, command, cwd, env, stdout, stderr, owned=None):
-        self.owned = os.path.normcase(os.path.abspath(owned)) if owned else None
+        self.owned = os.path.normcase(os.path.abspath(owned or Path(command[0]).parent))
         if os.name == "nt":
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
             self.handles, self.images = {}, {}
@@ -353,7 +353,7 @@ class Session:
             last = None
             for pid, handle in self.handles.items():
                 code, times = wintypes.DWORD(), [ctypes.c_ulonglong() for _ in range(4)]
-                if (handle and (self.owned is None or self.images[pid].startswith(self.owned)) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
+                if (handle and self.images[pid].startswith(self.owned) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
                         and kernel32.GetProcessTimes(handle, *map(ctypes.byref, times)) and (last is None or times[0].value >= last[0])):
                     last = (times[0].value, code.value)
             if last:
