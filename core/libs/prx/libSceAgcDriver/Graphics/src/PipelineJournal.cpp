@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -877,7 +878,7 @@ private:
         path = directory / "pipelines.journal";
         lockPath = directory / "pipelines.journal.lock";
         maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
-        std::thread([this] { run(); }).detach();
+        Libc::StartHostThread([this] { run(); }).detach();
     }
 
     // Parses the file: with `loaded` set every record is decoded, otherwise only the index (the
@@ -1333,7 +1334,7 @@ public:
         replayCounters().threads.store(threads, std::memory_order_relaxed);
         replayCounters().heldPeak.store(0, std::memory_order_relaxed);
         workers.reserve(threads);
-        for (unsigned index = 0; index < threads; ++index) workers.emplace_back([this] { run(); });
+        for (unsigned index = 0; index < threads; ++index) workers.push_back(Libc::StartHostThread([this] { run(); }));
     }
 
     ~Replay() override {

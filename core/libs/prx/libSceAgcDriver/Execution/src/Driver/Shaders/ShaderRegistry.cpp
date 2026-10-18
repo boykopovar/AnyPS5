@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -1685,6 +1686,7 @@ private:
 #endif
 
     static void* Main(void* argument) {
+        Libc::SetHostMxcsr();
         auto& pool = *static_cast<RegistrationPreparePool*>(argument);
         PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
         for (;;) {

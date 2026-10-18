@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
@@ -436,7 +437,7 @@ std::chrono::microseconds RemainingAlarm(const AlarmState& alarms, std::chrono::
 
 void NotifyAlarms(AlarmState& alarms) {
     if (!alarms.threadStarted) {
-        std::thread(RunAlarms).detach();
+        Libc::StartHostThread(RunAlarms).detach();
         alarms.threadStarted = true;
     }
     alarms.changed.notify_all();

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
@@ -259,7 +260,9 @@ public:
         require(pixels.size() <= maxBytes, "a frame dump exceeds the 64 MiB queue");
         changed.wait(lock, [&] { return stopping || pixels.size() <= maxBytes - queuedBytes; });
         require(!stopping, "frame dump writer has stopped");
-        if (!worker.joinable()) worker = std::thread([this] { run(); });
+        require(pixels.size() <= maxBytes - queuedBytes, "frame dump queue exceeded 64 MiB");
+        if (!frameDumpOutput.Enabled_nid_no_patch()) return;
+        if (!worker.joinable()) worker = Libc::StartHostThread([this] { run(); });
         const auto bytes = pixels.size();
         pending.push_back({index, width, height, screenshot, std::move(pixels)});
         queuedBytes += bytes;
