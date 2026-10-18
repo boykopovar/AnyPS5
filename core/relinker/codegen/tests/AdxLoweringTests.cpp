@@ -151,7 +151,8 @@ void execution() {
             site.insert(site.end(), {0x0F, 0x38, 0xF6, 0xC1});
             const auto mask = wide ? std::numeric_limits<std::uint64_t>::max() : std::uint64_t{0xFFFFFFFF};
             const auto high = wide ? std::numeric_limits<std::uint64_t>::max() : std::uint64_t{0xFFFFFFFF};
-            const std::array<std::uint64_t, 4> values{0, 1, wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull, high};
+            const auto upperBits = wide ? std::uint64_t{2} : std::uint64_t{0xDEADBEEF00000001};
+            const std::array<std::uint64_t, 5> values{0, 1, wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull, high, upperBits};
             for (const auto destination : values) {
                 for (const auto source : values) {
                     for (const auto inputFlag : {std::uint64_t{0}, std::uint64_t{1}}) {
@@ -176,7 +177,8 @@ void execution() {
         for (const bool wide : {false, true}) {
             for (const bool adox : {false, true}) {
                 const auto high = wide ? std::numeric_limits<std::uint64_t>::max() : std::uint64_t{0xFFFFFFFF};
-                const std::array<std::uint64_t, 4> values{0, 1, wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull, high};
+                const auto upperBits = wide ? std::uint64_t{2} : std::uint64_t{0xDEADBEEF00000001};
+                const std::array<std::uint64_t, 5> values{0, 1, wide ? 0x7FFFFFFFFFFFFFFFull : 0x7FFFFFFFull, high, upperBits};
                 for (const auto destination : values) {
                     for (const auto source : values) {
                         for (const auto inputFlag : {std::uint64_t{0}, std::uint64_t{1}}) {
