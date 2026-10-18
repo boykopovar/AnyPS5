@@ -96,12 +96,12 @@ def frame_is_uniform(path, tolerance=8):
     return True
 
 
-def classify(relinked, exit_code, summary_age, last_frame_uniform):
+def classify(relinked, exit_code, summary_age, framed, last_frame_uniform):
     if not relinked:
         return "relink-failed"
     if exit_code is not None:
         return "crashed" if exit_code != 0 else "exited"
-    if summary_age is None or summary_age > STALL_SECONDS:
+    if summary_age is None or summary_age > STALL_SECONDS or not framed:
         return "stalled"
     if last_frame_uniform:
         return "blank"
@@ -434,7 +434,7 @@ def run_title(executable, work, run_dir, seconds, extra_env):
     uniform = frame_is_uniform(run_dir / "frames" / frames[-1]) if frames else None
     age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
     cpu = re.search(r"host CPU (.+?): has", text)
-    return {"outcome": classify(True, exit_code, age, uniform), "exit_code": exit_code, "seconds": elapsed,
+    return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
             "warnings": warning_counts(text), "frames": frames, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else ""}
