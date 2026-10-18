@@ -108,14 +108,15 @@ class AnalysisTests(unittest.TestCase):
 
     def test_classify(self):
         cases = [
-            ((False, None, None, None), "relink-failed"),
-            ((True, 3221226505, None, None), "crashed"),
-            ((True, 0, None, None), "exited"),
-            ((True, None, None, None), "stalled"),
-            ((True, None, 25.0, False), "stalled"),
-            ((True, None, 5.0, True), "blank"),
-            ((True, None, 5.0, False), "rendering"),
-            ((True, None, 5.0, None), "rendering"),
+            ((False, None, None, False, None), "relink-failed"),
+            ((True, 3221226505, None, False, None), "crashed"),
+            ((True, 0, None, False, None), "exited"),
+            ((True, None, None, False, None), "stalled"),
+            ((True, None, 25.0, True, False), "stalled"),
+            ((True, None, 5.0, False, None), "stalled"),
+            ((True, None, 5.0, True, True), "blank"),
+            ((True, None, 5.0, True, False), "rendering"),
+            ((True, None, 5.0, True, None), "rendering"),
         ]
         for arguments, outcome in cases:
             self.assertEqual(title_run.classify(*arguments), outcome, arguments)
