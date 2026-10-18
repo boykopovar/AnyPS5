@@ -8,6 +8,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -259,6 +260,21 @@ if os.name == "nt":
     user32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT)
     user32.GetSystemMetrics.argtypes = (ctypes.c_int,)
     user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    user32.GetWindowRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = (wintypes.HWND, wintypes.UINT)
+    WinEventCallback = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND, wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+    user32.SetWinEventHook.restype = wintypes.HANDLE
+    user32.SetWinEventHook.argtypes = (wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WinEventCallback, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD)
+    user32.UnhookWinEvent.argtypes = (wintypes.HANDLE,)
+    user32.GetMessageW.argtypes = (ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT)
+    user32.PostThreadMessageW.argtypes = (wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+    def move_offscreen(window):
+        x = user32.GetSystemMetrics(76) + user32.GetSystemMetrics(78) + 64
+        rect = wintypes.RECT()
+        if user32.GetWindowRect(window, ctypes.byref(rect)) and rect.left < x:
+            user32.SetWindowPos(window, wintypes.HWND(1), x, user32.GetSystemMetrics(77), 0, 0, 0x4011)
 
     class ProcessIdList(ctypes.Structure):
         _fields_ = [("assigned", wintypes.DWORD), ("listed", wintypes.DWORD), ("ids", ctypes.c_size_t * 256)]
@@ -275,6 +291,9 @@ class Session:
                 error = ctypes.get_last_error()
                 self.process.kill()
                 raise ctypes.WinError(error)
+            ready = threading.Event()
+            threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
+            ready.wait()
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
@@ -299,6 +318,20 @@ class Session:
 
         user32.EnumWindows(WindowCallback(visit), 0)
         return found
+
+    def watch_windows(self, ready):
+        def created(hook, event, window, kind, child, thread, at):
+            if kind == 0 and child == 0 and user32.GetAncestor(window, 2) == window:
+                move_offscreen(window)
+
+        callback = WinEventCallback(created)
+        hook = user32.SetWinEventHook(0x8000, 0x800B, None, callback, self.process.pid, 0, 0)
+        self.watcher = kernel32.GetCurrentThreadId()
+        ready.set()
+        message = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+            pass
+        user32.UnhookWinEvent(hook)
 
     def alive(self):
         self.process.poll()
@@ -329,10 +362,8 @@ class Session:
 
     def move_windows_offscreen(self):
         if os.name == "nt":
-            x = user32.GetSystemMetrics(76) + user32.GetSystemMetrics(78) + 64
-            y = user32.GetSystemMetrics(77)
             for window in self.windows():
-                user32.SetWindowPos(window, wintypes.HWND(1), x, y, 0, 0, 0x11)
+                move_offscreen(window)
 
     def close(self):
         if os.name == "nt":
@@ -347,6 +378,7 @@ class Session:
     def kill(self):
         if os.name == "nt":
             kernel32.TerminateJobObject(self.job, 1)
+            user32.PostThreadMessageW(self.watcher, 0x12, 0, 0)
         else:
             try:
                 os.killpg(self.process.pid, signal.SIGKILL)

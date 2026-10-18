@@ -249,6 +249,22 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not session.alive()))
         self.assertEqual(session.exit_code(), 7)
 
+    @unittest.skipUnless(os.name == "nt", "window placement is Windows-specific")
+    def test_new_windows_move_offscreen_without_polling(self):
+        window = ("import ctypes; user32 = ctypes.WinDLL('user32'); user32.CreateWindowExW.argtypes = [ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4; "
+                  "user32.CreateWindowExW(0x08000000, 'STATIC', 'title_run test', 0x10CF0000, 100, 100, 200, 200, None, None, None, None); message = ctypes.create_string_buffer(64)\n"
+                  "while user32.GetMessageW(message, None, 0, 0) > 0: user32.DispatchMessageW(message)")
+        session = self.start(window)
+        right = title_run.user32.GetSystemMetrics(76) + title_run.user32.GetSystemMetrics(78)
+
+        def offscreen():
+            rects = [title_run.wintypes.RECT() for _ in session.windows()]
+            for found, rect in zip(session.windows(), rects):
+                title_run.user32.GetWindowRect(found, title_run.ctypes.byref(rect))
+            return bool(rects) and all(rect.left >= right for rect in rects)
+
+        self.assertTrue(wait_until(offscreen))
+
     def test_children_keep_it_alive_and_are_killed(self):
         session = self.start("import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])")
         self.assertTrue(wait_until(lambda: session.exit_code() == 0))
