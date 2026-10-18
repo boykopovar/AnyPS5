@@ -386,6 +386,10 @@ struct HostImports {
     // reused while it is unchanged.
     std::uint64_t epoch = 1;
     std::uint64_t inserted = 0;
+    std::uint64_t missPolicy = 0;
+    HostImportMissMemo missMemo;
+    std::uint64_t missMemoHits = 0;
+    std::uint64_t missMemoStores = 0;
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
@@ -520,6 +524,10 @@ void releaseSettleBatches(VkDevice device, ImportSettle& settle) {
     settle.batchMemory = VK_NULL_HANDLE;
 }
 #endif
+
+HostImportMissMemo::Stamp importMissStamp(const Context& context, const HostImports& state) {
+    return {context.device, context.hostImportAlignment, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), GuestMemory::ForgetSerial(), state.epoch, state.inserted, state.missPolicy};
+}
 
 void destroyImport(const Context& context, const HostImport& entry) {
     context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
@@ -2415,6 +2423,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     const auto failedBlockImport = [&]() -> const HostImport* {
         ++counts.failed;
         state.failedBlocks.insert_or_assign(std::pair{base, bytes}, ImportFailure{base, bytes, GuestAllocations::Mapped(entry.ranges.begin(), entry.ranges.end())});
+        ++state.missPolicy;
         return importAllocation(context, state, address, lease, requester, end, evict);
     };
     const auto failedImport = [&]() -> const HostImport* {
@@ -2811,8 +2820,13 @@ const HostImport* findImport(HostImports& state, std::uint64_t begin, std::uint6
     return entry;
 }
 
-const HostImport* importAccess(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease, ImportRequester requester) {
-    if (!runCovers(lease, begin, end)) return findImport(state, begin, end);
+const HostImport* importAccess(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease, ImportRequester requester, bool* structuralMiss = nullptr) {
+    if (structuralMiss != nullptr) *structuralMiss = false;
+    if (!runCovers(lease, begin, end)) {
+        const auto* entry = findImport(state, begin, end);
+        if (structuralMiss != nullptr) *structuralMiss = entry == nullptr;
+        return entry;
+    }
     const auto* entry = importAllocation(context, state, begin, lease, requester, end);
     return entry != nullptr && findImport(state, begin, end) == entry ? entry : nullptr;
 }
@@ -4483,11 +4497,15 @@ void SetImportWatch(const Context& context, ImportWatch watch) {
 }
 
 void SetHostImportWindow(std::uint64_t bytes) {
-    importWindow.store(bytes, std::memory_order_relaxed);
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (importWindow.exchange(bytes, std::memory_order_relaxed) != bytes) ++state.missPolicy;
 }
 
 void SetHostImportRangeWindow(std::uint64_t bytes) {
-    rangeImportWindow.store(bytes, std::memory_order_relaxed);
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (rangeImportWindow.exchange(bytes, std::memory_order_relaxed) != bytes) ++state.missPolicy;
 }
 
 void SetHostImportMaxBytes(std::uint64_t bytes) {
@@ -4680,6 +4698,45 @@ std::uint64_t HostImportsSettled() {
     return settledImports.load(std::memory_order_relaxed);
 }
 
+bool HostImportMissMemo::Enabled() {
+    static const bool disabled = std::getenv("APS5_NO_IMPORT_MISS_MEMO") != nullptr;
+    return !disabled;
+}
+
+bool HostImportMissMemo::Stable(const Stamp& before, const Stamp& after) {
+    return before.device != VK_NULL_HANDLE && before.alignment != 0 && before.generation != 0 && (before.forgetSerial & 1u) == 0 && before == after;
+}
+
+std::size_t HostImportMissMemo::slot(std::uint64_t begin, std::uint64_t end) {
+    auto hash = begin ^ std::rotl(end, 23);
+    hash ^= hash >> 30u;
+    hash *= 0xbf58476d1ce4e5b9ull;
+    hash ^= hash >> 27u;
+    return static_cast<std::size_t>(hash & 255u);
+}
+
+bool HostImportMissMemo::Contains(std::uint64_t begin, std::uint64_t end, const Stamp& current) const {
+    if (!Enabled() || begin >= end || !Stable(stamp, current)) return false;
+    const auto& entry = entries[slot(begin, end)];
+    return entry.begin == begin && entry.end == end;
+}
+
+bool HostImportMissMemo::Store(std::uint64_t begin, std::uint64_t end, const Stamp& before, const Stamp& after) {
+    if (!Enabled() || begin >= end || !Stable(before, after)) return false;
+    if (stamp != after) {
+        entries = {};
+        stamp = after;
+    }
+    entries[slot(begin, end)] = {begin, end};
+    return true;
+}
+
+ImportMissMemoStats ImportMissMemoCounters() {
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    return {HostImportMissMemo::Enabled(), state.missMemoHits, state.missMemoStores};
+}
+
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     ensurePinWaiter();
@@ -4688,6 +4745,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
 #ifdef _WIN32
     settleUnwatchedImports(context, state);
 #endif
+    const bool memoEnabled = HostImportMissMemo::Enabled();
     // A hit is only valid while the registry has not changed since the imports were reconciled.
     if (!importsStale(context, state)) {
         if (recentImportsEnabled()) {
@@ -4701,10 +4759,24 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
             if (recentImportsEnabled()) rememberImport(state, entry);
             return entry;
         }
+        if (memoEnabled) {
+            const auto before = importMissStamp(context, state);
+            if (state.missMemo.Contains(address, address + bytes, before) && HostImportMissMemo::Stable(before, importMissStamp(context, state))) {
+                ++state.missMemoHits;
+                return nullptr;
+            }
+        }
     }
+    const auto before = memoEnabled ? importMissStamp(context, state) : HostImportMissMemo::Stamp{};
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
-    return importAccess(context, state, address, address + bytes, lease, requester);
+    bool structuralMiss = false;
+    const auto* entry = importAccess(context, state, address, address + bytes, lease, requester, memoEnabled ? &structuralMiss : nullptr);
+    if (structuralMiss) {
+        const auto after = importMissStamp(context, state);
+        if (after.generation == state.refreshedGeneration && state.missMemo.Store(address, address + bytes, before, after)) ++state.missMemoStores;
+    }
+    return entry;
 }
 
 void RequireGpuLockBeforeImports(const char* where) {
