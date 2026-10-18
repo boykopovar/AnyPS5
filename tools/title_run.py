@@ -340,6 +340,8 @@ class Session:
         try:
             os.killpg(self.process.pid, 0)
             return True
+        except PermissionError:
+            return True
         except ProcessLookupError:
             return False
 
@@ -373,7 +375,7 @@ class Session:
         else:
             try:
                 os.killpg(self.process.pid, signal.SIGTERM)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
 
     def kill(self):
@@ -383,7 +385,7 @@ class Session:
         else:
             try:
                 os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
         self.process.wait()
 
