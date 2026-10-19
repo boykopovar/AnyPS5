@@ -473,7 +473,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }
 
-bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
+bool materializeCmaskClearOf(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
     if (color.cmaskAddress == 0) return false;
     if (context.detiler != nullptr) requireCmaskCodes(context.detiler->CmaskErrors());
     const CmaskLayout layout(color.extent.width, color.extent.height);
@@ -503,7 +503,7 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     Require(color.dccAddress == 0, "CMASK fast clear of a DCC color target, whose clear belongs in its DCC keys");
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
     const char* refusal = nullptr;
-    const bool filled = state == CmaskState::Cleared && color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
+    const bool filled = state == CmaskState::Cleared && color.mipCount == 1 && color.arrayLastSlice == 0 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
     if (!filled) {
         storeCmaskClearTexels(color, layout, state == CmaskState::Cleared ? nullptr : &cleared, texel);
         if (resident != nullptr) resident->Refresh();
@@ -511,6 +511,22 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     const std::vector<std::byte> expanded(bytes, std::byte{0xff});
     GuestMemory::Write(color.cmaskAddress, expanded, CmaskLayout::Alignment);
     proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
+    return filled;
+}
+
+bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
+    if (color.cmaskAddress == 0 || color.arrayLastSlice == 0) return materializeCmaskClearOf(context, color, resident);
+    const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+    bool filled = false;
+    for (std::uint32_t layer = 0; layer < color.layers; ++layer) {
+        auto one = color;
+        one.layers = 1;
+        one.address += layer * sliceBytes;
+        one.arraySlice += layer;
+        if (ColorTileModeIsXor(color.tileMode)) one.pipeBankXor ^= ColorSliceXor(color, color.arraySlice + layer);
+        one.cmaskAddress += layer * color.cmaskSliceBytes;
+        filled = materializeCmaskClearOf(context, one, resident) || filled;
+    }
     return filled;
 }
 
@@ -2837,7 +2853,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             // millisecond or more are counted apart; the [texture] line says how many uploaded.
             binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] {
                 if (color.arrayLastSlice != 0) {
-                    Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
+                    Require(color.dccAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC or an attachment proxy has no resident array image");
                     const auto array = ArraySurfaceForTarget(color);
                     // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
                     const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
