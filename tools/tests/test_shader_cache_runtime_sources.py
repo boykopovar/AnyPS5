@@ -34,6 +34,7 @@ class Fixture:
         header = root / 'core/libs/prx/libc/include/HostThreadLocal.hpp'
         header.parent.mkdir(parents=True)
         header.write_text('struct FixtureThreadLocal {};\n', encoding='utf-8')
+        (header.parent / 'HostThread.hpp').write_text('struct FixtureHostThread {};\n', encoding='utf-8')
         shared = root / 'core/libs/prx/libc/include/general/AtomicSharedPtr.hpp'
         shared.parent.mkdir(parents=True)
         shared.write_text('struct FixtureAtomicSharedPtr {};\n', encoding='utf-8')
