@@ -157,31 +157,66 @@ void SearchHeader(const Byte* header, Lookup& query) {
 }
 
 #ifdef LIBC_UNWIND_FIND_OBJECT
+struct LoadSegment { Word start; Word size; };
+
+struct ObjectBases {
+    Word text {};
+    Word data {};
+    std::vector<LoadSegment> loads;
+};
+
+struct ObjectProbe {
+    Lookup lookup;
+    std::vector<LoadSegment> loads;
+};
+
+int CollectLoads(dl_phdr_info* info, std::size_t size, void* argument) {
+    auto& probe = *static_cast<ObjectProbe*>(argument);
+    bool contains = false;
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        const auto& ph = info->dlpi_phdr[i];
+        const Word start = info->dlpi_addr + ph.p_vaddr;
+        if (ph.p_type == PT_LOAD && probe.lookup.pc >= start && probe.lookup.pc - start < ph.p_memsz) contains = true;
+    }
+    if (!contains) return 0;
+    for (unsigned i = 0; i < info->dlpi_phnum; ++i) {
+        const auto& ph = info->dlpi_phdr[i];
+        if (ph.p_type == PT_LOAD) probe.loads.push_back({Word(info->dlpi_addr + ph.p_vaddr), Word(ph.p_memsz)});
+    }
+    FindFrame(info, size, &probe.lookup);
+    return 1;
+}
+
+void SetBases(Lookup& query, const ObjectBases& bases) {
+    query.text = bases.text;
+    query.data = bases.data;
+    for (const auto& load : bases.loads)
+        if (query.pc >= load.start && query.pc - load.start < load.size) query.segment = load.start;
+}
+
 bool FindFrameFast(Lookup& query) {
     dl_find_object object {};
     if (_dl_find_object(reinterpret_cast<void*>(query.pc), &object) != 0 || object.dlfo_eh_frame == nullptr) return false;
     const auto* header = static_cast<const Byte*>(object.dlfo_eh_frame);
     if (header[0] != 1) return false;
     static std::mutex& mutex = *new std::mutex();
-    static auto& bases = *new std::map<std::tuple<const Byte*, const void*, const void*>, std::pair<Word, Word>>();
+    static auto& bases = *new std::map<std::tuple<const Byte*, const void*, const void*>, ObjectBases>();
     const std::tuple key {header, static_cast<const void*>(object.dlfo_map_start), static_cast<const void*>(object.dlfo_map_end)};
     {
         std::lock_guard lock(mutex);
         auto found = bases.find(key);
         if (found != bases.end()) {
-            query.text = found->second.first;
-            query.data = found->second.second;
+            SetBases(query, found->second);
             SearchHeader(header, query);
             return true;
         }
     }
-    Lookup probe {query.pc};
-    dl_iterate_phdr(FindFrame, &probe);
+    ObjectProbe probe {Lookup {query.pc}, {}};
+    dl_iterate_phdr(CollectLoads, &probe);
     {
         std::lock_guard lock(mutex);
-        const auto found = bases.emplace(key, std::pair {probe.text, probe.data}).first;
-        query.text = found->second.first;
-        query.data = found->second.second;
+        const auto found = bases.emplace(key, ObjectBases {probe.lookup.text, probe.lookup.data, std::move(probe.loads)}).first;
+        SetBases(query, found->second);
     }
     SearchHeader(header, query);
     return true;
