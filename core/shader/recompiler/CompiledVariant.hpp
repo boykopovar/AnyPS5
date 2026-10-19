@@ -5,7 +5,6 @@
 #include "IntermediateRepresentation/IrMetadata/CompiledShaderInfo.hpp"
 #include "Optimization/include/Optimization/BindingAllocator.hpp"
 #include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
-#include <array>
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -41,7 +40,7 @@ struct CompiledVariant {
     CompiledBindingLayout bindings;
     CompiledShaderArtifact artifact;
     std::shared_ptr<BufferSubstituteTable> substitutes;
-    std::array<std::byte, 16> artifactIdentity{};
+    std::vector<std::byte> artifactIdentity;
 };
 
 }

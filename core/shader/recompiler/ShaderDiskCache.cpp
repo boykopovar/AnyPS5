@@ -167,7 +167,6 @@ static_assert(fieldCount<PreparedDescriptorBinding>() == 8, "PreparedDescriptorB
 static_assert(fieldCount<PreparedImageMetadata>() == 3, "PreparedImageMetadata changed: update the binding plan encoder");
 static_assert(fieldCount<DescriptorBindingPlan>() == 5, "DescriptorBindingPlan changed: update the binding plan encoder");
 static_assert(fieldCount<SpecializedModule>() == 4, "SpecializedModule changed: update the specialized module encoder");
-static_assert(sizeof(CompiledVariant::artifactIdentity) == ArtifactIdentityBytes, "CompiledVariant::artifactIdentity changed: update BuildArtifactIdentity");
 
 constexpr std::uint32_t FileMagic = 0x43535041u;
 
