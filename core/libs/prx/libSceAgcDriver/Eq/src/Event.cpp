@@ -67,20 +67,15 @@ int DeleteEvent(KernelEqueue eq, std::uintptr_t ident, const char* caller) {
 
 }
 
-bool AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
+void AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
     std::vector<Registration> registrations;
     {
         std::lock_guard lock(g_mutex);
         registrations = g_registrations;
     }
-    bool delivered = false;
     for (const auto& registration : registrations) {
-        if (registration.queue == queue) {
-            EqueueTriggerEvent_nid_postfix(registration.eq, registration.ident, EvfiltGraphicsCore, nullptr);
-            delivered = true;
-        }
+        if (registration.queue == queue) EqueueTriggerEvent_nid_postfix(registration.eq, registration.ident, EvfiltGraphicsCore, nullptr);
     }
-    return delivered;
 }
 
 extern "C" {
