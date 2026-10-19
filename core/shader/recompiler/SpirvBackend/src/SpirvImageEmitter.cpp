@@ -2309,12 +2309,14 @@ TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, s
     const auto outsideCode = field(ImageTableAbi::TableOutsideCode);
     const auto tableFault = field(ImageTableAbi::TableFault);
     if (column.laneKey) {
+        if (handle->ArgumentCount() < 2u) ctx.Fail(inst, "has a lane image table handle without its descriptor-load predicate");
+        const auto active = Binary(state, spv::OpINotEqual, boolean, ctx.Def(handle->Argument(1)), ConstantU32(state, 0u));
         const auto inMap = Binary(state, spv::OpULessThan, boolean, offset, keys);
         const auto mapped = LoadTableMap(state, Select(state, u32, inMap, Binary(state, spv::OpIAdd, u32, mapStart, offset), ConstantU32(state, 0u)));
         const auto loaded = Binary(state, spv::OpULessThan, boolean, offset, field(ImageTableAbi::TableRecordCount));
         const auto outside = Select(state, u32, loaded, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)), ConstantU32(state, ImageTableAbi::NullCode));
         TableWord word;
-        word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside));
+        word.code = Select(state, u32, active, Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside)), ConstantU32(state, ImageTableAbi::NullCode));
         word.addressLow = baseLow;
         word.addressHigh = baseHigh;
         word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));

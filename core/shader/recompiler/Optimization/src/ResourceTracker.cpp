@@ -213,8 +213,9 @@ public:
         for (const auto& plan : m_tableColumns) {
             const auto& column = *m_sources[plan.source].tableColumn;
             IrValue* offset = column.selected ? &m_builder.Constant(column.addend) : plan.offset;
+            if (column.laneKey && plan.loaded == nullptr) fail("lane image table lacks its descriptor-load predicate");
             for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
-                const auto value = plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u) : offset;
+                const auto value = column.laneKey && argument == 1u ? plan.loaded : plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u) : offset;
                 plan.handle->ReplaceArgument(argument, value);
             }
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
@@ -255,6 +256,7 @@ private:
         std::uint32_t source = 0;
         IrValue* offset = nullptr;
         IrValue* parentPointer = nullptr;
+        IrValue* loaded = nullptr;
         std::vector<std::uint32_t> memory;
         std::vector<const IrValue*> reads;
         std::vector<std::uint32_t> hopMemory;
@@ -1353,7 +1355,10 @@ private:
         column.unkeyed = true;
         column.laneKey = true;
         column.implicitDerivatives = implicitDerivatives;
+        plan.loaded = &m_builder.Constant(1u);
         if (reads[0].written != nullptr) {
+            const std::array<IrValue*, 3> active {reads[0].written, &m_builder.Constant(1u), &m_builder.Constant(0u)};
+            plan.loaded = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, active);
             const std::array<IrValue*, 3> arguments {reads[0].written, key, &m_builder.Constant(std::numeric_limits<std::uint32_t>::max())};
             key = EmitBefore(handle, IrOpcode::SelectU32, IrType::U32, arguments);
         }

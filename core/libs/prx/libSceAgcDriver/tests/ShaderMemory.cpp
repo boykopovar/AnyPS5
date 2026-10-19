@@ -7051,10 +7051,52 @@ void verifyLaneImageTable() {
     require(maskedPlan.info.images.size() == 1u && maskedPlan.descriptorSources.at(maskedPlan.info.images.at(0).source).tableColumn.has_value() && maskedPlan.descriptorSources.at(maskedPlan.info.images.at(0).source).tableColumn->laneKey, "lane image table: masked descriptor loads with zero skipped values lost the lane table");
     require(fault(masked) == Abi::PoisonReason::LaneRecordLayout && ScanTableSpirv(masked.result->spirv.Words()).nonUniform, "lane image table: the masked nonempty invalid table did not retain its runtime fault map");
 
+    auto maskedProgram = PrepareResourceProgram(maskedRequest);
+    const IrValue* maskedHandle = nullptr;
+    for (const auto* block : maskedProgram.BlockOrder()) for (const auto* inst : block->Instructions()) if (inst->Opcode() == IrOpcode::GetImageResource) maskedHandle = inst;
+    require(maskedHandle != nullptr && maskedHandle->ArgumentCount() == 8u && std::ranges::all_of(maskedHandle->Arguments(), [](const IrValue* value) { return value->Resolve()->Type() == IrType::U32; }), "lane image table: the explicit load predicate changed the descriptor arity or types");
+    const auto* predicate = maskedHandle->Argument(1)->Resolve();
+    const auto* maskedKey = maskedHandle->Argument(0)->Resolve();
+    require(predicate->Opcode() == IrOpcode::SelectU32 && predicate->ArgumentCount() == 3u && !predicate->Argument(0)->Resolve()->HasImmediate() && predicate->Argument(1)->Resolve()->HasImmediate() && predicate->Argument(1)->Resolve()->ImmediateU32() == 1u && predicate->Argument(2)->Resolve()->HasImmediate() && predicate->Argument(2)->Resolve()->ImmediateU32() == 0u && maskedKey->Opcode() == IrOpcode::SelectU32 && predicate->Argument(0)->Resolve() == maskedKey->Argument(0)->Resolve(), "lane image table: the load predicate is not independent of the numeric key");
+    std::vector<std::byte> encodedMasked;
+    require(ShaderDiskCache::EncodePlan(*masked.capture->plan, encodedMasked), "lane image table: the masked host plan does not encode");
+    IrResourcePlan decodedMasked;
+    require(ShaderDiskCache::DecodePlan(encodedMasked, decodedMasked) && decodedMasked.descriptorSources.at(decodedMasked.info.images.at(0).source).tableColumn->laneKey, "lane image table: the masked host plan lost its table metadata on decode");
+    std::vector<std::byte> encodedAgain;
+    require(ShaderDiskCache::EncodePlan(decodedMasked, encodedAgain) && encodedAgain == encodedMasked, "lane image table: the masked host plan changed on disk round trip");
+    auto unboundedMaskedCode = maskedCode;
+    unboundedMaskedCode[0] = 0x7e020300u;
+    auto unboundedMaskedRequest = request(unboundedMaskedCode, 4u);
+    userData[1] |= 1u << 31u;
+    const auto unboundedMasked = CompileTable(unboundedMaskedRequest);
+    const auto& unboundedPlan = *unboundedMasked.capture->plan;
+    const auto& unboundedColumn = *unboundedPlan.descriptorSources.at(unboundedPlan.info.images.at(0).source).tableColumn;
+    require(unboundedColumn.laneKey && unboundedColumn.maxKey == 0xffffffffu && fault(unboundedMasked) == Abi::PoisonReason::LaneRecordLayout, "lane image table: the unbounded masked key lost its table or active fault semantics");
+    auto activeMaxCode = TableWaterfallCode;
+    activeMaxCode[0] = 0x7e0202c1u;
+    activeMaxCode[5] = 0xa0000201u;
+    activeMaxCode[7] = 0xa0000601u;
+    for (const auto mode : {2u, 3u}) {
+        auto activeRequest = request(activeMaxCode, mode == 2u ? 4u : 128u);
+        userData[3] = (userData[3] & ~(3u << 28u)) | (mode << 28u);
+        require(fault(CompileTable(activeRequest)) == Abi::PoisonReason::LaneRecordLayout, "lane image table: an active UINT_MAX key suppressed an unsupported OOB mode fault");
+    }
+
     const auto mixed = request(lodCode, 4u);
     const auto lodPlan = GetResourcePlan(mixed);
     require(lodPlan->descriptorSources.at(lodPlan->info.images.at(0).source).tableColumn->implicitDerivatives, "lane image table: an LOD query did not mark the table");
-    require(fault(CompileTable(mixed)) == Abi::PoisonReason::LaneModes, "lane image table: float and integer records under an LOD query were not a whole-table fault");
+    const auto mixedCompiled = CompileTable(mixed);
+    require(fault(mixedCompiled) == Abi::PoisonReason::LaneModes, "lane image table: float and integer records under an LOD query were not a whole-table fault");
+    auto independentModes = mixedCompiled.capture->snapshot;
+    independentModes.tables.tables.at(0).sharedMode = false;
+    constexpr std::uint64_t ModeMemo = 0x6c616e656d6f6465ull;
+    const auto& modeInfo = mixedCompiled.capture->plan->info;
+    const auto independent = ResourceMaterializer::ResolveImageTablesShared(modeInfo, independentModes, ModeMemo);
+    require(independent->map.at(Abi::TableHeader(0) + Abi::TableFault) == 0u, "lane image table: independent image modes unexpectedly faulted");
+    const auto shared = ResourceMaterializer::ResolveImageTablesShared(modeInfo, mixedCompiled.capture->snapshot, ModeMemo);
+    const auto sharedFault = shared->map.at(Abi::TableHeader(0) + Abi::TableFault);
+    require((sharedFault & Abi::PoisonFlag) != 0u && shared->poison.at(sharedFault & ~Abi::PoisonFlag).reason == Abi::PoisonReason::LaneModes, "lane image table: resolution reuse ignored a changed shared-mode requirement");
+    require(ResourceMaterializer::ResolveImageTablesShared(modeInfo, independentModes, ModeMemo)->map == independent->map, "lane image table: a shared-mode fault contaminated independent-mode resolution reuse");
     records[1] = TableT(textures[1].bytes.data(), TableFormat8888UNorm, TableType2D);
     require(fault(CompileTable(request(lodCode, 4u))) == Abi::PoisonReason::Count, "lane image table: records of one mode under an LOD query faulted");
     records = {};

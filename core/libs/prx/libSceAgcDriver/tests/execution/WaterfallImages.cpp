@@ -303,23 +303,35 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, s
     }
 }
 
-void RunMaskedTable(AgcDriver::VulkanDevice& device, bool invalid) {
-    const std::string what = invalid ? "skipped descriptor loads from a nonempty swizzled table" : "skipped descriptor loads from a valid table";
+void RunMaskedTable(AgcDriver::VulkanDevice& device, bool invalid, bool unbounded = false, bool partial = false) {
+    const std::string what = (partial ? invalid ? "partially skipped descriptor loads from a short-stride table" : "partially skipped descriptor loads from a valid table" : invalid ? "skipped descriptor loads from a nonempty swizzled table" : "skipped descriptor loads from a valid table") + std::string(unbounded ? " with an unbounded key" : "");
     auto& data = guest[0];
+    for (std::uint32_t x = 0u; x < textures[0].size(); ++x) textures[0][x] = 0x1000u + x;
     for (auto& record : data.table) record = Image(0u);
     data.output.fill(7u);
     const auto lanes = std::min(32u, device.Target().subgroupSize);
+    if (partial) for (std::uint32_t lane = 0u; lane < lanes; ++lane) data.output[lane] = lane % 2u == 0u ? 0u : 7u;
     auto userData = UserData(data, lanes);
-    if (invalid) userData[1] |= 1u << 31u;
+    if (invalid && partial) userData[1] = (userData[1] & 0xc000ffffu) | (28u << 16u);
+    else if (invalid) userData[1] |= 1u << 31u;
+    alignas(256) auto code = MaskedTableWave32;
+    if (unbounded) code[0] = 0x7e020300u;
     const std::array regions{MemoryRegion{reinterpret_cast<std::uintptr_t>(&data), std::as_bytes(std::span(&data, 1u))}};
-    auto request = Request(device, MaskedTableWave32, 32u, lanes, userData, regions);
+    auto request = Request(device, code, 32u, lanes, userData, regions);
     request.useCache = false;
     std::vector<RecompileResult> shaders;
     shaders.push_back(Recompile(request));
     Require(DecoratesNonUniform(shaders.front().spirv.Words()), what + ": the per-lane table slot is not decorated NonUniform");
     const auto outcome = Dispatch(device, shaders);
-    Require(outcome.failure.empty() && !Faulted(outcome), what + " faulted although no descriptor load executed:\n" + outcome.Text());
-    for (std::uint32_t lane = 0u; lane < lanes; ++lane) Require(data.output[lane] == 0u, what + ": a skipped descriptor load did not preserve its zero T#");
+    if (invalid && partial) {
+        Require(Faulted(outcome) && outcome.Text().find("records smaller than the descriptor") != std::string::npos, what + " did not fault for the lanes that loaded the invalid descriptor:\n" + outcome.Text());
+        return;
+    }
+    Require(outcome.failure.empty() && !Faulted(outcome), what + (partial ? " faulted for supported descriptor loads:\n" : " faulted although no descriptor load executed:\n") + outcome.Text());
+    for (std::uint32_t lane = 0u; lane < lanes; ++lane) {
+        const auto expected = partial && lane % 2u == 0u ? textures[0][lane / 4u] : 0u;
+        Require(data.output[lane] == expected, what + ": lane " + std::to_string(lane) + " did not retain the descriptor selected by its load predicate");
+    }
 }
 
 void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& what) {
@@ -370,6 +382,18 @@ void RequireFault(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t
     Require(Faulted(outcome) && outcome.Text().find(reason) != std::string::npos, what + " was not refused:\n" + outcome.Text());
 }
 
+void RequireActiveInvalidKey(AgcDriver::VulkanDevice& device, std::uint32_t mode) {
+    auto& data = guest[0];
+    for (auto& record : data.table) record = Image(0u);
+    alignas(256) auto code = WholeWave32;
+    code[0] = 0x7e0202c1u;
+    code[5] = 0xa0000201u;
+    code[7] = 0xa0000601u;
+    auto table = Buffer(data.table.data(), 32u, mode == 2u ? Records : static_cast<std::uint32_t>(sizeof(data.table)));
+    table[3] = (table[3] & ~(3u << 28u)) | (mode << 28u);
+    RequireFault(device, code, table, "table V# indexed per lane is swizzled", "an active UINT_MAX key with unsupported OOB_SELECT " + std::to_string(mode));
+}
+
 void RunLod(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Records>& records, bool refused, const std::string& what) {
     auto& data = guest[0];
     for (std::uint32_t key = 0u; key < Records; ++key) data.table[key] = records[key] == Textures ? std::array<std::uint32_t, 8>{} : Image(records[key]);
@@ -399,6 +423,12 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         RunMaskedTable(*device, false);
         RunMaskedTable(*device, true);
+        RunMaskedTable(*device, false, true);
+        RunMaskedTable(*device, true, true);
+        RunMaskedTable(*device, false, false, true);
+        RunMaskedTable(*device, true, false, true);
+        RequireActiveInvalidKey(*device, 2u);
+        RequireActiveInvalidKey(*device, 3u);
         if (argc == 2) {
             std::cout << "masked invalid table tests passed\n";
             return 0;
