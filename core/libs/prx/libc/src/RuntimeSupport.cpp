@@ -151,14 +151,16 @@ static constexpr int ThrdNomem = 1;
 static constexpr int ThrdTimedout = 2;
 static constexpr int ThrdBusy = 3;
 static constexpr int ThrdError = 4;
+static constexpr int ThrdPermission = 5;
 
 static constexpr int CppDeviceOrResourceBusy = 0;
 static constexpr int CppInvalidArgument = 1;
+static constexpr int CppOperationNotPermitted = 4;
 static constexpr int CppResourceUnavailableTryAgain = 6;
 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
 
-[[noreturn]] void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code) {
+void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code) {
     switch (code) {
     case ThrdNomem:
     case ThrdTimedout:
@@ -167,8 +169,10 @@ static constexpr int CppResourceUnavailableTryAgain = 6;
         ThrowCppError_nid_no_patch(CppDeviceOrResourceBusy);
     case ThrdError:
         ThrowCppError_nid_no_patch(CppInvalidArgument);
+    case ThrdPermission:
+        ThrowCppError_nid_no_patch(CppOperationNotPermitted);
     default:
-        throw std::out_of_range("_Throw_C_error: " + std::to_string(code) + " is not a _Thrd_t error code");
+        return;
     }
 }
 

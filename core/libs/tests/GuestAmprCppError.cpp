@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -158,14 +159,13 @@ static void CheckOutOfRange(int code) {
     Require(threw, 3);
 }
 
-static void CheckCErrorOutOfRange(int code) {
-    bool threw = false;
+static void CheckCErrorReturns(int code) {
     try {
         _ZSt14_Throw_C_errori_nid_postfix(code);
-    } catch (const std::out_of_range& error) {
-        threw = std::string(error.what()).find(std::to_string(code)) != std::string::npos;
+    } catch (...) {
+        std::fprintf(stderr, "guest _Throw_C_error unexpectedly threw for %d\n", code);
+        FixtureFail(6);
     }
-    Require(threw, 6);
 }
 
 int main() {
@@ -183,9 +183,9 @@ int main() {
     CatchCError(_ZTISt12system_error_nid_postfix, 4, 1);
     CatchCError(_ZTISt13runtime_error_nid_postfix, 3, 0);
     CatchCError(_ZTISt9exception_nid_postfix, 4, 1);
-    CheckCErrorOutOfRange(-1);
-    CheckCErrorOutOfRange(0);
-    CheckCErrorOutOfRange(5);
+    const std::array returnCodes {std::numeric_limits<int>::min(), -1, 0, 6, std::numeric_limits<int>::max()};
+    for (const int code : returnCodes) CheckCErrorReturns(code);
+    CatchCError(_ZTISt12system_error_nid_postfix, 5, 4);
     std::puts("guest _Throw_Cpp_error and _Throw_C_error system_error, generic category and range: PASS");
     return 0;
 }
