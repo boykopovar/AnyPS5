@@ -157,7 +157,7 @@ std::string hex(std::uint64_t value) {
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
-    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
+    return left.kind == right.kind && left.role == right.role && left.descriptorSet == right.descriptorSet && left.binding == right.binding && left.count == right.count && left.guestDescriptor == right.guestDescriptor && left.readOnly == right.readOnly && left.imageShape == right.imageShape && left.samplerDepthCompare == right.samplerDepthCompare && left.imageWritten == right.imageWritten && left.imageDepthCompare == right.imageDepthCompare && left.imageAtomic == right.imageAtomic && left.imageAtomic64 == right.imageAtomic64 && left.imageShapes == right.imageShapes && left.bufferAtomic == right.bufferAtomic && left.bufferWritten == right.bufferWritten && left.bufferRead == right.bufferRead && left.bufferExtent == right.bufferExtent && left.samplerUnnormalized == right.samplerUnnormalized && left.samplerIntegerBorder == right.samplerIntegerBorder && left.samplerCoordinatesIgnored == right.samplerCoordinatesIgnored && left.imageUnnormalized == right.imageUnnormalized && left.imageUnnormalizedBaseLevel == right.imageUnnormalizedBaseLevel && left.imageSamplers == right.imageSamplers;
 }
 
 bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<DescriptorBinding>& right) {
@@ -252,6 +252,7 @@ DescriptorBinding sampleBinding(std::uint32_t seed) {
     binding.imageDepthCompare = {false, true, false};
     binding.imageWritten = {false, true, true};
     binding.imageAtomic = {false, true, false};
+    binding.imageAtomic64 = {false, seed % 2 == 1};
     binding.imageShapes = {DescriptorImageShape::Image2D, DescriptorImageShape::Image3D};
     binding.bufferAtomic = {true};
     binding.bufferWritten = {false, false, true, true, false};
@@ -3272,6 +3273,87 @@ void verifySpecializedBoundsAcrossProcesses(const char* self) {
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
 }
 
+struct Float16ConvertRequest {
+    std::array<std::uint32_t, 4> code{0x7e021500u, 0xe0700000u, 0x80000100u, 0xbf810000u};
+    std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
+    std::vector<std::uint32_t> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityFloat16};
+    std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
+    RecompileRequest request{};
+
+    Float16ConvertRequest(bool roundingModeRte, bool useCache) {
+        if (roundingModeRte) capabilities.insert(capabilities.end(), {spv::CapabilityRoundingModeRTE, spv::CapabilityDenormPreserve});
+        request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00403000u;
+        request.target.spirvVersion = 0x00010600u;
+        request.target.subgroupSize = 64;
+        request.target.bdaAbiVersion = 1;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+        request.target.maxWorkgroupInvocations = 1024;
+        request.target.maxWorkgroupSharedMemoryBytes = 49152;
+        request.layout = {0, 0, 0, 128};
+        request.useCache = useCache;
+    }
+};
+
+bool roundsFloat16ToNearestEven(std::span<const std::uint32_t> words) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        if ((words[cursor] & 0xffffu) == spv::OpExecutionMode && count == 4 && words[cursor + 2] == spv::ExecutionModeRoundingModeRTE && words[cursor + 3] == 16u) return true;
+        cursor += count;
+    }
+    return false;
+}
+
+int runUncachedSpecializedProcess() {
+    require(ShaderDiskCache::SpecializedEnabled(), "the specialized disk cache is off, so this process cannot show that a compile without a cache key skips it");
+    const auto directory = ShaderDiskCache::EntryDirectory();
+    const auto storedEntries = [&] { return entryPaths(directory, SpecializedKind).size() + entryPaths(directory, BindingPlanKind).size(); };
+    const auto counts = [&] {
+        const auto totals = ShaderDiskCache::Totals();
+        return " (specialized hits " + std::to_string(totals.specializedHits) + ", misses " + std::to_string(totals.specializedMisses) + ", writes " + std::to_string(totals.specializedWrites) + "; binding plan hits " + std::to_string(totals.bindingPlanHits) + ", misses " + std::to_string(totals.bindingPlanMisses) + ", writes " + std::to_string(totals.bindingPlanWrites) + "; " + std::to_string(storedEntries()) + " specialized entries on disk)";
+    };
+    Float16ConvertRequest nearestEven(true, false);
+    const auto native = Recompile(nearestEven.request);
+    ShaderDiskCache::Flush();
+    require(roundsFloat16ToNearestEven(native.spirv.Words()), "a device with RoundingModeRTE for 16-bit floats did not get native f16 conversion");
+    Float16ConvertRequest withoutRte(false, false);
+    const auto emulated = Recompile(withoutRte.request);
+    require(!roundsFloat16ToNearestEven(emulated.spirv.Words()), "Recompile(request) with useCache=false for a device without RoundingModeRTE was served the module compiled for a device with it" + counts());
+    RequestMemoryView view(withoutRte.request.context.memory);
+    const auto capture = CaptureResources(withoutRte.request, view.MakeRuntime(withoutRte.request.context.userData, withoutRte.request.shader.codeAddress));
+    const auto captured = Recompile(withoutRte.request, *capture);
+    require(!roundsFloat16ToNearestEven(captured->spirv.Words()), "Recompile(request, capture) with useCache=false for a device without RoundingModeRTE was served the module compiled for a device with it" + counts());
+    ShaderDiskCache::Flush();
+    const auto uncached = ShaderDiskCache::Totals();
+    require(uncached.specializedHits == 0u && uncached.specializedMisses == 0u && uncached.specializedWrites == 0u && uncached.bindingPlanHits == 0u && uncached.bindingPlanMisses == 0u && uncached.bindingPlanWrites == 0u && storedEntries() == 0u, "a compile with useCache=false read or wrote the specialized disk cache" + counts());
+    Float16ConvertRequest cached(false, true);
+    const auto keyed = Recompile(cached.request);
+    ShaderDiskCache::Flush();
+    require(!roundsFloat16ToNearestEven(keyed.spirv.Words()), "a cached compile for a device without RoundingModeRTE got native f16 conversion" + counts());
+    const auto stored = ShaderDiskCache::Totals();
+    require(stored.specializedWrites > 0u && stored.bindingPlanWrites > 0u && storedEntries() > 0u, "a compile with a cache key did not store its specialized module and binding plan, so the compiles without one show nothing" + counts());
+    std::cout << "compiles with useCache=false for devices with and without RoundingModeRTE kept their own modules and left the specialized disk cache alone; a cached compile stored " << storedEntries() << " specialized entries\n";
+    return 0;
+}
+
+void verifyUncachedSpecializedAcrossProcesses(const char* self) {
+    const auto own = ShaderCacheDirectory();
+    const auto directory = own / "uncached-specialized";
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    const std::string command = "\"" + std::string(self) + "\" --uncached-specialized";
+    require(std::system(command.c_str()) == 0, "the process --uncached-specialized failed");
+    setEnvironment("ANYPS5_SHADER_CACHE_DIR", own.string());
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -3325,6 +3407,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]).starts_with("--load-plan")) return runPlanLoadingProcess(argv[1]);
         if (argc == 2 && (std::string_view(argv[1]) == "--store-specialized" || std::string_view(argv[1]).starts_with("--load-specialized"))) return runSpecializedLoadingProcess(argv[1]);
         if (argc == 2 && std::string_view(argv[1]).starts_with("--specialized-cap-")) return runSpecializedBoundsProcess(argv[1]);
+        if (argc == 2 && std::string_view(argv[1]) == "--uncached-specialized") return runUncachedSpecializedProcess();
         const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-disk-cache-test-" + std::to_string(std::random_device{}()));
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
@@ -3353,6 +3436,7 @@ int main(int argc, char** argv) {
         verifyPlanAcrossProcesses(argv[0]);
         verifySpecializedAcrossProcesses(argv[0]);
         verifySpecializedBoundsAcrossProcesses(argv[0]);
+        verifyUncachedSpecializedAcrossProcesses(argv[0]);
         verifyEmissionFailureMemo();
         verifyFailureMemoSwitch(argv[0]);
         verifyInvocationIsolation();
