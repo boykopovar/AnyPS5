@@ -117,6 +117,14 @@ std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, sta
 std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
 std::atomic<std::uint64_t> refreshesProved{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
+std::atomic<std::uint64_t> writerWaits[4]{}, writerWaitedUs[4]{}, writerWaitsCallerHeld{0};
+
+void countWriterWait(bool open, bool written, std::chrono::steady_clock::time_point start) {
+    const auto kind = (open ? 0u : 2u) + (written ? 1u : 0u);
+    writerWaits[kind].fetch_add(1, std::memory_order_relaxed);
+    writerWaitedUs[kind].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+    if (GuestMemory::GpuMutex().DepthOnThisThread() > 1) writerWaitsCallerHeld.fetch_add(1, std::memory_order_relaxed);
+}
 
 struct StorageTraffic {
     AgcDriver::Mutex mutex;
@@ -3970,11 +3978,16 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingWriterSerial(address, bytes) != 0) {
         try {
             recorder->Reap();
-            if (const auto writer = recorder->PendingWriterSerial(address, bytes); writer == recorder->OpenSerial()) {
-                Recorder::CountSync(recorder->OpenWriteOverlaps(address, bytes) ? 1 : 3);
+            bool written = false;
+            if (const auto writer = recorder->PendingWriterSerial(address, bytes, &written); writer == recorder->OpenSerial()) {
+                const auto waitStart = std::chrono::steady_clock::now();
+                Recorder::CountSync(written ? 1 : 3);
                 recorder->Sync();
+                countWriterWait(true, written, waitStart);
             } else if (writer != 0) {
-                recorder->FinishUpTo(writer);
+                const auto waitStart = std::chrono::steady_clock::now();
+                recorder->FinishUpTo(writer, written ? 1 : 3);
+                countWriterWait(false, written, waitStart);
             }
         } catch (...) {
             for (const auto& texture : flush) texture->reconcilePending();
@@ -4016,6 +4029,12 @@ bool StorageTexture::WaitForFlushing(std::uint64_t address, std::size_t bytes, c
         { std::lock_guard gpu(GuestMemory::GpuMutex()); }
         std::this_thread::yield();
     }
+}
+
+StorageTexture::WriterWaitStatistics StorageTexture::WriterWaitCounts() {
+    const auto count = [](std::size_t kind) { return writerWaits[kind].load(std::memory_order_relaxed); };
+    const auto ms = [](std::size_t kind) { return writerWaitedUs[kind].load(std::memory_order_relaxed) / 1000.0; };
+    return {count(0), count(1), count(2), count(3), writerWaitsCallerHeld.load(std::memory_order_relaxed), ms(0), ms(1), ms(2), ms(3)};
 }
 
 void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes) {
@@ -4383,6 +4402,18 @@ bool StorageTexture::AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, st
         for (const auto* texture : live.textures) {
             if (texture->overlapsLive(range.first, bytes)) return true;
         }
+    }
+    return false;
+}
+
+bool StorageTexture::OthersPendingInside(std::uint64_t address, std::size_t bytes) {
+    auto& pending = Pending();
+    if (pending.textures.SurelyClear(address, bytes)) return false;
+    std::lock_guard lock(pending.mutex);
+    if (!pending.textures.MayOverlap(address, bytes)) return false;
+    for (const auto* texture : pending.textures) {
+        if (texture->descriptor.baseAddress == address && texture->guestBytes == bytes) continue;
+        if (texture->overlaps(address, bytes) && texture->pendingUnitInside(address, bytes)) return true;
     }
     return false;
 }

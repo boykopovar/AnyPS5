@@ -5345,12 +5345,16 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     // the producer.
     const auto consider = [&](std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes, bool sampled) {
         const bool gpuDirect = sampled ? SampledFromStorageEligible(context, format, address, guestBytes) : HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
-        if (!gpuDirect) surfaces.push_back({address, guestBytes, false});
+        if (!gpuDirect) surfaces.push_back({address, guestBytes, false, false});
     };
     static const bool keyRanges = std::getenv("APS5_NO_DCC_PRESYNC") == nullptr;
     const auto considerKeys = [&](std::uint64_t dccAddress, std::uint64_t guestBytes) {
         const auto keyBytes = DccKeyBytes(guestBytes);
-        if (keyRanges && dccAddress != 0 && keyBytes != 0) surfaces.push_back({dccAddress, keyBytes, true});
+        if (keyRanges && dccAddress != 0 && keyBytes != 0) surfaces.push_back({dccAddress, keyBytes, true, false});
+    };
+    static const bool writerRanges = std::getenv("APS5_NO_WRITER_PRESYNC") == nullptr;
+    const auto considerWriter = [&](std::uint64_t address, std::uint64_t bytes) {
+        if (writerRanges && bytes != 0) surfaces.push_back({address, bytes, false, true});
     };
     if (completed) {
         // A cached object (the resource cache): Revalidate repeats the lookups of the objects the
@@ -5367,6 +5371,7 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
                 if (texture->ViewsStorageImage()) consider(range.format, range.address, range.bytes, false);
                 else consider(range.format, range.address, range.bytes, true);
                 considerKeys(range.dccAddress, range.bytes);
+                if (const auto* source = texture->StorageSource()) considerWriter(source->Descriptor().baseAddress, source->GuestBytes());
             }
         }
         for (std::size_t index = 0; index < storageTextures.size(); ++index) {
@@ -5374,7 +5379,9 @@ std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
             const auto& image = *storageTextures[index];
             consider(image.Descriptor().format, image.Descriptor().baseAddress, image.GuestBytes(), false);
             considerKeys(image.Descriptor().dccAddress, image.GuestBytes());
+            considerWriter(image.Descriptor().baseAddress, image.GuestBytes());
         }
+        for (const auto& region : directRegions) considerWriter(region.begin, region.end - region.begin);
         return surfaces;
     }
     if (!imageRecords.empty()) {
