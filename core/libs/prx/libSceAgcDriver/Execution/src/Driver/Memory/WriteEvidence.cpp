@@ -228,10 +228,10 @@ ShaderMemory::PendingWrite Driver::queryPendingWrite(std::uint64_t address, std:
         if (pipeline.Busy()) queued = pipeline.StoredBytes(address, bytes, known.size() == bytes ? known : std::span<std::byte>{});
         if (queued == DrawPipeline::QueuedWrite::Stored && known.size() == bytes) {
             if (!knownValueVerify()) return Policy::KnownValue;
-            pipeline.Drain(DrawPipeline::DrainReason::Capture);
+            pipeline.Drain(DrawPipeline::DrainReason::Capture, GuestMemory::CurrentPacket().opcode);
             return Policy::VerifyKnownValue;
         }
-        if (queued == DrawPipeline::QueuedWrite::Unknown) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+        if (queued == DrawPipeline::QueuedWrite::Unknown) pipeline.Drain(DrawPipeline::DrainReason::Capture, GuestMemory::CurrentPacket().opcode);
     }
     std::uint64_t ValidateCounters::*reason = nullptr;
     PendingView pending;
