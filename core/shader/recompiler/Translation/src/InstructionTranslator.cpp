@@ -295,9 +295,12 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         const auto unlessRestarted = [&](IrValue& offset) -> IrValue& {
             return strip ? entryIr.Select(entryIr.ULessThan(stripPosition, stripStart), entryIr.IMul(vertex, item), offset) : offset;
         };
-        IrValue& first = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item) : unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, parity), item));
-        IrValue& second = fan ? entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item) : size >= 2u ? unlessRestarted(entryIr.IMul(entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
-        IrValue& third = fan ? u32(0u) : size == 3u ? unlessRestarted(entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item)) : u32(0u);
+        const bool last = mesh.provokingVertex != 0u;
+        IrValue& fanSecond = entryIr.IMul(entryIr.IAdd(vertex, u32(1u)), item);
+        IrValue& fanThird = entryIr.IMul(entryIr.IAdd(vertex, u32(2u)), item);
+        IrValue& first = fan ? (last ? u32(0u) : fanSecond) : unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, parity) : vertex, item));
+        IrValue& second = fan ? (last ? fanSecond : fanThird) : size >= 2u ? unlessRestarted(entryIr.IMul(last ? entryIr.ISub(entryIr.IAdd(vertex, u32(1u)), parity) : entryIr.IAdd(entryIr.IAdd(vertex, u32(1u)), parity), item)) : u32(0u);
+        IrValue& third = fan ? (last ? fanThird : u32(0u)) : size == 3u ? unlessRestarted(entryIr.IMul(last ? entryIr.IAdd(vertex, u32(2u)) : entryIr.ISub(entryIr.IAdd(vertex, u32(2u)), parity), item)) : u32(0u);
         setVector(static_cast<VectorReg>(0), entryIr.BitwiseOr(entryIr.BitwiseAnd(first, u32(0xffffu)), entryIr.ShiftLeftLogical(second, u32(16u))));
         setVector(static_cast<VectorReg>(1), entryIr.BitwiseAnd(third, u32(0xffffu)));
         setVector(static_cast<VectorReg>(2), entryIr.IAdd(firstPrimitive, local));
