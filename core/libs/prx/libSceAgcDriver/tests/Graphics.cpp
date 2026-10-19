@@ -3418,7 +3418,7 @@ void cmaskTests() {
     Require(firstSliceTarget.cmaskFastClear && firstSliceTarget.cmaskAddress == cmaskChainBase, "slice 0 of a plain fast-clear target moved its CMASK");
     sliced.context[0x31b] = (2u << 13u) | 2u;
     const auto thirdSliceTarget = DecodeColorBuffer(sliced.context, 0);
-    Require(thirdSliceTarget.cmaskFastClear && thirdSliceTarget.cmaskAddress == cmaskChainBase + 2u * CmaskLayout::Alignment && thirdSliceTarget.cmaskBytes == 4096 && thirdSliceTarget.address > firstSliceTarget.address, "slice 2 of a plain fast-clear target did not decode at its own CMASK block");
+    Require(thirdSliceTarget.cmaskFastClear && thirdSliceTarget.cmaskAddress == cmaskChainBase + 2u * CmaskLayout::Alignment && thirdSliceTarget.cmaskBytes == 4096 && thirdSliceTarget.address > firstSliceTarget.address && thirdSliceTarget.cmaskSlice == 2u && firstSliceTarget.cmaskSlice == 0u, "slice 2 of a plain fast-clear target did not decode at its own CMASK block and swizzle");
     auto largeSliced = sliced;
     largeSliced.context[0x3b0] = (1023u << 14u) | 1023u;
     largeSliced.context[0x318] = static_cast<std::uint32_t>(largeMipBase >> 8u);
@@ -3427,7 +3427,7 @@ void cmaskTests() {
     largeSliced.context[0x398] = static_cast<std::uint32_t>(largeCmaskChainBase >> 40u);
     largeSliced.context[0x31b] = (1u << 13u) | 1u;
     const auto largeSliceTarget = DecodeColorBuffer(largeSliced.context, 0);
-    Require(largeSliceTarget.cmaskFastClear && largeSliceTarget.cmaskAddress == largeCmaskChainBase + 2u * CmaskLayout::Alignment && largeSliceTarget.cmaskBytes == 2u * CmaskLayout::Alignment, "a slice of a multiblock fast-clear target did not step by the CMASK of a whole slice");
+    Require(largeSliceTarget.cmaskFastClear && largeSliceTarget.cmaskAddress == largeCmaskChainBase + 2u * CmaskLayout::Alignment && largeSliceTarget.cmaskBytes == 2u * CmaskLayout::Alignment && largeSliceTarget.cmaskSlice == 1u, "a slice of a multiblock fast-clear target did not step by the CMASK of a whole slice");
     auto slicedMipmapped = mipmapped;
     slicedMipmapped.context[0x31b] = (1u << 13u) | 1u;
     expectFailure([&] { DecodeColorBuffer(slicedMipmapped.context, 0); }, "slice of a mipmapped");

@@ -14,6 +14,7 @@ layout(push_constant) uniform Push {
     uint clear0;
     uint clear1;
     uint write;
+    uint slice;
 } push;
 
 const uint xMasks[13] = uint[](0x008u, 0x000u, 0x040u, 0x000u, 0x080u, 0x000u, 0x100u, 0x000u, 0x200u, 0x008u, 0x010u, 0x040u, 0x020u);
@@ -26,6 +27,7 @@ void main() {
     uint y = pixel.y & ~7u;
     uint offset = 0u;
     for (uint bit = 0u; bit < 13u; ++bit) offset |= (uint(bitCount((x & xMasks[bit]) ^ (y & yMasks[bit]))) & 1u) << bit;
+    offset ^= ((push.slice & 1u) << 12u) | ((push.slice & 2u) << 10u) | ((push.slice & 4u) << 8u) | ((push.slice & 8u) << 6u);
     uint nibble = ((y / 512u) * push.blocksPerRow + x / 1024u) * 8192u + offset;
     uint byteAddress = push.base + nibble / 2u;
     uint code = (cmask.words[byteAddress / 4u] >> ((byteAddress % 4u) * 8u + (nibble % 2u) * 4u)) & 0xfu;

@@ -2282,6 +2282,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             const std::uint64_t cmaskSliceOffset = color.samples == 1 ? static_cast<std::uint64_t>(slice) * totalCmaskBytes : 0u;
             color.cmaskAddress = cmask + cmaskSliceOffset + cmaskMip0Offset;
             color.cmaskBytes = CmaskBytes(color.extent.width, color.extent.height);
+            color.cmaskSlice = color.samples == 1 ? slice : 0u;
             if (color.samples == 1) GuestMemory::CheckRange(reinterpret_cast<const void*>(cmask + cmaskSliceOffset), totalCmaskBytes, CmaskLayout::Alignment, true);
         }
         color.cmaskFastClear = (info & 0x2000u) != 0;

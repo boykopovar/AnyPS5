@@ -104,14 +104,31 @@ void RunColorTargetLayoutTests() {
         {1920, 1080, 1, 1, 0x1u}, {3840, 2160, 479, 269, 0x2651du}, {3840, 2160, 200, 77, 0xb30cu}, {2432, 1368, 303, 170, 0x10acfu}, {1025, 513, 128, 64, 0x6000u},
     }};
     for (const auto& reference : cmaskReferences) Require(CmaskLayout(reference.width, reference.height).Nibble(reference.tileX, reference.tileY) == reference.nibble, "CMASK nibble address differs from addrlib's");
+    struct CmaskSliceReference {
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t tileX;
+        std::uint32_t tileY;
+        std::uint32_t slice;
+        std::size_t nibble;
+    };
+    constexpr std::array<CmaskSliceReference, 14> cmaskSliceReferences{{
+        {20, 12, 2, 1, 1, 0x1600u}, {20, 12, 2, 1, 2, 0xe00u}, {20, 12, 2, 1, 3, 0x1e00u}, {20, 12, 2, 1, 8, 0x400u}, {20, 12, 2, 1, 15, 0x1800u},
+        {61, 13, 7, 1, 1, 0x401u}, {61, 13, 7, 1, 5, 0x1u}, {1920, 1080, 239, 134, 2, 0xbb47u}, {1920, 1080, 128, 64, 1, 0x7000u}, {1920, 1080, 1, 1, 5, 0x1401u},
+        {3840, 2160, 479, 269, 3, 0x27d1du}, {3840, 2160, 200, 77, 8, 0xb10cu}, {2432, 1368, 303, 170, 5, 0x11ecfu}, {1025, 513, 128, 64, 15, 0x7e00u},
+    }};
+    for (const auto& reference : cmaskSliceReferences) Require(CmaskLayout(reference.width, reference.height).Nibble(reference.tileX, reference.tileY, reference.slice) == reference.nibble, "CMASK nibble of a slice differs from addrlib's, which passes the slice into the swizzle pattern");
+    Require(CmaskLayout(61, 13).Nibble(7, 1, 16) == CmaskLayout(61, 13).Nibble(7, 1, 0), "a slice past the pattern's Z bits changed a CMASK nibble");
     for (const auto [width, height] : {std::pair{61u, 13u}, std::pair{1920u, 1080u}}) {
         const CmaskLayout cmask(width, height);
-        std::vector<bool> seen(cmask.Bytes() * 2u);
-        for (std::uint32_t tileY = 0; tileY < cmask.TilesY(); ++tileY) {
-            for (std::uint32_t tileX = 0; tileX < cmask.TilesX(); ++tileX) {
-                const auto nibble = cmask.Nibble(tileX, tileY);
-                Require(nibble < seen.size() && !seen[nibble], "CMASK tiles alias or leave the CMASK");
-                seen[nibble] = true;
+        for (const std::uint32_t slice : {0u, 1u, 2u, 5u, 15u}) {
+            std::vector<bool> seen(cmask.Bytes() * 2u);
+            for (std::uint32_t tileY = 0; tileY < cmask.TilesY(); ++tileY) {
+                for (std::uint32_t tileX = 0; tileX < cmask.TilesX(); ++tileX) {
+                    const auto nibble = cmask.Nibble(tileX, tileY, slice);
+                    Require(nibble < seen.size() && !seen[nibble], "CMASK tiles alias or leave the CMASK");
+                    seen[nibble] = true;
+                }
             }
         }
     }
