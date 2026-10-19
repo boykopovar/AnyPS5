@@ -26,20 +26,15 @@ std::vector<Registration> g_registrations;
 
 }
 
-bool AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
+void AgcDriverDeliverEopInterrupt(std::uint32_t queue) {
     std::vector<Registration> registrations;
     {
         std::lock_guard lock(g_mutex);
         registrations = g_registrations;
     }
-    bool delivered = false;
     for (const auto& registration : registrations) {
-        if (registration.id == static_cast<int>(queue)) {
-            EqueueTriggerEvent_nid_postfix(registration.eq, static_cast<uintptr_t>(registration.id), EvfiltGraphicsCore, nullptr);
-            delivered = true;
-        }
+        if (registration.id == static_cast<int>(queue)) EqueueTriggerEvent_nid_postfix(registration.eq, static_cast<uintptr_t>(registration.id), EvfiltGraphicsCore, nullptr);
     }
-    return delivered;
 }
 
 extern "C" {
