@@ -121,7 +121,7 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    if (holdsFlip) releaseFlipHold(submitFlipWork(0));
+    if (holdsFlip) finishFlipWork(submitFlipWork(0));
     else submitOpenWork(progress);
 }
 
