@@ -25,7 +25,6 @@ namespace AgcDriver::DriverDetail {
 
 namespace {
 
-constexpr std::uint32_t eopSelfSignalFlipLimit = 4;
 
 bool orderedFills() {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
@@ -104,20 +103,6 @@ bool& drawnSinceSeal() {
 }
 
 void Driver::deliverGuestEopInterrupt(std::uint32_t queue) {
-    if (!AgcDriverDeliverEopInterrupt(queue)) return;
-    std::lock_guard<std::mutex> lock(eopSelfSignalMutex);
-    eopSelfSignalFlips[queue] = 0;
-}
-
-void Driver::deliverFlipEopInterrupt(std::uint32_t queue) {
-    {
-        std::lock_guard<std::mutex> lock(eopSelfSignalMutex);
-        const auto latched = eopSelfSignalFlips.find(queue);
-        if (latched != eopSelfSignalFlips.end()) {
-            if (++latched->second <= eopSelfSignalFlipLimit) return;
-            eopSelfSignalFlips.erase(latched);
-        }
-    }
     AgcDriverDeliverEopInterrupt(queue);
 }
 
@@ -144,14 +129,18 @@ void Driver::execute(const Submission& submission) {
     auto* submissionTiming = includeTimingSubmission(submission, true);
     struct FlipHold {
         Driver& driver;
+        std::uint32_t queue;
         bool held;
-        void Release() {
+        void Finish() {
             if (!held) return;
+            const auto workSerial = driver.submitFlipWork(queue);
             held = false;
-            driver.releaseFlipHold();
+            driver.releaseFlipHold(workSerial);
         }
-        ~FlipHold() { Release(); }
-    } flipHold{*this, submission.holdsFlip};
+        ~FlipHold() {
+            if (held) driver.releaseFlipHold(0);
+        }
+    } flipHold{*this, submission.queue, submission.holdsFlip};
     const bool pipelined = submission.queue == 0 && DrawPipeline::Depth() != 0;
     static const bool orderedWaits = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
     DrawPipeline::Active() = pipelined;
@@ -391,7 +380,6 @@ void Driver::execute(const Submission& submission) {
             if (deviceUse.owns_lock()) deviceUse.unlock();
             CheckFailure();
             std::uint64_t batchesAtFlip = 0, unsignaledAtFlip = 0;
-            bool flipInterruptDeferred = false;
             if (!drains) {
 
                 GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
@@ -400,13 +388,8 @@ void Driver::execute(const Submission& submission) {
                 if (localDevice != nullptr) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("flip"));
 
                 if (!recordLabelsForPacket(localDevice.get(), submission.queue) && localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
-                if (localDevice != nullptr) {
-                    localDevice->FlipBatches(batchesAtFlip, unsignaledAtFlip);
-                    const auto queueId = submission.queue;
-                    flipInterruptDeferred = localDevice->AfterRecordedWork([this, queueId] { deliverFlipEopInterrupt(queueId); }, false);
-                }
+                if (localDevice != nullptr) localDevice->FlipBatches(batchesAtFlip, unsignaledAtFlip);
             }
-            if (!flipInterruptDeferred) deliverFlipEopInterrupt(submission.queue);
             ++flipsCounted;
             Graphics::NoteHostImportFrame();
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
@@ -433,7 +416,6 @@ void Driver::execute(const Submission& submission) {
             if (queueTiming) frame->CollectBackground();
             frame->NoteFlipBatches(batchesAtFlip, unsignaledAtFlip);
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial.load()), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
-            flipHold.Release();
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
             packetCounters.CountDispatch();
@@ -574,12 +556,15 @@ void Driver::execute(const Submission& submission) {
     static const bool submitAtEnd = std::getenv("APS5_SUBMIT_AT_END") != nullptr;
     if (pipelined && orderedCompletion && deferredLabels().labels.empty()) {
         if (submission.rewindTail == nullptr) {
+            flipHold.held = false;
             deferCompletion(submission);
             return;
         }
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(submission.rewindTail - 1)).load(std::memory_order_acquire) & 0x80000000u) != 0) {
-            DrawPipeline::Queue0().Enqueue([this, progress = submission.progress] {
-                submitOpenWork(progress);
+            const bool holdsFlip = std::exchange(flipHold.held, false);
+            DrawPipeline::Queue0().Enqueue([this, holdsFlip, progress = submission.progress] {
+                if (holdsFlip) releaseFlipHold(submitFlipWork(0));
+                else submitOpenWork(progress);
                 wakeQueueZeroForCompletions();
             }, {});
             endTiming.Finish();
@@ -592,6 +577,7 @@ void Driver::execute(const Submission& submission) {
         auto& costs = submissionCosts(submission.queue);
         if (!submitAtEnd && submission.rewindTail == nullptr && submission.queue == 0 && workerQueued() != nullptr && workerQueued()->load(std::memory_order_acquire) != 0) {
             ++costs.endSkipped;
+            flipHold.Finish();
             return;
         }
         ++costs.endSubmits;
@@ -602,6 +588,7 @@ void Driver::execute(const Submission& submission) {
         recordDeferredLabels(localDevice.get(), submission.queue);
         if (localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
     }
+    flipHold.Finish();
     endTiming.Finish();
     if (submission.rewindTail != nullptr) {
         if (submission.progress) submitOpenWork(submission.progress);

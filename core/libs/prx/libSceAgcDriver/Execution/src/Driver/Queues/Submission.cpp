@@ -278,10 +278,28 @@ void Driver::holdFlipBehindWorker(const Submission& submission) {
     flipHolders.fetch_add(1, std::memory_order_acq_rel);
     changed.wait(lock, [&] { return failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) == 0 || queue0AwaitsTitle.load(std::memory_order_acquire); });
     flipHolders.fetch_sub(1, std::memory_order_acq_rel);
+    if (failure != nullptr || stopping.load(std::memory_order_acquire) || shutdownToken.stop_requested() || flipsAhead.load(std::memory_order_acquire) != 0) return;
+    const auto workSerial = flipWorkSerial.load(std::memory_order_acquire);
+    lock.unlock();
+    waitFlipWork(workSerial);
 }
 
-void Driver::releaseFlipHold() {
+void Driver::waitFlipWork(std::uint64_t workSerial) {
+    if (workSerial == 0) return;
+    const auto localDevice = device.Load();
+    if (localDevice == nullptr) return;
+    if (localDevice->CanWaitUnlocked()) {
+        localDevice->WaitRecorded(workSerial);
+        return;
+    }
+    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    localDevice->WaitIdle();
+}
+
+void Driver::releaseFlipHold(std::uint64_t workSerial) {
     std::lock_guard lock(mutex);
+    if (workSerial > flipWorkSerial.load(std::memory_order_relaxed)) flipWorkSerial.store(workSerial, std::memory_order_release);
     flipsAhead.fetch_sub(1, std::memory_order_acq_rel);
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
@@ -442,7 +460,6 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
             Graphics::NoteHostImportFrame();
-            AgcDriverDeliverEopInterrupt(0);
             return;
         }
         submission.shaders = shaders;
