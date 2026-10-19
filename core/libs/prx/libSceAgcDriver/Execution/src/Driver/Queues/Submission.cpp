@@ -290,15 +290,27 @@ void Driver::holdFlipBehindWorker(const Submission& submission, bool cpuFlip) {
 
 void Driver::waitFlipWork(std::uint64_t workSerial) {
     if (workSerial == 0) return;
-    const auto localDevice = device.Load();
+    auto localDevice = device.Load();
     if (localDevice == nullptr) return;
     if (localDevice->CanWaitUnlocked()) {
-        localDevice->WaitRecorded(workSerial);
+        try {
+            localDevice->WaitRecorded(workSerial);
+        } catch (...) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            localDevice.reset();
+            throw;
+        }
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        localDevice->ReapRecorded(workSerial);
+        localDevice.reset();
         return;
     }
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Wait);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     localDevice->WaitIdle();
+    localDevice.reset();
 }
 
 void Driver::releaseFlipHold() {
