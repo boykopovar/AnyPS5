@@ -126,10 +126,11 @@ private:
     static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget);
     static void readRegisterLists(Submission& submission);
     void waitForFlipRoom(const Submission& submission);
-    void holdFlipBehindWorker(const Submission& submission);
+    void holdFlipBehindWorker(const Submission& submission, bool cpuFlip);
     bool awaitsTitle(std::uint64_t awaited) const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
-    void releaseFlipHold(std::uint64_t workSerial);
+    void releaseFlipHold();
+    void finishFlipWork(std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
     void reserveOutputs(Submission& submission);
@@ -472,6 +473,7 @@ private:
     std::atomic<std::uint64_t> queue0Awaited{0};
     std::atomic<std::uint32_t> flipsAhead{0};
     std::atomic<std::uint32_t> flipHolders{0};
+    std::atomic<std::uint32_t> flipWorkOpen{0};
     std::atomic<std::uint64_t> flipWorkSerial{0};
     std::atomic<bool> queue0AwaitsTitle{false};
 
