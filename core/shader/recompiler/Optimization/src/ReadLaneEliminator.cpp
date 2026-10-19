@@ -409,6 +409,59 @@ IrValue* uniqueLaneValue(IrValue* read, std::unordered_set<IrValue*> candidates)
     return candidates.size() == 1u ? *candidates.begin() : nullptr;
 }
 
+bool dominates(IrProgram& program, const IrBlock* dominator, const IrBlock* block) {
+    if (dominator == nullptr || dominator == block) return true;
+    if (program.BlockOrder().empty()) return true;
+    IrBlock* entry = program.BlockOrder().front();
+    if (entry == dominator) return true;
+    std::vector<IrBlock*> pending{entry};
+    std::unordered_set<const IrBlock*> visited{entry, dominator};
+    while (!pending.empty()) {
+        IrBlock* current = pending.back();
+        pending.pop_back();
+        if (current == block) return false;
+        for (IrBlock* successor : current->Successors()) {
+            if (visited.insert(successor).second) pending.push_back(successor);
+        }
+    }
+    return true;
+}
+
+class LaneValueAtBlocks {
+public:
+    LaneValueAtBlocks(IrProgram& program, IrValue* value) : program(program), value(value) {}
+
+    IrValue* At(IrBlock* block) {
+        if (dominates(program, value->Parent(), block)) return value;
+        if (const auto found = values.find(block); found != values.end()) return found->second;
+        if (block->Predecessors().empty()) return values[block] = Undefined();
+        IrValue& phi = program.CreateValue(IrOpcode::Phi, IrType::U32);
+        if (block->Instructions().empty()) block->AppendInstruction(&phi);
+        else block->InsertInstructionBefore(block->Instructions().front(), &phi);
+        values[block] = &phi;
+        const std::vector<IrBlock*> predecessors = block->Predecessors();
+        for (IrBlock* predecessor : predecessors) phi.AddPhiOperand(predecessor, At(predecessor));
+        return &phi;
+    }
+
+private:
+    IrValue* Undefined() {
+        if (undefined != nullptr) return undefined;
+        IrBlock* entry = program.BlockOrder().front();
+        undefined = &program.CreateValue(IrOpcode::UndefU32, IrType::U32);
+        auto& instructions = entry->Instructions();
+        const auto position = std::ranges::find_if(instructions, [](const IrValue* instruction) { return !instruction->IsPhi(); });
+        if (position == instructions.end()) entry->AppendInstruction(undefined);
+        else entry->InsertInstructionBefore(*position, undefined);
+        return undefined;
+    }
+
+    IrProgram& program;
+    IrValue* value;
+    IrValue* undefined = nullptr;
+    std::unordered_map<const IrBlock*, IrValue*> values;
+};
+
 }
 
 ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::uint32_t waveSize) const {
@@ -447,7 +500,7 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
                 collectLaneValues(inst->Argument(0), lane, waveSize, false, values);
                 if (values.failed || values.values.empty()) continue;
                 if (IrValue* unique = uniqueLaneValue(inst, values.values); unique != nullptr && !dependsOn(unique, inst)) {
-                    inst->ReplaceUsesWith(unique, true);
+                    inst->ReplaceUsesWith(LaneValueAtBlocks(program, unique).At(inst->Parent()), true);
                     stats.rewrittenReads++;
                 }
                 continue;
