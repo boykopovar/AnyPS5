@@ -146,16 +146,23 @@ void Driver::execute(const Submission& submission) {
         Driver& driver;
         std::uint32_t queue;
         bool held;
-        void Finish() {
+        bool working;
+        void Release() {
             if (!held) return;
-            const auto workSerial = driver.submitFlipWork(queue);
             held = false;
-            driver.releaseFlipHold(workSerial);
+            driver.releaseFlipHold();
+        }
+        void Finish() {
+            if (!working) return;
+            const auto workSerial = driver.submitFlipWork(queue);
+            working = false;
+            driver.finishFlipWork(workSerial);
         }
         ~FlipHold() {
-            if (held) driver.releaseFlipHold(0);
+            Release();
+            if (working) driver.finishFlipWork(0);
         }
-    } flipHold{*this, submission.queue, submission.holdsFlip};
+    } flipHold{*this, submission.queue, submission.holdsFlip, submission.holdsFlip};
     const bool pipelined = submission.queue == 0 && DrawPipeline::Depth() != 0;
     static const bool orderedWaits = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
     DrawPipeline::Active() = pipelined;
@@ -418,6 +425,7 @@ void Driver::execute(const Submission& submission) {
             if (queueTiming) frame->CollectBackground();
             frame->NoteFlipBatches(batchesAtFlip, unsignaledAtFlip);
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial.load()), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
+            flipHold.Release();
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
             packetCounters.CountDispatch();
@@ -558,14 +566,14 @@ void Driver::execute(const Submission& submission) {
     static const bool submitAtEnd = std::getenv("APS5_SUBMIT_AT_END") != nullptr;
     if (pipelined && orderedCompletion && deferredLabels().labels.empty()) {
         if (submission.rewindTail == nullptr) {
-            flipHold.held = false;
+            flipHold.working = false;
             deferCompletion(submission);
             return;
         }
         if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(submission.rewindTail - 1)).load(std::memory_order_acquire) & 0x80000000u) != 0) {
-            const bool holdsFlip = std::exchange(flipHold.held, false);
+            const bool holdsFlip = std::exchange(flipHold.working, false);
             DrawPipeline::Queue0().Enqueue([this, holdsFlip, progress = submission.progress] {
-                if (holdsFlip) releaseFlipHold(submitFlipWork(0));
+                if (holdsFlip) finishFlipWork(submitFlipWork(0));
                 else submitOpenWork(progress);
                 wakeQueueZeroForCompletions();
             }, {});
