@@ -240,6 +240,12 @@ void testEndOfPipeInterrupts() {
         check(output->ready.load() == 2 + index, "flip after a release was not handed to its output");
         check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip after a release raised the graphics end-of-pipe event");
     }
+    words[2] = 2u << 24u;
+    words[7] = AgcDriverReserveEopFlip_nid_postfix(AgcDriver::FlipInfo{7, 0, 1, 0});
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "end-of-pipe flip release submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == 10, "end-of-pipe flip was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a release that carries a flip raised the graphics end-of-pipe event");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
@@ -892,7 +898,11 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--eop-interrupts") {
             testEndOfPipeInterrupts();
-            LibcRunShutdown_nid_postfix();
+            std::array<std::uint32_t, 8> typed{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0x08000038u};
+            Packet typedPacket{typed.data(), static_cast<std::uint32_t>(typed.size()), 0, {}};
+            check(sceAgcDriverSubmitDcb(&typedPacket) == 0, "typed interrupt context submit failed");
+            check(expectFailure([] { AgcDriverWaitIdle_nid_postfix(); }).find("typed interrupt context") != std::string::npos, "a release with a typed interrupt context did not fail");
+            check(expectFailure([] { LibcRunShutdown_nid_postfix(); }).find("typed interrupt context") != std::string::npos, "shutdown lost the typed interrupt context failure");
             std::puts("AGC end-of-pipe interrupt queue mode tests passed");
             return 0;
         }
