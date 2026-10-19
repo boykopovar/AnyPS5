@@ -172,8 +172,11 @@ void testFlipAndBoundary() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     auto replacement = std::make_shared<Output>();
     AgcDriverRegisterVideoOutput_nid_postfix(7, replacement);
-    submitFlip();
+    auto next = std::async(std::launch::async, [] { submitFlip(); });
+    check(next.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout, "a flip was accepted before the previous flip submission completed");
     release.Release();
+    check(next.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a flip stayed held after the previous flip submission completed");
+    next.get();
     AgcDriverWaitIdle_nid_postfix();
     check(output->state->ready == 1 && replacement->state->ready == 1, "registration lifetime or FIFO was lost");
     check(output->state->failed == 0, "successful request failed");
