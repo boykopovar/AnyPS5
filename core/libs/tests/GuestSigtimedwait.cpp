@@ -24,7 +24,7 @@ struct GuestSiginfo {
     std::int32_t tail;
 };
 using Handler = void (APS5_VABI *)(int);
-
+extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 volatile int received = 0;
 void APS5_VABI Callback(int value) { received = value; }
 static void Require(bool value) { if (!value) std::abort(); }
@@ -136,15 +136,26 @@ int main() {
     Require(sigwait_nid_postfix(&interrupt, &taken) == 0 && taken == 2 && received == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigtimedwait_nid_postfix(&interrupt, &info, &poll) == 2 && received == 0);
-    Require(info.signo == 2 && info.error == 0 && info.code == 0 && info.pid == getpid_nid_postfix() && info.uid == 0);
+    Require(info.signo == 2 && info.error == 0 && info.code == 0x10007 && info.pid == getpid_nid_postfix() && info.uid == 0);
     Require(info.status == 0 && info.address == 0 && info.value == 0 && info.band == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigwaitinfo_nid_postfix(&interrupt, &info) == 2 && received == 0);
-    Require(info.signo == 2 && info.code == 0 && info.pid == getpid_nid_postfix());
+    Require(info.signo == 2 && info.code == 0x10007 && info.pid == getpid_nid_postfix());
+    Require(kill_nid_postfix(getpid_nid_postfix(), 2) == 0 && received == 0);
+    Require(sigwaitinfo_nid_postfix(&interrupt, &info) == 2 && received == 0);
+    Require(info.signo == 2 && info.code == 0x10001 && info.pid == getpid_nid_postfix() && info.uid == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigwaitinfo_nid_postfix(&interrupt, nullptr) == 2 && received == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigtimedwait_nid_postfix(&interrupt, nullptr, nullptr) == 2 && received == 0);
+    const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
+    const KernelTimespec alarmWait{3, 0};
+    GuestSignalSet beforeAlarm{};
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, &beforeAlarm) == 0);
+    Require(GuestAlarm_nid_no_patch(1) == 0);
+    Require(sigtimedwait_nid_postfix(&alarmSet, &info, &alarmWait) == 14);
+    Require(info.signo == 14 && info.code == 0x10006 && info.pid == 0 && info.uid == 0);
+    Require(_sigprocmask_nid_postfix(3, &beforeAlarm, nullptr) == 0);
     GuestSignalSet current{};
     Require(_sigprocmask_nid_postfix(1, nullptr, &current) == 0 && current.bits[0] == (previous.bits[0] | interrupt.bits[0]));
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
@@ -165,7 +176,7 @@ int main() {
     Pthread senderThread = StartSender(sender);
     Require(sigwaitinfo_nid_postfix(&pipe, &info) == 13);
     JoinSender(senderThread, sender);
-    Require(info.signo == 13 && info.code == 0 && info.pid == getpid_nid_postfix());
+    Require(info.signo == 13 && info.code == 0x10007 && info.pid == getpid_nid_postfix());
     senderThread = StartSender(sender);
     Require(sigtimedwait_nid_postfix(&pipe, nullptr, nullptr) == 13);
     JoinSender(senderThread, sender);
