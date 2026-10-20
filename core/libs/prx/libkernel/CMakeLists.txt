@@ -1538,9 +1538,10 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_socket_pair_tests)
     add_test(NAME guest_socket_pair COMMAND guest_socket_pair_tests)
     add_test(NAME guest_recvmsg_memory COMMAND guest_socket_pair_tests recvmsg-memory)
-    set_tests_properties(guest_socket_pair guest_recvmsg_memory PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_sendmsg_memory COMMAND guest_socket_pair_tests sendmsg-memory)
+    set_tests_properties(guest_socket_pair guest_recvmsg_memory guest_sendmsg_memory PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_socket_pair guest_recvmsg_memory PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_socket_pair guest_recvmsg_memory guest_sendmsg_memory PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_kernel_app_archive_tests ${LIBS_INCLUDE_DIR}/tests/GuestKernelAppArchive.cpp)
