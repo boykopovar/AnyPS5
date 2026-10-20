@@ -5916,6 +5916,8 @@ std::atomic<std::uint64_t> importUs{0};
 std::atomic<std::uint64_t> allocateUs{0};
 std::atomic<std::uint64_t> readUs{0};
 std::atomic<std::uint64_t> uploadsProfiled{0};
+std::atomic<std::uint64_t> memoHitsReported{0};
+std::atomic<std::uint64_t> memoStoresReported{0};
 
 std::uint64_t microsecondsSince(std::chrono::steady_clock::time_point start) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count());
@@ -6686,7 +6688,11 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     const auto uploads = uploadsProfiled.fetch_add(1, std::memory_order_relaxed) + 1;
     if (uploads % 2000 == 0) {
         const auto& copies = Copies();
-        AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu uploads: import lookup %.0f ms, buffer allocation %.0f ms, guest read %.0f ms; copies on the GPU: %llu regions (%.0f KiB) copied out of imports, %llu written sub-ranges (%.0f KiB) copied back, %llu staging stores by the CPU at write-back\n", static_cast<unsigned long long>(uploads), importUs.load(std::memory_order_relaxed) / 1000.0, allocateUs.load(std::memory_order_relaxed) / 1000.0, readUs.load(std::memory_order_relaxed) / 1000.0, static_cast<unsigned long long>(copies.gpuCopies.load(std::memory_order_relaxed)), copies.gpuCopyBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.gpuCopyBacks.load(std::memory_order_relaxed)), copies.gpuCopyBackBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.stagingStores.load(std::memory_order_relaxed)));
+        const auto memo = ImportMissMemoCounters();
+        const auto hitsReported = memoHitsReported.exchange(memo.hits, std::memory_order_relaxed);
+        const auto storesReported = memoStoresReported.exchange(memo.stores, std::memory_order_relaxed);
+        const auto memoText = memo.hits != hitsReported || memo.stores != storesReported ? "; import miss memo: " + std::to_string(memo.hits) + " hits, " + std::to_string(memo.stores) + " stores" : std::string();
+        AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu uploads: import lookup %.0f ms, buffer allocation %.0f ms, guest read %.0f ms; copies on the GPU: %llu regions (%.0f KiB) copied out of imports, %llu written sub-ranges (%.0f KiB) copied back, %llu staging stores by the CPU at write-back%s\n", static_cast<unsigned long long>(uploads), importUs.load(std::memory_order_relaxed) / 1000.0, allocateUs.load(std::memory_order_relaxed) / 1000.0, readUs.load(std::memory_order_relaxed) / 1000.0, static_cast<unsigned long long>(copies.gpuCopies.load(std::memory_order_relaxed)), copies.gpuCopyBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.gpuCopyBacks.load(std::memory_order_relaxed)), copies.gpuCopyBackBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.stagingStores.load(std::memory_order_relaxed)), memoText.c_str());
     }
     const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     if (ms > 50) {
