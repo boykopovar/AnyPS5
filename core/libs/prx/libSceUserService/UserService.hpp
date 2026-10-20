@@ -24,5 +24,11 @@ constexpr int USER_SERVICE_ERROR_BUFFER_TOO_SHORT = -2137653238;
 constexpr int USER_SERVICE_ERROR_UNKNOWN_USER = static_cast<int>(0x80960105u);
 constexpr std::size_t USER_SERVICE_MAX_USER_NAME_LENGTH = 16;
 constexpr const char* USER_SERVICE_INITIAL_USER_NAME = "Player";
+constexpr int USER_SERVICE_MAX_USERS = 4;
+constexpr const char* USER_SERVICE_USER_NAMES[USER_SERVICE_MAX_USERS] = {
+    "Player", "Player2", "Player3", "Player4"
+};
+
+extern "C" void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected);
 
 #endif

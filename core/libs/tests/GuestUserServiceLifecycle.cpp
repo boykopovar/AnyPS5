@@ -82,6 +82,22 @@ int main() {
 
     Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     RequireLoginOnce();
+
+    UserServiceSetUserConnected_nid_postfix(1, true);
+    SceUserServiceEvent event{};
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 1);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
+    Require(list.user_id[1] == USER_SERVICE_INITIAL_USER_ID + 1);
+
+    UserServiceSetUserConnected_nid_postfix(1, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 1);
+    Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
+    Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
+    Require(list.user_id[1] == USER_SERVICE_USER_ID_INVALID);
+
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();
