@@ -600,7 +600,14 @@ int main() {
     Require(scePadGetHandle(user, PAD_PORT_TYPE_SPECIAL, 0) == earlySpecial);
     Require(scePadClose_nid_postfix(earlySpecial) == PAD_OK);
     Require(scePadGetHandle(user, PAD_PORT_TYPE_SPECIAL, 0) == noHandle);
+    PadSetPortConnected_nid_postfix(1, true);
     Require(scePadInit_nid_postfix() == 0);
+    PadInfo initInfo{};
+    Require(scePadGetInfo_nid_postfix(&initInfo) == PAD_OK);
+    Require(initInfo.connectedCount[0] == 2);
+    Require(initInfo.padTypeInfo[0].connectPort == 0);
+    Require(initInfo.padTypeInfo[1].connectPort == 1);
+    PadSetPortConnected_nid_postfix(1, false);
     Require(scePadUnknown_n3kSX62fgNo() == PAD_OK);
     const int handle = scePadOpen_nid_postfix(user, 0, 0, nullptr);
     Require(handle > 0);

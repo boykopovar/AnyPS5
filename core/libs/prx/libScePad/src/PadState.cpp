@@ -47,7 +47,11 @@ namespace {
     };
 
     std::mutex stateMutex;
-    std::array<PadSlot, PAD_MAX_CONTROLLERS> slots;
+    std::array<PadSlot, PAD_MAX_CONTROLLERS> slots = [] {
+        std::array<PadSlot, PAD_MAX_CONTROLLERS> initialSlots{};
+        initialSlots[0].connected = true;
+        return initialSlots;
+    }();
     std::exception_ptr failure;
     bool initialized = false;
     constexpr float kAngularVelocityDeadband = 0.017453292f;
@@ -136,7 +140,6 @@ void Pad::Initialize() {
             slots[i].lastFuseTime = now;
             slots[i].queue.clear();
             slots[i].pressedSinceRead = 0;
-            slots[i].connected = (i == 0);
         }
     }
     initialized = true;
