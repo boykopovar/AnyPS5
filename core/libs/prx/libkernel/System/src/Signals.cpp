@@ -57,7 +57,10 @@ constexpr int GuestSigunblock = 2;
 constexpr int GuestSigsetmask = 3;
 constexpr int GuestEintr = 4;
 constexpr int GuestEagain = 35;
-constexpr int GuestSiuser = 0;
+constexpr std::int32_t GuestSiUser = 0x10001;
+constexpr std::int32_t GuestSiKernel = 0x10006;
+constexpr std::int32_t GuestSiLwp = 0x10007;
+thread_local std::int32_t sendCode = GuestSiLwp;
 struct GuestSiginfo {
     std::int32_t signo;
     std::int32_t error;
@@ -98,6 +101,7 @@ struct PendingSignals {
     std::mutex lock;
     std::condition_variable changed;
     std::atomic<std::uint32_t> words[4]{};
+    std::atomic<std::int32_t> codes[MaxSignal + 1]{};
 };
 
 PendingSignals& Pending() {
@@ -105,12 +109,13 @@ PendingSignals& Pending() {
     return *state;
 }
 
-void MarkPending(int guest) {
+void MarkPending(int guest, std::int32_t code = sendCode) {
     auto& pending = Pending();
     {
         // under the same lock the waits check the set with: without it a signal raised
         // between the check and the wait is lost and the wait never returns
         std::lock_guard lock(pending.lock);
+        pending.codes[guest].store(code, std::memory_order_relaxed);
         pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
     }
     pending.changed.notify_all();
@@ -260,8 +265,8 @@ int WaitForPendingInSet(const GuestSignalSet& set, bool waitForever, const Guest
 void FillSiginfo(GuestSiginfo* info, int guest) {
     *info = {};
     info->signo = guest;
-    info->code = GuestSiuser;
-    info->pid = getpid_nid_postfix();
+    info->code = Pending().codes[guest].load(std::memory_order_relaxed);
+    info->pid = info->code == GuestSiKernel ? 0 : getpid_nid_postfix();
 }
 
 void WaitForDeliverableSignal() {
@@ -313,7 +318,7 @@ void ExpireAlarm(std::chrono::microseconds interval) {
     }
     if (handler == 1) return;
     if (SignalBlocked(GuestSigalrm)) {
-        MarkPending(GuestSigalrm);
+        MarkPending(GuestSigalrm, GuestSiKernel);
         std::atomic_thread_fence(std::memory_order_seq_cst);
         if (SignalBlocked(GuestSigalrm) || !TakePending(GuestSigalrm)) return;
         handler = Disposition(GuestSigalrm).handler;
@@ -538,7 +543,12 @@ int APS5_VABI kill_nid_postfix(int pid, int guest) {
     if (guest < 0 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const int self = getpid_nid_postfix();
     if (pid != self && pid != 0 && pid != -self) { *__error_nid_postfix() = 3; return -1; }
-    return guest == 0 ? 0 : raise_nid_postfix(guest);
+    if (guest == 0) return 0;
+    struct SentByKill {
+        SentByKill() { sendCode = GuestSiUser; }
+        ~SentByKill() { sendCode = GuestSiLwp; }
+    } sentByKill;
+    return raise_nid_postfix(guest);
 }
 int APS5_VABI killpg_nid_postfix(int pgrp, int guest) {
     if (pgrp < 0) { *__error_nid_postfix() = 22; return -1; }
