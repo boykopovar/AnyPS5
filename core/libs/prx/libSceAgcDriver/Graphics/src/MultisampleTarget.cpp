@@ -478,6 +478,7 @@ public:
         fmaskCopy = {};
         metadataValid = std::make_shared<std::atomic<bool>>(true);
         const auto initial = initialDccClear(use);
+        ensureGeneralLayout();
         cleared = initial;
         drawn = false;
         ++contents;
@@ -1169,7 +1170,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
             target->Recreate(use);
             target->use->hostOnly.store(true, std::memory_order_release);
             guard(context, use, target->active, target->metadataValid, target->use);
-            target->ApplyFastClear(use);
+            target->PrepareForColorAttachment(use);
             return *target;
         }
         {
