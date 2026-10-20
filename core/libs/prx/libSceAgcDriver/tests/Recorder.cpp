@@ -6846,6 +6846,46 @@ bool importMissMemoTests(const Device& device, Recorder& recorder) {
         cleanup.registered[6] = true;
     }
     Require(HostImportFor(context, missing, 16) != nullptr, "a structural miss memo hid a newly registered import");
+    const auto neighbour = address + 2 * unit;
+    const auto reprotected = address + 4 * unit;
+    const auto missAt = [&](std::uint64_t at, std::uint64_t hits, std::uint64_t stores, const char* reason) {
+        const auto before = ImportMissMemoCounters();
+        Require(HostImportFor(context, at, 16) == nullptr, reason);
+        const auto after = ImportMissMemoCounters();
+        Require(after.hits == before.hits + (enabled ? hits : 0) && after.stores == before.stores + (enabled ? stores : 0), reason);
+    };
+    const auto importedAgain = [&](std::uint64_t at, const char* reason) {
+        Require(HostImportFor(context, neighbour, 16) != nullptr, "the memo fixture lost its neighbouring import");
+        const auto before = ImportMissMemoCounters();
+        Require(HostImportFor(context, at, 16) != nullptr, reason);
+        Require(ImportMissMemoCounters().hits == before.hits, reason);
+    };
+    Require(HostImportFor(context, neighbour, 16) != nullptr && HostImportFor(context, reprotected, 16) != nullptr, "the memo fixture did not import its neighbouring and reprotected ranges");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(reinterpret_cast<const void*>(missing), unit, [](const void*, std::size_t, const void*, bool) {});
+        cleanup.registered[6] = false;
+    }
+    missAt(missing, 0, 1, "an unmapped range was imported or its first miss was not stored");
+    missAt(missing, 1, 0, "a repeated miss on an unmapped range did not hit the memo");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(reinterpret_cast<void*>(missing), unit, true, true, true);
+        cleanup.registered[6] = true;
+    }
+    importedAgain(missing, "a structural miss memo hid a range mapped again");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(reinterpret_cast<const void*>(reprotected), unit, false, false, true, [] {});
+    }
+    missAt(reprotected, 0, 1, "an unreadable range was imported or its first miss was not stored");
+    missAt(reprotected, 1, 0, "a repeated miss on an unreadable range did not hit the memo");
+    missAt(reprotected, 1, 0, "a second repeated miss on an unreadable range did not hit the memo");
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Protect(reinterpret_cast<const void*>(reprotected), unit, true, true, true, [] {});
+    }
+    importedAgain(reprotected, "a structural miss memo hid a range made readable again");
     std::cout << "import miss memo runtime invalidation: ok\n";
     return true;
 }
