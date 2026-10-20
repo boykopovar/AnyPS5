@@ -118,6 +118,38 @@ int main() {
         return stats.rewrittenReads == 1u && spill.read->Opcode() == IrOpcode::Identity && spill.read->Argument(0) == spill.stored;
     });
 
+    passed &= run("a loop read before its same-block store uses the preceding iteration value", [] {
+        Builder b;
+        IrBlock& entry = *b.block;
+        IrBlock& loop = b.newBlock();
+        IrBlock& exit = b.newBlock();
+        entry.AddBranch(&loop);
+        loop.AddBranch(&loop);
+        loop.AddBranch(&exit);
+        auto& initial = b.unknown();
+        b.block = &loop;
+        auto& slot = b.emit(IrOpcode::Phi, IrType::U32, {});
+        slot.AddPhiOperand(&entry, &initial);
+        auto& read = b.emit(IrOpcode::ReadLane, IrType::U32, {&slot, &b.constant(5u)});
+        b.keep(read);
+        auto& stored = b.unknown();
+        auto& written = b.emit(IrOpcode::WriteLane, IrType::U32, {&stored, &b.constant(5u), &slot});
+        slot.AddPhiOperand(&loop, &written);
+
+        const auto stats = ReadLaneEliminator{}.Eliminate(b.program, 64u);
+        if (stats.rewrittenReads != 1u || read.Opcode() != IrOpcode::Identity) return false;
+        const IrValue* reaching = read.Argument(0);
+        if (!reaching->IsPhi() || reaching->Parent() != &loop || reaching->ArgumentCount() != 2u) return false;
+        bool entryUndefined = false;
+        bool backedgeStore = false;
+        for (std::size_t index = 0; index < reaching->ArgumentCount(); index++) {
+            const IrValue* operand = reaching->Argument(index);
+            entryUndefined = entryUndefined || (reaching->PhiBlock(index) == &entry && operand->Opcode() == IrOpcode::UndefU32);
+            backedgeStore = backedgeStore || (reaching->PhiBlock(index) == &loop && operand == &stored);
+        }
+        return entryUndefined && backedgeStore;
+    });
+
     if (!passed) return 1;
     std::puts("read lane elimination tests passed");
     return 0;

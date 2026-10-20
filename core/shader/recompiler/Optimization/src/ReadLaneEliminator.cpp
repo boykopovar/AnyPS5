@@ -431,12 +431,26 @@ class LaneValueAtBlocks {
 public:
     LaneValueAtBlocks(IrProgram& program, IrValue* value) : program(program), value(value) {}
 
-    IrValue* At(IrBlock* block) {
-        if (dominates(program, value->Parent(), block)) return value;
+    IrValue* At(IrBlock* block, IrValue* before = nullptr) {
+        bool available = false;
+        if (value->Parent() == block) {
+            if (before == nullptr) {
+                available = true;
+            } else {
+                for (const IrValue* instruction : block->Instructions()) {
+                    if (instruction == before) break;
+                    if (instruction == value) { available = true; break; }
+                }
+            }
+        } else {
+            available = dominates(program, value->Parent(), block);
+        }
+        if (available) return value;
         if (const auto found = values.find(block); found != values.end()) return found->second;
         if (block->Predecessors().empty()) return values[block] = Undefined();
         IrValue& phi = program.CreateValue(IrOpcode::Phi, IrType::U32);
-        if (block->Instructions().empty()) block->AppendInstruction(&phi);
+        if (before != nullptr) block->InsertInstructionBefore(before, &phi);
+        else if (block->Instructions().empty()) block->AppendInstruction(&phi);
         else block->InsertInstructionBefore(block->Instructions().front(), &phi);
         values[block] = &phi;
         const std::vector<IrBlock*> predecessors = block->Predecessors();
@@ -500,7 +514,7 @@ ReadLaneEliminationStats ReadLaneEliminator::Eliminate(IrProgram& program, std::
                 collectLaneValues(inst->Argument(0), lane, waveSize, false, values);
                 if (values.failed || values.values.empty()) continue;
                 if (IrValue* unique = uniqueLaneValue(inst, values.values); unique != nullptr && !dependsOn(unique, inst)) {
-                    inst->ReplaceUsesWith(LaneValueAtBlocks(program, unique).At(inst->Parent()), true);
+                    inst->ReplaceUsesWith(LaneValueAtBlocks(program, unique).At(inst->Parent(), inst), true);
                     stats.rewrittenReads++;
                 }
                 continue;
