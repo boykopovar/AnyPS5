@@ -54,7 +54,7 @@ struct Spill {
     IrValue* read = nullptr;
 };
 
-Spill SpillWrittenInBranch(bool storedBeforeBranch) {
+Spill SpillWrittenInBranch(bool storedBeforeBranch, bool prefixBeforeRead = false) {
     Spill spill;
     auto& b = spill.b;
     IrBlock& entry = *b.block;
@@ -72,6 +72,7 @@ Spill SpillWrittenInBranch(bool storedBeforeBranch) {
     auto& slot = b.emit(IrOpcode::Phi, IrType::U32, {});
     slot.AddPhiOperand(&entry, &initial);
     slot.AddPhiOperand(&then, &written);
+    if (prefixBeforeRead) static_cast<void>(b.unknown());
     spill.read = &b.emit(IrOpcode::ReadLane, IrType::U32, {&slot, &b.constant(5u)});
     b.keep(*spill.read);
     return spill;
@@ -97,11 +98,21 @@ int main() {
     bool passed = true;
 
     passed &= run("a lane value stored inside a branch reaches the read after the merge through a phi", [] {
-        auto spill = SpillWrittenInBranch(false);
+        auto spill = SpillWrittenInBranch(false, true);
         const auto stats = ReadLaneEliminator{}.Eliminate(spill.b.program, 64u);
         if (stats.rewrittenReads != 1u || spill.read->Opcode() != IrOpcode::Identity) return false;
         const IrValue* phi = spill.read->Argument(0);
         if (!phi->IsPhi() || phi->Parent() != spill.read->Parent() || phi->ArgumentCount() != 2u) return false;
+        bool phiBeforeEveryNonPhi = false;
+        bool sawNonPhi = false;
+        for (const IrValue* instruction : phi->Parent()->Instructions()) {
+            if (!instruction->IsPhi()) sawNonPhi = true;
+            if (instruction == phi) {
+                phiBeforeEveryNonPhi = !sawNonPhi;
+                break;
+            }
+        }
+        if (!phiBeforeEveryNonPhi) return false;
         bool stored = false;
         bool undefined = false;
         for (std::size_t index = 0; index < phi->ArgumentCount(); index++) {
