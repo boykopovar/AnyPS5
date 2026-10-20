@@ -144,6 +144,8 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             throw RelinkerException("PT_LOAD file size exceeds memory size", ph.Offset);
         if (ph.Type == PT_LOAD && !_rangeFits(ph.Offset, ph.FileSize, _fileBuffer.size()))
             throw RelinkerException("Segment offset out of bounds", ph.Offset);
+        if (ph.Type == PT_LOAD && ph.Alignment > 1 && !std::has_single_bit(ph.Alignment))
+            throw RelinkerException("PT_LOAD alignment is not a power of two", ph.Offset);
 
         headers.push_back(ph);
         offset += header.ProgramHeaderEntrySize;
@@ -165,6 +167,8 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
                 throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
             if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
                 throw RelinkerException("Segment offset out of bounds", relro.Offset);
+            if (relro.Alignment > 1 && !std::has_single_bit(relro.Alignment))
+                throw RelinkerException("PT_SCE_RELRO alignment is not a power of two", relro.Offset);
             relro.Type = PT_LOAD;
             relro.Flags = PF_R | PF_W;
         }
