@@ -3238,7 +3238,7 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Require(second.size() == 2u && second.front().stage == Stage::Mesh && std::ranges::count_if(first, [](const CompiledShader& shader) { return shader.stage == Stage::Geometry; }) == 1, "tessellation followed by a geometry stage needs its capture and mesh stages");
     const auto patches = static_cast<std::uint64_t>(draw.indexCount / tessellation.inputControlPoints);
     const auto level = static_cast<std::uint64_t>(std::ceil(std::clamp(state.stages.maxTessellationLevel, 1.0f, 64.0f))) + 1u;
-    const auto perPatch = tessellation.domain == 2u ? 2u * level * level : level * level;
+    const auto perPatch = 2u * level * level;
     const auto capacity = static_cast<std::uint32_t>(std::min(perPatch * patches, MaxCapturedTriangles));
     auto capture = std::make_shared<TessellationCapture>();
     capture->header = std::make_shared<Buffer>(context, ShaderRecompiler::MeshCapturedHeaderBytes, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);

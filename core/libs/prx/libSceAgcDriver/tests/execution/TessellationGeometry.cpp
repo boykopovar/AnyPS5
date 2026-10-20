@@ -175,12 +175,13 @@ AgcDriver::Graphics::ColorTarget LinearTarget() {
     return {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
 }
 
-AgcDriver::Graphics::State PatchState(AgcDriver::Graphics::ShaderPath path, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color) {
+AgcDriver::Graphics::State PatchState(AgcDriver::Graphics::ShaderPath path, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, float maxLevel) {
     AgcDriver::Graphics::State state{};
     const auto wave32 = wave == 32u ? 0x00600000u : 0u;
     state.stages = {path, (path == AgcDriver::Graphics::ShaderPath::Tessellation ? 0x0200210du : 0x0000212du) | wave32, wave, 64, std::nullopt, Patches};
     state.stages.hullWaveSize = wave;
     if (path == AgcDriver::Graphics::ShaderPath::TessellationGeometry) state.stages.tessellationGeometry = Subgroup;
+    state.stages.maxTessellationLevel = maxLevel;
     state.color = color;
     state.colors = {state.color};
     state.hasColorTarget = true;
@@ -203,7 +204,7 @@ void ClearPixels() {
     }
 }
 
-void DrawReference(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color) {
+void DrawReference(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint16_t> indices = Indices, float maxLevel = 64.0f) {
     std::uint32_t cursor = 0;
     const auto local = Compile(target, ShaderStage::Local, LocalCode, cursor, false, wave);
     const auto hull = Compile(target, ShaderStage::TessellationControl, HullCode, cursor, false, wave);
@@ -216,11 +217,11 @@ void DrawReference(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Spir
         {ShaderStage::TessellationEvaluation, &domain, Offset(domain, offsets)},
         {ShaderStage::Fragment, &fragment, PixelPushOffset(offsets, target)},
     }};
-    device.Draw(PatchState(AgcDriver::Graphics::ShaderPath::Tessellation, cull, wave, color), {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true, 0, 0}, shaders);
+    device.Draw(PatchState(AgcDriver::Graphics::ShaderPath::Tessellation, cull, wave, color, maxLevel), {reinterpret_cast<std::uintptr_t>(indices.data()), static_cast<std::uint32_t>(indices.size()), 2, 1, 0, true, 0, 0}, shaders);
     device.WaitIdle();
 }
 
-void DrawThroughGeometry(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color) {
+void DrawThroughGeometry(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, VkCullModeFlags cull, std::uint32_t wave, const AgcDriver::Graphics::ColorTarget& color, std::span<const std::uint16_t> indices = Indices, float maxLevel = 64.0f) {
     std::uint32_t cursor = 0;
     const std::span<const std::uint32_t> merged = wave == 32u ? std::span<const std::uint32_t>(Wave32DomainGeometryCode) : std::span<const std::uint32_t>(DomainGeometryCode);
     const auto local = Compile(target, ShaderStage::Local, LocalCode, cursor, true, wave);
@@ -238,7 +239,7 @@ void DrawThroughGeometry(AgcDriver::VulkanDevice& device, const ShaderRecompiler
         {ShaderStage::Mesh, &mesh, Offset(mesh, offsets)},
         {ShaderStage::Fragment, &fragment, PixelPushOffset(offsets, target)},
     }};
-    device.Draw(PatchState(AgcDriver::Graphics::ShaderPath::TessellationGeometry, cull, wave, color), {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1, 0, true, 0, 0}, shaders);
+    device.Draw(PatchState(AgcDriver::Graphics::ShaderPath::TessellationGeometry, cull, wave, color, maxLevel), {reinterpret_cast<std::uintptr_t>(indices.data()), static_cast<std::uint32_t>(indices.size()), 2, 1, 0, true, 0, 0}, shaders);
     device.WaitIdle();
 }
 
@@ -426,6 +427,13 @@ int main() {
                 RequireSameImage(reference, Pixels, std::string(cull == VK_CULL_MODE_NONE ? "unculled" : "back-face culled") + " wave" + std::to_string(wave) + " patches");
             }
         }
+        ClearPixels();
+        const auto levelFive = std::span<const std::uint16_t>(Indices).subspan(6u, 3u);
+        DrawReference(*device, target, VK_CULL_MODE_NONE, 64u, LinearTarget(), levelFive, 5.0f);
+        const std::vector<std::byte> fullLevel(Pixels.begin(), Pixels.end());
+        ClearPixels();
+        DrawThroughGeometry(*device, target, VK_CULL_MODE_NONE, 64u, LinearTarget(), levelFive, 5.0f);
+        RequireSameImage(fullLevel, Pixels, "a level-5 triangle patch alone at VGT_HOS_MAX_TESS_LEVEL 5");
         RequireRecordedTarget(*device, target);
         device.reset();
         RequireRegisteredStages();
