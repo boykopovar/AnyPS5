@@ -20,6 +20,9 @@ public:
     void HandleEvent(const SDL_Event& event, DisplayWindow& window);
     void Update(const DisplayWindow& window);
     bool MouseModeEnabled() const { return keyboardMouse.MouseMode(); }
+    bool SlotOccupied(int slot) const {
+        return slot >= 0 && slot < PAD_MAX_CONTROLLERS && slots[slot].controller != nullptr;
+    }
 
 private:
     struct ControllerSlot {

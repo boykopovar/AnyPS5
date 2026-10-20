@@ -662,7 +662,8 @@ int main() {
     PadInfo info{};
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);
     Require(info.maxConnectCount == PAD_MAX_CONTROLLERS);
-    Require(info.connectedCount[0] >= 1);
+    Require(info.connectedCount[0] == 1);
+    Require(info.padTypeInfo[0].connectPort == 0);
 
     const int user2 = 0x10000001;
     Require(scePadGetHandle(user2, 0, 0) == noHandle);
@@ -688,6 +689,9 @@ int main() {
     Require(info.padTypeInfo[0].connectPort == 0);
     Require(info.padTypeInfo[1].connectPort == 1);
     PadSetPortConnected_nid_postfix(1, false);
+    Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);
+    Require(info.connectedCount[0] == 1);
+    Require(info.padTypeInfo[0].connectPort == 0);
 
     Require(scePadClose_nid_postfix(handle2) == 0);
     Require(scePadGetHandle(user2, 0, 0) == noHandle);
