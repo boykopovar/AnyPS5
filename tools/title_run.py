@@ -18,14 +18,15 @@ sys.path.insert(0, str(ROOT / "tools"))
 import unwrap_self
 from package_release import windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "blank", "rendering")
-TITLE_FIELDS = {"name": str, "relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict}
+TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
+TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict}
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
 
 
 def load_titles(path):
     titles = json.loads(Path(path).read_text(encoding="utf-8"))
     for title_id, entry in titles.items():
-        if not re.fullmatch(r"[A-Z]{4}[0-9]{5}", title_id):
+        if not TITLE_ID.fullmatch(title_id):
             raise ValueError(f"{path}: {title_id} is not a title ID")
         for key, value in entry.items():
             if key not in TITLE_FIELDS:
@@ -180,6 +181,8 @@ def discover(directories):
             title_id = data.get("titleId")
             if not isinstance(title_id, str):
                 raise ValueError(f"{param}: no titleId")
+            if not TITLE_ID.fullmatch(title_id):
+                raise ValueError(f"{param}: titleId {title_id!r} is not a title ID")
             if title_id in found:
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
@@ -535,7 +538,7 @@ def main(argv=None):
                     summary["machine"][key] = summary["machine"][key] or value
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
             print(f"{title_id} run{number}: {result['outcome']}", flush=True)
-        summary["titles"][title_id] = {"name": entry.get("name", found[title_id]["name"]), "version": found[title_id]["version"], "seconds": seconds, "runs": runs}
+        summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "runs": runs}
         write_summary(output, summary)
     write_summary(output, summary)
     report = render_markdown(summary, previous)
