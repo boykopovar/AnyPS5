@@ -42,8 +42,12 @@ class TitlesTests(unittest.TestCase):
             title_run.load_titles(self.write({"PPSA00001": {"relink": [1]}}))
 
     def test_bad_id_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "VLC is not a title ID"):
-            title_run.load_titles(self.write({"VLC": {}}))
+        with self.assertRaisesRegex(ValueError, "NOT-AN-ID is not a title ID"):
+            title_run.load_titles(self.write({"NOT-AN-ID": {}}))
+
+    def test_name_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field name"):
+            title_run.load_titles(self.write({"PPSA00001": {"name": "Light"}}))
 
     def test_default_entry(self):
         self.assertEqual(title_run.relink_args({}, "windows"), ["--windows"])
@@ -147,26 +151,26 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(title_run.cell([run("rendering")], "warm"), "-")
 
     def test_worst_and_compare(self):
-        now = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("crashed"), run("crashed", "warm")]},
+        now = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("crashed"), run("crashed", "warm")]},
                        "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("rendering"), run("rendering", "warm")]}})
-        before = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
+        before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
                           "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
         self.assertEqual(title_run.worst(now["titles"]["PPSA85300"]["runs"]), "crashed")
         self.assertEqual(title_run.compare(now, before),
                          ([("PPSA85300", "rendering", "crashed")], [("PPSA97358", "stalled", "rendering")]))
 
     def test_render_markdown(self):
-        now = summary({"PPSA85300": {"name": "VLC", "version": "0.4",
+        now = summary({"PPSA85300": {"name": "Light", "version": "0.4",
                                      "runs": [run("crashed", error="what(): unsupported MIB 1.1 | x"), run("rendering", "warm", 31.0)]}})
-        before = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
+        before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
         self.assertEqual(title_run.render_markdown(now, before), "\n".join([
             "AnyPS5 `abc1234`, main + #6814. Windows 11, Radeon 860M, driver 32.0.13058.8001, CPU Ryzen AI 7 350. 2 runs per title, 60 s each.",
             "",
-            "Regressions: VLC (PPSA85300) rendering -> crashed",
+            "Regressions: Light (PPSA85300) rendering -> crashed",
             "",
             "| Title | ID | Version | Cold | Warm | FPS | First error | Before |",
             "|---|---|---|---|---|---|---|---|",
-            "| VLC | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
+            "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
             "",
         ]))
         self.assertNotIn("Before", title_run.render_markdown(now))
@@ -174,8 +178,8 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
     def test_render_markdown_lists_missing_titles(self):
-        now = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
-        before = summary({"PPSA85300": {"name": "VLC", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
+        now = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]}})
+        before = summary({"PPSA85300": {"name": "Light", "version": "0.4", "runs": [run("rendering"), run("rendering", "warm")]},
                           "PPSA97358": {"name": "XPSemu", "version": "A2.1", "runs": [run("stalled"), run("stalled", "warm")]}})
         self.assertIn("Missing: XPSemu (PPSA97358)", title_run.render_markdown(now, before))
 
@@ -222,6 +226,12 @@ class PreparationTests(unittest.TestCase):
         param.write_text(json.dumps({"contentVersion": "01.000.000"}), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "param.json: no titleId"):
             title_run.discover([self.root])
+
+    def test_discover_refuses_a_title_id_that_is_not_one(self):
+        for index, title_id in enumerate(("../../outside", str(self.root / "elsewhere"), "PPSA0001")):
+            package(self.root / str(index) / "PPSA00001", title_id)
+            with self.assertRaisesRegex(ValueError, "is not a title ID"):
+                title_run.discover([self.root / str(index)])
 
     def test_unwrap_or_copy_keeps_an_elf(self):
         source = self.root / "eboot.bin"
