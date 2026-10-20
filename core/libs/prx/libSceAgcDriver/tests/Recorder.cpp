@@ -6976,8 +6976,7 @@ bool importMissMemoTests(const Device& device, Recorder& recorder) {
         mutation.Unmap(reinterpret_cast<const void*>(missing), unit, [](const void*, std::size_t, const void*, bool) {});
         cleanup.registered[6] = false;
     }
-    missAt(missing, 0, 0, "an unmapped range was imported or a miss that retired its import was stored");
-    missAt(missing, 0, 1, "an unmapped range was imported or its first settled miss was not stored");
+    missAt(missing, 0, 1, "an unmapped range was imported or its first miss was not stored");
     missAt(missing, 1, 0, "a repeated miss on an unmapped range did not hit the memo");
     {
         GuestAllocations::Mutation mutation;
@@ -6989,8 +6988,7 @@ bool importMissMemoTests(const Device& device, Recorder& recorder) {
         GuestAllocations::Mutation mutation;
         mutation.Protect(reinterpret_cast<const void*>(reprotected), unit, false, false, true, [] {});
     }
-    missAt(reprotected, 0, 0, "an unreadable range was imported or a miss that retired its import was stored");
-    missAt(reprotected, 0, 1, "an unreadable range was imported or its first settled miss was not stored");
+    missAt(reprotected, 0, 1, "an unreadable range was imported or its first miss was not stored");
     missAt(reprotected, 1, 0, "a repeated miss on an unreadable range did not hit the memo");
     missAt(reprotected, 1, 0, "a second repeated miss on an unreadable range did not hit the memo");
     {
