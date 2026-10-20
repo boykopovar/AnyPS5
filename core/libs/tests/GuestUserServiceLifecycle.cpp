@@ -98,6 +98,26 @@ int main() {
     Require(list.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     Require(list.user_id[1] == USER_SERVICE_USER_ID_INVALID);
 
+    for (int i = 0; i < 50; ++i) {
+        UserServiceSetUserConnected_nid_postfix(1, true);
+        UserServiceSetUserConnected_nid_postfix(1, false);
+    }
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(2, true);
+    UserServiceSetUserConnected_nid_postfix(2, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+
+    UserServiceSetUserConnected_nid_postfix(2, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 2);
+    UserServiceSetUserConnected_nid_postfix(2, false);
+    UserServiceSetUserConnected_nid_postfix(2, true);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
+    UserServiceSetUserConnected_nid_postfix(2, false);
+    Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
+    Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 2);
+
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();

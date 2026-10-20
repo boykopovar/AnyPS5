@@ -85,7 +85,21 @@ void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected) {
         if (initialized.load()) {
             constexpr std::uint32_t EventTypeLogin = 0;
             constexpr std::uint32_t EventTypeLogout = 1;
-            eventQueue.push_back({connected ? EventTypeLogin : EventTypeLogout, USER_SERVICE_INITIAL_USER_ID + userIndex});
+            const std::uint32_t eventType = connected ? EventTypeLogin : EventTypeLogout;
+            const int userId = USER_SERVICE_INITIAL_USER_ID + userIndex;
+            bool collapsed = false;
+            for (auto it = eventQueue.begin(); it != eventQueue.end(); ++it) {
+                if (it->userId == userId) {
+                    if (it->eventType != eventType) {
+                        eventQueue.erase(it);
+                    }
+                    collapsed = true;
+                    break;
+                }
+            }
+            if (!collapsed) {
+                eventQueue.push_back({eventType, userId});
+            }
         }
     }
 }
