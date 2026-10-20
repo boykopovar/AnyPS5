@@ -515,6 +515,7 @@ public:
     static std::uint64_t SlabRetiles();
     static std::uint64_t PaddingSeedCopies();
     static std::uint64_t LinearImportRetiles();
+    static std::uint64_t GpuSingleUploads();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
     static std::uint64_t CreationHandOvers();

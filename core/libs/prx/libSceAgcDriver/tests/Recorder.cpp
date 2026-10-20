@@ -15062,6 +15062,167 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     return true;
 }
 
+bool gpuSingleUploadTests(const Device& device, Recorder& recorder, bool watched) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || (watched && !AgcDriver::GuestMemory::WriteWatched())) {
+        std::cout << "host imports unavailable: GPU single-key uploads not compared\n";
+        return false;
+    }
+    struct Case {
+        const char* name;
+        std::uint32_t format;
+        TextureTileMode tileMode;
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t mipCount;
+    };
+    constexpr Case cases[] = {
+        {"R8 64 KiB R_X 160x96", 1, TextureTileMode::kR64KBX, 160, 96, 1},
+        {"RGBA32F 4 KiB S 80x50, 3 mips", 77, TextureTileMode::kStandard4KB, 80, 50, 3},
+        {"RGBA8 linear 260x3", 56, TextureTileMode::kLinear, 260, 3, 1},
+        {"R16 64 KiB R_X 200x150, 3 mips", 7, TextureTileMode::kR64KBX, 200, 150, 3},
+        {"RGBA8 64 KiB R_X 520x260, 6 mips", 56, TextureTileMode::kR64KBX, 520, 260, 6},
+        {"RGBA16F 4 KiB S 100x70, 2 mips", 71, TextureTileMode::kStandard4KB, 100, 70, 2},
+    };
+    const bool enabled = std::getenv("APS5_NO_GPU_SINGLE_UPLOAD") == nullptr;
+    std::string failures;
+    std::size_t tested = 0;
+    for (const auto& test : cases) {
+        if (!StorageFormatAvailable(base, test.format)) continue;
+        GuestTextureResource resource{};
+        resource.width = test.width;
+        resource.height = test.height;
+        resource.mipCount = test.mipCount;
+        resource.tileMode = test.tileMode;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = test.format;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto geometry = DescribeSurface(resource);
+        const auto elementBytes = BytesPerElement(test.format);
+        const auto bytes = (static_cast<std::size_t>(geometry.guestBytes) + 65535) / 65536 * 65536 + 65536;
+        void* block = nullptr;
+        if (watched) block = AllocateWatched(bytes, 65536);
+#ifdef _WIN32
+        else block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        else block = std::aligned_alloc(65536, bytes);
+#endif
+        Require(block != nullptr, "GPU single-key upload test memory");
+        auto* memory = static_cast<std::uint8_t*>(block);
+        std::uint32_t seed = 0x2468ace1u;
+        for (std::size_t i = 0; i < bytes; ++i) {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            memory[i] = static_cast<std::uint8_t>(seed >> 9);
+        }
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, bytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* block;
+            std::uint64_t address;
+            std::size_t bytes;
+            bool watched;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, address, bytes);
+                if (watched) ReleaseWatched(block, bytes);
+#ifdef _WIN32
+                else VirtualFree(block, 0, MEM_RELEASE);
+#else
+                else std::free(block);
+#endif
+            }
+        } unregister{base, block, address, bytes, watched};
+        if (HostImportFor(base, address, bytes) == nullptr) {
+            std::cout << "host import refused: GPU single-key upload of " << test.name << " not compared\n";
+            continue;
+        }
+        if (watched && !AgcDriver::GuestMemory::Watched(address, static_cast<std::size_t>(geometry.guestBytes))) {
+            std::cout << "host import lost write watching: single-key upload not compared\n";
+            continue;
+        }
+        TextureDetiler detiler(base);
+        auto imported = base;
+        imported.detiler = &detiler;
+        auto copied = base;
+        copied.detiler = &detiler;
+        copied.hostImportAlignment = 0;
+        resource.baseAddress = address;
+        resource.dccAddress = address + bytes - 65536;
+        std::memset(memory + bytes - 65536, 0x10, 65536);
+        std::size_t linearBytes = 0;
+        for (const auto& mip : geometry.mips) linearBytes += static_cast<std::size_t>(mip.width) * mip.height * elementBytes;
+        const auto readImage = [&](const StorageTexture& image) {
+            Buffer readback(base, linearBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(base, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            std::vector<VkBufferImageCopy> copies;
+            std::size_t at = 0;
+            for (std::uint32_t level = 0; level < geometry.mips.size(); ++level) {
+                VkBufferImageCopy copy{};
+                copy.bufferOffset = at;
+                copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+                copy.imageExtent = {geometry.mips[level].width, geometry.mips[level].height, 1};
+                copies.push_back(copy);
+                at += static_cast<std::size_t>(geometry.mips[level].width) * geometry.mips[level].height * elementBytes;
+            }
+            base.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image.Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
+            RecordMemoryBarrier(base, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            const auto read = readback.Bytes();
+            return std::vector<std::uint8_t>(reinterpret_cast<const std::uint8_t*>(read.data()), reinterpret_cast<const std::uint8_t*>(read.data()) + linearBytes);
+        };
+        {
+            const auto before = StorageTexture::GpuSingleUploads();
+            auto fromCopy = StorageTexture::Create(copied, detiler, resource, 0);
+            recorder.Keep(fromCopy);
+            Require(StorageTexture::GpuSingleUploads() == before, "the reference single-key upload used the GPU expansion");
+            const auto copiedTexels = readImage(*fromCopy);
+            auto fromImport = StorageTexture::Create(imported, detiler, resource, 0);
+            recorder.Keep(fromImport);
+            const auto expanded = StorageTexture::GpuSingleUploads() - before;
+            const auto importedTexels = readImage(*fromImport);
+            const auto* import = HostImportFor(imported, address, static_cast<std::size_t>(geometry.guestBytes));
+            Require(import != nullptr, "single-key producer lost its import");
+            RecordMemoryBarrier(base, recorder.Commands(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            base.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(recorder.Commands(), import->buffer, HostImportOffset(*import, address), geometry.guestBytes, 0x7135a9c3u);
+            recorder.NotePendingWrite(address, static_cast<std::size_t>(geometry.guestBytes));
+            AgcDriver::GuestMemory::MarkWritten(address, static_cast<std::size_t>(geometry.guestBytes));
+            auto fromPending = StorageTexture::Create(imported, detiler, resource, 0);
+            recorder.Keep(fromPending);
+            const auto pendingTexels = readImage(*fromPending);
+            auto pendingCopy = StorageTexture::Create(copied, detiler, resource, 0);
+            recorder.Keep(pendingCopy);
+            Require(pendingTexels == readImage(*pendingCopy), "single-key upload did not observe a pending GPU producer");
+            if (copiedTexels != importedTexels) {
+                std::size_t differ = 0;
+                for (std::size_t i = 0; i < copiedTexels.size(); ++i) differ += copiedTexels[i] != importedTexels[i];
+                failures += std::string(test.name) + ": the CPU upload differs from the import upload in " + std::to_string(differ) + " bytes\n";
+            }
+            if (enabled ? expanded != 1 : expanded != 0) failures += std::string(test.name) + ": unexpected GPU single-key upload count " + std::to_string(expanded) + "\n";
+        }
+        recorder.Sync();
+        ++tested;
+    }
+    if (!failures.empty()) throw std::runtime_error("GPU single-key uploads:\n" + failures);
+    if (tested == 0) return false;
+    std::cout << "GPU single-key uploads" << (enabled ? "" : " (CPU expansion)") << ": ok (" << tested << " surfaces)\n";
+    return true;
+}
+
 bool denormalClearTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -15964,6 +16125,12 @@ int main(int argc, char** argv) {
             const auto before = Recorder::StoreCounts().stores;
             storeRunTests(device, recorder);
             return Recorder::StoreCounts().stores != before ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--gpu-single-upload-watched-only") {
+            return gpuSingleUploadTests(device, recorder, true) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--gpu-single-upload-only") {
+            return gpuSingleUploadTests(device, recorder, false) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--copied-direct-only") {
             copiedDirectOrderingTests(device, recorder);

@@ -50,6 +50,7 @@ namespace AgcDriver::Graphics {
         void Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, bool thick = false, const DetileWindow& window = {});
         void DispatchImage(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer tiled, std::uint64_t tiledOffset, VkImageView view, const TileMipLayout& layout, bool retile = false, std::uint32_t slice = 0, const DetileWindow& window = {});
         void DispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat = false);
+        void DispatchExpandSingle(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t bytes, std::uint32_t elementBytes);
         static VkFormat ImageElementFormat(std::uint32_t elementBytes);
         // Recycles the descriptor sets of the previous batch; call before recording a new command batch.
         void BeginBatch();
@@ -59,6 +60,7 @@ namespace AgcDriver::Graphics {
         void DispatchMultisampleImage(VkCommandBuffer commands, std::uint32_t elementBytes, VkBuffer source, std::uint64_t offset, std::uint64_t bytes, VkImageView arrayView, std::uint32_t width, std::uint32_t height, std::uint32_t layers, std::uint32_t fragments, std::uint32_t firstElement, std::uint32_t elements);
 
     private:
+        void dispatchRepack(VkCommandBuffer commands, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, std::uint64_t bytes, bool depthToFloat, std::uint32_t singleElementBytes);
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);

@@ -488,6 +488,16 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_host_import_mutation_race COMMAND agc_driver_recorder_tests --host-import-mutation-race-only)
     set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race PROPERTIES
         ENVIRONMENT "APS5_PIN_WAIT_MS=2000" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_gpu_single_upload COMMAND agc_driver_recorder_tests --gpu-single-upload-only)
+    add_test(NAME agc_gpu_single_upload_off COMMAND agc_driver_recorder_tests --gpu-single-upload-only)
+    add_test(NAME agc_gpu_single_upload_watched COMMAND agc_driver_recorder_tests --gpu-single-upload-watched-only)
+    add_test(NAME agc_gpu_single_upload_watched_off COMMAND agc_driver_recorder_tests --gpu-single-upload-watched-only)
+    set_tests_properties(agc_gpu_single_upload agc_gpu_single_upload_off agc_gpu_single_upload_watched agc_gpu_single_upload_watched_off PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_tests_properties(agc_gpu_single_upload_off agc_gpu_single_upload_watched_off PROPERTIES ENVIRONMENT "APS5_NO_GPU_SINGLE_UPLOAD=1")
+    if(WIN32)
+        set_tests_properties(agc_gpu_single_upload agc_gpu_single_upload_off agc_gpu_single_upload_watched agc_gpu_single_upload_watched_off PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_unit_shadow COMMAND agc_driver_recorder_tests --unit-shadow-only)
     add_test(NAME agc_driver_unit_shadow_budget COMMAND agc_driver_recorder_tests --unit-shadow-only)
     set_tests_properties(agc_driver_unit_shadow PROPERTIES
