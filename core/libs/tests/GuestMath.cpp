@@ -34,7 +34,6 @@ extern SonyDconst _LDenorm_nid_postfix;
 extern SonyDconst _LInf_nid_postfix;
 extern SonyDconst _LNan_nid_postfix;
 extern SonyDconst _LSnan_nid_postfix;
-
 extern int signgam_nid_postfix;
 
 struct DinkumwareFloatCharacteristics {
@@ -3430,6 +3429,84 @@ int main() {
     Require(lgamma_nid_postfix(1.) == 0. && lgamma_nid_postfix(2.) == 0. && std::isinf(lgamma_nid_postfix(0.)));
     Require(std::abs(lgamma_nid_postfix(0.5) - 0.5723649429247001) < 1e-15 && std::abs(lgamma_nid_postfix(10.) - 12.801827480081469) < 1e-13);
     Require(std::abs(lgamma_nid_postfix(-0.5) - 1.2655121234846454) < 1e-15);
+    Require(tgamma_nid_postfix(1.) == 1. && tgamma_nid_postfix(2.) == 1. && tgamma_nid_postfix(3.) == 2.);
+    Require(std::abs(tgamma_nid_postfix(0.5) - 1.7724538509055160) < 1e-15);
+    errno = 0;
+    Require(std::isnan(tgamma_nid_postfix(-1.)));
+    Require(errno == EDOM);
+    errno = 0;
+    Require(std::isinf(tgamma_nid_postfix(200.)));
+    Require(errno == 0);
+    int rSign = 7;
+    Require(lgamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
+    rSign = 7;
+    Require(std::abs(lgamma_r_nid_postfix(-0.5, &rSign) - 1.2655121234846454) < 1e-15 && rSign == -1);
+    Require(lgammaf_nid_postfix(1.f) == 0.f && lgammaf_nid_postfix(2.f) == 0.f);
+    Require(std::abs(lgammaf_nid_postfix(0.5f) - 0.57236494f) < 1e-6f);
+    signgam_nid_postfix = 7;
+    Require(lgammaf_nid_postfix(-0.5f) > 0.f && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(lgammaf_r_nid_postfix(1.f, &rSign) == 0.f && rSign == 1);
+    rSign = 7;
+    Require(lgammaf_r_nid_postfix(-0.5f, &rSign) > 0.f && rSign == -1);
+    signgam_nid_postfix = 7;
+    Require(gamma_nid_postfix(1.) == 0. && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(gamma_nid_postfix(-0.5) > 0. && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(gamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
+    rSign = 7;
+    Require(gamma_r_nid_postfix(-0.5, &rSign) > 0. && rSign == -1);
+    signgam_nid_postfix = 7;
+    Require(gammaf_nid_postfix(1.f) == 0.f && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(gammaf_nid_postfix(-0.5f) > 0.f && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(gammaf_r_nid_postfix(1.f, &rSign) == 0.f && rSign == 1);
+    rSign = 7;
+    Require(gammaf_r_nid_postfix(-0.5f, &rSign) > 0.f && rSign == -1);
+    threw = false;
+    try { lgamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { lgammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { gamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { gammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    rSign = 7;
+    Require(std::isinf(lgamma_r_nid_postfix(-0., &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(lgammaf_r_nid_postfix(-0.f, &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(gamma_r_nid_postfix(-0., &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(gammaf_r_nid_postfix(-0.f, &rSign)) && rSign == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(lgammaf_nid_postfix(-0.f)) && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(gamma_nid_postfix(-0.)) && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(gammaf_nid_postfix(-0.f)) && signgam_nid_postfix == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(-0., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(0., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(-1., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(1., &rSign);
+    Require(errno == 0 && rSign == 1);
     for (const double sign : {1.0, -1.0}) {
         std::feclearexcept(FE_ALL_EXCEPT);
         Require(std::abs(lgamma_nid_postfix(sign * std::numeric_limits<double>::denorm_min()) - 744.44007192138122) < 1e-12);
