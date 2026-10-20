@@ -389,6 +389,7 @@ struct HostImports {
     std::uint64_t missPolicy = 0;
     HostImportMissMemo missMemo;
     std::uint64_t missMemoHits = 0;
+    std::uint64_t missMemoMisses = 0;
     std::uint64_t missMemoStores = 0;
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
@@ -4707,34 +4708,51 @@ bool HostImportMissMemo::Stable(const Stamp& before, const Stamp& after) {
     return before.device != VK_NULL_HANDLE && before.alignment != 0 && before.generation != 0 && (before.forgetSerial & 1u) == 0 && before == after;
 }
 
-std::size_t HostImportMissMemo::slot(std::uint64_t begin, std::uint64_t end) {
+std::size_t HostImportMissMemo::SetOf(std::uint64_t begin, std::uint64_t end) {
     auto hash = begin ^ std::rotl(end, 23);
     hash ^= hash >> 30u;
     hash *= 0xbf58476d1ce4e5b9ull;
     hash ^= hash >> 27u;
-    return static_cast<std::size_t>(hash & 255u);
+    return static_cast<std::size_t>(hash % Sets);
 }
 
 bool HostImportMissMemo::Contains(std::uint64_t begin, std::uint64_t end, const Stamp& current) const {
     if (!Enabled() || begin >= end || !Stable(stamp, current)) return false;
-    const auto& entry = entries[slot(begin, end)];
-    return entry.begin == begin && entry.end == end;
+    const auto first = entries.begin() + static_cast<std::ptrdiff_t>(SetOf(begin, end) * Ways);
+    return std::any_of(first, first + Ways, [&](const Entry& entry) { return entry.begin == begin && entry.end == end; });
 }
 
 bool HostImportMissMemo::Store(std::uint64_t begin, std::uint64_t end, const Stamp& before, const Stamp& after) {
     if (!Enabled() || begin >= end || !Stable(before, after)) return false;
     if (stamp != after) {
-        entries = {};
+        if (filled != 0) {
+            ++resets;
+            entries = {};
+            victims = {};
+            filled = 0;
+        }
         stamp = after;
     }
-    entries[slot(begin, end)] = {begin, end};
+    const auto set = SetOf(begin, end);
+    const auto first = entries.begin() + static_cast<std::ptrdiff_t>(set * Ways);
+    const auto last = first + Ways;
+    if (std::any_of(first, last, [&](const Entry& entry) { return entry.begin == begin && entry.end == end; })) return true;
+    auto target = std::find_if(first, last, [](const Entry& entry) { return entry.begin == entry.end; });
+    if (target == last) {
+        target = first + victims[set];
+        victims[set] = static_cast<std::uint8_t>((victims[set] + 1u) % Ways);
+        ++evictions;
+    } else {
+        ++filled;
+    }
+    *target = {begin, end};
     return true;
 }
 
 ImportMissMemoStats ImportMissMemoCounters() {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
-    return {HostImportMissMemo::Enabled(), state.missMemoHits, state.missMemoStores};
+    return {HostImportMissMemo::Enabled(), state.missMemoHits, state.missMemoMisses, state.missMemoStores, state.missMemo.Evictions(), state.missMemo.Resets()};
 }
 
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester) {
@@ -4773,6 +4791,7 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     bool structuralMiss = false;
     const auto* entry = importAccess(context, state, address, address + bytes, lease, requester, memoEnabled ? &structuralMiss : nullptr);
     if (structuralMiss) {
+        ++state.missMemoMisses;
         const auto after = importMissStamp(context, state);
         if (after.generation == state.refreshedGeneration && state.missMemo.Store(address, address + bytes, before, after)) ++state.missMemoStores;
     }
@@ -5916,8 +5935,7 @@ std::atomic<std::uint64_t> importUs{0};
 std::atomic<std::uint64_t> allocateUs{0};
 std::atomic<std::uint64_t> readUs{0};
 std::atomic<std::uint64_t> uploadsProfiled{0};
-std::atomic<std::uint64_t> memoHitsReported{0};
-std::atomic<std::uint64_t> memoStoresReported{0};
+std::atomic<std::uint64_t> memoLookupsReported{0};
 
 std::uint64_t microsecondsSince(std::chrono::steady_clock::time_point start) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count());
@@ -6689,9 +6707,13 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     if (uploads % 2000 == 0) {
         const auto& copies = Copies();
         const auto memo = ImportMissMemoCounters();
-        const auto hitsReported = memoHitsReported.exchange(memo.hits, std::memory_order_relaxed);
-        const auto storesReported = memoStoresReported.exchange(memo.stores, std::memory_order_relaxed);
-        const auto memoText = memo.hits != hitsReported || memo.stores != storesReported ? "; import miss memo: " + std::to_string(memo.hits) + " hits, " + std::to_string(memo.stores) + " stores" : std::string();
+        const auto lookups = memo.hits + memo.misses;
+        std::string memoText;
+        if (memoLookupsReported.exchange(lookups, std::memory_order_relaxed) != lookups) {
+            char text[192];
+            std::snprintf(text, sizeof(text), "; import miss memo: %llu hits of %llu structural misses (%.1f%%), %llu stores, %llu evictions, %llu resets", static_cast<unsigned long long>(memo.hits), static_cast<unsigned long long>(lookups), 100.0 * static_cast<double>(memo.hits) / static_cast<double>(lookups), static_cast<unsigned long long>(memo.stores), static_cast<unsigned long long>(memo.evictions), static_cast<unsigned long long>(memo.resets));
+            memoText = text;
+        }
         AgcDriver::ProfilePrint_nid_no_patch("[buffers] %llu uploads: import lookup %.0f ms, buffer allocation %.0f ms, guest read %.0f ms; copies on the GPU: %llu regions (%.0f KiB) copied out of imports, %llu written sub-ranges (%.0f KiB) copied back, %llu staging stores by the CPU at write-back%s\n", static_cast<unsigned long long>(uploads), importUs.load(std::memory_order_relaxed) / 1000.0, allocateUs.load(std::memory_order_relaxed) / 1000.0, readUs.load(std::memory_order_relaxed) / 1000.0, static_cast<unsigned long long>(copies.gpuCopies.load(std::memory_order_relaxed)), copies.gpuCopyBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.gpuCopyBacks.load(std::memory_order_relaxed)), copies.gpuCopyBackBytes.load(std::memory_order_relaxed) / 1024.0, static_cast<unsigned long long>(copies.stagingStores.load(std::memory_order_relaxed)), memoText.c_str());
     }
     const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();

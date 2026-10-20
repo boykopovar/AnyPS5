@@ -131,25 +131,37 @@ public:
         bool operator==(const Stamp&) const = default;
     };
 
+    static constexpr std::size_t Sets = 64;
+    static constexpr std::size_t Ways = 4;
+
     static bool Enabled();
     static bool Stable(const Stamp& before, const Stamp& after);
+    static std::size_t SetOf(std::uint64_t begin, std::uint64_t end);
     bool Contains(std::uint64_t begin, std::uint64_t end, const Stamp& current) const;
     bool Store(std::uint64_t begin, std::uint64_t end, const Stamp& before, const Stamp& after);
+    std::uint64_t Evictions() const { return evictions; }
+    std::uint64_t Resets() const { return resets; }
 
 private:
     struct Entry {
         std::uint64_t begin = 0;
         std::uint64_t end = 0;
     };
-    static std::size_t slot(std::uint64_t begin, std::uint64_t end);
     Stamp stamp;
-    std::array<Entry, 256> entries{};
+    std::array<Entry, Sets * Ways> entries{};
+    std::array<std::uint8_t, Sets> victims{};
+    std::size_t filled = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t resets = 0;
 };
 
 struct ImportMissMemoStats {
     bool enabled;
     std::uint64_t hits;
+    std::uint64_t misses;
     std::uint64_t stores;
+    std::uint64_t evictions;
+    std::uint64_t resets;
 };
 
 ImportMissMemoStats ImportMissMemoCounters();
