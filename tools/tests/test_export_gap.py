@@ -404,5 +404,80 @@ class ExportGapTests(unittest.TestCase):
                     self.assertIn("already provided", report)
 
 
+    def test_mangled_name_needs_renamed_helper(self):
+        name = "_Z5dummyv"
+        nid = nid_names.compute_nid(name)
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            write_table(tables, MODULE, [nid])
+            db = write_db(directory, [(nid, name)])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+            self.assertNotIn(f"missing {nid} {name}", report)
+            self.assertIn(name, report)
+            self.assertIn(nid, report)
+            self.assertIn("mangled", report)
+            self.assertIn("renamed helper", report)
+            self.assertIn("APS5_EXPORT", report)
+            self.assertIn("libSceAmpr", report)
+
+    def test_non_identifier_name_needs_renamed_helper(self):
+        name = "sceExample.dot-name"
+        nid = nid_names.compute_nid(name)
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            write_table(tables, MODULE, [nid])
+            db = write_db(directory, [(nid, name)])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+            self.assertNotIn(f"missing {nid} {name}", report)
+            self.assertIn("valid C identifier", report)
+            self.assertIn("renamed helper", report)
+            self.assertIn("APS5_EXPORT", report)
+            self.assertIn("libSceAmpr", report)
+
+    def test_native_module_name_is_accepted(self):
+        native = "libSceExample.native"
+        nid = nid_names.compute_nid("sceExampleNativeCall")
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, native, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            write_table(tables, native, [nid])
+            db = write_db(directory, [(nid, "sceExampleNativeCall")])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", native, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+            self.assertIn(f"missing {nid} sceExampleNativeCall", report)
+
+    def test_underscore_name_is_plain_missing(self):
+        name = "_sceExampleUnderscore"
+        nid = nid_names.compute_nid(name)
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": "int helper(void) { return 0; }\n"})
+            write_table(tables, MODULE, [nid])
+            db = write_db(directory, [(nid, name)])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8").split(), [nid])
+            self.assertIn(f"missing {nid} {name}", report)
+
+    def test_slash_module_name_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            db = write_db(directory, [])
+            code, _, error = run_tool_with_stderr(root, prx, ["--module", "libSceExample/bad", "--export-table", str(tables), "--db", str(db)])
+            self.assertEqual(code, 2)
+            self.assertIn("FAIL:", error)
+
+
 if __name__ == "__main__":
     unittest.main()

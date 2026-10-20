@@ -21,6 +21,29 @@ VABI = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
 TABLE_ENTRY = re.compile(r"sprx_dlsym\s*\(\s*__handle\s*,\s*\"(" + NID_PATTERN + r")\"")
 DEFINE = re.compile(r"#define\s+(\w+)\s*\(\s*(\w+)\s*\)([^\n]*)")
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
+
+
+def is_mangled(name):
+    return name.startswith("_Z") and len(name) > 2 and name[2].isdigit()
+
+
+def helper_reason(name):
+    if is_mangled(name):
+        return "is a C++ mangled name"
+    if IDENTIFIER.match(name) is None:
+        return "is not a valid C identifier"
+    return None
+
+
+def is_safe_module(name):
+    if not name or name in (".", ".."):
+        return False
+    if "/" in name or "\\" in name:
+        return False
+    if ".." in name:
+        return False
+    return MODULE_PATTERN.match(name) is not None
 
 
 class GapError(Exception):
@@ -222,7 +245,11 @@ def report_module(module, console_nids, provided, db):
             missing.append((nid, db[nid]))
     lines = [f"{module}: {len(missing)} missing, {len(already)} already provided, {len(unknown)} unknown"]
     for nid, name in missing:
-        lines.append(f"missing {nid} {name}")
+        reason = helper_reason(name)
+        if reason is None:
+            lines.append(f"missing {nid} {name}")
+        else:
+            lines.append(f"{module}: {name} ({nid}) {reason} and needs a renamed helper bound with APS5_EXPORT, like libSceAmpr")
     for nid, name, how in already:
         if name is None:
             lines.append(f"already provided {nid} {how}")
@@ -254,7 +281,7 @@ def main(argv=None):
         if (args.export_table is None) == (args.nids is None):
             raise GapError("exactly one of --export-table and --nids is required")
         for module in modules:
-            if not IDENTIFIER.match(module):
+            if not is_safe_module(module):
                 raise GapError(f"{module}: invalid module name")
             if not (PRX / module).is_dir():
                 raise GapError(f"{PRX / module}: no such library")
