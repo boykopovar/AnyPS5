@@ -377,4 +377,14 @@ int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Sh
     return 0;
 }
 
+int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, const Shader* back) {
+    SizeAlign result{};
+    const int status = sceAgcGetFusedShaderSize_0080(&result, front, back);
+    if (status != 0) return status;
+    const auto align = static_cast<std::uint32_t>(result.m_align);
+    dst->m_size = result.m_size;
+    std::memcpy(&dst->m_align, &align, sizeof(align));
+    return 0;
+}
+
 }

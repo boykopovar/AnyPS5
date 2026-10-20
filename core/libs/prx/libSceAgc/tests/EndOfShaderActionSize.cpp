@@ -13,8 +13,8 @@ std::uint32_t APS5_VABI sceAgcDcbQueueEndOfShaderActionGetSize();
 std::uint32_t APS5_VABI sceAgcAcbQueueEndOfShaderActionGetSize();
 std::uint32_t* APS5_VABI sceAgcCbReleaseMem(CommandBuffer*, std::uint8_t, std::uint16_t, std::uint8_t, std::uint8_t, const volatile Label*, std::uint8_t, std::uint64_t, std::uint16_t, std::uint16_t, std::uint8_t, std::uint32_t);
 std::uint32_t APS5_VABI sceAgcDcbAtomicGdsGetSize();
-std::uint32_t* APS5_VABI sceAgcDcbAtomicGds_0900(CommandBuffer*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint16_t, std::uint16_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t);
-std::uint32_t* APS5_VABI sceAgcDcbAtomicGds(CommandBuffer*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint16_t, std::uint16_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t);
+std::uint32_t* APS5_VABI sceAgcDcbAtomicGds_0900(CommandBuffer*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint16_t, std::uint16_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t);
+std::uint32_t* APS5_VABI sceAgcDcbAtomicGds(CommandBuffer*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint16_t, std::uint16_t, std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t);
 }
 
 namespace {
@@ -39,17 +39,19 @@ void testAtomicGds() {
 
     std::array<std::uint32_t, 32> words{};
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
-    const auto* packet = sceAgcDcbAtomicGds_0900(&buffer, 0x261u, 1, 3, 7, 0x100, 0x200, 0x00ff00ffu, 0x12345678u, 0x1122334455667788ull, 0x99aabbccddeeff00ull);
+    const auto* packet = sceAgcDcbAtomicGds_0900(&buffer, 2, 0x2e1u, 1, 3, 7, 0x100, 0x200, 0x00ff00ffu, 0x12345678u, 0x1122334455667788ull, 0x99aabbccddeeff00ull);
     check(packet != nullptr && packet == words.data(), "DCB atomic GDS returned unexpected packet pointer");
     check(buffer.cursor_up == words.data() + 11, "DCB atomic GDS cursor advance does not match 11 dwords");
     check(packet[0] == 0xc0091d00u, "DCB atomic GDS header opcode mismatch");
 
     std::array<std::uint32_t, 32> unversionedWords{};
     CommandBuffer unversionedBuffer{unversionedWords.data(), unversionedWords.data() + unversionedWords.size(), unversionedWords.data(), unversionedWords.data() + unversionedWords.size(), nullptr, nullptr, 0};
-    const auto* unversionedPacket = sceAgcDcbAtomicGds(&unversionedBuffer, 0x261u, 1, 3, 7, 0x100, 0x200, 0x00ff00ffu, 0x12345678u, 0x1122334455667788ull, 0x99aabbccddeeff00ull);
+    const auto* unversionedPacket = sceAgcDcbAtomicGds(&unversionedBuffer, 2, 0x2e1u, 1, 3, 7, 0x100, 0x200, 0x00ff00ffu, 0x12345678u, 0x1122334455667788ull, 0x99aabbccddeeff00ull);
     check(unversionedPacket != nullptr && unversionedPacket == unversionedWords.data(), "unversioned DCB atomic GDS returned unexpected packet pointer");
     check(unversionedBuffer.cursor_up == unversionedWords.data() + 11, "unversioned DCB atomic GDS cursor advance does not match 11 dwords");
-    check(std::equal(words.begin(), words.begin() + 11, unversionedWords.begin()), "versioned and unversioned DCB atomic GDS emitted different packets");
+    check(packet[1] == 0x801500e1u, "DCB atomic GDS operation dword mismatch");
+    check(unversionedPacket[1] == 0x80150061u, "unversioned DCB atomic GDS kept operation bit 7");
+    check(std::equal(words.begin() + 2, words.begin() + 11, unversionedWords.begin() + 2), "versioned and unversioned DCB atomic GDS emitted different payloads");
 }
 
 }
