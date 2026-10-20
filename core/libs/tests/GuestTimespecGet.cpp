@@ -1,20 +1,28 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstdint>
 #include <ctime>
 #include <cstdlib>
 
-extern "C" int APS5_VABI timespec_get_nid_postfix(timespec* ts, int base);
+struct GuestTimespec {
+    std::int64_t tv_sec;
+    std::int64_t tv_nsec;
+};
+
+extern "C" int APS5_VABI timespec_get_nid_postfix(GuestTimespec* ts, int base);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     Require(timespec_get_nid_postfix(nullptr, TIME_UTC) == 0);
-    timespec ts{};
+    GuestTimespec ts{};
     Require(timespec_get_nid_postfix(&ts, 0) == 0);
-    Require(timespec_get_nid_postfix(&ts, TIME_UTC) == TIME_UTC);
-    Require(ts.tv_sec > 0);
-    Require(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000L);
-    timespec later{};
+    GuestTimespec filled{-1, -1};
+    Require(timespec_get_nid_postfix(&filled, TIME_UTC) == TIME_UTC);
+    Require(filled.tv_sec > 0);
+    Require(filled.tv_nsec >= 0 && filled.tv_nsec < 1000000000LL);
+    GuestTimespec later{-1, -1};
     Require(timespec_get_nid_postfix(&later, TIME_UTC) == TIME_UTC);
-    Require(later.tv_sec > ts.tv_sec || (later.tv_sec == ts.tv_sec && later.tv_nsec >= ts.tv_nsec));
+    Require(later.tv_nsec >= 0 && later.tv_nsec < 1000000000LL);
+    Require(later.tv_sec > filled.tv_sec || (later.tv_sec == filled.tv_sec && later.tv_nsec >= filled.tv_nsec));
     return 0;
 }

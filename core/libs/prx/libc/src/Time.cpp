@@ -14,6 +14,7 @@
 #include <windows.h>
 #endif
 
+#include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -453,16 +454,19 @@ int64_t APS5_VABI _Xtime_get_ticks_nid_postfix() {
 #endif
 }
 
-int APS5_VABI timespec_get_nid_postfix(timespec* ts, int base) {
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base) {
     if (ts == nullptr || base != TIME_UTC) return 0;
 #ifdef _WIN32
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
     const uint64_t hundredNs = ((static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime) - 116444736000000000ULL;
-    ts->tv_sec = static_cast<decltype(ts->tv_sec)>(hundredNs / 10000000ULL);
-    ts->tv_nsec = static_cast<decltype(ts->tv_nsec)>((hundredNs % 10000000ULL) * 100ULL);
+    ts->tv_sec = static_cast<std::int64_t>(hundredNs / 10000000ULL);
+    ts->tv_nsec = static_cast<std::int64_t>((hundredNs % 10000000ULL) * 100ULL);
 #else
-    if (clock_gettime(CLOCK_REALTIME, ts) != 0) return 0;
+    timespec host{};
+    if (clock_gettime(CLOCK_REALTIME, &host) != 0) return 0;
+    ts->tv_sec = host.tv_sec;
+    ts->tv_nsec = host.tv_nsec;
 #endif
     return TIME_UTC;
 }
