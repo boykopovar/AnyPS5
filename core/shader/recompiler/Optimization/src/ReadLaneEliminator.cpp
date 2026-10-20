@@ -449,9 +449,9 @@ public:
         if (const auto found = values.find(block); found != values.end()) return found->second;
         if (block->Predecessors().empty()) return values[block] = Undefined();
         IrValue& phi = program.CreateValue(IrOpcode::Phi, IrType::U32);
-        if (before != nullptr) block->InsertInstructionBefore(before, &phi);
-        else if (block->Instructions().empty()) block->AppendInstruction(&phi);
-        else block->InsertInstructionBefore(block->Instructions().front(), &phi);
+        const auto firstNonPhi = std::ranges::find_if(block->Instructions(), [](const IrValue* instruction) { return !instruction->IsPhi(); });
+        if (firstNonPhi == block->Instructions().end()) block->AppendInstruction(&phi);
+        else block->InsertInstructionBefore(*firstNonPhi, &phi);
         values[block] = &phi;
         const std::vector<IrBlock*> predecessors = block->Predecessors();
         for (IrBlock* predecessor : predecessors) phi.AddPhiOperand(predecessor, At(predecessor));
