@@ -813,6 +813,10 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"kern.proc.proc", {1, 14, 8}, 3},
         {"kern.ps_strings", {1, 32}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
+        {"kern.sched.name", {1, 2147483182, 2147483181}, 3},
+        {"kern.smp.maxcpus", {1, 2147482816, 2147482814}, 3},
+        {"kern.stackprot", {1, 2147483151}, 2},
+        {"kern.timecounter.hardware", {1, 2147482838, 2147482834}, 3},
         {"vm.loadavg", {2, 2}, 2},
     };
     if (name == nullptr || size == nullptr) throw std::invalid_argument(std::string(__func__) + ": null name or size");
