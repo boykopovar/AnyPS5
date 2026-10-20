@@ -1374,8 +1374,26 @@ private:
         std::call_once(loadOnce, [&] {
             try {
                 auto journal = Journal::Instance().Load();
-                const auto limit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 1024u);
-                if (journal.entries.size() > limit) journal.entries.erase(journal.entries.begin(), journal.entries.end() - static_cast<std::ptrdiff_t>(limit));
+                const auto graphicsLimit = configured("APS5_PIPELINE_JOURNAL_ENTRIES", 1024u);
+                const auto computeLimit = configured("APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES", 1024u);
+                const auto compute = static_cast<std::uint64_t>(std::ranges::count_if(journal.entries, [](const LoadedEntry& entry) { return entry.kind == ComputeRecord; }));
+                const auto graphics = journal.entries.size() - compute;
+                auto graphicsLeft = graphics > graphicsLimit ? graphics - graphicsLimit : 0u;
+                auto computeLeft = compute > computeLimit ? compute - computeLimit : 0u;
+                if (graphicsLeft + computeLeft != 0) {
+                    std::fprintf(stderr, "[pipeline-journal] replaying the newest %llu of %llu graphics and %llu of %llu compute pipelines (APS5_PIPELINE_JOURNAL_ENTRIES, APS5_PIPELINE_JOURNAL_COMPUTE_ENTRIES)\n", static_cast<unsigned long long>(graphics - graphicsLeft), static_cast<unsigned long long>(graphics), static_cast<unsigned long long>(compute - computeLeft), static_cast<unsigned long long>(compute));
+                    std::vector<LoadedEntry> kept;
+                    kept.reserve(static_cast<std::size_t>(journal.entries.size() - graphicsLeft - computeLeft));
+                    for (auto& entry : journal.entries) {
+                        auto& left = entry.kind == ComputeRecord ? computeLeft : graphicsLeft;
+                        if (left != 0) {
+                            --left;
+                            continue;
+                        }
+                        kept.push_back(std::move(entry));
+                    }
+                    journal.entries = std::move(kept);
+                }
                 loaded = std::move(journal);
             } catch (const std::exception& error) {
                 std::fprintf(stderr, "[pipeline-journal] cannot load %s: %s\n", Journal::Instance().Path().string().c_str(), error.what());
