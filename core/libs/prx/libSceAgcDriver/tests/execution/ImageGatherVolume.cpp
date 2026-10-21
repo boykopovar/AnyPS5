@@ -351,8 +351,42 @@ void Run(AgcDriver::VulkanDevice& device, const Variant& variant) {
     }
 }
 
+void RequireNoDivisionByImageSize(std::span<const std::uint32_t> words, const std::string& name) {
+    constexpr std::uint32_t OpCompositeExtract = 81, OpImageQuerySizeLod = 103, OpBitcast = 124, OpIAdd = 128, OpIMul = 132, OpUDiv = 134, OpSDiv = 135, OpUMod = 137, OpSRem = 138, OpSMod = 139, OpShiftLeftLogical = 196;
+    std::vector<std::vector<std::uint32_t>> definitions;
+    std::vector<std::span<const std::uint32_t>> divisions;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> 16u;
+        const auto opcode = words[offset] & 0xffffu;
+        Require(count != 0u && offset + count <= words.size(), name + ": the SPIR-V module is malformed");
+        const auto instruction = words.subspan(offset, count);
+        if (opcode == OpCompositeExtract || opcode == OpImageQuerySizeLod || opcode == OpBitcast || opcode == OpIAdd || opcode == OpIMul || opcode == OpShiftLeftLogical) {
+            if (definitions.size() <= instruction[2]) definitions.resize(instruction[2] + 1u);
+            definitions[instruction[2]] = {instruction.begin(), instruction.end()};
+        }
+        if (opcode == OpUDiv || opcode == OpSDiv || opcode == OpUMod || opcode == OpSRem || opcode == OpSMod) divisions.push_back(instruction);
+        offset += count;
+    }
+    const auto zeroable = [&](auto&& self, std::uint32_t id) -> bool {
+        if (id >= definitions.size() || definitions[id].empty()) return false;
+        const auto& definition = definitions[id];
+        const auto opcode = definition[0] & 0xffffu;
+        if (opcode == OpImageQuerySizeLod) return true;
+        if (opcode == OpCompositeExtract || opcode == OpBitcast || opcode == OpShiftLeftLogical) return self(self, definition[3]);
+        return self(self, definition[3]) || self(self, definition[4]);
+    };
+    for (const auto division : divisions) {
+        Require(!zeroable(zeroable, division[4]), name + ": a division takes the image size query's extent, which is 0 for a null image, as its divisor");
+    }
+}
+
 void RunNull(AgcDriver::VulkanDevice& device, Variant variant) {
     variant.null = true;
+    if (!variant.vertex) {
+        FillInput(variant.volume, variant.inputs);
+        const auto result = Compile(device, variant);
+        RequireNoDivisionByImageSize(result.spirv.Words(), variant.name);
+    }
     Dispatch(device, variant);
     for (std::uint32_t index = 0; index < Output.size(); ++index) {
         Require(Output[index] == 0.0f, variant.name + ": value " + std::to_string(index) + " is " + std::to_string(Output[index]) + ", expected 0");
