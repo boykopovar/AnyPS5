@@ -157,6 +157,18 @@ static std::string Contents(FileStream& stream) {
     return text;
 }
 
+static std::string constraintMessage;
+
+static void APS5_VABI RecordConstraint(const char* message, void*, int) {
+    constraintMessage = message;
+}
+
+static bool Constraint(const char* message) {
+    const bool matches = constraintMessage == message;
+    constraintMessage.clear();
+    return matches;
+}
+
 int main() {
     FileStream scanned(TemporaryFile::Open());
     Require(std::fputs("42 answer 7", scanned.GetHandle()) >= 0, "seed the scanned stream");
@@ -203,10 +215,12 @@ int main() {
     FileStream violations(TemporaryFile::Open());
     signed char marker = -7;
     char sibling[16];
-    Require(snprintf_s_nid_postfix(sibling, sizeof(sibling), "ab%hhn", &marker) == -1, "snprintf_s rejects %n");
-    Require(fprintf_s_nid_postfix(&violations, "ab%hhn", &marker) == -1 && marker == -7, "fprintf_s rejects %n like snprintf_s");
+    void* previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordConstraint));
+    Require(snprintf_s_nid_postfix(sibling, sizeof(sibling), "ab%hhn", &marker) == -23 && Constraint("printf_s: %n disallowed"), "snprintf_s rejects %n");
+    Require(snprintf_s_nid_postfix(sibling, sizeof(sibling), "%s", static_cast<const char*>(nullptr)) == -23 && Constraint("printf_s: bad %s argument"), "snprintf_s rejects a null %s");
+    set_constraint_handler_s_nid_postfix(previousHandler);
+    Require(fprintf_s_nid_postfix(&violations, "ab%hhn", &marker) == -1 && marker == -7, "fprintf_s rejects %n");
     Require(PrintSecure(&violations, "ab%n", &number) == -1, "vfprintf_s rejects %n");
-    Require(snprintf_s_nid_postfix(sibling, sizeof(sibling), "%s", static_cast<const char*>(nullptr)) == -1, "snprintf_s rejects a null %s");
     Require(fprintf_s_nid_postfix(&violations, "x%s", static_cast<const char*>(nullptr)) == -1, "fprintf_s rejects a null %s");
     Require(fprintf_s_nid_postfix(&violations, static_cast<const char*>(nullptr)) == -1, "fprintf_s rejects a null format");
     Require(PrintSecure(&violations, static_cast<const char*>(nullptr)) == -1, "vfprintf_s rejects a null format");
@@ -251,8 +265,8 @@ int main() {
     Require(std::strcmp(key, "key") == 0 && std::strcmp(value, "val") == 0 && NextByte(sizedInput) == ' ', "fscanf_s set and string values");
     char tooSmall[4] = {'x', 'x', 'x', 'x'};
     char siblingSmall[4] = {'x', 'x', 'x', 'x'};
-    Require(sscanf_s_nid_postfix("abcdef", "%s", siblingSmall, 4u) == 0 && siblingSmall[0] == '\0', "sscanf_s reference for an undersized buffer");
-    Require(fscanf_s_nid_postfix(sizedInput, "%s", tooSmall, 4u) == 0 && tooSmall[0] == '\0', "fscanf_s rejects an undersized buffer like sscanf_s");
+    Require(sscanf_s_nid_postfix("abcdef", "%s", siblingSmall, std::size_t{4}) == 0 && std::memcmp(siblingSmall, "abcd", 4) == 0, "sscanf_s fills an undersized buffer without a terminator");
+    Require(fscanf_s_nid_postfix(sizedInput, "%s", tooSmall, 4u) == 0 && tooSmall[0] == '\0', "fscanf_s rejects an undersized buffer");
     sizedInput->Close();
     errno = 0;
     Require(fscanf_s_nid_postfix(sizedInput, "%d", &number) == EOF && errno == 9, "fscanf_s on a closed stream sets EBADF");
