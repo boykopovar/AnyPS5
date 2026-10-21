@@ -124,7 +124,11 @@ int CheckName(const char* path, std::string& name) {
 }
 
 std::chrono::system_clock::time_point Deadline(const GuestTimespec* abstime) {
-    return std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+    using Clock = std::chrono::system_clock;
+    const std::int64_t maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(Clock::duration::max()).count();
+    if (abstime->seconds >= maxSeconds) return Clock::time_point::max();
+    if (abstime->seconds <= -maxSeconds) return Clock::time_point::min();
+    return Clock::time_point(std::chrono::duration_cast<Clock::duration>(
         std::chrono::seconds(abstime->seconds) + std::chrono::nanoseconds(abstime->nanoseconds)));
 }
 
@@ -191,8 +195,8 @@ int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, G
     if (attr != nullptr && (attr->flags & ~static_cast<std::int64_t>(GuestONonblock)) != 0) return Fail(GuestEinval);
     const auto open = Find(descriptor);
     if (!open) return Fail(GuestEbadf);
+    std::lock_guard lock(open->queue->lock);
     if (oattr != nullptr) {
-        std::lock_guard lock(open->queue->lock);
         *oattr = GuestMqAttr{open->nonblocking ? GuestONonblock : 0, open->queue->maxmsg, open->queue->msgsize,
                              static_cast<std::int64_t>(open->queue->messages.size()), {}};
     }
@@ -223,6 +227,7 @@ std::int64_t APS5_VABI kmq_timedreceive_nid_postfix(int descriptor, char* buffer
     if (!open || open->access == GuestOWronly) return Fail(GuestEbadf);
     auto& queue = *open->queue;
     if (length < static_cast<std::size_t>(queue.msgsize)) return Fail(GuestEmsgsize);
+    if (buffer == nullptr) return Fail(GuestEfault);
     std::unique_lock lock(queue.lock);
     const auto available = [&] { return !queue.messages.empty(); };
     if (const int error = WaitFor(*open, lock, queue.readable, abstime, available)) return Fail(error);
