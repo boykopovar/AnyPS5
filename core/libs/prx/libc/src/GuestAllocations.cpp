@@ -812,6 +812,19 @@ Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped) {
     return Lease(std::move(ranges));
 }
 
+Lease GuestAllocationsAcquireRegistered_nid_postfix() {
+    std::lock_guard lock(registry().mutex);
+    if (registry().retiring.empty()) {
+        if (auto shared = registry().readableLease) return Lease(std::move(shared));
+    }
+    auto ranges = std::make_shared<Lease::Ranges>();
+    for (const auto& [address, range] : registry().ranges) {
+        if (range->readable && range->bytes != 0) ranges->push_back(range);
+    }
+    if (registry().retiring.empty()) registry().readableLease = ranges;
+    return Lease(std::move(ranges));
+}
+
 std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t address, bool next) {
     std::lock_guard lock(registry().mutex);
     const auto& ranges = registry().ranges;
