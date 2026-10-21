@@ -186,7 +186,7 @@ void Access() {
     Require(kmq_timedreceive_nid_postfix(reader, buffer, sizeof(buffer), nullptr, nullptr) == 6);
     Require(close_nid_postfix(both) == 0 && close_nid_postfix(reader) == 0);
     Require(kmq_timedreceive_nid_postfix(reader, buffer, sizeof(buffer), nullptr, nullptr) == -1 && Error() == Ebadf);
-    const auto path = (std::filesystem::temp_directory_path() / "anyps5-mq-stale.bin").string();
+    const auto path = "anyps5-mq-stale-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin";
     { std::ofstream stream(path); stream << "x"; }
     const int plain = open_nid_postfix(path.c_str(), 0, 0);
     Require(plain >= 0);
