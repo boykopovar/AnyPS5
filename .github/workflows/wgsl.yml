@@ -31,13 +31,31 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - uses: actions/checkout@v7
+        with:
+          repository: boykopovar/AnyPS5
+          ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+          path: native-main
+          persist-credentials: false
       - name: Install software Vulkan and validation layers
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers vulkan-validationlayers
       - name: Build and check native shader compatibility
+        shell: bash
         run: |
           cmake -S . -B build-shaders -DCMAKE_BUILD_TYPE=Release -DANYPS5_BUILD_SHADER_TOOLS=ON -DBUILD_TESTING=ON
           cmake --build build-shaders --parallel 2
-          ctest --test-dir build-shaders -R wgsl_native_compat -V | tee native-validation.log
+          cmake -S core/shader/recompiler/tests/native_snapshot -B build-native-main -DCMAKE_BUILD_TYPE=Release -DANYPS5_NATIVE_SOURCE="$GITHUB_WORKSPACE/native-main"
+          cmake --build build-native-main --parallel 2
+          ctest --test-dir build-native-main -R '^shader_native_snapshot$' -V | tee main-validation.log
+          ctest --test-dir build-shaders -R '^(wgsl_native_compat|shader_native_snapshot)$' -V | tee native-validation.log
+          python3 - <<'PY'
+          from pathlib import Path
+          baseline = Path('build-native-main/native-snapshots')
+          candidate = Path('build-shaders/core/shader/recompiler/WgslBackend/tools/native-snapshots')
+          assert len(list(baseline.iterdir())) == 9
+          for source in baseline.iterdir():
+              assert source.read_bytes() == (candidate / source.name).read_bytes(), source.name
+          PY
           build-shaders/core/shader/recompiler/WgslBackend/tools/wgsl_native_compat_tests --emit-wgsl shader-fixtures
       - name: Check generated WGSL with Naga and wgpu
         shell: bash
@@ -49,7 +67,7 @@ jobs:
           tools/wgsl-check/target/release/anyps5-wgsl-check shader-fixtures/program-{0,1,2} 2>&1 | tee wgsl-validation.log
           python3 - <<'PY'
           from pathlib import Path
-          for name in ('native-validation.log', 'wgsl-validation.log'):
+          for name in ('main-validation.log', 'native-validation.log', 'wgsl-validation.log'):
               text = Path(name).read_text()
               assert 'VUID-' not in text, name
               assert 'was not found but was requested by env var VK_INSTANCE_LAYERS' not in text, name
