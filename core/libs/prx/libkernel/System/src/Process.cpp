@@ -20,6 +20,11 @@
 #include <sys/syscall.h>
 #endif
 
+#ifdef _WIN32
+#include "prx/libc/include/ChildProcesses.hpp"
+#else
+#include <sys/wait.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -435,10 +440,46 @@ int APS5_VABI system_nid_postfix(const char* command) {
 }
 
 int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
-    (void)pid;
-    (void)status;
-    *__error_nid_postfix() = (static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0 ? errnoInvalidArgument : errnoNoChild;
-    return -1;
+    if ((static_cast<unsigned>(options) & ~freebsdWaitOptions) != 0) {
+        *__error_nid_postfix() = errnoInvalidArgument;
+        return -1;
+    }
+#ifdef _WIN32
+    int encoded = 0;
+    const std::int64_t reaped = WaitChildProcess_nid_no_patch(pid, static_cast<unsigned>(options), &encoded);
+    if (reaped == -2) {
+        *__error_nid_postfix() = errnoNoChild;
+        return -1;
+    }
+    if (reaped == -1) return -1;
+    if (reaped == 0) return 0;
+    if (status != nullptr) *status = encoded;
+    return static_cast<int>(reaped);
+#else
+    int encoded = 0;
+    const int result = ::waitpid(pid, &encoded, options & (WNOHANG | WUNTRACED | WCONTINUED));
+    if (result < 0) {
+        *__error_nid_postfix() = errno;
+        return -1;
+    }
+    if (result == 0) return 0;
+    if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
+        const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
+        switch (hostSignal) {
+        case 7: encoded = (encoded & ~0x7f) | 10; break;
+        case 10: encoded = (encoded & ~0x7f) | 30; break;
+        case 12: encoded = (encoded & ~0x7f) | 31; break;
+        case 16:
+        case 29:
+        case 30:
+            NotImplemented_nid_no_patch("waitpid: a child died with a signal without a guest equivalent");
+            return -1;
+        default: break;
+        }
+    }
+    if (status != nullptr) *status = encoded;
+    return result;
+#endif
 }
 
 int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit);
