@@ -423,6 +423,10 @@ target_link_libraries(libSceAgcDriver PRIVATE
         libzstd_static
         ${CMAKE_DL_LIBS}
 )
+target_include_directories(libSceAgcDriver SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/zstd/lib)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-libs,libzstd.a)
+endif()
 if(APS5_ENABLE_TRACY)
     target_link_libraries(libSceAgcDriver PUBLIC TracyClient)
 endif()
