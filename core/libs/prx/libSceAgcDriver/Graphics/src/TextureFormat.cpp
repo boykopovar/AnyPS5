@@ -115,6 +115,11 @@ VkFormat ResolveTextureFormat(std::uint32_t guestFormat) {
     return findFormatEntry(guestFormat).vkFormat;
 }
 
+VkFormat DccClearTextureFormat(std::uint32_t guestFormat) {
+    if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    return ResolveTextureFormat(guestFormat);
+}
+
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
     const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
     const bool always = forced != nullptr && (std::strcmp(forced, "1") == 0 || std::strcmp(forced, "copy") == 0);

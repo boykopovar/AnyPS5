@@ -789,7 +789,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         keys = scanKeys();
         if (*keys == source->FilledKeys()) {
             std::array<std::byte, 16> probe{};
-            if (!FillDccClear(ResolveTextureFormat(resource.format), *keys, resource.dccAlphaOnMsb, probe)) {
+            if (!FillDccClear(DccClearTextureFormat(resource.format), *keys, resource.dccAlphaOnMsb, probe)) {
                 char text[256];
                 std::snprintf(text, sizeof(text), "AGC graphics: sampled texture 0x%llx (%ux%u format %u, dcc 0x%llx) reads %s DCC keys filled over its pending image, a clear value the format has no encoding for", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<unsigned long long>(resource.dccAddress), DccKeysName(*keys));
                 throw std::runtime_error(text);
