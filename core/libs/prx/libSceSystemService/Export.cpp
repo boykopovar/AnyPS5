@@ -97,6 +97,8 @@ ConsoleTimeZone HostTimeZone() {
 std::mutex appSuspendBlockMutex;
 int appSuspendBlocks = 0;
 
+std::atomic<bool> lncUtilInitialized{false};
+
 int WriteStatus(bool* status, bool value, const char* function) {
     if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
     *status = value;
@@ -644,6 +646,13 @@ int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event) {
  return SYSTEM_SERVICE_ERROR_NO_EVENT;
 }
 
+int APS5_VABI sceAppMessagingTryReceiveMsg(AppMessagingMessage* message) {
+ if (message == nullptr) {
+  return APP_MESSAGING_ERROR_NULL_POINTER;
+ }
+ return APP_MESSAGING_ERROR_NO_MESSAGE;
+}
+
 int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info) {
  (void)info;
  return SYSTEM_SERVICE_OK;
@@ -733,6 +742,10 @@ int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
 
 int APS5_VABI sceSystemServiceShowControllerSettings(void) {
  return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilInitialize() {
+ return lncUtilInitialized.exchange(true) ? LNC_UTIL_ERROR_ALREADY_INITIALIZED : SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
