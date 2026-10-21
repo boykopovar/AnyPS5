@@ -492,11 +492,6 @@ int APS5_VABI _Thrd_detach_nid_postfix(void* thread) {
     return detach(thread) == 0 ? threadSuccess : threadError;
 }
 
-int APS5_VABI _Thrd_id_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code) {
     ThrowCppError_nid_no_patch(code);
 }
@@ -538,6 +533,10 @@ int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
 }
 
 void* APS5_VABI _Thrd_current_nid_postfix(void) {
+    return ThreadForwards(__func__).self();
+}
+
+void* APS5_VABI _Thrd_id_nid_postfix(void) {
     return ThreadForwards(__func__).self();
 }
 
