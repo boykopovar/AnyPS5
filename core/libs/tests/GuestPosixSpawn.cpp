@@ -9,6 +9,10 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 int APS5_VABI posix_spawnattr_init_nid_postfix(PosixSpawnAttributes**);
@@ -35,6 +39,8 @@ int APS5_VABI posix_spawnp_nid_postfix(std::int32_t*, const char*, PosixSpawnFil
 int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
 int APS5_VABI unsetenv_nid_postfix(const char*);
 int APS5_VABI chdir_nid_postfix(const char*);
+int APS5_VABI waitpid_nid_postfix(int, int*, int);
+int* APS5_VABI __error_nid_postfix();
 }
 
 static void Require(bool condition, int line) {
@@ -175,29 +181,29 @@ static void CheckSpawn() {
     std::int32_t processId = 77;
 
     Check(ReportsNotImplemented([&] { posix_spawn_nid_postfix(&processId, existing.c_str(), &actions, &attributes, arguments, environment); },
-        "posix_spawn: process creation not implemented"));
+        "posix_spawn: executables outside /app0 (" + existing + ") not implemented"));
     Check(posix_spawn_nid_postfix(&processId, missing.c_str(), &actions, &attributes, arguments, environment) == NoSuchFile);
     Check(posix_spawn_nid_postfix(&processId, "", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
     Check(posix_spawn_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
 
     Check(setenv_nid_postfix("PATH", bothDirectories.c_str(), 1) == 0);
     Check(ReportsNotImplemented([&] { posix_spawnp_nid_postfix(&processId, "tool.elf", &actions, &attributes, arguments, nullptr); },
-        "posix_spawnp: process creation not implemented"));
+        "posix_spawnp: executables outside /app0 (" + existing + ") not implemented"));
     Check(posix_spawnp_nid_postfix(&processId, "missing.elf", &actions, &attributes, arguments, nullptr) == NoSuchFile);
     Check(posix_spawnp_nid_postfix(&processId, "", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
     Check(setenv_nid_postfix("PATH", emptyOnly.c_str(), 1) == 0);
     Check(posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
     Check(ReportsNotImplemented([&] { posix_spawnp_nid_postfix(&processId, existing.c_str(), nullptr, nullptr, arguments, nullptr); },
-        "posix_spawnp: process creation not implemented"));
+        "posix_spawnp: executables outside /app0 (" + existing + ") not implemented"));
     Check(posix_spawnp_nid_postfix(&processId, missing.c_str(), nullptr, nullptr, arguments, nullptr) == NoSuchFile);
 
     Check(setenv_nid_postfix("PATH", (emptyOnly + ":").c_str(), 1) == 0);
     Check(posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr) == NoSuchFile);
     Check(chdir_nid_postfix(guest.c_str()) == 0);
     Check(ReportsNotImplemented([&] { posix_spawnp_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr); },
-        "posix_spawnp: process creation not implemented"));
+        "posix_spawnp: executables outside /app0 (./tool.elf) not implemented"));
     Check(ReportsNotImplemented([&] { posix_spawn_nid_postfix(&processId, "tool.elf", nullptr, nullptr, arguments, nullptr); },
-        "posix_spawn: process creation not implemented"));
+        "posix_spawn: executables outside /app0 (tool.elf) not implemented"));
     Check(chdir_nid_postfix("/") == 0);
 
     Check(unsetenv_nid_postfix("PATH") == 0);
@@ -215,8 +221,63 @@ static void CheckSpawn() {
     std::filesystem::remove_all(directory);
 }
 
+static std::filesystem::path OwnExecutablePath() {
+#ifdef _WIN32
+    std::wstring own(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
+    own.resize(length);
+    return std::filesystem::path(own);
+#else
+    std::error_code error;
+    return std::filesystem::read_symlink("/proc/self/exe", error);
+#endif
+}
+
+static void CheckSpawnedChild(const char* role, int expectedCode) {
+    const auto own = OwnExecutablePath();
+    const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
+    std::error_code error;
+    std::filesystem::copy_file(own, target, std::filesystem::copy_options::overwrite_existing, error);
+    Check(!error);
+    const auto app0 = std::filesystem::current_path() / "app0";
+    Check(std::filesystem::create_directories(app0));
+    { std::ofstream file(app0 / "child.bin"); file << "child"; }
+
+    char program[] = "/app0/child.bin";
+    char* arguments[] = {program, nullptr};
+    char roleValue[64];
+    std::strcpy(roleValue, "ANYPS5_POSIX_SPAWN_ROLE=");
+    std::strcat(roleValue, role);
+    char* environment[] = {roleValue, nullptr};
+    std::int32_t processId = 0;
+    Check(posix_spawn_nid_postfix(&processId, program, nullptr, nullptr, arguments, environment) == 0);
+    Check(processId > 0);
+
+    int status = -1;
+    if (std::strcmp(role, "child-sleep") == 0)
+        Check(waitpid_nid_postfix(processId, &status, 1) == 0);
+    Check(waitpid_nid_postfix(processId, &status, 0) == processId);
+    Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == expectedCode);
+
+    status = -1;
+    Check(waitpid_nid_postfix(processId, &status, 0) == -1 && *__error_nid_postfix() == 10);
+
+    std::filesystem::remove(target, error);
+    std::filesystem::remove_all(app0, error);
+}
+
 int main() {
+    if (const char* role = std::getenv("ANYPS5_POSIX_SPAWN_ROLE")) {
+        if (std::strcmp(role, "child-exit-42") == 0) std::_Exit(42);
+        if (std::strcmp(role, "child-sleep") == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            std::_Exit(43);
+        }
+        std::_Exit(99);
+    }
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
+    CheckSpawnedChild("child-exit-42", 42);
+    CheckSpawnedChild("child-sleep", 43);
 }
