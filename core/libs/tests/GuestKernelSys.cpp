@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -25,6 +26,7 @@
 #endif
 #ifndef _WIN32
 #include <cerrno>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -74,6 +76,25 @@ int APS5_VABI lchown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
 int APS5_VABI fchownat_nid_postfix(int, const char*, std::uint32_t, std::uint32_t, int);
 int APS5_VABI linkat_nid_postfix(int, const char*, int, const char*, int);
 int APS5_VABI fstatat_nid_postfix(int, const char*, FileStat*, int);
+int APS5_VABI chmod_nid_postfix(const char*, int);
+int APS5_VABI mkdir_nid_postfix(const char*, std::uint16_t);
+int APS5_VABI rmdir_nid_postfix(const char*);
+int APS5_VABI unlink_nid_postfix(const char*);
+int APS5_VABI stat_nid_postfix(const char*, FileStat*);
+int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
+int APS5_VABI truncate_nid_postfix(const char*, std::int64_t);
+int APS5_VABI utimes_nid_postfix(const char*, const KernelTimeval*);
+int APS5_VABI lutimes_nid_postfix(const char*, const KernelTimeval*);
+int APS5_VABI shm_open_nid_postfix(const char*, int, int);
+int APS5_VABI shm_unlink_nid_postfix(const char*);
+int APS5_VABI sceKernelStat(const char*, FileStat*);
+int APS5_VABI sceKernelMkdir(const char*, std::uint16_t);
+int APS5_VABI sceKernelRmdir(const char*);
+int APS5_VABI sceKernelUnlink(const char*);
+int APS5_VABI sceKernelChmod_nid_postfix(const char*, std::uint16_t);
+int APS5_VABI sceKernelTruncate_nid_postfix(const char*, std::int64_t);
+int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const KernelTimeval*);
+int APS5_VABI sceKernelCheckReachability(const char*);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
 int APS5_VABI scePthreadCondattrInit(PthreadCondattr*);
@@ -208,6 +229,119 @@ bool RemoveSymlink(const std::string& link) {
 #else
     return std::filesystem::remove(link);
 #endif
+}
+
+class GuardedPaths {
+public:
+    GuardedPaths() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        page = static_cast<std::size_t>(size);
+        memory = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + page, page, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPaths() {
+#ifdef _WIN32
+        Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(memory, 2 * page) == 0);
+#endif
+    }
+
+    char* Unreadable() const { return memory + page; }
+    char* Crossing() const { return memory + page - 3; }
+    char* Boundary() const { return memory + page - 2; }
+
+private:
+    char* memory = nullptr;
+    std::size_t page = 0;
+};
+
+void CheckUnreadablePaths(const std::string& renameSource, int directory) {
+    constexpr int Fault = 14;
+    constexpr int KernelFault = static_cast<int>(0x8002000Eu);
+    GuardedPaths paths;
+    std::memcpy(paths.Crossing(), "abc", 3);
+    std::string copy;
+    Require(CopyGuestPath_nid_no_patch(paths.Unreadable(), copy) == Fault);
+    Require(CopyGuestPath_nid_no_patch(paths.Crossing(), copy) == Fault);
+    paths.Boundary()[0] = '.';
+    paths.Boundary()[1] = '\0';
+    Require(CopyGuestPath_nid_no_patch(paths.Boundary(), copy) == 0 && copy == ".");
+    const std::string maximum(1023, 'p');
+    std::array<char, 1024> unterminated{};
+    unterminated.fill('p');
+    Require(CopyGuestPath_nid_no_patch(maximum.c_str(), copy) == 0 && copy == maximum);
+    Require(CopyGuestPath_nid_no_patch(unterminated.data(), copy) == 63);
+    const auto posixFault = [&](auto call) {
+        *__error_nid_postfix() = 0;
+        Require(call() == -1 && Error() == Fault);
+    };
+    FileStat status{};
+    char linkBuffer[16]{};
+    posixFault([&] { return open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0); });
+    posixFault([&] { return chmod_nid_postfix(paths.Unreadable(), 0); });
+    posixFault([&] { return mkdir_nid_postfix(paths.Unreadable(), 0755); });
+    posixFault([&] { return rmdir_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return unlink_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return stat_nid_postfix(paths.Unreadable(), &status); });
+    posixFault([&] { return lstat_nid_postfix(paths.Unreadable(), &status); });
+    posixFault([&] { return truncate_nid_postfix(paths.Unreadable(), 0); });
+    posixFault([&] { return utimes_nid_postfix(paths.Unreadable(), nullptr); });
+    posixFault([&] { return lutimes_nid_postfix(paths.Unreadable(), nullptr); });
+    posixFault([&] { return readlink_nid_postfix(paths.Unreadable(), linkBuffer, sizeof(linkBuffer)); });
+    posixFault([&] { return pathconf_nid_postfix(paths.Unreadable(), 4); });
+    posixFault([&] { return link_nid_postfix(paths.Unreadable(), "unused-link"); });
+    posixFault([&] { return link_nid_postfix(renameSource.c_str(), paths.Unreadable()); });
+    posixFault([&] { return symlink_nid_postfix(paths.Unreadable(), "unused-symlink"); });
+    posixFault([&] { return symlink_nid_postfix("target", paths.Unreadable()); });
+    posixFault([&] { return openat_nid_postfix(-100, paths.Unreadable(), SCE_KERNEL_O_RDONLY); });
+    posixFault([&] { return mkdirat_nid_postfix(-100, paths.Unreadable(), 0755); });
+    posixFault([&] { return fchmodat_nid_postfix(-100, paths.Unreadable(), 0, 0); });
+    posixFault([&] { return lchmod_nid_postfix(paths.Unreadable(), 0); });
+    posixFault([&] { return fstatat_nid_postfix(-100, paths.Unreadable(), &status, 0); });
+    posixFault([&] { return unlinkat_nid_postfix(-100, paths.Unreadable(), 0); });
+    posixFault([&] { return readlinkat_nid_postfix(-100, paths.Unreadable(), linkBuffer, sizeof(linkBuffer)); });
+    posixFault([&] { return renameat_nid_postfix(-100, paths.Unreadable(), -100, "unused-rename"); });
+    posixFault([&] { return renameat_nid_postfix(-100, renameSource.c_str(), -100, paths.Unreadable()); });
+    posixFault([&] { return openat_nid_postfix(directory, paths.Unreadable(), SCE_KERNEL_O_RDONLY); });
+    posixFault([&] { return mkdirat_nid_postfix(directory, paths.Unreadable(), 0755); });
+    posixFault([&] { return fchmodat_nid_postfix(directory, paths.Unreadable(), 0, 0); });
+    posixFault([&] { return fstatat_nid_postfix(directory, paths.Unreadable(), &status, 0); });
+    posixFault([&] { return unlinkat_nid_postfix(directory, paths.Unreadable(), 0); });
+    posixFault([&] { return readlinkat_nid_postfix(directory, paths.Unreadable(), linkBuffer, sizeof(linkBuffer)); });
+    posixFault([&] { return renameat_nid_postfix(directory, paths.Unreadable(), directory, "unused-rename"); });
+    posixFault([&] { return renameat_nid_postfix(directory, "file.txt", directory, paths.Unreadable()); });
+    *__error_nid_postfix() = 0;
+    Require(renameat_nid_postfix(directory, "missing", directory, paths.Unreadable()) == -1 && Error() == 2);
+    *__error_nid_postfix() = 0;
+    Require(link_nid_postfix("missing", paths.Unreadable()) == -1 && Error() == 2);
+    posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
+    posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
+    Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
+    Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
+    Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
+    Require(sceKernelRmdir(paths.Unreadable()) == KernelFault);
+    Require(sceKernelUnlink(paths.Unreadable()) == KernelFault);
+    Require(sceKernelChmod_nid_postfix(paths.Unreadable(), 0) == KernelFault);
+    Require(sceKernelTruncate_nid_postfix(paths.Unreadable(), 0) == KernelFault);
+    Require(sceKernelUtimes_nid_postfix(paths.Unreadable(), nullptr) == KernelFault);
+    Require(sceKernelCheckReachability(paths.Unreadable()) == KernelFault);
+    Require(sceKernelRename(paths.Unreadable(), ".") == KernelFault);
+    Require(sceKernelRename(renameSource.c_str(), paths.Unreadable()) == KernelFault);
+    Require(!std::filesystem::exists("unused-link") && !std::filesystem::exists("unused-symlink") && !std::filesystem::exists("unused-rename"));
 }
 
 void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
@@ -768,6 +902,7 @@ int main() {
     CheckSymlinkTargetRestrictions(root);
     const int base = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(base >= 0);
+    CheckUnreadablePaths(file, base);
     const int relative = openat_nid_postfix(base, "file.txt", SCE_KERNEL_O_RDONLY);
     char byte = 0;
     Require(relative >= 0 && sceKernelRead(relative, &byte, 1) == 1 && byte == 'x');

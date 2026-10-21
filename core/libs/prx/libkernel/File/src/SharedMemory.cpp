@@ -134,12 +134,10 @@ int NamedGuestError(int error) {
 }
 
 std::string NamedHostPath(const char* path, int& error) {
-    if (path == nullptr) { error = EFAULT; return {}; }
-    std::size_t length = 0;
-    while (length < 1024 && path[length] != '\0') ++length;
-    if (length == 1024) { error = ENAMETOOLONG; return {}; }
-    if (length == 0 || path[0] != '/') { error = EINVAL; return {}; }
-    const auto digest = Nid::Sha1(std::vector<std::uint8_t>(path, path + length));
+    std::string copy;
+    if (const int copyError = CopyGuestPath_nid_no_patch(path, copy)) { error = copyError; return {}; }
+    if (copy.empty() || copy[0] != '/') { error = EINVAL; return {}; }
+    const auto digest = Nid::Sha1(std::vector<std::uint8_t>(copy.begin(), copy.end()));
     std::string hostName = "/anyps5-shm-";
     for (const auto byte : digest) {
         hostName += "0123456789abcdef"[byte >> 4];
@@ -455,6 +453,9 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
     if (accessMode != SCE_KERNEL_O_RDONLY && accessMode != SCE_KERNEL_O_RDWR) return Fail(GuestInvalid);
     if ((flags & ~AcceptedFlags) != 0) return Fail(GuestInvalid);
     if (path != anonymousObject) {
+        std::string copy;
+        if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return Fail(error);
+        path = copy.c_str();
 #ifdef _WIN32
         NotImplemented_nid_no_patch("shm_open of a named object");
 #else
@@ -470,6 +471,9 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
 }
 
 extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) return Fail(error);
+    path = copy.c_str();
 #ifdef _WIN32
     (void)path;
     NotImplemented_nid_no_patch("shm_unlink of a named object");
