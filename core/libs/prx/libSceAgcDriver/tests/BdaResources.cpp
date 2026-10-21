@@ -3327,6 +3327,87 @@ void hostWriteWatchExclusionTests() {
 #endif
 }
 
+void sparseJoinedHeapMirrorTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t half = 1u << 20u;
+    constexpr std::size_t reserved = 2 * half;
+    constexpr std::size_t page = 65536;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: sparse heap mirrors over adjacent ranges not tested\n";
+        return;
+    }
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(reserved, page);
+    auto* guest = static_cast<std::uint8_t*>(block);
+    GuestArena::GuestArenaCommit_nid_postfix(guest, page, PAGE_READWRITE, page);
+    GuestArena::GuestArenaCommit_nid_postfix(guest + half, page, PAGE_READWRITE, page);
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: sparse heap mirrors over adjacent ranges not tested\n";
+        return;
+    }
+    void* mapping = mmap(nullptr, reserved + page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "cannot reserve the sparse heap over adjacent ranges");
+    auto* guest = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(mapping) + page - 1) & ~std::uintptr_t{page - 1});
+    Require(mprotect(guest, page, PROT_READ | PROT_WRITE) == 0 && mprotect(guest + half, page, PROT_READ | PROT_WRITE) == 0, "cannot commit the sparse heap pages");
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, reserved);
+    void* block = guest;
+#endif
+    auto* second = guest + half;
+    std::memset(guest, 0x5a, page);
+    std::memset(second, 0x6b, page);
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) {
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, half, true, true, true);
+            GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, second, half, true, true, true);
+        } else {
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+            GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, second);
+        }
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto sweep = [&] {
+        GuestBufferMemory memory(context);
+        memory.AcquireRegistered();
+        memory.Upload(true);
+        memory.WriteBack();
+    };
+    sweep();
+    registry(true);
+    const auto bind = [&] {
+        GuestBufferMemory memory(context);
+        memory.AddWritable(base, reserved);
+        memory.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(base, reserved, adjustment);
+        Require(adjustment == 0, "a sparse heap view over adjacent ranges is adjusted");
+        const auto bytes = access.bytes(view.buffer);
+        Require(view.range >= half + page && bytes[view.offset + page - 1] == std::byte{0x5a} && bytes[view.offset + page] == std::byte{} && bytes[view.offset + half] == std::byte{0x6b}, "a sparse heap over adjacent ranges is not bound to its committed extent");
+        bytes[view.offset + half + 8] = std::byte{0x77};
+        memory.WriteBack();
+        return view;
+    };
+    const auto before = MirrorCounters();
+    const auto first = bind();
+    const auto made = MirrorCounters();
+    Require(made.sparseBinds == before.sparseBinds + 1 && made.heapMirrors == before.heapMirrors + 1, "a sparse heap whose committed span crosses an adjacent range was not mirrored");
+    Require(second[8] == 0x77, "a store to the adjacent range of a mirrored sparse heap was not written back");
+    second[8] = 0x6b;
+    const auto again = bind();
+    Require(again.buffer == first.buffer && MirrorCounters().rebuilds == made.rebuilds && MirrorCounters().sparseBinds == made.sparseBinds + 1, "a sparse heap over unchanged adjacent ranges did not reuse its mirror");
+    registry(false);
+    sweep();
+    Require(MirrorCounters().heapMirrors == before.heapMirrors && MirrorCounters().heapBytes == before.heapBytes, "the sparse heap mirror over adjacent ranges outlived its ranges");
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(block, reserved);
+    GuestArena::GuestArenaRelease_nid_postfix(block, reserved);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, reserved);
+    munmap(mapping, reserved + page);
+#endif
+}
+
 void sparseHeapMirrorTests(const Context& context, const BdaTestAccess& access) {
 #ifdef _WIN32
     if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
@@ -3734,6 +3815,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     spaceCommittedPagesTests(context, access);
     hostWriteWatchExclusionTests();
     sparseHeapMirrorTests(context, access);
+    sparseJoinedHeapMirrorTests(context, access);
     Require(AddressCopyOverflow({{0x1000, 0x3000, 0x2000, "uncommitted pages"}}, 0x2000).empty(), "copies within the limit were refused");
     const auto copies = AddressCopyOverflow({{0x1000, 0x2000, 0x1000, "not mirrored"}, {0x10000, 0x30000, 0x18000, "uncommitted pages"}}, 0x2000);
     Require(!copies.empty() && copies.find("0x10000+0x20000 (0.1 MiB committed, uncommitted pages)") < copies.find("0x1000+0x1000"), "the copy limit does not name the largest copy first");
