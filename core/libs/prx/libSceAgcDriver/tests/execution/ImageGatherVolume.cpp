@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -28,11 +29,18 @@ constexpr std::uint32_t IdentitySwizzle = 0xfacu;
 constexpr std::uint32_t BlueGreenRedAlpha = 0xf2eu;
 constexpr std::array<float, 20> Positions{-9.3f, -4.8f, -1.3f, -0.7f, -0.2f, 0.3f, 1.4985f, 1.6f, 3.499f, 3.7f,
                                           -1.3f, -0.7f, -0.2f, -0.5015f, 0.8f, 1.6f, 0.3f, 1.9f, -0.3f, -1.6f};
+constexpr std::array<float, 8> Extremes{3.0e6f, -3.0e6f, 1.0e9f, -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN(), 65536.3f, -1000.3f};
+constexpr std::array<std::uint32_t, 32> WideColumns{
+    0x3f4412b9u, 0x3f78caa4u, 0x3dbebd8cu, 0x3f1fa5e0u, 0x3f6f111au, 0x3f656d67u, 0x3f03ec82u, 0x3f6869bcu, 0x3f6b91beu, 0x3f305e22u, 0x3f75a2a2u,
+    0x3f0dbbe2u, 0x3eb2b6a3u, 0x3dc6ee00u, 0x3f4d5f12u, 0x3f69f2d2u, 0x3dc59097u, 0x3f050867u, 0x3e74d30bu, 0x3f436405u, 0x3f5924b9u, 0x3e4a2c04u,
+    0x3eac3af2u, 0x3eb0277fu, 0x3ebd4a8eu, 0x3f67d0deu, 0x3ec6acbeu, 0x3f588bdbu, 0x3f4c84b1u, 0x3f62f419u, 0x3f452e9eu, 0x3f7e97a1u,
+};
+constexpr std::uint32_t WideWidth = 3001;
 constexpr std::array<int, 20> PositionExtents{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, -1, -1};
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<float, Threads * 4> Output{};
-alignas(4096) std::array<std::uint8_t, 32768> Texels{};
+alignas(4096) std::array<std::uint8_t, 65536> Texels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 10> GatherRed{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf11c0110, 0x00820603, 0xbf8c3f70, 0xe0781000,
@@ -140,6 +148,13 @@ void FillInput(const Volume& volume) {
         Input[tid * 4u + 1u] = std::bit_cast<std::uint32_t>(Position(tid % 20u, width) / static_cast<float>(width));
         Input[tid * 4u + 2u] = std::bit_cast<std::uint32_t>(Position((tid * 7u + 3u) % 20u, height) / static_cast<float>(height));
         Input[tid * 4u + 3u] = std::bit_cast<std::uint32_t>((Position((tid * 11u + 5u) % 20u, depth) + 0.5f) / static_cast<float>(depth));
+        if (volume.width == WideWidth) {
+            Input[tid * 4u + 1u] = WideColumns[tid];
+            Input[tid * 4u + 2u] = std::bit_cast<std::uint32_t>(0.25f);
+            Input[tid * 4u + 3u] = std::bit_cast<std::uint32_t>(0.25f);
+        } else if (tid >= Threads - Extremes.size()) {
+            Input[tid * 4u + 1u + tid % 3u] = std::bit_cast<std::uint32_t>(Extremes[tid - (Threads - Extremes.size())]);
+        }
     }
 }
 
@@ -172,8 +187,16 @@ std::array<std::optional<int>, 2> Footprint(int first, int extent, std::uint32_t
     return result;
 }
 
-int Snapped(float coordinate, int extent, int offset) {
-    const auto steps = static_cast<long long>(std::floor(static_cast<double>(coordinate) * extent * 256.0 + 0.5)) - offset;
+float Reduced(float coordinate, std::uint32_t clamp) {
+    if (std::isnan(coordinate)) return 0.0f;
+    if (std::isinf(coordinate)) coordinate = coordinate < 0.0f ? -4.0f : 4.0f;
+    if (clamp == 0u) return coordinate - std::floor(coordinate);
+    if (clamp == 1u) return coordinate - 2.0f * std::floor(coordinate * 0.5f);
+    return std::clamp(coordinate, -4.0f, 4.0f);
+}
+
+int Snapped(float coordinate, int extent, int offset, std::uint32_t clamp) {
+    const auto steps = static_cast<long long>(std::floor(static_cast<double>(Reduced(coordinate, clamp)) * extent * 256.0 + 0.5)) - offset;
     return static_cast<int>(steps >= 0 ? steps / 256 : -((-steps + 255) / 256));
 }
 
@@ -196,9 +219,9 @@ std::array<std::uint32_t, 4> Expected(std::uint32_t tid, const Variant& variant)
     const float u = std::bit_cast<float>(Input[tid * 4u + 1u]);
     const float v = std::bit_cast<float>(Input[tid * 4u + 2u]);
     const float r = std::bit_cast<float>(Input[tid * 4u + 3u]);
-    const auto columns = Footprint(Snapped(u, width, 128), width, variant.sampler.clamp);
-    const auto rows = Footprint(Snapped(v, height, 128), height, variant.sampler.clamp);
-    const auto slice = Single(Snapped(r, depth, 0), depth, (variant.sampler.clamp & 6u) == 4u ? (variant.sampler.clamp & 1u) | 2u : variant.sampler.clamp);
+    const auto columns = Footprint(Snapped(u, width, 128, variant.sampler.clamp), width, variant.sampler.clamp);
+    const auto rows = Footprint(Snapped(v, height, 128, variant.sampler.clamp), height, variant.sampler.clamp);
+    const auto slice = Single(Snapped(r, depth, 0, variant.sampler.clamp), depth, (variant.sampler.clamp & 6u) == 4u ? (variant.sampler.clamp & 1u) | 2u : variant.sampler.clamp);
     const auto value = [&](std::size_t column, std::size_t row) {
         if (!columns[column] || !rows[row] || !slice) return BorderValue(variant);
         return Channel(variant, Texel(volume, level, static_cast<std::uint32_t>(*columns[column]), static_cast<std::uint32_t>(*rows[row]), static_cast<std::uint32_t>(*slice)));
@@ -279,6 +302,7 @@ int main() {
         const SamplerState lodState{2, 0, 4u << 9u, 0x100u | (0xfffu << 12u), 0x100u | (1u << 20u) | (1u << 22u) | (2u << 26u)};
         Run(*device, {GatherRed, 0, {8, 4, 4, 0, 1}, lodState, "3D gather of red ignores the sampler's LOD clamp, bias, filters and anisotropy"});
         Run(*device, {GatherRed, 0, {8, 4, 4, 1, 1}, {0}, "3D gather of red reads the base level"});
+        Run(*device, {GatherRed, 0, {WideWidth, 2, 2}, {2}, "3D gather of red from a 3001 texel wide volume at 1/256 texel boundaries"});
         Run(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {1}, "3D gather of red through a blue-green-red-alpha swizzle"});
         RunThrows(*device, {GatherRed, 0, cube, {6, 3}, "3D gather with a border color table"}, "a 3D gather with a border color table is not implemented");
         RunThrows(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {6, 2}, "3D gather of a swizzled volume with border addressing"}, "a 3D gather of a swizzled texture with border addressing is not implemented");
