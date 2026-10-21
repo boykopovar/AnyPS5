@@ -1,5 +1,6 @@
 set(ANYPS5_RECOMPILER_DIR ${PROJECT_SOURCE_DIR}/core/shader/recompiler)
 file(GLOB_RECURSE ANYPS5_TOOL_RECOMPILER_SOURCES CONFIGURE_DEPENDS ${ANYPS5_RECOMPILER_DIR}/*.cpp)
+list(FILTER ANYPS5_TOOL_RECOMPILER_SOURCES EXCLUDE REGEX "/tests/")
 list(FILTER ANYPS5_TOOL_RECOMPILER_SOURCES EXCLUDE REGEX "^${ANYPS5_RECOMPILER_DIR}/(tests/|WgslBackend/tools/|Deserialize\\.cpp$|SpirvBackend/src/SpirvOptimizer\\.cpp$)")
 set(ANYPS5_TOOL_RECOMPILER_VERSION ${CMAKE_CURRENT_BINARY_DIR}/ShaderCacheVersion.cpp)
 file(CONFIGURE OUTPUT ${ANYPS5_TOOL_RECOMPILER_VERSION} CONTENT "#include \"ShaderCacheSourceVersion.hpp\"\n\nnamespace ShaderRecompiler::ShaderDiskCache::Generated {\n\nconstinit const std::uint64_t SourceVersion = 0;\nconstinit const std::span<const std::string_view> RecompilerSwitches = {};\n\n}\n")
