@@ -41,6 +41,18 @@ int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
  return USER_SERVICE_OK;
 }
 
+void PopulateInitialLoginEvents() {
+ std::lock_guard lock(userMutex);
+ eventQueue.clear();
+ constexpr std::uint32_t EventTypeLogin = 0;
+ eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {
+  if (userConnected[i]) {
+   eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID + i});
+  }
+ }
+}
+
 extern "C" int APS5_VABI sceSystemServiceParamGetInt(int param_id, int* value);
 
 // Per-user keyboard settings. Nothing in AnyPS5 stores a keyboard type or input variant, so every known user reports
@@ -248,15 +260,7 @@ static int MarkInitialized() {
  if (initialized.exchange(true)) {
   return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
  }
- std::lock_guard lock(userMutex);
- eventQueue.clear();
- constexpr std::uint32_t EventTypeLogin = 0;
- eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
- for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {
-  if (userConnected[i]) {
-   eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID + i});
-  }
- }
+ PopulateInitialLoginEvents();
  return USER_SERVICE_OK;
 }
 
