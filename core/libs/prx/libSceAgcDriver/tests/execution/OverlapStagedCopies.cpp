@@ -140,6 +140,8 @@ void ReadRound(std::uint32_t round) {
     }
 }
 
+bool Inline = false;
+
 void StagedRun(std::uint32_t round) {
     std::vector<std::uint32_t> words{0xc0037600u, 0x207u, Lanes, 1u, 1u, 0xc0017600u, 0x213u, 4u << 1u};
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
@@ -149,11 +151,14 @@ void StagedRun(std::uint32_t round) {
         words.insert(words.end(), {0xc0047600u, 0x240u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), BufferBytes, 0x31016facu});
         words.insert(words.end(), {0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u), 0xc0031500u, 1u, 1u, 1u, 0x8041u});
     }
-    const auto before = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped;
+    const auto counts = AgcDriver::Graphics::Recorder::OverlapCounts();
+    const auto before = counts.overlapped;
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
-    const auto joined = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped - before;
+    const auto after = AgcDriver::Graphics::Recorder::OverlapCounts();
+    const auto joined = after.overlapped - before;
+    const auto prelude = after.preludeDispatches - counts.preludeDispatches;
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[build]), BufferBytes);
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
@@ -162,6 +167,8 @@ void StagedRun(std::uint32_t round) {
         }
     }
     check(joined == StoreCodes.size() - 1, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(joined) + " joined a run, expected 3");
+    const std::uint64_t expected = Inline ? 0 : StoreCodes.size() - 1;
+    check(prelude == expected, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(prelude) + " joining dispatches copied in through the run's prelude, expected " + std::to_string(expected));
 }
 
 void Round(std::uint32_t dispatches, std::uint32_t& expected, const std::string& what) {
@@ -179,7 +186,7 @@ void Round(std::uint32_t dispatches, std::uint32_t& expected, const std::string&
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_WRITTEN_SHADOW_MIN_KIB", "0");
@@ -191,6 +198,7 @@ int main() {
             if (!probe) return VulkanTestSkipped;
         }
 
+        Inline = argc > 1 && std::string(argv[1]) == "--inline";
         for (const auto* code : StoreCodes) Register(code, sizeof(StoreOne));
         for (auto& block : Staged) block = NewBlock();
         for (std::uint32_t round = 1; round <= 3; ++round) StagedRun(round);

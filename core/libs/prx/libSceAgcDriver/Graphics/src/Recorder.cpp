@@ -1248,6 +1248,8 @@ Recorder::~Recorder() {
     if (dispatchArgumentLayout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, dispatchArgumentLayout, nullptr);
     for (const auto fence : spare) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     spare.clear();
+    for (auto chunk : spareChunks) context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &chunk);
+    spareChunks.clear();
     for (const auto pool : sparePools) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, pool, nullptr);
     sparePools.clear();
     // Sync() above waited for every batch, so no submission still signals the timeline.
@@ -1435,7 +1437,7 @@ struct DispatchOrder {
 };
 
 thread_local DispatchOrder nextDispatchOrder;
-std::atomic<std::uint64_t> overlapDeferred{0}, overlapJoined{0}, overlapFlushed{0};
+std::atomic<std::uint64_t> overlapDeferred{0}, overlapJoined{0}, overlapFlushed{0}, overlapPreludeDispatches{0};
 
 }
 
@@ -1459,11 +1461,13 @@ std::uint32_t Recorder::TakeDispatchOrder(bool& unordered) {
 }
 
 Recorder::OverlapStatistics Recorder::OverlapCounts() {
-    return OverlapStatistics{overlapDeferred.load(std::memory_order_relaxed), overlapJoined.load(std::memory_order_relaxed), overlapFlushed.load(std::memory_order_relaxed)};
+    return OverlapStatistics{overlapDeferred.load(std::memory_order_relaxed), overlapJoined.load(std::memory_order_relaxed), overlapFlushed.load(std::memory_order_relaxed), overlapPreludeDispatches.load(std::memory_order_relaxed)};
 }
 
 void Recorder::flushDeferredDispatch() {
-    if (open == nullptr || open->deferredDispatchQueue == 0) return;
+    if (open == nullptr) return;
+    sealPrelude();
+    if (open->deferredDispatchQueue == 0) return;
     open->deferredDispatchQueue = 0;
     open->deferredRun.clear();
     open->runAccess.clear();
@@ -1474,6 +1478,16 @@ void Recorder::flushDeferredDispatch() {
     CountBarriers(CommandClass::DispatchTrailing);
     open->coveredAccess = dispatchedAccess;
     overlapFlushed.fetch_add(1, std::memory_order_relaxed);
+    const bool merge = BatchedStagingEnabled() && !BarrierValidate() && after.size() > 1;
+    open->afterRunMerging = merge;
+    open->afterRunWrote = false;
+    open->afterRunWritten.clear();
+    struct EndMerge {
+        Recorder& recorder;
+        ~EndMerge() {
+            if (recorder.open != nullptr) recorder.open->afterRunMerging = false;
+        }
+    } endMerge{*this};
     std::exception_ptr failure;
     for (auto& work : after) {
         try {
@@ -1482,7 +1496,92 @@ void Recorder::flushDeferredDispatch() {
             if (failure == nullptr) failure = std::current_exception();
         }
     }
+    if (merge && open->afterRunWrote) {
+        constexpr VkAccessFlags copiedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+        recordBarrier(open->commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, copiedAccess);
+        CountBarriers(CommandClass::StagingOut);
+        open->coveredAccess = copiedAccess;
+    }
+    open->afterRunWritten.clear();
     if (failure != nullptr) std::rethrow_exception(failure);
+}
+
+bool Recorder::BatchedStagingEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_BATCHED_STAGING") == nullptr;
+    return enabled;
+}
+
+VkCommandBuffer Recorder::beginChunk() {
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    if (!spareChunks.empty()) {
+        commands = spareChunks.back();
+        spareChunks.pop_back();
+    } else {
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocation.commandPool = context.pool;
+        allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocation.commandBufferCount = 1;
+        Check(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &commands), "vkAllocateCommandBuffers recorder chunk");
+    }
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    const auto result = function(beginCommandBuffer, "vkBeginCommandBuffer")(commands, &begin);
+    if (result != VK_SUCCESS) {
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &commands);
+        Check(result, "vkBeginCommandBuffer recorder chunk");
+    }
+    return commands;
+}
+
+VkCommandBuffer Recorder::SplitForRun() {
+    Require(open != nullptr, "a run split has no batch");
+    GuestMemory::AssertGpuLockHeld("Recorder::SplitForRun");
+    if (open->sampleActive || open->segmentActive || open->renderPass.open || open->run.open) return open->commands;
+    sealPrelude();
+    open->chunks.reserve(open->chunks.size() + 1);
+    const auto next = beginChunk();
+    const auto ended = function(endCommandBuffer, "vkEndCommandBuffer")(open->commands);
+    if (ended != VK_SUCCESS) {
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &next);
+        Check(ended, "vkEndCommandBuffer recorder split");
+    }
+    open->chunks.push_back(open->commands);
+    open->commands = next;
+    open->preludeArmed = true;
+    return next;
+}
+
+VkCommandBuffer Recorder::PreludeCommands() {
+    if (open == nullptr || !open->preludeArmed || open->deferredDispatchQueue == 0) return VK_NULL_HANDLE;
+    if (open->prelude == VK_NULL_HANDLE) {
+        open->chunks.reserve(open->chunks.size() + 1);
+        open->prelude = beginChunk();
+        open->chunks.insert(open->chunks.end(), open->prelude);
+        recordBarrier(open->prelude, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        CountBarriers(CommandClass::StagingIn);
+    }
+    overlapPreludeDispatches.fetch_add(1, std::memory_order_relaxed);
+    return open->prelude;
+}
+
+void Recorder::sealPrelude() {
+    if (open == nullptr) return;
+    open->preludeArmed = false;
+    if (open->prelude == VK_NULL_HANDLE) return;
+    const auto commands = std::exchange(open->prelude, VK_NULL_HANDLE);
+    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    CountBarriers(CommandClass::StagingIn);
+    Check(function(endCommandBuffer, "vkEndCommandBuffer")(commands), "vkEndCommandBuffer recorder prelude");
+}
+
+bool Recorder::AfterRunWrite(std::uint64_t begin, std::uint64_t end) {
+    Require(open != nullptr && open->afterRunMerging, "a merged copy-back outside a run's end");
+    auto& written = open->afterRunWritten;
+    const bool overlaps = std::any_of(written.begin(), written.end(), [&](const auto& range) { return begin < range.second && range.first < end; });
+    if (overlaps) written.clear();
+    written.emplace_back(begin, end);
+    open->afterRunWrote = true;
+    return overlaps;
 }
 
 bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
@@ -3796,6 +3895,7 @@ void Recorder::Submit() {
     if (open == nullptr) return;
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
     flushDeferredDispatch();
+    sealPrelude();
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::NewBatch);
     const bool segments = segmentMode();
@@ -3829,8 +3929,13 @@ void Recorder::Submit() {
     } discardUnsubmitted{*this, batch};
     Check(function(endCommandBuffer, "vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submission.commandBufferCount = 1;
-    submission.pCommandBuffers = &batch->commands;
+    std::vector<VkCommandBuffer> commandBuffers;
+    if (!batch->chunks.empty()) {
+        commandBuffers = batch->chunks;
+        commandBuffers.push_back(batch->commands);
+    }
+    submission.commandBufferCount = commandBuffers.empty() ? 1u : static_cast<std::uint32_t>(commandBuffers.size());
+    submission.pCommandBuffers = commandBuffers.empty() ? &batch->commands : commandBuffers.data();
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
     std::string tokensStr = "[";
@@ -4482,6 +4587,20 @@ void Recorder::release(Batch& batch) noexcept {
     batch.endedSamples.clear();
     batch.segments = VK_NULL_HANDLE;
     batch.segmentPool.reset();
+    const bool chunksIdle = batch.submitted && batch.fence != VK_NULL_HANDLE && fenceStatus(batch.fence) == VK_SUCCESS;
+    for (auto chunk : batch.chunks) {
+        if (chunksIdle && spareChunks.size() < 256) {
+            try {
+                spareChunks.push_back(chunk);
+                continue;
+            } catch (...) {
+            }
+        }
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &chunk);
+    }
+    batch.chunks.clear();
+    batch.prelude = VK_NULL_HANDLE;
+    batch.preludeArmed = false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (batch.commands != VK_NULL_HANDLE) {
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &batch.commands);
