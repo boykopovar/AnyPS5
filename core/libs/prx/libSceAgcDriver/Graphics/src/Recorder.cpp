@@ -1448,6 +1448,10 @@ void Recorder::SetDispatchOrder(std::uint32_t queueKey, bool unordered) {
     nextDispatchOrder = {queueKey, unordered};
 }
 
+std::uint32_t Recorder::PeekUnorderedDispatch() {
+    return nextDispatchOrder.unordered ? nextDispatchOrder.queueKey : 0u;
+}
+
 std::uint32_t Recorder::TakeDispatchOrder(bool& unordered) {
     const auto order = std::exchange(nextDispatchOrder, DispatchOrder{});
     unordered = order.unordered;
@@ -1463,11 +1467,22 @@ void Recorder::flushDeferredDispatch() {
     open->deferredDispatchQueue = 0;
     open->deferredRun.clear();
     open->runAccess.clear();
+    auto after = std::move(open->afterRun);
+    open->afterRun.clear();
     constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
     recordBarrier(open->commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
     CountBarriers(CommandClass::DispatchTrailing);
     open->coveredAccess = dispatchedAccess;
     overlapFlushed.fetch_add(1, std::memory_order_relaxed);
+    std::exception_ptr failure;
+    for (auto& work : after) {
+        try {
+            work(*this);
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
+    }
+    if (failure != nullptr) std::rethrow_exception(failure);
 }
 
 bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
@@ -1481,15 +1496,41 @@ bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
     return false;
 }
 
-VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped) {
+bool Recorder::joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const {
+    if (queueKey == 0 || open == nullptr || open->deferredDispatchQueue != queueKey || open->renderPass.open || open->run.open) return false;
+    const auto taken = [&](const void* owner) { return std::find(open->deferredRun.begin(), open->deferredRun.end(), owner) != open->deferredRun.end(); };
+    return std::none_of(owners.begin(), owners.end(), taken) && !runConflict(accesses);
+}
+
+VkCommandBuffer Recorder::RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess) {
+    GuestMemory::AssertGpuLockHeld("Recorder::RunCommands");
+    inRun = joinsRun(queueKey, std::span(&owner, 1), accesses);
+    if (!inRun) return Commands(coveredAccess);
+    if (coveredAccess != nullptr) *coveredAccess = 0;
+    return open->commands;
+}
+
+void Recorder::AfterRun(std::function<void(Recorder&)> work) {
+    Require(RunOpen(), "work after a dispatch run without an open run");
+    open->afterRun.push_back(std::move(work));
+}
+
+bool Recorder::CloseRunOwing(const void* owner) {
+    GuestMemory::AssertGpuLockHeld("Recorder::CloseRunOwing");
+    if (!RunOpen() || std::find(open->deferredRun.begin(), open->deferredRun.end(), owner) == open->deferredRun.end()) return false;
+    flushDeferredDispatch();
+    return true;
+}
+
+VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped) {
     GuestMemory::AssertGpuLockHeld("Recorder::OverlapCommands");
-    overlapped = queueKey != 0 && open != nullptr && open->deferredDispatchQueue == queueKey && !open->renderPass.open && !open->run.open && std::find(open->deferredRun.begin(), open->deferredRun.end(), owner) == open->deferredRun.end() && !runConflict(accesses);
+    overlapped = joinsRun(queueKey, owners, accesses);
     if (!overlapped) return Commands(coveredAccess);
     if (coveredAccess != nullptr) *coveredAccess = 0;
     return open->commands;
 }
 
-void Recorder::DeferDispatchBarrier(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses) {
+void Recorder::DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) {
     Require(open != nullptr && queueKey != 0, "a deferred dispatch barrier has no batch");
     if (open->deferredDispatchQueue == 0) {
         open->deferredRun.clear();
@@ -1497,7 +1538,7 @@ void Recorder::DeferDispatchBarrier(std::uint32_t queueKey, const void* owner, s
     } else {
         overlapJoined.fetch_add(1, std::memory_order_relaxed);
     }
-    open->deferredRun.push_back(owner);
+    open->deferredRun.insert(open->deferredRun.end(), owners.begin(), owners.end());
     open->runAccess.insert(open->runAccess.end(), accesses.begin(), accesses.end());
     open->deferredDispatchQueue = queueKey;
     open->coveredAccess = 0;

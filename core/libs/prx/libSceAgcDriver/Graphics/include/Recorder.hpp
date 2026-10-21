@@ -69,8 +69,14 @@ public:
     static std::uint32_t TakeDispatchOrder(bool& unordered);
     static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
     using RunAccess = std::array<std::uint64_t, 3>;
-    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
-    void DeferDispatchBarrier(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses);
+    static std::uint32_t PeekUnorderedDispatch();
+    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
+    void DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses);
+    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess);
+    void OpenBatch() { ensureOpen(); }
+    bool RunOpen() const { return open != nullptr && open->deferredDispatchQueue != 0; }
+    void AfterRun(std::function<void(Recorder&)> work);
+    bool CloseRunOwing(const void* owner);
     struct OverlapStatistics {
         std::uint64_t deferred, overlapped, flushed;
     };
@@ -675,6 +681,7 @@ private:
         std::uint32_t deferredDispatchQueue = 0;
         std::vector<const void*> deferredRun;
         std::vector<RunAccess> runAccess;
+        std::vector<std::function<void(Recorder&)>> afterRun;
         // The hazard tracker's accesses since its last simulated barrier (see NoteAccess).
         struct Tracker {
             struct Range {
@@ -799,6 +806,7 @@ private:
     void ensureOpen();
     void flushDeferredDispatch();
     bool runConflict(std::span<const RunAccess> accesses) const;
+    bool joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const;
     void dropStaleHoldKept();
     // Records the run's pending store (vkCmdUpdateBuffer), if any.
     void flushPendingStore();

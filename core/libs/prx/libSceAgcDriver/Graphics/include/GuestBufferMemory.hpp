@@ -384,6 +384,11 @@ public:
         return false;
     }
     void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
+    bool HasHostGpuCopies() const {
+        for (const auto& region : regions) if (region.gpuCopy && !region.deviceLocal) return true;
+        return false;
+    }
+    void MarkStagedWrites() const;
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
