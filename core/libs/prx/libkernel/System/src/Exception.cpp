@@ -37,6 +37,9 @@
 #include <string_view>
 #include <dlfcn.h>
 #include <link.h>
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 35))
+#define LIBKERNEL_EXCEPTION_FIND_OBJECT 1
+#endif
 #endif
 
 #ifdef _WIN32
@@ -1211,9 +1214,16 @@ bool Classify(int hostSignal, const mcontext_t& host, Fault& fault) {
 
 bool GuestCode(std::uintptr_t rip) {
     if (GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<const void*>(rip), 1)) return true;
+#ifdef LIBKERNEL_EXCEPTION_FIND_OBJECT
+    dl_find_object object{};
+    if (_dl_find_object(reinterpret_cast<void*>(rip), &object) != 0) return false;
+    const link_map* native = object.dlfo_link_map;
+#else
     Dl_info symbol{};
     link_map* native = nullptr;
-    if (!dladdr1(reinterpret_cast<const void*>(rip), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) || !native) return false;
+    if (!dladdr1(reinterpret_cast<const void*>(rip), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP)) return false;
+#endif
+    if (!native) return false;
     const std::string_view name = native->l_name ? native->l_name : "";
     return name.empty() || name.ends_with(GuestModuleSuffix);
 }
