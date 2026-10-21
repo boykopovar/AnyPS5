@@ -761,6 +761,53 @@ std::uint32_t EmitOneDimensionalGatherLz(SpirvValueEmitContext& ctx, const Image
     return result;
 }
 
+std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+    auto& state = ctx.state;
+    const auto numericClass = access.image.numericClass;
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeU32Vector(state, 3), size, image, ConstantU32(state, 0));
+    std::uint32_t extents[3] = {};
+    std::uint32_t starts[3] = {};
+    for (std::uint32_t axis = 0; axis < 3u; axis++) {
+        const auto extent = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), extent, size, axis);
+        extents[axis] = Unary(state, spv::OpConvertUToF, TypeF32(state), extent);
+        const auto coord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), coord, setup.coord, axis);
+        auto scaled = Binary(state, spv::OpFMul, TypeF32(state), coord, extents[axis]);
+        if (axis < 2u) {
+            scaled = Binary(state, spv::OpFSub, TypeF32(state), scaled, ConstantF32(state, 0x3f000000u));
+        }
+        starts[axis] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32(state), starts[axis], GlslStd450(state), GLSLstd450Floor, scaled);
+    }
+    const auto centre = [&](std::uint32_t axis, std::uint32_t half) {
+        return Binary(state, spv::OpFDiv, TypeF32(state), Binary(state, spv::OpFAdd, TypeF32(state), starts[axis], ConstantF32(state, half)), extents[axis]);
+    };
+    const std::uint32_t columns[2] = {centre(0u, 0x3f000000u), centre(0u, 0x3fc00000u)};
+    const std::uint32_t rows[2] = {centre(1u, 0x3f000000u), centre(1u, 0x3fc00000u)};
+    const auto slice = centre(2u, 0x3f000000u);
+    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
+    const auto vectorType = ImageVectorType(state, numericClass, 4);
+    const auto scalarType = ImageScalarType(state, numericClass);
+    const auto component = ImageConversionFormat(access.image).format == IrBufferFormat::Invalid ? ImageGatherComponent(EffectiveDmask(access.mem)) : 0u;
+    constexpr std::uint32_t footprint[4][2] = {{0u, 1u}, {1u, 1u}, {1u, 0u}, {0u, 0u}};
+    std::uint32_t values[4] = {};
+    for (std::uint32_t index = 0; index < 4u; index++) {
+        const auto sampleCoord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 3), sampleCoord, columns[footprint[index][0]], rows[footprint[index][1]], slice);
+        const auto texel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageSampleExplicitLod, vectorType, texel, sampled, sampleCoord, spv::ImageOperandsLodMask, ZeroF32(state));
+        values[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, scalarType, values[index], texel, component);
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, vectorType, result, values[0], values[1], values[2], values[3]);
+    return result;
+}
+
 std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
     auto& state = ctx.state;
     const auto info = ImageConversionFormat(access.image);
@@ -1334,6 +1381,14 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
             ctx.Fail(access.inst, "has an unsupported 1D gather variant");
         }
         const auto sample = EmitOneDimensionalGatherLz(ctx, access, setup);
+        ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true));
+        return;
+    }
+    if (dimension == RdnaImageDimension::Dim3D) {
+        if (setup.dref || !HasFlag(mem, RdnaImageSampleFlagLevelZero) || HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) || setup.layout.offset != NoImageComponent) {
+            ctx.Fail(access.inst, "has an unsupported 3D gather variant");
+        }
+        const auto sample = EmitVolumeGatherLz(ctx, access, setup);
         ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true));
         return;
     }
