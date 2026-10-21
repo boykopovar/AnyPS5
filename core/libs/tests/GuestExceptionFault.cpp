@@ -7,11 +7,20 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <chrono>
+#include <csignal>
+#include <spawn.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
 #endif
 
 extern "C" {
@@ -206,8 +215,12 @@ static constexpr std::uint64_t PatchedR12 = 0x5a5a1234abcd0001ULL;
 static constexpr int JumpValue = 7;
 static constexpr std::size_t PageBytes = 4096;
 static constexpr std::size_t WatchedBytes = 65536;
+static constexpr int RetryCalls = 3;
+static constexpr int ChildTimeoutSeconds = 10;
+static constexpr const char* RemoveAndReturnMode = "remove-and-return";
+static constexpr const char* HandledMarker = "[guest_exception_fault] handler removed itself\n";
 
-enum class Mode { Resume, Registers, Nested, Jump };
+enum class Mode { Resume, Registers, Nested, Jump, Retry, Unprotect, Remove };
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -242,7 +255,26 @@ static std::atomic<int> nestedCalls{0};
 static std::uint64_t observedErr = 0;
 static std::atomic<std::thread::id> handlerThread;
 static RegisterState* registerState = nullptr;
+static void* unprotectPage = nullptr;
 alignas(16) static std::uint8_t jumpBuffer[128];
+
+static void MakeWritable(void* page) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, PageBytes, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(page, PageBytes, PROT_READ | PROT_WRITE) == 0);
+#endif
+}
+
+static void MarkHandled() {
+#ifdef _WIN32
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), HandledMarker, static_cast<DWORD>(std::strlen(HandledMarker)), &written, nullptr);
+#else
+    Require(write(STDOUT_FILENO, HandledMarker, std::strlen(HandledMarker)) == static_cast<ssize_t>(std::strlen(HandledMarker)));
+#endif
+}
 
 static void Check(int signum, void* context, const Expected& want) {
     Require(signum == want.signum);
@@ -272,7 +304,17 @@ static void APS5_VABI Handler(int signum, void* context) {
     Check(signum, context, expected);
     observedErr = Field<std::uint64_t>(context, ErrOffset);
     handlerThread.store(std::this_thread::get_id());
-    calls.fetch_add(1);
+    const int call = calls.fetch_add(1) + 1;
+    if (mode == Mode::Retry && call < RetryCalls) return;
+    if (mode == Mode::Unprotect) {
+        MakeWritable(unprotectPage);
+        return;
+    }
+    if (mode == Mode::Remove) {
+        MarkHandled();
+        Require(sceKernelRemoveExceptionHandler(signum) == 0);
+        return;
+    }
     if (mode == Mode::Jump) longjmp_nid_postfix(jumpBuffer, JumpValue);
     if (mode == Mode::Nested) Require(FaultTestIllegal() == Resumed);
     if (mode == Mode::Registers) {
@@ -424,6 +466,103 @@ static void TestWatchedStore() {
     FreePages(watched, WatchedBytes);
 }
 
+static void TestReturnUnchanged() {
+    Arm(Mode::Retry, {GUEST_SIGSEGV, T_PAGEFLT, NullAddress, Address(FaultTestReadSite), Address(FaultTestReadResume)});
+    Require(FaultTestRead(NullAddress) == Resumed);
+    Require(calls.load() == RetryCalls);
+}
+
+static void TestFixAndReturn() {
+    void* page = Pages(PageBytes, false);
+    const auto address = reinterpret_cast<std::uintptr_t>(page) + 8;
+    unprotectPage = page;
+    Arm(Mode::Unprotect, {GUEST_SIGSEGV, T_PAGEFLT, address, Address(FaultTestWriteSite), 0});
+    Require(FaultTestWrite(address, 9) == 0);
+    Require(calls.load() == 1);
+    Require(*reinterpret_cast<volatile std::uint64_t*>(address) == 9);
+    unprotectPage = nullptr;
+    FreePages(page, PageBytes);
+}
+
+static int RemoveAndReturnChild() {
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+#else
+    const rlimit noCore{0, 0};
+    setrlimit(RLIMIT_CORE, &noCore);
+#endif
+    Require(sceKernelInstallExceptionHandler(GUEST_SIGSEGV, reinterpret_cast<void*>(&Handler)) == 0);
+    Arm(Mode::Remove, {GUEST_SIGSEGV, T_PAGEFLT, NullAddress, Address(FaultTestReadSite), 0});
+    FaultTestRead(NullAddress);
+    return EXIT_SUCCESS;
+}
+
+static void TestRemoveAndReturn(const char* self) {
+    std::string output;
+#ifdef _WIN32
+    (void)self;
+    SECURITY_ATTRIBUTES attributes{sizeof(attributes), nullptr, TRUE};
+    HANDLE readEnd = nullptr;
+    HANDLE writeEnd = nullptr;
+    Require(CreatePipe(&readEnd, &writeEnd, &attributes, 0) != 0);
+    Require(SetHandleInformation(readEnd, HANDLE_FLAG_INHERIT, 0) != 0);
+    wchar_t path[MAX_PATH]{};
+    Require(GetModuleFileNameW(nullptr, path, MAX_PATH) != 0);
+    std::wstring command = L"\"" + std::wstring(path) + L"\" remove-and-return";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = writeEnd;
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    PROCESS_INFORMATION child{};
+    Require(CreateProcessW(path, command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &child) != 0);
+    CloseHandle(writeEnd);
+    const DWORD waited = WaitForSingleObject(child.hProcess, ChildTimeoutSeconds * 1000);
+    if (waited != WAIT_OBJECT_0) TerminateProcess(child.hProcess, 1);
+    Require(waited == WAIT_OBJECT_0);
+    DWORD code = 0;
+    Require(GetExitCodeProcess(child.hProcess, &code) != 0);
+    Require(code == static_cast<DWORD>(EXCEPTION_ACCESS_VIOLATION));
+    char buffer[64];
+    DWORD bytes = 0;
+    while (ReadFile(readEnd, buffer, sizeof(buffer), &bytes, nullptr) != 0 && bytes != 0) output.append(buffer, bytes);
+    CloseHandle(readEnd);
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+#else
+    int pipeEnds[2];
+    Require(pipe(pipeEnds) == 0);
+    posix_spawn_file_actions_t actions;
+    Require(posix_spawn_file_actions_init(&actions) == 0);
+    Require(posix_spawn_file_actions_adddup2(&actions, pipeEnds[1], STDOUT_FILENO) == 0);
+    Require(posix_spawn_file_actions_addclose(&actions, pipeEnds[0]) == 0);
+    std::string program = self;
+    std::string argument = RemoveAndReturnMode;
+    char* arguments[] = {program.data(), argument.data(), nullptr};
+    pid_t child = 0;
+    Require(posix_spawn(&child, "/proc/self/exe", &actions, nullptr, arguments, environ) == 0);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipeEnds[1]);
+    int status = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(ChildTimeoutSeconds);
+    pid_t waited = 0;
+    while ((waited = waitpid(child, &status, WNOHANG)) == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (waited == 0) {
+        kill(child, SIGKILL);
+        waitpid(child, &status, 0);
+    }
+    Require(waited == child);
+    Require(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
+    char buffer[64];
+    ssize_t bytes = 0;
+    while ((bytes = read(pipeEnds[0], buffer, sizeof(buffer))) > 0) output.append(buffer, static_cast<std::size_t>(bytes));
+    close(pipeEnds[0]);
+#endif
+    const auto first = output.find(HandledMarker);
+    Require(first != std::string::npos && output.find(HandledMarker, first + 1) == std::string::npos);
+}
+
 static void TestOtherThread() {
     Arm(Mode::Resume, {GUEST_SIGSEGV, T_PAGEFLT, NullAddress, Address(FaultTestReadSite), Address(FaultTestReadResume)});
     std::thread::id worker;
@@ -438,7 +577,8 @@ static void TestOtherThread() {
     Require(handlerThread.load() == worker);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], RemoveAndReturnMode) == 0) return RemoveAndReturnChild();
     __builtin_cpu_init();
     Require(sceKernelInstallExceptionHandler(GUEST_SIGSEGV, reinterpret_cast<void*>(&Handler)) == 0);
     Require(sceKernelInstallExceptionHandler(GUEST_SIGBUS, reinterpret_cast<void*>(&Handler)) == 0);
@@ -455,5 +595,8 @@ int main() {
     TestJumpOut();
     TestOtherThread();
     TestWatchedStore();
+    TestReturnUnchanged();
+    TestFixAndReturn();
+    TestRemoveAndReturn(argv[0]);
     for (const int signum : {GUEST_SIGSEGV, GUEST_SIGBUS, GUEST_SIGFPE, GUEST_SIGILL}) Require(sceKernelRemoveExceptionHandler(signum) == 0);
 }
