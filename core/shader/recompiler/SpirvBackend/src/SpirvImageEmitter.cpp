@@ -785,15 +785,19 @@ std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAcce
         extents[axis] = Unary(state, spv::OpBitcast, i32, extent);
         const auto coord = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, f32, coord, setup.coord, axis);
-        auto scaled = Binary(state, spv::OpFMul, f32, coord, Unary(state, spv::OpConvertUToF, f32, extent));
+        const auto scaled = Binary(state, spv::OpFMul, f32, coord, Unary(state, spv::OpConvertUToF, f32, extent));
         state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
-        if (axis < 2u) {
-            scaled = Binary(state, spv::OpFSub, f32, scaled, ConstantF32(state, 0x3f000000u));
-            state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
-        }
+        const auto steps = Binary(state, spv::OpFMul, f32, scaled, ConstantF32(state, 0x43800000u));
+        state.module.AddAnnotation(spv::OpDecorate, steps, spv::DecorationNoContraction);
+        const auto halfStep = Binary(state, spv::OpFAdd, f32, steps, ConstantF32(state, 0x3f000000u));
+        state.module.AddAnnotation(spv::OpDecorate, halfStep, spv::DecorationNoContraction);
         const auto floored = state.module.AllocateId();
-        state.module.AddFunction(spv::OpExtInst, f32, floored, GlslStd450(state), GLSLstd450Floor, scaled);
-        starts[axis] = Unary(state, spv::OpConvertFToS, i32, floored);
+        state.module.AddFunction(spv::OpExtInst, f32, floored, GlslStd450(state), GLSLstd450Floor, halfStep);
+        auto snapped = Unary(state, spv::OpConvertFToS, i32, floored);
+        if (axis < 2u) {
+            snapped = Binary(state, spv::OpISub, i32, snapped, ConstantI32(state, 128));
+        }
+        starts[axis] = Binary(state, spv::OpShiftRightArithmetic, i32, snapped, ConstantI32(state, 8));
     }
     const auto resolve = [&](std::initializer_list<std::uint32_t> indices, std::uint32_t axis, std::uint32_t mode) {
         const auto extent = extents[axis];

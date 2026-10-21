@@ -26,8 +26,8 @@ constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type3D = 10;
 constexpr std::uint32_t IdentitySwizzle = 0xfacu;
 constexpr std::uint32_t BlueGreenRedAlpha = 0xf2eu;
-constexpr std::array<float, 20> Positions{-9.3f, -4.8f, -1.3f, -0.7f, -0.2f, 0.3f, 0.9f, 1.6f, 2.2f, 3.7f,
-                                          -1.3f, -0.7f, -0.2f, 0.3f, 0.8f, 1.6f, 0.3f, 1.9f, -0.3f, -1.6f};
+constexpr std::array<float, 20> Positions{-9.3f, -4.8f, -1.3f, -0.7f, -0.2f, 0.3f, 1.4985f, 1.6f, 3.499f, 3.7f,
+                                          -1.3f, -0.7f, -0.2f, -0.5015f, 0.8f, 1.6f, 0.3f, 1.9f, -0.3f, -1.6f};
 constexpr std::array<int, 20> PositionExtents{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, -1, -1};
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
@@ -172,6 +172,11 @@ std::array<std::optional<int>, 2> Footprint(int first, int extent, std::uint32_t
     return result;
 }
 
+int Snapped(float coordinate, int extent, int offset) {
+    const auto steps = static_cast<long long>(std::floor(static_cast<double>(coordinate) * extent * 256.0 + 0.5)) - offset;
+    return static_cast<int>(steps >= 0 ? steps / 256 : -((-steps + 255) / 256));
+}
+
 std::uint32_t Channel(const Variant& variant, const std::array<std::uint8_t, 4>& texel) {
     const auto select = (variant.volume.swizzle >> (3u * variant.channel)) & 7u;
     return texel.at(select - 4u);
@@ -191,9 +196,9 @@ std::array<std::uint32_t, 4> Expected(std::uint32_t tid, const Variant& variant)
     const float u = std::bit_cast<float>(Input[tid * 4u + 1u]);
     const float v = std::bit_cast<float>(Input[tid * 4u + 2u]);
     const float r = std::bit_cast<float>(Input[tid * 4u + 3u]);
-    const auto columns = Footprint(static_cast<int>(std::floor(u * static_cast<float>(width) - 0.5f)), width, variant.sampler.clamp);
-    const auto rows = Footprint(static_cast<int>(std::floor(v * static_cast<float>(height) - 0.5f)), height, variant.sampler.clamp);
-    const auto slice = Single(static_cast<int>(std::floor(r * static_cast<float>(depth))), depth, (variant.sampler.clamp & 6u) == 4u ? (variant.sampler.clamp & 1u) | 2u : variant.sampler.clamp);
+    const auto columns = Footprint(Snapped(u, width, 128), width, variant.sampler.clamp);
+    const auto rows = Footprint(Snapped(v, height, 128), height, variant.sampler.clamp);
+    const auto slice = Single(Snapped(r, depth, 0), depth, (variant.sampler.clamp & 6u) == 4u ? (variant.sampler.clamp & 1u) | 2u : variant.sampler.clamp);
     const auto value = [&](std::size_t column, std::size_t row) {
         if (!columns[column] || !rows[row] || !slice) return BorderValue(variant);
         return Channel(variant, Texel(volume, level, static_cast<std::uint32_t>(*columns[column]), static_cast<std::uint32_t>(*rows[row]), static_cast<std::uint32_t>(*slice)));
