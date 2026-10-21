@@ -6,10 +6,16 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 using namespace FreeType;
 
 namespace {
+
+template <typename TTarget, typename TSource> TTarget Count(TSource value, const char* function) {
+    if (!std::in_range<TTarget>(value)) NotImplemented_nid_no_patch(function);
+    return static_cast<TTarget>(value);
+}
 
 struct Glyph {
     GuestOutlineGlyphRec outline{};
@@ -21,7 +27,7 @@ struct Glyph {
 
     GuestGlyphRec* Root() { return isBitmap ? &bitmap.root : &outline.root; }
 
-    void Publish(const GuestOutline& source) {
+    void Publish(const GuestOutline& source, const char* function) {
         *Root() = {library, host->clazz, static_cast<std::uint32_t>(host->format), {host->advance.x, host->advance.y}};
         if (isBitmap) {
             const auto* native = reinterpret_cast<FT_BitmapGlyph>(host.get());
@@ -32,7 +38,9 @@ struct Glyph {
         } else {
             const auto& native = reinterpret_cast<FT_OutlineGlyph>(host.get())->outline;
             std::copy_n(source.points, points.size(), points.begin());
-            outline.outline = {native.n_contours, native.n_points, points.empty() ? nullptr : points.data(), native.tags, native.contours, native.flags};
+            outline.outline = {Count<std::uint16_t>(native.n_contours, function), Count<std::uint16_t>(native.n_points, function),
+                               points.empty() ? nullptr : points.data(), reinterpret_cast<unsigned char*>(native.tags),
+                               reinterpret_cast<std::uint16_t*>(native.contours), native.flags};
         }
     }
 };
@@ -57,8 +65,9 @@ struct Outline {
     FT_Outline native{};
     std::vector<FT_Vector> points;
 
-    Outline(const GuestOutline& outline) {
-        native = {outline.n_contours, outline.n_points, nullptr, outline.tags, outline.contours, outline.flags};
+    Outline(const GuestOutline& outline, const char* function) {
+        native = {Count<decltype(native.n_contours)>(outline.n_contours, function), Count<decltype(native.n_points)>(outline.n_points, function), nullptr,
+                  reinterpret_cast<decltype(native.tags)>(outline.tags), reinterpret_cast<decltype(native.contours)>(outline.contours), outline.flags};
         if (outline.n_contours > outline.n_points) return;
         points.resize(outline.n_points);
         native.points = points.empty() ? nullptr : points.data();
@@ -107,7 +116,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
         FT_Done_Glyph(probe);
         NotImplemented_nid_no_patch(__func__);
     }
-    Outline outline(native.format == FT_GLYPH_FORMAT_OUTLINE ? slot->outline : GuestOutline{});
+    Outline outline(native.format == FT_GLYPH_FORMAT_OUTLINE ? slot->outline : GuestOutline{}, __func__);
     native.outline = outline.native;
     native.bitmap = Bitmap(slot->bitmap);
     native.bitmap_left = slot->bitmap_left;
@@ -130,7 +139,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
         return error;
     }
     owner.host.reset(result);
-    owner.Publish(slot->outline);
+    owner.Publish(slot->outline, __func__);
     *target = address;
     return 0;
 }
@@ -148,7 +157,7 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
     FT_Glyph native = original.isBitmap ? &nativeBitmap.root : &nativeOutline.root;
     *native = *original.host;
     native->format = static_cast<FT_Glyph_Format>(source->format);
-    Outline outline(original.isBitmap ? GuestOutline{} : original.outline.outline);
+    Outline outline(original.isBitmap ? GuestOutline{} : original.outline.outline, __func__);
     nativeOutline.outline = outline.native;
     nativeBitmap.bitmap = Bitmap(original.bitmap.bitmap);
     nativeBitmap.left = original.bitmap.left;
@@ -162,7 +171,7 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
         return error;
     }
     copy.host.reset(result);
-    copy.Publish(original.outline.outline);
+    copy.Publish(original.outline.outline, __func__);
     address->advance = advance;
     *target = address;
     return 0;
@@ -177,7 +186,9 @@ void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {
     } else {
         const auto& outline = owner.outline.outline;
         const auto& native = reinterpret_cast<FT_OutlineGlyph>(owner.host.get())->outline;
-        if (outline.points != (owner.points.empty() ? nullptr : owner.points.data()) || outline.tags != native.tags || outline.contours != native.contours ||
+        if (outline.points != (owner.points.empty() ? nullptr : owner.points.data()) ||
+            static_cast<const void*>(outline.tags) != static_cast<const void*>(native.tags) ||
+            static_cast<const void*>(outline.contours) != static_cast<const void*>(native.contours) ||
             (outline.flags & FT_OUTLINE_OWNER) != (native.flags & FT_OUTLINE_OWNER)) NotImplemented_nid_no_patch(__func__);
     }
     glyphs.erase(glyph);

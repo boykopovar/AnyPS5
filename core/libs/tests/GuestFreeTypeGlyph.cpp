@@ -6,6 +6,7 @@
 #include FT_GLYPH_H
 #include FT_OUTLINE_H
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 using namespace FreeType;
 
@@ -65,9 +67,9 @@ static void Matches(const GuestGlyphRec* glyph, FT_Glyph native, void* library, 
         const auto& b = reinterpret_cast<FT_OutlineGlyph>(native)->outline;
         Require(a.n_points == b.n_points && a.n_contours == b.n_contours && a.flags == b.flags);
         for (unsigned index = 0; index < a.n_points; ++index) {
-            Require(a.points[index].x == b.points[index].x && a.points[index].y == b.points[index].y && a.tags[index] == b.tags[index]);
+            Require(a.points[index].x == b.points[index].x && a.points[index].y == b.points[index].y && a.tags[index] == static_cast<unsigned char>(b.tags[index]));
         }
-        for (unsigned index = 0; index < a.n_contours; ++index) Require(a.contours[index] == b.contours[index]);
+        for (unsigned index = 0; index < a.n_contours; ++index) Require(a.contours[index] == static_cast<std::uint16_t>(b.contours[index]));
     }
 }
 
@@ -381,6 +383,59 @@ static void ErrorsAndEmptyGlyphs() {
     FT_Done_Glyph(nullptr);
 }
 
+static void OutlineCountLimits() {
+    Fixture fixture;
+    fixture.Load(1, FT_LOAD_NO_HINTING);
+    const auto pointCount = std::min<std::size_t>(std::numeric_limits<decltype(FT_Outline{}.n_points)>::max(), std::numeric_limits<std::uint16_t>::max());
+    std::vector<GuestVector> points(pointCount);
+    std::vector<FT_Vector> nativePoints(pointCount);
+    std::vector<unsigned char> tags(pointCount, 0xA5);
+    std::vector<std::remove_pointer_t<decltype(FT_Outline{}.tags)>> nativeTags(pointCount, static_cast<std::remove_pointer_t<decltype(FT_Outline{}.tags)>>(0xA5));
+    std::uint16_t contour = static_cast<std::uint16_t>(pointCount - 1);
+    auto nativeContour = static_cast<std::remove_pointer_t<decltype(FT_Outline{}.contours)>>(contour);
+    for (std::size_t index = 0; index < pointCount; ++index) {
+        points[index] = {static_cast<std::int64_t>(index), -static_cast<std::int64_t>(index)};
+        nativePoints[index] = {static_cast<FT_Pos>(index), -static_cast<FT_Pos>(index)};
+    }
+    auto* slot = fixture.face->glyph;
+    const auto nativeSlot = fixture.host->glyph;
+    const auto savedOutline = slot->outline;
+    const auto savedNativeOutline = nativeSlot->outline;
+    slot->outline = {1, static_cast<std::uint16_t>(pointCount), points.data(), tags.data(), &contour, 0};
+    nativeSlot->outline = {1, static_cast<decltype(FT_Outline{}.n_points)>(pointCount), nativePoints.data(), nativeTags.data(), &nativeContour, 0};
+    GuestGlyphRec* glyph = nullptr;
+    FT_Glyph native = nullptr;
+    Require(FT_Get_Glyph_nid_postfix(slot, &glyph) == FT_Get_Glyph(nativeSlot, &native));
+    Matches(glyph, native, fixture.library, false);
+    slot->outline = savedOutline;
+    nativeSlot->outline = savedNativeOutline;
+    reinterpret_cast<GuestOutlineGlyphRec*>(glyph)->outline.contours[0] = 0xFFFF;
+    reinterpret_cast<FT_OutlineGlyph>(native)->outline.contours[0] = static_cast<decltype(nativeContour)>(0xFFFF);
+    GuestGlyphRec* copy = nullptr;
+    FT_Glyph nativeCopy = nullptr;
+    Require(FT_Glyph_Copy_nid_postfix(glyph, &copy) == FT_Glyph_Copy(native, &nativeCopy));
+    Matches(copy, nativeCopy, fixture.library, false);
+    FT_Done_Glyph_nid_postfix(copy);
+    FT_Done_Glyph(nativeCopy);
+    if (pointCount < std::numeric_limits<std::uint16_t>::max()) {
+        slot->outline = {0, static_cast<std::uint16_t>(pointCount + 1), nullptr, nullptr, nullptr, 0};
+        Require(Throws([&] { FT_Get_Glyph_nid_postfix(slot, &copy); }, "FT_Get_Glyph"));
+        slot->outline = {static_cast<std::uint16_t>(pointCount + 1), 0, nullptr, nullptr, nullptr, 0};
+        Require(Throws([&] { FT_Get_Glyph_nid_postfix(slot, &copy); }, "FT_Get_Glyph"));
+        slot->outline = savedOutline;
+        auto& outline = reinterpret_cast<GuestOutlineGlyphRec*>(glyph)->outline;
+        const auto saved = outline;
+        outline.n_points = static_cast<std::uint16_t>(pointCount + 1);
+        Require(Throws([&] { FT_Glyph_Copy_nid_postfix(glyph, &copy); }, "FT_Glyph_Copy"));
+        outline = saved;
+        outline.n_contours = static_cast<std::uint16_t>(pointCount + 1);
+        Require(Throws([&] { FT_Glyph_Copy_nid_postfix(glyph, &copy); }, "FT_Glyph_Copy"));
+        outline = saved;
+    }
+    FT_Done_Glyph_nid_postfix(glyph);
+    FT_Done_Glyph(native);
+}
+
 static void UnsupportedChanges() {
     Fixture fixture;
     fixture.Load(1, FT_LOAD_NO_HINTING);
@@ -425,6 +480,7 @@ int main() {
     BitmapOwnership();
     WideOutlineCoordinates();
     ErrorsAndEmptyGlyphs();
+    OutlineCountLimits();
     UnsupportedChanges();
     std::puts("FreeType glyph ownership and reference comparisons passed");
 }
