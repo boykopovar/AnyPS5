@@ -596,6 +596,7 @@ public:
     };
 
     ElementFlags() = default;
+    explicit ElementFlags(std::size_t size) : count(size), spill(size > InlineFlags ? size : 0u, false) {}
     ElementFlags(std::initializer_list<bool> flags) {
         for (const bool flag : flags) push_back(flag);
     }
@@ -631,12 +632,7 @@ public:
     }
     void assign(std::size_t size, bool flag) {
         clear();
-        if (size <= InlineFlags) {
-            if (flag) bits = size == InlineFlags ? ~std::uint64_t{0} : (std::uint64_t{1} << size) - 1u;
-        } else {
-            spill.assign(size, flag);
-        }
-        count = size;
+        for (std::size_t index = 0; index < size; ++index) push_back(flag);
     }
     void resize(std::size_t size, bool flag = false) {
         if (size < count) {

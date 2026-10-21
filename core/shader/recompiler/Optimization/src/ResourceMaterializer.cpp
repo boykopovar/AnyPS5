@@ -1880,8 +1880,7 @@ std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const Image
 }
 
 ElementFlags reducingSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
-    ElementFlags reducing;
-    reducing.assign(info.images.size(), false);
+    ElementFlags reducing(info.images.size());
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table != NoTable) continue;
         const auto& words = snapshot.samplers.at(pair.sampler).dwords;
