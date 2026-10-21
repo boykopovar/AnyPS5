@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -20,18 +22,17 @@ using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
-constexpr std::uint32_t Width = 8;
-constexpr std::uint32_t Height = 4;
-constexpr std::uint32_t Depth = 4;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Type3D = 10;
-constexpr std::uint32_t ClampWrap = 0;
-constexpr std::uint32_t ClampMirror = 1;
-constexpr std::uint32_t ClampEdge = 2;
+constexpr std::uint32_t IdentitySwizzle = 0xfacu;
+constexpr std::uint32_t BlueGreenRedAlpha = 0xf2eu;
+constexpr std::array<float, 20> Positions{-9.3f, -4.8f, -1.3f, -0.7f, -0.2f, 0.3f, 0.9f, 1.6f, 2.2f, 3.7f,
+                                          -1.3f, -0.7f, -0.2f, 0.3f, 0.8f, 1.6f, 0.3f, 1.9f, -0.3f, -1.6f};
+constexpr std::array<int, 20> PositionExtents{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, -1, -1};
 
 alignas(256) std::array<std::uint32_t, Threads * 4> Input{};
 alignas(256) std::array<float, Threads * 4> Output{};
-alignas(4096) std::array<std::uint8_t, 16384> Texels{};
+alignas(4096) std::array<std::uint8_t, 32768> Texels{};
 
 alignas(256) constexpr std::array<std::uint32_t, 10> GatherRed{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf11c0110, 0x00820603, 0xbf8c3f70, 0xe0781000,
@@ -41,12 +42,34 @@ alignas(256) constexpr std::array<std::uint32_t, 10> GatherBlue{
     0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf11c0410, 0x00820603, 0xbf8c3f70, 0xe0781000,
     0x80010601, 0xbf810000,
 };
+alignas(256) constexpr std::array<std::uint32_t, 10> GatherAlpha{
+    0x34020084, 0xe0381000, 0x80000201, 0xbf8c3f70, 0xf11c0810, 0x00820603, 0xbf8c3f70, 0xe0781000,
+    0x80010601, 0xbf810000,
+};
+
+struct Volume {
+    std::uint32_t width;
+    std::uint32_t height;
+    std::uint32_t depth;
+    std::uint32_t baseLevel = 0;
+    std::uint32_t lastLevel = 0;
+    std::uint32_t swizzle = IdentitySwizzle;
+};
+
+struct SamplerState {
+    std::uint32_t clamp;
+    std::uint32_t border = 0;
+    std::uint32_t extra0 = 0;
+    std::uint32_t word1 = 0xfffu << 12u;
+    std::uint32_t word2 = 0;
+};
 
 struct Variant {
     std::span<const std::uint32_t> code;
-    bool blue;
-    std::uint32_t clamp;
-    const char* name;
+    std::uint32_t channel;
+    Volume volume;
+    SamplerState sampler;
+    std::string name;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -54,88 +77,136 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor() {
+std::array<std::uint32_t, 8> TextureDescriptor(const Volume& volume) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (((Width - 1u) & 3u) << 30u),
-        ((Width - 1u) >> 2u) | ((Height - 1u) << 14u),
-        0xfacu | (Type3D << 28u),
-        Depth - 1u,
-        0u,
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (((volume.width - 1u) & 3u) << 30u),
+        ((volume.width - 1u) >> 2u) | ((volume.height - 1u) << 14u),
+        volume.swizzle | (volume.baseLevel << 12u) | (volume.lastLevel << 16u) | (Type3D << 28u),
+        volume.depth - 1u,
+        volume.lastLevel << 4u,
         0u,
         0u,
     };
 }
 
-std::array<std::uint32_t, 4> SamplerDescriptor(std::uint32_t clamp) {
-    return {clamp | (clamp << 3u) | (clamp << 6u), 0u, 0u, 0u};
+std::array<std::uint32_t, 4> SamplerDescriptor(const SamplerState& sampler) {
+    return {sampler.clamp | (sampler.clamp << 3u) | (sampler.clamp << 6u) | sampler.extra0, sampler.word1, sampler.word2, sampler.border << 30u};
 }
 
-std::uint8_t Red(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    return static_cast<std::uint8_t>(x + Width * y + Width * Height * z);
+std::uint32_t LevelStart(const Volume& volume, std::uint32_t level) {
+    std::uint32_t start = 0;
+    for (std::uint32_t below = 0; below < level; ++below) {
+        start += std::max(volume.width >> below, 1u) * std::max(volume.height >> below, 1u) * std::max(volume.depth >> below, 1u);
+    }
+    return start;
 }
 
-std::uint8_t Blue(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    return static_cast<std::uint8_t>(255u - 2u * Red(x, y, z));
+std::array<std::uint8_t, 4> Texel(const Volume& volume, std::uint32_t level, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+    const auto width = std::max(volume.width >> level, 1u);
+    const auto height = std::max(volume.height >> level, 1u);
+    const auto id = LevelStart(volume, level) + x + width * y + width * height * z;
+    return {static_cast<std::uint8_t>(id + 1u), 0x11, static_cast<std::uint8_t>(254u - id), static_cast<std::uint8_t>(id * 37u + 11u)};
 }
 
-void FillTexels() {
-    const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor()));
+void FillTexels(const Volume& volume) {
+    const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(volume)));
     Require(geometry.guestBytes <= Texels.size(), "image gather volume: the volume does not fit the texel storage");
-    const auto& mip = geometry.mips.at(0);
     Texels.fill(0);
-    for (std::uint32_t z = 0; z < Depth; ++z) {
-        for (std::uint32_t y = 0; y < Height; ++y) {
-            for (std::uint32_t x = 0; x < Width; ++x) {
-                auto* texel = &Texels[geometry.GuestLayerOffset(z) + mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u];
-                texel[0] = Red(x, y, z);
-                texel[1] = 0x11;
-                texel[2] = Blue(x, y, z);
-                texel[3] = 0xff;
+    for (std::uint32_t level = 0; level <= volume.lastLevel; ++level) {
+        const auto& mip = geometry.mips.at(level);
+        for (std::uint32_t z = 0; z < std::max(volume.depth >> level, 1u); ++z) {
+            for (std::uint32_t y = 0; y < mip.height; ++y) {
+                for (std::uint32_t x = 0; x < mip.width; ++x) {
+                    const auto value = Texel(volume, level, x, y, z);
+                    std::copy(value.begin(), value.end(), &Texels[geometry.GuestLayerOffset(z) + mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u]);
+                }
             }
         }
     }
 }
 
-void FillInput() {
+float Position(std::uint32_t index, std::uint32_t extent) {
+    return Positions[index] + static_cast<float>(PositionExtents[index] * static_cast<int>(extent));
+}
+
+void FillInput(const Volume& volume) {
+    const auto width = std::max(volume.width >> volume.baseLevel, 1u);
+    const auto height = std::max(volume.height >> volume.baseLevel, 1u);
+    const auto depth = std::max(volume.depth >> volume.baseLevel, 1u);
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         Input[tid * 4u + 0u] = 0u;
-        Input[tid * 4u + 1u] = std::bit_cast<std::uint32_t>(-0.23f + 0.047f * static_cast<float>(tid));
-        Input[tid * 4u + 2u] = std::bit_cast<std::uint32_t>(1.29f - 0.053f * static_cast<float>(tid));
-        Input[tid * 4u + 3u] = std::bit_cast<std::uint32_t>(-0.37f + 0.061f * static_cast<float>((tid * 7u) % Threads));
+        Input[tid * 4u + 1u] = std::bit_cast<std::uint32_t>(Position(tid % 20u, width) / static_cast<float>(width));
+        Input[tid * 4u + 2u] = std::bit_cast<std::uint32_t>(Position((tid * 7u + 3u) % 20u, height) / static_cast<float>(height));
+        Input[tid * 4u + 3u] = std::bit_cast<std::uint32_t>((Position((tid * 11u + 5u) % 20u, depth) + 0.5f) / static_cast<float>(depth));
     }
 }
 
-int Address(int coordinate, std::uint32_t size, std::uint32_t clamp) {
-    const int extent = static_cast<int>(size);
-    if (clamp == ClampEdge) return std::clamp(coordinate, 0, extent - 1);
-    if (clamp == ClampWrap) return ((coordinate % extent) + extent) % extent;
-    const int period = ((coordinate % (2 * extent)) + 2 * extent) % (2 * extent);
-    return period < extent ? period : 2 * extent - 1 - period;
+int Fold(int index) {
+    return index < 0 ? -1 - index : index;
+}
+
+std::optional<int> Single(int index, int extent, std::uint32_t clamp) {
+    if (clamp == 0u) return ((index % extent) + extent) % extent;
+    if (clamp == 1u) {
+        const int phase = ((index % (2 * extent)) + 2 * extent) % (2 * extent);
+        return phase < extent ? phase : 2 * extent - 1 - phase;
+    }
+    const int source = (clamp & 1u) != 0u ? Fold(index) : index;
+    if (clamp < 6u) return std::clamp(source, 0, extent - 1);
+    if (source < 0 || source >= extent) return std::nullopt;
+    return source;
+}
+
+std::array<std::optional<int>, 2> Footprint(int first, int extent, std::uint32_t clamp) {
+    if ((clamp & 6u) != 4u) return {Single(first, extent, clamp), Single(first + 1, extent, clamp)};
+    const std::array<int, 2> sources{clamp == 5u ? Fold(first) : first, clamp == 5u ? Fold(first + 1) : first + 1};
+    const int low = std::min(sources[0], sources[1]);
+    const int pinned = std::clamp(low, -1, extent - 1);
+    std::array<std::optional<int>, 2> result;
+    for (std::size_t index = 0; index < 2u; ++index) {
+        const int effective = pinned + sources[index] - low;
+        if (effective >= 0 && effective < extent) result[index] = effective;
+    }
+    return result;
+}
+
+std::uint32_t Channel(const Variant& variant, const std::array<std::uint8_t, 4>& texel) {
+    const auto select = (variant.volume.swizzle >> (3u * variant.channel)) & 7u;
+    return texel.at(select - 4u);
+}
+
+std::uint32_t BorderValue(const Variant& variant) {
+    if (variant.sampler.border == 2u) return 255u;
+    return variant.sampler.border == 1u && variant.channel == 3u ? 255u : 0u;
 }
 
 std::array<std::uint32_t, 4> Expected(std::uint32_t tid, const Variant& variant) {
+    const auto& volume = variant.volume;
+    const auto level = volume.baseLevel;
+    const auto width = static_cast<int>(std::max(volume.width >> level, 1u));
+    const auto height = static_cast<int>(std::max(volume.height >> level, 1u));
+    const auto depth = static_cast<int>(std::max(volume.depth >> level, 1u));
     const float u = std::bit_cast<float>(Input[tid * 4u + 1u]);
     const float v = std::bit_cast<float>(Input[tid * 4u + 2u]);
     const float r = std::bit_cast<float>(Input[tid * 4u + 3u]);
-    const int left = static_cast<int>(std::floor(u * static_cast<float>(Width) - 0.5f));
-    const int top = static_cast<int>(std::floor(v * static_cast<float>(Height) - 0.5f));
-    const auto z = static_cast<std::uint32_t>(Address(static_cast<int>(std::floor(r * static_cast<float>(Depth))), Depth, variant.clamp));
-    const auto texel = [&](int x, int y) {
-        const auto column = static_cast<std::uint32_t>(Address(x, Width, variant.clamp));
-        const auto row = static_cast<std::uint32_t>(Address(y, Height, variant.clamp));
-        return static_cast<std::uint32_t>(variant.blue ? Blue(column, row, z) : Red(column, row, z));
+    const auto columns = Footprint(static_cast<int>(std::floor(u * static_cast<float>(width) - 0.5f)), width, variant.sampler.clamp);
+    const auto rows = Footprint(static_cast<int>(std::floor(v * static_cast<float>(height) - 0.5f)), height, variant.sampler.clamp);
+    const auto slice = Single(static_cast<int>(std::floor(r * static_cast<float>(depth))), depth, (variant.sampler.clamp & 6u) == 4u ? (variant.sampler.clamp & 1u) | 2u : variant.sampler.clamp);
+    const auto value = [&](std::size_t column, std::size_t row) {
+        if (!columns[column] || !rows[row] || !slice) return BorderValue(variant);
+        return Channel(variant, Texel(volume, level, static_cast<std::uint32_t>(*columns[column]), static_cast<std::uint32_t>(*rows[row]), static_cast<std::uint32_t>(*slice)));
     };
-    return {texel(left, top + 1), texel(left + 1, top + 1), texel(left + 1, top), texel(left, top)};
+    return {value(0, 1), value(1, 1), value(1, 0), value(0, 0)};
 }
 
 ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const Variant& variant) {
     std::vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto texture = TextureDescriptor();
-    const auto sampler = SamplerDescriptor(variant.clamp);
+    const auto texture = TextureDescriptor(variant.volume);
+    const auto sampler = SamplerDescriptor(variant.sampler);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(texture.begin(), texture.end(), userData.begin() + 8);
@@ -152,19 +223,34 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
     return ShaderRecompiler::Recompile(request);
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Variant& variant) {
+void Dispatch(AgcDriver::VulkanDevice& device, const Variant& variant) {
+    FillTexels(variant.volume);
+    FillInput(variant.volume);
     Output.fill(-1.0f);
     const auto result = Compile(device, variant);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(variant.code.data()));
     device.WaitIdle();
+}
+
+void Run(AgcDriver::VulkanDevice& device, const Variant& variant) {
+    Dispatch(device, variant);
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto expected = Expected(tid, variant);
         for (std::uint32_t component = 0; component < 4u; ++component) {
-            const float actual = Output[tid * 4u + component];
-            const float scaled = actual * 255.0f;
-            Require(std::fabs(scaled - std::round(scaled)) < 1e-3f && static_cast<std::uint32_t>(std::lround(scaled)) == expected[component], std::string(variant.name) + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + std::to_string(scaled) + "/255, expected " + std::to_string(expected[component]) + "/255");
+            const float scaled = Output[tid * 4u + component] * 255.0f;
+            Require(std::fabs(scaled - std::round(scaled)) < 1e-3f && static_cast<std::uint32_t>(std::lround(scaled)) == expected[component], variant.name + ": thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + std::to_string(scaled) + "/255, expected " + std::to_string(expected[component]) + "/255");
         }
     }
+}
+
+void RunThrows(AgcDriver::VulkanDevice& device, const Variant& variant, const std::string& message) {
+    try {
+        Dispatch(device, variant);
+    } catch (const std::exception& error) {
+        Require(std::string(error.what()).find(message) != std::string::npos, variant.name + ": threw '" + error.what() + "', expected '" + message + "'");
+        return;
+    }
+    throw std::runtime_error(variant.name + ": did not throw '" + message + "'");
 }
 
 }
@@ -173,12 +259,24 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        FillTexels();
-        FillInput();
-        Run(*device, {GatherRed, false, ClampEdge, "3D gather of red, clamp to edge"});
-        Run(*device, {GatherBlue, true, ClampEdge, "3D gather of blue, clamp to edge"});
-        Run(*device, {GatherRed, false, ClampWrap, "3D gather of red, wrap"});
-        Run(*device, {GatherRed, false, ClampMirror, "3D gather of red, mirror"});
+        const Volume cube{8, 4, 4};
+        const Volume odd{7, 5, 3};
+        const char* clampNames[8] = {"wrap", "mirror", "clamp to edge", "mirror once to edge", "clamp to half border", "mirror once to half border", "clamp to border", "mirror once to border"};
+        const char* borderNames[3] = {"transparent black", "opaque black", "opaque white"};
+        for (std::uint32_t clamp = 0; clamp < 8u; ++clamp) {
+            for (std::uint32_t border = 0; border < (clamp >= 4u ? 3u : 1u); ++border) {
+                const auto suffix = std::string(clampNames[clamp]) + (clamp >= 4u ? std::string(", ") + borderNames[border] : std::string());
+                Run(*device, {GatherRed, 0, cube, {clamp, border}, "3D gather of red, " + suffix});
+                Run(*device, {GatherAlpha, 3, cube, {clamp, border}, "3D gather of alpha, " + suffix});
+                Run(*device, {GatherBlue, 2, odd, {clamp, border}, "3D gather of blue from a 7x5x3 volume, " + suffix});
+            }
+        }
+        const SamplerState lodState{2, 0, 4u << 9u, 0x100u | (0xfffu << 12u), 0x100u | (1u << 20u) | (1u << 22u) | (2u << 26u)};
+        Run(*device, {GatherRed, 0, {8, 4, 4, 0, 1}, lodState, "3D gather of red ignores the sampler's LOD clamp, bias, filters and anisotropy"});
+        Run(*device, {GatherRed, 0, {8, 4, 4, 1, 1}, {0}, "3D gather of red reads the base level"});
+        Run(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {1}, "3D gather of red through a blue-green-red-alpha swizzle"});
+        RunThrows(*device, {GatherRed, 0, cube, {6, 3}, "3D gather with a border color table"}, "a 3D gather with a border color table is not implemented");
+        RunThrows(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {6, 2}, "3D gather of a swizzled volume with border addressing"}, "a 3D gather of a swizzled texture with border addressing is not implemented");
         std::puts("image 3D gather tests passed");
         return 0;
     } catch (const std::exception& error) {

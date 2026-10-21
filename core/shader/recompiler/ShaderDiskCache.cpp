@@ -806,6 +806,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.convertedSamples);
         out.Value(image.remappedDepth1D);
         out.Value(image.optionalDescriptor);
+        out.Value(image.volumeGather);
         out.Value(image.byElements);
         out.Value(image.byComponents);
         out.Value(image.packedFormat);
@@ -915,6 +916,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.convertedSamples);
         in.Value(image.remappedDepth1D);
         in.Value(image.optionalDescriptor);
+        in.Value(image.volumeGather);
         in.Value(image.byElements);
         in.Value(image.byComponents);
         in.Value(image.packedFormat);
