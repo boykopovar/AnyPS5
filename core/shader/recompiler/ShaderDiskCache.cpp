@@ -577,6 +577,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.bdaWrites);
     writer.Value(result.layerReplaySafe);
     writer.Value(result.stencilReferenceDword);
+    writer.Value(result.meshRecordLayout);
 }
 
 void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
@@ -648,6 +649,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.bdaWrites);
     reader.Value(result.layerReplaySafe);
     reader.Value(result.stencilReferenceDword);
+    reader.Value(result.meshRecordLayout);
     result.variantId = 0;
 }
 

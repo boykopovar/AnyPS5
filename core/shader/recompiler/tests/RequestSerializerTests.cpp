@@ -322,7 +322,7 @@ int main() {
             Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
             Require(request.target.float16DenormPreserve == preserve);
             auto upgraded = bytes;
-            upgraded[4] = 56u;
+            upgraded[4] = 57u;
             InsertMeshBarycentricFlag(upgraded);
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, {0u, 0u, 0u});
             if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
@@ -333,6 +333,7 @@ int main() {
             upgraded.insert(upgraded.end(), {0u, 0x10u, 0u, 0u});
             upgraded.push_back(0u);
             upgraded.push_back(1u);
+            upgraded.push_back(0u);
             upgraded.push_back(0u);
             upgraded.push_back(0u);
             upgraded.push_back(0u);
@@ -371,7 +372,7 @@ int main() {
                     layerRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
                 }
                 Require(layerRejected);
-                layered[4] = 56u;
+                layered[4] = 57u;
                 InsertMeshBarycentricFlag(layered);
                 layered.insert(layered.begin() + 259u, {0u, 0u});
                 InsertPixelDefaultsAfterFrontFace(layered);
@@ -382,6 +383,7 @@ int main() {
                 layered.insert(layered.end(), {0u, 0x10u, 0u, 0u});
                 layered.push_back(0u);
                 layered.push_back(1u);
+                layered.push_back(0u);
                 layered.push_back(0u);
                 layered.push_back(0u);
                 layered.push_back(0u);
@@ -406,7 +408,7 @@ int main() {
             Require(replay.request.context.pixel->rasterPrimitive == ShaderRecompiler::RasterPrimitive::Rectangle);
             Require(replay.request.context.vertex->paClVsOutCntl == 0x00050a05u);
             Require(replay.request.target.float16DenormPreserve == preserve);
-            bytes[4] = 56u;
+            bytes[4] = 57u;
             InsertMeshBarycentricFlag(bytes);
             bytes.insert(bytes.begin() + 259u, {0u, 0u});
             InsertPixelDefaultsAfterFrontFace(bytes);
@@ -416,6 +418,7 @@ int main() {
             bytes.insert(bytes.end(), {0u, 0x10u, 0u, 0u});
             bytes.push_back(0u);
             bytes.push_back(1u);
+            bytes.push_back(0u);
             bytes.push_back(0u);
             bytes.push_back(0u);
             bytes.push_back(0u);
@@ -545,7 +548,7 @@ int main() {
                 if (fixture.pixel) main38.insert(main38.begin() + 259u, {0u, 0u});
                 if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(main38, false, false);
                 auto upgraded = main38;
-                upgraded[4] = 56u;
+                upgraded[4] = 57u;
                 if (fixture.pixel) {
                     const auto tail = PixelTailDefaults(true, true);
                     upgraded.insert(upgraded.begin() + 317u, tail.begin(), tail.end());
@@ -558,6 +561,7 @@ int main() {
                 upgraded.insert(upgraded.end(), {0u, 0x10u, 0u, 0u});
                 upgraded.push_back(0u);
                 upgraded.push_back(1u);
+                upgraded.push_back(0u);
                 upgraded.push_back(0u);
                 upgraded.push_back(0u);
                 upgraded.push_back(0u);
@@ -650,7 +654,7 @@ int main() {
                     const auto replay25 = serializer.Deserialize(EncodeBase64(main25));
                     Require(!fixture.pixel || (replay25.request.context.pixel->layerExported == layer && replay25.request.context.pixel->ditheredAlphaToCoverage == dither && replay25.request.context.pixel->reversedBlend == 0u));
                     Require(replay25.request.target.float16DenormPreserve == preserve && (!fixture.tessellation || replay25.request.graphics->tessellation->primitiveGroupSize == 37u));
-                    main25[4] = 56u;
+                    main25[4] = 57u;
                     InsertMeshBarycentricFlag(main25);
                     if (fixture.pixel) {
                         main25.insert(main25.begin() + 260u, 0u);
@@ -663,6 +667,7 @@ int main() {
                     main25.insert(main25.end(), {0u, 0x10u, 0u, 0u});
                     main25.push_back(0u);
                     main25.push_back(1u);
+                    main25.push_back(0u);
                     main25.push_back(0u);
                     main25.push_back(0u);
                     main25.push_back(0u);
@@ -684,7 +689,7 @@ int main() {
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.target.float16DenormPreserve == preserve && replay.request.target.float32FlushToZero == !preserve && replay.request.target.float32DenormPreserve == preserve && replay.request.target.largePixelFunctionLdsBuffer == !preserve && replay.request.target.pixelFunctionStorageDwords == request.target.pixelFunctionStorageDwords);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() >= 8u && bytes[4] == 56u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
+        Require(bytes.size() >= 8u && bytes[4] == 57u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
         auto version40 = bytes;
         version40.pop_back();
         version40.pop_back();
@@ -700,7 +705,7 @@ int main() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 57u;
+        future[4] = 58u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
@@ -770,6 +775,7 @@ int main() {
     version42.pop_back();
     version42.pop_back();
     version42.resize(version42.size() - 4u);
+    version42.pop_back();
     version42.pop_back();
     version42.pop_back();
     version42.pop_back();
@@ -1074,6 +1080,14 @@ int main() {
     }
     request.target.float16WidenNans = false;
     request.target.float16NarrowNans = false;
+    for (const bool spanned : {false, true}) {
+        for (const bool meshAsCompute : {false, true}) {
+            request.target.spannedWaves = spanned;
+            request.target.meshAsCompute = meshAsCompute;
+            const auto replay = serializer.Deserialize(serializer.Serialize(request));
+            Require(replay.request.target.spannedWaves == spanned && replay.request.target.meshAsCompute == meshAsCompute);
+        }
+    }
 
     return 0;
 }

@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -76,6 +77,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (graphics.depthRemap.mode != 0u && pushOffset < Graphics::PipelinePushSlotBytes) {
         request.layout.pushConstantSizeBytes = std::min(request.layout.pushConstantSizeBytes, ShaderRecompiler::DepthRemapPushOffsetBytes - pushOffset);
     }
+    if (program.binary.stage == Stage::Mesh && Graphics::MeshDrawRunsAsCompute(request.target.mesh.has_value(), localDevice->MaxMeshOutputLayers(), graphics)) request.target.meshAsCompute = true;
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     auto invocation = [&] {
         try {

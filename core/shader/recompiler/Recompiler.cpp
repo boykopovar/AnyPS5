@@ -705,6 +705,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
     targetOptions.float16WidenNans = request.target.float16WidenNans;
     targetOptions.float16NarrowNans = request.target.float16NarrowNans;
+    targetOptions.meshAsCompute = request.target.meshAsCompute;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -753,9 +754,16 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.instanceOffsetShared = program.Info().instanceOffsetShared;
     result.vertexOffsetConflict = program.Info().vertexOffsetConflict;
     result.instanceOffsetConflict = program.Info().instanceOffsetConflict;
+    std::uint32_t clipDistances = 0;
+    std::uint32_t cullDistances = 0;
+    bool layer = false;
     for (const auto& output : program.Info().outputs) {
         if (output.kind == StageOutputKind::Parameter) result.parameterExports.push_back(output.location);
+        if (output.kind == StageOutputKind::ClipDistance) clipDistances = std::max(clipDistances, output.index + 1u);
+        if (output.kind == StageOutputKind::CullDistance) cullDistances = std::max(cullDistances, output.index + 1u);
+        layer = layer || output.kind == StageOutputKind::Layer;
     }
+    if (targetOptions.meshAsCompute && request.shader.stage == ShaderStage::Mesh) result.meshRecordLayout = MeshRecordLayout(clipDistances, cullDistances, layer, inputInfo.vertex->mesh.provokingVertex, inputInfo.vertex->mesh.outputPrimitiveSize);
     if (request.shader.stage == ShaderStage::Fragment) {
         result.fragmentParameters = DescribeFragmentParameters(program, inputInfo);
         const auto& inputs = program.Info().inputs;
@@ -1194,6 +1202,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .bdaWrites = artifact.bdaWrites,
         .layerReplaySafe = artifact.layerReplaySafe,
         .stencilReferenceDword = artifact.stencilReferenceDword,
+        .meshRecordLayout = artifact.meshRecordLayout,
         .variantId = artifact.variantId
     };
     for (const auto reg : variant.bindings.layout.userDataRegisters) {

@@ -12480,6 +12480,7 @@ void meshArgumentTests() {
     using AgcDriver::Graphics::MeshArguments;
     using AgcDriver::Graphics::ResolveMeshArguments;
     AgcDriver::Graphics::Context context{};
+    context.meshShader = true;
     context.meshLimits.maxMeshWorkGroupCount[0] = 1000;
     context.meshLimits.maxMeshWorkGroupCount[1] = 600;
     context.meshLimits.maxMeshWorkGroupTotalCount = 4000;
@@ -12573,6 +12574,54 @@ void meshLimitTests() {
     expectFailure([&] { AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96); }, "mesh LDS 12288 bytes exceeds the device shared memory limit 12284");
     mesh.ldsSizeDwords = 3071;
     AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96);
+=======
+    using AgcDriver::Graphics::MeshDrawRunsAsCompute;
+    AgcDriver::Graphics::State layered{};
+    Require(!MeshDrawRunsAsCompute(false, 0, layered), "a draw without a mesh stage ran as a mesh compute pass");
+    layered.stages.mesh = triangles;
+    layered.colors.resize(1);
+    Require(MeshDrawRunsAsCompute(false, 0, layered), "a mesh-path draw on a device without mesh shaders did not run as compute");
+    Require(!MeshDrawRunsAsCompute(true, 8, layered), "a one-layer mesh-path draw left the mesh stage");
+    layered.colors.front().layers = 8;
+    Require(!MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw at the device's layer limit left the mesh stage");
+    layered.colors.front().layers = 1;
+    layered.colors.front().depth = 32;
+    Require(MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into a 32-slice volume did not run as compute on a device with 8 mesh output layers");
+    Require(!MeshDrawRunsAsCompute(true, 2048, layered), "a mesh-path draw within the device's layer limit ran as compute");
+    layered.colors.front().depth = 1;
+    layered.depth = AgcDriver::Graphics::DepthTarget{};
+    layered.depth->firstSlice = 2;
+    layered.depth->lastSlice = 17;
+    Require(AgcDriver::Graphics::MeshDrawLayers(layered) == 16 && MeshDrawRunsAsCompute(true, 8, layered), "a mesh-path draw into 16 depth slices did not run as compute on a device with 8 mesh output layers");
+    AgcDriver::Graphics::Context narrow{};
+    narrow.subgroup.subgroupSize = 8;
+    ShaderRecompiler::RecompileResult program{};
+    program.variantId = 1;
+    program.meshRecordLayout = 1u << 11u;
+    program.hostSubgroupSize = 8;
+    const ShaderRecompiler::RecompileResult fragment{};
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Mesh, &program, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    AgcDriver::Graphics::State waved{};
+    waved.stages.mesh = triangles;
+    waved.stages.vertexWaveSize = 32;
+    std::string refusal;
+    try {
+        static_cast<void>(AgcDriver::Graphics::MeshComputeStages(narrow, waved, shaders));
+    } catch (const std::exception& error) {
+        refusal = error.what();
+    }
+    Require(refusal.find("compute subgroups at least as wide as its wave") != std::string::npos, "a wave-32 mesh program ran as compute on 8-lane subgroups: " + refusal);
+    AgcDriver::Graphics::Context compute{};
+    compute.limits.maxComputeWorkGroupCount[0] = 65535u;
+    compute.limits.maxComputeWorkGroupCount[1] = 65535u;
+    compute.limits.maxComputeWorkGroupCount[2] = 65535u;
+    const auto cgrid = [&](std::uint32_t groups, std::uint32_t instances, std::array<std::uint32_t, 4> expected) {
+        const auto value = AgcDriver::Graphics::MeshComputeGridFor(compute, groups, instances);
+        return value.has_value() && value->groups == expected[0] && value->instances == expected[1] && value->layers == expected[2] && value->layerStride == expected[3];
+    };
+    Require(cgrid(1000, 1, {1000, 1, 1, 0}), "a compute grid in one layer numbers its groups by X alone");
+    Require(cgrid(65536, 1, {65535, 1, 2, 65535}), "one group past the compute X limit splits the groups over two layers");
+    Require(!AgcDriver::Graphics::MeshComputeGridFor(compute, 0, 1).has_value(), "no groups are refused by the compute grid");
 }
 
 void debugBranchTests() {
