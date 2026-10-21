@@ -12,6 +12,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -44,6 +46,11 @@ alignas(256) constexpr std::array<std::uint32_t, 5> StoreTwo{0x34020082u, 0x4a04
 alignas(256) constexpr std::array<std::uint32_t, 5> StoreThree{0x34020082u, 0x4a040083u, 0xe0701000u, 0x80000201u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 5> StoreFour{0x34020082u, 0x4a040084u, 0xe0701000u, 0x80000201u, 0xbf810000u};
 const std::array<const std::uint32_t*, 4> StoreCodes{StoreOne.data(), StoreTwo.data(), StoreThree.data(), StoreFour.data()};
+alignas(256) constexpr std::array<std::uint32_t, 9> ReadOne{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040481u, 0xe0701000u, 0x80000201u, 0xbf800000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 9> ReadTwo{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040481u, 0xe0701000u, 0x80000201u, 0xbf800001u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 9> ReadThree{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040481u, 0xe0701000u, 0x80000201u, 0xbf800002u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 9> ReadFour{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a040481u, 0xe0701000u, 0x80000201u, 0xbf800003u, 0xbf810000u};
+const std::array<const std::uint32_t*, 4> ReadCodes{ReadOne.data(), ReadTwo.data(), ReadThree.data(), ReadFour.data()};
 
 std::uint32_t* Source = nullptr;
 std::uint32_t* Target = nullptr;
@@ -140,6 +147,8 @@ void ReadRound(std::uint32_t round) {
     }
 }
 
+bool Inline = false;
+
 void StagedRun(std::uint32_t round) {
     std::vector<std::uint32_t> words{0xc0037600u, 0x207u, Lanes, 1u, 1u, 0xc0017600u, 0x213u, 4u << 1u};
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
@@ -149,11 +158,14 @@ void StagedRun(std::uint32_t round) {
         words.insert(words.end(), {0xc0047600u, 0x240u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), BufferBytes, 0x31016facu});
         words.insert(words.end(), {0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u), 0xc0031500u, 1u, 1u, 1u, 0x8041u});
     }
-    const auto before = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped;
+    const auto counts = AgcDriver::Graphics::Recorder::OverlapCounts();
+    const auto before = counts.overlapped;
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
-    const auto joined = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped - before;
+    const auto after = AgcDriver::Graphics::Recorder::OverlapCounts();
+    const auto joined = after.overlapped - before;
+    const auto prelude = after.preludeDispatches - counts.preludeDispatches;
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[build]), BufferBytes);
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
@@ -162,6 +174,83 @@ void StagedRun(std::uint32_t round) {
         }
     }
     check(joined == StoreCodes.size() - 1, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(joined) + " joined a run, expected 3");
+    const std::uint64_t expected = Inline ? 0 : StoreCodes.size() - 1;
+    check(prelude == expected, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(prelude) + " joining dispatches copied in through the run's prelude, expected " + std::to_string(expected));
+}
+
+void OverlappingStagedRuns() {
+    constexpr std::uint32_t stride = Lanes / 2;
+    constexpr std::uint32_t total = Lanes + stride * 3;
+    std::fill_n(Staged[0], total, 0xffffffffu);
+    std::vector<std::uint32_t> words{0xc0037600u, 0x207u, Lanes, 1u, 1u, 0xc0017600u, 0x213u, 4u << 1u};
+    for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
+        const auto data = reinterpret_cast<std::uintptr_t>(Staged[0] + build * stride);
+        const auto codeAddress = reinterpret_cast<std::uintptr_t>(StoreCodes[build]);
+        words.insert(words.end(), {0xc0047600u, 0x240u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), BufferBytes, 0x31016facu});
+        words.insert(words.end(), {0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u), 0xc0031500u, 1u, 1u, 1u, 0x8041u});
+    }
+    const auto before = AgcDriver::Graphics::Recorder::OverlapCounts();
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "overlapping submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto after = AgcDriver::Graphics::Recorder::OverlapCounts();
+    AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[0]), total * sizeof(std::uint32_t));
+    check(after.overlapped == before.overlapped, "overlapping writable dispatches joined a run");
+    for (std::uint32_t index = 0; index < total; ++index) {
+        const auto build = std::min(index / stride, 3u);
+        const auto expected = index - build * stride + build + 1u;
+        const auto value = std::atomic_ref<std::uint32_t>(Staged[0][index]).load(std::memory_order_acquire);
+        check(value == expected, "overlapping staged result at " + std::to_string(index) + " is " + std::to_string(value) + ", expected " + std::to_string(expected));
+    }
+}
+
+void StagedReadRun(std::uint32_t round) {
+    std::vector<std::uint32_t> words{0xc0037600u, 0x207u, Lanes, 1u, 1u, 0xc0017600u, 0x213u, 4u << 1u};
+    for (std::size_t build = 0; build < ReadCodes.size(); ++build) {
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) Staged[build][lane] = round * 1000u + static_cast<std::uint32_t>(build) * 100u + lane;
+        const auto data = reinterpret_cast<std::uintptr_t>(Staged[build]);
+        const auto codeAddress = reinterpret_cast<std::uintptr_t>(ReadCodes[build]);
+        words.insert(words.end(), {0xc0047600u, 0x240u, static_cast<std::uint32_t>(data), static_cast<std::uint32_t>((data >> 32u) & 0xffffu), BufferBytes, 0x31016facu});
+        words.insert(words.end(), {0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u), 0xc0031500u, 1u, 1u, 1u, 0x8041u});
+    }
+    const auto before = AgcDriver::Graphics::Recorder::OverlapCounts();
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "read-before-write submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto after = AgcDriver::Graphics::Recorder::OverlapCounts();
+    for (std::size_t build = 0; build < ReadCodes.size(); ++build) {
+        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[build]), BufferBytes);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            const auto value = std::atomic_ref<std::uint32_t>(Staged[build][lane]).load(std::memory_order_acquire);
+            const auto expected = round * 1000u + static_cast<std::uint32_t>(build) * 100u + lane + 1u;
+            check(value == expected, "staged read-before-write dispatch " + std::to_string(build + 1) + ", lane " + std::to_string(lane) + " read " + std::to_string(value) + ", expected " + std::to_string(expected));
+        }
+    }
+    check(after.overlapped - before.overlapped == ReadCodes.size() - 1, "read-before-write dispatches did not join one run");
+    check(after.preludeDispatches - before.preludeDispatches == (Inline ? 0u : ReadCodes.size() - 1), "read-before-write dispatches did not use the expected copy-in path");
+}
+
+void CopyBackOverlapCheck() {
+    if (Inline) return;
+    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = AgcDriver::Graphics::Recorder::Active();
+    check(recorder != nullptr, "copy-back overlap check needs the active recorder");
+    std::array<bool, 5> overlap{};
+    recorder->OpenBatch();
+    recorder->DeferDispatchBarrier(ComputeQueue, {}, {});
+    recorder->AfterRun([&](auto& current) {
+        overlap[0] = current.AfterRunWrite(0x1000, 0x1100);
+        overlap[1] = current.AfterRunWrite(0x1100, 0x1180);
+    });
+    recorder->AfterRun([&](auto& current) {
+        overlap[2] = current.AfterRunWrite(0x1080, 0x1200);
+        overlap[3] = current.AfterRunWrite(0x1200, 0x1280);
+        overlap[4] = current.AfterRunWrite(0x1180, 0x1210);
+    });
+    static_cast<void>(recorder->Commands());
+    check(overlap == std::array{false, false, true, false, true}, "overlapping copy-backs were not separated from adjacent ranges");
+    recorder->Sync();
+    std::puts("overlap staged copy-backs: overlapping and adjacent ranges classified");
 }
 
 void RefusedRun() {
@@ -205,7 +294,7 @@ void Round(std::uint32_t dispatches, std::uint32_t& expected, const std::string&
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_WRITTEN_SHADOW_MIN_KIB", "0");
@@ -217,9 +306,15 @@ int main() {
             if (!probe) return VulkanTestSkipped;
         }
 
+        Inline = argc > 1 && std::string(argv[1]) == "--inline";
         for (const auto* code : StoreCodes) Register(code, sizeof(StoreOne));
+        for (const auto* code : ReadCodes) Register(code, sizeof(ReadOne));
         for (auto& block : Staged) block = NewBlock();
         for (std::uint32_t round = 1; round <= 3; ++round) StagedRun(round);
+        OverlappingStagedRuns();
+        for (std::uint32_t round = 1; round <= 3; ++round) StagedReadRun(round);
+        std::puts("overlap staged copy-ins: read-before-write dispatches used their input bytes");
+        CopyBackOverlapCheck();
         std::puts("overlap staged copies: unordered staged dispatches of four builds ran in one run");
         for (auto& block : Staged) block = NewBlock();
         RefusedRun();
