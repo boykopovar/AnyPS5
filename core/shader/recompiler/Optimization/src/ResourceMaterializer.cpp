@@ -259,11 +259,11 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
                                                                      : "MIMG BY2/BY4 requires a direct, identity-swizzled 2D image whose elements fill one dword: R8, R16 or RG8 for BY2, R8 for BY4");
         }
     }
-    const bool nativeRepacked = format == IrBufferFormat::Format10_11_11Float && !storage && !base.packed;
+    const bool nativeRepacked = (format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !storage && !base.packed;
     const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
     decoded.conversionFormat = remappedFormat != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
-    if (format == IrBufferFormat::Format11_11_10UNorm || (format == IrBufferFormat::Format10_11_11Float && !nativeRepacked)) {
-        const bool floating = format == IrBufferFormat::Format10_11_11Float;
+    if (format == IrBufferFormat::Format11_11_10UNorm || ((format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !nativeRepacked)) {
+        const bool floating = format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float;
         if (!base.srgbDecodeCompatible) {
             if (floating) return rejectImage(PoisonReason::Conversion, "samples or gathers a converted float image, or queries its LOD, which is not implemented");
             if (storage || base.depthCompare || (base.emulatedCompare & EmulatedCompare::ConvertedSampleUnsupported) != 0u) return rejectImage(PoisonReason::Conversion, "sampling, gathering or querying LOD of a converted unorm image is not implemented");
@@ -1886,7 +1886,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.cube = false;
         mode.mipCount = mode.mipMode == ImageMipMode::DynamicStorage ? RuntimeAbi::StorageMipSlots : 1u;
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
-        if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
+        if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
@@ -1977,7 +1977,10 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (!storage) append(IrTextureNumericClass::Sint, IrBufferFormat::Invalid, IrBufferFormat::Invalid, false, false);
             append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UInt, IrBufferFormat::Invalid, false, false);
             if ((image.srgbDecodeCompatible || (image.convertedSamples && convertedSampleCompatible(image))) && image.depthBitsCompatible) append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10UNorm, IrBufferFormat::Invalid, false, false);
-            if (image.srgbDecodeCompatible && image.depthBitsCompatible) append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
+            if (image.srgbDecodeCompatible && image.depthBitsCompatible) {
+                append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10Float, IrBufferFormat::Invalid, false, false);
+                append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
+            }
             if (storage) {
                 for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
                     append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);

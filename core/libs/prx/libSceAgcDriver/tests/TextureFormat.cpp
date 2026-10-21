@@ -117,6 +117,7 @@ void repackedFormatTests() {
     Require(IsRepackedTextureFormat(guest) && !IsRepackedTextureFormat(36u) && !IsRepackedTextureFormat(20u), "only texture format 43 is sampled through a repacked copy");
     Context context{};
     Require(SampledTextureFormat(context, guest) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(guest) == VK_FORMAT_R32_UINT, "format 43 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
+    Require(SampledTextureFormat(context, 36u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(36u) == VK_FORMAT_R32_UINT, "format 36 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
     const auto field = [](std::uint32_t word, VkComponentSwizzle channel) -> std::pair<std::uint32_t, std::uint32_t> {
         switch (channel) {
             case VK_COMPONENT_SWIZZLE_R: return {word & 0x7ffu, 6u};
