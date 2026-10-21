@@ -4778,6 +4778,55 @@ void verifyTableEdgeStore() {
     std::cout << "table edge store passed\n";
 }
 
+void verifyImageTableBindingGrowth() {
+    using namespace ShaderRecompiler;
+    DescriptorBindingBuilder builder;
+    CompiledBindingLayout compiled;
+    compiled.layout.descriptors = {{DescriptorBindingKind::ImageTable, {}}, {DescriptorBindingKind::SamplerTable, {}}};
+    const ResourceSnapshot snapshot;
+    const auto plan = builder.Prepare(compiled.layout, ShaderInfo{}, IrShaderStage::Compute, snapshot);
+    ImageResource sampled{};
+    sampled.resourceClass = ImageResourceClass::Sampled;
+    sampled.numericClass = IrTextureNumericClass::Float;
+    sampled.dimension = RdnaImageDimension::Dim2D;
+    auto storage = sampled;
+    storage.resourceClass = ImageResourceClass::Storage;
+    const auto sampledKind = DescriptorBindingForImage(sampled);
+    const auto storageKind = DescriptorBindingForImage(storage);
+    for (const auto count : {0u, 1u, 64u, 65u, 256u, 3000u}) {
+        ResolvedImageTables tables;
+        tables.elements.resize(count);
+        tables.samplers.resize(count);
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            for (std::uint32_t index = 0; index < count; ++index) {
+                auto& image = tables.elements[index];
+                image.words[0] = index + pass * count;
+                image.words[7] = count - index;
+                image.dimension = RdnaImageDimension::Dim2D;
+                image.depthCompare = (index + pass) % 3u == 0u;
+                image.kind = (index + pass) % 2u == 0u ? sampledKind : storageKind;
+                tables.samplers[index].words = {index, pass, count, index + pass};
+                tables.samplers[index].compare = (index + pass) % 2u != 0u;
+            }
+            BindingAllocationResult allocation;
+            const auto before = allocationCount;
+            builder.Populate(allocation, compiled, plan, 0u, snapshot, {}, &tables);
+            const auto allocations = allocationCount - before;
+            require(allocation.bindings.size() == 2u, "image table bindings: a prepared binding was lost");
+            const auto& images = allocation.bindings[0];
+            const auto& samplers = allocation.bindings[1];
+            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
+            require(samplers.count == count && samplers.guestDescriptor.size() == count * 4u && samplers.samplerDepthCompare.size() == count, "image table bindings: sampler metadata count differs from the descriptors");
+            for (std::uint32_t index = 0; index < count; ++index) {
+                require(std::equal(tables.elements[index].words.begin(), tables.elements[index].words.end(), images.guestDescriptor.begin() + index * 8u), "image table bindings: image words changed");
+                require(images.imageShapes[index] == DescriptorImageShape::Image2D && images.imageDepthCompare[index] == tables.elements[index].depthCompare && images.imageWritten[index] == ((index + pass) % 2u != 0u) && !images.imageAtomic[index] && images.imageSamplers[index] == 0u, "image table bindings: an element inherited another element's metadata");
+                require(std::equal(tables.samplers[index].words.begin(), tables.samplers[index].words.end(), samplers.guestDescriptor.begin() + index * 4u) && samplers.samplerDepthCompare[index] == tables.samplers[index].compare, "image table bindings: sampler words or comparison state changed");
+            }
+            require(allocations <= 10u, ("image table bindings: " + std::to_string(count) + " elements required " + std::to_string(allocations) + " allocations, expected at most one per output array").c_str());
+        }
+    }
+}
+
 void verifyImageTableScratchReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -11946,6 +11995,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
             verifySpecializedBufferAtomicBindings(true);
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-binding-growth") {
+            verifyImageTableBindingGrowth();
+            std::cout << "Image and sampler table bindings preserve metadata with bounded allocations\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--quad-mask-no-demote") {

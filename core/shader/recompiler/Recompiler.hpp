@@ -601,6 +601,9 @@ public:
     }
     std::size_t size() const { return count; }
     bool empty() const { return count == 0; }
+    void reserve(std::size_t size) {
+        if (size > InlineFlags) spill.reserve(size);
+    }
     bool operator[](std::size_t index) const { return count <= InlineFlags ? ((bits >> index) & 1u) != 0 : spill[index]; }
     reference operator[](std::size_t index) { return {*this, index}; }
     bool back() const { return (*this)[count - 1]; }
