@@ -1,5 +1,5 @@
 #include "FreeTypeFontFixture.hpp"
-#include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <ft2build.h>
@@ -31,6 +31,7 @@ int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
 int APS5_VABI FT_Done_FreeType_nid_postfix(void*);
 int APS5_VABI FT_New_Face_nid_postfix(void*, const char*, std::int64_t, GuestFaceRec**);
 int APS5_VABI FT_New_Memory_Face_nid_postfix(void*, const unsigned char*, std::int64_t, std::int64_t, GuestFaceRec**);
+int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec*);
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec*);
 int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t);
 int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec*, std::uint32_t, std::uint32_t, std::uint32_t, GuestVector*);
@@ -296,6 +297,7 @@ static void SizeMatches(const GuestFaceRec* face, FT_Face host) {
 
 struct Finalizers {
     std::vector<int> calls;
+    bool reenter = false;
 };
 
 static void NativeSlotFinalizer(void* object) {
@@ -313,7 +315,13 @@ static void NativeSizeFinalizer(void* object) {
 static void NativeFaceFinalizer(void* object) {
     auto* face = static_cast<FT_Face>(object);
     Require(face->glyph == nullptr && face->size == nullptr);
-    static_cast<Finalizers*>(face->generic.data)->calls.push_back(3);
+    auto* events = static_cast<Finalizers*>(face->generic.data);
+    events->calls.push_back(3);
+    if (events->reenter) {
+        Require(FT_Reference_Face(face) == 0 && FT_Reference_Face(face) == 0);
+        Require(FT_Done_Face(face) == 0);
+        Require(face->glyph == nullptr && face->size == nullptr);
+    }
 }
 
 static void APS5_VABI GuestSlotFinalizer(void* object) {
@@ -331,7 +339,14 @@ static void APS5_VABI GuestSizeFinalizer(void* object) {
 static void APS5_VABI GuestFaceFinalizer(void* object) {
     auto* face = static_cast<GuestFaceRec*>(object);
     Require(face->glyph == nullptr && face->size == nullptr);
-    static_cast<Finalizers*>(face->generic.data)->calls.push_back(3);
+    auto* events = static_cast<Finalizers*>(face->generic.data);
+    events->calls.push_back(3);
+    if (events->reenter) {
+        const auto* library = static_cast<const GuestFace*>(face->internal)->library;
+        Require(FT_Reference_Face_nid_postfix(face) == 0 && FT_Reference_Face_nid_postfix(face) == 0);
+        Require(FT_Done_Face_nid_postfix(face) == 0 && library->faces.size() == 1);
+        Require(face->glyph == nullptr && face->size == nullptr);
+    }
 }
 
 static void SetFinalizers(FT_Face face, Finalizers& events) {
@@ -434,6 +449,99 @@ static void CheckTransforms(const std::vector<unsigned char>& font) {
 }
 
 int main() {
+    {
+        const auto referenceFont = SquareGlyphFont('A', 700);
+        void* referenceLibrary = nullptr;
+        FT_Library oracle = nullptr;
+        Require(FT_Init_FreeType_nid_postfix(&referenceLibrary) == 0 && FT_Init_FreeType(&oracle) == 0);
+        auto* owners = static_cast<GuestLibrary*>(referenceLibrary);
+        Require(FT_Reference_Face_nid_postfix(nullptr) == FT_Reference_Face(nullptr));
+        int references = 0;
+        int retained = 0;
+        int finalized = 0;
+        for (const unsigned depth : {1u, 2u, 3u, 17u}) {
+            GuestFaceRec* shared = nullptr;
+            FT_Face native = nullptr;
+            Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), 0, &shared) == 0);
+            Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), 0, &native) == 0);
+            Finalizers guestEvents;
+            Finalizers nativeEvents;
+            guestEvents.reenter = nativeEvents.reenter = depth == 3;
+            SetFinalizers(shared, guestEvents);
+            SetFinalizers(native, nativeEvents);
+            for (unsigned index = 1; index < depth; ++index) {
+                Require(FT_Reference_Face_nid_postfix(shared) == FT_Reference_Face(native));
+                ++references;
+            }
+            for (unsigned index = 1; index < depth; ++index) {
+                Require(FT_Done_Face(native) == 0 && FT_Done_Face_nid_postfix(shared) == 0);
+                Require(owners->faces.size() == 1 && guestEvents.calls.empty() && nativeEvents.calls.empty());
+                Require(FT_Get_Char_Index_nid_postfix(shared, 'A') == FT_Get_Char_Index(native, 'A'));
+                Require(FT_Set_Pixel_Sizes_nid_postfix(shared, 0, 16 + index) == 0 && FT_Set_Pixel_Sizes(native, 0, 16 + index) == 0);
+                Require(FT_Load_Char_nid_postfix(shared, 'A', FT_LOAD_RENDER) == 0 && FT_Load_Char(native, 'A', FT_LOAD_RENDER) == 0);
+                SlotMatches(shared->glyph, native->glyph);
+                ++retained;
+            }
+            Require(FT_Done_Face(native) == 0 && FT_Done_Face_nid_postfix(shared) == 0);
+            if (guestEvents.reenter) {
+                references += 2;
+                ++retained;
+            }
+            Require(owners->faces.empty() && guestEvents.calls == nativeEvents.calls && guestEvents.calls == std::vector<int>({1, 2, 3}));
+            ++finalized;
+        }
+        GuestFaceRec* plain = nullptr;
+        FT_Face nativePlain = nullptr;
+        Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), 0, &plain) == 0);
+        Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), 0, &nativePlain) == 0);
+        Require(FT_Reference_Face_nid_postfix(plain) == FT_Reference_Face(nativePlain));
+        ++references;
+        Require(FT_Done_Face(nativePlain) == 0 && FT_Done_Face_nid_postfix(plain) == 0 && owners->faces.size() == 1);
+        ++retained;
+        Require(FT_Done_Face(nativePlain) == 0 && FT_Done_Face_nid_postfix(plain) == 0 && owners->faces.empty());
+        ++finalized;
+        GuestFaceRec* probe = nullptr;
+        FT_Face nativeProbe = nullptr;
+        Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), -1, &probe) == 0);
+        Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), -1, &nativeProbe) == 0);
+        Finalizers probeEvents;
+        Finalizers nativeProbeEvents;
+        probe->generic = {&probeEvents, GuestFaceFinalizer};
+        nativeProbe->generic = {&nativeProbeEvents, NativeFaceFinalizer};
+        Require(probe->glyph == nullptr && probe->size == nullptr);
+        Require(FT_Reference_Face_nid_postfix(probe) == FT_Reference_Face(nativeProbe));
+        ++references;
+        Require(FT_Done_Face(nativeProbe) == 0 && FT_Done_Face_nid_postfix(probe) == 0 && owners->faces.size() == 1);
+        ++retained;
+        Require(probeEvents.calls.empty() && nativeProbeEvents.calls.empty());
+        Require(FT_Done_Face(nativeProbe) == 0 && FT_Done_Face_nid_postfix(probe) == 0);
+        Require(owners->faces.empty() && probeEvents.calls == nativeProbeEvents.calls && probeEvents.calls == std::vector<int>({3}));
+        ++finalized;
+        std::array<Finalizers, 2> shutdownEvents;
+        std::array<Finalizers, 2> nativeShutdownEvents;
+        std::array<GuestFaceRec*, 2> shutdown{};
+        std::array<FT_Face, 2> nativeShutdown{};
+        for (unsigned index = 0; index < shutdown.size(); ++index) {
+            Require(FT_New_Memory_Face_nid_postfix(referenceLibrary, referenceFont.data(), static_cast<std::int64_t>(referenceFont.size()), 0, &shutdown[index]) == 0);
+            Require(FT_New_Memory_Face(oracle, referenceFont.data(), static_cast<FT_Long>(referenceFont.size()), 0, &nativeShutdown[index]) == 0);
+            SetFinalizers(shutdown[index], shutdownEvents[index]);
+            SetFinalizers(nativeShutdown[index], nativeShutdownEvents[index]);
+            for (unsigned reference = 0; reference < 3 - index; ++reference) {
+                Require(FT_Reference_Face_nid_postfix(shutdown[index]) == FT_Reference_Face(nativeShutdown[index]));
+                ++references;
+            }
+            Require(FT_Done_Face(nativeShutdown[index]) == 0 && FT_Done_Face_nid_postfix(shutdown[index]) == 0);
+            Require(owners->faces.size() == index + 1 && shutdownEvents[index].calls.empty());
+            ++retained;
+        }
+        Require(FT_Done_FreeType(oracle) == 0 && FT_Done_FreeType_nid_postfix(referenceLibrary) == 0);
+        for (unsigned index = 0; index < shutdown.size(); ++index) {
+            Require(shutdownEvents[index].calls == nativeShutdownEvents[index].calls && shutdownEvents[index].calls == std::vector<int>({1, 2, 3}));
+            ++finalized;
+        }
+        Require(references == 28 && retained == 24 && finalized == 8);
+        std::printf("FreeType face references: %d retains, %d non-final releases, %d finalized faces compared with native\n", references, retained, finalized);
+    }
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_guest_freetype-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root / "app0");
     CheckGasp();
@@ -471,6 +579,19 @@ int main() {
     GuestFaceRec* masked = nullptr;
     Require(FT_New_Face_nid_postfix(library, "/app0/font.ttf", 0x180000000ll, &masked) == 0 && masked != nullptr && masked->face_index == 0);
     Require(FT_New_Face_nid_postfix(library, "/app0/font.ttf", 0, &face) == 0 && face != nullptr && face != masked);
+    {
+        FT_Face nativeFile = nullptr;
+        Require(FT_New_Face(hostLibrary, "app0/font.ttf", 0, &nativeFile) == 0);
+        const auto* bytes = FaceOf(face)->bytes.data();
+        Require(FaceOf(face)->bytes.size() == font.size() && std::memcmp(bytes, font.data(), font.size()) == 0);
+        Require(FT_Reference_Face_nid_postfix(face) == FT_Reference_Face(nativeFile));
+        Require(FT_Done_Face(nativeFile) == 0 && FT_Done_Face_nid_postfix(face) == 0);
+        Require(static_cast<GuestLibrary*>(library)->faces.size() == 2);
+        Require(FaceOf(face)->bytes.data() == bytes && std::memcmp(bytes, font.data(), font.size()) == 0);
+        Require(FT_Get_Char_Index_nid_postfix(face, 'A') == FT_Get_Char_Index(nativeFile, 'A'));
+        Require(FT_Done_Face(nativeFile) == 0);
+        std::puts("File-backed face reference: owned font bytes survive a non-final release");
+    }
     FaceMatches(face, host, library);
 
     const auto fontSize = static_cast<std::int64_t>(font.size());

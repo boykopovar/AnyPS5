@@ -1,6 +1,7 @@
 # libSceFreeType technical debt
 
 ### Unknown function info
+- [FT_Reference_Face](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signature, reference-counter limits and finalizer behavior are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Counter overflow and reentrant finalization have not been measured on the console.
 
 - [FT_Get_Sfnt_Name_Count, FT_Get_Sfnt_Name](../../../core/libs/prx/libSceFreeType/src/Names.cpp) (libSceFreeType) - console signatures, record layout and errors are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftsnames.c) and assumes the public LP64 `FT_SfntName` layout (24 bytes, string pointer at 8, byte length at 16). Strings retain their original encoding, borrow native face storage and remain valid only while the face is alive
 

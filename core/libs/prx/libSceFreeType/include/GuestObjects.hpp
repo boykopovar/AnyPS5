@@ -27,6 +27,7 @@ struct GuestFace {
     GuestSizeRec size{};
     GuestLibrary* library = nullptr;
     FT_Face host = nullptr;
+    bool finalized = false;
     std::vector<unsigned char> bytes;
     std::vector<GuestBitmapSize> fixedSizes;
     std::vector<GuestCharMapRec> charmaps;
