@@ -115,7 +115,7 @@ void CheckInfo(_Unwind_Context& context, std::uintptr_t probe) {
         "getInfo agrees with _Unwind_GetRegionStart and _Unwind_GetLanguageSpecificData");
 }
 
-_Unwind_Reason_Code TraceFirstFrame(_Unwind_Context* context, void* argument) {
+_Unwind_Reason_Code APS5_VABI TraceFirstFrame(_Unwind_Context* context, void* argument) {
     *static_cast<ProcedureInfo*>(argument) = Info(*context);
     return _URC_NORMAL_STOP;
 }
