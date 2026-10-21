@@ -99,7 +99,7 @@ static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info en
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
-static_assert(sizeof(SampledResourcePair) == 12, "SampledResourcePair changed: update the info encoder");
+static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
 static_assert(sizeof(IrBindingLayout) == 80, "IrBindingLayout changed: update the layout encoder");
@@ -145,7 +145,7 @@ static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the in
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 49, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
-static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
+static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: update EncodePlan and DecodePlan");
@@ -843,6 +843,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(pair.image);
         out.Value(pair.sampler);
         out.Value(pair.firstUsePc);
+        out.Value(pair.volumeGather);
     });
     writer.List(info.inputs, [](Writer& out, const StageInput& input) {
         out.Value(input.kind);
@@ -956,10 +957,11 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(sampler.foldTexelOffsetsOnly);
         in.Value(sampler.table);
     });
-    reader.List(info.sampledPairs, 12, [](Reader& in, SampledResourcePair& pair) {
+    reader.List(info.sampledPairs, 13, [](Reader& in, SampledResourcePair& pair) {
         in.Value(pair.image);
         in.Value(pair.sampler);
         in.Value(pair.firstUsePc);
+        in.Value(pair.volumeGather);
     });
     reader.List(info.inputs, 21, [](Reader& in, StageInput& input) {
         in.Value(input.kind);
