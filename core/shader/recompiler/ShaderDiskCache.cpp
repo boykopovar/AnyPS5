@@ -819,6 +819,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.layerRows);
         out.Value(image.maxArrayLayers);
         out.Value(image.optionalDescriptor);
+        out.Value(image.volumeGather);
         out.Value(image.byElements);
         out.Value(image.byComponents);
         out.Value(image.packedFormat);
@@ -933,6 +934,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.layerRows);
         in.Value(image.maxArrayLayers);
         in.Value(image.optionalDescriptor);
+        in.Value(image.volumeGather);
         in.Value(image.byElements);
         in.Value(image.byComponents);
         in.Value(image.packedFormat);
