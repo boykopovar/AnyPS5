@@ -587,6 +587,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_trace_imports.py $<TARGET_FILE:relinker>)
         add_test(NAME linux_trace_imports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_trace_imports.py $<TARGET_FILE:relinker>)
+        add_test(NAME macos_trace_imports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_trace_imports.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_address_space COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_address_space.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_tls_thread_pointer COMMAND ${Python3_EXECUTABLE}
