@@ -1015,6 +1015,20 @@ int main(int argc, char** argv) {
         Block stored(BlockBytes);
         StoreWords(stored, colorBytes, FillOnes);
         CheckUniform(LoadSamples(*device, stored), Ones, "from color memory of half-float ones no draw rendered to");
+        Block reused(BlockBytes);
+        StoreWords(reused, colorBytes, FillOnes);
+        CheckUniform(LoadSamples(*device, reused), Ones, "from color memory of half-float ones no draw rendered to, before the title reuses it");
+        AgcDriver::Graphics::RequireNoMultisampleColorTarget(reused.Address(), static_cast<std::size_t>(colorBytes / 2u), "a storage image access");
+        StoreWords(reused, colorBytes, 0u);
+        CheckUniform(LoadSamples(*device, reused), {}, "from color memory no draw rendered to after the title reused it for zeros");
+        std::string drawnRefusal;
+        try {
+            AgcDriver::Graphics::RequireNoMultisampleColorTarget(block.Address(), static_cast<std::size_t>(colorBytes / 2u), "a storage image access");
+        } catch (const std::exception& error) {
+            drawnRefusal = error.what();
+        }
+        Require(drawnRefusal.find("whose samples are only on the host") != std::string::npos, "a guest access over a drawn 4x target is not refused");
+        std::puts("a guest access over a 4x texture no draw rendered to retires it, so a later load reads the memory's new value, and a guest access over a drawn target is still refused");
         const auto storedState = TargetState(DecodeTarget(stored));
         Draw(*device, storedState);
         CheckSamples(storedState, LoadSamples(*device, stored), Ones);
