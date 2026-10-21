@@ -1045,6 +1045,23 @@ int main(int argc, char** argv) {
         Block undrawn(BlockBytes);
         StoreSamples(*device, TargetDescriptor(undrawn, SampleShift), SampleWrites(leftHalf));
         CheckWritten(std::vector<std::array<float, 4>>(Side * Side * Samples), LoadSamples(*device, undrawn), leftHalf, "into zeroed color memory no draw rendered to");
+        const auto refusedOver = [&](const Block& over) {
+            try {
+                AgcDriver::Graphics::RequireNoMultisampleColorTarget(over.Address(), static_cast<std::size_t>(colorBytes / 2u), "a storage image access");
+            } catch (const std::exception& error) {
+                return std::string(error.what()).find("whose samples are only on the host") != std::string::npos;
+            }
+            return false;
+        };
+        Require(refusedOver(undrawn), "a guest access over a 4x texture no draw rendered to but a dispatch wrote is not refused");
+        Block absorbing(BlockBytes);
+        StoreWords(absorbing, colorBytes, FillOnes);
+        CheckUniform(LoadSamples(*device, absorbing), Ones, "from color memory of half-float ones no draw rendered to, before a fill the texture absorbs");
+        Require(AgcDriver::Graphics::MultisampledColorFillAbsorbs(absorbing.Address(), static_cast<std::size_t>(colorBytes), 0u), "a fill of 0 over the whole color memory of a 4x texture no draw rendered to is not absorbed");
+        AgcDriver::Graphics::NoteColorMetadataFill(absorbing.Address(), static_cast<std::size_t>(colorBytes), 0u);
+        Require(refusedOver(absorbing), "a guest access over a 4x texture no draw rendered to that absorbed a fill is not refused");
+        CheckUniform(LoadSamples(*device, absorbing), {}, "from a 4x texture no draw rendered to after it absorbed a fill of 0");
+        std::puts("a guest access over a 4x texture no draw rendered to is still refused once a dispatch wrote it or it absorbed a fill");
         Block mixedStore(BlockBytes);
         StoreWords(mixedStore, colorBytes, FillOnes);
         std::memcpy(mixedStore.data + colorBytes - sizeof(odd), &odd, sizeof(odd));
