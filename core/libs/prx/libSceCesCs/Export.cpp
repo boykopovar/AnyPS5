@@ -1566,6 +1566,38 @@ int APS5_VABI sceCesMbcToUtf32le(const void* profile, const uint8_t* mbcBuffer, 
     return profiledToUtf32<false>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf32);
 }
 
+int APS5_VABI sceCesUcs2ToMbc(uint16_t ucs2, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return scalarToProfiled(isMbcs, ucs2, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
+int APS5_VABI sceCesUtf8ToMbc(const uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf8Buffer, utf8Max, utf8Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf8);
+}
+
+int APS5_VABI sceCesUtf16ToMbc(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf16Buffer, utf16Max, utf16Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf16<NATIVE_BIG_ENDIAN>);
+}
+
+int APS5_VABI sceCesUtf16beToMbc(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf16Buffer, utf16Max, utf16Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf16<true>);
+}
+
+int APS5_VABI sceCesUtf16leToMbc(const uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return bufferToProfiled(isMbcs, utf16Buffer, utf16Max, utf16Len, profile, mbcBuffer, mbcMax, mbcLen, decodeUtf16<false>);
+}
+
+int APS5_VABI sceCesUtf32ToMbc(uint32_t utf32, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return scalarToProfiled(isMbcs, utf32, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
+int APS5_VABI sceCesUtf32beToMbc(const uint32_t* utf32, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return utf32ToProfiled<true>(isMbcs, utf32, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
+int APS5_VABI sceCesUtf32leToMbc(const uint32_t* utf32, const void* profile, uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen) {
+    return utf32ToProfiled<false>(isMbcs, utf32, profile, mbcBuffer, mbcMax, mbcLen);
+}
+
 int APS5_VABI sceCesSbcToUcs2(const uint8_t* profile, uint8_t sbc, uint16_t* ucs2) {
     uint32_t code = 0;
     if (const int result = sbcToUnit(profile, sbc, ucs2, code); result != 0) return result;
