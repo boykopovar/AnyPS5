@@ -2189,7 +2189,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
 
 std::shared_ptr<const ResolvedImageTables> ResourceMaterializer::ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey) {
     if (snapshot.tables.tables.empty()) {
-        static const auto none = std::make_shared<const ResolvedImageTables>();
+        static thread_local const auto none = std::make_shared<const ResolvedImageTables>();
         static_cast<void>(ResolveImageTables(info, snapshot, memoKey));
         return none;
     }

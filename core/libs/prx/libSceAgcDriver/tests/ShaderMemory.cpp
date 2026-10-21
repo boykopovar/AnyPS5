@@ -4778,6 +4778,40 @@ void verifyTableEdgeStore() {
     std::cout << "table edge store passed\n";
 }
 
+void verifyEmptyImageTableResolution() {
+    using namespace ShaderRecompiler;
+    using Result = std::shared_ptr<const ResolvedImageTables>;
+    std::array<std::promise<Result>, 4> outputs;
+    std::array<std::thread, 4> workers;
+    for (std::size_t index = 0; index < workers.size(); ++index) {
+        workers[index] = std::thread([&, index] {
+            try {
+                const ShaderInfo info;
+                const ResourceSnapshot snapshot;
+                auto held = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, 0);
+                const auto before = allocationCount;
+                for (unsigned call = 0; call < 1000; ++call) {
+                    const auto resolved = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, 0);
+                    require(resolved && resolved->map.empty() && resolved->elements.empty() && resolved->samplers.empty() && resolved->poison.empty() && resolved->faults == 0u, "empty image tables: a resolution acquired table data");
+                }
+                require(allocationCount == before, "empty image tables: repeated resolutions allocate");
+                ShaderInfo invalid;
+                invalid.images.resize(1);
+                invalid.images[0].table = 0u;
+                expectFailure([&] { static_cast<void>(ResourceMaterializer::ResolveImageTablesShared(invalid, snapshot, 0)); }, "image table snapshot disagrees", "empty image tables: a missing static table was accepted");
+                outputs[index].set_value(std::move(held));
+            } catch (...) {
+                outputs[index].set_exception(std::current_exception());
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+    for (auto& output : outputs) {
+        const auto held = output.get_future().get();
+        require(held && held->map.empty() && held->elements.empty() && held->samplers.empty() && held->poison.empty() && held->faults == 0u, "empty image tables: a result did not survive its resolving thread");
+    }
+}
+
 void verifyImageTableBindingGrowth() {
     using namespace ShaderRecompiler;
     DescriptorBindingBuilder builder;
@@ -12000,6 +12034,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--table-binding-growth") {
             verifyImageTableBindingGrowth();
             std::cout << "Image and sampler table bindings preserve metadata with bounded allocations\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--empty-table-resolution") {
+            verifyEmptyImageTableResolution();
+            std::cout << "Empty image table resolutions preserve errors and survive their resolving threads\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--quad-mask-no-demote") {
