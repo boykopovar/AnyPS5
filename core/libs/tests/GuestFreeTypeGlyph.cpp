@@ -240,6 +240,48 @@ static void BitmapOwnership() {
     FT_Done_Glyph(nativeRetained);
 }
 
+static void WideOutlineCoordinates() {
+    Fixture fixture;
+    fixture.Load(1, FT_LOAD_NO_HINTING);
+    const std::array<GuestVector, 4> expected{{
+        {std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()},
+        {std::numeric_limits<std::int64_t>::max(), std::numeric_limits<std::int64_t>::min()},
+        {std::int64_t{1} << 40, -(std::int64_t{1} << 40)},
+        {-2147483649LL, 2147483648LL},
+    }};
+    auto& slotOutline = fixture.face->glyph->outline;
+    Require(slotOutline.n_points == expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        slotOutline.points[index] = expected[index];
+        fixture.host->glyph->outline.points[index] = {static_cast<FT_Pos>(expected[index].x), static_cast<FT_Pos>(expected[index].y)};
+    }
+    GuestGlyphRec* glyph = nullptr;
+    FT_Glyph native = nullptr;
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &glyph) == FT_Get_Glyph(fixture.host->glyph, &native));
+    auto& outline = reinterpret_cast<GuestOutlineGlyphRec*>(glyph)->outline;
+    Require(outline.n_points == expected.size() && outline.points != slotOutline.points);
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        Require(outline.points[index].x == expected[index].x && outline.points[index].y == expected[index].y);
+    }
+    if constexpr (sizeof(FT_Pos) == sizeof(std::int64_t)) Matches(glyph, native, fixture.library, false);
+    fixture.Load(0, FT_LOAD_NO_HINTING);
+    fixture.CloseFaces();
+    GuestGlyphRec* copy = nullptr;
+    FT_Glyph nativeCopy = nullptr;
+    Require(FT_Glyph_Copy_nid_postfix(glyph, &copy) == FT_Glyph_Copy(native, &nativeCopy));
+    const auto& copiedOutline = reinterpret_cast<GuestOutlineGlyphRec*>(copy)->outline;
+    Require(copiedOutline.points != outline.points && copiedOutline.n_points == expected.size());
+    outline.points[0] = {};
+    FT_Done_Glyph_nid_postfix(glyph);
+    FT_Done_Glyph(native);
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        Require(copiedOutline.points[index].x == expected[index].x && copiedOutline.points[index].y == expected[index].y);
+    }
+    if constexpr (sizeof(FT_Pos) == sizeof(std::int64_t)) Matches(copy, nativeCopy, fixture.library, false);
+    FT_Done_Glyph_nid_postfix(copy);
+    FT_Done_Glyph(nativeCopy);
+}
+
 static void ErrorsAndEmptyGlyphs() {
     Fixture fixture;
     fixture.Load(1, FT_LOAD_NO_HINTING);
@@ -363,12 +405,6 @@ static void UnsupportedChanges() {
     glyph->clazz = &foreignClass;
     Require(Throws([&] { FT_Glyph_Copy_nid_postfix(glyph, &copy); }, "FT_Glyph_Copy"));
     glyph->clazz = clazz;
-    if constexpr (sizeof(FT_Pos) < sizeof(std::int64_t)) {
-        const auto oldPoint = outline.points[0];
-        outline.points[0].x = std::numeric_limits<std::int64_t>::max();
-        Require(Throws([&] { FT_Glyph_Copy_nid_postfix(glyph, &copy); }, "FT_Glyph_Copy"));
-        outline.points[0] = oldPoint;
-    }
     FT_Done_Glyph_nid_postfix(glyph);
     fixture.Load(1, FT_LOAD_RENDER);
     const auto slotBuffer = fixture.face->glyph->bitmap.buffer;
@@ -387,6 +423,7 @@ static void UnsupportedChanges() {
 int main() {
     OutlineOwnership();
     BitmapOwnership();
+    WideOutlineCoordinates();
     ErrorsAndEmptyGlyphs();
     UnsupportedChanges();
     std::puts("FreeType glyph ownership and reference comparisons passed");

@@ -4,7 +4,6 @@
 #include FT_GLYPH_H
 
 #include <algorithm>
-#include <limits>
 #include <mutex>
 #include <unordered_map>
 
@@ -22,7 +21,7 @@ struct Glyph {
 
     GuestGlyphRec* Root() { return isBitmap ? &bitmap.root : &outline.root; }
 
-    void Publish() {
+    void Publish(const GuestOutline& source) {
         *Root() = {library, host->clazz, static_cast<std::uint32_t>(host->format), {host->advance.x, host->advance.y}};
         if (isBitmap) {
             const auto* native = reinterpret_cast<FT_BitmapGlyph>(host.get());
@@ -32,7 +31,7 @@ struct Glyph {
             bitmap.bitmap = {image.rows, image.width, image.pitch, image.buffer, image.num_grays, image.pixel_mode, image.palette_mode, image.palette};
         } else {
             const auto& native = reinterpret_cast<FT_OutlineGlyph>(host.get())->outline;
-            for (std::size_t index = 0; index < points.size(); ++index) points[index] = {native.points[index].x, native.points[index].y};
+            std::copy_n(source.points, points.size(), points.begin());
             outline.outline = {native.n_contours, native.n_points, points.empty() ? nullptr : points.data(), native.tags, native.contours, native.flags};
         }
     }
@@ -40,11 +39,6 @@ struct Glyph {
 
 std::mutex glyphMutex;
 std::unordered_map<GuestGlyphRec*, std::unique_ptr<Glyph>> glyphs;
-
-FT_Pos Position(std::int64_t value, const char* function) {
-    if (value < std::numeric_limits<FT_Pos>::min() || value > std::numeric_limits<FT_Pos>::max()) NotImplemented_nid_no_patch(function);
-    return static_cast<FT_Pos>(value);
-}
 
 FT_Vector Advance(const GuestVector& advance) {
     constexpr std::int64_t limit = 0x200000;
@@ -63,13 +57,10 @@ struct Outline {
     FT_Outline native{};
     std::vector<FT_Vector> points;
 
-    Outline(const GuestOutline& outline, const char* function) {
+    Outline(const GuestOutline& outline) {
         native = {outline.n_contours, outline.n_points, nullptr, outline.tags, outline.contours, outline.flags};
         if (outline.n_contours > outline.n_points) return;
         points.resize(outline.n_points);
-        for (std::size_t index = 0; index < points.size(); ++index) {
-            points[index] = {Position(outline.points[index].x, function), Position(outline.points[index].y, function)};
-        }
         native.points = points.empty() ? nullptr : points.data();
     }
 };
@@ -116,7 +107,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
         FT_Done_Glyph(probe);
         NotImplemented_nid_no_patch(__func__);
     }
-    Outline outline(native.format == FT_GLYPH_FORMAT_OUTLINE ? slot->outline : GuestOutline{}, __func__);
+    Outline outline(native.format == FT_GLYPH_FORMAT_OUTLINE ? slot->outline : GuestOutline{});
     native.outline = outline.native;
     native.bitmap = Bitmap(slot->bitmap);
     native.bitmap_left = slot->bitmap_left;
@@ -139,7 +130,7 @@ int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec* slot, GuestGlyphRec** 
         return error;
     }
     owner.host.reset(result);
-    owner.Publish();
+    owner.Publish(slot->outline);
     *target = address;
     return 0;
 }
@@ -157,7 +148,7 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
     FT_Glyph native = original.isBitmap ? &nativeBitmap.root : &nativeOutline.root;
     *native = *original.host;
     native->format = static_cast<FT_Glyph_Format>(source->format);
-    Outline outline(original.isBitmap ? GuestOutline{} : original.outline.outline, __func__);
+    Outline outline(original.isBitmap ? GuestOutline{} : original.outline.outline);
     nativeOutline.outline = outline.native;
     nativeBitmap.bitmap = Bitmap(original.bitmap.bitmap);
     nativeBitmap.left = original.bitmap.left;
@@ -171,7 +162,7 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
         return error;
     }
     copy.host.reset(result);
-    copy.Publish();
+    copy.Publish(original.outline.outline);
     address->advance = advance;
     *target = address;
     return 0;
