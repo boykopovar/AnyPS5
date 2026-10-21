@@ -764,6 +764,15 @@ std::uint32_t EmitOneDimensionalGatherLz(SpirvValueEmitContext& ctx, const Image
 std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
     auto& state = ctx.state;
     const auto numericClass = access.image.numericClass;
+    const auto f32 = TypeF32(state);
+    const auto i32 = TypeI32(state);
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto gatherState = state.registrationModules
+        ? EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, RuntimeImageDword(state, access.mem.resource, offsetof(RuntimeAbi::ResourceMetadata, flags) / sizeof(std::uint32_t)), ConstantU32(state, RuntimeAbi::CompareStateShift)), RuntimeAbi::CompareStateMask)
+        : state.module.SpecializationConstant(u32, PipelineSpecialization::VolumeGatherBase + access.mem.resource, 0u);
+    const auto field = [&](std::uint32_t shift, std::uint32_t mask) { return EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, gatherState, ConstantU32(state, shift)), mask); };
+    const auto equal = [&](std::uint32_t value, std::uint32_t literal) { return Binary(state, spv::OpIEqual, boolean, value, ConstantU32(state, literal)); };
     state.module.EmitCapability(spv::CapabilityImageQuery);
     const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
     const auto size = state.module.AllocateId();
@@ -772,36 +781,99 @@ std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAcce
     std::uint32_t starts[3] = {};
     for (std::uint32_t axis = 0; axis < 3u; axis++) {
         const auto extent = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), extent, size, axis);
-        extents[axis] = Unary(state, spv::OpConvertUToF, TypeF32(state), extent);
+        state.module.AddFunction(spv::OpCompositeExtract, u32, extent, size, axis);
+        extents[axis] = Unary(state, spv::OpBitcast, i32, extent);
         const auto coord = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), coord, setup.coord, axis);
-        auto scaled = Binary(state, spv::OpFMul, TypeF32(state), coord, extents[axis]);
+        state.module.AddFunction(spv::OpCompositeExtract, f32, coord, setup.coord, axis);
+        auto scaled = Binary(state, spv::OpFMul, f32, coord, Unary(state, spv::OpConvertUToF, f32, extent));
+        state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
         if (axis < 2u) {
-            scaled = Binary(state, spv::OpFSub, TypeF32(state), scaled, ConstantF32(state, 0x3f000000u));
+            scaled = Binary(state, spv::OpFSub, f32, scaled, ConstantF32(state, 0x3f000000u));
+            state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
         }
-        starts[axis] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpExtInst, TypeF32(state), starts[axis], GlslStd450(state), GLSLstd450Floor, scaled);
+        const auto floored = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, floored, GlslStd450(state), GLSLstd450Floor, scaled);
+        starts[axis] = Unary(state, spv::OpConvertFToS, i32, floored);
     }
-    const auto centre = [&](std::uint32_t axis, std::uint32_t half) {
-        return Binary(state, spv::OpFDiv, TypeF32(state), Binary(state, spv::OpFAdd, TypeF32(state), starts[axis], ConstantF32(state, half)), extents[axis]);
+    const auto resolve = [&](std::initializer_list<std::uint32_t> indices, std::uint32_t axis, std::uint32_t mode) {
+        const auto extent = extents[axis];
+        const auto last = Binary(state, spv::OpISub, i32, extent, ConstantI32(state, 1));
+        const auto modulo = [&](std::uint32_t value, std::uint32_t period) {
+            const auto remainder = Binary(state, spv::OpSRem, i32, value, period);
+            return Binary(state, spv::OpIAdd, i32, remainder, Select(state, i32, Binary(state, spv::OpSLessThan, boolean, remainder, ConstantI32(state, 0)), period, ConstantI32(state, 0)));
+        };
+        const auto extInst = [&](std::uint32_t op, std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+            const auto id = state.module.AllocateId();
+            if (c == 0u) {
+                state.module.AddFunction(spv::OpExtInst, i32, id, GlslStd450(state), op, a, b);
+            } else {
+                state.module.AddFunction(spv::OpExtInst, i32, id, GlslStd450(state), op, a, b, c);
+            }
+            return id;
+        };
+        const auto once = Binary(state, spv::OpINotEqual, boolean, EmitAndConstant(state, mode, 1u), ConstantU32(state, 0u));
+        const auto halfBorder = equal(EmitAndConstant(state, mode, 6u), 4u);
+        const bool footprint = indices.size() == 2u;
+        std::vector<std::uint32_t> sources;
+        for (const auto index : indices) {
+            const auto folded = Select(state, i32, Binary(state, spv::OpSLessThan, boolean, index, ConstantI32(state, 0)), Binary(state, spv::OpISub, i32, ConstantI32(state, -1), index), index);
+            sources.push_back(Select(state, i32, once, folded, index));
+        }
+        std::uint32_t low = 0u;
+        std::uint32_t pinned = 0u;
+        if (footprint) {
+            low = extInst(GLSLstd450SMin, sources[0], sources[1], 0u);
+            pinned = extInst(GLSLstd450SClamp, low, ConstantI32(state, -1), last);
+        }
+        const auto period = Binary(state, spv::OpIMul, i32, extent, ConstantI32(state, 2));
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> resolved;
+        auto source = sources.begin();
+        for (const auto index : indices) {
+            auto effective = *source++;
+            if (footprint) {
+                effective = Select(state, i32, halfBorder, Binary(state, spv::OpIAdd, i32, pinned, Binary(state, spv::OpISub, i32, effective, low)), effective);
+            }
+            const auto phase = modulo(index, period);
+            const auto mirrored = Select(state, i32, Binary(state, spv::OpSLessThan, boolean, phase, extent), phase, Binary(state, spv::OpISub, i32, Binary(state, spv::OpISub, i32, period, ConstantI32(state, 1)), phase));
+            const auto clamped = extInst(GLSLstd450SClamp, effective, ConstantI32(state, 0), last);
+            const auto coordinate = Select(state, i32, equal(mode, 0u), modulo(index, extent), Select(state, i32, equal(mode, 1u), mirrored, clamped));
+            const auto outside = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpSLessThan, boolean, effective, ConstantI32(state, 0)), Binary(state, spv::OpSGreaterThan, boolean, effective, last));
+            const auto bordering = Binary(state, spv::OpUGreaterThanEqual, boolean, mode, ConstantU32(state, footprint ? 4u : 6u));
+            resolved.emplace_back(coordinate, Binary(state, spv::OpLogicalAnd, boolean, bordering, outside));
+        }
+        return resolved;
     };
-    const std::uint32_t columns[2] = {centre(0u, 0x3f000000u), centre(0u, 0x3fc00000u)};
-    const std::uint32_t rows[2] = {centre(1u, 0x3f000000u), centre(1u, 0x3fc00000u)};
-    const auto slice = centre(2u, 0x3f000000u);
-    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
+    const auto modeX = field(VolumeGather::ClampXShift, 7u);
+    const auto modeY = field(VolumeGather::ClampYShift, 7u);
+    const auto modeZ = field(VolumeGather::ClampZShift, 7u);
+    const auto border = field(VolumeGather::BorderShift, 3u);
+    const auto columns = resolve({starts[0], Binary(state, spv::OpIAdd, i32, starts[0], ConstantI32(state, 1))}, 0u, modeX);
+    const auto rows = resolve({starts[1], Binary(state, spv::OpIAdd, i32, starts[1], ConstantI32(state, 1))}, 1u, modeY);
+    const auto slice = resolve({starts[2]}, 2u, modeZ)[0];
     const auto vectorType = ImageVectorType(state, numericClass, 4);
     const auto scalarType = ImageScalarType(state, numericClass);
     const auto component = ImageConversionFormat(access.image).format == IrBufferFormat::Invalid ? ImageGatherComponent(EffectiveDmask(access.mem)) : 0u;
+    std::uint32_t borderValue = 0u;
+    if (numericClass == IrTextureNumericClass::Float) {
+        const auto white = equal(border, VolumeGather::BorderOpaqueWhite);
+        const auto opaque = component == 3u ? Binary(state, spv::OpLogicalOr, boolean, white, equal(border, VolumeGather::BorderOpaqueBlack)) : white;
+        borderValue = Select(state, f32, opaque, ConstantF32(state, 0x3f800000u), ConstantF32(state, 0u));
+    } else {
+        borderValue = numericClass == IrTextureNumericClass::Sint ? ConstantI32(state, 0) : ConstantU32(state, 0u);
+    }
     constexpr std::uint32_t footprint[4][2] = {{0u, 1u}, {1u, 1u}, {1u, 0u}, {0u, 0u}};
     std::uint32_t values[4] = {};
     for (std::uint32_t index = 0; index < 4u; index++) {
-        const auto sampleCoord = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 3), sampleCoord, columns[footprint[index][0]], rows[footprint[index][1]], slice);
+        const auto& column = columns[footprint[index][0]];
+        const auto& row = rows[footprint[index][1]];
+        const auto coord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeI32Vector(state, 3), coord, column.first, row.first, slice.first);
         const auto texel = state.module.AllocateId();
-        state.module.AddFunction(spv::OpImageSampleExplicitLod, vectorType, texel, sampled, sampleCoord, spv::ImageOperandsLodMask, ZeroF32(state));
-        values[index] = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, scalarType, values[index], texel, component);
+        state.module.AddFunction(spv::OpImageFetch, vectorType, texel, image, coord, spv::ImageOperandsLodMask, ConstantU32(state, 0u));
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, scalarType, value, texel, component);
+        const auto outside = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpLogicalOr, boolean, column.second, row.second), slice.second);
+        values[index] = Select(state, scalarType, outside, borderValue, value);
     }
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, vectorType, result, values[0], values[1], values[2], values[3]);

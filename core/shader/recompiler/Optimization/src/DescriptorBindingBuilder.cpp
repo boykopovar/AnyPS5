@@ -316,6 +316,12 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
         const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return mode.conversionFormat == IrBufferFormat::Format11_11_10UNorm; });
+        if (info.images[index].volumeGather) {
+            if (info.images[index].depthCompare || convertedSample) fail("a 3D gather of a compared or converted image is not implemented");
+            compareStates[index] = ResourceMaterializer::VolumeGatherState(info, snapshot, index);
+            if (!registrationModules) plan.specialization.push_back({PipelineSpecialization::VolumeGatherBase + index, compareStates[index]});
+            continue;
+        }
         if (!info.images[index].depthCompare && !convertedSample) continue;
         const auto compare = compareStates[index] = ResourceMaterializer::EmulatedCompareState(info, snapshot, index);
         const auto first = PipelineSpecialization::CompareBase + index * PipelineSpecialization::CompareWords;
