@@ -16,6 +16,7 @@
 #include <ranges>
 #include <functional>
 #include <utility>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -364,6 +365,7 @@ struct SpirvTarget {
     bool shaderImageMinLod = false;
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
+    bool wgsl = false;
 };
 
 struct BindingLayout {
@@ -751,6 +753,7 @@ struct VertexInputPatch {
 struct CompiledShaderArtifact {
     std::vector<VertexInputPatch> vertexInputPatches;
     SharedSpirv spirv;
+    std::string wgsl;
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t shaderDataDwords = 0;
     std::uint32_t imageMetadataDword = 0;
