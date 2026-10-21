@@ -631,7 +631,12 @@ public:
     }
     void assign(std::size_t size, bool flag) {
         clear();
-        for (std::size_t index = 0; index < size; ++index) push_back(flag);
+        if (size <= InlineFlags) {
+            if (flag) bits = size == InlineFlags ? ~std::uint64_t{0} : (std::uint64_t{1} << size) - 1u;
+        } else {
+            spill.assign(size, flag);
+        }
+        count = size;
     }
     void resize(std::size_t size, bool flag = false) {
         if (size < count) {
@@ -646,10 +651,7 @@ public:
     const_iterator end() const { return {this, count}; }
     bool operator==(const ElementFlags& other) const {
         if (count != other.count) return false;
-        for (std::size_t index = 0; index < count; ++index) {
-            if ((*this)[index] != other[index]) return false;
-        }
-        return true;
+        return count <= InlineFlags ? bits == other.bits : spill == other.spill;
     }
     bool operator==(const std::vector<bool>& other) const {
         if (count != other.size()) return false;

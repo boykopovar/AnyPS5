@@ -4778,6 +4778,68 @@ void verifyTableEdgeStore() {
     std::cout << "table edge store passed\n";
 }
 
+void verifySharedImageTableResolution() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    for (const auto count : {1u, 32u, 64u, 65u, 129u}) {
+        ShaderInfo info;
+        ImageResource image;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.numericClass = IrTextureNumericClass::Uint;
+        image.read = true;
+        image.tableOperation = TableOperation::Supported;
+        info.images.assign(count, image);
+        info.images.back().table = 0u;
+        for (const auto& resource : info.images) info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(resource));
+        info.samplers.resize(1u);
+        info.sampledPairs.push_back({count - 1u, 0u});
+        ResourceSnapshot snapshot;
+        snapshot.samplers.push_back({{0x600u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u});
+        snapshot.tables.tables.resize(1u);
+        auto& column = snapshot.tables.tables[0];
+        column.base = 0x100000u;
+        column.size = 32u;
+        column.records = 1u;
+        column.keys = 1u;
+        column.codes = SharedValues<std::uint32_t>({0u});
+        const DescriptorValue words{TableT(reinterpret_cast<const void*>(std::uintptr_t{0x100000000ull}), TableFormat32UInt, TableType2D), 8u, 0xffu};
+        column.words = SharedValues<DescriptorValue>({words});
+        const auto memoKey = 0x72736f6c76650000ull + count;
+        const auto held = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+        require(held->faults == 0u && held->elements.size() == 1u && held->elements[0].words == words.dwords, "shared image tables: the integer image was not resolved");
+        const auto before = allocationCount;
+        for (unsigned call = 0; call < 100u; ++call) {
+            const auto resolved = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+            require(resolved == held, "shared image tables: an unchanged snapshot was not reused");
+        }
+        const auto allocations = allocationCount - before;
+        require(allocations <= (count <= 64u ? 0u : 100u), ("shared image tables: " + std::to_string(count) + " images required " + std::to_string(allocations) + " allocations on cache hits").c_str());
+        snapshot.samplers[0].dwords[0] |= 1u << 29u;
+        const auto reducing = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+        const auto mapStart = reducing->map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto record = reducing->map.at(mapStart);
+        const auto flags = reducing->map.at(record + Abi::ImageRecordFlags);
+        require(reducing != held && reducing->faults == 1u && (flags & Abi::PoisonFlag) != 0u && reducing->poison.at(flags & ~Abi::PoisonFlag).reason == Abi::PoisonReason::Reduction, "shared image tables: a changed reduction sampler reused an incompatible image");
+        snapshot.samplers[0].dwords[0] &= ~(1u << 29u);
+        require(ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey) == held, "shared image tables: restoring the sampler did not restore its resolution");
+        auto changed = words;
+        changed.dwords[0] += 16u;
+        column.words = SharedValues<DescriptorValue>({changed});
+        const auto rewritten = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey);
+        require(rewritten != held && rewritten->elements.size() == 1u && rewritten->elements[0].words == changed.dwords && held->elements[0].words == words.dwords, "shared image tables: replacing the snapshot reused stale descriptors or changed a held result");
+        snapshot.samplers[0].dwords[0] |= 1u << 29u;
+        info.sampledPairs[0].image = count;
+        bool rejected = false;
+        try {
+            static_cast<void>(ResourceMaterializer::ResolveImageTablesShared(info, snapshot, memoKey));
+        } catch (const std::out_of_range&) {
+            rejected = true;
+        }
+        require(rejected, "shared image tables: an invalid sampled image index was accepted");
+    }
+}
+
 void verifyEmptyImageTableResolution() {
     using namespace ShaderRecompiler;
     using Result = std::shared_ptr<const ResolvedImageTables>;
@@ -12029,6 +12091,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
             verifySpecializedBufferAtomicBindings(true);
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--shared-table-resolution") {
+            verifySharedImageTableResolution();
+            std::cout << "Shared image table resolutions reuse allocations and preserve sampler invalidation\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-binding-growth") {

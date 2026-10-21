@@ -1879,12 +1879,16 @@ std::uint32_t decodeTableEntry(const ImageResource& image, std::span<const Image
     return value;
 }
 
-std::vector<bool> reducingSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
-    std::vector<bool> reducing(info.images.size(), false);
+ElementFlags reducingSamplers(const ShaderInfo& info, const ResourceSnapshot& snapshot) {
+    ElementFlags reducing;
+    reducing.assign(info.images.size(), false);
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table != NoTable) continue;
         const auto& words = snapshot.samplers.at(pair.sampler).dwords;
-        if (reducesBetweenTexels(words[0], words[2])) reducing.at(pair.image) = true;
+        if (reducesBetweenTexels(words[0], words[2])) {
+            static_cast<void>(reducing.at(pair.image));
+            reducing[pair.image] = true;
+        }
     }
     return reducing;
 }
@@ -1898,7 +1902,7 @@ struct ResolutionMemoEntry {
     std::uint64_t memoKey = 0;
     std::vector<ImageTableColumnSnapshot> tables;
     std::vector<ImageTableColumnSnapshot> nested;
-    std::vector<bool> reducing;
+    ElementFlags reducing;
     std::shared_ptr<const ResolvedImageTables> resolved;
     std::size_t footprint = 0;
 };
