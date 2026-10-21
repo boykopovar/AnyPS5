@@ -1904,17 +1904,18 @@ private:
         return static_cast<std::uint32_t>(m_info.samplers.size() - 1);
     }
 
-    void AddSampledPair(std::uint32_t image, std::uint32_t sampler, std::uint32_t pc) {
+    void AddSampledPair(std::uint32_t image, std::uint32_t sampler, std::uint32_t pc, bool volumeGather) {
         for (auto& pair : m_info.sampledPairs) {
             if (pair.image == image && pair.sampler == sampler) {
                 pair.firstUsePc = std::min(pair.firstUsePc, pc);
+                pair.volumeGather = pair.volumeGather || volumeGather;
                 return;
             }
         }
         if (m_info.sampledPairs.size() >= ShaderInfo::MaxSampledPairs) {
             fail("sampled image/sampler pair limit exceeded");
         }
-        m_info.sampledPairs.push_back({image, sampler, pc});
+        m_info.sampledPairs.push_back({image, sampler, pc, volumeGather});
     }
 
     void AddHandlePatch(IrValue* handle, std::uint32_t resource) {
@@ -2043,7 +2044,7 @@ private:
                 fail("sampler resource limit exceeded");
             }
             AddHandlePatch(samplerHandle, sampler);
-            AddSampledPair(resource, sampler, flags.pc);
+            AddSampledPair(resource, sampler, flags.pc, op == IrOpcode::ImageGatherRaw && m_info.images[resource].dimension == RdnaImageDimension::Dim3D);
         }
         AddMemoryPatch(flags.index, resource, sampler, imageInfo.needsSampler);
     }

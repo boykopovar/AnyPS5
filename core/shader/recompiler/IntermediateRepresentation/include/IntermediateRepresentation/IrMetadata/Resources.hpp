@@ -164,6 +164,7 @@ struct SampledResourcePair {
     std::uint32_t image = 0;
     std::uint32_t sampler = 0;
     std::uint32_t firstUsePc = 0;
+    bool volumeGather = false;
 
     bool operator==(const SampledResourcePair& other) const = default;
 };

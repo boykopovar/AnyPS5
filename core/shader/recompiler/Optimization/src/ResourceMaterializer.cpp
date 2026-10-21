@@ -2144,10 +2144,11 @@ std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, co
     const auto& image = info.images[index];
     const auto& descriptor = snapshot.images[index];
     if (image.table != NoTable) throw std::runtime_error("a 3D gather of an image table entry is not implemented");
-    if (descriptor.dwordCount != 8u || nullImageDescriptor(image, descriptor)) return 0u;
+    if (descriptor.dwordCount != 8u) throw std::runtime_error("a 3D gather of an image without an 8-dword descriptor is not implemented");
+    if (nullImageDescriptor(image, descriptor)) return 0u;
     std::optional<std::uint32_t> samplerState;
     for (const auto& pair : info.sampledPairs) {
-        if (pair.image != index) continue;
+        if (pair.image != index || !pair.volumeGather) continue;
         if (pair.sampler >= info.samplers.size() || info.samplers[pair.sampler].table != NoTable) throw std::runtime_error("a 3D gather through a sampler table is not implemented");
         if (pair.sampler >= snapshot.samplers.size() || snapshot.samplers[pair.sampler].dwordCount != 4u) throw std::runtime_error("a 3D gather has no sampler descriptor");
         const auto& words = snapshot.samplers[pair.sampler].dwords;
@@ -2156,7 +2157,7 @@ std::uint32_t ResourceMaterializer::VolumeGatherState(const ShaderInfo& info, co
         const auto clampY = (words[0] >> 3u) & 0x7u;
         const auto clampZ = (words[0] >> 6u) & 0x7u;
         const auto border = (words[3] >> 30u) & 0x3u;
-        const bool bordered = std::ranges::any_of(std::array{clampX, clampY, clampZ}, [](std::uint32_t clamp) { return clamp >= 4u; });
+        const bool bordered = clampX >= 4u || clampY >= 4u || clampZ >= 6u;
         if (bordered && border == 3u) throw std::runtime_error("a 3D gather with a border color table is not implemented");
         if (bordered && (image.numericClass == IrTextureNumericClass::Uint || image.numericClass == IrTextureNumericClass::Sint)) throw std::runtime_error("a 3D gather of an integer texture with border addressing is not implemented");
         if (bordered && descriptorImageSwizzle(descriptor) != ShaderImageIdentitySwizzle) throw std::runtime_error("a 3D gather of a swizzled texture with border addressing is not implemented");

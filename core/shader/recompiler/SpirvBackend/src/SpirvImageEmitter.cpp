@@ -793,8 +793,10 @@ std::uint32_t EmitVolumeGatherLz(SpirvValueEmitContext& ctx, const ImageEmitAcce
     std::uint32_t extents[3] = {};
     std::uint32_t starts[3] = {};
     for (std::uint32_t axis = 0; axis < 3u; axis++) {
+        const auto queried = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, queried, size, axis);
         const auto extent = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, u32, extent, size, axis);
+        state.module.AddFunction(spv::OpExtInst, u32, extent, GlslStd450(state), GLSLstd450UMax, queried, ConstantU32(state, 1u));
         extents[axis] = Unary(state, spv::OpBitcast, i32, extent);
         const auto raw = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, f32, raw, setup.coord, axis);
