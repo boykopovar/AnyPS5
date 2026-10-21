@@ -1,0 +1,57 @@
+name: WGSL backend
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/wgsl.yml
+      - CMakeLists.txt
+      - core/shader/recompiler/**
+      - tools/wgsl-check/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/wgsl.yml
+      - CMakeLists.txt
+      - core/shader/recompiler/**
+      - tools/wgsl-check/**
+
+permissions:
+  contents: read
+
+jobs:
+  native-compatibility-and-wgsl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ANYPS5_REQUIRE_VULKAN: '1'
+      ANYPS5_NO_SHADER_CACHE: '1'
+      VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install software Vulkan and validation layers
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers vulkan-validationlayers
+      - name: Build and check native shader compatibility
+        run: |
+          cmake -S . -B build-shaders -DCMAKE_BUILD_TYPE=Release -DANYPS5_BUILD_SHADER_TOOLS=ON -DBUILD_TESTING=ON
+          cmake --build build-shaders --parallel 2
+          ctest --test-dir build-shaders -R wgsl_native_compat -V | tee native-validation.log
+          build-shaders/core/shader/recompiler/WgslBackend/tools/wgsl_native_compat_tests --emit-wgsl shader-fixtures
+      - name: Check generated WGSL with Naga and wgpu
+        shell: bash
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo +1.98.0 build --release --locked --manifest-path tools/wgsl-check/Cargo.toml
+          lavapipe=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          export VK_DRIVER_FILES="${lavapipe[0]}"
+          tools/wgsl-check/target/release/anyps5-wgsl-check shader-fixtures/program-{0,1,2} 2>&1 | tee wgsl-validation.log
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('native-validation.log', 'wgsl-validation.log'):
+              text = Path(name).read_text()
+              assert 'VUID-' not in text, name
+              assert 'was not found but was requested by env var VK_INSTANCE_LAYERS' not in text, name
+              assert 'SKIP ' not in text, name
+          PY

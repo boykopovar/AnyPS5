@@ -388,6 +388,7 @@ private:
         append(key, value.shaderImageMinLod);
         append(key, value.float16WidenNans);
         append(key, value.float16NarrowNans);
+        if (value.wgsl) append(key, std::uint64_t{1});
     }
 };
 
