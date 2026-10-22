@@ -3938,6 +3938,10 @@ void multisampleTests() {
         for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
         expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
     }
+    auto uintSource = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
+    const auto uintPass = DecodeColorMetadataPass(uintSource);
+    Require(uintPass.has_value() && uintPass->mode == ColorMetadataPass::Mode::Resolve && uintPass->source.has_value() && uintPass->source->packing == ShaderRecompiler::ColorExportPacking::Uint && uintPass->targets.size() == 1, "a CB resolve of an unsigned integer target was refused");
     queue = rasterizedResolve;
     queue.context[0x31c] |= 0x10000000u;
     queue.context[0x325] = 0;
@@ -9775,6 +9779,34 @@ ShaderRecompiler::RecompileRequest packedExportRequest(const AgcDriver::QueueSta
     return request;
 }
 
+void uintTargetTests() {
+    using ShaderRecompiler::ColorExportPacking;
+    auto queue = makeState();
+    queue.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (4u << 8u);
+    queue.context[0x1e0] = 1u << 30u;
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.color.format == VK_FORMAT_R32_UINT && state.color.elementBytes == 4 && state.color.bytes == colorMemory.size() && state.color.packing == ColorExportPacking::Uint, "a 32-bit UINT target did not get the unsigned integer export packing");
+    const auto packings = AgcDriver::Graphics::ExportPackings(state);
+    Require(packings[0] == ColorExportPacking::Uint && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the unsigned integer packing");
+    Require(!state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "blending into a UINT target was not dropped");
+    auto bytes = queue;
+    bytes.context[0x31c] = (bytes.context.at(0x31c) & ~0x1f7cu) | (1u << 2u) | (4u << 8u);
+    const auto eight = AgcDriver::Graphics::DecodeState(bytes);
+    Require(eight.color.format == VK_FORMAT_R8_UINT && eight.color.packing == ColorExportPacking::Uint && !eight.blends.at(0).blendEnable, "an 8-bit UINT target did not get the unsigned integer export packing");
+    auto words = queue;
+    words.context[0x1c5] = 7u;
+    words.context[0x1e0] = 0;
+    const auto uint16 = AgcDriver::Graphics::DecodeState(words);
+    Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
+    auto halves = queue;
+    halves.context[0x1c5] = 4u;
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(halves)); }, "color export format 4 into an unsigned integer target is unsupported");
+    auto unorm = queue;
+    unorm.context[0x31c] = (unorm.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (7u << 8u);
+    Require(AgcDriver::Graphics::DecodeState(unorm).color.packing == ColorExportPacking::None, "a 32-bit float target got the unsigned integer export packing");
+}
+
 void unorm10_11_11TargetTests() {
     using ShaderRecompiler::ColorExportPacking;
     auto queue = makeState();
@@ -9968,7 +10000,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(4);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(5);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -11631,6 +11663,7 @@ int main(int argc, char** argv) {
         unorm10_11_11TargetTests();
         float11_11_10TargetTests();
         unorm4_4_4_4TargetTests();
+        uintTargetTests();
         DepthBoundsBiasTests();
         conservativeZExportTests();
         earlyFragmentTestsTests();
