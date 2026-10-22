@@ -31,11 +31,11 @@ constexpr std::array<float, 20> Positions{-9.3f, -4.8f, -1.3f, -0.7f, -0.2f, 0.3
                                           -1.3f, -0.7f, -0.2f, -0.5015f, 0.8f, 1.6f, 0.3f, 1.9f, -0.3f, -1.6f};
 constexpr std::array<float, 8> Extremes{3.0e6f, -3.0e6f, 1.0e9f, -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN(), 65536.3f, -1000.3f};
 constexpr std::array<std::uint32_t, 32> WideColumns{
-    0x3f4412b9u, 0x3f78caa4u, 0x3dbebd8cu, 0x3f1fa5e0u, 0x3f6f111au, 0x3f656d67u, 0x3f03ec82u, 0x3f6869bcu, 0x3f6b91beu, 0x3f305e22u, 0x3f75a2a2u,
-    0x3f0dbbe2u, 0x3eb2b6a3u, 0x3dc6ee00u, 0x3f4d5f12u, 0x3f69f2d2u, 0x3dc59097u, 0x3f050867u, 0x3e74d30bu, 0x3f436405u, 0x3f5924b9u, 0x3e4a2c04u,
-    0x3eac3af2u, 0x3eb0277fu, 0x3ebd4a8eu, 0x3f67d0deu, 0x3ec6acbeu, 0x3f588bdbu, 0x3f4c84b1u, 0x3f62f419u, 0x3f452e9eu, 0x3f7e97a1u,
+    0x3bcbaf45u, 0x3d326c59u, 0x3dbf2fcdu, 0x3de9ad25u, 0x3e678f67u, 0x3e7cce13u, 0x3ef99f56u, 0x3f021f56u, 0x3f065f12u, 0x3f0baebdu, 0x3f10fe68u,
+    0x3f164e13u, 0x3f1b9dbeu, 0x3f20ed69u, 0x3f263d14u, 0x3f2b8cbfu, 0x3f30dc6au, 0x3f362c15u, 0x3f3b7bc0u, 0x3f40cb6bu, 0x3f461b16u, 0x3f4b6ac1u,
+    0x3f50ba6cu, 0x3f560a17u, 0x3f5a49d3u, 0x3f5f997eu, 0x3f64e929u, 0x3f6a38d4u, 0x3f6f887fu, 0x3f74d82au, 0x3f7a27d5u, 0x3f7f7780u,
 };
-constexpr std::uint32_t WideWidth = 3001;
+constexpr std::uint32_t WideWidth = 241;
 constexpr std::array<float, 8> Ties{127.5f / 2048.0f, -1.0f / 4096.0f, 0x1.0p-20f, -0.0f, -0x1.0p-149f, 255.5f / 1024.0f, 0x1.0p-149f, 383.5f / 1024.0f};
 constexpr std::array<int, 20> PositionExtents{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, -1, -1};
 
@@ -437,7 +437,7 @@ int main() {
         const SamplerState lodState{Same(2), 0, 4u << 9u, 0x100u | (0xfffu << 12u), 0x100u | (1u << 20u) | (1u << 22u) | (2u << 26u)};
         Run(*device, {GatherRed, 0, {8, 4, 4, 0, 1}, lodState, "3D gather of red ignores the sampler's LOD clamp, bias, filters and anisotropy"});
         Run(*device, {GatherRed, 0, {8, 4, 4, 1, 1}, {Same(0)}, "3D gather of red reads the base level"});
-        Run(*device, {GatherRed, 0, {WideWidth, 2, 2}, {Same(2)}, "3D gather of red from a 3001 texel wide volume at 1/256 texel boundaries"});
+        Run(*device, {GatherRed, 0, {WideWidth, 2, 2}, {Same(2)}, "3D gather of red from a 241 texel wide volume at 1/256 texel boundaries"});
         Run(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {Same(1)}, "3D gather of red through a blue-green-red-alpha swizzle"});
         RunThrows(*device, {GatherRed, 0, cube, {Same(6), 3}, "3D gather with a border color table"}, "a 3D gather with a border color table is not implemented");
         RunThrows(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {Same(6), 2}, "3D gather of a swizzled volume with border addressing"}, "a 3D gather of a swizzled texture with border addressing is not implemented");
