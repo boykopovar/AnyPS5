@@ -25,6 +25,7 @@ const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array*, const Array*);
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
 std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
@@ -58,12 +59,13 @@ struct ArrayTrace {
     std::map<void*, std::size_t> live;
     std::vector<std::size_t> requests;
     int budget = -1;
+    bool once = false;
     unsigned notifications = 0;
     std::set<void*> headers;
 };
 static void* APS5_VABI AllocateArray(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<ArrayTrace*>(context); trace.requests.push_back(bytes);
-    if (trace.budget == 0) return nullptr;
+    if (trace.budget == 0) { if (trace.once) trace.budget = -1; return nullptr; }
     if (trace.budget > 0) --trace.budget;
     void* memory = std::malloc(bytes);
     Require(memory != nullptr, "Tracking allocator requires host memory");
@@ -99,12 +101,59 @@ static void CheckLinks(const Array& array, std::size_t count) {
     }
     Require(seen == count && head[0] == reinterpret_cast<std::uintptr_t>(previous), "Array sentinel must close both list directions");
 }
+static void CheckAssignments(ArrayTrace& trace) {
+    const auto baseline = trace.live.size();
+    for (bool once : {false, true}) for (int budget = 0; budget <= 5; ++budget) {
+        Array source{}, destination{};
+        _ZN3sce4Json5ArrayC1Ev(&source); _ZN3sce4Json5ArrayC1Ev(&destination);
+        Value value{};
+        for (int number : {10, 20, 30}) { _ZN3sce4Json5ValueC1El(&value, number); _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&source, &value); _ZN3sce4Json5ValueD1Ev(&value); }
+        _ZN3sce4Json5ValueC1El(&value, 99); _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&destination, &value); _ZN3sce4Json5ValueD1Ev(&value);
+        Value owner{};
+        static_cast<std::uintptr_t*>(destination.storage)[3] = reinterpret_cast<std::uintptr_t>(&owner);
+        auto* previous = destination.storage;
+        trace.headers.insert(previous);
+        const auto notifications = trace.notifications;
+        trace.budget = budget; trace.once = once;
+        Require(_ZN3sce4Json5ArrayaSERKS1_(&destination, &source) == &destination, "Array assignment must return its destination");
+        trace.budget = -1; trace.once = false;
+        auto* header = static_cast<std::uintptr_t*>(destination.storage);
+        Require((destination.storage == previous) == (budget < 2) && header[3] == reinterpret_cast<std::uintptr_t>(&owner), "Array assignment must preserve the original on initial failure and carry its owner into a replacement");
+        const auto expected = budget < 2 ? 1 : budget == 5 ? 3 : once ? 2 : budget - 2;
+        Require(header[1] == static_cast<std::size_t>(expected), "Array assignment must retain the observed partial list");
+        Require(trace.notifications - notifications == (budget < 2 ? 1u : budget == 5 ? 0u : once ? 1u : static_cast<unsigned>(5 - budget)), "Array assignment must report failed node admission while continuing through the source");
+        auto* head = reinterpret_cast<const std::uintptr_t*>(header[0]);
+        auto* node = reinterpret_cast<const std::uintptr_t*>(head[1]);
+        for (int index = 0, sourceIndex = 0; index < expected; ++index, ++sourceIndex) {
+            if (once && budget >= 2 && budget < 5 && sourceIndex == budget - 2) ++sourceIndex;
+            const auto* entry = reinterpret_cast<const Value*>(node + 2);
+            Require(entry->type == 2 && entry->payload == static_cast<std::uint64_t>(budget < 2 ? 99 : (sourceIndex + 1) * 10), "Array assignment must preserve retained entry values");
+            if (budget >= 2) Require(entry->parent == &owner && !entry->auxiliary, "Replacement array entries must bind to the destination owner");
+            node = reinterpret_cast<const std::uintptr_t*>(node[1]);
+        }
+        Require(node == head, "Replacement array traversal must close at its sentinel");
+        CheckLinks(source, 3);
+        trace.headers.insert(destination.storage);
+        _ZN3sce4Json5ArrayD1Ev(&destination); _ZN3sce4Json5ArrayD1Ev(&source);
+        Require(trace.live.size() == baseline, "Assignment must release failed replacement resources and its previous list");
+    }
+    Array array{}; _ZN3sce4Json5ArrayC1Ev(&array);
+    Value value{};
+    for (int number : {10, 20, 30}) { _ZN3sce4Json5ValueC1El(&value, number); _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &value); _ZN3sce4Json5ValueD1Ev(&value); }
+    auto* previous = array.storage; trace.headers.insert(previous);
+    _ZN3sce4Json5ArrayaSERKS1_(&array, &array);
+    Require(array.storage != previous, "Modern array self-assignment must replace its header");
+    CheckLinks(array, 3);
+    trace.headers.insert(array.storage); _ZN3sce4Json5ArrayD1Ev(&array);
+    Require(trace.live.size() == baseline, "Array self-assignment must release its old list");
+}
 int main() {
     ArrayTrace trace; ArrayAllocator allocator;
     Parameter parameter{&allocator, &trace, 16384, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize array allocation contract");
     const auto baseline = trace.live.size();
+    CheckAssignments(trace);
     for (int budget : {0, 1}) {
         trace.budget = budget; Array partial{}; _ZN3sce4Json5ArrayC1Ev(&partial);
         Require(budget ? partial.storage && trace.live.at(partial.storage) == 32 && !*static_cast<void**>(partial.storage) : !partial.storage,

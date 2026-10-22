@@ -198,6 +198,44 @@ static void CheckScalarCopies(ValueAllocationTrace& trace) {
         Require(trace.live.size() == baseline, "Copy failures must reclaim destination and source resources");
     }
 }
+static void CheckCollectionCopies(ValueAllocationTrace& trace) {
+    const auto baseline = trace.live.size();
+    for (int previous = -1; previous <= 7; ++previous) for (int type : {6, 7}) for (int budget = 0; budget <= 5; ++budget) {
+        Value source; std::memset(&source, 0xa5, sizeof(source));
+        _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&source, type);
+        const auto sourcePayload = source.payload;
+        Value destination; std::memset(&destination, 0xa5, sizeof(destination));
+        void* auxiliary = nullptr;
+        void* originalHeader = nullptr;
+        if (previous >= 0) {
+            _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&destination, previous);
+            Require(Register(destination, 0, &trace, true) == 0, "Prepare collection assignment metadata");
+            auxiliary = destination.auxiliary;
+            if (previous == type) originalHeader = *reinterpret_cast<void* const*>(destination.payload);
+        }
+        const auto notifications = trace.notifications;
+        trace.budget = budget;
+        if (previous < 0) _ZN3sce4Json5ValueC1ERKS1_(&destination, &source);
+        else _ZN3sce4Json5ValueaSERKS1_(&destination, &source);
+        trace.budget = -1;
+        const auto threshold = type == 6 ? 2 : 3;
+        const auto expected = previous == type || budget >= threshold ? type : 0;
+        Check(destination, expected, trace);
+        Require(!destination.parent && destination.auxiliary == auxiliary, "Collection copies must preserve destination metadata");
+        if (!expected) Require(destination.payload == 0, "Failed collection admission must leave a null handle");
+        else {
+            auto* header = *reinterpret_cast<void* const*>(destination.payload);
+            const auto* words = static_cast<const std::uintptr_t*>(header);
+            Require(words[1] == 0 && (words[0] != 0) == !(type == 6 && previous != type && budget == 2), "Collection assignment must preserve the reference partial-header state");
+            if (previous == type) Require((header == originalHeader) == (budget < 2), "Same-type assignment must preserve the header only when replacement admission fails");
+        }
+        const auto expectedNotifications = budget == 5 || (previous == type && budget >= 2) ? 0u : type == 6 && previous != type && budget == 2 ? 2u : 1u;
+        Require(trace.notifications - notifications == expectedNotifications, "Collection copies must notify both type-admission and replacement allocation failures");
+        Require(source.payload == sourcePayload && source.type == type, "Collection assignment must preserve source ownership");
+        _ZN3sce4Json5ValueD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&source);
+        Require(trace.live.size() == baseline, "Collection copies must reclaim partial handles and replaced storage");
+    }
+}
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
@@ -205,6 +243,7 @@ int main() {
     const auto baseline = trace.live.size();
     CheckMetadata(trace);
     CheckScalarCopies(trace);
+    CheckCollectionCopies(trace);
     for (int target = 0; target <= 7; ++target) for (int budget = 0; budget <= 4; ++budget) {
         Value value; std::memset(&value, 0xa5, sizeof(value));
         trace.budget = budget;

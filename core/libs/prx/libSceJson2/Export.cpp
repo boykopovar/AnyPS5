@@ -816,7 +816,7 @@ void Destroy(String& s) {
 void Destroy(Array& a) {
     if (!a.items) return;
     a.items->ReleaseContents();
-    Release(a.items->head);
+    if (a.items->head) Release(a.items->head);
     a.items->head = reinterpret_cast<ArrayLink*>(std::uintptr_t{0xffffffff});
     a.items->count = std::numeric_limits<std::size_t>::max();
     Release(a.items);
@@ -825,7 +825,7 @@ void Destroy(Array& a) {
 void Destroy(Object& object) {
     if (!object.items) return;
     object.items->clear();
-    Release(object.items->head);
+    if (object.items->head) Release(object.items->head);
     object.items->head = reinterpret_cast<ObjectLink*>(std::uintptr_t{0xffffffff});
     object.items->count = std::numeric_limits<std::size_t>::max();
     Release(object.items);
@@ -962,29 +962,29 @@ void Construct(T*& destination, const TArgs&... arguments) {
     ConstructHandle(destination, [&](T& value) { Construct(value, arguments...); });
 }
 
+void CopyArrayStorage(ArrayStorage& destination, const ArrayStorage& source) {
+    ArrayStorage pending{NewArrayHead(), 0, 0};
+    try {
+        if (pending.head) {
+            for (const auto& item : source) {
+                try { CopyInto(pending.emplace_back(), item); }
+                catch (const GuestOutOfMemory&) { break; }
+            }
+        }
+    } catch (...) { pending.clear(); if (pending.head) Release(pending.head); throw; }
+    destination.clear();
+    if (destination.head) Release(destination.head);
+    destination.head = pending.head;
+    destination.count = pending.count;
+}
+
 void CopyArray(Array& destination, const Array& source) {
     Array pending{};
     if (!source.items) { destination = pending; return; }
     Construct(pending);
     if (!pending.items) { destination = pending; return; }
-    auto* originalHead = pending.items->head;
-    pending.items->head = NewArrayHead();
-    try {
-        if (pending.items->head) {
-            for (const auto& item : *source.items) {
-                try {
-                    CopyInto(pending.items->emplace_back(), item);
-                } catch (const GuestOutOfMemory&) {
-                    break;
-                }
-            }
-        }
-    } catch (...) {
-        Release(originalHead);
-        Destroy(pending);
-        throw;
-    }
-    Release(originalHead);
+    try { CopyArrayStorage(*pending.items, *source.items); }
+    catch (...) { Destroy(pending); throw; }
     destination = pending;
 }
 
@@ -1012,6 +1012,8 @@ void CopyObject(Object*& destination, const Object* source) {
 void AssignReal(Node& n, double value);
 
 void SetType(Node& n, ValueType type);
+void AssignArray(Array& destination, const Array& source);
+void AssignObject(Object& destination, const Object& source);
 
 void AssignNode(Node& destination, const Node& source) {
     if (source.type == TypeNull) { SetType(destination, TypeNull); return; }
@@ -1036,20 +1038,23 @@ void AssignNode(Node& destination, const Node& source) {
         if (destination.string && destination.string->text != string->text) AssignText(*destination.string, View(*string), true);
         return;
     }
-    if (&destination == &source) return;
-    Node copy{};
-    copy.type = source.type;
-    try {
-        if (source.type == TypeArray) CopyArray(copy.array, source.array);
-        else if (source.type == TypeObject) CopyObject(copy.object, source.object);
-        else NotImplemented_nid_no_patch(__func__);
-        if ((copy.type == TypeArray && !copy.array) || (copy.type == TypeObject && !copy.object)) copy.type = TypeNull;
-    } catch (...) {
-        Clear(copy);
-        throw;
+    if (source.type == TypeArray) {
+        const auto* array = source.array;
+        if (!array) NotImplemented_nid_no_patch(__func__);
+        if (!array->items) return;
+        SetType(destination, TypeArray);
+        if (destination.array) AssignArray(*destination.array, *array);
+        return;
     }
-    Clear(destination);
-    TransferPayload(destination, copy);
+    if (source.type == TypeObject) {
+        const auto* object = source.object;
+        if (!object) NotImplemented_nid_no_patch(__func__);
+        if (!object->items) return;
+        SetType(destination, TypeObject);
+        if (destination.object) AssignObject(*destination.object, *object);
+        return;
+    }
+    NotImplemented_nid_no_patch(__func__);
 }
 
 void RecoverSpecial(const Node& source, const Handlers& handlers, int function, double number, Value& result, bool* error) {
@@ -1400,6 +1405,36 @@ struct TemporaryTreeEntry {
     }
     ~TemporaryTreeEntry() { Destroy(pair.value); Destroy(pair.key); }
 };
+
+void AssignArray(Array& destination, const Array& source) {
+    if (!destination.items || !source.items) return;
+    if (!ModernValues()) {
+        CopyArrayStorage(*destination.items, *source.items);
+        return;
+    }
+    Array pending{};
+    Construct(pending);
+    if (!pending.items) return;
+    if (!pending.items->head) { Destroy(pending); return; }
+    pending.items->SetOwner(destination.items->Owner());
+    try {
+        for (const auto& item : *source.items) {
+            ScopedValue placeholder;
+            SetType(placeholder.value, item.type);
+            const auto failures = AllocationFailures();
+            try { CopyInto(pending.items->emplace_back(), placeholder.value); }
+            catch (const GuestOutOfMemory&) {}
+            if (AllocationFailures() == failures) {
+                auto& value = pending.items->back();
+                value.parent = destination.items->Owner();
+                AssignNode(value, item);
+            }
+        }
+    } catch (...) { Destroy(pending); throw; }
+    auto previous = destination;
+    destination = pending;
+    Destroy(previous);
+}
 
 struct ScopedPair {
     Pair pair{};
@@ -1879,6 +1914,7 @@ int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const Strin
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) { AssignArray(*self, *other); return self; }
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     if (!self->items || !self->items->head) return;
     const auto failures = AllocationFailures();
