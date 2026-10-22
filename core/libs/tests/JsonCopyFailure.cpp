@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "JsonTestAllocator.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -15,6 +16,9 @@ struct Iterator { void* state; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 
 extern "C" {
+void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
+int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
 Iterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(Iterator*, const Object*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
@@ -170,6 +174,11 @@ static bool Run(Operation operation, const Value& source, const char* expected, 
 }
 
 int main() {
+    JsonTest::Allocator allocator;
+    struct { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; } parameter{&allocator, nullptr, 0, 2, {}};
+    std::uint8_t initializer = 0;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize copy failure contract");
     constexpr const char* objectJson = "{\"long\":\"a sufficiently long string to require its own allocation\",\"nested\":[{\"leaf\":\"another sufficiently long string\"},[true,null,17]]}";
     constexpr const char* arrayJson = "[1,{\"long\":\"a sufficiently long string to require its own allocation\"},[false,null]]";
     constexpr const char* stringJson = "\"a sufficiently long string to require its own allocation\"";

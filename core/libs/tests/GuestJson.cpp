@@ -934,6 +934,9 @@ static void ValueAccess() {
     _ZN3sce4Json6StringD1Ev(&missing);
     _ZN3sce4Json5ValueD1Ev(&root);
 
+}
+
+static void ValueAccessParameters() {
     alignas(16) std::uint8_t parameter[40];
     std::memset(parameter, 0xff, sizeof(parameter));
     _ZN3sce4Json14InitParameter2C1Ev(parameter);
@@ -1369,7 +1372,21 @@ static void ValueOperatorBool() {
     _ZN3sce4Json5ValueD1Ev(&cleared);
 }
 
+struct ActiveModule {
+    JsonTest::Allocator allocator;
+    alignas(8) std::uint8_t parameter[40]{};
+    std::uint8_t initializer = 0;
+    ActiveModule() {
+        _ZN3sce4Json14InitParameter2C1Ev(parameter);
+        _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(parameter, &allocator, nullptr);
+        _ZN3sce4Json11InitializerC1Ev(&initializer);
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, parameter) == 0);
+    }
+    ~ActiveModule() { Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0); }
+};
+
 static int NumericLocale() {
+    ActiveModule module;
     const std::string previous = std::setlocale(LC_NUMERIC, nullptr);
     const char* selected = nullptr;
     for (const char* name : {"xx_COMMA", "de_DE.UTF-8", "de_DE.utf8", "de-DE", "German_Germany.1252", "fr_FR.UTF-8"}) {
@@ -1441,22 +1458,25 @@ static int NumericLocale() {
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--numeric-locale") == 0) return NumericLocale();
-    ParseAndRoundTrip();
-    NestingDepth();
-    ObjectsAndArrays();
-    ObjectFind();
-    ObjectPair();
-    ObjectInsert();
-    ObjectKeyOrder();
-    ArrayIteratorCopies();
-    ObjectIteratorCopies();
-    AllocatorNotifyError();
-    StringMethods();
-    StringComparison();
-    ParseDuplicateKeys();
-    ValueSwap();
-    ArrayIteratorAdvance();
-    ObjectOperations();
+    {
+        ActiveModule module;
+        ParseAndRoundTrip();
+        NestingDepth();
+        ObjectsAndArrays();
+        ObjectFind();
+        ObjectPair();
+        ObjectInsert();
+        ObjectKeyOrder();
+        ArrayIteratorCopies();
+        ObjectIteratorCopies();
+        AllocatorNotifyError();
+        StringMethods();
+        StringComparison();
+        ParseDuplicateKeys();
+        ValueSwap();
+        ArrayIteratorAdvance();
+        ObjectOperations();
+    }
     NullAccess(_ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_);
     NullAccess(_ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_);
     JsonTest::Allocator recoveryAllocator;
@@ -1471,11 +1491,15 @@ int main(int argc, char** argv) {
     ValueElementAccessFailureHandler();
     ValueSpecialFloatHandler();
     Require(_ZN3sce4Json11Initializer9terminateEv(&recoveryInitializer) == 0);
-    ValueAccess();
     InitParameter2BaseConstructor();
     InitParameters();
-    ValueClear();
-    ValueOperatorBool();
-    IntegerRepresentation();
-    StreamParse();
+    ValueAccessParameters();
+    {
+        ActiveModule module;
+        ValueAccess();
+        ValueClear();
+        ValueOperatorBool();
+        IntegerRepresentation();
+        StreamParse();
+    }
 }

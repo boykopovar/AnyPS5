@@ -14,8 +14,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 
 namespace {
 
@@ -42,7 +46,9 @@ struct Handlers;
 struct Auxiliary;
 template<typename T>
 struct Items : std::list<T> { Value* owner = nullptr; };
-struct String { std::string* text; };
+struct Text { char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
+static_assert(sizeof(Text) == 24);
+struct String { Text* text; };
 struct Array { Items<Value>* items; };
 struct Pair;
 struct Object { Items<Pair>* items; };
@@ -126,14 +132,23 @@ struct AllocParamRtti {
     RttiNotify notify;
 };
 
+struct AllocationContext {
+    void* allocator = nullptr;
+    void* userData = nullptr;
+    std::size_t fileBufferSize = 0;
+};
+static_assert(sizeof(AllocationContext) == 24);
+
 struct Globals {
-    std::mutex mutex;
+    std::recursive_mutex mutex;
     NullAccessCallback callback = nullptr;
     void* context = nullptr;
     std::int32_t floatFormat = 2;
     bool floatFormatEnabled = false;
     bool initialized = false;
     AllocParamRtti rtti{};
+    Handlers handlers{};
+    AllocationContext allocation{};
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
 };
@@ -156,6 +171,54 @@ AllocParamRtti RttiCallbacks() {
     std::lock_guard lock(state.mutex);
     return state.rtti;
 }
+
+void* Allocate(const AllocationContext& context, std::size_t size) {
+    auto* const* table = *static_cast<void* const* const*>(context.allocator);
+    const auto allocate = reinterpret_cast<void* (APS5_VABI*)(void*, std::size_t, void*)>(table[2]);
+    void* memory = allocate(context.allocator, size, context.userData);
+    if (!memory) {
+        const auto notify = reinterpret_cast<void (APS5_VABI*)(void*, int, std::size_t, void*)>(table[4]);
+        notify(context.allocator, JsonErrorOutOfMemory, size, context.userData);
+    }
+    return memory;
+}
+
+void Release(const AllocationContext& context, void* memory) {
+    auto* const* table = *static_cast<void* const* const*>(context.allocator);
+    const auto free = reinterpret_cast<void (APS5_VABI*)(void*, void*, void*)>(table[3]);
+    free(context.allocator, memory, context.userData);
+}
+
+struct FileReader {
+    AllocationContext allocation;
+    void* buffer = nullptr;
+    int descriptor = -1;
+    std::size_t available = 0;
+    std::size_t position = 0;
+
+    ~FileReader() {
+        if (descriptor >= 0) sceKernelClose(descriptor);
+        Release(allocation, buffer);
+    }
+
+    static int APS5_VABI Read(char& character, void* context) {
+        auto& reader = *static_cast<FileReader*>(context);
+        if (reader.descriptor < 0) {
+            if (reader.descriptor == -1) return JsonErrorNotInitialized;
+            if (reader.descriptor == static_cast<int>(0x80020002)) return static_cast<int>(0x80848103);
+            return reader.descriptor;
+        }
+        if (reader.position == reader.available) {
+            const auto count = sceKernelRead(reader.descriptor, reader.buffer, reader.allocation.fileBufferSize);
+            if (count < 0) return static_cast<int>(count);
+            if (!count) return JsonErrorParse;
+            reader.available = static_cast<std::size_t>(count);
+            reader.position = 0;
+        }
+        character = static_cast<const char*>(reader.buffer)[reader.position++];
+        return 0;
+    }
+};
 
 void APS5_VABI RttiDestroy(void*) {}
 
@@ -186,13 +249,123 @@ void* const RttiAllocatorVtable[] = {
 struct RttiAllocator { void* const* vtable = RttiAllocatorVtable; };
 RttiAllocator rttiAllocator;
 
-void Construct(String& s, const std::string& text) { s.text = new std::string(text); }
+char emptyCharacters[1]{};
+
+AllocationContext ActiveAllocation() {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    return state.allocation;
+}
+
+void* Allocate(std::size_t size) {
+    const auto context = ActiveAllocation();
+    return context.allocator ? Allocate(context, size) : nullptr;
+}
+
+void Release(void* memory) {
+    const auto context = ActiveAllocation();
+    if (context.allocator) Release(context, memory);
+}
+
+const char* Characters(const String& string) {
+    return string.text ? string.text->characters : emptyCharacters;
+}
+
+std::string_view View(const String& string) {
+    return {Characters(string), string.text ? string.text->length : 0};
+}
+
+bool Grow(Text& text, std::size_t requested) {
+    if (requested > std::numeric_limits<std::uint32_t>::max())
+        throw std::length_error("sce::Json::String: capacity exceeds 32 bits");
+    if (requested <= text.capacity) return true;
+    std::uint32_t capacity = static_cast<std::uint32_t>(requested);
+    std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
+    try {
+        const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+        if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
+    } catch (const std::runtime_error&) {
+    }
+    if (sdk > 0x044fffff) {
+        capacity |= 0x10;
+        if (capacity / 3 < text.capacity / 2) {
+            const auto grown = std::uint64_t{text.capacity} + text.capacity / 2;
+            capacity = static_cast<std::uint32_t>(std::min(grown, std::uint64_t{std::numeric_limits<std::uint32_t>::max()}));
+        }
+    }
+    auto* memory = static_cast<char*>(Allocate(capacity));
+    if (!memory) return false;
+    std::memcpy(memory, text.characters, text.length);
+    memory[text.length] = 0;
+    if (text.characters != emptyCharacters) Release(text.characters);
+    text.characters = memory;
+    text.capacity = capacity;
+    return true;
+}
+
+void ClearText(String& string) {
+    if (!string.text) return;
+    if (string.text->characters != emptyCharacters) Release(string.text->characters);
+    string.text->characters = emptyCharacters;
+    string.text->length = 0;
+    string.text->capacity = 0;
+}
+
+void AssignText(String& string, std::string_view bytes, bool preserveBinary = false) {
+    if (!string.text || bytes.data() == string.text->characters) return;
+    if (bytes.size() >= std::numeric_limits<std::uint32_t>::max())
+        throw std::length_error("sce::Json::String: length exceeds 32 bits");
+    ClearText(string);
+    if (bytes.empty() || (!preserveBinary && !bytes.front())) return;
+    auto* memory = static_cast<char*>(Allocate(bytes.size() + 1));
+    if (!memory) return;
+    std::memcpy(memory, bytes.data(), bytes.size());
+    memory[bytes.size()] = 0;
+    string.text->characters = memory;
+    string.text->length = static_cast<std::uint32_t>(bytes.size());
+    string.text->capacity = static_cast<std::uint32_t>(bytes.size() + 1);
+}
+
+void AppendText(String& string, std::string_view bytes) {
+    if (!string.text) return;
+    if (bytes.size() >= std::numeric_limits<std::uint32_t>::max() - string.text->length)
+        throw std::length_error("sce::Json::String: length exceeds 32 bits");
+    const auto source = reinterpret_cast<std::uintptr_t>(bytes.data());
+    const auto destination = reinterpret_cast<std::uintptr_t>(string.text->characters);
+    const bool aliases = source >= destination && source - destination < string.text->capacity;
+    const auto offset = source - destination;
+    if (!Grow(*string.text, string.text->length + bytes.size() + 1)) return;
+    const char* data = aliases ? string.text->characters + offset : bytes.data();
+    std::memmove(string.text->characters + string.text->length, data, bytes.size());
+    string.text->length += static_cast<std::uint32_t>(bytes.size());
+    string.text->characters[string.text->length] = 0;
+}
+
+void Construct(String& string, std::string_view bytes) {
+    string.text = static_cast<Text*>(Allocate(sizeof(Text)));
+    if (!string.text) return;
+    string.text->characters = emptyCharacters;
+    string.text->length = 0;
+    string.text->capacity = 0;
+    AssignText(string, bytes);
+}
+
+void Construct(String& string, const String& source) {
+    if (!source.text) { string.text = nullptr; return; }
+    Construct(string, std::string_view{});
+    AssignText(string, View(source), true);
+}
 void Construct(Array& a) { a.items = new Items<Value>(); }
 void Construct(Object& o) { o.items = new Items<Pair>(); }
 void Destroy(Value& v);
 void CopyInto(Value& destination, const Value& source);
 
-void Destroy(String& s) { delete s.text; s.text = nullptr; }
+void Destroy(String& s) {
+    if (!s.text) return;
+    ClearText(s);
+    Release(s.text);
+    s.text = nullptr;
+}
 void Destroy(Array& a) {
     if (!a.items) return;
     for (auto& item : *a.items) Destroy(item);
@@ -218,16 +391,21 @@ const Node& RootOf(const Node& n) {
 Handlers HandlersOf(const Node& n) {
     const auto* auxiliary = RootOf(n).auxiliary;
     Handlers handlers;
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (state.initialized) handlers = state.handlers;
+    }
     if (!auxiliary) return handlers;
-    if (auxiliary->typeMismatch) {
+    if (auxiliary->typeMismatch && auxiliary->typeMismatch->callback) {
         handlers.typeMismatch = auxiliary->typeMismatch->callback;
         handlers.typeMismatchContext = auxiliary->typeMismatch->context;
     }
-    if (auxiliary->specialFloat) {
+    if (auxiliary->specialFloat && auxiliary->specialFloat->callback) {
         handlers.specialFloat = auxiliary->specialFloat->callback;
         handlers.specialFloatContext = auxiliary->specialFloat->context;
     }
-    if (auxiliary->elementAccessFailure) {
+    if (auxiliary->elementAccessFailure && auxiliary->elementAccessFailure->callback) {
         handlers.elementAccessFailure = auxiliary->elementAccessFailure->callback;
         handlers.elementAccessFailureContext = auxiliary->elementAccessFailure->context;
     }
@@ -340,7 +518,7 @@ void CopyObject(Object& destination, const Object& source) {
     try {
         for (const auto& pair : *source.items) {
             auto& copy = pending.items->emplace_back();
-            Construct(copy.key, *pair.key.text);
+            Construct(copy.key, pair.key);
             CopyInto(copy.value, pair.value);
         }
     } catch (...) {
@@ -369,7 +547,7 @@ void AssignNode(Node& destination, const Node& source) {
     Node copy{};
     copy.type = source.type;
     try {
-        if (source.type == TypeString) Construct(copy.string, *source.string->text);
+        if (source.type == TypeString) Construct(copy.string, *source.string);
         else if (source.type == TypeArray) CopyArray(copy.array, source.array);
         else if (source.type == TypeObject) CopyObject(copy.object, source.object);
         else if (source.type == TypeReal) AssignReal(copy, source.real);
@@ -410,14 +588,35 @@ void SetType(Node& n, ValueType type) {
     TransferPayload(n, pending);
 }
 
+struct DefaultStorage {
+    Value values[8]{};
+    bool ready[8]{};
+};
+
+DefaultStorage& SharedDefaults() {
+    static DefaultStorage defaults;
+    return defaults;
+}
+
 const Value& Defaults(ValueType type) {
-    static Value values[8]{};
-    static std::once_flag once[8];
-    std::call_once(once[type], [type] {
-        Construct(values[type]);
-        SetType(values[type], type);
-    });
-    return values[type];
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    auto& defaults = SharedDefaults();
+    if (!defaults.ready[type]) {
+        Construct(defaults.values[type]);
+        SetType(defaults.values[type], type);
+        defaults.ready[type] = true;
+    }
+    return defaults.values[type];
+}
+
+void ResetDefaults() {
+    auto& defaults = SharedDefaults();
+    for (unsigned type = 0; type < 8; ++type) {
+        if (defaults.ready[type]) Destroy(defaults.values[type]);
+        defaults.values[type] = {};
+        defaults.ready[type] = false;
+    }
 }
 
 const Node& Typed(const Value* self, ValueType requested) {
@@ -442,11 +641,14 @@ const Node& Typed(const Value* self, ValueType requested) {
         if (auxiliary && auxiliary->nullAccess)
             return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested);
     }
+    const auto* auxiliary = RootOf(*self).auxiliary;
+    if (auxiliary && auxiliary->typeMismatch && auxiliary->typeMismatch->callback)
+        return Typed(&auxiliary->typeMismatch->callback(requested, self, self->parent, auxiliary->typeMismatch->context), requested);
+    if (self->type == TypeNull && callback)
+        return Typed(&callback(requested, self->parent, context), requested);
     const auto handlers = HandlersOf(*self);
     if (handlers.typeMismatch)
         return Typed(&handlers.typeMismatch(requested, self, self->parent, handlers.typeMismatchContext), requested);
-    if (self->type == TypeNull && callback)
-        return Typed(&callback(requested, self->parent, context), requested);
     return Defaults(requested);
 }
 
@@ -487,6 +689,20 @@ int SetHandler(Node& n, HandlerRecord<TCallback>* Auxiliary::* member, TCallback
     } catch (const std::bad_alloc&) {
         return JsonErrorOutOfMemory;
     }
+    return 0;
+}
+
+template<typename TCallback>
+int SetGlobalHandler(void* self, TCallback Handlers::* callbackMember, void* Handlers::* contextMember,
+        TCallback callback, void* context, bool modernOnly = false) {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
+    if (modernOnly && !state.floatFormatEnabled) return static_cast<int>(0x80848113);
+    if (!callback) return JsonErrorInvalidArgument;
+    if (state.handlers.*callbackMember) return static_cast<int>(0x80848112);
+    state.handlers.*callbackMember = callback;
+    state.handlers.*contextMember = context;
     return 0;
 }
 
@@ -544,7 +760,7 @@ void AssignReal(Node& n, double value) {
     n.real = value;
 }
 
-void AppendEscaped(std::string& out, const std::string& text) {
+void AppendEscaped(std::string& out, std::string_view text) {
     out += '"';
     for (const unsigned char c : text) {
         switch (c) {
@@ -614,7 +830,7 @@ int Serialize(std::string& out, const Node& n) {
             AppendReal(out, n.real);
             return 0;
         }
-        case TypeString: AppendEscaped(out, *n.string->text); return 0;
+        case TypeString: AppendEscaped(out, View(*n.string)); return 0;
         case TypeArray: {
             out += '[';
             bool first = true;
@@ -633,7 +849,7 @@ int Serialize(std::string& out, const Node& n) {
             for (const auto& pair : *n.object->items) {
                 if (!first) out += ',';
                 first = false;
-                AppendEscaped(out, *pair.key.text);
+                AppendEscaped(out, View(pair.key));
                 out += ':';
                 const int result = Serialize(out, pair.value);
                 if (result < 0) return result;
@@ -653,13 +869,13 @@ int CompareText(const char* left, const char* right) {
     return static_cast<unsigned char>(*left) - static_cast<unsigned char>(*right);
 }
 
-std::list<Pair>::iterator ObjectPosition(const Object& object, const std::string& key) {
-    return std::find_if(object.items->begin(), object.items->end(), [&](const Pair& pair) { return std::strcmp(pair.key.text->c_str(), key.c_str()) >= 0; });
+std::list<Pair>::iterator ObjectPosition(const Object& object, std::string_view key) {
+    return std::find_if(object.items->begin(), object.items->end(), [&](const Pair& pair) { return std::strcmp(Characters(pair.key), key.data()) >= 0; });
 }
 
-Value& ObjectEntry(Object& object, const std::string& key) {
+Value& ObjectEntry(Object& object, std::string_view key) {
     auto position = ObjectPosition(object, key);
-    if (position != object.items->end() && std::strcmp(position->key.text->c_str(), key.c_str()) == 0) return position->value;
+    if (position != object.items->end() && std::strcmp(Characters(position->key), key.data()) == 0) return position->value;
     Pair pair{};
     Construct(pair.key, key);
     try {
@@ -838,7 +1054,7 @@ private:
                 std::string text;
                 if (!string(text)) return false;
                 SetType(out, TypeString);
-                *out.string->text = std::move(text);
+                AssignText(*out.string, text);
                 return true;
             }
             case '[': {
@@ -941,6 +1157,8 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*
     if (state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
     if (!parameter) return JsonErrorInvalidArgument;
     if (!*static_cast<void* const*>(parameter)) return JsonErrorOutOfMemory;
+    ResetDefaults();
+    std::memcpy(&state.allocation, parameter, sizeof(state.allocation));
     state.floatFormat = 2;
     state.floatFormatEnabled = false;
     state.initialized = true;
@@ -954,6 +1172,9 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
     state.callback = nullptr;
     state.context = nullptr;
+    state.handlers = {};
+    ResetDefaults();
+    state.allocation = {};
     state.floatFormat = 2;
     state.floatFormatEnabled = false;
     state.initialized = false;
@@ -976,6 +1197,18 @@ int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallbackEPFRKNS0_5Va
     return _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(self, callback, context);
 }
 
+int APS5_VABI _ZN3sce4Json11Initializer28setGlobalTypeMismatchHandlerEPFRKNS0_5ValueENS0_9ValueTypeEPS3_S6_PvES7_(void* self, TypeMismatchHandler callback, void* context) {
+    return SetGlobalHandler(self, &Handlers::typeMismatch, &Handlers::typeMismatchContext, callback, context);
+}
+
+int APS5_VABI _ZN3sce4Json11Initializer28setGlobalSpecialFloatHandlerEPFKNS0_5ValueENS0_12FunctionTypeEdPS3_PvPbES6_(void* self, SpecialFloatHandler callback, void* context) {
+    return SetGlobalHandler(self, &Handlers::specialFloat, &Handlers::specialFloatContext, callback, context, true);
+}
+
+int APS5_VABI _ZN3sce4Json11Initializer36setGlobalElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKNS0_5ValueES9_PvESA_(void* self, ElementAccessFailureHandler callback, void* context) {
+    return SetGlobalHandler(self, &Handlers::elementAccessFailure, &Handlers::elementAccessFailureContext, callback, context);
+}
+
 void APS5_VABI _ZN3sce4Json12MemAllocatorC2Ev(void* self) {
     *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
 }
@@ -986,63 +1219,68 @@ void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void* self) {
 
 std::size_t _ZN3sce4Json6String4nposE = static_cast<std::size_t>(-1);
 
-void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string()); }
-void APS5_VABI _ZN3sce4Json6StringC1EPKc(String* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::String: null text");
-    Construct(*self, text);
-}
-void APS5_VABI _ZN3sce4Json6StringC1ERKS1_(String* self, const String* other) { Construct(*self, *other->text); }
+void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string_view{}); }
+void APS5_VABI _ZN3sce4Json6StringC1EPKc(String* self, const char* text) { Construct(*self, text ? text : ""); }
+void APS5_VABI _ZN3sce4Json6StringC1ERKS1_(String* self, const String* other) { Construct(*self, *other); }
 void APS5_VABI _ZN3sce4Json6StringD1Ev(String* self) { Destroy(*self); }
 String* APS5_VABI _ZN3sce4Json6StringaSERKS1_(String* self, const String* other) {
-    if (self != other) *self->text = *other->text;
+    if (self->text != other->text && other->text) AssignText(*self, View(*other), true);
     return self;
 }
-const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String* self) { return self->text->c_str(); }
-bool APS5_VABI _ZNK3sce4Json6String5emptyEv(const String* self) { return self->text->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json6String6lengthEv(const String* self) { return self->text->size(); }
-std::size_t APS5_VABI _ZNK3sce4Json6String4sizeEv(const String* self) { return self->text->size(); }
-std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const String* self) { return self->text->capacity(); }
-bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) { return text != nullptr && CompareText(self->text->c_str(), text) == 0; }
-bool APS5_VABI _ZNK3sce4Json6StringeqERKS1_(const String* self, const String* other) { return other != nullptr && other->text != nullptr && CompareText(self->text->c_str(), other->text->c_str()) == 0; }
-void APS5_VABI _ZN3sce4Json6String5clearEv(String* self) { self->text->clear(); }
-void APS5_VABI _ZN3sce4Json6String6resizeEm(String* self, std::size_t count) { self->text->resize(count); }
-void APS5_VABI _ZN3sce4Json6String7reserveEm(String* self, std::size_t capacity) { self->text->reserve(capacity); }
+const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String* self) { return Characters(*self); }
+bool APS5_VABI _ZNK3sce4Json6String5emptyEv(const String* self) { return View(*self).empty(); }
+std::size_t APS5_VABI _ZNK3sce4Json6String6lengthEv(const String* self) { return View(*self).size(); }
+std::size_t APS5_VABI _ZNK3sce4Json6String4sizeEv(const String* self) { return View(*self).size(); }
+std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const String* self) { return self->text ? self->text->capacity : 0; }
+bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) { return text != nullptr && CompareText(Characters(*self), text) == 0; }
+bool APS5_VABI _ZNK3sce4Json6StringeqERKS1_(const String* self, const String* other) { return other != nullptr && CompareText(Characters(*self), Characters(*other)) == 0; }
+void APS5_VABI _ZN3sce4Json6String5clearEv(String* self) { ClearText(*self); }
+void APS5_VABI _ZN3sce4Json6String6resizeEm(String* self, std::size_t count) {
+    if (!self->text || count == self->text->length) return;
+    auto& text = *self->text;
+    if (count < text.length) { text.characters[count] = 0; text.length = static_cast<std::uint32_t>(count); }
+    else if (count < std::numeric_limits<std::uint32_t>::max() && Grow(text, count + 1)) {
+        std::memset(text.characters + text.length, 0, count - text.length + 1);
+        text.length = static_cast<std::uint32_t>(count);
+    } else if (count >= std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("sce::Json::String: length exceeds 32 bits");
+    }
+}
+void APS5_VABI _ZN3sce4Json6String7reserveEm(String* self, std::size_t capacity) { if (self->text) Grow(*self->text, capacity); }
 String* APS5_VABI _ZN3sce4Json6String6appendERKS1_(String* self, const String* other) {
-    const std::string copy = *other->text;
-    self->text->append(copy);
+    AppendText(*self, Characters(*other));
     return self;
 }
 String* APS5_VABI _ZN3sce4Json6String6appendEPKc(String* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::String::append: null text");
-    self->text->append(text);
+    if (!text) throw std::invalid_argument("sce::Json::String::append: null text");
+    AppendText(*self, text);
     return self;
 }
 String* APS5_VABI _ZN3sce4Json6String6appendEPKcm(String* self, const char* text, std::size_t length) {
-    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::append: null text");
-    self->text->append(text, length);
+    if (!text && length) throw std::invalid_argument("sce::Json::String::append: null text");
+    AppendText(*self, {text ? text : "", length});
     return self;
 }
-String* APS5_VABI _ZN3sce4Json6StringpLEPKc(String* self, const char* text) {
-    return _ZN3sce4Json6String6appendEPKc(self, text);
-}
+String* APS5_VABI _ZN3sce4Json6StringpLEPKc(String* self, const char* text) { return _ZN3sce4Json6String6appendEPKc(self, text); }
 String* APS5_VABI _ZN3sce4Json6StringpLEh(String* self, unsigned char ch) {
-    self->text->push_back(static_cast<char>(ch));
+    const char text[]{static_cast<char>(ch), 0};
+    AppendText(*self, text);
     return self;
 }
 String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* self, std::size_t position, std::size_t length) {
-    if (position > self->text->size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
-    Construct(*result, self->text->substr(position, length));
+    if (position > View(*self).size()) throw std::out_of_range("sce::Json::String::substr: position past the end");
+    Construct(*result, View(*self).substr(position, length));
     return result;
 }
-std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return self->text->find(character, position); }
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return self->text->rfind(character, position); }
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return View(*self).find(character, position); }
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return View(*self).rfind(character, position); }
 int APS5_VABI _ZNK3sce4Json6String7compareEPKc(const String* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::String::compare: null text");
-    return CompareText(self->text->c_str(), text);
+    if (!text) throw std::invalid_argument("sce::Json::String::compare: null text");
+    return CompareText(Characters(*self), text);
 }
 int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const String* other) {
-    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::compare: null other");
-    return CompareText(self->text->c_str(), other->text->c_str());
+    if (!other) throw std::invalid_argument("sce::Json::String::compare: null other");
+    return CompareText(Characters(*self), Characters(*other));
 }
 
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
@@ -1129,7 +1367,7 @@ void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) {
     }
     self->items->clear();
 }
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return &ObjectEntry(*self, *key->text); }
+Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return &ObjectEntry(*self, View(*key)); }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) { result->state = new ObjectIteratorState{self->items, self->items->begin()}; return result; }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) { result->state = new ObjectIteratorState{self->items, self->items->end()}; return result; }
 void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { delete self->state; self->state = nullptr; }
@@ -1146,7 +1384,7 @@ Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratorptEv(const ObjectIterator* self) { return _ZNK3sce4Json6Object8iteratordeEv(self); }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterator* result, const Object* self, const String* key) {
-    const auto position = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0; });
+    const auto position = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(Characters(pair.key), Characters(*key)) == 0; });
     result->state = new ObjectIteratorState{self->items, position};
     return result;
 }
@@ -1174,7 +1412,7 @@ bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return self->i
 std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
     if (key == nullptr || key->text == nullptr) throw std::invalid_argument("sce::Json::Object::erase: null key");
-    auto it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0; });
+    auto it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(Characters(pair.key), Characters(*key)) == 0; });
     if (it == self->items->end()) return;
     Destroy(it->key);
     Destroy(it->value);
@@ -1190,13 +1428,13 @@ void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value: null text");
     Construct(*self, [text](Node& node) {
         SetType(node, TypeString);
-        *node.string->text = text;
+        AssignText(*node.string, text);
     });
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value* self, const String* text) {
     Construct(*self, [text](Node& node) {
         SetType(node, TypeString);
-        *node.string->text = *text->text;
+        AssignText(*node.string, View(*text), true);
     });
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value* self, const Array* array) {
@@ -1239,13 +1477,13 @@ int APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
     const std::string copy(text);
     SetType(NodeOf(*self), TypeString);
-    *self->string->text = copy;
+    AssignText(*self->string, copy);
     return 0;
 }
 int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
-    const std::string copy(*text->text);
+    const std::string copy(View(*text));
     SetType(NodeOf(*self), TypeString);
-    *self->string->text = copy;
+    AssignText(*self->string, copy, true);
     return 0;
 }
 int APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
@@ -1306,7 +1544,7 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* 
     try {
         if (self->type == TypeObject) {
             for (const auto& pair : *self->object->items)
-                if (std::strcmp(pair.key.text->c_str(), text.text->c_str()) == 0) {
+                if (std::strcmp(Characters(pair.key), Characters(text)) == 0) {
                     Destroy(text);
                     return &pair.value;
                 }
@@ -1341,7 +1579,7 @@ const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* 
     const Node& n = NodeOf(*self);
     if (key != nullptr && n.type == TypeObject)
         for (const auto& pair : *n.object->items)
-            if (std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0) return &pair.value;
+            if (std::strcmp(Characters(pair.key), Characters(*key)) == 0) return &pair.value;
     return &MissingElement(self, static_cast<int>(n.type == TypeObject ? 0x80848115 : 0x80848117), key, nullptr);
 }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
@@ -1361,7 +1599,7 @@ Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value* self, cons
     Node& n = NodeOf(*self);
     if (key == nullptr || n.type != TypeObject) return nullptr;
     for (auto& pair : *n.object->items)
-        if (std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0) return &pair.value;
+        if (std::strcmp(Characters(pair.key), Characters(*key)) == 0) return &pair.value;
     return nullptr;
 }
 Array* APS5_VABI _ZN3sce4Json5Value10referArrayEv(Value* self) {
@@ -1379,15 +1617,19 @@ Object* APS5_VABI _ZN3sce4Json5Value11referObjectEv(Value* self) {
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* out) {
     std::string text;
     const int result = Serialize(text, *self);
-    out->text->append(text);
+    AppendText(*out, text);
     return result;
 }
 void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
-    if (self->type == TypeString) out->text->append(*self->string->text);
-    else if (self->type == TypeArray) out->text->append("array");
-    else if (self->type == TypeObject) out->text->append("object");
-    else if (self->type == TypeReal) AppendReal(*out->text, self->real);
-    else Serialize(*out->text, *self);
+    std::string text;
+    if (self->type == TypeString) AppendText(*out, Characters(*self->string));
+    else {
+        if (self->type == TypeArray) text = "array";
+        else if (self->type == TypeObject) text = "object";
+        else if (self->type == TypeReal) AppendReal(text, self->real);
+        else Serialize(text, *self);
+        AppendText(*out, text);
+    }
 }
 
 
@@ -1404,6 +1646,22 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
     return ParseValue(out, parser);
 }
 
+
+int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* path) {
+    AllocationContext allocation;
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (!state.initialized) return JsonErrorNotInitialized;
+        allocation = state.allocation;
+    }
+    if (!allocation.fileBufferSize) return static_cast<int>(0x80848105);
+    FileReader reader{allocation};
+    reader.buffer = Allocate(allocation, allocation.fileBufferSize);
+    if (reader.buffer) reader.descriptor = sceKernelOpen(path, 0, 0555);
+    Parser parser(FileReader::Read, &reader);
+    return ParseValue(out, parser);
+}
 
 struct InitParameterRtti {
     void* allocParam;
@@ -1473,6 +1731,8 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void
     if (state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
     if (!parameter || !parameter->allocator || static_cast<std::uint32_t>(parameter->specialFloatFormatType) > 2)
         return JsonErrorInvalidArgument;
+    ResetDefaults();
+    state.allocation = {parameter->allocator, parameter->userData, parameter->fileBufferSize};
     state.floatFormat = parameter->specialFloatFormatType;
     state.floatFormatEnabled = true;
     state.initialized = true;
@@ -1537,7 +1797,7 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
         case TypeInteger: return n.integer != 0;
         case TypeUInteger: return n.uinteger != 0;
         case TypeReal: return n.real != 0.0;
-        case TypeString: return n.string->text && !n.string->text->empty();
+        case TypeString: return !View(*n.string).empty();
         case TypeArray:
         case TypeObject: return true;
         default: throw std::runtime_error("sce::Json::Value: invalid value type");
@@ -1547,7 +1807,7 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
 void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) {
     Pair pair{};
     pair.reserved = 0;
-    Construct(pair.key, *key->text);
+    Construct(pair.key, *key);
     try {
         CopyInto(pair.value, *value);
     } catch (...) {
@@ -1564,15 +1824,15 @@ void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator* result, Object* self, const Pair* pair) {
-    auto it = ObjectPosition(*self, *pair->key.text);
+    auto it = ObjectPosition(*self, View(pair->key));
     auto state = std::make_unique<ObjectIteratorState>(ObjectIteratorState{self->items, it});
-    if (it != self->items->end() && std::strcmp(it->key.text->c_str(), pair->key.text->c_str()) == 0) {
+    if (it != self->items->end() && std::strcmp(Characters(it->key), Characters(pair->key)) == 0) {
         result->state = state.release();
         return result;
     }
     Pair copy{};
     copy.reserved = 0;
-    Construct(copy.key, *pair->key.text);
+    Construct(copy.key, pair->key);
     try {
         CopyInto(copy.value, pair->value);
         state->position = self->items->insert(it, copy);

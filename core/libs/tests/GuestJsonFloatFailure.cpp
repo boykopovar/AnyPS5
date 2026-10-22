@@ -172,7 +172,9 @@ int main() {
             "Finite assignment must not require a conversion allocation");
     _ZN3sce4Json5ValueD1Ev(&value);
     Require(liveAllocations == baseline, "Destroy must reclaim the retained value");
-    for (int budget : {0, 1}) {
+    bool constructed = false;
+    unsigned constructorFailures = 0;
+    for (int budget = 0; budget < 64 && !constructed; ++budget) {
         Value destination;
         destination.bytes.fill(std::byte{0xa5});
         const auto original = destination.bytes;
@@ -184,9 +186,19 @@ int main() {
             failed = true;
         }
         allocationBudget = -1;
-        Require(failed && destination.bytes == original && liveAllocations == baseline,
-                "Failed construction must leave destination storage unchanged and reclaim partial state");
+        if (failed) {
+            ++constructorFailures;
+            Require(destination.bytes == original && liveAllocations == baseline,
+                    "Failed construction must leave destination storage unchanged and reclaim partial state");
+        } else {
+            constructed = true;
+            Require(_ZNK3sce4Json5Value7getTypeEv(&destination) == 5,
+                    "Construction must remain usable after earlier host allocation failures");
+            _ZN3sce4Json5ValueD1Ev(&destination);
+            Require(liveAllocations == baseline, "Successful construction must release its host ownership");
+        }
     }
+    Require(constructed && constructorFailures > 0, "Exercise failed and successful host construction");
     _ZN3sce4Json5ValueC1Ed(&value, std::numeric_limits<double>::infinity());
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == 5, "Conversion must remain usable after allocation failure");
     _ZN3sce4Json5ValueD1Ev(&value);
