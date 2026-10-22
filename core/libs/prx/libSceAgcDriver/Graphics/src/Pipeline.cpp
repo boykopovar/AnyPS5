@@ -21,6 +21,7 @@
 #include <list>
 #include <mutex>
 #include <spirv/unified1/spirv.hpp>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -1053,17 +1054,20 @@ public:
     KeyWriter(std::vector<std::byte>& storage, std::size_t capacity) {
         if (storage.size() < capacity) storage.resize(capacity);
         begin = out = storage.data();
+        end = begin + capacity;
     }
 
     template<typename TValue>
     void Put(const TValue& value) {
         static_assert(std::is_trivially_copyable_v<TValue>);
+        reserve(sizeof(TValue));
         std::memcpy(out, &value, sizeof(TValue));
         out += sizeof(TValue);
     }
 
     void PutBytes(const void* data, std::size_t bytes) {
         if (bytes == 0) return;
+        reserve(bytes);
         std::memcpy(out, data, bytes);
         out += bytes;
     }
@@ -1071,8 +1075,13 @@ public:
     std::size_t Length() const { return static_cast<std::size_t>(out - begin); }
 
 private:
+    void reserve(std::size_t bytes) const {
+        if (bytes > static_cast<std::size_t>(end - out)) [[unlikely]] throw std::length_error("pipeline key larger than its buffer");
+    }
+
     std::byte* begin;
     std::byte* out;
+    std::byte* end;
 };
 
 template<typename TValue>
@@ -1199,7 +1208,6 @@ std::size_t pipelineKey(std::vector<std::byte>& storage, const Context& context,
     append(key, context.sampleLocationGridSampleCounts);
     append(key, context.storageImageMultisample);
     append(key, context.shaderStencilExport);
-    Require(key.Length() <= capacity, "pipeline key larger than its buffer");
     return key.Length();
 }
 
