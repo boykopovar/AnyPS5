@@ -491,7 +491,8 @@ void ReferencedRegistrationPreparation() {
     const std::vector<std::uint32_t> commands{0xc0027600u, 0x20cu, static_cast<std::uint32_t>(bound >> 8u), static_cast<std::uint32_t>(bound >> 40u)};
     Require(AgcDriver::DriverDetail::ReferencedPrograms(commands, {}).addresses == std::vector<std::uint64_t>{bound}, "a compute program bound with SET_SH_REG was not found in the submission");
     const std::vector<std::uint32_t> indirect{0xc0036300u, 0, 0, 0, 2};
-    const std::map<std::size_t, std::vector<std::uint32_t>> lists{{0, {0xc8u, static_cast<std::uint32_t>(unrelated >> 8u), 0xc9u, static_cast<std::uint32_t>(unrelated >> 40u)}}};
+    AgcDriver::DriverDetail::RegisterLists lists;
+    lists.append(0, {0xc8u, static_cast<std::uint32_t>(unrelated >> 8u), 0xc9u, static_cast<std::uint32_t>(unrelated >> 40u)});
     Require(AgcDriver::DriverDetail::ReferencedPrograms(indirect, lists).addresses == std::vector<std::uint64_t>{unrelated}, "a vertex program bound through an indirect register list was not found in the submission");
     const std::vector<std::uint32_t> lowOnly{0xc0017600u, 0x008u, static_cast<std::uint32_t>(bound >> 8u)};
     Require(AgcDriver::DriverDetail::ReferencedPrograms(lowOnly, {}).addresses.empty(), "a program address without its high register was resolved");
@@ -629,11 +630,14 @@ void UnprovenProgramsAtSubmit() {
     const std::vector<std::uint32_t> vertexLowOnly{0xc0017600u, 0x048u, low ^ 1u};
     Require(!AgcDriver::DriverDetail::ReferencedPrograms(joined({&graphicsPair, &vertexLowOnly, &draw}), {}).complete, "an incomplete classic vertex pair was hidden by a complete pixel pair");
     const std::vector<std::uint32_t> indirectGraphics{0xc0036300u, 0, 0, 0, 4};
-    const std::map<std::size_t, std::vector<std::uint32_t>> graphicsRegisters{{0, {0x008u, low, 0x009u, high, 0x048u, low ^ 1u, 0x049u, high}}};
+    AgcDriver::DriverDetail::RegisterLists graphicsRegisters;
+    graphicsRegisters.append(0, {0x008u, low, 0x009u, high, 0x048u, low ^ 1u, 0x049u, high});
     const auto indirectPrograms = AgcDriver::DriverDetail::ReferencedPrograms(joined({&indirectGraphics, &draw}), graphicsRegisters);
     Require(indirectPrograms.complete && indirectPrograms.addresses == expectedPrograms, "an indirect list lost its classic vertex program pair");
-    const std::map<std::size_t, std::vector<std::uint32_t>> invalidList{{0, {0xffffffffu, 0}}};
-    const std::map<std::size_t, std::vector<std::uint32_t>> validList{{0, {0x20cu, low}}};
+    AgcDriver::DriverDetail::RegisterLists invalidList;
+    invalidList.append(0, {0xffffffffu, 0});
+    AgcDriver::DriverDetail::RegisterLists validList;
+    validList.append(0, {0x20cu, low});
     Require(!AgcDriver::DriverDetail::ReferencedPrograms(indirectList, invalidList).complete, "an indirect register list the worker reads again was reported as fully scanned");
     Require(AgcDriver::DriverDetail::ReferencedPrograms(indirectList, validList).addresses.empty(), "a lone indirect register was resolved to a program");
     const std::vector<std::uint32_t> predicatedPair{0xc0027601u, 0x20cu, low, high};

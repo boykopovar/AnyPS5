@@ -141,6 +141,7 @@ void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, st
     submission.commands.clear();
     submission.conditionalEnds.clear();
     std::size_t budget = std::size_t{1} << 26u;
+    if (words <= budget) submission.commands.reserve(std::min<std::size_t>(words, std::size_t{1} << 14u));
     copySegment(submission, guest, words, budget, 0);
 }
 
@@ -247,7 +248,7 @@ bool Driver::copyLink(Submission& submission, const std::uint32_t* guest, std::s
     return false;
 }
 
-ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const std::map<std::size_t, std::vector<std::uint32_t>>& registerLists) {
+ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands, const RegisterLists& registerLists) {
     constexpr std::array<std::uint32_t, 7> programRegisters{0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u, 0x20cu};
     std::array<std::uint32_t, programRegisters.size() * 2> values{};
     std::array<bool, programRegisters.size() * 2> written{};
@@ -284,13 +285,13 @@ ReferencedProgramScan ReferencedPrograms(std::span<const std::uint32_t> commands
             const auto offset = packet[1] & ~0x70000000u;
             for (std::size_t i = 2; i < words; ++i) write(offset + static_cast<std::uint32_t>(i - 2), packet[i], conditional);
         } else if (opcode == 0x63u) {
-            const auto list = registerLists.find(cursor);
-            if (list == registerLists.end()) continue;
-            if (!Pm4::IndirectRegistersValid(list->second)) {
+            const auto* list = registerLists.find(cursor);
+            if (list == nullptr) continue;
+            if (!Pm4::IndirectRegistersValid(*list)) {
                 scan.complete = false;
                 continue;
             }
-            for (std::size_t i = 0; i + 1 < list->second.size(); i += 2) write(list->second[i] & ~0x70000000u, list->second[i + 1], conditional);
+            for (std::size_t i = 0; i + 1 < list->size(); i += 2) write((*list)[i] & ~0x70000000u, (*list)[i + 1], conditional);
         }
     }
     for (std::size_t slot = 0; slot < written.size(); slot += 2) {
@@ -307,7 +308,7 @@ void Driver::readRegisterLists(Submission& submission) {
         const auto header = submission.commands[cursor];
         if ((header >> 30u) != 3u || !Pm4::IndirectRegisterOpcode((header >> 8u) & 0xffu)) continue;
         try {
-            submission.registerLists.emplace(cursor, Pm4::ReadIndirectRegisters(std::span<const std::uint32_t>(submission.commands).subspan(cursor, Pm4::PacketWords(header))));
+            submission.registerLists.append(cursor, Pm4::ReadIndirectRegisters(std::span<const std::uint32_t>(submission.commands).subspan(cursor, Pm4::PacketWords(header))));
         } catch (const std::exception& error) {
             throw std::runtime_error("AGC driver: " + Pm4::Name(header) + " at DWORD " + std::to_string(cursor) + ": " + error.what());
         }
@@ -491,8 +492,8 @@ std::vector<std::uint64_t> BoundGraphicsPrograms(const Submission& submission) {
         if (!Pm4::FillerPacket(header) && opcode == 0x76 && count > 2 && !Pm4::IsTagMarker(packet)) {
             for (std::size_t index = 2; index < count; ++index) note((packet[1] & ~0x70000000u) + static_cast<std::uint32_t>(index - 2), packet[index]);
         } else if (!Pm4::FillerPacket(header) && opcode == 0x63) {
-            if (const auto found = submission.registerLists.find(cursor); found != submission.registerLists.end()) {
-                for (std::size_t index = 0; index + 1 < found->second.size(); index += 2) note(found->second[index] & ~0x70000000u, found->second[index + 1]);
+            if (const auto* found = submission.registerLists.find(cursor); found != nullptr) {
+                for (std::size_t index = 0; index + 1 < found->size(); index += 2) note((*found)[index] & ~0x70000000u, (*found)[index + 1]);
             }
         }
         flush();

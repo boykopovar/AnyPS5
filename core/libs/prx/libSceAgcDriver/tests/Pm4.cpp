@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
@@ -1220,6 +1221,57 @@ void testRegisterListsReadAtSubmission() {
     std::atomic_ref<std::uint32_t>(gate).store(1);
     AgcDriverWaitIdle_nid_postfix();
     check(std::atomic_ref<std::uint32_t>(done).load() == 1, "register list rewritten after submission was read by the worker");
+}
+
+void testRegisterListLookup() {
+    AgcDriver::DriverDetail::RegisterLists lists;
+    for (std::size_t i = 0; i < 100; ++i) lists.append(i * 5 + 3, {static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(i * 2)});
+    check(lists.size() == 100, "register lists lost entries");
+    for (std::size_t i = 0; i < 100; ++i) {
+        const auto& pairs = lists.at(i * 5 + 3);
+        check(pairs.size() == 2 && pairs[0] == i && pairs[1] == i * 2, "register list lookup returned another packet's list");
+    }
+    for (const std::size_t missing : {std::size_t{0}, std::size_t{4}, std::size_t{499}, std::size_t{503}, std::size_t{100000}}) {
+        bool thrown = false;
+        try {
+            lists.at(missing);
+        } catch (const std::out_of_range&) {
+            thrown = true;
+        }
+        check(thrown, "a register list lookup of a cursor without a list did not throw");
+    }
+    lists.clear();
+    check(lists.size() == 0, "clearing register lists kept entries");
+    bool cleared = false;
+    try {
+        lists.at(3);
+    } catch (const std::out_of_range&) {
+        cleared = true;
+    }
+    check(cleared, "cleared register lists still answered a lookup");
+}
+
+void testManyRegisterListsReadAtSubmission() {
+    alignas(8) static std::uint32_t gate = 0;
+    static std::uint32_t done = 0;
+    constexpr std::size_t count = 40;
+    static std::array<std::array<std::uint32_t, 4>, count> lists;
+    gate = 0;
+    done = 0;
+    std::vector<std::vector<std::uint32_t>> parts{makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x19})};
+    for (std::size_t i = 0; i < count; ++i) {
+        lists[i] = {0x10 + static_cast<std::uint32_t>(i), 100 + static_cast<std::uint32_t>(i), 0x200 + static_cast<std::uint32_t>(i), 7};
+        parts.push_back(makePacket(i % 3 == 0 ? 0x9f : (i % 3 == 1 ? 0x63 : 0x64), {low(lists[i].data()), high(lists[i].data()), 0x80000000, 2}));
+        parts.push_back(makePacket(0x69, {0x11, 50, 51}));
+    }
+    parts.push_back(writeWord(done, 1));
+    std::vector<std::uint32_t> words;
+    for (const auto& part : parts) words.insert(words.end(), part.begin(), part.end());
+    submitWords(words);
+    for (auto& list : lists) list = {0x3a888889u, 0x3a888889u, 0x3a888889u, 0x3a888889u};
+    std::atomic_ref<std::uint32_t>(gate).store(1);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(done).load() == 1, "register lists of a long submission were not read at submission");
 }
 
 void testInvalidRegisterListEntries() {
@@ -2631,6 +2683,8 @@ int main(int argc, char** argv) {
         testUnwrittenUserData();
         testDriverSubmission();
         testRegisterListsReadAtSubmission();
+        testRegisterListLookup();
+        testManyRegisterListsReadAtSubmission();
         testInvalidRegisterListEntries();
         testPartlyUpdatedRegisterListSkipsOnlyItsInvalidEntries();
         testRegisterListReadAgainAtExecution();
