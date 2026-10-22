@@ -318,6 +318,78 @@ struct WorkgroupMemory {
     }
 };
 
+class ComputePrefetchPool {
+public:
+    static constexpr std::size_t Capacity = 64;
+    bool Enqueue(std::function<void()> job) {
+        std::lock_guard lock(mutex);
+        if (stopped || jobs.size() >= Capacity) return false;
+        if (workers.empty()) {
+            const auto count = std::clamp(std::thread::hardware_concurrency() / 4u, 1u, 4u);
+            for (unsigned i = 0; i < count; ++i) workers.emplace_back([this] { run(); });
+        }
+        jobs.push_back(std::move(job));
+        ready.notify_one();
+        return true;
+    }
+    void Stop() {
+        std::vector<std::thread> joining;
+        {
+            std::lock_guard lock(mutex);
+            stopped = true;
+            jobs.clear();
+            joining.swap(workers);
+        }
+        ready.notify_all();
+        for (auto& worker : joining) worker.join();
+    }
+    ~ComputePrefetchPool() { Stop(); }
+    void Restart() {
+        std::lock_guard lock(mutex);
+        stopped = false;
+    }
+private:
+    void run() {
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::unique_lock lock(mutex);
+                ready.wait(lock, [this] { return stopped || !jobs.empty(); });
+                if (stopped) return;
+                job = std::move(jobs.front());
+                jobs.pop_front();
+            }
+            job();
+        }
+    }
+    std::mutex mutex;
+    std::condition_variable ready;
+    std::deque<std::function<void()>> jobs;
+    std::vector<std::thread> workers;
+    bool stopped = false;
+};
+
+
+bool ParallelComputeCompile() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("APS5_PARALLEL_COMPUTE_COMPILE");
+        return value != nullptr && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+struct ComputePrefetchCounters {
+    std::atomic<std::uint64_t> prefetched{0};
+    std::atomic<std::uint64_t> hits{0};
+    std::atomic<std::uint64_t> dropped{0};
+    std::atomic<std::int64_t> lastReport{0};
+};
+
+ComputePrefetchCounters& ComputePrefetchStats() {
+    static ComputePrefetchCounters counters;
+    return counters;
+}
+
 struct VulkanDevice::State {
     bool compileOnly = false;
     void* library = nullptr;
@@ -481,6 +553,8 @@ struct VulkanDevice::State {
     AgcDriver::Mutex computePipelinesMutex;
     std::map<ComputePipelineKey, std::shared_ptr<ComputePipelineObjects>> computePipelines;
     std::map<ComputePipelineKey, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
+    ComputePrefetchPool computePrefetch;
+    std::set<ComputePipelineKey> computePipelinesPrefetched;
     // The journal replay building this device's pipelines on its own threads; drained first at teardown.
     std::shared_ptr<Graphics::PipelineJournalReplay> journalReplay;
     std::atomic<bool> journalReplayPending{false};
@@ -827,6 +901,7 @@ struct VulkanDevice::State {
     }
 
     ~State() {
+        computePrefetch.Stop();
         if (journalReplay != nullptr) {
             journalReplay->Cancel();
             journalReplay->Wait();
@@ -879,6 +954,7 @@ struct VulkanDevice::State {
                 std::lock_guard pipelines(computePipelinesMutex);
                 computePipelines.clear();
                 computePipelinesBuilding.clear();
+                computePipelinesPrefetched.clear();
             }
             // Every ShaderResources (kept by the recorder or the resource cache) is gone now, so the
             // sets and samplers they borrowed can go.
@@ -2220,7 +2296,9 @@ void VulkanDevice::startJournalReplay() {
     state->journalReplay = Graphics::StartPipelineJournalReplay(graphicsContext(), Graphics::PipelineJournalDeviceFingerprint(state->properties), {[this](const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return ReplayComputePipeline(shader, pushConstants); }});
 }
 
-VulkanDevice::~VulkanDevice() = default;
+VulkanDevice::~VulkanDevice() {
+    if (state != nullptr) state->computePrefetch.Stop();
+}
 
 VkPipelineCreateFlags VulkanDevice::computePipelineFlags() const {
     return (graphicsContext().pipelineExecutableInfo ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0) | VK_PIPELINE_CREATE_DISPATCH_BASE_BIT;
@@ -2269,6 +2347,53 @@ bool VulkanDevice::ReplayComputePipeline(const ShaderRecompiler::RecompileResult
     return state->computePipelines.try_emplace(key, std::move(objects)).second;
 }
 
+void VulkanDevice::PrefetchComputePipeline(std::shared_ptr<const ShaderRecompiler::RecompileResult> shader) {
+    if (!ParallelComputeCompile() || shader == nullptr || state->compileOnly) return;
+    if (shader->spirv.size() < 5 || shader->spirv[0] != 0x07230203u) return;
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, shader.get(), 0}}};
+    const auto pushStages = Graphics::PushConstantStages(shaders);
+    if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) return;
+    const auto key = ComputePipelineKey::Of(*shader, pushStages != 0);
+    if (key.identity.Empty()) return;
+    auto& counters = ComputePrefetchStats();
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    if (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key)) return;
+    auto completion = std::make_shared<std::promise<std::shared_ptr<ComputePipelineObjects>>>();
+    state->computePipelinesBuilding.emplace(key, completion->get_future().share());
+    bool queued = false;
+    try {
+        queued = state->computePrefetch.Enqueue([this, shader = std::move(shader), pushStages, key, completion, &counters] {
+            std::shared_ptr<ComputePipelineObjects> objects;
+            try {
+                const auto context = graphicsContext();
+                if (context.descriptorCache != nullptr) {
+                    const std::array<Graphics::CompiledShader, 1> compute{{{ShaderRecompiler::ShaderStage::Compute, shader.get(), 0}}};
+                    const auto described = Graphics::DescribeSetLayouts(context, compute);
+                    objects = createComputePipeline(context, *shader, described.layouts.main, described.mainKey, pushStages, 0);
+                    if (Graphics::PipelineJournalEnabled() && !state->probingFloatControls) Graphics::RecordComputePipeline(*shader, pushStages != 0);
+                }
+                std::lock_guard lock(state->computePipelinesMutex);
+                if (objects != nullptr) {
+                    objects = state->computePipelines.try_emplace(key, objects).first->second;
+                    state->computePipelinesPrefetched.insert(key);
+                    counters.prefetched.fetch_add(1, std::memory_order_relaxed);
+                }
+                completion->set_value(objects);
+                state->computePipelinesBuilding.erase(key);
+            } catch (...) {
+                completion->set_exception(std::current_exception());
+            }
+        });
+    } catch (...) {
+        state->computePipelinesBuilding.erase(key);
+        throw;
+    }
+    if (!queued) {
+        state->computePipelinesBuilding.erase(key);
+        counters.dropped.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 bool VulkanDevice::ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (adoptDevice) GuestMemory::AssertGpuLockHeld("VulkanDevice::ImportGuestMemory");
     return Graphics::ImportMappedRanges(graphicsContext(), ranges, generation, adoptDevice);
@@ -2290,11 +2415,17 @@ void VulkanDevice::PrepareForReplacement() {
     Graphics::DestroyShadows(state->device);
     // The replacement's draws never find this device's pipelines (the store keys on the device), and
     // the device lives on until the driver stops: destroy them now rather than then.
+    state->computePrefetch.Stop();
     Graphics::ClearCachedPipelines(state->device);
-    std::lock_guard pipelines(state->computePipelinesMutex);
-    state->computePipelines.clear();
-}
+    {
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        state->computePipelines.clear();
+        state->computePipelinesBuilding.clear();
+        state->computePipelinesPrefetched.clear();
+    }
+    state->computePrefetch.Restart();
 
+}
 void VulkanDevice::WaitIdle() {
     APS5_LOG_CHARS_OUT_DEBUG("VulkanDevice::WaitIdle begin");
     RetirePresents(0);
@@ -5210,12 +5341,24 @@ VkPipeline VulkanDevice::splitComputePipeline(const Graphics::Context& context, 
 
 std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, VkDescriptorSetLayout setLayout, std::span<const std::uint32_t> layoutKey, VkShaderStageFlags pushStages, std::uint64_t programAddress) {
     const auto pipelineKey = ComputePipelineKey::Of(shader, pushStages != 0);
+    static const bool profilePrefetch = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (ParallelComputeCompile() && profilePrefetch) {
+        auto& counters = ComputePrefetchStats();
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto last = counters.lastReport.load(std::memory_order_relaxed);
+        if (now - last >= 10000 && counters.lastReport.compare_exchange_strong(last, now)) {
+            std::fprintf(stderr, "[gpu] compute pipeline prefetch: %llu prefetched, %llu dispatch hits, %llu dropped\n", static_cast<unsigned long long>(counters.prefetched.load()), static_cast<unsigned long long>(counters.hits.load()), static_cast<unsigned long long>(counters.dropped.load()));
+        }
+    }
     std::promise<std::shared_ptr<ComputePipelineObjects>> building;
     if (!pipelineKey.identity.Empty()) {
         std::shared_future<std::shared_ptr<ComputePipelineObjects>> other;
         {
             std::lock_guard pipelines(state->computePipelinesMutex);
-            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) return found->second;
+            if (const auto found = state->computePipelines.find(pipelineKey); found != state->computePipelines.end()) {
+                if (ParallelComputeCompile() && state->computePipelinesPrefetched.erase(pipelineKey) != 0) ComputePrefetchStats().hits.fetch_add(1, std::memory_order_relaxed);
+                return found->second;
+            }
             if (const auto pending = state->computePipelinesBuilding.find(pipelineKey); pending != state->computePipelinesBuilding.end()) other = pending->second;
             else state->computePipelinesBuilding.emplace(pipelineKey, building.get_future().share());
         }

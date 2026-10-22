@@ -402,6 +402,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         std::copy_n(packet.begin(), std::min(packet.size(), parked.packet.size()), parked.packet.begin());
         parked.registeredShader = registeredShader;
         parked.compiledResult = compiledResult;
+        localDevice->PrefetchComputePipeline(compiledResult);
         parked.keepVariant = keepVariant;
         parked.attachVariant = attachVariant;
         parked.shaderMemory = shaderMemory;
