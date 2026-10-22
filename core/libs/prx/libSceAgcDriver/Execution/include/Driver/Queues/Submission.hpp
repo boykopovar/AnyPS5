@@ -56,6 +56,8 @@ struct Submission {
     std::map<std::size_t, std::shared_ptr<IRenderingWait>> renderingWaits;
     std::map<std::size_t, std::size_t> conditionalEnds;
     RegisterLists registerLists;
+    std::vector<std::size_t> scanCursors;
+    bool scanAll = true;
     bool suspend = false;
     bool waitFree = false;
     bool holdsFlip = false;
