@@ -47,6 +47,11 @@ void CheckUnmountedCalls() {
     SaveDataIcon icon{};
     char buf[128]{};
     std::size_t gotSize = 0;
+    SaveDataMount3 nullMount{};
+    SaveDataMountResult mountResult{};
+    Check(sceSaveDataMount3(nullptr, &mountResult) == SaveDataErrorParameter, "mount3 null mount is PARAMETER");
+    Check(sceSaveDataMount3(&nullMount, nullptr) == SaveDataErrorParameter, "mount3 null result is PARAMETER");
+    Check(sceSaveDataMount3(&nullMount, &mountResult) == SaveDataErrorParameter, "mount3 null dir_name is PARAMETER");
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
     Check(sceSaveDataUmount2(0, &point) == SaveDataErrorNotMounted, "umount2 unmounted point is NOT_MOUNTED");
     Check(sceSaveDataLoadIcon(nullptr, &icon) == SaveDataErrorParameter, "loadIcon null point is PARAMETER");
