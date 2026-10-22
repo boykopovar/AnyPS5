@@ -72,7 +72,8 @@ float SampleAspect(AVRational sampleAspect) {
 
 float DisplayAspect(int width, int height, AVRational sampleAspect) {
     if (width <= 0 || height <= 0) return 0.0f;
-    return static_cast<float>(width * static_cast<double>(SampleAspect(sampleAspect)) / height);
+    const double pixel = sampleAspect.num > 0 && sampleAspect.den > 0 ? av_q2d(sampleAspect) : 1.0;
+    return static_cast<float>(width * pixel / height);
 }
 
 class FileReplacementStream {
