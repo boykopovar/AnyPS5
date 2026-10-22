@@ -11,6 +11,8 @@
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
+struct Array { void* storage; };
+struct Object { void* storage; };
 using NullCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
 using MismatchCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
 using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
@@ -27,6 +29,10 @@ void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
+void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
+void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value*, const Object*);
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value*, const Array*);
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value*, const Object*);
 int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullCallback, void*);
 int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, MismatchCallback, void*);
 int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatCallback, void*);
@@ -200,7 +206,7 @@ static void CheckScalarCopies(ValueAllocationTrace& trace) {
 }
 static void CheckCollectionCopies(ValueAllocationTrace& trace) {
     const auto baseline = trace.live.size();
-    for (int previous = -1; previous <= 7; ++previous) for (int type : {6, 7}) for (int budget = 0; budget <= 5; ++budget) {
+    for (bool specialized : {false, true}) for (int previous = -1; previous <= 7; ++previous) for (int type : {6, 7}) for (int budget = 0; budget <= 5; ++budget) {
         Value source; std::memset(&source, 0xa5, sizeof(source));
         _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&source, type);
         const auto sourcePayload = source.payload;
@@ -215,7 +221,15 @@ static void CheckCollectionCopies(ValueAllocationTrace& trace) {
         }
         const auto notifications = trace.notifications;
         trace.budget = budget;
-        if (previous < 0) _ZN3sce4Json5ValueC1ERKS1_(&destination, &source);
+        if (specialized && type == 6) {
+            const auto* array = reinterpret_cast<const Array*>(source.payload);
+            if (previous < 0) _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(&destination, array);
+            else _ZN3sce4Json5Value3setERKNS0_5ArrayE(&destination, array);
+        } else if (specialized) {
+            const auto* object = reinterpret_cast<const Object*>(source.payload);
+            if (previous < 0) _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(&destination, object);
+            else _ZN3sce4Json5Value3setERKNS0_6ObjectE(&destination, object);
+        } else if (previous < 0) _ZN3sce4Json5ValueC1ERKS1_(&destination, &source);
         else _ZN3sce4Json5ValueaSERKS1_(&destination, &source);
         trace.budget = -1;
         const auto threshold = type == 6 ? 2 : 3;
@@ -236,6 +250,48 @@ static void CheckCollectionCopies(ValueAllocationTrace& trace) {
         Require(trace.live.size() == baseline, "Collection copies must reclaim partial handles and replaced storage");
     }
 }
+static void CheckMissingCollections(ValueAllocationTrace& trace) {
+    const auto baseline = trace.live.size();
+    const Array array{}; const Object object{};
+    for (int previous = -1; previous <= 7; ++previous) for (bool useArray : {false, true}) {
+        Value value; std::memset(&value, 0xa5, sizeof(value));
+        if (previous >= 0) {
+            _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&value, previous);
+            Require(Register(value, 0, &trace, true) == 0, "Prepare missing-source collection metadata");
+        }
+        const auto original = value;
+        const auto requests = trace.requests.size();
+        const auto notifications = trace.notifications;
+        trace.budget = 0;
+        if (previous < 0) {
+            if (useArray) _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(&value, &array);
+            else _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(&value, &object);
+        } else {
+            if (useArray) _ZN3sce4Json5Value3setERKNS0_5ArrayE(&value, &array);
+            else _ZN3sce4Json5Value3setERKNS0_6ObjectE(&value, &object);
+        }
+        trace.budget = -1;
+        Require(trace.requests.size() == requests && trace.notifications == notifications, "A missing input header must not allocate or notify");
+        if (previous >= 0) Require(std::memcmp(&value, &original, sizeof(value)) == 0, "A missing input header must preserve the entire destination");
+        else Require(value.type == 0 && !value.parent && !value.auxiliary && value.payload == original.payload && value.reserved == original.reserved, "Construction from a missing header must initialize null metadata and preserve inactive bytes");
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live.size() == baseline, "Missing collection inputs must not leak ownership");
+    }
+    for (int type : {6, 7}) {
+        Value value; std::memset(&value, 0xa5, sizeof(value));
+        _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&value, type);
+        Require(Register(value, 0, &trace, true) == 0, "Prepare collection self-setting metadata");
+        const auto handle = value.payload;
+        const auto* header = *reinterpret_cast<void* const*>(handle);
+        auto* auxiliary = value.auxiliary;
+        if (type == 6) _ZN3sce4Json5Value3setERKNS0_5ArrayE(&value, reinterpret_cast<const Array*>(handle));
+        else _ZN3sce4Json5Value3setERKNS0_6ObjectE(&value, reinterpret_cast<const Object*>(handle));
+        Check(value, type, trace);
+        Require(value.payload == handle && *reinterpret_cast<void* const*>(handle) != header && value.auxiliary == auxiliary, "Collection self-setting must replace storage while retaining the handle and callback metadata");
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live.size() == baseline, "Collection self-setting must release replaced storage");
+    }
+}
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
@@ -244,6 +300,7 @@ int main() {
     CheckMetadata(trace);
     CheckScalarCopies(trace);
     CheckCollectionCopies(trace);
+    CheckMissingCollections(trace);
     for (int target = 0; target <= 7; ++target) for (int budget = 0; budget <= 4; ++budget) {
         Value value; std::memset(&value, 0xa5, sizeof(value));
         trace.budget = budget;

@@ -1001,13 +1001,6 @@ void CopyObject(Object& destination, const Object& source) {
     destination = pending;
 }
 
-void CopyArray(Array*& destination, const Array* source) {
-    ConstructHandle(destination, [&](Array& value) { CopyArray(value, *source); });
-}
-
-void CopyObject(Object*& destination, const Object* source) {
-    ConstructHandle(destination, [&](Object& value) { CopyObject(value, *source); });
-}
 
 void AssignReal(Node& n, double value);
 
@@ -2092,15 +2085,15 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value* self, const String* te
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value* self, const Array* array) {
     Construct(*self);
-    CopyArray(self->array, array);
-    self->type = self->array ? TypeArray : TypeNull;
-    BindChildren(*self);
+    if (!array->items) return;
+    SetType(*self, TypeArray);
+    if (self->array) AssignArray(*self->array, *array);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value* self, const Object* object) {
     Construct(*self);
-    CopyObject(self->object, object);
-    self->type = self->object ? TypeObject : TypeNull;
-    BindChildren(*self);
+    if (!object->items) return;
+    SetType(*self, TypeObject);
+    if (self->object) AssignObject(*self->object, *object);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) { CopyInto(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) { Destroy(*self); }
@@ -2139,23 +2132,15 @@ int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* t
     if (self->type == TypeString) AssignText(*self->string, copy, true);
     return 0;
 }
-int APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
-    Array* copy = nullptr;
-    CopyArray(copy, array);
-    Clear(NodeOf(*self));
-    self->type = copy ? TypeArray : TypeNull;
-    self->array = copy;
-    BindChildren(*self);
-    return 0;
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
+    if (!array->items) return;
+    SetType(*self, TypeArray);
+    if (self->array) AssignArray(*self->array, *array);
 }
-int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* object) {
-    Object* copy = nullptr;
-    CopyObject(copy, object);
-    Clear(NodeOf(*self));
-    self->type = copy ? TypeObject : TypeNull;
-    self->object = copy;
-    BindChildren(*self);
-    return 0;
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* object) {
+    if (!object->items) return;
+    SetType(*self, TypeObject);
+    if (self->object) AssignObject(*self->object, *object);
 }
 int APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
     if (self != other) AssignNode(NodeOf(*self), NodeOf(*other));
