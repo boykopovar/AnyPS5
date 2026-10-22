@@ -2895,15 +2895,15 @@ void sweepMirrors() {
     state.pinnedVersion = state.version;
 }
 
-void releaseImportedMirrors(const Context& context, const std::vector<std::uint64_t>& imported) {
+void releaseImportedMirrors(const Context& context, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported) {
     if (imported.empty()) return;
     std::vector<std::shared_ptr<ImageMirror>> released;
     auto& state = Mirrors();
     std::lock_guard lock(state.mutex);
     if (state.device != context.device || state.entries.empty()) return;
-    for (const auto base : imported) {
+    for (const auto& [base, bytes] : imported) {
         const auto found = state.entries.find(base);
-        if (found == state.entries.end() || !found->second->heap) continue;
+        if (found == state.entries.end() || !found->second->heap || found->second->reserved > bytes) continue;
         state.heapImportedBytes += found->second->accounted;
         unlistMirror(state, *found->second);
         ++state.heapImported;
@@ -3902,7 +3902,7 @@ void GuestBufferMemory::AcquireRegistered() {
         // must not happen under it.
         regions.reserve(lease.size());
         std::vector<AddressCopy> copies;
-        std::vector<std::uint64_t> imported;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> imported;
         const HostImport* covering = nullptr;
         std::uint64_t coveredBegin = 0;
         std::uint64_t coveredEnd = 0;
@@ -3931,13 +3931,15 @@ void GuestBufferMemory::AcquireRegistered() {
             }
             lap(timing.importsUs, at);
             if (!pieces.empty()) {
+                std::uint64_t covered = 0;
                 for (const auto& piece : pieces) {
                     Region part{piece.begin, piece.end, range->writable, {}, nullptr};
                     part.hostBacked = true;
                     part.direct = piece.entry;
                     regions.push_back(std::move(part));
+                    covered += piece.end - piece.begin;
                 }
-                imported.push_back(range->address);
+                imported.emplace_back(range->address, covered);
                 continue;
             }
             if (entry != nullptr) {
@@ -3945,7 +3947,7 @@ void GuestBufferMemory::AcquireRegistered() {
                 // Reused by Upload while no import was dropped since (see importsEpoch).
                 region.direct = entry;
                 regions.push_back(std::move(region));
-                imported.push_back(range->address);
+                imported.emplace_back(range->address, range->bytes);
                 continue;
             }
             if (mirrorsEnabled()) {
