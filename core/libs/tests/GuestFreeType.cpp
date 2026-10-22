@@ -461,6 +461,14 @@ static void SizeMatches(const GuestSizeRec* size, FT_Size native) {
     Require(a.ascender == b.ascender && a.descender == b.descender && a.height == b.height && a.max_advance == b.max_advance);
 }
 
+static bool OwnsSize(const GuestFace& face, const GuestSizeRec* size) {
+    if (size == &face.size) return true;
+    for (const auto& entry : face.sizes) {
+        if (size == &entry.rec) return true;
+    }
+    return false;
+}
+
 struct SizeEvents {
     std::vector<void*> sizes;
     std::vector<std::array<int, 4>> calls;
@@ -484,6 +492,10 @@ static void NativeMultipleSizeFinalizer(void* object) {
 static void APS5_VABI GuestMultipleSizeFinalizer(void* object) {
     auto* size = static_cast<GuestSizeRec*>(object);
     auto* face = static_cast<GuestFaceRec*>(size->face);
+    const auto& owner = *static_cast<GuestFace*>(face->internal);
+    Require(OwnsSize(owner, size));
+    if (face->size) Require(OwnsSize(owner, face->size));
+    SizeMatches(size, static_cast<FT_Size>(size->internal));
     auto& events = *static_cast<SizeEvents*>(size->generic.data);
     events.calls.push_back({events.Index(size), events.Index(face->size), size->metrics.y_ppem, face->glyph == nullptr});
 }
@@ -646,9 +658,18 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
                     Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
                     Require(actual.calls.empty() && expected.calls.empty());
                 }
+                if (cleanup == 2 && count == 5) {
+                    Require(sizes.size() > 2);
+                    Require(FT_Activate_Size_nid_postfix(sizes[1]) == FT_Activate_Size(originals[1]));
+                    Require(face->size == sizes[1] && native->size == originals[1]);
+                }
                 if (cleanup != 2) Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(native) == 0);
                 Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(oracle) == 0);
                 Require(actual.calls == expected.calls && !actual.calls.empty() && actual.calls.back()[0] == 100);
+                if (cleanup == 2 && count == 5) {
+                    Require(actual.calls.size() > 3 && actual.calls[0][1] == 1 && actual.calls[1][0] == 1);
+                    for (std::size_t index = 2; index + 1 < actual.calls.size(); ++index) Require(actual.calls[index][1] == 1);
+                }
                 ++scenarios;
             }
         }
