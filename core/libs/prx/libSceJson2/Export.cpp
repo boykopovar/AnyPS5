@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <list>
+#include <iterator>
 #include <locale>
 #include <mutex>
 #include <memory>
@@ -49,12 +50,13 @@ struct Items : std::list<T> { Value* owner = nullptr; };
 struct Text { char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
 static_assert(sizeof(Text) == 24);
 struct String { Text* text; };
-struct Array { Items<Value>* items; };
+struct ArrayStorage;
+struct ArrayLink;
+struct Array { ArrayStorage* items; };
 struct Pair;
 struct Object { Items<Pair>* items; };
 struct ArrayIteratorState {
-    std::list<Value>::iterator position;
-    std::list<Value>::iterator end;
+    ArrayLink* position;
 };
 struct ArrayIterator { ArrayIteratorState* state; };
 struct ObjectIteratorState {
@@ -151,6 +153,7 @@ struct Globals {
     AllocationContext allocation{};
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
+    std::uint64_t allocationFailures = 0;
 };
 
 Globals& State() {
@@ -179,6 +182,9 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
     if (!memory) {
         const auto notify = reinterpret_cast<void (APS5_VABI*)(void*, int, std::size_t, void*)>(table[4]);
         notify(context.allocator, JsonErrorOutOfMemory, size, context.userData);
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        ++state.allocationFailures;
     }
     return memory;
 }
@@ -275,17 +281,33 @@ std::string_view View(const String& string) {
     return {Characters(string), string.text ? string.text->length : 0};
 }
 
-bool Grow(Text& text, std::size_t requested) {
-    if (requested > std::numeric_limits<std::uint32_t>::max())
-        throw std::length_error("sce::Json::String: capacity exceeds 32 bits");
-    if (requested <= text.capacity) return true;
-    std::uint32_t capacity = static_cast<std::uint32_t>(requested);
+std::uint32_t CompiledSdk() {
     std::uint32_t sdk = std::numeric_limits<std::uint32_t>::max();
     try {
         const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
         if (process) std::memcpy(&sdk, process + 0x10, sizeof(sdk));
     } catch (const std::runtime_error&) {
     }
+    return sdk;
+}
+
+bool ModernValues() {
+    const auto sdk = CompiledSdk();
+    return sdk >= 0x06000000 || (sdk >= 0x05508700 && sdk < 0x05510000);
+}
+
+std::uint64_t AllocationFailures() {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    return state.allocationFailures;
+}
+
+bool Grow(Text& text, std::size_t requested) {
+    if (requested > std::numeric_limits<std::uint32_t>::max())
+        throw std::length_error("sce::Json::String: capacity exceeds 32 bits");
+    if (requested <= text.capacity) return true;
+    std::uint32_t capacity = static_cast<std::uint32_t>(requested);
+    const auto sdk = CompiledSdk();
     if (sdk > 0x044fffff) {
         capacity |= 0x10;
         if (capacity / 3 < text.capacity / 2) {
@@ -355,7 +377,108 @@ void Construct(String& string, const String& source) {
     Construct(string, std::string_view{});
     AssignText(string, View(source), true);
 }
-void Construct(Array& a) { a.items = new Items<Value>(); }
+struct GuestOutOfMemory {};
+
+void Construct(Value& value);
+void Destroy(Value& value);
+void CopyInto(Value& destination, const Value& source);
+
+struct ArrayLink {
+    ArrayLink* previous;
+    ArrayLink* next;
+    Value value;
+};
+static_assert(sizeof(ArrayLink) == 48 && offsetof(ArrayLink, value) == 16);
+
+struct ArrayStorage {
+    ArrayLink* head;
+    std::size_t count;
+    std::uint64_t reserved;
+
+    struct iterator {
+        using value_type = Value;
+        using difference_type = std::ptrdiff_t;
+        using pointer = Value*;
+        using reference = Value&;
+        using iterator_category = std::bidirectional_iterator_tag;
+        ArrayLink* node = nullptr;
+        Value& operator*() const { return node->value; }
+        Value* operator->() const { return &node->value; }
+        iterator& operator++() { node = node->next; return *this; }
+        iterator operator++(int) { const auto previous = *this; ++*this; return previous; }
+        iterator& operator--() { node = node->previous; return *this; }
+        iterator operator--(int) { const auto previous = *this; --*this; return previous; }
+        bool operator==(const iterator&) const = default;
+    };
+
+    Value* Owner() const {
+        Value* owner = nullptr;
+        if (ModernValues()) std::memcpy(&owner, reinterpret_cast<const std::byte*>(this) + 24, sizeof(owner));
+        return owner;
+    }
+    void SetOwner(Value* owner) {
+        if (ModernValues()) std::memcpy(reinterpret_cast<std::byte*>(this) + 24, &owner, sizeof(owner));
+    }
+    iterator begin() const { return {head ? head->next : nullptr}; }
+    iterator end() const { return {head}; }
+    bool empty() const { return !count; }
+    std::size_t size() const { return count; }
+    Value& front() { return head->next->value; }
+    Value& back() { return head->previous->value; }
+    const Value& front() const { return head->next->value; }
+    const Value& back() const { return head->previous->value; }
+    Value& emplace_back() {
+        if (!head) throw GuestOutOfMemory{};
+        auto* link = static_cast<ArrayLink*>(Allocate(sizeof(ArrayLink)));
+        if (!link) throw GuestOutOfMemory{};
+        Construct(link->value);
+        link->previous = head->previous;
+        link->next = head;
+        head->previous->next = link;
+        head->previous = link;
+        ++count;
+        return link->value;
+    }
+    void ReleaseContents() {
+        if (!head) return;
+        auto* link = head->next;
+        while (link != head) {
+            auto* next = link->next;
+            Destroy(link->value);
+            Release(link);
+            link = next;
+        }
+    }
+    void clear() {
+        ReleaseContents();
+        if (head) { head->previous = head; head->next = head; }
+        count = 0;
+    }
+    void PopBack() {
+        if (!head || !count) return;
+        auto* link = head->previous;
+        link->previous->next = head;
+        head->previous = link->previous;
+        Destroy(link->value);
+        Release(link);
+        --count;
+    }
+};
+static_assert(sizeof(ArrayStorage) == 24 && sizeof(ArrayIteratorState) == 8);
+
+ArrayLink* NewArrayHead() {
+    auto* head = static_cast<ArrayLink*>(Allocate(sizeof(ArrayLink)));
+    if (head) { head->previous = head; head->next = head; }
+    return head;
+}
+
+void Construct(Array& array) {
+    array.items = static_cast<ArrayStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (!array.items) return;
+    array.items->count = 0;
+    array.items->head = NewArrayHead();
+    array.items->SetOwner(nullptr);
+}
 void Construct(Object& o) { o.items = new Items<Pair>(); }
 void Destroy(Value& v);
 void CopyInto(Value& destination, const Value& source);
@@ -368,8 +491,11 @@ void Destroy(String& s) {
 }
 void Destroy(Array& a) {
     if (!a.items) return;
-    for (auto& item : *a.items) Destroy(item);
-    delete a.items;
+    a.items->ReleaseContents();
+    Release(a.items->head);
+    a.items->head = reinterpret_cast<ArrayLink*>(std::uintptr_t{0xffffffff});
+    a.items->count = std::numeric_limits<std::size_t>::max();
+    Release(a.items);
     a.items = nullptr;
 }
 void Destroy(Object& o) {
@@ -413,8 +539,8 @@ Handlers HandlersOf(const Node& n) {
 }
 
 void BindChildren(Node& n) {
-    if (n.type == TypeArray && n.array) {
-        n.array->items->owner = &n;
+    if (n.type == TypeArray && n.array && n.array->items) {
+        n.array->items->SetOwner(&n);
         for (auto& item : *n.array->items) item.parent = &n;
     }
     if (n.type == TypeObject && n.object) {
@@ -500,15 +626,27 @@ void Construct(T*& destination, const TArgs&... arguments) {
 
 void CopyArray(Array& destination, const Array& source) {
     Array pending{};
+    if (!source.items) { destination = pending; return; }
     Construct(pending);
+    if (!pending.items) { destination = pending; return; }
+    auto* originalHead = pending.items->head;
+    pending.items->head = NewArrayHead();
     try {
-        for (const auto& item : *source.items) {
-            CopyInto(pending.items->emplace_back(), item);
+        if (pending.items->head) {
+            for (const auto& item : *source.items) {
+                try {
+                    CopyInto(pending.items->emplace_back(), item);
+                } catch (const GuestOutOfMemory&) {
+                    break;
+                }
+            }
         }
     } catch (...) {
+        Release(originalHead);
         Destroy(pending);
         throw;
     }
+    Release(originalHead);
     destination = pending;
 }
 
@@ -1065,6 +1203,7 @@ private:
                 skip();
                 if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
                 for (;;) {
+                    if (!out.array->items) throw GuestOutOfMemory{};
                     auto& item = out.array->items->emplace_back();
                     Construct(item);
                     item.parent = &out;
@@ -1112,6 +1251,9 @@ int ParseValue(Value* out, Parser& parser) {
     bool parsedOk = false;
     try {
         parsedOk = parser.Parse(parsed);
+    } catch (const GuestOutOfMemory&) {
+        Clear(parsed);
+        return JsonErrorOutOfMemory;
     } catch (...) {
         Clear(parsed);
         throw;
@@ -1287,66 +1429,98 @@ void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
+    if (!self->items || !self->items->head) return;
+    const auto failures = AllocationFailures();
     Value copy{};
-    CopyInto(copy, *value);
+    copy.parent = self->items->Owner();
     try {
-        self->items->push_back(copy);
-        auto& inserted = self->items->back();
-        inserted.parent = self->items->owner;
-        BindChildren(inserted);
+        AssignNode(copy, *value);
+        auto& inserted = self->items->emplace_back();
+        inserted.parent = self->items->Owner();
+        TransferPayload(inserted, copy);
+    } catch (const GuestOutOfMemory&) {
     } catch (...) {
         Destroy(copy);
         throw;
     }
+    Destroy(copy);
+    if (AllocationFailures() != failures) self->items->PopBack();
 }
-ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) { result->state = new ArrayIteratorState{self->items->begin(), self->items->end()}; return result; }
-ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) { result->state = new ArrayIteratorState{self->items->end(), self->items->end()}; return result; }
-bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) { return self->items->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array* self) { return self->items->size(); }
+
+ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
+    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
+    if (result->state) result->state->position = self->items && self->items->head ? self->items->head->next : nullptr;
+    if (self->items && (!self->items->head || !self->items->head->next)) {
+        Release(result->state);
+        result->state = nullptr;
+    }
+    return result;
+}
+ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) {
+    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
+    if (result->state) result->state->position = self->items ? self->items->head : nullptr;
+    if (self->items && !self->items->head) {
+        Release(result->state);
+        result->state = nullptr;
+    }
+    return result;
+}
+bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) { return !self->items || self->items->empty(); }
+std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array* self) { return self->items ? self->items->size() : 0; }
 void APS5_VABI _ZN3sce4Json5Array5clearEv(Array* self) {
-    for (auto& item : *self->items) Destroy(item);
+    if (!self->items) return;
     self->items->clear();
 }
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array* self) {
-    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::front: empty array");
+    if (!self->items) return &Defaults(TypeNull);
+    if (!self->items->head) NotImplemented_nid_no_patch(__func__);
     return &self->items->front();
 }
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
-    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::back: empty array");
+    if (!self->items) return &Defaults(TypeNull);
+    if (!self->items->head) return reinterpret_cast<const Value*>(16);
     return &self->items->back();
 }
 void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
+    if (!self->items || !self->items->head) NotImplemented_nid_no_patch(__func__);
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
-    Destroy(self->items->front());
-    self->items->pop_front();
+    auto* link = self->items->head->next;
+    self->items->head->next = link->next;
+    link->next->previous = self->items->head;
+    Destroy(link->value);
+    Release(link);
+    --self->items->count;
 }
-void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { delete self->state; self->state = nullptr; }
+void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { Release(self->state); self->state = nullptr; }
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {
-    if (self->state && self->state->position != self->state->end) ++self->state->position;
+    if (self->state && self->state->position) self->state->position = self->state->position->next;
     return self;
 }
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const ArrayIterator* self) {
-    if (!self->state || self->state->position == self->state->end) throw std::out_of_range("sce::Json::Array::iterator: no current element");
-    return &*self->state->position;
+    if (!self->state) return const_cast<Value*>(&Defaults(TypeNull));
+    return reinterpret_cast<Value*>(reinterpret_cast<std::uintptr_t>(self->state->position) + 16);
 }
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const ArrayIterator* self) { return _ZNK3sce4Json5Array8iteratordeEv(self); }
 bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const ArrayIterator* self, const ArrayIterator* other) {
-    if (!self->state || !other->state) return false;
-    const Value* left = self->state && self->state->position != self->state->end ? &*self->state->position : nullptr;
-    const Value* right = other->state && other->state->position != other->state->end ? &*other->state->position : nullptr;
-    return left != right;
+    return self->state && other->state && self->state->position != other->state->position;
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(ArrayIterator* self, const ArrayIterator* other) {
-    self->state = other->state ? new ArrayIteratorState(*other->state) : nullptr;
+    self->state = other->state ? static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState))) : nullptr;
+    if (self->state) *self->state = *other->state;
 }
-ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::size_t count) {
-    if (self->state) {
-        while (count && self->state->position != self->state->end) {
-            ++self->state->position;
-            --count;
-        }
-    }
-    return self;
+void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::size_t count) {
+    if (!self->state || !self->state->position || !count) return;
+    auto* start = self->state->position;
+    auto* node = start;
+    std::size_t traversed = 0;
+    do {
+        node = node->next;
+        ++traversed;
+    } while (node && node != start && traversed < count);
+    if (node == start) count %= traversed;
+    else { self->state->position = node; return; }
+    while (count--) node = node->next;
+    self->state->position = node;
 }
 
 void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) { Construct(*self); }
@@ -1847,33 +2021,25 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
     }
 }
 
-ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* result, ArrayIterator* self, int) {
-    _ZN3sce4Json5Array8iteratorC1ERKS2_(result, self);
-    _ZN3sce4Json5Array8iteratorppEv(self);
-    return result;
+ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* self, int) {
+    return _ZN3sce4Json5Array8iteratorppEv(self);
 }
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratoraSERKS2_(ArrayIterator* self, const ArrayIterator* other) {
     if (self->state) {
-        if (other->state && other->state->position != other->state->end) {
-            *self->state = *other->state;
-        } else {
-            delete self->state;
-            self->state = nullptr;
-        }
+        if (other->state && other->state->position) *self->state = *other->state;
+        else { Release(self->state); self->state = nullptr; }
     }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
-    self->state = new ArrayIteratorState{};
+    self->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
+    if (self->state) self->state->position = nullptr;
 }
 
-ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* result, ObjectIterator* self, int) {
-    auto state = self->state ? std::make_unique<ObjectIteratorState>(*self->state) : nullptr;
-    _ZN3sce4Json6Object8iteratorppEv(self);
-    result->state = state.release();
-    return result;
+ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* self, int) {
+    return _ZN3sce4Json6Object8iteratorppEv(self);
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(ObjectIterator* self, const ObjectIterator* other) {

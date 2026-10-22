@@ -141,15 +141,15 @@ void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair*);
 Iterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(Iterator*, Object*, const Pair*);
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(Iterator*);
 Iterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(Iterator*, const Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(Iterator*, Iterator*, int);
+Iterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(Iterator*, int);
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(Iterator*);
 Iterator* APS5_VABI _ZN3sce4Json5Array8iteratoraSERKS2_(Iterator*, const Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(Iterator*, Iterator*, int);
+Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(Iterator*, int);
 void APS5_VABI _ZN3sce4Json12MemAllocator11notifyErrorEimPv(void*, int, std::size_t, void*);
 bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value*);
 void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value*, Value*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(Iterator*, std::size_t);
+void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(Iterator*, std::size_t);
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(Iterator*, const Iterator*);
 Iterator* APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(Iterator*, std::size_t);
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object*, const String*);
@@ -347,19 +347,14 @@ static void ObjectsAndArrays() {
     for (; _ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end); _ZN3sce4Json5Array8iteratorppEv(&it)) ++visited;
     Require(visited == 2);
     Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&array)));
+    _ZN3sce4Json5Array8iteratorD1Ev(&it);
     _ZNK3sce4Json5Array5beginEv(&it, &array);
     Require(_ZNK3sce4Json5Array8iteratorptEv(&it) == _ZNK3sce4Json5Array8iteratordeEv(&it));
     Array copy{};
     _ZN3sce4Json5ArrayC1ERKS1_(&copy, &array);
     _ZN3sce4Json5Array5clearEv(&array);
     Require(_ZNK3sce4Json5Array4sizeEv(&array) == 0);
-    bool threw = false;
-    try {
-        _ZNK3sce4Json5Array5frontEv(&array);
-    } catch (const std::out_of_range&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(_ZNK3sce4Json5Array5frontEv(&array) == _ZNK3sce4Json5Array4backEv(&array));
     Require(_ZNK3sce4Json5Array4sizeEv(&copy) == 2);
     Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&copy)));
     Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array4backEv(&copy)) == 2.5);
@@ -368,13 +363,15 @@ static void ObjectsAndArrays() {
     Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array5frontEv(&copy)) == 2.5);
     _ZN3sce4Json5Array9pop_frontEv(&copy);
     Require(_ZNK3sce4Json5Array5emptyEv(&copy));
-    threw = false;
+    bool threw = false;
     try {
         _ZN3sce4Json5Array9pop_frontEv(&copy);
     } catch (const std::out_of_range&) {
         threw = true;
     }
     Require(threw && _ZNK3sce4Json5Array5emptyEv(&copy));
+    _ZN3sce4Json5Array8iteratorD1Ev(&it);
+    _ZN3sce4Json5Array8iteratorD1Ev(&end);
     _ZN3sce4Json5ArrayD1Ev(&copy);
     _ZN3sce4Json5ArrayD1Ev(&array);
 }
@@ -430,7 +427,8 @@ static void ArrayIteratorCopies() {
     Iterator previous{};
     while (_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end)) {
         _ZN3sce4Json5Array8iteratorD1Ev(&previous);
-        Require(_ZN3sce4Json5Array8iteratorppEi(&previous, &it, 0) == &previous);
+        _ZN3sce4Json5Array8iteratorC1ERKS2_(&previous, &it);
+        Require(_ZN3sce4Json5Array8iteratorppEi(&it, 0) == &it);
         seen.push_back(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&previous)));
         Require(_ZNK3sce4Json5Array8iteratorneERKS2_(&previous, &it));
     }
@@ -438,9 +436,14 @@ static void ArrayIteratorCopies() {
     Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end));
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&previous)) == 3);
     Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &end) == &it);
-    Require(it.position == nullptr);
+    Require(it.position != nullptr && !_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &end));
     Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &begin) == &it);
-    Require(it.position == nullptr);
+    Require(it.position != nullptr);
+    Iterator empty{};
+    _ZN3sce4Json5Array8iteratorC1Ev(&empty);
+    Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &empty) == &it && it.position == nullptr);
+    Require(_ZN3sce4Json5Array8iteratoraSERKS2_(&it, &begin) == &it && it.position == nullptr);
+    _ZN3sce4Json5Array8iteratorD1Ev(&empty);
     Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&it, &begin));
 
     _ZN3sce4Json5Array8iteratorD1Ev(&previous);
@@ -542,11 +545,8 @@ static void ObjectIteratorCopies() {
     Require(!_ZNK3sce4Json6Object8iteratoreqERKS2_(&begin, &end));
     Require(_ZNK3sce4Json6Object8iteratorneERKS2_(&begin, &end));
 
-    Iterator post{};
-    Require(_ZN3sce4Json6Object8iteratorppEi(&post, &begin, 0) == &post);
-    Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&post)->key), "one") == 0);
+    Require(_ZN3sce4Json6Object8iteratorppEi(&begin, 0) == &begin);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&begin)->key), "two") == 0);
-    _ZN3sce4Json6Object8iteratorD1Ev(&post);
 
     Iterator assigned{};
     _ZN3sce4Json6Object8iteratorC1Ev(&assigned);
@@ -768,14 +768,16 @@ static void ArrayIteratorAdvance() {
     _ZNK3sce4Json5Array5beginEv(&begin, &array);
     Iterator copy{};
     _ZN3sce4Json5Array8iteratorC1ERKS2_(&copy, &begin);
-    Require(_ZN3sce4Json5Array8iterator7advanceEm(&copy, 3) == &copy);
+    _ZN3sce4Json5Array8iterator7advanceEm(&copy, 3);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&copy)) == 30);
     Iterator end{};
     _ZNK3sce4Json5Array3endEv(&end, &array);
     _ZN3sce4Json5Array8iterator7advanceEm(&copy, std::numeric_limits<std::size_t>::max());
+    Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &begin));
+    _ZN3sce4Json5Array8iterator7advanceEm(&copy, 5);
     Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &end));
     _ZN3sce4Json5Array8iteratorppEv(&copy);
-    Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &end));
+    Require(!_ZNK3sce4Json5Array8iteratorneERKS2_(&copy, &begin));
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&begin)) == 0);
     _ZN3sce4Json5Array8iteratorD1Ev(&end);
     _ZN3sce4Json5Array8iteratorD1Ev(&begin);

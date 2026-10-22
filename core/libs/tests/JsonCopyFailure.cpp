@@ -248,7 +248,7 @@ int main() {
                 ++failures;
             }
             allocationBudget = -1;
-            Require(succeeded == (activeBudget == 1), "iterator allocation failure ignored");
+            Require(succeeded == (!objectIterator || activeBudget == 1), "Host iterator allocation boundary changed");
             if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
             if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
             else _ZN3sce4Json5Array8iteratorD1Ev(&copy);
