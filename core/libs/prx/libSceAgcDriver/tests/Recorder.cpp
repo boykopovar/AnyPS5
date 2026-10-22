@@ -1567,6 +1567,26 @@ void afterRecordedWorkTests(const Device& device, Recorder& recorder) {
     Require(seen == 1, "an action ran before the completion label recorded ahead of it");
 }
 
+void completionWaitTests(const Device& device, Recorder& recorder) {
+    alignas(64) static std::uint32_t memory[16];
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    recorder.Sync();
+    const std::array<std::byte, 4> gpuValue{std::byte{5}, std::byte{0}, std::byte{0}, std::byte{0}};
+    auto ran = std::make_shared<bool>(false);
+    recorder.NotePendingWrite(base, sizeof(memory));
+    recorder.AfterCompletions(base, gpuValue, 7, 0, true);
+    Require(recorder.AfterRecordedWork([ran] { *ran = true; }) && Recorder::PendingCompletionLabels() != 0, "completion wait: the action behind the open batch is not pending");
+    CompletePendingCpuWrites(device.GetContext(), base, sizeof(memory));
+    Require(!*ran && !recorder.Idle(), "completion wait: a reader of a GPU-stored label waited for a batch whose only completion action writes no memory");
+    recorder.Sync();
+    Require(*ran && recorder.Idle(), "completion wait: the action did not run at the sync");
+    const std::array<std::byte, 4> cpuValue{std::byte{9}, std::byte{0}, std::byte{0}, std::byte{0}};
+    recorder.NotePendingWrite(base, sizeof(memory));
+    recorder.AfterCompletions(base + 4u, cpuValue, 8, 0, false);
+    CompletePendingCpuWrites(device.GetContext(), base, sizeof(memory));
+    Require(memory[1] == 9u && Recorder::PendingCompletionLabels() == 0, "completion wait: a reader of a label stored behind a completion did not wait for that store");
+}
+
 int gpuTimingCompletionTests(const Device& device, bool incomplete) {
     const auto& context = device.GetContext();
     if (!device.Timestamps()) {
@@ -12697,6 +12717,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--copied-direct-only") {
             copiedDirectOrderingTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--completion-wait-only") {
+            completionWaitTests(device, recorder);
+            std::cout << "Completion wait tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-write-snapshot-only") {
