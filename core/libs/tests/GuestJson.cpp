@@ -1003,12 +1003,6 @@ static StoredInitParameter2 Stored(const std::uint8_t* parameter) {
     return stored;
 }
 
-static bool Untouched(const std::uint8_t* parameter, std::size_t from) {
-    for (std::size_t i = from; i < 40; ++i)
-        if (parameter[i] != 0xff) return false;
-    return true;
-}
-
 static void InitParameters() {
     using Constructor = void (APS5_VABI*)(void*);
     for (Constructor construct : {_ZN3sce4Json14InitParameter2C1Ev, _ZN3sce4Json14InitParameter2C2Ev}) {
@@ -1020,11 +1014,11 @@ static void InitParameters() {
         Require(stored.specialFloatFormatType == 2);
         Require(stored.reserved[0] == 0 && stored.reserved[1] == 0 && stored.reserved[2] == 0);
 
-        int allocParam = 0;
+        JsonTest::Allocator allocParam;
         int userData = 0;
         _ZN3sce4Json14InitParameter217setFileBufferSizeEm(parameter, 8192);
         _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22SpecialFloatFormatTypeE(parameter, 2);
-        _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(parameter, &allocParam, &userData);
+        _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(parameter, &allocParam, &userData);
         stored = Stored(parameter);
         Require(stored.allocator == &allocParam && stored.userData == &userData && stored.fileBufferSize == 8192);
         Require(stored.specialFloatFormatType == 2);
@@ -1040,15 +1034,7 @@ static void InitParameters() {
         _ZN3sce4Json11InitializerD1Ev(initializer);
     }
 
-    alignas(16) std::uint8_t rttiParameter[40];
-    std::memset(rttiParameter, 0xff, sizeof(rttiParameter));
-    int allocParam = 0;
-    int userData = 0;
-    _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(rttiParameter, &allocParam, &userData, 4096);
-    void* rttiStored[3]{};
-    std::memcpy(rttiStored, rttiParameter, sizeof(rttiStored));
-    Require(rttiStored[0] == &allocParam && rttiStored[1] == &userData && reinterpret_cast<std::uintptr_t>(rttiStored[2]) == 4096);
-    Require(Untouched(rttiParameter, sizeof(rttiStored)));
+
 }
 
 static void ValueClear() {

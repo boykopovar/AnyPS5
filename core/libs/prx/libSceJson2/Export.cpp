@@ -87,6 +87,15 @@ struct Node {
 };
 
 using NullAccessCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
+using RttiAllocate = void* (APS5_VABI*)(std::size_t, void*);
+using RttiFree = void (APS5_VABI*)(void*, void*);
+using RttiNotify = void (APS5_VABI*)(int, std::size_t, void*);
+
+struct AllocParamRtti {
+    RttiAllocate allocate;
+    RttiFree free;
+    RttiNotify notify;
+};
 
 struct Globals {
     std::mutex mutex;
@@ -95,12 +104,48 @@ struct Globals {
     std::int32_t floatFormat = 2;
     bool floatFormatEnabled = false;
     bool initialized = false;
+    AllocParamRtti rtti{};
 };
 
 Globals& State() {
     static Globals globals;
     return globals;
 }
+
+AllocParamRtti RttiCallbacks() {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    return state.rtti;
+}
+
+void APS5_VABI RttiDestroy(void*) {}
+
+void APS5_VABI RttiDelete(void* self) { ::operator delete(self); }
+
+void* APS5_VABI RttiAllocateMemory(void*, std::size_t size, void* context) {
+    return RttiCallbacks().allocate(size, context);
+}
+
+void APS5_VABI RttiFreeMemory(void*, void* memory, void* context) {
+    RttiCallbacks().free(memory, context);
+}
+
+void APS5_VABI RttiNotifyError(void*, int error, std::size_t size, void* context) {
+    const auto callback = RttiCallbacks().notify;
+    if (callback) callback(error, size, context);
+    else if (error == JsonErrorOutOfMemory)
+        std::printf("[libSceJson] Allocation Fail. size = %zu\n", size);
+    else std::printf("[libSceJson] unknown notification[%#x]\n", static_cast<unsigned>(error));
+}
+
+void* const RttiAllocatorVtable[] = {
+    reinterpret_cast<void*>(&RttiDestroy), reinterpret_cast<void*>(&RttiDelete),
+    reinterpret_cast<void*>(&RttiAllocateMemory), reinterpret_cast<void*>(&RttiFreeMemory),
+    reinterpret_cast<void*>(&RttiNotifyError),
+};
+
+struct RttiAllocator { void* const* vtable = RttiAllocatorVtable; };
+RttiAllocator rttiAllocator;
 
 void Construct(String& s, const std::string& text) { s.text = new std::string(text); }
 void Construct(Array& a) { a.items = new std::list<Value>(); }
@@ -1150,7 +1195,14 @@ struct InitParameterRtti {
 };
 
 void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) {
-    self->allocParam = allocParam;
+    *self = {};
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    if (state.initialized) return;
+    const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
+    if (!callbacks.allocate || !callbacks.free) return;
+    state.rtti = callbacks;
+    self->allocParam = &rttiAllocator;
     self->userData = userData;
     self->fileBufferSize = fileBufferSize;
 }
@@ -1179,7 +1231,14 @@ void APS5_VABI _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv
 }
 
 void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(InitParameter2* self, void* allocParam, void* userData) {
-    self->allocator = allocParam;
+    if (!allocParam) return;
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    if (state.initialized) return;
+    const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
+    if (!callbacks.allocate || !callbacks.free) return;
+    state.rtti = callbacks;
+    self->allocator = &rttiAllocator;
     self->userData = userData;
 }
 
