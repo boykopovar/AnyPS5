@@ -1956,6 +1956,26 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
     if (tables.tables.size() != count) throw std::runtime_error("image table snapshot disagrees with the static tables");
     if (info.runtimeImageModes.size() != info.images.size()) throw std::runtime_error("prepared runtime image modes are missing");
     if (count > (Abi::MaxMapWords - Abi::HeaderWords) / Abi::TableWords) throw std::runtime_error("image table map exceeds its word budget");
+    std::size_t mapWords = static_cast<std::size_t>(Abi::HeaderWords) + static_cast<std::size_t>(Abi::TableWords) * count;
+    std::size_t distinctImages = 0;
+    for (const auto& image : info.images) {
+        if (image.table == NoTable) continue;
+        const auto& column = tables.tables.at(image.table);
+        const auto keys = std::min<std::size_t>(column.keys, column.codes.size());
+        const auto distinct = std::min<std::size_t>(keys, column.words.size());
+        mapWords += keys + static_cast<std::size_t>(Abi::ImageRecordWords) * distinct;
+        distinctImages += distinct;
+    }
+    for (const auto& sampler : info.samplers) {
+        if (sampler.table == NoTable) continue;
+        const auto& column = tables.tables.at(sampler.table);
+        const auto keys = std::min<std::size_t>(column.keys, column.codes.size());
+        const auto distinct = std::min<std::size_t>(keys, column.words.size()) + 1u;
+        mapWords += keys + static_cast<std::size_t>(Abi::SamplerRecordWords) * distinct + distinct;
+    }
+    out.map.reserve(std::min<std::size_t>(mapWords + distinctImages, Abi::MaxMapWords));
+    out.elements.reserve(std::min<std::size_t>(distinctImages, Abi::ImageElementBudget));
+    out.poison.reserve(4u);
     out.map.assign(Abi::HeaderWords + Abi::TableWords * count, 0u);
     const auto growMap = [&](std::size_t words) {
         if (out.map.size() > Abi::MaxMapWords || words > Abi::MaxMapWords - out.map.size()) throw std::runtime_error("image table map exceeds its word budget");
