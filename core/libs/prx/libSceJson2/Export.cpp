@@ -31,6 +31,10 @@ enum ValueType : std::int32_t {
 };
 
 constexpr int JsonErrorParse = static_cast<int>(0x80848101);
+constexpr int JsonErrorOutOfMemory = static_cast<int>(0x80848102);
+constexpr int JsonErrorNotInitialized = static_cast<int>(0x80848110);
+constexpr int JsonErrorAlreadyInitialized = static_cast<int>(0x80848111);
+constexpr int JsonErrorInvalidArgument = static_cast<int>(0x80848120);
 
 struct Node;
 struct Value { Node* node; };
@@ -88,6 +92,9 @@ struct Globals {
     std::mutex mutex;
     NullAccessCallback callback = nullptr;
     void* context = nullptr;
+    std::int32_t floatFormat = 2;
+    bool floatFormatEnabled = false;
+    bool initialized = false;
 };
 
 Globals& State() {
@@ -277,6 +284,47 @@ void SetHandlers(Node& n, const TSetter& setter) {
         for (auto& pair : *n.object.items) SetHandlers(NodeOf(pair.value), setter);
 }
 
+const char* SpecialFloatText(double value) {
+    return std::isnan(value) ? "nan" : value < 0 ? "-inf" : "inf";
+}
+
+struct FloatSettings {
+    std::int32_t format;
+    bool enabled;
+};
+
+FloatSettings FloatConfiguration() {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    return {state.floatFormat, state.floatFormatEnabled};
+}
+
+void AssignReal(Node& n, double value) {
+    if (std::isfinite(value)) {
+        SetType(n, TypeReal);
+        n.real = value;
+        return;
+    }
+    const auto settings = FloatConfiguration();
+    if (settings.enabled && n.handlers.specialFloat)
+        NotImplemented_nid_no_patch(__func__);
+    if (settings.enabled && settings.format != 2) {
+        if (settings.format == 1) {
+            SetType(n, TypeNull);
+        } else {
+            Node pending{};
+            pending.type = TypeString;
+            Construct(pending.string, SpecialFloatText(value));
+            Clear(n);
+            pending.handlers = n.handlers;
+            n = pending;
+        }
+        return;
+    }
+    SetType(n, TypeReal);
+    n.real = value;
+}
+
 void AppendEscaped(std::string& out, const std::string& text) {
     out += '"';
     for (const unsigned char c : text) {
@@ -315,7 +363,15 @@ void Serialize(std::string& out, const Node& n) {
         case TypeUInteger: out += std::to_string(n.uinteger); return;
         case TypeReal:
             if (!std::isfinite(n.real) && n.handlers.specialFloat)
-                throw std::runtime_error("sce::Json::Value: special float handler: the FunctionType the console passes is unverified");
+                throw std::runtime_error("sce::Json::Value: special float handler: callback dispatch and ownership are unverified");
+            if (!std::isfinite(n.real)) {
+                const auto settings = FloatConfiguration();
+                if (settings.enabled) {
+                    if (settings.format == 0) AppendEscaped(out, SpecialFloatText(n.real));
+                    else out += settings.format == 1 ? "null" : SpecialFloatText(n.real);
+                    return;
+                }
+            }
             out += RealText(n.real);
             return;
         case TypeString: AppendEscaped(out, *n.string.text); return;
@@ -627,28 +683,39 @@ void* const JsonMemAllocatorVtable[] = {
 
 extern "C" {
 
-int APS5_VABI _ZN3sce4Json11InitializerC1Ev(void* self) {
-    (void)self;
-    return 0;
+int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self);
+
+void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void* self) {
+    *static_cast<std::uint8_t*>(self) = 0;
 }
 
-int APS5_VABI _ZN3sce4Json11InitializerD1Ev(void* self) {
-    (void)self;
-    return 0;
+void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void* self) {
+    _ZN3sce4Json11Initializer9terminateEv(self);
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void* self, const void* parameter) {
-    (void)self;
-    if (parameter == nullptr) throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    if (state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
+    if (!parameter) return JsonErrorInvalidArgument;
+    if (!*static_cast<void* const*>(parameter)) return JsonErrorOutOfMemory;
+    state.floatFormat = 2;
+    state.floatFormatEnabled = false;
+    state.initialized = true;
+    *static_cast<std::uint8_t*>(self) = 1;
     return 0;
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
-    (void)self;
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
     state.callback = nullptr;
     state.context = nullptr;
+    state.floatFormat = 2;
+    state.floatFormatEnabled = false;
+    state.initialized = false;
+    *static_cast<std::uint8_t*>(self) = 0;
     return 0;
 }
 
@@ -871,7 +938,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) { Construct(*self); self->node->type = TypeBoolean; self->node->boolean = value; }
 void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) { Construct(*self); self->node->type = TypeInteger; self->node->integer = value; }
 void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Construct(*self); self->node->type = TypeUInteger; self->node->uinteger = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); self->node->type = TypeReal; self->node->real = value; }
+void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self, [value](Node& n) { AssignReal(n, value); }); }
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value: null text");
     Construct(*self, [text](Node& node) {
@@ -920,7 +987,7 @@ int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type
 int APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) { SetType(NodeOf(*self), TypeBoolean); self->node->boolean = value; return 0; }
 int APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) { SetType(NodeOf(*self), TypeInteger); self->node->integer = value; return 0; }
 int APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetType(NodeOf(*self), TypeUInteger); self->node->uinteger = value; return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { SetType(NodeOf(*self), TypeReal); self->node->real = value; return 0; }
+void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { AssignReal(NodeOf(*self), value); }
 int APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
     const std::string copy(text);
@@ -1049,16 +1116,16 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* ou
     *out->text = std::move(text);
     return 0;
 }
-int APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
+void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
     const Node& n = NodeOf(*self);
     if (n.type == TypeString) {
         *out->text = *n.string.text;
-        return 0;
+        return;
     }
     std::string text;
     Serialize(text, n);
     *out->text = std::move(text);
-    return 0;
+    return;
 }
 
 
@@ -1125,8 +1192,15 @@ void APS5_VABI _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22Spe
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {
-    (void)self;
-    if (parameter == nullptr) throw std::invalid_argument("sce::Json::Initializer::initialize: null parameter");
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    if (state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
+    if (!parameter || !parameter->allocator || static_cast<std::uint32_t>(parameter->specialFloatFormatType) > 2)
+        return JsonErrorInvalidArgument;
+    state.floatFormat = parameter->specialFloatFormatType;
+    state.floatFormatEnabled = true;
+    state.initialized = true;
+    *static_cast<std::uint8_t*>(self) = 1;
     return 0;
 }
 

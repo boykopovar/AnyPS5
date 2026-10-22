@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "JsonTestAllocator.hpp"
 #include <cstddef>
 #include <clocale>
 #include <cmath>
@@ -29,8 +30,8 @@ using SpecialFloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, co
 using ElementAccessFailureHandler = void (APS5_VABI*)(std::int32_t, const String*, const std::size_t*, const Value*, const Value*, void*);
 
 extern "C" {
-int APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
-int APS5_VABI _ZN3sce4Json11InitializerD1Ev(void*);
+void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
+void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const void*);
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 int APS5_VABI _ZN3sce4Json11Initializer27setGlobalNullAccessCallBackEPFRKNS0_5ValueENS0_9ValueTypeEPS3_PvES7_(void*, NullAccessCallback, void*);
@@ -39,7 +40,7 @@ void APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEP
 int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, TypeMismatchHandler, void*);
 int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, SpecialFloatHandler, void*);
 int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, ElementAccessFailureHandler, void*);
-int APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
+void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
 int APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value*, const Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
@@ -857,7 +858,10 @@ static void NullAccess(SetNullAccessCallback setCallback) {
     lastContext = nullptr;
     alignas(16) std::uint8_t initializer[16]{};
     alignas(16) std::uint8_t parameter[64]{};
-    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
+    JsonTest::Allocator allocator;
+    void* allocatorPointer = &allocator;
+    std::memcpy(parameter, &allocatorPointer, sizeof(allocatorPointer));
+    _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(initializer, parameter) == 0);
     int context = 0;
     Require(setCallback(initializer, OnNullAccess, &context) == 0);
@@ -882,7 +886,7 @@ static void NullAccess(SetNullAccessCallback setCallback) {
     Require(callbackCalls == 4);
     _ZN3sce4Json5ValueD1Ev(&root);
     _ZN3sce4Json5ValueD1Ev(&fallback);
-    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerD1Ev(initializer);
 }
 
 static void ValueAccess() {
@@ -933,7 +937,7 @@ static void ValueAccess() {
     alignas(16) std::uint8_t parameter[40];
     std::memset(parameter, 0xff, sizeof(parameter));
     _ZN3sce4Json14InitParameter2C1Ev(parameter);
-    int allocator = 0;
+    JsonTest::Allocator allocator;
     int userData = 0;
     _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(parameter, &allocator, &userData);
     _ZN3sce4Json14InitParameter217setFileBufferSizeEm(parameter, 4096);
@@ -941,10 +945,10 @@ static void ValueAccess() {
     std::memcpy(stored, parameter, sizeof(stored));
     Require(stored[0] == &allocator && stored[1] == &userData && reinterpret_cast<std::uintptr_t>(stored[2]) == 4096);
     alignas(16) std::uint8_t initializer[16]{};
-    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, parameter) == 0);
     Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerD1Ev(initializer);
 }
 
 static void InitParameter2BaseConstructor() {
@@ -963,7 +967,7 @@ static void InitParameter2BaseConstructor() {
     std::memcpy(&defaultUserData, baseParameter + sizeof(void*), sizeof(defaultUserData));
     std::memcpy(&defaultFileBufferSize, baseParameter + 2 * sizeof(void*), sizeof(defaultFileBufferSize));
     Require(defaultAllocator == nullptr && defaultUserData == nullptr && defaultFileBufferSize == 0);
-    int allocator = 0;
+    JsonTest::Allocator allocator;
     int userData = 0;
     _ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv(baseParameter, &allocator, &userData);
     _ZN3sce4Json14InitParameter217setFileBufferSizeEm(baseParameter, 4096);
@@ -978,10 +982,10 @@ static void InitParameter2BaseConstructor() {
     for (std::size_t i = 16 + sizeof(parameter); i < sizeof(baseStorage); ++i)
         Require(baseStorage[i] == 0xff);
     alignas(16) std::uint8_t initializer[16]{};
-    Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, baseParameter) == 0);
     Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-    Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+    _ZN3sce4Json11InitializerD1Ev(initializer);
 }
 
 struct StoredInitParameter2 {
@@ -1030,10 +1034,10 @@ static void InitParameters() {
         Require(Stored(parameter).specialFloatFormatType == 0 && Stored(parameter).fileBufferSize == 8192);
 
         alignas(16) std::uint8_t initializer[16]{};
-        Require(_ZN3sce4Json11InitializerC1Ev(initializer) == 0);
+        _ZN3sce4Json11InitializerC1Ev(initializer);
         Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(initializer, parameter) == 0);
         Require(_ZN3sce4Json11Initializer9terminateEv(initializer) == 0);
-        Require(_ZN3sce4Json11InitializerD1Ev(initializer) == 0);
+        _ZN3sce4Json11InitializerD1Ev(initializer);
     }
 
     alignas(16) std::uint8_t rttiParameter[40];
@@ -1246,7 +1250,7 @@ static void ValueTypeMismatchHandler() {
     RequireMismatch(6, TypeInteger, &root, &context);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&other) == 0);
     Require(mismatchCalls == 6);
-    Require(_ZN3sce4Json5Value3setEd(&other, 1.5) == 0);
+    _ZN3sce4Json5Value3setEd(&other, 1.5);
     Require(_ZN3sce4Json5Value3setERKS1_(&root, &other) == 0);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
     RequireMismatch(7, TypeInteger, &root, &context);
@@ -1327,10 +1331,10 @@ static void ValueSpecialFloatHandler() {
     String out{};
     _ZN3sce4Json6StringC1Ev(&out);
     Require(ThrowsUnverified([&] { _ZN3sce4Json5Value9serializeERNS0_6StringE(&real, &out); }));
-    Require(_ZN3sce4Json5Value3setEd(&real, std::numeric_limits<double>::infinity()) == 0);
+    _ZN3sce4Json5Value3setEd(&real, std::numeric_limits<double>::infinity());
     Require(ThrowsUnverified([&] { _ZN3sce4Json5Value9serializeERNS0_6StringE(&real, &out); }));
     _ZN3sce4Json6StringD1Ev(&out);
-    Require(_ZN3sce4Json5Value3setEd(&real, 2.5) == 0);
+    _ZN3sce4Json5Value3setEd(&real, 2.5);
     Require(Serialize(real) == "2.5");
     Require(specialFloatCalls == 0);
     _ZN3sce4Json5ValueD1Ev(&real);
@@ -1368,7 +1372,7 @@ static void ValueOperatorBool() {
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (value != 0));
     }
     for (double value : {0.0, -0.0, 1.0, -1.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
-        Require(_ZN3sce4Json5Value3setEd(&scalar, value) == 0);
+        _ZN3sce4Json5Value3setEd(&scalar, value);
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (value != 0.0));
     }
     for (const char* text : {"", "0", "false", " "}) {
