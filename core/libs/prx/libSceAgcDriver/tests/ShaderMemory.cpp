@@ -4840,6 +4840,52 @@ void verifySharedImageTableResolution() {
     }
 }
 
+void verifyImageTableResolutionGrowth() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    for (const auto count : {1u, 8u, 64u, 256u, 1024u}) {
+        ShaderInfo info;
+        ImageResource image;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.numericClass = IrTextureNumericClass::Uint;
+        image.read = true;
+        image.tableOperation = TableOperation::Supported;
+        image.table = 0u;
+        info.images.assign(1u, image);
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(info.images[0]));
+        info.samplers.resize(1u);
+        info.sampledPairs.push_back({0u, 0u});
+        ResourceSnapshot snapshot;
+        snapshot.samplers.push_back({{0x600u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u});
+        snapshot.tables.tables.resize(1u);
+        auto& column = snapshot.tables.tables[0];
+        column.base = 0x100000u;
+        column.size = 32u * count;
+        column.records = count;
+        column.keys = count;
+        std::vector<std::uint32_t> codes(count);
+        std::vector<DescriptorValue> words;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            codes[index] = index;
+            words.push_back({TableT(reinterpret_cast<const void*>(std::uintptr_t{0x100000000ull + index * 256ull}), TableFormat32UInt, TableType2D), 8u, 0xffu});
+        }
+        column.codes = SharedValues<std::uint32_t>(codes);
+        column.words = SharedValues<DescriptorValue>(words);
+        const auto before = allocationCount;
+        const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
+        const auto allocations = allocationCount - before;
+        require(resolved.faults == 0u && resolved.elements.size() == count && resolved.samplers.empty(), "image table resolution: distinct elements were not all resolved");
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            require(resolved.elements[index].words == words[index].dwords, "image table resolution: an element changed");
+            const auto record = resolved.map.at(mapStart + index);
+            require(resolved.map.at(record + Abi::ImageRecordElement) == index && (resolved.map.at(record + Abi::ImageRecordFlags) & Abi::PoisonFlag) == 0u, "image table resolution: a record does not name its element");
+        }
+        require(allocations <= 12u, ("image table resolution: " + std::to_string(count) + " distinct elements required " + std::to_string(allocations) + " allocations, expected a fixed number of output arrays").c_str());
+    }
+}
+
 void verifyEmptyImageTableResolution() {
     using namespace ShaderRecompiler;
     using Result = std::shared_ptr<const ResolvedImageTables>;
@@ -12101,6 +12147,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--table-binding-growth") {
             verifyImageTableBindingGrowth();
             std::cout << "Image and sampler table bindings preserve metadata with bounded allocations\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--table-resolution-growth") {
+            verifyImageTableResolutionGrowth();
+            std::cout << "Image table resolutions bound their allocations by output array\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--empty-table-resolution") {
