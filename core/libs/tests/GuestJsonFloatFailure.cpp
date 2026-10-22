@@ -10,6 +10,8 @@
 #include <new>
 
 struct Value { alignas(8) std::array<std::byte, 32> bytes{}; };
+struct String { void* text; };
+using Handler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
 struct Parameter {
     void* allocator;
     void* userData;
@@ -23,10 +25,14 @@ void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
+void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
 std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
 const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value*);
+const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value*);
+const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
+int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, Handler, void*);
 }
 
 #ifndef _WIN32
@@ -66,6 +72,74 @@ static void Require(bool condition, const char* message) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+struct CallbackFailure {};
+struct Context { bool throwAfterConstruction = false; int calls = 0; };
+static constexpr const char* Replacement = "A callback replacement long enough to require separately allocated character storage";
+
+static Value* APS5_VABI Recover(Value* result, std::int32_t, double, const Value*, void* context, bool*) {
+    auto& trace = *static_cast<Context*>(context);
+    ++trace.calls;
+    _ZN3sce4Json5ValueC1EPKc(result, Replacement);
+    if (trace.throwAfterConstruction) throw CallbackFailure{};
+    return result;
+}
+
+static void CheckRecoveryFailures() {
+    const auto baseline = liveAllocations;
+    Context context;
+    bool succeeded = false;
+    unsigned failures = 0;
+    for (int budget = 0; budget < 64 && !succeeded; ++budget) {
+        Value value;
+        _ZN3sce4Json5ValueC1Ed(&value, 0.125);
+        Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, Recover, &context) == 0,
+                "Register allocation-failure recovery");
+        const auto before = liveAllocations;
+        allocationBudget = budget;
+        try {
+            _ZN3sce4Json5Value3setEd(&value, std::numeric_limits<double>::infinity());
+            succeeded = true;
+        } catch (const std::bad_alloc&) {
+            ++failures;
+        }
+        allocationBudget = -1;
+        if (succeeded) {
+            Require(_ZNK3sce4Json5Value7getTypeEv(&value) == 5 &&
+                        std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&value)), Replacement) == 0,
+                    "Recovery must remain usable after every earlier allocation failure");
+        } else {
+            Require(_ZNK3sce4Json5Value7getTypeEv(&value) == 4 &&
+                        *_ZNK3sce4Json5Value7getRealEv(&value) == 0.125 && liveAllocations == before,
+                    "Failed callback construction or cloning must retain the destination and reclaim temporary ownership");
+        }
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(liveAllocations == baseline, "Recovery teardown must reclaim metadata, replacement and temporary allocations");
+    }
+    Require(succeeded && failures > 0, "Recovery must exercise failed and successful host allocations");
+    Value value;
+    _ZN3sce4Json5ValueC1Ed(&value, 0.125);
+    Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, Recover, &context) == 0,
+            "Register throwing recovery");
+    const auto before = liveAllocations;
+    context.throwAfterConstruction = true;
+    bool threw = false;
+    try {
+        _ZN3sce4Json5Value3setEd(&value, std::numeric_limits<double>::infinity());
+    } catch (const CallbackFailure&) {
+        threw = true;
+    }
+    Require(threw && liveAllocations == before && _ZNK3sce4Json5Value7getTypeEv(&value) == 4 &&
+                *_ZNK3sce4Json5Value7getRealEv(&value) == 0.125,
+            "A throwing host callback must release its constructed return object and preserve the destination");
+    context.throwAfterConstruction = false;
+    const int calls = context.calls;
+    _ZN3sce4Json5Value3setEd(&value, std::numeric_limits<double>::infinity());
+    Require(context.calls == calls + 1 && _ZNK3sce4Json5Value7getTypeEv(&value) == 5,
+            "Callback exceptions must release the reentry guard before retry");
+    _ZN3sce4Json5ValueD1Ev(&value);
+    Require(liveAllocations == baseline, "A retried callback must not leak");
 }
 
 int main() {
@@ -117,5 +191,6 @@ int main() {
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == 5, "Conversion must remain usable after allocation failure");
     _ZN3sce4Json5ValueD1Ev(&value);
     Require(liveAllocations == baseline, "Successful conversion must not leak");
+    CheckRecoveryFailures();
     _ZN3sce4Json11InitializerD1Ev(&initializer);
 }

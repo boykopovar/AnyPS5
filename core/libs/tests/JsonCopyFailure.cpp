@@ -7,7 +7,7 @@
 #include <new>
 #include <initializer_list>
 
-struct Value { void* node; };
+struct Value { alignas(8) std::uint64_t storage[4]{}; };
 struct String { void* text; };
 struct Array { void* items; };
 struct Object { void* items; };
@@ -203,7 +203,7 @@ int main() {
         {"set object", Operation::SetObject, &objectValue, objectJson},
         {"set empty array", Operation::SetTypeArray, &objectValue, "[]"},
         {"set empty object", Operation::SetTypeObject, &objectValue, "{}"},
-        {"set empty string", Operation::SetTypeString, &objectValue, "\"\""},
+        {"retain string type", Operation::SetTypeString, &objectValue, "\"previous\""},
         {"pair copy", Operation::PairCopy, &objectValue, objectJson},
     };
     unsigned failures = 0;
