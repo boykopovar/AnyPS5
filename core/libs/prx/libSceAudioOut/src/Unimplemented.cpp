@@ -389,4 +389,14 @@ int APS5_VABI sceAudioOut2GetHrtfIdForCronos(void) {
     return 0;
 }
 
+
+int APS5_VABI sceAudioDeviceControlGet_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tKumjQSzhys", sceAudioDeviceControlGet_nid_no_patch);
+
+int APS5_VABI sceAudioDeviceControlSet_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5ChfcHOf3SM", sceAudioDeviceControlSet_nid_no_patch);
 }
