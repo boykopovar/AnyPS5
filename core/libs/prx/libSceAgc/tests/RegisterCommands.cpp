@@ -6,9 +6,31 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <vector>
+
+namespace {
+
+thread_local std::size_t allocations = 0;
+
+}
+
+void* operator new(std::size_t size) {
+    ++allocations;
+    if (void* memory = std::malloc(size != 0 ? size : 1)) return memory;
+    throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
 
 namespace {
 
@@ -318,6 +340,26 @@ void testRegisterListRuns() {
     }
 }
 
+void testRegisterWritesDoNotAllocate() {
+    std::array<std::uint32_t, 8> values{1, 2, 3, 4, 5, 6, 7, 8};
+    std::array<ShaderRegister, 12> registers;
+    for (std::uint32_t i = 0; i < registers.size(); ++i) registers[i] = {0x20u + (i < 6 ? i : i + 4u), i};
+    std::array<std::uint32_t, 256> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    const auto measure = [&](const char* message, auto&& write) {
+        const auto before = allocations;
+        write();
+        check(allocations == before, message);
+    };
+    measure("sceAgcDcbSetCxRegisterDirect allocated", [&] { sceAgcDcbSetCxRegisterDirect(&buffer, {0x10u, 1}); });
+    measure("sceAgcDcbSetShRegisterDirect allocated", [&] { sceAgcDcbSetShRegisterDirect(&buffer, {0x10u, 1}); });
+    measure("sceAgcDcbSetUcRegisterDirect allocated", [&] { sceAgcDcbSetUcRegisterDirect(&buffer, {0x10u, 1}); });
+    measure("sceAgcCbSetShRegisterRangeDirect allocated", [&] { sceAgcCbSetShRegisterRangeDirect(&buffer, 0x30u, values.data(), 8); });
+    measure("sceAgcCbSetUcRegisterRangeDirect allocated", [&] { sceAgcCbSetUcRegisterRangeDirect(&buffer, 0x30u, values.data(), 8); });
+    measure("sceAgcCbSetShRegistersDirect allocated", [&] { sceAgcCbSetShRegistersDirect(&buffer, registers.data(), 12); });
+    measure("sceAgcCbSetUcRegistersDirect allocated", [&] { sceAgcCbSetUcRegistersDirect(&buffer, registers.data(), 12); });
+}
+
 }
 
 int main() {
@@ -331,6 +373,7 @@ int main() {
         testDirectList();
         testValuesSurviveBufferGrowth();
         testRegisterListRuns();
+        testRegisterWritesDoNotAllocate();
         std::puts("AGC register command tests passed");
         return 0;
     } catch (const std::exception& error) {

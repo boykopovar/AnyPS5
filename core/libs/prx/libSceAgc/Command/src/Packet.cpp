@@ -2,6 +2,7 @@
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -38,6 +39,60 @@ std::uint32_t Header(std::uint32_t opcode, std::uint32_t count, std::uint32_t fl
 }
 
 namespace {
+
+template <typename T, std::size_t N>
+class SmallSnapshot {
+public:
+    explicit SmallSnapshot(std::size_t expected = 0) {
+        if (expected > N) {
+            heap_.reserve(expected);
+            spilled_ = true;
+        }
+    }
+
+    void push(const T& value) {
+        if (!spilled_ && size_ < N) {
+            local_[size_++] = value;
+            return;
+        }
+        if (!spilled_) {
+            heap_.assign(local_.begin(), local_.begin() + size_);
+            spilled_ = true;
+        }
+        heap_.push_back(value);
+        size_ = heap_.size();
+    }
+
+    void assign(const T* source, std::size_t count) {
+        if (count > N) {
+            heap_.resize(count);
+            spilled_ = true;
+            size_ = count;
+            std::memcpy(heap_.data(), source, count * sizeof(T));
+            return;
+        }
+        size_ = count;
+        std::memcpy(local_.data(), source, count * sizeof(T));
+    }
+
+    const T* data() const { return spilled_ ? heap_.data() : local_.data(); }
+    const T& operator[](std::size_t index) const { return data()[index]; }
+    std::size_t size() const { return size_; }
+
+private:
+    std::array<T, N> local_;
+    std::vector<T> heap_;
+    std::size_t size_ = 0;
+    bool spilled_ = false;
+};
+
+std::uint32_t* StoreRegisterRange(CommandBuffer* buffer, std::uint32_t opcode, std::uint32_t offset, const std::uint32_t* values, std::uint32_t count, const char* function) {
+    auto* packet = Allocate(buffer, count + 2u, function);
+    packet[0] = Header(opcode, count + 2u);
+    packet[1] = offset;
+    if (values != nullptr) std::copy(values, values + count, packet + 2);
+    return packet;
+}
 
 std::uint32_t available(const CommandBuffer& buffer, const char* function) {
     const auto bottom = reinterpret_cast<std::uintptr_t>(buffer.bottom);
@@ -98,16 +153,11 @@ std::uint32_t* WriteNop(CommandBuffer* buffer, std::uint32_t count, const char* 
 
 std::uint32_t* WriteRegisterRange(CommandBuffer* buffer, std::uint32_t opcode, std::uint32_t offset, const std::uint32_t* values, std::uint32_t count, const char* function) {
     Require(count != 0 && count <= 0x3fffu && offset <= 0xffffu && count <= 0x10000u - offset, function, "invalid register range");
-    std::vector<std::uint32_t> snapshot;
+    SmallSnapshot<std::uint32_t, 64> snapshot;
     if (values != nullptr) {
-        snapshot.resize(count);
-        std::memcpy(snapshot.data(), values, static_cast<std::size_t>(count) * sizeof(std::uint32_t));
+        snapshot.assign(values, count);
     }
-    auto* packet = Allocate(buffer, count + 2u, function);
-    packet[0] = Header(opcode, count + 2u);
-    packet[1] = offset;
-    std::copy(snapshot.begin(), snapshot.end(), packet + 2);
-    return packet;
+    return StoreRegisterRange(buffer, opcode, offset, values != nullptr ? snapshot.data() : nullptr, count, function);
 }
 
 std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const volatile ShaderRegister* registers, std::uint32_t count, bool snapshotAll, const char* function) {
@@ -122,12 +172,11 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
         std::memcpy(&entry, bytes + static_cast<std::size_t>(index) * sizeof(ShaderRegister), sizeof(entry));
         return entry;
     };
-    std::vector<ShaderRegister> snapshot;
+    SmallSnapshot<ShaderRegister, 32> snapshot(snapshotAll ? count : 0u);
     if (snapshotAll) {
-        snapshot.reserve(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            snapshot.push_back(entryAt(i));
-            CheckBits(snapshot.back().offset, 0xffffu, function);
+            snapshot.push(entryAt(i));
+            CheckBits(snapshot[i].offset, 0xffffu, function);
         }
     }
     const auto offsetAt = [&](std::uint32_t index) { return snapshotAll ? snapshot[index].offset : entryAt(index).offset; };
@@ -137,12 +186,15 @@ std::uint32_t* WriteRegisters(CommandBuffer* buffer, std::uint32_t opcode, const
     while (index < count) {
         const auto offset = offsetAt(index);
         CheckBits(offset, 0xffffu, function);
-        std::vector<std::uint32_t> values{valueAt(index++)};
+        SmallSnapshot<std::uint32_t, 64> values;
+        values.push(valueAt(index++));
         while (index < count && offsetAt(index) == offset + values.size() && values.size() < 0x3fffu) {
             CheckBits(offsetAt(index), 0xffffu, function);
-            values.push_back(valueAt(index++));
+            values.push(valueAt(index++));
         }
-        auto* packet = WriteRegisterRange(buffer, opcode, offset, values.data(), static_cast<std::uint32_t>(values.size()), function);
+        const auto runLength = static_cast<std::uint32_t>(values.size());
+        Require(offset <= 0xffffu && runLength <= 0x10000u - offset, function, "invalid register range");
+        auto* packet = StoreRegisterRange(buffer, opcode, offset, values.data(), runLength, function);
         if (first == nullptr) {
             first = packet;
         }
