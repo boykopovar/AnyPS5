@@ -19,6 +19,7 @@ MODULE_SUFFIX = "#"
 CLASSES = ("implemented", "partial", "stub", "absent", "module")
 CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
 BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
+PREPROCESSOR_BRANCH = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|endif)\b", re.M)
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 
 
@@ -487,6 +488,13 @@ def top_level_statements(body):
     return parts
 
 
+def preprocessor_guarded(body, position):
+    depth = 0
+    for directive in PREPROCESSOR_BRANCH.finditer(body, 0, position):
+        depth += -1 if directive.group(1) == "endif" else 1
+    return depth > 0
+
+
 def unconditional_calls(body):
     names = set()
     for offset, statement in top_level_statements(body):
@@ -494,7 +502,8 @@ def unconditional_calls(body):
             continue
         for call in progress.CALL.finditer(statement):
             before = statement[:call.start()]
-            if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
+            position = offset + call.start()
+            if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, position) and not preprocessor_guarded(body, position):
                 names.add(call.group(1))
     return names
 

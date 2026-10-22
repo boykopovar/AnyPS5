@@ -1292,13 +1292,18 @@ class ImportAuditTests(unittest.TestCase):
                      "int APS5_VABI sceTernary(int value) { return value ? value : NotImplemented_nid_no_patch(__func__); }\n"
                      "int APS5_VABI sceShort(int value) { return value && NotImplemented_nid_no_patch(__func__); }\n"
                      "int APS5_VABI sceLambda(int value) { auto f = [&]() { Fail(); }; return value; }\n"
-                     "int APS5_VABI sceMember(int value) { if (value) Fail(); other.Fail(); return value; }\n")
+                     "int APS5_VABI sceMember(int value) { if (value) Fail(); other.Fail(); return value; }\n"
+                     "int APS5_VABI sceHost(int value) {\n#if defined(_WIN32)\n    return value;\n#elif defined(__linux__)\n"
+                     "    return value + 1;\n#else\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n#endif\n}\n"
+                     "int APS5_VABI sceHostHelper(int value) {\n#ifdef HOST_WITHOUT_IT\n    Fail();\n#endif\n    return value;\n}\n"
+                     "#ifdef ONLY_HERE\nint APS5_VABI sceOuter(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n#endif\n")
         write_source(source, "libShared", '#include "prx/libGuard/Export.cpp"\n')
         stubs, partial = import_audit.source_stub_classes(source)
         names = ("sceDirect", "sceReturned", "sceWrapped", "sceIf", "sceBlock", "sceElse", "sceGuarded",
-                 "sceLoop", "sceSwitch", "sceTernary", "sceShort", "sceLambda", "sceMember")
+                 "sceLoop", "sceSwitch", "sceTernary", "sceShort", "sceLambda", "sceMember", "sceHost", "sceHostHelper",
+                 "sceOuter")
         kinds = {name: "partial" if ("libGuard.prx", nid_names.compute_nid(name)) in partial else "stub" for name in names}
-        self.assertEqual({name for name, kind in kinds.items() if kind == "stub"}, {"sceDirect", "sceReturned", "sceWrapped"})
+        self.assertEqual({name for name, kind in kinds.items() if kind == "stub"}, {"sceDirect", "sceReturned", "sceWrapped", "sceOuter"})
         self.assertEqual(set(stubs), {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx") for name in names})
         self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
                                    for name, kind in kinds.items() if kind == "partial"})
