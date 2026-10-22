@@ -17,6 +17,7 @@
 #include <bit>
 #include <emmintrin.h>
 #include <functional>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2470,7 +2471,15 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
     const auto* from = static_cast<const unsigned char*>(source);
     std::size_t index = 0;
     for (; index + sizeof(std::uint64_t) <= bytes; index += sizeof(std::uint64_t)) {
-        const std::uint64_t word = *reinterpret_cast<const volatile std::uint64_t*>(from + index);
+        std::uint64_t word;
+        if (reinterpret_cast<std::uintptr_t>(from + index) % alignof(std::uint64_t) == 0) {
+            word = *reinterpret_cast<const volatile std::uint64_t*>(from + index);
+        } else {
+            const volatile unsigned char* wide = from + index;
+            unsigned char buffer[sizeof(std::uint64_t)];
+            for (std::size_t offset = 0; offset < sizeof(std::uint64_t); ++offset) buffer[offset] = wide[offset];
+            std::memcpy(&word, buffer, sizeof(word));
+        }
         std::memcpy(to + index, &word, sizeof(word));
     }
     for (; index < bytes; ++index) to[index] = static_cast<const volatile unsigned char*>(from)[index];
