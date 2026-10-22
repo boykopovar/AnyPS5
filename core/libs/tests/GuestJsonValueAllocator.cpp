@@ -7,6 +7,7 @@
 #include <cstring>
 #include <map>
 #include <limits>
+#include <string>
 #include <vector>
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
@@ -26,6 +27,8 @@ void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
+void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
+void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
@@ -46,13 +49,14 @@ struct ValueAllocationTrace {
     std::vector<std::size_t> requests;
     std::vector<void*> frees;
     int budget = -1;
+    bool once = false;
     unsigned notifications = 0;
     unsigned nullFrees = 0;
     const Value* registering = nullptr;
 };
 static void* APS5_VABI ValueAllocationAllocate(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<ValueAllocationTrace*>(context); trace.requests.push_back(bytes);
-    if (trace.budget == 0) return nullptr;
+    if (trace.budget == 0) { if (trace.once) trace.budget = -1; return nullptr; }
     if (trace.budget > 0) --trace.budget;
     auto* memory = std::malloc(bytes); Require(memory != nullptr, "Tracking allocator requires host memory");
     std::memset(memory, 0xa5, bytes); trace.live.emplace(memory, bytes); return memory;
@@ -292,6 +296,137 @@ static void CheckMissingCollections(ValueAllocationTrace& trace) {
         Require(trace.live.size() == baseline, "Collection self-setting must release replaced storage");
     }
 }
+static void PrepareNestedSource(Value& value) {
+    _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&value, 6);
+    auto* array = reinterpret_cast<Array*>(value.payload);
+    Value item{};
+    _ZN3sce4Json5ValueC1EPKc(&item, "abc");
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(array, &item);
+    _ZN3sce4Json5ValueD1Ev(&item);
+    _ZN3sce4Json5ValueC1El(&item, 42);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(array, &item);
+    _ZN3sce4Json5ValueD1Ev(&item);
+    Value nested{};
+    _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&nested, 6);
+    _ZN3sce4Json5ValueC1EPKc(&item, "def");
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(reinterpret_cast<Array*>(nested.payload), &item);
+    _ZN3sce4Json5ValueD1Ev(&item);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(array, &nested);
+    _ZN3sce4Json5ValueD1Ev(&nested);
+}
+static std::string NestedState(const Value& value, const Value* parent = nullptr) {
+    std::string state = std::to_string(value.type) + (value.parent == parent ? "p" : value.parent ? "x" : "-");
+    if (value.type == 0) return state;
+    if (value.type == 2) return state + std::to_string(value.payload);
+    if (value.type != 5 && value.type != 6) { Require(false, "Unexpected nested test value type"); return {}; }
+    if (!value.payload) return state + "!";
+    const auto* header = *reinterpret_cast<void* const*>(value.payload);
+    if (!header) return state + "?";
+    if (value.type == 5) return state + ":" + *static_cast<const char* const*>(header);
+    const auto* words = static_cast<const std::uintptr_t*>(header);
+    state += words[3] == reinterpret_cast<std::uintptr_t>(&value) ? "o" : "!";
+    state += std::to_string(words[1]) + "[";
+    if (!words[0]) return state + "?]";
+    const auto* head = reinterpret_cast<const std::uintptr_t*>(words[0]);
+    auto* node = reinterpret_cast<const std::uintptr_t*>(head[1]);
+    std::size_t count = 0;
+    const auto* previous = head;
+    while (node != head) {
+        Require(node[0] == reinterpret_cast<std::uintptr_t>(previous), "Nested array predecessor links must preserve ownership order");
+        Require(++count <= words[1], "Nested array nodes must close at their sentinel");
+        state += NestedState(*reinterpret_cast<const Value*>(node + 2), &value) + ";";
+        previous = node;
+        node = reinterpret_cast<const std::uintptr_t*>(node[1]);
+    }
+    Require(head[0] == reinterpret_cast<std::uintptr_t>(previous), "Nested array sentinel must retain its last live entry");
+    Require(count == words[1], "Nested array count must match its live links");
+    return state + "]";
+}
+static void CheckNestedCopies(ValueAllocationTrace& trace) {
+    struct Case { bool once; int budget; unsigned notifications; std::size_t requests; const char* state; };
+    const Case cases[]{
+        {0, 0, 1, 1, "0p"},
+        {0, 1, 1, 2, "0p"},
+        {0, 2, 2, 4, "6po0[?]"},
+        {0, 3, 1, 4, "6po0[]"},
+        {0, 4, 1, 5, "6po0[]"},
+        {0, 5, 5, 10, "6po0[]"},
+        {0, 6, 5, 11, "6po0[]"},
+        {0, 7, 4, 11, "6po0[]"},
+        {0, 8, 4, 12, "6po1[0-;]"},
+        {0, 9, 4, 13, "6po1[0-;]"},
+        {0, 10, 4, 14, "6po1[5p:;]"},
+        {0, 11, 3, 14, "6po1[5p:abc;]"},
+        {0, 12, 2, 14, "6po2[5p:abc;2p42;]"},
+        {0, 13, 2, 15, "6po2[5p:abc;2p42;]"},
+        {0, 14, 2, 16, "6po2[5p:abc;2p42;]"},
+        {0, 15, 1, 16, "6po2[5p:abc;2p42;]"},
+        {0, 16, 1, 17, "6po3[5p:abc;2p42;0-;]"},
+        {0, 17, 1, 18, "6po3[5p:abc;2p42;0-;]"},
+        {0, 18, 2, 20, "6po3[5p:abc;2p42;6-o0[?];]"},
+        {0, 19, 1, 20, "6po3[5p:abc;2p42;6-o0[];]"},
+        {0, 20, 1, 21, "6po3[5p:abc;2p42;6-o0[];]"},
+        {0, 21, 1, 22, "6po3[5p:abc;2p42;6po0[];]"},
+        {0, 22, 1, 23, "6po3[5p:abc;2p42;6po0[];]"},
+        {0, 23, 2, 25, "6po3[5p:abc;2p42;6po0[];]"},
+        {0, 24, 2, 26, "6po3[5p:abc;2p42;6po0[];]"},
+        {0, 25, 1, 26, "6po3[5p:abc;2p42;6po0[];]"},
+        {0, 26, 1, 27, "6po3[5p:abc;2p42;6po1[0-;];]"},
+        {0, 27, 1, 28, "6po3[5p:abc;2p42;6po1[0-;];]"},
+        {0, 28, 1, 29, "6po3[5p:abc;2p42;6po1[5p:;];]"},
+        {0, 29, 0, 29, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 0, 1, 1, "0p"},
+        {1, 1, 1, 2, "0p"},
+        {1, 2, 1, 29, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 3, 1, 4, "6po0[]"},
+        {1, 4, 1, 5, "6po0[]"},
+        {1, 5, 1, 28, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 6, 1, 29, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 7, 1, 26, "6po2[2p42;6po1[5p:def;];]"},
+        {1, 8, 1, 27, "6po3[0-;2p42;6po1[5p:def;];]"},
+        {1, 9, 1, 28, "6po3[0-;2p42;6po1[5p:def;];]"},
+        {1, 10, 1, 29, "6po3[5p:;2p42;6po1[5p:def;];]"},
+        {1, 11, 1, 29, "6po2[5p:abc;6po1[5p:def;];]"},
+        {1, 12, 1, 25, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 13, 1, 26, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 14, 1, 29, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 15, 1, 16, "6po2[5p:abc;2p42;]"},
+        {1, 16, 1, 17, "6po3[5p:abc;2p42;0-;]"},
+        {1, 17, 1, 18, "6po3[5p:abc;2p42;0-;]"},
+        {1, 18, 1, 21, "6po3[5p:abc;2p42;6-o0[];]"},
+        {1, 19, 1, 20, "6po3[5p:abc;2p42;6-o0[];]"},
+        {1, 20, 1, 21, "6po3[5p:abc;2p42;6-o0[];]"},
+        {1, 21, 1, 22, "6po3[5p:abc;2p42;6po0[];]"},
+        {1, 22, 1, 23, "6po3[5p:abc;2p42;6po0[];]"},
+        {1, 23, 1, 28, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 24, 1, 29, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+        {1, 25, 1, 26, "6po3[5p:abc;2p42;6po0[];]"},
+        {1, 26, 1, 27, "6po3[5p:abc;2p42;6po1[0-;];]"},
+        {1, 27, 1, 28, "6po3[5p:abc;2p42;6po1[0-;];]"},
+        {1, 28, 1, 29, "6po3[5p:abc;2p42;6po1[5p:;];]"},
+        {1, 29, 0, 29, "6po3[5p:abc;2p42;6po1[5p:def;];]"},
+    };
+    const auto baseline = trace.live.size();
+    for (bool constructor : {false, true}) for (const auto& test : cases) {
+        Value source{}; PrepareNestedSource(source);
+        const auto sourceState = NestedState(source);
+        Value destination{};
+        if (!constructor) _ZN3sce4Json5ValueC1EPKc(&destination, "previous");
+        const auto requests = trace.requests.size();
+        const auto notifications = trace.notifications;
+        trace.budget = test.budget; trace.once = test.once;
+        if (constructor) _ZN3sce4Json5ValueC1ERKS1_(&destination, &source);
+        else _ZN3sce4Json5ValueaSERKS1_(&destination, &source);
+        trace.budget = -1; trace.once = false;
+        const auto state = NestedState(destination);
+        const bool matches = state == test.state && trace.requests.size() - requests == test.requests && trace.notifications - notifications == test.notifications;
+        if (!matches) std::fprintf(stderr, "Nested copy constructor=%d once=%d budget=%d expected=%s actual=%s requests=%zu notifications=%u\n", constructor, test.once, test.budget, test.state, state.c_str(), trace.requests.size() - requests, trace.notifications - notifications);
+        Require(matches, "Nested copy must retain the reference partial state and allocation failure accounting");
+        Require(NestedState(source) == sourceState, "Nested allocation failure must preserve its source");
+        _ZN3sce4Json5ValueD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&source);
+        Require(trace.live.size() == baseline, "Nested partial-state teardown must release all admitted ownership");
+    }
+}
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
@@ -301,6 +436,7 @@ int main() {
     CheckScalarCopies(trace);
     CheckCollectionCopies(trace);
     CheckMissingCollections(trace);
+    CheckNestedCopies(trace);
     for (int target = 0; target <= 7; ++target) for (int budget = 0; budget <= 4; ++budget) {
         Value value; std::memset(&value, 0xa5, sizeof(value));
         trace.budget = budget;
