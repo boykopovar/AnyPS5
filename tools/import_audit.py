@@ -19,7 +19,8 @@ MODULE_SUFFIX = "#"
 CLASSES = ("implemented", "partial", "stub", "absent", "module")
 CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
 BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
-PREPROCESSOR_BRANCH = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|endif)\b", re.M)
+PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
+BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 
 
@@ -488,11 +489,53 @@ def top_level_statements(body):
     return parts
 
 
-def preprocessor_guarded(body, position):
-    depth = 0
-    for directive in PREPROCESSOR_BRANCH.finditer(body, 0, position):
-        depth += -1 if directive.group(1) == "endif" else 1
-    return depth > 0
+def branch_variants(body):
+    root = []
+    lists, groups = [root], []
+    position = 0
+    for directive in PREPROCESSOR_LINE.finditer(body):
+        lists[-1].append(body[position:directive.start()])
+        position = directive.end()
+        kind = directive.group(1)
+        if kind in ("if", "ifdef", "ifndef"):
+            group = {"alternatives": [[]], "default": False}
+            lists[-1].append(group)
+            groups.append(group)
+            lists.append(group["alternatives"][-1])
+            continue
+        if not groups:
+            raise AuditError(f"#{kind} without a matching #if")
+        group = groups[-1]
+        lists.pop()
+        if kind == "endif":
+            if not group["default"]:
+                group["alternatives"].append([])
+            groups.pop()
+            continue
+        group["default"] = group["default"] or kind == "else"
+        group["alternatives"].append([])
+        lists.append(group["alternatives"][-1])
+    if groups:
+        raise AuditError("#if without a matching #endif")
+    root.append(body[position:])
+
+    def expand(items):
+        variants = [""]
+        for item in items:
+            if isinstance(item, str):
+                variants = [variant + item for variant in variants]
+                continue
+            choices = [choice for alternative in item["alternatives"] for choice in expand(alternative)]
+            variants = [variant + choice for variant in variants for choice in choices]
+            if len(variants) > BRANCH_VARIANT_LIMIT:
+                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
+        return variants
+
+    return expand(root)
+
+
+def variant_calls(body):
+    return [unconditional_calls(variant) for variant in branch_variants(body)]
 
 
 def unconditional_calls(body):
@@ -502,8 +545,7 @@ def unconditional_calls(body):
             continue
         for call in progress.CALL.finditer(statement):
             before = statement[:call.start()]
-            position = offset + call.start()
-            if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, position) and not preprocessor_guarded(body, position):
+            if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
                 names.add(call.group(1))
     return names
 
@@ -512,7 +554,7 @@ def always_stub_calls(text):
     helpers = {}
     for match in progress.STUB_WRAPPER.finditer(text):
         body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
-        helpers.setdefault(match.group(1), []).append(unconditional_calls(body))
+        helpers.setdefault(match.group(1), []).extend(variant_calls(body))
     calls = {progress.STUB}
     while True:
         found = {name for name, bodies in helpers.items() if name not in calls and all(targets & calls for targets in bodies)}
@@ -530,7 +572,7 @@ def conditional_stubs(library):
         calls = always_stub_calls(text)
         for match in progress.DEFINITION.finditer(text):
             body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
-            if not unconditional_calls(body) & calls:
+            if not all(targets & calls for targets in variant_calls(body)):
                 conditional.add(match.group(1))
     return conditional
 
