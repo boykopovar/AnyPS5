@@ -117,7 +117,7 @@ static void CheckRecoveryFailures() {
         _ZN3sce4Json5ValueD1Ev(&value);
         Require(liveAllocations == baseline, "Recovery teardown must reclaim metadata, replacement and temporary allocations");
     }
-    Require(succeeded && failures > 0, "Recovery must exercise failed and successful host allocations");
+    Require(succeeded && failures == 0, "Recovery value storage must use the guest allocator without host allocations");
     Value value;
     _ZN3sce4Json5ValueC1Ed(&value, 0.125);
     Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, Recover, &context) == 0,
@@ -161,10 +161,10 @@ int main() {
         failed = true;
     }
     allocationBudget = -1;
-    Require(failed, "String conversion must propagate host allocation failure");
-    Require(liveAllocations == before && _ZNK3sce4Json5Value7getTypeEv(&value) == 4 &&
-                *_ZNK3sce4Json5Value7getRealEv(&value) == 0.125,
-            "Failed conversion must retain the original value and ownership");
+    Require(!failed, "String conversion must use the guest allocator without host allocations");
+    Require(liveAllocations == before && _ZNK3sce4Json5Value7getTypeEv(&value) == 5 &&
+                std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&value)), "inf") == 0,
+            "Conversion must own its string through the guest allocator");
     allocationBudget = 0;
     _ZN3sce4Json5Value3setEd(&value, 0.5);
     allocationBudget = -1;
@@ -198,7 +198,7 @@ int main() {
             Require(liveAllocations == baseline, "Successful construction must release its host ownership");
         }
     }
-    Require(constructed && constructorFailures > 0, "Exercise failed and successful host construction");
+    Require(constructed && constructorFailures == 0, "Float construction must not depend on host allocation");
     _ZN3sce4Json5ValueC1Ed(&value, std::numeric_limits<double>::infinity());
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == 5, "Conversion must remain usable after allocation failure");
     _ZN3sce4Json5ValueD1Ev(&value);
