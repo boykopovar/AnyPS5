@@ -478,12 +478,8 @@ int main() {
     }
     std::memcpy(processParameters.data() + 16, &sdkVersion, sizeof(sdkVersion));
     int callbackCount = 0;
-    const auto request = sceHttpCreateRequest2(1, "GET", "/", 0);
-    Require(sceHttpSetRequestStatusCallback(request, RequestStatusCallback, &callbackCount) == 0);
-    Require(sceHttpSendRequest(request, nullptr, 0) == static_cast<int>(0x80431063u));
-    Require(callbackCount == 0);
-    Require(sceHttpSetRequestStatusCallback(request, nullptr, nullptr) == 0);
     Require(sceHttpSetRequestStatusCallback(-1, RequestStatusCallback, &callbackCount) == static_cast<int>(0x80431100u));
+    Require(callbackCount == 0);
     constexpr int outOfMemory = static_cast<int>(0x80431022);
     constexpr int invalidValue = static_cast<int>(0x804311FE);
     constexpr int invalidUrl = static_cast<int>(0x80433060);
@@ -817,9 +813,8 @@ int main() {
     Require(sceHttpTerm_nid_postfix(emptyPoolContext) == 0);
 
     char data[16];
-    Require(sceHttpReadData(1, data, sizeof(data)) == network);
-
-    Require(sceHttpCreateRequest2(1, "GET", "/", 0) > 0);
+    Require(sceHttpReadData(1, data, sizeof(data)) == beforeInit);
+    Require(sceHttpCreateRequest2(1, "GET", "/", 0) == beforeInit);
     Require(sceHttpSetInflateGZIPEnabled(1, 0) == 0);
     Require(sceHttpSetInflateGZIPEnabled(1, 1) == 0);
     Require(sceHttpSetInflateGZIPEnabled(1, 2) == invalidValue);
@@ -827,16 +822,16 @@ int main() {
     Require(sceHttpsEnableOption(1, 0) == 0);
     Require(sceHttpsLoadCert(1, 0, nullptr, nullptr, nullptr) == 0);
     Require(sceHttpsUnloadCert(1) == 0);
-    Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == 0);
+    Require(sceHttpSetResponseHeaderMaxSize(1, 8192) == beforeInit);
     Require(sceHttpSetRecvBlockSize(1, 0x4000) == 0);
     Require(sceHttpRedirectCacheFlush(1) == 0);
     int authUserArg = 0;
     Require(sceHttpSetAuthInfoCallback(1, AuthInfo, &authUserArg) == 0);
-    Require(sceHttpReadData(1, data, sizeof(data)) == network);
+    Require(sceHttpReadData(1, data, sizeof(data)) == beforeInit);
     int httpErrno = -1;
-    Require(sceHttpGetLastErrno(1, &httpErrno) == 0);
-    Require(httpErrno == 0);
-    Require(sceHttpGetLastErrno(1, nullptr) == invalidValue);
+    Require(sceHttpGetLastErrno(1, &httpErrno) == beforeInit);
+    Require(httpErrno == -1);
+    Require(sceHttpGetLastErrno(1, nullptr) == beforeInit);
     Require(sceHttpsSetSslVersion(1, 0) == 0);
     Require(sceHttpSetRedirectCallback(1, nullptr, nullptr) == 0);
     Require(sceHttpSetCookieRecvCallback(1, nullptr, nullptr) == 0);

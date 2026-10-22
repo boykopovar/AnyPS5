@@ -1,6 +1,7 @@
-add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Options.cpp src/Parse.cpp src/Uri.cpp)
+add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Options.cpp src/Parse.cpp src/Request.cpp src/Uri.cpp)
 target_include_directories(libSceHttp PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHttp)
+target_link_libraries(libSceHttp PRIVATE libSceNet libSceSsl)
 
 if(BUILD_TESTING)
     add_test_executable(guest_http_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp.cpp)
@@ -18,8 +19,18 @@ if(BUILD_TESTING)
     target_link_libraries(guest_http_options_tests PRIVATE libSceHttp libc)
     configure_windows_unwind(guest_http_options_tests)
     add_test(NAME guest_http_options COMMAND guest_http_options_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_http_transport_tests ${LIBS_INCLUDE_DIR}/tests/networking/GuestHttpTransport.cpp)
+    target_include_directories(guest_http_transport_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/tests ${CMAKE_SOURCE_DIR}/3rdparty/mbedtls/include)
+    target_link_libraries(guest_http_transport_tests PRIVATE libSceHttp libSceNet libSceSsl libc mbedtls mbedx509 mbedcrypto)
+    configure_windows_unwind(guest_http_transport_tests)
+    add_test(NAME guest_http_transport COMMAND guest_http_transport_tests)
+    set_tests_properties(guest_http_transport PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_http guest_http_response_header guest_http_options PROPERTIES ENVIRONMENT_MODIFICATION
+        target_link_libraries(guest_http_transport_tests PRIVATE bcrypt ws2_32)
+        set_tests_properties(guest_http_transport PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
 endif()
