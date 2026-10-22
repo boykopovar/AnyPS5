@@ -66,10 +66,13 @@ bool IsStreamSupported(const AVStream& stream) {
     return codec == AV_CODEC_ID_H264 || codec == AV_CODEC_ID_HEVC || codec == AV_CODEC_ID_AAC || codec == AV_CODEC_ID_VP9 || codec == AV_CODEC_ID_OPUS;
 }
 
+float SampleAspect(AVRational sampleAspect) {
+    return sampleAspect.num > 0 && sampleAspect.den > 0 ? static_cast<float>(av_q2d(sampleAspect)) : 1.0f;
+}
+
 float DisplayAspect(int width, int height, AVRational sampleAspect) {
     if (width <= 0 || height <= 0) return 0.0f;
-    const double pixel = sampleAspect.num > 0 && sampleAspect.den > 0 ? av_q2d(sampleAspect) : 1.0;
-    return static_cast<float>(width * pixel / height);
+    return static_cast<float>(width * static_cast<double>(SampleAspect(sampleAspect)) / height);
 }
 
 class FileReplacementStream {
@@ -1070,7 +1073,7 @@ private:
         info.timestamp = timestamp;
         info.details.video.width = alignedWidth;
         info.details.video.height = alignedHeight;
-        info.details.video.aspect_ratio = DisplayAspect(frame.width, frame.height, frame.sample_aspect_ratio);
+        info.details.video.aspect_ratio = SampleAspect(frame.sample_aspect_ratio);
         std::memcpy(info.details.video.language_code, streamLanguage(index), sizeof(info.details.video.language_code));
         info.details.video.crop_left_offset = static_cast<std::uint32_t>(frame.crop_left);
         info.details.video.crop_right_offset = static_cast<std::uint32_t>(frame.crop_right) + pitch - width;
