@@ -630,6 +630,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_absolute_symbols.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_identity.py $<TARGET_FILE:relinker>)
+        add_test(NAME linux_guest_zero_address_exports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_guest_zero_address_exports.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
+        add_asan_test_options(linux_guest_zero_address_exports verify_asan_link_order=0)
         add_test(NAME guest_unused_import_dependencies COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_unused_import_dependencies.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
