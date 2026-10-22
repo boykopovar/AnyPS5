@@ -370,14 +370,14 @@ void DefineModule(SpirvEmitterState& state) {
         DefineTessellationExecutionModes(state);
     }
     state.entryLabel = state.module.AllocateId();
-    EmitBaseHeader(state.module, state.program);
+    EmitBaseHeader(state.module, state.program, state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks);
     for (const auto capability : state.requirements.capabilities) {
         state.module.EmitCapability(capability);
     }
     for (const auto& extension : state.requirements.extensions) {
         state.module.EmitExtension(extension);
     }
-    if (state.requirements.bufferInt64Atomics) {
+    if (state.requirements.bufferInt64Atomics && !state.requirements.bufferAtomicLocks) {
         if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
             FailEmit("64-bit buffer atomics need shaderBufferInt64Atomics");
         }
@@ -400,10 +400,14 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
-    if (state.requirements.imageInt64Atomics) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
-            FailEmit("64-bit image atomics need VK_EXT_shader_image_atomic_int64");
+    if (state.requirements.imageAtomicLocks) {
+        for (const auto capability : {spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageWriteWithoutFormat}) {
+            if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) == state.supportedCapabilities.end()) {
+                FailEmit("64-bit image atomics without VK_EXT_shader_image_atomic_int64 need storage image reads and writes without format");
+            }
+            state.module.EmitCapability(capability);
         }
+    } else if (state.requirements.imageInt64Atomics) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
         state.module.EmitCapability(spv::CapabilityInt64ImageEXT);

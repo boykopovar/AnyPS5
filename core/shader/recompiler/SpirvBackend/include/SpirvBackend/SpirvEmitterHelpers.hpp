@@ -2,6 +2,7 @@
 #define CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVEMITTERHELPERS_HPP
 
 #include "SpirvBackend/SpirvEmitterState.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "Optimization/BindingAllocator.hpp"
 #include <array>
 #include <string>
@@ -83,7 +84,7 @@ std::uint32_t ConstantU64(SpirvEmitterState& state, std::uint64_t value);
 std::uint32_t ConstantU32CompositeZero(SpirvEmitterState& state, std::uint32_t components);
 std::uint32_t DefineInterfaceVariable(SpirvEmitterState& state, std::uint32_t type, std::uint32_t storage, const char* name);
 void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindings);
-void EmitBaseHeader(SpirvModule& module, const IrProgram& program);
+void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool atomicLockTable = false);
 void DefineInputs(SpirvEmitterState& state);
 void DefineOutputs(SpirvEmitterState& state);
 void DefineDescriptors(SpirvEmitterState& state);
@@ -125,6 +126,7 @@ std::uint32_t EmitScratchPoolElementPointer(SpirvEmitterState& state, std::uint3
 void EmitReturnReleasingScratch(SpirvEmitterState& state);
 void VerifyScratchPoolReturns(const SpirvEmitterState& state, const std::vector<std::uint32_t>& words);
 std::uint32_t EmitLdsLockPointer(SpirvEmitterState& state);
+std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t index);
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem);
 std::uint32_t EmitMemoryElementIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t rawIndex);
@@ -303,6 +305,78 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
 template<typename TFunction>
 std::uint32_t AtomicUpdate(SpirvEmitterState& state, std::uint32_t pointer, ResourceKind kind, TFunction&& function) {
     return AtomicUpdateTyped(state, pointer, kind, TypeU32(state), std::forward<TFunction>(function));
+}
+
+template<typename TUpdate>
+std::uint32_t LockedDeviceUpdate(SpirvEmitterState& state, std::uint32_t lock, std::uint32_t type, std::uint32_t zero, TUpdate&& update) {
+    const auto entry = state.currentLabel;
+    const auto header = state.module.AllocateId();
+    const auto body = state.module.AllocateId();
+    const auto pending = state.module.AllocateId();
+    const auto critical = state.module.AllocateId();
+    const auto attemptMerge = state.module.AllocateId();
+    const auto pendingMerge = state.module.AllocateId();
+    const auto cont = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    const auto done = state.module.AllocateId();
+    const auto result = state.module.AllocateId();
+    const auto doneNext = state.module.AllocateId();
+    const auto resultNext = state.module.AllocateId();
+    const auto fence = [&] {
+        state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask | spv::MemorySemanticsImageMemoryMask));
+    };
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, header);
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), done, ConstantBool(state, false), entry, doneNext, cont);
+    state.module.AddFunction(spv::OpPhi, type, result, zero, entry, resultNext, cont);
+    state.module.AddFunction(spv::OpLoopMerge, merge, cont, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranch, body);
+    EmitLabel(state, body);
+    state.module.AddFunction(spv::OpSelectionMerge, pendingMerge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, done, pendingMerge, pending);
+    EmitLabel(state, pending);
+    const auto previous = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, lock, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u), ConstantU32(state, 0u));
+    const auto acquired = state.module.AllocateId();
+    state.module.AddFunction(spv::OpIEqual, TypeBool(state), acquired, previous, ConstantU32(state, 0u));
+    state.module.AddFunction(spv::OpSelectionMerge, attemptMerge, spv::SelectionControlMaskNone);
+    state.module.AddFunction(spv::OpBranchConditional, acquired, critical, attemptMerge);
+    EmitLabel(state, critical);
+    fence();
+    const auto old = update();
+    fence();
+    const auto released = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicExchange, TypeU32(state), released, lock, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 0u));
+    const auto criticalExit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, attemptMerge);
+    EmitLabel(state, attemptMerge);
+    const auto served = state.module.AllocateId();
+    const auto servedResult = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), served, ConstantBool(state, true), criticalExit, ConstantBool(state, false), pending);
+    state.module.AddFunction(spv::OpPhi, type, servedResult, old, criticalExit, result, pending);
+    state.module.AddFunction(spv::OpBranch, pendingMerge);
+    EmitLabel(state, pendingMerge);
+    state.module.AddFunction(spv::OpPhi, TypeBool(state), doneNext, served, attemptMerge, done, body);
+    state.module.AddFunction(spv::OpPhi, type, resultNext, servedResult, attemptMerge, result, body);
+    const auto waiting = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLogicalNot, TypeBool(state), waiting, doneNext);
+    const auto ballot = state.module.AllocateId();
+    EmitHostSubgroupBallot(state, ballot, waiting);
+    std::uint32_t remaining = ConstantU32(state, 0u);
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        const auto word = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ballot, component);
+        const auto combined = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBitwiseOr, TypeU32(state), combined, remaining, word);
+        remaining = combined;
+    }
+    const auto again = state.module.AllocateId();
+    state.module.AddFunction(spv::OpINotEqual, TypeBool(state), again, remaining, ConstantU32(state, 0u));
+    state.module.AddFunction(spv::OpBranchConditional, again, cont, merge);
+    EmitLabel(state, cont);
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, merge);
+    return resultNext;
 }
 
 }

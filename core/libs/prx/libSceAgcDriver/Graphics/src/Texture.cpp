@@ -2392,11 +2392,12 @@ VkImageView StorageTexture::AtomicView(std::uint32_t mip, bool firstLayer) {
 }
 
 VkImageView StorageTexture::Atomic64View(std::uint32_t mip, bool firstLayer) {
-    if (storageFormat == VK_FORMAT_R64_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
+    const auto format = context.imageInt64Atomics ? VK_FORMAT_R64_UINT : VK_FORMAT_R32G32_UINT;
+    if (storageFormat == format) return firstLayer ? FirstLayerView(mip) : View(mip);
     Require(storageFormat == VK_FORMAT_R32G32_UINT || storageFormat == VK_FORMAT_R32G32_SINT || storageFormat == VK_FORMAT_R32G32_SFLOAT, "64-bit storage image atomics need a surface of two 32-bit components");
     const auto found = atomicViews.find({mip, firstLayer});
     if (found != atomicViews.end()) return found->second;
-    const auto created = createView(mip, firstLayer, VK_FORMAT_R64_UINT);
+    const auto created = createView(mip, firstLayer, format);
     atomicViews.emplace(std::pair{mip, firstLayer}, created);
     return created;
 }

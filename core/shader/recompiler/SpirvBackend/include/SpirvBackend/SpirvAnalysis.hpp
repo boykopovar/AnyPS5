@@ -27,10 +27,13 @@ struct SpirvRequirements {
     bool bufferInt64Atomics = false;
     bool bufferInt64AtomicsExact = false;
     bool bufferInt64AtomicsSplit = false;
+    bool addressInt64Atomics = false;
+    bool bufferAtomicLocks = false;
     bool coherentBufferPairs = false;
     bool bufferU64View = false;
     bool imageInt64Atomics = false;
     bool gdsInt64Atomics = false;
+    bool imageAtomicLocks = false;
     bool sharedInt64Atomics = false;
     bool float64 = false;
     bool float64NeedsDevice = false;

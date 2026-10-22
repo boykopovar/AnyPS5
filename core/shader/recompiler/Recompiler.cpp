@@ -849,6 +849,12 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
                 cursor += count;
                 continue;
             }
+            if (PipelineSpecialization::IsAtomicLockTable(words[cursor + 3u])) {
+                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("the atomic lock table is supplied with the pipeline, not prepared");
+                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate atomic lock table specialization");
+                cursor += count;
+                continue;
+            }
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
             if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount) {
@@ -1352,6 +1358,12 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.readsDepthRemapPush = depthRemap;
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
+    }
+    const auto lacks = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) == request.target.supportedCapabilities.end(); };
+    const bool imageAtomicLocks = std::ranges::any_of(variant.info.info.images, [](const ImageResource& image) { return image.atomic64; }) && lacks(spv::CapabilityInt64ImageEXT);
+    const bool bufferAtomicLocks = std::ranges::any_of(variant.info.info.buffers, [](const BufferResource& buffer) { return buffer.atomic; }) && lacks(spv::CapabilityInt64Atomics);
+    if (imageAtomicLocks || bufferAtomicLocks) {
+        for (std::uint32_t word = 0; word < PipelineSpecialization::AtomicLockTableWords; ++word) result.specialization.push_back({PipelineSpecialization::AtomicLockTableBase + word, 0u});
     }
     if (!artifact.stencilReferences.empty()) {
         if (artifact.stencilReferenceDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("stencil replay push constant lies outside the stage range");
