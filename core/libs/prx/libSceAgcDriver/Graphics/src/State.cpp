@@ -1835,15 +1835,15 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
             if (state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE && state.dstColorBlendFactor == VK_BLEND_FACTOR_ZERO && state.colorBlendOp == VK_BLEND_OP_ADD) state.blendEnable = VK_FALSE;
-            const bool floating = color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10;
-            if (floating && state.blendEnable) {
-                color.mergeBlend = PackedBlendControl(blend);
+            const bool wide = color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || color.packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11;
+            if (wide && state.blendEnable) {
+                Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || (read(cx, 0x31c + slot * 0xfu) & 0x8000u) != 0, "blending unclamped normalized color into a 10_11_11 unorm color target is not implemented");
+                color.mergeBlend = PackedBlendControl(color.packing, blend);
                 state.blendEnable = VK_FALSE;
             }
             Require(!state.blendEnable, "blending into " + packed + " color target is unsupported");
             const bool nibbles = color.packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
             const std::uint32_t packedMask = nibbles ? 0xfu : 7u;
-            Require(nibbles || floating || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask || color.mergeBlend != 0u) {
                 const std::string merged = color.mergeBlend != 0u ? "blending into " : "partial writes of ";
                 if (color.volume || color.depth != 1u || (color.samples > 1u && (color.mipCount != 1u || color.layers != 1u || color.arrayLastSlice != 0u))) {
@@ -1855,7 +1855,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 color.partialWriteMask = PackedWriteMask(color.packing, mapping, exportedMask & packedMask);
                 Require(color.partialWriteMask != 0u, merged + packed + " color target that writes none of its channels is not implemented");
                 state.colorWriteMask = 0;
-                Require(!floating || color.samples == 1u, merged + "a multisampled 11_11_10 float color target are not implemented");
+                Require(!wide || color.samples == 1u, merged + "a multisampled " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
                 if (color.samples > 1u) {
                     Require(sampleCoverageSupported(queue, result.samples, true), "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample, or reads sample-rate or ancillary inputs, is unsupported (the input holds the whole pixel's coverage, gl_SampleMaskIn only the invocation's samples)");
                     if (!result.perSampleShading && !pixelRateInputsKept(queue, result)) {
@@ -1934,8 +1934,9 @@ std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t expor
 std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask) {
     constexpr std::array<std::uint32_t, 4> nibbles{0x000fu, 0x00f0u, 0x0f00u, 0xf000u};
     constexpr std::array<std::uint32_t, 4> floats{0x000003ffu, 0x001ffc00u, 0xffe00000u, 0u};
-    Require(packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10, "a write mask of a packed color target that is neither 4_4_4_4 unorm nor 11_11_10 float");
-    const auto& fields = packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 ? nibbles : floats;
+    constexpr std::array<std::uint32_t, 4> unorms{0x000007ffu, 0x003ff800u, 0xffc00000u, 0u};
+    Require(packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11, "a write mask of a packed color target that is not 4_4_4_4 unorm, 11_11_10 float or 10_11_11 unorm");
+    const auto& fields = packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 ? nibbles : packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? floats : unorms;
     std::uint32_t mask = 0;
     for (std::uint32_t component = 0; component < 4; ++component) {
         if (((exportedMask >> ((componentMapping >> (2u * component)) & 3u)) & 1u) != 0) mask |= fields[component];
@@ -1944,16 +1945,21 @@ std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std:
 }
 
 std::uint32_t PackedBlendControl(std::uint32_t blendControl) {
+    return PackedBlendControl(ShaderRecompiler::ColorExportPacking::Float11_11_10, blendControl);
+}
+
+std::uint32_t PackedBlendControl(ShaderRecompiler::ColorExportPacking packing, std::uint32_t blendControl) {
+    const std::string target = std::string(packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(packing) + " color target";
     const auto source = blendControl & 0x1fu;
     const auto combine = (blendControl >> 5u) & 7u;
     const auto destination = (blendControl >> 8u) & 0x1fu;
     char detail[96];
     std::snprintf(detail, sizeof(detail), " (CB_BLEND_CONTROL 0x%08x)", blendControl);
-    Require(combine <= 4u, std::string("blending into an 11_11_10 float color target with an unknown combine function is not implemented") + detail);
+    Require(combine <= 4u, "blending into " + target + " with an unknown combine function is not implemented" + detail);
     const auto factor = [&](std::uint32_t value) {
-        if (value >= 15u && value <= 18u) Require(false, std::string("dual-source blending into an 11_11_10 float color target is not implemented") + detail);
-        if (value == 13u || value == 14u || value == 19u || value == 20u) Require(false, std::string("blending into an 11_11_10 float color target with a constant color factor is not implemented") + detail);
-        Require(value <= 10u, std::string("blending into an 11_11_10 float color target with an unknown blend factor is not implemented") + detail);
+        if (value >= 15u && value <= 18u) Require(false, "dual-source blending into " + target + " is not implemented" + detail);
+        if (value == 13u || value == 14u || value == 19u || value == 20u) Require(false, "blending into " + target + " with a constant color factor is not implemented" + detail);
+        Require(value <= 10u, "blending into " + target + " with an unknown blend factor is not implemented" + detail);
     };
     factor(source);
     factor(destination);

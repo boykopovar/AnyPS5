@@ -534,12 +534,23 @@ std::uint32_t BlendPackedColor(SpirvEmitterState& state, IrBufferFormat format, 
     const auto sourceFactor = control & 0x1fu;
     const auto combine = (control >> 5u) & 7u;
     const auto destinationFactor = (control >> 8u) & 0x1fu;
-    const auto sourceAlpha = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), sourceAlpha, color, 3u);
+    const bool normalized = info.type == SpirvFormatComponentType::Unorm;
+    const auto unit = [&](std::uint32_t value) {
+        if (!normalized) return value;
+        const auto raised = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32(state), raised, GlslStd450(state), GLSLstd450NMax, value, ConstantF32Value(state, 0.0f));
+        const auto clamped = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32(state), clamped, GlslStd450(state), GLSLstd450NMin, raised, ConstantF32Value(state, 1.0f));
+        return clamped;
+    };
+    const auto alpha = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), alpha, color, 3u);
+    const auto sourceAlpha = unit(alpha);
     std::array<std::uint32_t, 4> components{};
     for (std::uint32_t component = 0; component < components.size(); ++component) {
-        const auto source = state.module.AllocateId();
-        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), source, color, component);
+        const auto exported = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), exported, color, component);
+        const auto source = component < info.componentCount ? unit(exported) : exported;
         if (component >= info.componentCount) {
             components[component] = source;
             continue;
@@ -653,9 +664,10 @@ void MergeColorTarget(SpirvEmitterState& state, std::size_t entry, std::uint32_t
     const auto stored = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), stored, EmitStorageImageRead(state, resource, coord, sample), 0u);
     const bool floating = merge.packing == ColorExportPacking::Float11_11_10;
-    if (!floating && merge.packing != ColorExportPacking::Unorm4_4_4_4) FailEmit("a color target merge into an unsupported packing");
-    if (merge.blendControl != 0u && !floating) FailEmit("a blending color target merge into a target other than 11_11_10 float");
-    const auto format = floating ? IrBufferFormat::Format10_11_11Float : IrBufferFormat::Format4_4_4_4UNorm;
+    const bool unorm = merge.packing == ColorExportPacking::Unorm10_11_11;
+    if (!floating && !unorm && merge.packing != ColorExportPacking::Unorm4_4_4_4) FailEmit("a color target merge into an unsupported packing");
+    if (merge.blendControl != 0u && !floating && !unorm) FailEmit("a blending color target merge into a target other than 11_11_10 float or 10_11_11 unorm");
+    const auto format = floating ? IrBufferFormat::Format10_11_11Float : unorm ? IrBufferFormat::Format11_11_10UNorm : IrBufferFormat::Format4_4_4_4UNorm;
     const auto word = PackExport(state, format, merge.blendControl != 0u ? BlendPackedColor(state, format, color, stored, merge.blendControl) : color);
     const auto kept = EmitBinaryU32(state, spv::OpBitwiseAnd, stored, ConstantU32(state, ~merge.mask));
     const auto merged = EmitOrU32(state, kept, EmitBinaryU32(state, spv::OpBitwiseAnd, word, ConstantU32(state, merge.mask)));
