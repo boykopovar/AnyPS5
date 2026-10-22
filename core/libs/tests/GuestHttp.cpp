@@ -483,7 +483,6 @@ int main() {
     constexpr int outOfMemory = static_cast<int>(0x80431022);
     constexpr int invalidValue = static_cast<int>(0x804311FE);
     constexpr int invalidUrl = static_cast<int>(0x80433060);
-    constexpr int network = static_cast<int>(0x80431063);
     constexpr std::uint32_t buildAll = 0xFF;
 
     const char* url = "https://user:secret@example.com:8443/a/./b/../c?x=1&y=2#top";

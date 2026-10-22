@@ -611,9 +611,9 @@ int ParseRedirectUrl(const Url& current, const std::string& location, Url& resul
     const std::string base = current.scheme + "://" + (current.host.find(':') != std::string::npos ? "[" + current.host + "]" : current.host) +
         (current.port != (current.secure ? 443 : 80) ? ":" + std::to_string(current.port) : "") + current.target;
     std::size_t required = 0;
-    if (const int code = sceHttpUriMerge(nullptr, base.c_str(), location.c_str(), &required, 0, 0xff); code != 0) return code;
+    if (const int code = sceHttpUriMerge(nullptr, base.c_str(), location.c_str(), &required, 0, 0); code != 0) return code;
     std::vector<char> merged(required);
-    if (const int code = sceHttpUriMerge(merged.data(), base.c_str(), location.c_str(), nullptr, merged.size(), 0xff); code != 0) return code;
+    if (const int code = sceHttpUriMerge(merged.data(), base.c_str(), location.c_str(), nullptr, merged.size(), 0); code != 0) return code;
     return ParseUrl(merged.data(), result);
 }
 
