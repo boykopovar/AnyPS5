@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,10 @@
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
+using NullCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
+using MismatchCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
+using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
+using ElementCallback = void (APS5_VABI*)(int, const void*, const std::size_t*, const Value*, const Value*, void*);
 extern "C" {
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
@@ -19,6 +24,10 @@ void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
+int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullCallback, void*);
+int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, MismatchCallback, void*);
+int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatCallback, void*);
+int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, ElementCallback, void*);
 }
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
@@ -26,8 +35,11 @@ static void Require(bool valid, const char* message) {
 struct ValueAllocationTrace {
     std::map<void*, std::size_t> live;
     std::vector<std::size_t> requests;
+    std::vector<void*> frees;
     int budget = -1;
     unsigned notifications = 0;
+    unsigned nullFrees = 0;
+    const Value* registering = nullptr;
 };
 static void* APS5_VABI ValueAllocationAllocate(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<ValueAllocationTrace*>(context); trace.requests.push_back(bytes);
@@ -37,13 +49,15 @@ static void* APS5_VABI ValueAllocationAllocate(void*, std::size_t bytes, void* c
     std::memset(memory, 0xa5, bytes); trace.live.emplace(memory, bytes); return memory;
 }
 static void APS5_VABI ValueAllocationFree(void*, void* memory, void* context) {
-    if (!memory) return;
+    if (!memory) { ++static_cast<ValueAllocationTrace*>(context)->nullFrees; return; }
     Require(static_cast<ValueAllocationTrace*>(context)->live.erase(memory) == 1, "Value resources must return through their owning allocator");
+    static_cast<ValueAllocationTrace*>(context)->frees.push_back(memory);
     std::free(memory);
 }
 static void APS5_VABI ValueAllocationNotify(void*, int error, std::size_t bytes, void* context) {
     auto& trace = *static_cast<ValueAllocationTrace*>(context);
     Require(static_cast<unsigned>(error) == 0x80848102 && trace.requests.back() == bytes, "Value failure notification must identify its allocation");
+    if (trace.registering && bytes != 16) Require(!trace.registering->auxiliary, "Auxiliary admission must remain unpublished during allocation failure notification");
     ++trace.notifications;
 }
 static void* const ValueAllocationVtable[]{nullptr, nullptr, reinterpret_cast<void*>(ValueAllocationAllocate), reinterpret_cast<void*>(ValueAllocationFree), reinterpret_cast<void*>(ValueAllocationNotify)};
@@ -61,11 +75,79 @@ static void Check(const Value& value, int expected, const ValueAllocationTrace& 
         Require(owner == &value, "Collection headers must bind to their enclosing value");
     }
 }
+static const Value& APS5_VABI NullRecovery(std::int32_t, const Value* value, void*) { return *value; }
+static const Value& APS5_VABI MismatchRecovery(std::int32_t, const Value* value, const Value*, void*) { return *value; }
+static Value* APS5_VABI FloatRecovery(Value* value, std::int32_t, double, const Value*, void*, bool*) { return value; }
+static void APS5_VABI ElementRecovery(int, const void*, const std::size_t*, const Value*, const Value*, void*) {}
+static int Register(Value& value, unsigned kind, void* context, bool empty = false) {
+    switch (kind) {
+        case 0: return _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&value, empty ? nullptr : NullRecovery, context);
+        case 1: return _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&value, empty ? nullptr : MismatchRecovery, context);
+        case 2: return _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, empty ? nullptr : FloatRecovery, context);
+        default: return _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(&value, empty ? nullptr : ElementRecovery, context);
+    }
+}
+static void CheckMetadata(ValueAllocationTrace& trace) {
+    const auto baseline = trace.live.size();
+    for (unsigned kind = 0; kind < 4; ++kind) for (int budget = 0; budget <= 3; ++budget) {
+        Value value; std::memset(&value, 0xa5, sizeof(value));
+        _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&value, 0);
+        const auto payload = value.payload;
+        const auto notifications = trace.notifications;
+        trace.budget = budget;
+        trace.registering = &value;
+        const auto status = Register(value, kind, &trace);
+        trace.registering = nullptr;
+        trace.budget = -1;
+        const bool admitted = budget >= (kind == 0 ? 2 : 3);
+        Require(static_cast<unsigned>(status) == (admitted ? 0u : 0x80848102u) && trace.notifications - notifications == (admitted ? 0u : 1u), "Callback metadata admission must return and notify its actual allocation failure");
+        Require(value.payload == payload && value.reserved == 0xa5a5a5a5 && value.type == 0, "Callback registration must preserve the value payload");
+        Require((value.auxiliary != nullptr) == (budget >= 1), "Failed fallback allocation must retain its auxiliary record");
+        if (value.auxiliary) {
+            Require(Owned(trace, value.auxiliary, 72), "Modern auxiliary records must use the supplied allocator");
+            auto* slots = static_cast<void**>(value.auxiliary);
+            Require((slots[2] != nullptr) == (budget >= 2), "Fallback allocation failure must preserve a null fallback pointer");
+            if (slots[2]) {
+                auto* fallback = static_cast<Value*>(slots[2]);
+                Require(Owned(trace, fallback, 32) && fallback->parent == &value && !fallback->auxiliary && fallback->type == 0 && fallback->payload == UINT64_C(0xa5a5a5a5a5a5a5a5), "Fallback values must retain native ownership and inactive payload bytes");
+            }
+            for (unsigned index = 6; index < 9; ++index) Require(!slots[index], "Auxiliary reserved fields must initialize to zero");
+            if (kind && admitted) Require(Owned(trace, slots[kind + 2], 16), "Callback records must own their actual sixteen-byte allocation");
+        }
+        auto* auxiliary = value.auxiliary;
+        auto* fallback = auxiliary ? static_cast<void**>(auxiliary)[2] : nullptr;
+        const auto requests = trace.requests.size();
+        Require(Register(value, kind, &value) == 0, "Callback registration must remain usable after allocation failure");
+        Require(!auxiliary || (value.auxiliary == auxiliary && static_cast<void**>(auxiliary)[2] == fallback), "Registration retry must reuse partial auxiliary state without recreating a missing fallback");
+        if (admitted) Require(trace.requests.size() == requests, "Replacing an existing callback must not allocate");
+        auto* slots = static_cast<void**>(value.auxiliary);
+        auto* record = kind ? static_cast<void**>(slots[kind + 2]) : slots;
+        Require(record[0] && record[1] == &value, "Registration must retain its callback and replacement context");
+        const auto retained = trace.requests.size();
+        Require(Register(value, kind, &trace, true) == 0 && !record[0] && record[1] == &trace && trace.requests.size() == retained, "A null callback must replace its record without deleting or reallocating metadata");
+        _ZN3sce4Json5Value3setENS0_9ValueTypeE(&value, 2);
+        Require(value.auxiliary == slots, "Payload type changes must preserve root callback metadata");
+        Value parent{}; value.parent = &parent;
+        Require(static_cast<unsigned>(Register(value, kind, &trace)) == 0x80848104 && trace.requests.size() == retained, "Owned children must reject callback registration without allocating");
+        value.parent = nullptr;
+        std::vector<void*> expectedFrees;
+        if (kind) expectedFrees.push_back(record);
+        if (slots[2]) expectedFrees.push_back(slots[2]);
+        expectedFrees.push_back(slots);
+        const auto freed = trace.frees.size();
+        const auto nullFrees = trace.nullFrees;
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.nullFrees == nullFrees, "Metadata destruction must not free absent callback records");
+        Require(trace.frees.size() == freed + expectedFrees.size() && std::equal(expectedFrees.begin(), expectedFrees.end(), trace.frees.begin() + freed), "Metadata teardown must release callback records, fallback and auxiliary in ownership order");
+        Require(trace.live.size() == baseline, "Callback metadata destruction must release all admitted and partial resources");
+    }
+}
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize value allocation contract");
     const auto baseline = trace.live.size();
+    CheckMetadata(trace);
     for (int target = 0; target <= 7; ++target) for (int budget = 0; budget <= 4; ++budget) {
         Value value; std::memset(&value, 0xa5, sizeof(value));
         trace.budget = budget;

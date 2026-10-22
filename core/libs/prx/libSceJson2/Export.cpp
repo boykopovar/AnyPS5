@@ -10,7 +10,6 @@
 #include <iterator>
 #include <locale>
 #include <mutex>
-#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -847,7 +846,7 @@ Handlers HandlersOf(const Node& n) {
         std::lock_guard lock(state.mutex);
         if (state.initialized) handlers = state.handlers;
     }
-    if (!auxiliary) return handlers;
+    if (!auxiliary || !ModernValues()) return handlers;
     if (auxiliary->typeMismatch && auxiliary->typeMismatch->callback) {
         handlers.typeMismatch = auxiliary->typeMismatch->callback;
         handlers.typeMismatchContext = auxiliary->typeMismatch->context;
@@ -893,24 +892,38 @@ void Clear(Node& n) {
 void Destroy(Value& v) {
     Clear(v);
     if (v.auxiliary) {
-        delete v.auxiliary->typeMismatch;
-        delete v.auxiliary->specialFloat;
-        delete v.auxiliary->elementAccessFailure;
+        if (ModernValues()) {
+            if (v.auxiliary->typeMismatch) Release(v.auxiliary->typeMismatch);
+            v.auxiliary->typeMismatch = nullptr;
+            if (v.auxiliary->specialFloat) Release(v.auxiliary->specialFloat);
+            v.auxiliary->specialFloat = nullptr;
+            if (v.auxiliary->elementAccessFailure) Release(v.auxiliary->elementAccessFailure);
+            v.auxiliary->elementAccessFailure = nullptr;
+        }
         if (v.auxiliary->fallback) {
             Destroy(*v.auxiliary->fallback);
-            delete v.auxiliary->fallback;
+            Release(v.auxiliary->fallback);
+            v.auxiliary->fallback = nullptr;
         }
-        delete v.auxiliary;
+        Release(v.auxiliary);
         v.auxiliary = nullptr;
     }
 }
 
-void EnsureAuxiliary(Node& n) {
-    if (!n.auxiliary) {
-        n.auxiliary = new Auxiliary();
-        n.auxiliary->fallback = new Value();
-        n.auxiliary->fallback->parent = &n;
-    }
+int EnsureAuxiliary(Node& n) {
+    if (n.auxiliary) return 0;
+    const auto bytes = ModernValues() ? sizeof(Auxiliary) : std::size_t{24};
+    auto* auxiliary = static_cast<Auxiliary*>(Allocate(bytes));
+    if (!auxiliary) return JsonErrorOutOfMemory;
+    auxiliary->nullAccess = nullptr;
+    auxiliary->nullAccessContext = nullptr;
+    auxiliary->fallback = static_cast<Value*>(Allocate(sizeof(Value)));
+    if (auxiliary->fallback) Construct(*auxiliary->fallback);
+    if (ModernValues()) std::memset(reinterpret_cast<std::byte*>(auxiliary) + 24, 0, sizeof(Auxiliary) - 24);
+    n.auxiliary = auxiliary;
+    if (!auxiliary->fallback) return JsonErrorOutOfMemory;
+    auxiliary->fallback->parent = &n;
+    return 0;
 }
 
 Node& NodeOf(const Value& v) { return const_cast<Value&>(v); }
@@ -1120,7 +1133,7 @@ const Node& Typed(const Value* self, ValueType requested) {
             return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested);
     }
     const auto* auxiliary = RootOf(*self).auxiliary;
-    if (auxiliary && auxiliary->typeMismatch && auxiliary->typeMismatch->callback)
+    if (ModernValues() && auxiliary && auxiliary->typeMismatch && auxiliary->typeMismatch->callback)
         return Typed(&auxiliary->typeMismatch->callback(requested, self, self->parent, auxiliary->typeMismatch->context), requested);
     if (self->type == TypeNull && callback)
         return Typed(&callback(requested, self->parent, context), requested);
@@ -1158,15 +1171,16 @@ int SetHandler(Node& n, HandlerRecord<TCallback>* Auxiliary::* member, TCallback
         if (!state.initialized) return JsonErrorNotInitialized;
         if (modernOnly && !state.floatFormatEnabled) return static_cast<int>(0x80848113);
     }
-    try {
-        EnsureAuxiliary(n);
-        auto& record = n.auxiliary->*member;
-        if (!record) record = new HandlerRecord<TCallback>();
-        record->callback = callback;
-        record->context = context;
-    } catch (const std::bad_alloc&) {
-        return JsonErrorOutOfMemory;
+    if (!ModernValues()) NotImplemented_nid_no_patch(__func__);
+    const auto status = EnsureAuxiliary(n);
+    if (status) return status;
+    auto& record = n.auxiliary->*member;
+    if (!record) {
+        record = static_cast<HandlerRecord<TCallback>*>(Allocate(sizeof(HandlerRecord<TCallback>)));
+        if (!record) return JsonErrorOutOfMemory;
     }
+    record->callback = callback;
+    record->context = context;
     return 0;
 }
 
@@ -1670,7 +1684,10 @@ private:
 };
 
 int ParseValue(Value* out, Parser& parser) {
-    if (!out->parent) EnsureAuxiliary(*out);
+    if (!out->parent) {
+        const auto status = EnsureAuxiliary(*out);
+        if (status) return status;
+    }
     Node parsed{};
     bool parsedOk = false;
     try {
@@ -2348,11 +2365,9 @@ int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS
         std::lock_guard lock(state.mutex);
         if (!state.initialized) return JsonErrorNotInitialized;
     }
-    try {
-        EnsureAuxiliary(*self);
-    } catch (const std::bad_alloc&) {
-        return JsonErrorOutOfMemory;
-    }
+    if (!ModernValues() && !self->auxiliary) return static_cast<int>(0x80848104);
+    const auto status = EnsureAuxiliary(*self);
+    if (status) return status;
     self->auxiliary->nullAccess = callback;
     self->auxiliary->nullAccessContext = context;
     return 0;
