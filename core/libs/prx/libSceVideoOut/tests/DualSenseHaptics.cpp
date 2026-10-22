@@ -25,15 +25,15 @@ void ReportLayout() {
     expected[2] = 0x91;
     expected[3] = 0x07;
     expected[4] = 0xFE;
-    for (std::size_t index = 5; index <= 9; ++index) expected[index] = 16;
+    for (std::size_t index = 5; index <= 9; ++index) expected[index] = DualSenseHaptics::ControllerQueueFrames;
     expected[10] = 0x2A;
     expected[11] = 0x92;
     expected[12] = 64;
     for (std::size_t index = 0; index < samples.size(); ++index) expected[13 + index] = static_cast<std::uint8_t>(samples[index]);
-    expected[138] = 0xE2;
-    expected[139] = 0xFB;
-    expected[140] = 0xFE;
-    expected[141] = 0x51;
+    expected[138] = 0xFB;
+    expected[139] = 0x6F;
+    expected[140] = 0x69;
+    expected[141] = 0xCC;
     for (std::size_t index = 0; index < expected.size(); ++index) {
         if (report[index] == expected[index]) continue;
         std::fprintf(stderr, "dualsense_haptics: report byte %zu is 0x%02x, expected 0x%02x\n", index, report[index], expected[index]);

@@ -2,7 +2,6 @@
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_DUALSENSEHAPTICS_HPP
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -14,8 +13,7 @@ constexpr std::size_t ReportBytes = 142;
 constexpr std::size_t PowerReportBytes = 78;
 constexpr std::size_t SamplesOffset = 13;
 constexpr std::size_t SamplesBytes = 64;
-constexpr std::uint8_t ControllerQueueFrames = 16;
-constexpr std::chrono::nanoseconds BlockPeriod{10'672'000};
+constexpr std::uint8_t ControllerQueueFrames = 64;
 
 constexpr std::array<std::uint32_t, 256> CrcTable = [] {
     std::array<std::uint32_t, 256> table{};

@@ -157,14 +157,9 @@ void PadInput::streamHaptics() {
         return false;
     };
     if (!write(DualSenseHaptics::PowerReport(sequence++))) return;
-    auto next = std::chrono::steady_clock::now();
     while (hapticsRunning) {
-        next += DualSenseHaptics::BlockPeriod;
-        const auto now = std::chrono::steady_clock::now();
-        if (next < now) next = now;
-        std::this_thread::sleep_until(next);
         std::array<std::int8_t, DualSenseHaptics::SamplesBytes> samples{};
-        if (!PadTakeHapticBlock_nid_postfix(samples.data())) continue;
+        if (!PadWaitTakeHapticBlock_nid_postfix(samples.data(), 50)) continue;
         if (std::all_of(samples.begin(), samples.end(), [](std::int8_t sample) { return sample == 0; })) continue;
         if (!write(DualSenseHaptics::Report(sequence++, counter++, samples))) return;
     }
@@ -172,9 +167,9 @@ void PadInput::streamHaptics() {
 
 void PadInput::closeHaptics() {
     if (haptics == nullptr) return;
+    PadSetHapticStreamOpen_nid_postfix(false);
     hapticsRunning = false;
     if (hapticsThread.joinable()) hapticsThread.join();
-    PadSetHapticStreamOpen_nid_postfix(false);
     SDL_hid_close(haptics);
     haptics = nullptr;
 }
