@@ -10,6 +10,7 @@
 #include <iterator>
 #include <locale>
 #include <mutex>
+#include <type_traits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -19,6 +20,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 
 namespace {
 
@@ -147,7 +149,10 @@ struct Globals {
     bool initialized = false;
     AllocParamRtti rtti{};
     Handlers handlers{};
-    AllocationContext allocation{};
+    AllocationContext* allocation = nullptr;
+    Value* fallback = nullptr;
+    PthreadMutex* internalMutex = nullptr;
+    PthreadMutex* recoveryMutex = nullptr;
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
     std::uint64_t allocationFailures = 0;
@@ -158,9 +163,20 @@ Globals& State() {
     return globals;
 }
 
+struct KernelMutexLock {
+    PthreadMutex* mutex;
+    explicit KernelMutexLock(PthreadMutex* value) : mutex(value) {
+        if (mutex && scePthreadMutexLock(mutex)) NotImplemented_nid_no_patch(__func__);
+    }
+    ~KernelMutexLock() { if (mutex) scePthreadMutexUnlock(mutex); }
+    KernelMutexLock(const KernelMutexLock&) = delete;
+    KernelMutexLock& operator=(const KernelMutexLock&) = delete;
+};
+
 struct CallbackScope {
     Globals& state = State();
     std::unique_lock<std::recursive_mutex> lock{state.callbackMutex};
+    KernelMutexLock kernelLock{state.recoveryMutex};
     bool entered = !state.callbackActive;
     CallbackScope() { if (entered) state.callbackActive = true; }
     ~CallbackScope() { if (entered) state.callbackActive = false; }
@@ -181,6 +197,7 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
         notify(context.allocator, JsonErrorOutOfMemory, size, context.userData);
         auto& state = State();
         std::lock_guard lock(state.mutex);
+        KernelMutexLock kernelLock(state.internalMutex);
         ++state.allocationFailures;
     }
     return memory;
@@ -257,7 +274,7 @@ char emptyCharacters[1]{};
 AllocationContext ActiveAllocation() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    return state.allocation;
+    return state.allocation ? *state.allocation : AllocationContext{};
 }
 
 void* Allocate(std::size_t size) {
@@ -296,6 +313,7 @@ bool ModernValues() {
 std::uint64_t AllocationFailures() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    KernelMutexLock kernelLock(state.internalMutex);
     return state.allocationFailures;
 }
 
@@ -1100,6 +1118,7 @@ DefaultStorage& SharedDefaults() {
 const Value& Defaults(ValueType type) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    if (type == TypeNull && state.fallback) return *state.fallback;
     auto& defaults = SharedDefaults();
     if (!defaults.ready[type]) {
         Construct(defaults.values[type]);
@@ -1116,6 +1135,87 @@ void ResetDefaults() {
         defaults.values[type] = {};
         defaults.ready[type] = false;
     }
+}
+
+PthreadMutex* CreateKernelMutex() {
+    auto* mutex = static_cast<PthreadMutex*>(Allocate(sizeof(PthreadMutex)));
+    if (!mutex) return nullptr;
+    *mutex = nullptr;
+    PthreadMutexattr attribute = nullptr;
+    if (scePthreadMutexattrInit(&attribute)) { Release(mutex); NotImplemented_nid_no_patch(__func__); }
+    const auto typeStatus = scePthreadMutexattrSettype(&attribute, 2);
+    const auto status = typeStatus ? typeStatus : scePthreadMutexInit(mutex, &attribute, "SceJson_internal");
+    scePthreadMutexattrDestroy(&attribute);
+    if (status) { Release(mutex); NotImplemented_nid_no_patch(__func__); }
+    return mutex;
+}
+
+void ReleaseInitialization() {
+    auto& state = State();
+    if (state.fallback) { Destroy(*state.fallback); Release(state.fallback); state.fallback = nullptr; }
+    if (state.recoveryMutex && state.recoveryMutex != state.internalMutex) {
+        scePthreadMutexDestroy(state.recoveryMutex);
+        Release(state.recoveryMutex);
+    }
+    state.recoveryMutex = nullptr;
+    if (state.internalMutex) { scePthreadMutexDestroy(state.internalMutex); Release(state.internalMutex); state.internalMutex = nullptr; }
+    ResetDefaults();
+    if (state.allocation) {
+        auto* allocation = state.allocation;
+        const auto context = *allocation;
+        Release(context, allocation);
+        state.allocation = nullptr;
+    }
+    state.floatFormat = 2;
+    state.floatFormatEnabled = false;
+    state.initialized = false;
+}
+
+template<typename T>
+void CreateDefault(ValueType type) {
+    auto& defaults = SharedDefaults();
+    auto& value = defaults.values[type];
+    Construct(value);
+    auto* handle = static_cast<T*>(Allocate(sizeof(T)));
+    value.payload = reinterpret_cast<std::uintptr_t>(handle);
+    value.type = type;
+    defaults.ready[type] = true;
+    if (handle) {
+        *handle = {};
+        if constexpr (std::is_same_v<T, String>) Construct(*handle, std::string_view{});
+        else Construct(*handle);
+    }
+}
+
+int InitializeResources(void* self, const void* parameter, std::int32_t format, bool modern) {
+    auto& state = State();
+    AllocationContext context;
+    std::memcpy(&context, parameter, offsetof(AllocationContext, fileBufferSize));
+    auto* const* table = *static_cast<void* const* const*>(context.allocator);
+    const auto allocate = reinterpret_cast<void* (APS5_VABI*)(void*, std::size_t, void*)>(table[2]);
+    auto* allocation = static_cast<AllocationContext*>(allocate(context.allocator, sizeof(AllocationContext), context.userData));
+    if (!allocation) return JsonErrorOutOfMemory;
+    std::memcpy(&context.fileBufferSize, static_cast<const std::byte*>(parameter) + offsetof(AllocationContext, fileBufferSize), sizeof(context.fileBufferSize));
+    *allocation = context;
+    state.allocation = allocation;
+    state.floatFormat = format;
+    state.floatFormatEnabled = modern;
+    try {
+        CreateDefault<String>(TypeString);
+        CreateDefault<Array>(TypeArray);
+        CreateDefault<Object>(TypeObject);
+        state.fallback = static_cast<Value*>(Allocate(sizeof(Value)));
+        if (state.fallback) Construct(*state.fallback);
+        state.internalMutex = CreateKernelMutex();
+        const auto& defaults = SharedDefaults();
+        const bool admitted = defaults.values[TypeString].string && defaults.values[TypeArray].array &&
+            defaults.values[TypeObject].object && state.fallback && state.internalMutex;
+        if (admitted) state.recoveryMutex = ModernValues() ? CreateKernelMutex() : state.internalMutex;
+        if (!admitted || !state.recoveryMutex) { ReleaseInitialization(); return JsonErrorOutOfMemory; }
+    } catch (...) { ReleaseInitialization(); throw; }
+    state.initialized = true;
+    *static_cast<std::uint8_t*>(self) = 1;
+    return 0;
 }
 
 const Node& Typed(const Value* self, ValueType requested) {
@@ -1176,7 +1276,7 @@ int SetHandler(Node& n, HandlerRecord<TCallback>* Auxiliary::* member, TCallback
     {
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        if (!state.initialized) return JsonErrorNotInitialized;
+        if (!state.allocation) return JsonErrorNotInitialized;
         if (modernOnly && !state.floatFormatEnabled) return static_cast<int>(0x80848113);
     }
     if (!ModernValues()) NotImplemented_nid_no_patch(__func__);
@@ -1774,31 +1874,25 @@ void APS5_VABI _ZN3sce4Json11InitializerD1Ev(void* self) {
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void* self, const void* parameter) {
     auto& state = State();
+    std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
-    if (state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
+    if (state.allocation || state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
     if (!parameter) return JsonErrorInvalidArgument;
     if (!*static_cast<void* const*>(parameter)) return JsonErrorOutOfMemory;
     ResetDefaults();
-    std::memcpy(&state.allocation, parameter, sizeof(state.allocation));
-    state.floatFormat = 2;
-    state.floatFormatEnabled = false;
-    state.initialized = true;
-    *static_cast<std::uint8_t*>(self) = 1;
-    return 0;
+    return InitializeResources(self, parameter, 2, false);
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     auto& state = State();
+    std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
+    if (state.callbackActive) NotImplemented_nid_no_patch(__func__);
     state.callback = nullptr;
     state.context = nullptr;
     state.handlers = {};
-    ResetDefaults();
-    state.allocation = {};
-    state.floatFormat = 2;
-    state.floatFormatEnabled = false;
-    state.initialized = false;
+    ReleaseInitialization();
     *static_cast<std::uint8_t*>(self) = 0;
     return 0;
 }
@@ -2290,7 +2384,7 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* 
         auto& state = State();
         std::lock_guard lock(state.mutex);
         if (!state.initialized) return JsonErrorNotInitialized;
-        allocation = state.allocation;
+        allocation = state.allocation ? *state.allocation : AllocationContext{};
     }
     if (!allocation.fileBufferSize) return static_cast<int>(0x80848105);
     FileReader reader{allocation};
@@ -2310,7 +2404,7 @@ void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(InitP
     *self = {};
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    if (state.initialized) return;
+    if (state.allocation) return;
     const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
     if (!callbacks.allocate || !callbacks.free) return;
     state.rtti = callbacks;
@@ -2346,7 +2440,7 @@ void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocPa
     if (!allocParam) return;
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    if (state.initialized) return;
+    if (state.allocation) return;
     const auto& callbacks = *static_cast<const AllocParamRtti*>(allocParam);
     if (!callbacks.allocate || !callbacks.free) return;
     state.rtti = callbacks;
@@ -2364,17 +2458,13 @@ void APS5_VABI _ZN3sce4Json14InitParameter225setSpecialFloatFormatTypeENS0_22Spe
 
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void* self, const InitParameter2* parameter) {
     auto& state = State();
+    std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
-    if (state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
+    if (state.allocation || state.initialized || *static_cast<const std::uint8_t*>(self)) return JsonErrorAlreadyInitialized;
     if (!parameter || !parameter->allocator || static_cast<std::uint32_t>(parameter->specialFloatFormatType) > 2)
         return JsonErrorInvalidArgument;
     ResetDefaults();
-    state.allocation = {parameter->allocator, parameter->userData, parameter->fileBufferSize};
-    state.floatFormat = parameter->specialFloatFormatType;
-    state.floatFormatEnabled = true;
-    state.initialized = true;
-    *static_cast<std::uint8_t*>(self) = 1;
-    return 0;
+    return InitializeResources(self, parameter, parameter->specialFloatFormatType, true);
 }
 
 void APS5_VABI _ZN3sce4Json5Value5clearEv(Value* self) {
@@ -2394,7 +2484,7 @@ int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS
     {
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        if (!state.initialized) return JsonErrorNotInitialized;
+        if (!state.allocation) return JsonErrorNotInitialized;
     }
     if (!ModernValues() && !self->auxiliary) return static_cast<int>(0x80848104);
     const auto status = EnsureAuxiliary(*self);
