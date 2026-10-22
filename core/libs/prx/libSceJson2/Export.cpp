@@ -942,18 +942,6 @@ void TransferPayload(Node& destination, Node& source) {
     BindChildren(destination);
 }
 
-template<typename TInitialize>
-void Construct(Value& destination, TInitialize initialize) {
-    Value pending{};
-    try {
-        initialize(pending);
-    } catch (...) {
-        Destroy(pending);
-        throw;
-    }
-    Construct(destination);
-    TransferPayload(destination, pending);
-}
 
 bool HasStorage(const String& value) { return value.text != nullptr; }
 bool HasStorage(const Array& value) { return value.items != nullptr; }
@@ -1023,18 +1011,39 @@ void CopyObject(Object*& destination, const Object* source) {
 
 void AssignReal(Node& n, double value);
 
+void SetType(Node& n, ValueType type);
+
 void AssignNode(Node& destination, const Node& source) {
+    if (source.type == TypeNull) { SetType(destination, TypeNull); return; }
+    if (source.type == TypeBoolean) {
+        const auto value = source.boolean;
+        SetType(destination, TypeBoolean);
+        destination.boolean = value;
+        return;
+    }
+    if (source.type == TypeInteger || source.type == TypeUInteger) {
+        const auto value = source.payload;
+        SetType(destination, source.type);
+        destination.payload = value;
+        return;
+    }
+    if (source.type == TypeReal) { AssignReal(destination, source.real); return; }
+    if (source.type == TypeString) {
+        const auto* string = source.string;
+        if (!string) NotImplemented_nid_no_patch(__func__);
+        if (!string->text) return;
+        SetType(destination, TypeString);
+        if (destination.string && destination.string->text != string->text) AssignText(*destination.string, View(*string), true);
+        return;
+    }
     if (&destination == &source) return;
     Node copy{};
     copy.type = source.type;
     try {
-        if (source.type == TypeString) Construct(copy.string, *source.string);
-        else if (source.type == TypeArray) CopyArray(copy.array, source.array);
+        if (source.type == TypeArray) CopyArray(copy.array, source.array);
         else if (source.type == TypeObject) CopyObject(copy.object, source.object);
-        else if (source.type == TypeReal) AssignReal(copy, source.real);
-        else std::memcpy(&copy.payload, &source.payload, sizeof(copy.payload));
-        if ((copy.type == TypeString && !copy.string) || (copy.type == TypeArray && !copy.array) ||
-                (copy.type == TypeObject && !copy.object)) copy.type = TypeNull;
+        else NotImplemented_nid_no_patch(__func__);
+        if ((copy.type == TypeArray && !copy.array) || (copy.type == TypeObject && !copy.object)) copy.type = TypeNull;
     } catch (...) {
         Clear(copy);
         throw;
@@ -1056,7 +1065,8 @@ void RecoverSpecial(const Node& source, const Handlers& handlers, int function, 
 }
 
 void CopyInto(Value& destination, const Value& source) {
-    Construct(destination, [&](Node& node) { AssignNode(node, NodeOf(source)); });
+    Construct(destination);
+    AssignNode(destination, source);
 }
 
 void SetType(Node& n, ValueType type) {

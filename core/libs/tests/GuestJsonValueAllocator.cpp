@@ -24,6 +24,9 @@ void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
+void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
+void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
+Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
 int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullCallback, void*);
 int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, MismatchCallback, void*);
 int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatCallback, void*);
@@ -142,12 +145,66 @@ static void CheckMetadata(ValueAllocationTrace& trace) {
         Require(trace.live.size() == baseline, "Callback metadata destruction must release all admitted and partial resources");
     }
 }
+static void CheckScalarCopies(ValueAllocationTrace& trace) {
+    const auto baseline = trace.live.size();
+    constexpr const char* text = "a string requiring independently allocated storage";
+    for (int previous = -1; previous <= 7; ++previous) for (int type = 0; type <= 5; ++type) for (int budget = 0; budget <= 3; ++budget) {
+        Value source; std::memset(&source, 0xa5, sizeof(source));
+        if (type == 5) _ZN3sce4Json5ValueC1EPKc(&source, text);
+        else {
+            _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&source, type);
+            if (type == 1) source.payload = UINT64_C(0xa5a5a5a5a5a5a501);
+            if (type == 2) source.payload = 42;
+            if (type == 3) source.payload = UINT64_C(0xfedcba9876543210);
+            if (type == 4) source.payload = UINT64_C(0x3fe8000000000000);
+        }
+        Value destination; std::memset(&destination, 0xa5, sizeof(destination));
+        void* auxiliary = nullptr;
+        std::uint64_t payload = destination.payload;
+        void* header = nullptr;
+        if (previous >= 0) {
+            if (previous == 5) _ZN3sce4Json5ValueC1EPKc(&destination, "previous");
+            else _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&destination, previous);
+            Require(Register(destination, 0, &trace, true) == 0, "Prepare assignment metadata");
+            auxiliary = destination.auxiliary;
+            payload = destination.payload;
+            if (previous == 5) header = *reinterpret_cast<void* const*>(payload);
+        }
+        const auto requests = trace.requests.size();
+        trace.budget = budget;
+        if (previous < 0) _ZN3sce4Json5ValueC1ERKS1_(&destination, &source);
+        else Require(_ZN3sce4Json5ValueaSERKS1_(&destination, &source) == &destination, "Value assignment must return its destination");
+        trace.budget = -1;
+        const auto expected = type == 5 && previous != 5 && budget < 2 ? 0 : type;
+        Check(destination, expected, trace);
+        Require(!destination.parent && destination.auxiliary == auxiliary, "Copy and assignment must preserve their metadata contract");
+        if (type == 0) Require(destination.payload == (previous >= 5 ? 0 : payload), "Null copies must preserve inactive scalar payload bytes");
+        else if (type == 1) Require(destination.payload == (((previous >= 5 ? 0 : payload) & ~UINT64_C(255)) | 1), "Boolean copies must preserve inactive destination bytes");
+        else if (type < 5) Require(destination.payload == source.payload, "Numeric copies must retain the exact active payload");
+        else if (!expected) Require(destination.payload == 0, "Failed string admission must leave a null payload pointer");
+        else {
+            const auto* stored = *reinterpret_cast<void* const*>(destination.payload);
+            const auto* characters = *static_cast<const char* const*>(stored);
+            const bool complete = budget >= (previous == 5 ? 1 : 3);
+            Require(std::strcmp(characters, complete ? text : "") == 0, "String copy failure must retain its admitted empty header");
+            if (previous == 5) Require(stored == header, "String assignment must reuse the existing header");
+        }
+        if (type < 5) Require(trace.requests.size() == requests, "Scalar copies must not allocate");
+        if (type == 5) {
+            const auto* stored = *reinterpret_cast<void* const*>(source.payload);
+            Require(std::strcmp(*static_cast<const char* const*>(stored), text) == 0, "String copy failures must preserve the source");
+        }
+        _ZN3sce4Json5ValueD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&source);
+        Require(trace.live.size() == baseline, "Copy failures must reclaim destination and source resources");
+    }
+}
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize value allocation contract");
     const auto baseline = trace.live.size();
     CheckMetadata(trace);
+    CheckScalarCopies(trace);
     for (int target = 0; target <= 7; ++target) for (int budget = 0; budget <= 4; ++budget) {
         Value value; std::memset(&value, 0xa5, sizeof(value));
         trace.budget = budget;
