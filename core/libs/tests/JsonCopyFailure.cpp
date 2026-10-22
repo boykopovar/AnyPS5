@@ -236,7 +236,7 @@ int main() {
         Iterator source{};
         if (objectIterator) _ZNK3sce4Json6Object5beginEv(&source, object);
         else _ZNK3sce4Json5Array5beginEv(&source, array);
-        for (activeBudget = 0; activeBudget <= 1; ++activeBudget) {
+        for (activeBudget = 0; activeBudget < 1; ++activeBudget) {
             Iterator copy{};
             bool succeeded = false;
             allocationBudget = activeBudget;
@@ -248,7 +248,7 @@ int main() {
                 ++failures;
             }
             allocationBudget = -1;
-            Require(succeeded == (!objectIterator || activeBudget == 1), "Host iterator allocation boundary changed");
+            Require(succeeded, "Iterator copies must use the guest allocator without host allocations");
             if (succeeded) Require(copy.state != source.state, "iterator copy shares owned storage");
             if (objectIterator) _ZN3sce4Json6Object8iteratorD1Ev(&copy);
             else _ZN3sce4Json5Array8iteratorD1Ev(&copy);

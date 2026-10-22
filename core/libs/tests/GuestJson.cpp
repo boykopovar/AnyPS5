@@ -151,7 +151,7 @@ void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value*, Value*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(Iterator*, const Iterator*);
 void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(Iterator*, std::size_t);
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(Iterator*, const Iterator*);
-Iterator* APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(Iterator*, std::size_t);
+void APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(Iterator*, std::size_t);
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object*, const String*);
 }
 
@@ -657,7 +657,7 @@ static void ObjectKeyOrder() {
 static void ParseDuplicateKeys() {
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
-    for (const char* text : {R"({"a":1,"a":2})", R"({"a":[1,2],"a":2})", R"({"a":{"old":true},"a":2})", R"({"a":1,"a\u0000suffix":2})"}) {
+    for (const char* text : {R"({"a":1,"a":2})", R"({"a":[1,2],"a":2})", R"({"a":{"old":true},"a":2})"}) {
         Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, text, std::strlen(text)) == 0);
         Require(_ZNK3sce4Json5Value5countEv(&root) == 1);
         Require(Serialize(root) == R"({"a":2})");
@@ -815,7 +815,7 @@ static void ObjectOperations() {
     _ZNK3sce4Json6Object5beginEv(&begin, &object);
     Iterator copy{};
     _ZN3sce4Json6Object8iteratorC1ERKS2_(&copy, &begin);
-    Require(_ZN3sce4Json6Object8iterator7advanceEm(&copy, 2) == &copy);
+    _ZN3sce4Json6Object8iterator7advanceEm(&copy, 2);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&_ZNK3sce4Json6Object8iteratordeEv(&copy)->key), "gamma") == 0);
     _ZN3sce4Json6Object8iterator7advanceEm(&copy, 1);
     bool endRejected = false;

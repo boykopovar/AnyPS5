@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
-#include <list>
 #include <iterator>
 #include <locale>
 #include <mutex>
@@ -45,8 +44,6 @@ constexpr int JsonErrorInvalidArgument = static_cast<int>(0x80848120);
 struct Value;
 struct Handlers;
 struct Auxiliary;
-template<typename T>
-struct Items : std::list<T> { Value* owner = nullptr; };
 struct Text { char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
 static_assert(sizeof(Text) == 24);
 struct String { Text* text; };
@@ -54,14 +51,15 @@ struct ArrayStorage;
 struct ArrayLink;
 struct Array { ArrayStorage* items; };
 struct Pair;
-struct Object { Items<Pair>* items; };
+struct ObjectStorage;
+struct ObjectLink;
+struct Object { ObjectStorage* items; };
 struct ArrayIteratorState {
     ArrayLink* position;
 };
 struct ArrayIterator { ArrayIteratorState* state; };
 struct ObjectIteratorState {
-    std::list<Pair>* owner = nullptr;
-    std::list<Pair>::iterator position{};
+    ObjectLink* position;
 };
 struct ObjectIterator { ObjectIteratorState* state; };
 using TypeMismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
@@ -479,13 +477,340 @@ void Construct(Array& array) {
     array.items->head = NewArrayHead();
     array.items->SetOwner(nullptr);
 }
-void Construct(Object& o) { o.items = new Items<Pair>(); }
+void Destroy(String& string);
+void BindChildren(Value& value);
+void AssignNode(Value& destination, const Value& source);
+void TransferPayload(Value& destination, Value& source);
+
+void PoisonText(Text& text) {
+    text.characters = reinterpret_cast<char*>(std::uintptr_t{0xffffffff});
+    text.length = std::numeric_limits<std::uint32_t>::max();
+    text.capacity = std::numeric_limits<std::uint32_t>::max();
+}
+
+struct InlineText {
+    Text text;
+    InlineText() { text.characters = emptyCharacters; text.length = 0; text.capacity = 0; }
+    ~InlineText() { String string{&text}; ClearText(string); PoisonText(text); }
+    InlineText(const InlineText&) = delete;
+    InlineText& operator=(const InlineText&) = delete;
+    void Assign(std::string_view bytes) { String string{&text}; AssignText(string, bytes, true); }
+};
+
+struct ObjectLink {
+    ObjectLink* parent;
+    ObjectLink* left;
+    ObjectLink* right;
+    Text key;
+    Pair pair;
+    std::uint8_t color;
+    std::uint8_t nil;
+    std::uint8_t reserved[6];
+};
+static_assert(sizeof(ObjectLink) == 104 && offsetof(ObjectLink, key) == 24);
+static_assert(offsetof(ObjectLink, pair) == 48 && offsetof(ObjectLink, color) == 96);
+
+ObjectLink* NextObjectLink(ObjectLink* node) {
+    if (!node) return nullptr;
+    if (node->nil) throw std::out_of_range("sce::Json::Object::iterator: advance past the end");
+    if (!node->right->nil) {
+        node = node->right;
+        while (!node->left->nil) node = node->left;
+        return node;
+    }
+    auto* parent = node->parent;
+    while (!parent->nil && node == parent->right) { node = parent; parent = parent->parent; }
+    return parent;
+}
+
+void DestroyObjectLink(ObjectLink* node) {
+    Destroy(node->pair.value);
+    Destroy(node->pair.key);
+    String key{&node->key};
+    ClearText(key);
+    PoisonText(node->key);
+    Release(node);
+}
+
+void ReleaseObjectTree(ObjectLink* node) {
+    if (!node || node->nil) return;
+    ReleaseObjectTree(node->left);
+    ReleaseObjectTree(node->right);
+    if (!node->parent->nil) {
+        if (node->parent->left == node) node->parent->left = node->left;
+        else node->parent->right = node->right;
+    }
+    DestroyObjectLink(node);
+}
+
+ObjectLink* NewObjectHead() {
+    auto* head = static_cast<ObjectLink*>(Allocate(sizeof(ObjectLink)));
+    if (head) { head->parent = head; head->left = head; head->right = head; head->color = 0; head->nil = 1; }
+    return head;
+}
+
+struct ObjectStorage {
+    ObjectLink* head;
+    std::size_t count;
+    std::uint64_t reserved;
+
+    struct iterator {
+        using value_type = Pair;
+        using difference_type = std::ptrdiff_t;
+        using pointer = Pair*;
+        using reference = Pair&;
+        using iterator_category = std::bidirectional_iterator_tag;
+        ObjectLink* node = nullptr;
+        Pair& operator*() const { return node->pair; }
+        Pair* operator->() const { return &node->pair; }
+        iterator& operator++() { node = NextObjectLink(node); return *this; }
+        iterator operator++(int) { const auto previous = *this; ++*this; return previous; }
+        iterator& operator--() {
+            if (node->nil) node = node->right;
+            else if (!node->left->nil) { node = node->left; while (!node->right->nil) node = node->right; }
+            else { auto* parent = node->parent; while (!parent->nil && node == parent->left) { node = parent; parent = parent->parent; } node = parent; }
+            return *this;
+        }
+        bool operator==(const iterator&) const = default;
+    };
+
+    Value* Owner() const {
+        Value* owner = nullptr;
+        if (ModernValues()) std::memcpy(&owner, reinterpret_cast<const std::byte*>(this) + 24, sizeof(owner));
+        return owner;
+    }
+    void SetOwner(Value* owner) { if (ModernValues()) std::memcpy(reinterpret_cast<std::byte*>(this) + 24, &owner, sizeof(owner)); }
+    iterator begin() const { return {head ? head->left : nullptr}; }
+    iterator end() const { return {head}; }
+    bool empty() const { return !count; }
+    std::size_t size() const { return count; }
+    ObjectLink* Find(const char* key) const {
+        if (!head) return nullptr;
+        auto* node = head->parent;
+        while (!node->nil) {
+            const int comparison = std::strcmp(key, node->key.characters);
+            if (!comparison) return node;
+            node = comparison < 0 ? node->left : node->right;
+        }
+        return head;
+    }
+    void RefreshEndpoints() {
+        auto* first = head->parent;
+        auto* last = first;
+        if (!first->nil) {
+            while (!first->left->nil) first = first->left;
+            while (!last->right->nil) last = last->right;
+        }
+        head->left = first;
+        head->right = last;
+    }
+    void RotateLeft(ObjectLink* node) {
+        auto* pivot = node->right;
+        node->right = pivot->left;
+        if (!pivot->left->nil) pivot->left->parent = node;
+        pivot->parent = node->parent;
+        if (node->parent->nil) head->parent = pivot;
+        else if (node == node->parent->left) node->parent->left = pivot;
+        else node->parent->right = pivot;
+        pivot->left = node;
+        node->parent = pivot;
+    }
+    void RotateRight(ObjectLink* node) {
+        auto* pivot = node->left;
+        node->left = pivot->right;
+        if (!pivot->right->nil) pivot->right->parent = node;
+        pivot->parent = node->parent;
+        if (node->parent->nil) head->parent = pivot;
+        else if (node == node->parent->right) node->parent->right = pivot;
+        else node->parent->left = pivot;
+        pivot->right = node;
+        node->parent = pivot;
+    }
+    void BalanceInsertion(ObjectLink* node) {
+        while (node->parent->color == 1) {
+            auto* parent = node->parent;
+            auto* grandparent = parent->parent;
+            if (parent == grandparent->left) {
+                auto* uncle = grandparent->right;
+                if (uncle->color == 1) { parent->color = 0; uncle->color = 0; grandparent->color = 1; node = grandparent; }
+                else {
+                    if (node == parent->right) { node = parent; RotateLeft(node); parent = node->parent; grandparent = parent->parent; }
+                    parent->color = 0; grandparent->color = 1; RotateRight(grandparent);
+                }
+            } else {
+                auto* uncle = grandparent->left;
+                if (uncle->color == 1) { parent->color = 0; uncle->color = 0; grandparent->color = 1; node = grandparent; }
+                else {
+                    if (node == parent->left) { node = parent; RotateRight(node); parent = node->parent; grandparent = parent->parent; }
+                    parent->color = 0; grandparent->color = 1; RotateLeft(grandparent);
+                }
+            }
+        }
+        head->parent->color = 0;
+    }
+    ObjectLink* Insert(const Text& key, const Pair& pair, bool& inserted) {
+        inserted = false;
+        if (!head) return nullptr;
+        auto* parent = head;
+        auto* position = head->parent;
+        int comparison = 0;
+        while (!position->nil) {
+            parent = position;
+            comparison = std::strcmp(key.characters, position->key.characters);
+            if (!comparison) return position;
+            position = comparison < 0 ? position->left : position->right;
+        }
+        auto* node = static_cast<ObjectLink*>(Allocate(sizeof(ObjectLink)));
+        if (!node) return head;
+        node->parent = parent; node->left = head; node->right = head;
+        node->key.characters = emptyCharacters; node->key.length = 0; node->key.capacity = 0;
+        node->pair.key.text = nullptr;
+        Construct(node->pair.value);
+        node->color = 1; node->nil = 0;
+        try {
+            String keyStorage{&node->key}; AssignText(keyStorage, {key.characters, key.length}, true);
+            Construct(node->pair.key, pair.key);
+            std::memcpy(&node->pair.reserved, &pair.reserved, sizeof(std::uint32_t));
+            CopyInto(node->pair.value, pair.value);
+        } catch (...) { DestroyObjectLink(node); throw; }
+        if (parent == head) head->parent = node;
+        else if (comparison < 0) parent->left = node;
+        else parent->right = node;
+        ++count;
+        BalanceInsertion(node);
+        RefreshEndpoints();
+        inserted = true;
+        return node;
+    }
+    void Replace(ObjectLink* node, ObjectLink* replacement) {
+        if (node->parent->nil) head->parent = replacement;
+        else if (node == node->parent->left) node->parent->left = replacement;
+        else node->parent->right = replacement;
+        if (!replacement->nil) replacement->parent = node->parent;
+    }
+    void BalanceErasure(ObjectLink* node, ObjectLink* parent) {
+        while (node != head->parent && node->color == 0) {
+            if (node == parent->left) {
+                auto* sibling = parent->right;
+                if (sibling->color == 1) { sibling->color = 0; parent->color = 1; RotateLeft(parent); sibling = parent->right; }
+                if (sibling->left->color == 0 && sibling->right->color == 0) {
+                    if (!sibling->nil) sibling->color = 1;
+                    node = parent; parent = node->parent;
+                } else {
+                    if (sibling->right->color == 0) { sibling->left->color = 0; sibling->color = 1; RotateRight(sibling); sibling = parent->right; }
+                    sibling->color = parent->color; parent->color = 0; sibling->right->color = 0;
+                    RotateLeft(parent); node = head->parent;
+                }
+            } else {
+                auto* sibling = parent->left;
+                if (sibling->color == 1) { sibling->color = 0; parent->color = 1; RotateRight(parent); sibling = parent->left; }
+                if (sibling->right->color == 0 && sibling->left->color == 0) {
+                    if (!sibling->nil) sibling->color = 1;
+                    node = parent; parent = node->parent;
+                } else {
+                    if (sibling->left->color == 0) { sibling->right->color = 0; sibling->color = 1; RotateLeft(sibling); sibling = parent->left; }
+                    sibling->color = parent->color; parent->color = 0; sibling->left->color = 0;
+                    RotateRight(parent); node = head->parent;
+                }
+            }
+        }
+        node->color = 0;
+    }
+    void Erase(ObjectLink* removed) {
+        if (!removed || removed->nil) return;
+        auto* successor = removed;
+        auto color = successor->color;
+        ObjectLink* child;
+        ObjectLink* parent;
+        if (removed->left->nil) { child = removed->right; parent = removed->parent; Replace(removed, child); }
+        else if (removed->right->nil) { child = removed->left; parent = removed->parent; Replace(removed, child); }
+        else {
+            successor = removed->right;
+            while (!successor->left->nil) successor = successor->left;
+            color = successor->color;
+            child = successor->right;
+            if (successor->parent == removed) parent = successor;
+            else {
+                parent = successor->parent;
+                Replace(successor, child);
+                successor->right = removed->right;
+                successor->right->parent = successor;
+            }
+            Replace(removed, successor);
+            successor->left = removed->left;
+            successor->left->parent = successor;
+            successor->color = removed->color;
+        }
+        if (color == 0) BalanceErasure(child, parent);
+        RefreshEndpoints();
+        DestroyObjectLink(removed);
+        --count;
+    }
+    void clear() {
+        if (!head) return;
+        ReleaseObjectTree(head->parent);
+        head->parent = head; head->left = head; head->right = head;
+        count = 0;
+    }
+};
+static_assert(sizeof(ObjectStorage) == 24 && sizeof(ObjectIteratorState) == 8);
+
+void Construct(Object& object) {
+    object.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (!object.items) return;
+    object.items->count = 0;
+    object.items->head = NewObjectHead();
+    object.items->SetOwner(nullptr);
+    if (!object.items->head) {
+        object.items->head = reinterpret_cast<ObjectLink*>(std::uintptr_t{0xffffffff});
+        object.items->count = std::numeric_limits<std::size_t>::max();
+        Release(object.items);
+        object.items = nullptr;
+    }
+}
+
+ObjectLink* CloneObjectTree(ObjectLink* source, ObjectLink* parent, ObjectLink* head) {
+    auto* node = static_cast<ObjectLink*>(Allocate(sizeof(ObjectLink)));
+    if (!node) return head;
+    node->parent = parent; node->left = head; node->right = head;
+    node->key.characters = emptyCharacters; node->key.length = 0; node->key.capacity = 0;
+    node->pair.key.text = nullptr;
+    Construct(node->pair.value);
+    node->color = source->color; node->nil = 0;
+    try {
+        String key{&node->key}; AssignText(key, {source->key.characters, source->key.length}, true);
+        Construct(node->pair.key, source->pair.key);
+        std::memcpy(&node->pair.reserved, &source->pair.reserved, sizeof(std::uint32_t));
+        CopyInto(node->pair.value, source->pair.value);
+        if (!source->left->nil) node->left = CloneObjectTree(source->left, node, head);
+        if (!source->right->nil) node->right = CloneObjectTree(source->right, node, head);
+    } catch (...) {
+        ReleaseObjectTree(node->left); ReleaseObjectTree(node->right); DestroyObjectLink(node); throw;
+    }
+    return node;
+}
+
+void CopyObjectStorage(ObjectStorage& destination, const ObjectStorage& source) {
+    auto* replacement = NewObjectHead();
+    ObjectStorage pending{replacement, 0, 0};
+    try {
+        if (replacement && source.head && !source.head->parent->nil) {
+            replacement->parent = CloneObjectTree(source.head->parent, replacement, replacement);
+            if (replacement->parent != replacement) { pending.count = source.count; pending.RefreshEndpoints(); }
+        }
+    } catch (...) { pending.clear(); Release(replacement); throw; }
+    destination.clear(); Release(destination.head);
+    destination.head = replacement;
+    destination.count = pending.count;
+}
+
 void Destroy(Value& v);
 void CopyInto(Value& destination, const Value& source);
 
 void Destroy(String& s) {
     if (!s.text) return;
     ClearText(s);
+    PoisonText(*s.text);
     Release(s.text);
     s.text = nullptr;
 }
@@ -498,14 +823,14 @@ void Destroy(Array& a) {
     Release(a.items);
     a.items = nullptr;
 }
-void Destroy(Object& o) {
-    if (!o.items) return;
-    for (auto& pair : *o.items) {
-        Destroy(pair.key);
-        Destroy(pair.value);
-    }
-    delete o.items;
-    o.items = nullptr;
+void Destroy(Object& object) {
+    if (!object.items) return;
+    object.items->clear();
+    Release(object.items->head);
+    object.items->head = reinterpret_cast<ObjectLink*>(std::uintptr_t{0xffffffff});
+    object.items->count = std::numeric_limits<std::size_t>::max();
+    Release(object.items);
+    object.items = nullptr;
 }
 
 const Node& RootOf(const Node& n) {
@@ -543,8 +868,8 @@ void BindChildren(Node& n) {
         n.array->items->SetOwner(&n);
         for (auto& item : *n.array->items) item.parent = &n;
     }
-    if (n.type == TypeObject && n.object) {
-        n.object->items->owner = &n;
+    if (n.type == TypeObject && n.object && n.object->items) {
+        n.object->items->SetOwner(&n);
         for (auto& pair : *n.object->items) pair.value.parent = &n;
     }
 }
@@ -652,17 +977,14 @@ void CopyArray(Array& destination, const Array& source) {
 
 void CopyObject(Object& destination, const Object& source) {
     Object pending{};
-    Construct(pending);
-    try {
-        for (const auto& pair : *source.items) {
-            auto& copy = pending.items->emplace_back();
-            Construct(copy.key, pair.key);
-            CopyInto(copy.value, pair.value);
-        }
-    } catch (...) {
-        Destroy(pending);
-        throw;
-    }
+    if (!source.items) { destination = pending; return; }
+    pending.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (!pending.items) { destination = pending; return; }
+    pending.items->count = 0;
+    pending.items->head = NewObjectHead();
+    pending.items->SetOwner(nullptr);
+    try { CopyObjectStorage(*pending.items, *source.items); }
+    catch (...) { Destroy(pending); throw; }
     destination = pending;
 }
 
@@ -987,7 +1309,7 @@ int Serialize(std::string& out, const Node& n) {
             for (const auto& pair : *n.object->items) {
                 if (!first) out += ',';
                 first = false;
-                AppendEscaped(out, View(pair.key));
+                AppendEscaped(out, Characters(pair.key));
                 out += ':';
                 const int result = Serialize(out, pair.value);
                 if (result < 0) return result;
@@ -1007,26 +1329,102 @@ int CompareText(const char* left, const char* right) {
     return static_cast<unsigned char>(*left) - static_cast<unsigned char>(*right);
 }
 
-std::list<Pair>::iterator ObjectPosition(const Object& object, std::string_view key) {
-    return std::find_if(object.items->begin(), object.items->end(), [&](const Pair& pair) { return std::strcmp(Characters(pair.key), key.data()) >= 0; });
+struct ScopedString {
+    String string{};
+    explicit ScopedString(std::string_view text) { Construct(string, text); }
+    explicit ScopedString(const String& source) { Construct(string, source); }
+    ~ScopedString() { Destroy(string); }
+};
+
+struct ScopedValue {
+    Value value{};
+    ~ScopedValue() { Destroy(value); }
+};
+
+struct TemporaryTreeEntry {
+    InlineText key;
+    Pair pair{};
+    TemporaryTreeEntry(const Text& sourceKey, const Pair& source) {
+        try {
+            key.Assign({sourceKey.characters, sourceKey.length});
+            Construct(pair.key, source.key);
+            std::memcpy(&pair.reserved, &source.reserved, sizeof(std::uint32_t));
+            CopyInto(pair.value, source.value);
+        } catch (...) { Destroy(pair.value); Destroy(pair.key); throw; }
+    }
+    ~TemporaryTreeEntry() { Destroy(pair.value); Destroy(pair.key); }
+};
+
+struct ScopedPair {
+    Pair pair{};
+    ~ScopedPair() { Destroy(pair.value); Destroy(pair.key); }
+};
+
+void AssignObject(Object& destination, const Object& source) {
+    if (!destination.items || !source.items) return;
+    if (!ModernValues()) {
+        CopyObjectStorage(*destination.items, *source.items);
+        return;
+    }
+    Object pending{};
+    Construct(pending);
+    if (!pending.items) return;
+    pending.items->SetOwner(destination.items->Owner());
+    try {
+        for (const auto& pair : *source.items) {
+            ScopedValue placeholder;
+            SetType(placeholder.value, pair.value.type);
+            ScopedPair copied;
+            {
+                ScopedString key{std::string_view{Characters(pair.key)}};
+                Construct(copied.pair.key, key.string);
+                CopyInto(copied.pair.value, placeholder.value);
+            }
+            const auto failures = AllocationFailures();
+            ObjectLink* node;
+            bool inserted;
+            {
+                InlineText key; key.Assign(Characters(pair.key));
+                TemporaryTreeEntry entry(key.text, copied.pair);
+                node = pending.items->Insert(entry.key.text, entry.pair, inserted);
+            }
+            if (inserted && AllocationFailures() == failures) {
+                node->pair.value.parent = destination.items->Owner();
+                AssignNode(node->pair.value, pair.value);
+            }
+        }
+    } catch (...) { Destroy(pending); throw; }
+    auto previous = destination;
+    destination = pending;
+    Destroy(previous);
 }
 
-Value& ObjectEntry(Object& object, std::string_view key) {
-    auto position = ObjectPosition(object, key);
-    if (position != object.items->end() && std::strcmp(Characters(position->key), key.data()) == 0) return position->value;
-    Pair pair{};
-    Construct(pair.key, key);
-    try {
-        Construct(pair.value);
-        auto& value = object.items->insert(position, pair)->value;
-        value.parent = object.items->owner;
-        BindChildren(value);
-        return value;
-    } catch (...) {
-        Destroy(pair.value);
-        Destroy(pair.key);
-        throw;
+Value* ObjectAccess(Object& object, const String& input) {
+    if (!object.items || !input.text) return const_cast<Value*>(&Defaults(TypeNull));
+    if (!object.items->head) NotImplemented_nid_no_patch(__func__);
+    const auto failures = AllocationFailures();
+    ObjectLink* node;
+    {
+        InlineText key; key.Assign(Characters(input));
+        ScopedString defaultKey{std::string_view{}};
+        Pair source{}; source.key = defaultKey.string;
+        TemporaryTreeEntry entry(key.text, source);
+        bool inserted;
+        node = object.items->Insert(entry.key.text, entry.pair, inserted);
     }
+    if (AllocationFailures() != failures) return const_cast<Value*>(&Defaults(TypeNull));
+    if (!node || node->nil) NotImplemented_nid_no_patch(__func__);
+    AssignText(node->pair.key, View(input), true);
+    node->pair.value.parent = object.items->Owner();
+    return &node->pair.value;
+}
+
+Value& ObjectEntry(Object& object, std::string_view input) {
+    const auto failures = AllocationFailures();
+    ScopedString key(input);
+    auto* value = ObjectAccess(object, key.string);
+    if (AllocationFailures() != failures) throw GuestOutOfMemory{};
+    return *value;
 }
 
 using ParserReadCallback = int (APS5_VABI*)(char&, void*);
@@ -1082,6 +1480,7 @@ private:
         return true;
     }
     static void appendUtf8(std::string& out, std::uint32_t code) {
+        if (!code) return;
         if (code < 0x80) out += static_cast<char>(code);
         else if (code < 0x800) { out += static_cast<char>(0xc0 | (code >> 6)); out += static_cast<char>(0x80 | (code & 0x3f)); }
         else if (code < 0x10000) { out += static_cast<char>(0xe0 | (code >> 12)); out += static_cast<char>(0x80 | ((code >> 6) & 0x3f)); out += static_cast<char>(0x80 | (code & 0x3f)); }
@@ -1527,70 +1926,64 @@ void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object* self, const Object* other) { CopyObject(*self, *other); }
 void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object* self) { Destroy(*self); }
 Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object* self, const Object* other) {
-    if (self == other) return self;
-    Object copy{};
-    CopyObject(copy, *other);
-    Destroy(*self);
-    *self = copy;
+    AssignObject(*self, *other);
     return self;
 }
-void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) {
-    for (auto& pair : *self->items) {
-        Destroy(pair.key);
-        Destroy(pair.value);
-    }
-    self->items->clear();
+void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) { if (self->items) self->items->clear(); }
+Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return ObjectAccess(*self, *key); }
+ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) {
+    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+    if (result->state) result->state->position = self->items && self->items->head ? self->items->head->left : nullptr;
+    if (self->items && (!self->items->head || !self->items->head->left)) { Release(result->state); result->state = nullptr; }
+    return result;
 }
-Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return &ObjectEntry(*self, View(*key)); }
-ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) { result->state = new ObjectIteratorState{self->items, self->items->begin()}; return result; }
-ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) { result->state = new ObjectIteratorState{self->items, self->items->end()}; return result; }
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { delete self->state; self->state = nullptr; }
+ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) {
+    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+    if (result->state) result->state->position = self->items ? self->items->head : nullptr;
+    if (self->items && !self->items->head) { Release(result->state); result->state = nullptr; }
+    return result;
+}
+void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { Release(self->state); self->state = nullptr; }
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) {
-    if (self->state && self->state->owner) {
-        if (self->state->position == self->state->owner->end()) throw std::out_of_range("sce::Json::Object::iterator: advance past the end");
-        ++self->state->position;
-    }
+    if (self->state) self->state->position = NextObjectLink(self->state->position);
     return self;
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
-    if (!self->state || !self->state->owner || self->state->position == self->state->owner->end()) throw std::out_of_range("sce::Json::Object::iterator: no current element");
-    return &*self->state->position;
+    if (self->state) return reinterpret_cast<Pair*>(reinterpret_cast<std::uintptr_t>(self->state->position) + 48);
+    const auto* object = Defaults(TypeObject).object;
+    if (!object || !object->items) NotImplemented_nid_no_patch(__func__);
+    ObjectIterator fallback{};
+    _ZNK3sce4Json6Object5beginEv(&fallback, object);
+    if (!fallback.state) NotImplemented_nid_no_patch(__func__);
+    auto* pair = reinterpret_cast<Pair*>(reinterpret_cast<std::uintptr_t>(fallback.state->position) + 48);
+    Release(fallback.state);
+    return pair;
 }
 Pair* APS5_VABI _ZNK3sce4Json6Object8iteratorptEv(const ObjectIterator* self) { return _ZNK3sce4Json6Object8iteratordeEv(self); }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterator* result, const Object* self, const String* key) {
-    const auto position = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(Characters(pair.key), Characters(*key)) == 0; });
-    result->state = new ObjectIteratorState{self->items, position};
+    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+    if (result->state) result->state->position = self->items && key->text ? self->items->Find(Characters(*key)) : nullptr;
+    if (self->items && key->text && !self->items->head) { Release(result->state); result->state = nullptr; }
     return result;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratoreqERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    if (!self->state || !other->state) return false;
-    return self->state->owner == other->state->owner && self->state->position == other->state->position;
+    return self->state && other->state && self->state->position == other->state->position;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    if (!self->state || !other->state) return false;
-    return !_ZNK3sce4Json6Object8iteratoreqERKS2_(self, other);
+    return self->state && other->state && self->state->position != other->state->position;
 }
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    self->state = other->state ? new ObjectIteratorState(*other->state) : nullptr;
+    self->state = other->state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr;
+    if (self->state) *self->state = *other->state;
 }
-ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std::size_t count) {
-    if (self->state && self->state->owner) {
-        while (count) {
-            _ZN3sce4Json6Object8iteratorppEv(self);
-            --count;
-        }
-    }
-    return self;
+void APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std::size_t count) {
+    if (self->state) while (count--) self->state->position = NextObjectLink(self->state->position);
 }
-bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return self->items->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return !self->items || self->items->empty(); }
+std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items ? self->items->size() : 0; }
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
-    if (key == nullptr || key->text == nullptr) throw std::invalid_argument("sce::Json::Object::erase: null key");
-    auto it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(Characters(pair.key), Characters(*key)) == 0; });
-    if (it == self->items->end()) return;
-    Destroy(it->key);
-    Destroy(it->value);
-    self->items->erase(it);
+    if (!self->items || !key->text) return;
+    self->items->Erase(self->items->Find(Characters(*key)));
 }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
@@ -1717,11 +2110,8 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* 
     const Value* result;
     try {
         if (self->type == TypeObject) {
-            for (const auto& pair : *self->object->items)
-                if (std::strcmp(Characters(pair.key), Characters(text)) == 0) {
-                    Destroy(text);
-                    return &pair.value;
-                }
+            const auto* node = self->object->items ? self->object->items->Find(Characters(text)) : nullptr;
+            if (node && !node->nil) { Destroy(text); return &node->pair.value; }
         }
         result = &MissingElement(self, static_cast<int>(self->type == TypeObject ? 0x80848115 : 0x80848117), &text, nullptr);
     } catch (...) {
@@ -1751,9 +2141,10 @@ void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type)
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) { return _ZNK3sce4Json5ValueixEm(self, index); }
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) {
     const Node& n = NodeOf(*self);
-    if (key != nullptr && n.type == TypeObject)
-        for (const auto& pair : *n.object->items)
-            if (std::strcmp(Characters(pair.key), Characters(*key)) == 0) return &pair.value;
+    if (key && n.type == TypeObject && n.object->items) {
+        const auto* node = n.object->items->Find(Characters(*key));
+        if (node && !node->nil) return &node->pair.value;
+    }
     return &MissingElement(self, static_cast<int>(n.type == TypeObject ? 0x80848115 : 0x80848117), key, nullptr);
 }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
@@ -1772,9 +2163,9 @@ Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index
 Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value* self, const String* key) {
     Node& n = NodeOf(*self);
     if (key == nullptr || n.type != TypeObject) return nullptr;
-    for (auto& pair : *n.object->items)
-        if (std::strcmp(Characters(pair.key), Characters(*key)) == 0) return &pair.value;
-    return nullptr;
+    if (!n.object->items) return nullptr;
+    auto* node = n.object->items->Find(Characters(*key));
+    return node && !node->nil ? &node->pair.value : nullptr;
 }
 Array* APS5_VABI _ZN3sce4Json5Value10referArrayEv(Value* self) {
     Node& n = NodeOf(*self);
@@ -1998,27 +2389,42 @@ void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator* result, Object* self, const Pair* pair) {
-    auto it = ObjectPosition(*self, View(pair->key));
-    auto state = std::make_unique<ObjectIteratorState>(ObjectIteratorState{self->items, it});
-    if (it != self->items->end() && std::strcmp(Characters(it->key), Characters(pair->key)) == 0) {
-        result->state = state.release();
+    result->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+    if (result->state) result->state->position = nullptr;
+    if (!self->items) return result;
+    if (!ModernValues()) {
+        ObjectLink* node;
+        {
+            InlineText key; key.Assign(Characters(pair->key));
+            TemporaryTreeEntry entry(key.text, *pair);
+            bool inserted;
+            node = self->items->Insert(entry.key.text, entry.pair, inserted);
+        }
+        if (!node) { Release(result->state); result->state = nullptr; }
+        else if (result->state) result->state->position = node;
         return result;
     }
-    Pair copy{};
-    copy.reserved = 0;
-    Construct(copy.key, pair->key);
-    try {
-        CopyInto(copy.value, pair->value);
-        state->position = self->items->insert(it, copy);
-        state->position->value.parent = self->items->owner;
-        BindChildren(state->position->value);
-        result->state = state.release();
-        return result;
-    } catch (...) {
-        Destroy(copy.value);
-        Destroy(copy.key);
-        throw;
+    ScopedValue value;
+    value.value.parent = self->items->Owner();
+    AssignNode(value.value, pair->value);
+    const auto failures = AllocationFailures();
+    ObjectLink* node;
+    bool inserted;
+    {
+        InlineText key; key.Assign(Characters(pair->key));
+        ScopedString copiedKey(pair->key);
+        Pair source{}; source.key = copiedKey.string;
+        TemporaryTreeEntry entry(key.text, source);
+        node = self->items->Insert(entry.key.text, entry.pair, inserted);
     }
+    if (inserted && AllocationFailures() == failures) {
+        TransferPayload(node->pair.value, value.value);
+        node->pair.value.parent = self->items->Owner();
+        BindChildren(node->pair.value);
+    }
+    if (!node) { Release(result->state); result->state = nullptr; }
+    else if (result->state) result->state->position = node;
+    return result;
 }
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* self, int) {
@@ -2044,18 +2450,15 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* self,
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(ObjectIterator* self, const ObjectIterator* other) {
     if (self->state) {
-        if (other->state && other->state->owner) {
-            *self->state = *other->state;
-        } else {
-            delete self->state;
-            self->state = nullptr;
-        }
+        if (other->state && other->state->position) *self->state = *other->state;
+        else { Release(self->state); self->state = nullptr; }
     }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(ObjectIterator* self) {
-    self->state = new ObjectIteratorState{};
+    self->state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+    if (self->state) self->state->position = nullptr;
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {
