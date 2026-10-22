@@ -4,11 +4,15 @@
 #include FT_GLYPH_H
 
 #include <algorithm>
+#include <bit>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
 
 using namespace FreeType;
+
+extern "C" void APS5_VABI FT_Outline_Get_CBox_nid_postfix(const GuestOutline*, GuestBBox*);
 
 namespace {
 
@@ -74,11 +78,11 @@ struct Outline {
     }
 };
 
-Glyph& Find(GuestGlyphRec* glyph, const char* function) {
+Glyph& Find(GuestGlyphRec* glyph, const char* function, bool requireLibrary = true) {
     const auto found = glyphs.find(glyph);
     if (found == glyphs.end()) NotImplemented_nid_no_patch(function);
     auto& owner = *found->second;
-    if (glyph->library != owner.library || glyph->clazz != owner.host->clazz) NotImplemented_nid_no_patch(function);
+    if ((requireLibrary && glyph->library != owner.library) || glyph->clazz != owner.host->clazz) NotImplemented_nid_no_patch(function);
     return owner;
 }
 
@@ -175,6 +179,42 @@ int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec* source, GuestGlyphRec** t
     address->advance = advance;
     *target = address;
     return 0;
+}
+
+void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox* box) {
+    if (!box) return;
+    *box = {};
+    if (!glyph || !glyph->clazz) return;
+    std::lock_guard lock(glyphMutex);
+    auto& owner = Find(glyph, __func__, false);
+    if (owner.isBitmap) {
+        const auto& image = owner.bitmap;
+        const auto fits = [](std::int32_t bearing) {
+            return bearing >= std::numeric_limits<std::int32_t>::min() / 64 && bearing <= std::numeric_limits<std::int32_t>::max() / 64;
+        };
+        if (!fits(image.left) || !fits(image.top)) NotImplemented_nid_no_patch(__func__);
+        box->xMin = static_cast<std::int64_t>(image.left) * 64;
+        box->xMax = box->xMin + static_cast<std::int64_t>(image.bitmap.width * std::uint32_t{64});
+        box->yMax = static_cast<std::int64_t>(image.top) * 64;
+        box->yMin = box->yMax - static_cast<std::int64_t>(image.bitmap.rows * std::uint32_t{64});
+    } else {
+        FT_Outline_Get_CBox_nid_postfix(&owner.outline.outline, box);
+    }
+    if (mode == FT_GLYPH_BBOX_GRIDFIT || mode == FT_GLYPH_BBOX_PIXELS) {
+        const auto ceiling = [](std::int64_t value) {
+            return std::bit_cast<std::int64_t>((std::bit_cast<std::uint64_t>(value) + 63) & ~std::uint64_t{63});
+        };
+        box->xMin &= ~std::int64_t{63};
+        box->yMin &= ~std::int64_t{63};
+        box->xMax = ceiling(box->xMax);
+        box->yMax = ceiling(box->yMax);
+    }
+    if (mode == FT_GLYPH_BBOX_TRUNCATE || mode == FT_GLYPH_BBOX_PIXELS) {
+        box->xMin >>= 6;
+        box->yMin >>= 6;
+        box->xMax >>= 6;
+        box->yMax >>= 6;
+    }
 }
 
 void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec* glyph) {

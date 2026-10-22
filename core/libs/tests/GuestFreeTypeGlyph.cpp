@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -28,6 +29,7 @@ int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32
 int APS5_VABI FT_Get_Glyph_nid_postfix(GuestGlyphSlotRec*, GuestGlyphRec**);
 int APS5_VABI FT_Glyph_Copy_nid_postfix(GuestGlyphRec*, GuestGlyphRec**);
 void APS5_VABI FT_Done_Glyph_nid_postfix(GuestGlyphRec*);
+void APS5_VABI FT_Glyph_Get_CBox_nid_postfix(GuestGlyphRec*, std::uint32_t, GuestBBox*);
 }
 
 static void Check(bool value, int line) {
@@ -475,7 +477,226 @@ static void UnsupportedChanges() {
     FT_Done_Glyph_nid_postfix(glyph);
 }
 
+static int NativeBoxComparisons = 0;
+static int WideBoxExpectations = 0;
+
+static bool EqualBox(const GuestBBox& first, const GuestBBox& second) {
+    return first.xMin == second.xMin && first.yMin == second.yMin && first.xMax == second.xMax && first.yMax == second.yMax;
+}
+
+static GuestBBox Box(GuestGlyphRec* glyph, std::uint32_t mode) {
+    struct GuardedBox {
+        std::uint64_t before;
+        GuestBBox value;
+        std::uint64_t after;
+    } box{0x123456789ABCDEF0ull, {91, 92, 93, 94}, 0x0FEDCBA987654321ull};
+    FT_Glyph_Get_CBox_nid_postfix(glyph, mode, &box.value);
+    Require(box.before == 0x123456789ABCDEF0ull && box.after == 0x0FEDCBA987654321ull);
+    return box.value;
+}
+
+static void CompareBox(GuestGlyphRec* glyph, FT_Glyph native, std::uint32_t mode) {
+    const GuestBBox actual = Box(glyph, mode);
+    FT_BBox expected{91, 92, 93, 94};
+    FT_Glyph_Get_CBox(native, mode, &expected);
+    Require(EqualBox(actual, {expected.xMin, expected.yMin, expected.xMax, expected.yMax}));
+    ++NativeBoxComparisons;
+}
+
+static void ExpectBox(GuestGlyphRec* glyph, std::uint32_t mode, GuestBBox expected) {
+    Require(EqualBox(Box(glyph, mode), expected));
+    ++WideBoxExpectations;
+}
+
+static constexpr std::array<std::uint32_t, 7> BoxModes{0, 1, 2, 3, 4, 7, UINT32_MAX};
+
+static void OutlineBoxes() {
+    Fixture fixture;
+    fixture.Load(1, FT_LOAD_NO_HINTING);
+    GuestGlyphRec* glyph = nullptr;
+    FT_Glyph native = nullptr;
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &glyph) == FT_Get_Glyph(fixture.host->glyph, &native));
+    auto& outline = reinterpret_cast<GuestOutlineGlyphRec*>(glyph)->outline;
+    auto& nativeOutline = reinterpret_cast<FT_OutlineGlyph>(native)->outline;
+    const auto saved = outline;
+    const auto nativeSaved = nativeOutline;
+    Require(outline.n_points == 4);
+    std::mt19937 random(0xC80A51u);
+    std::uniform_int_distribution<int> coordinate(-4096, 4096);
+    for (unsigned iteration = 0; iteration < 512; ++iteration) {
+        for (unsigned point = 0; point < outline.n_points; ++point) {
+            const auto x = coordinate(random);
+            const auto y = coordinate(random);
+            outline.points[point] = {x, y};
+            nativeOutline.points[point] = {x, y};
+        }
+        for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+    }
+    outline.tags = nativeOutline.tags = nullptr;
+    outline.contours = nativeOutline.contours = nullptr;
+    outline.n_contours = nativeOutline.n_contours = 65535;
+    for (const unsigned count : {0u, 1u, 2u, 4u}) {
+        outline.n_points = static_cast<std::uint16_t>(count);
+        nativeOutline.n_points = static_cast<decltype(nativeOutline.n_points)>(count);
+        outline.points = count ? saved.points : nullptr;
+        nativeOutline.points = count ? nativeSaved.points : nullptr;
+        for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+    }
+    outline = saved;
+    nativeOutline = nativeSaved;
+    {
+        std::vector<GuestVector> points(65535, {17, -29});
+        std::vector<FT_Vector> nativePoints(65535, {17, -29});
+        points.back() = {-100000, 200000};
+        nativePoints.back() = {-100000, 200000};
+        outline.points = points.data();
+        nativeOutline.points = nativePoints.data();
+        outline.n_points = nativeOutline.n_points = 65535;
+        for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+        outline = saved;
+        nativeOutline = nativeSaved;
+    }
+    fixture.CloseFaces();
+    const auto library = glyph->library;
+    const auto nativeLibrary = native->library;
+    glyph->library = nullptr;
+    native->library = nullptr;
+    glyph->format = static_cast<std::uint32_t>(FT_GLYPH_FORMAT_NONE);
+    native->format = FT_GLYPH_FORMAT_NONE;
+    glyph->advance = {INT64_MIN, INT64_MAX};
+    native->advance = {};
+    for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+    glyph->library = library;
+    native->library = nativeLibrary;
+    GuestGlyphRec* copy = nullptr;
+    FT_Glyph nativeCopy = nullptr;
+    Require(FT_Glyph_Copy_nid_postfix(glyph, &copy) == FT_Glyph_Copy(native, &nativeCopy));
+    outline.points[0] = {-1, -65};
+    nativeOutline.points[0] = {-1, -65};
+    for (const auto mode : BoxModes) {
+        CompareBox(glyph, native, mode);
+        CompareBox(copy, nativeCopy, mode);
+    }
+    FT_Done_Glyph_nid_postfix(copy);
+    FT_Done_Glyph(nativeCopy);
+    const std::array<GuestVector, 4> wide{{{INT64_MIN, INT64_MAX}, {INT64_MAX, INT64_MIN}, {1ll << 40, -(1ll << 40)}, {-2147483649ll, 2147483648ll}}};
+    std::copy(wide.begin(), wide.end(), outline.points);
+    ExpectBox(glyph, 0, {INT64_MIN, INT64_MIN, INT64_MAX, INT64_MAX});
+    ExpectBox(glyph, 1, {INT64_MIN, INT64_MIN, INT64_MIN, INT64_MIN});
+    ExpectBox(glyph, 2, {-144115188075855872ll, -144115188075855872ll, 144115188075855871ll, 144115188075855871ll});
+    ExpectBox(glyph, 3, {-144115188075855872ll, -144115188075855872ll, -144115188075855872ll, -144115188075855872ll});
+    ExpectBox(glyph, UINT32_MAX, {INT64_MIN, INT64_MIN, INT64_MAX, INT64_MAX});
+    outline.points[0] = {-1099511627777ll, -65};
+    outline.points[1] = {1099511627777ll, 65};
+    outline.points[2] = {0, -1};
+    outline.points[3] = {1, 0};
+    ExpectBox(glyph, 0, {-1099511627777ll, -65, 1099511627777ll, 65});
+    ExpectBox(glyph, 1, {-1099511627840ll, -128, 1099511627840ll, 128});
+    ExpectBox(glyph, 2, {-17179869185ll, -2, 17179869184ll, 1});
+    ExpectBox(glyph, 3, {-17179869185ll, -2, 17179869185ll, 2});
+    const auto clazz = glyph->clazz;
+    glyph->clazz = nullptr;
+    ExpectBox(glyph, 3, {});
+    glyph->clazz = clazz;
+    FT_Glyph_Get_CBox_nid_postfix(glyph, 0, nullptr);
+    FT_Done_Glyph_nid_postfix(glyph);
+    FT_Done_Glyph(native);
+}
+
+static void BitmapBoxes() {
+    Fixture fixture;
+    fixture.Load(1, FT_LOAD_RENDER);
+    GuestGlyphRec* glyph = nullptr;
+    FT_Glyph native = nullptr;
+    Require(FT_Get_Glyph_nid_postfix(fixture.face->glyph, &glyph) == FT_Get_Glyph(fixture.host->glyph, &native));
+    auto& image = *reinterpret_cast<GuestBitmapGlyphRec*>(glyph);
+    const auto nativeImage = reinterpret_cast<FT_BitmapGlyph>(native);
+    const auto saved = image;
+    const auto nativeSaved = *nativeImage;
+    for (const int left : {-13, -1, 0, 1, 17, 511}) {
+        for (const int top : {-13, -1, 0, 1, 17, 511}) {
+            image.left = nativeImage->left = left;
+            image.top = nativeImage->top = top;
+            for (const unsigned width : {0u, 1u, 5u, 511u}) {
+                for (const unsigned rows : {0u, 1u, 5u, 511u}) {
+                    image.bitmap.width = nativeImage->bitmap.width = width;
+                    image.bitmap.rows = nativeImage->bitmap.rows = rows;
+                    image.bitmap.pitch = nativeImage->bitmap.pitch = INT32_MIN;
+                    image.bitmap.buffer = nativeImage->bitmap.buffer = nullptr;
+                    image.bitmap.pixel_mode = nativeImage->bitmap.pixel_mode = FT_PIXEL_MODE_NONE;
+                    for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+                }
+            }
+        }
+    }
+    image = saved;
+    *nativeImage = nativeSaved;
+    fixture.CloseFaces();
+    const auto library = glyph->library;
+    const auto nativeLibrary = native->library;
+    glyph->library = nullptr;
+    native->library = nullptr;
+    for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+    glyph->library = library;
+    native->library = nativeLibrary;
+    image.left = nativeImage->left = INT32_MIN / 64;
+    image.top = nativeImage->top = INT32_MAX / 64;
+    image.bitmap.width = nativeImage->bitmap.width = 1;
+    image.bitmap.rows = nativeImage->bitmap.rows = 1;
+    for (const auto mode : BoxModes) CompareBox(glyph, native, mode);
+    image.left = -3;
+    image.top = 7;
+    image.bitmap.width = image.bitmap.rows = UINT32_MAX;
+    ExpectBox(glyph, 0, {-192, -4294966784ll, 4294967040ll, 448});
+    ExpectBox(glyph, 1, {-192, -4294966784ll, 4294967040ll, 448});
+    ExpectBox(glyph, 2, {-3, -67108856, 67108860, 7});
+    ExpectBox(glyph, 3, {-3, -67108856, 67108860, 7});
+    image.bitmap.width = image.bitmap.rows = 67108864;
+    ExpectBox(glyph, 0, {-192, 448, -192, 448});
+    ExpectBox(glyph, 3, {-3, 7, -3, 7});
+    for (const std::int32_t bearing : {INT32_MIN, INT32_MAX, -33554433, 33554432}) {
+        for (const bool vertical : {false, true}) {
+            image.left = vertical ? 0 : bearing;
+            image.top = vertical ? bearing : 0;
+            GuestBBox box{1, 2, 3, 4};
+            Require(Throws([&] { FT_Glyph_Get_CBox_nid_postfix(glyph, 0, &box); }, "FT_Glyph_Get_CBox"));
+            Require(EqualBox(box, {}));
+        }
+    }
+    image = saved;
+    *nativeImage = nativeSaved;
+    GuestGlyphRec* copy = nullptr;
+    FT_Glyph nativeCopy = nullptr;
+    Require(FT_Glyph_Copy_nid_postfix(glyph, &copy) == FT_Glyph_Copy(native, &nativeCopy));
+    for (const auto mode : BoxModes) CompareBox(copy, nativeCopy, mode);
+    FT_Done_Glyph_nid_postfix(copy);
+    FT_Done_Glyph(nativeCopy);
+    const auto clazz = glyph->clazz;
+    const unsigned char foreignClass = 0;
+    glyph->clazz = &foreignClass;
+    Require(Throws([&] { Box(glyph, 0); }, "FT_Glyph_Get_CBox"));
+    glyph->clazz = clazz;
+    FT_Done_Glyph_nid_postfix(glyph);
+    FT_Done_Glyph(native);
+}
+
+static void GlyphBoxes() {
+    static_assert(sizeof(GuestBBox) == 32);
+    for (const auto mode : BoxModes) CompareBox(nullptr, nullptr, mode);
+    GuestGlyphRec empty{};
+    FT_GlyphRec nativeEmpty{};
+    for (const auto mode : BoxModes) CompareBox(&empty, &nativeEmpty, mode);
+    FT_Glyph_Get_CBox_nid_postfix(reinterpret_cast<GuestGlyphRec*>(1), UINT32_MAX, nullptr);
+    FT_Glyph_Get_CBox(reinterpret_cast<FT_Glyph>(1), UINT32_MAX, nullptr);
+    empty.clazz = reinterpret_cast<void*>(1);
+    Require(Throws([&] { Box(&empty, 0); }, "FT_Glyph_Get_CBox"));
+    OutlineBoxes();
+    BitmapBoxes();
+    std::printf("FreeType glyph control boxes: %d native comparisons, %d LP64 expectations, bitmap/outline lifetime and rounding\n", NativeBoxComparisons, WideBoxExpectations);
+}
+
 int main() {
+    GlyphBoxes();
     OutlineOwnership();
     BitmapOwnership();
     WideOutlineCoordinates();
