@@ -1,5 +1,9 @@
 # libSceUserService technical debt
 
+### Silent stubs
+
+- [sceUserServiceGetPlatformPrivacyWs1](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - sets `*value` to 0 (feature not permitted) and returns 0 when passed a non-null pointer, as no PSN account exists to query platform privacy settings for; a null output pointer returns `USER_SERVICE_ERROR_INVALID_ARGUMENT`. Console platform privacy behavior and whether an unmodeled user ID returns an error are unverified
+
 ### Unknown function info
 
 - [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`
