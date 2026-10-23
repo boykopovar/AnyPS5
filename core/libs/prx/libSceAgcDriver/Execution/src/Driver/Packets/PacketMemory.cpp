@@ -87,6 +87,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                     noteLabelStore(label->address, bytes, stamp, submission.queue);
                     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
                 }
+                if (reason == 7) localDevice->SubmitAfterEarlyLabel();
                 countLabelOutcome(reason);
                 ++immediateLabels;
             } else {
@@ -142,6 +143,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                 }
                 if (wroteOnGpu) noteLabelStore(label->address, bytes, stamp, submission.queue);
                 Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
+                if (reason == 7) localDevice->SubmitAfterEarlyLabel();
                 countLabelOutcome(reason);
                 ++immediateLabels;
             }
@@ -215,6 +217,7 @@ bool Driver::preparePacketMemory(const Submission& submission, QueueState& queue
                     drained = false;
                 }
                 Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
+                if (reason == 7) localDevice->SubmitAfterEarlyLabel();
             }
         }
         if (drained && opcode == 0x50) {
@@ -486,6 +489,7 @@ void Driver::commitStore(std::uint32_t queue, std::uint64_t address, std::span<c
         else ++storesOnCpu;
     }
     Graphics::Recorder::CloseLabelGroup(GuestMemory::TrackerGeneration());
+    if (reason == 7) localDevice->SubmitAfterEarlyLabel();
 }
 
 bool Driver::labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode) {
@@ -579,7 +583,7 @@ void Driver::commitLabel(std::uint32_t queue, std::uint64_t address, std::span<c
 }
 
 void Driver::submitDueAfterCommit(VulkanDevice* localDevice) {
-    if (localDevice == nullptr) return;
+    if (localDevice == nullptr || localDevice->SubmitAfterEarlyLabel()) return;
     const auto pending = Graphics::Recorder::PendingLabelSince();
     const bool due = pending.has_value() && std::chrono::steady_clock::now() - *pending >= labelFlushDeadline();
     const bool capped = batchCap() != 0 && Graphics::Recorder::RecordedWorkSinceSubmit() >= batchCap();
