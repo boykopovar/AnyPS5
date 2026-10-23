@@ -41,4 +41,11 @@ void* APS5_VABI sk_value_nid_postfix(const LibreSslStack* stack, int index) {
     return Elements(stack, __func__)[index];
 }
 
+void* APS5_VABI sk_pop_nid_postfix(LibreSslStack* stack) {
+    if (!stack || stack->num <= 0) return nullptr;
+    char* const element = Elements(stack, __func__)[stack->num - 1];
+    --stack->num;
+    return element;
+}
+
 }

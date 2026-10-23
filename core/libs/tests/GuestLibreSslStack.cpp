@@ -15,6 +15,7 @@ struct TestStack {
 extern "C" {
 int APS5_VABI sk_num_nid_postfix(const TestStack*);
 void* APS5_VABI sk_value_nid_postfix(const TestStack*, int);
+void* APS5_VABI sk_pop_nid_postfix(TestStack*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -62,8 +63,28 @@ static void TestValue() {
     RequireThrows([&] { sk_value_nid_postfix(&detached, 1); });
 }
 
+static void TestPop() {
+    char first = 'a';
+    char third = 'c';
+    Require(sk_pop_nid_postfix(nullptr) == nullptr);
+    char* elements[8] {&first, nullptr, &third};
+    TestStack stack {3, elements, 0, 8, nullptr};
+    Require(sk_pop_nid_postfix(&stack) == &third);
+    Require(sk_num_nid_postfix(&stack) == 2 && stack.numAlloc == 8 && stack.data == elements && elements[2] == &third);
+    Require(sk_value_nid_postfix(&stack, 2) == nullptr);
+    Require(sk_pop_nid_postfix(&stack) == nullptr && sk_num_nid_postfix(&stack) == 1);
+    Require(sk_pop_nid_postfix(&stack) == &first && sk_num_nid_postfix(&stack) == 0);
+    Require(sk_pop_nid_postfix(&stack) == nullptr && sk_num_nid_postfix(&stack) == 0);
+    stack.num = -2;
+    Require(sk_pop_nid_postfix(&stack) == nullptr && sk_num_nid_postfix(&stack) == -2);
+    TestStack detached {2, nullptr, 0, 0, nullptr};
+    RequireThrows([&] { sk_pop_nid_postfix(&detached); });
+    Require(detached.num == 2);
+}
+
 int main() {
     TestNum();
     TestValue();
+    TestPop();
     std::puts("libSceLibreSsl stack tests passed");
 }
