@@ -17,18 +17,22 @@ int main() {
     char* arguments[] = {name, nullptr};
     char unpairedEntry[] = "EXECVP_SECOND_STAGE";
     char* unpaired[] = {unpairedEntry, nullptr};
-    char variable[] = "EXECVP_SECOND_STAGE=1";
-    char* environment[] = {variable, nullptr};
     std::string huge(300000, 'X');
     char* oversized[] = {name, &huge[0], nullptr};
     char* const empty[] = {nullptr};
+    static std::string firstVector(132000, 'K');
+    static std::string secondVector(132000, 'M');
+    std::string firstEntry = "EXECVP_LARGE_FIRST=" + firstVector;
+    std::string secondEntry = "EXECVP_LARGE_SECOND=" + secondVector;
+    char* largeEnvironment[] = {&firstEntry[0], &secondEntry[0], nullptr};
     Require(execvp_nid_postfix(nullptr, nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(execv_nid_postfix(nullptr, arguments) == -1 && *__error_nid_postfix() == 14);
     Require(execv_nid_postfix(name, nullptr) == -1 && *__error_nid_postfix() == 14);
-    Require(execv_nid_postfix(name, empty) == -1 && *__error_nid_postfix() == 14);
     Require(execv_nid_postfix("", arguments) == -1 && *__error_nid_postfix() == 2);
-    Require(execve_nid_postfix(name, arguments, nullptr) == -1 && *__error_nid_postfix() == 14);
-    Require(execve_nid_postfix(name, arguments, unpaired) == -1 && *__error_nid_postfix() == 14);
+    Require(execv_nid_postfix(name, empty) == -1 && *__error_nid_postfix() == 2);
+    Require(execve_nid_postfix(name, arguments, nullptr) == -1 && *__error_nid_postfix() == 2);
+    Require(execve_nid_postfix(name, arguments, unpaired) == -1 && *__error_nid_postfix() == 2);
     Require(execvp_nid_postfix("EXECVP_NO_SUCH_LIBRARY", arguments) == -1 && *__error_nid_postfix() == 2);
     Require(execv_nid_postfix(name, oversized) == -1 && *__error_nid_postfix() == 7);
+    Require(execve_nid_postfix(name, arguments, largeEnvironment) == -1 && *__error_nid_postfix() == 7);
 }
