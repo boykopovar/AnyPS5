@@ -805,6 +805,8 @@ struct MeshOutputBudget {
 
 struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
+void SetResultMemoBudget(std::uint64_t bytes);
+[[nodiscard]] std::uint64_t ResultMemoBytes();
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile

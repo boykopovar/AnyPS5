@@ -406,6 +406,47 @@ void verifyFrontendPair() {
     }
 }
 
+void verifyResultMemoBudget() {
+    using namespace ShaderRecompiler;
+    const std::vector<std::uint32_t> pixelCode{0xbf800000u, 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
+    std::array<std::uint32_t, 1> color{};
+    auto request = FrontendRequest(pixelCode, color);
+    request.shader.stage = ShaderStage::Fragment;
+    request.context.compute.reset();
+    request.context.pixel = ShaderPixelStageInfo{};
+    request.context.pixel->wave32 = true;
+    request.context.pixel->targetOutputMode[0] = 9u;
+    request.context.waveSize = 32u;
+    request.useCache = true;
+    const auto compile = [&](std::uint32_t value) {
+        color[0] = value;
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        const auto regions = memory.Regions();
+        auto compileRequest = request;
+        compileRequest.context.memory = regions;
+        bool hit = false;
+        static_cast<void>(Recompile(compileRequest, *capture, &hit));
+        return hit;
+    };
+    require(ResultMemoBytes() == 0u, "result memo budget: the memo held results before the first compile");
+    require(!compile(1u) && compile(1u), "result memo budget: the memo did not keep a result");
+    const auto one = ResultMemoBytes();
+    require(one != 0u, "result memo budget: a memo'd result counted no bytes");
+    const auto budget = 3u * one;
+    SetResultMemoBudget(budget);
+    for (const auto value : {2u, 3u, 4u}) {
+        require(!compile(value), "result memo budget: a new snapshot hit the memo");
+        require(ResultMemoBytes() <= budget, "result memo budget: the memo holds more than its budget");
+    }
+    require(ResultMemoBytes() < budget, "result memo budget: a fourth result over a budget of three was not trimmed");
+    require(compile(4u) && compile(3u), "result memo budget: the most recently used results were dropped");
+    require(!compile(1u), "result memo budget: the least recently used result outlived the trim");
+    SetResultMemoBudget(0u);
+    for (const auto value : {5u, 6u, 7u}) static_cast<void>(compile(value));
+    require(ResultMemoBytes() > budget, "result memo budget: clearing the budget kept bounding the memo");
+}
+
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
     using namespace ShaderRecompiler;
     auto request = FrontendRequest(code, userData);
@@ -8282,6 +8323,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget") {
+            verifyResultMemoBudget();
+            std::cout << "The result memo keeps its most recently used results within its byte budget\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--layout-pair") {

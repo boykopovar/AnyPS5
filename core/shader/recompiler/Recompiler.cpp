@@ -353,6 +353,7 @@ struct ResultMemoEntry {
     std::uint64_t hash = 0;
     std::shared_ptr<const RecompileResult> result;
     std::uint64_t used = 0;
+    std::uint64_t bytes = 0;
 };
 
 struct EmissionFailure {
@@ -382,7 +383,6 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::vector<std::shared_ptr<const CompiledVariant>> variants;
     std::vector<EmissionFailure> emissionFailures;
     std::unique_ptr<ResultMemoTable> memo;
-    std::uint64_t memoClock = 0;
 };
 
 namespace {
@@ -1356,13 +1356,102 @@ ResultMemoEntry* memoSet(SourceEntry& source, std::uint64_t index) {
 }
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, populateNanoseconds{0};
+    std::atomic<std::uint64_t> hits{0}, misses{0}, evictions{0}, trimmed{0}, populateNanoseconds{0};
     std::atomic<std::int64_t> lastReport{0};
+    std::atomic<std::uint64_t> clock{0}, heldBytes{0}, heldEntries{0};
 };
 
 ResultMemoCounters& resultMemoCounters() {
     static ResultMemoCounters counters;
     return counters;
+}
+
+template <typename T>
+std::uint64_t vectorBytes(const std::vector<T>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(T);
+}
+
+std::uint64_t vectorBytes(const std::vector<bool>& values) {
+    return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
+}
+
+std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
+}
+
+std::uint64_t resultBytes(const RecompileResult& result) {
+    const auto bytes = [](const auto& values) { return vectorBytes(values); };
+    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
+    for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
+    for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
+    return total;
+}
+
+std::atomic<std::uint64_t>& resultMemoBudgetBytes() {
+    static std::atomic<std::uint64_t> budget{[] {
+        const char* value = std::getenv("APS5_RESULT_MEMO_MB");
+        const std::uint64_t megabytes = value == nullptr || *value == '\0' ? 256u : std::strtoull(value, nullptr, 10);
+        return megabytes << 20u;
+    }()};
+    return budget;
+}
+
+std::uint64_t resultMemoBudget() {
+    return resultMemoBudgetBytes().load(std::memory_order_relaxed);
+}
+
+struct ResultMemoRegistry {
+    std::mutex mutex;
+    std::vector<std::weak_ptr<SourceEntry>> sources;
+};
+
+ResultMemoRegistry& resultMemoRegistry() {
+    static ResultMemoRegistry registry;
+    return registry;
+}
+
+void trimResultMemo(std::uint64_t budget) {
+    static std::mutex trimMutex;
+    std::unique_lock trim(trimMutex, std::try_to_lock);
+    if (!trim.owns_lock()) return;
+    auto& counters = resultMemoCounters();
+    const auto held = counters.heldBytes.load(std::memory_order_relaxed);
+    if (held <= budget) return;
+    std::vector<std::shared_ptr<SourceEntry>> sources;
+    {
+        auto& registry = resultMemoRegistry();
+        std::lock_guard lock(registry.mutex);
+        sources.reserve(registry.sources.size());
+        for (const auto& weak : registry.sources) {
+            if (auto source = weak.lock()) sources.push_back(std::move(source));
+        }
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
+    for (const auto& source : sources) {
+        std::lock_guard lock(source->mutex);
+        for (const auto& entry : *source->memo) {
+            if (entry.result != nullptr) stamps.emplace_back(entry.used, entry.bytes);
+        }
+    }
+    std::sort(stamps.begin(), stamps.end());
+    const auto excess = held - budget / 4u * 3u;
+    std::uint64_t freed = 0;
+    std::uint64_t threshold = 0;
+    for (const auto& [used, bytes] : stamps) {
+        threshold = used;
+        freed += bytes;
+        if (freed >= excess) break;
+    }
+    for (const auto& source : sources) {
+        std::lock_guard lock(source->mutex);
+        for (auto& entry : *source->memo) {
+            if (entry.result == nullptr || entry.used > threshold) continue;
+            counters.heldBytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
+            counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+            counters.trimmed.fetch_add(1, std::memory_order_relaxed);
+            entry = {};
+        }
+    }
 }
 
 void reportResultMemo() {
@@ -1379,8 +1468,9 @@ void reportResultMemo() {
     const auto hits = counters.hits.exchange(0, std::memory_order_relaxed);
     const auto misses = counters.misses.exchange(0, std::memory_order_relaxed);
     const auto evictions = counters.evictions.exchange(0, std::memory_order_relaxed);
+    const auto trimmed = counters.trimmed.exchange(0, std::memory_order_relaxed);
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions));
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu misses (%.1f%% hits), Populate %.1f us per miss / %.1f ms in total, %llu evictions, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses), hits + misses != 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(hits + misses) : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
@@ -1477,7 +1567,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
                 if (entry.result == nullptr || entry.variantId != variant->artifact.variantId || entry.hash != hash) continue;
-                entry.used = ++source.memoClock;
+                entry.used = counters.clock.fetch_add(1, std::memory_order_relaxed) + 1u;
                 counters.hits.fetch_add(1, std::memory_order_relaxed);
                 if (memoHit != nullptr) *memoHit = true;
                 reportResultMemo();
@@ -1490,17 +1580,23 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     result->cacheHit = cacheHit;
     if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     counters.misses.fetch_add(1, std::memory_order_relaxed);
+    const auto bytes = resultBytes(*result);
     std::shared_ptr<const RecompileResult> shared = std::move(result);
     {
         std::lock_guard lock(source.mutex);
-        if (source.memo == nullptr) source.memo = std::make_unique<ResultMemoTable>();
+        if (source.memo == nullptr) {
+            source.memo = std::make_unique<ResultMemoTable>();
+            auto& registry = resultMemoRegistry();
+            std::lock_guard registryLock(registry.mutex);
+            registry.sources.push_back(source.weak_from_this());
+        }
         auto* set = memoSet(source, index);
         auto* victim = set;
         bool present = false;
         for (std::size_t way = 0; way < ResultMemoWays && !present; ++way) {
             auto& entry = set[way];
             if (entry.result != nullptr && entry.variantId == variant->artifact.variantId && entry.hash == hash) {
-                entry.used = ++source.memoClock;
+                entry.used = counters.clock.fetch_add(1, std::memory_order_relaxed) + 1u;
                 shared = entry.result;
                 present = true;
             } else if (entry.used < victim->used) {
@@ -1508,10 +1604,17 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             }
         }
         if (!present) {
-            if (victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
-            *victim = {variant->artifact.variantId, hash, shared, ++source.memoClock};
+            if (victim->result != nullptr) {
+                counters.evictions.fetch_add(1, std::memory_order_relaxed);
+                counters.heldBytes.fetch_sub(victim->bytes, std::memory_order_relaxed);
+                counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+            }
+            *victim = {variant->artifact.variantId, hash, shared, counters.clock.fetch_add(1, std::memory_order_relaxed) + 1u, bytes};
+            counters.heldBytes.fetch_add(bytes, std::memory_order_relaxed);
+            counters.heldEntries.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    if (const auto budget = resultMemoBudget(); budget != 0 && counters.heldBytes.load(std::memory_order_relaxed) > budget) trimResultMemo(budget);
     reportResultMemo();
     return shared;
 }
@@ -1742,6 +1845,15 @@ RecompileResult Recompile(const RecompileRequest& request) {
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
     return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+}
+
+void SetResultMemoBudget(std::uint64_t bytes) {
+    resultMemoBudgetBytes().store(bytes, std::memory_order_relaxed);
+    if (bytes != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > bytes) trimResultMemo(bytes);
+}
+
+std::uint64_t ResultMemoBytes() {
+    return resultMemoCounters().heldBytes.load(std::memory_order_relaxed);
 }
 
 }
