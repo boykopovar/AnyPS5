@@ -158,6 +158,7 @@ struct Globals {
     PthreadMutex* recoveryMutex = nullptr;
     bool internalMutexRetired = false;
     bool recoveryMutexRetired = false;
+    std::uint8_t retiredDefaultHeaders = 0;
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
     std::uint32_t allocationDepth = 0;
@@ -1073,30 +1074,38 @@ void CopyObjectStorage(ObjectStorage& destination, const ObjectStorage& source) 
 void Destroy(Value& v);
 void CopyInto(Value& destination, const Value& source);
 
+void SetDefaultHeaderRetired(ValueType type, const void* owner, bool retired);
+
 void Destroy(String& s) {
     if (!s.text) return;
     ClearText(s);
+    SetDefaultHeaderRetired(TypeString, &s, true);
     PoisonText(*s.text);
     Release(s.text);
     s.text = nullptr;
+    SetDefaultHeaderRetired(TypeString, &s, false);
 }
 void Destroy(Array& a) {
     if (!a.items) return;
     a.items->ReleaseContents();
     if (a.items->head) Release(a.items->head);
+    SetDefaultHeaderRetired(TypeArray, &a, true);
     a.items->head = reinterpret_cast<ArrayLink*>(std::uintptr_t{0xffffffff});
     a.items->count = std::numeric_limits<std::size_t>::max();
     Release(a.items);
     a.items = nullptr;
+    SetDefaultHeaderRetired(TypeArray, &a, false);
 }
 void Destroy(Object& object) {
     if (!object.items) return;
     object.items->clear();
     if (object.items->head) Release(object.items->head);
+    SetDefaultHeaderRetired(TypeObject, &object, true);
     object.items->head = reinterpret_cast<ObjectLink*>(std::uintptr_t{0xffffffff});
     object.items->count = std::numeric_limits<std::size_t>::max();
     Release(object.items);
     object.items = nullptr;
+    SetDefaultHeaderRetired(TypeObject, &object, false);
 }
 
 const Node& RootOf(const Node& n) {
@@ -1415,6 +1424,16 @@ struct DefaultStorage {
 DefaultStorage& SharedDefaults() {
     static DefaultStorage defaults;
     return defaults;
+}
+
+void SetDefaultHeaderRetired(ValueType type, const void* owner, bool retired) {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    auto& defaults = SharedDefaults();
+    if (!defaults.ready[type] || defaults.values[type].payload != reinterpret_cast<std::uintptr_t>(owner)) return;
+    const auto mask = static_cast<std::uint8_t>(1u << type);
+    if (retired) state.retiredDefaultHeaders |= mask;
+    else state.retiredDefaultHeaders &= static_cast<std::uint8_t>(~mask);
 }
 
 const Value& Defaults(ValueType type) {
@@ -2578,7 +2597,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
-    if (state.internalMutexRetired || state.recoveryMutexRetired) NotImplemented_nid_no_patch(__func__);
+    if (state.internalMutexRetired || state.recoveryMutexRetired || state.retiredDefaultHeaders) NotImplemented_nid_no_patch(__func__);
     if (state.terminating || state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
     TerminationScope termination(state.terminating);
     state.callback = nullptr;
