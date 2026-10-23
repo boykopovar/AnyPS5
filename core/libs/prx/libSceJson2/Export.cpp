@@ -148,6 +148,7 @@ struct Globals {
     bool floatFormatEnabled = false;
     bool paddedStringGrowth = false;
     bool initialized = false;
+    bool terminating = false;
     AllocParamRtti rtti{};
     Handlers handlers{};
     AllocationContext* allocation = nullptr;
@@ -173,6 +174,14 @@ struct AllocatorCallbackScope {
     ~AllocatorCallbackScope() { --allocatorCallbackDepth; }
     AllocatorCallbackScope(const AllocatorCallbackScope&) = delete;
     AllocatorCallbackScope& operator=(const AllocatorCallbackScope&) = delete;
+};
+
+struct TerminationScope {
+    bool& active;
+    explicit TerminationScope(bool& value) : active(value) { active = true; }
+    ~TerminationScope() { active = false; }
+    TerminationScope(const TerminationScope&) = delete;
+    TerminationScope& operator=(const TerminationScope&) = delete;
 };
 
 struct KernelMutexLock {
@@ -2552,7 +2561,8 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
-    if (state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
+    if (state.terminating || state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
+    TerminationScope termination(state.terminating);
     state.callback = nullptr;
     state.context = nullptr;
     state.handlers = {};

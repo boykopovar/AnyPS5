@@ -38,6 +38,8 @@ struct LifecycleTrace {
     AllocatorAction allocatorAction = AllocatorAction::None;
     unsigned notices = 0;
     unsigned refused = 0;
+    unsigned freeCalls = 0;
+    unsigned teardownTarget = 0;
 };
 static void RejectOwnerTermination(LifecycleTrace& trace);
 static void* APS5_VABI AllocateLifecycle(void*, std::size_t bytes, void* context) {
@@ -55,6 +57,11 @@ static void* APS5_VABI AllocateLifecycle(void*, std::size_t bytes, void* context
 }
 static void APS5_VABI FreeLifecycle(void*, void* memory, void* context) {
     auto& trace = *static_cast<LifecycleTrace*>(context);
+    ++trace.freeCalls;
+    if (trace.teardownTarget && trace.freeCalls == trace.teardownTarget) {
+        trace.teardownTarget = 0;
+        RejectOwnerTermination(trace);
+    }
     if (trace.allocatorAction == AllocatorAction::RejectFree) {
         trace.allocatorAction = AllocatorAction::None;
         RejectOwnerTermination(trace);
@@ -78,7 +85,7 @@ static void RejectOwnerTermination(LifecycleTrace& trace) {
         Require(std::strstr(error.what(), "terminate"), "Unsafe callback termination must use the explicit unsupported boundary");
         rejected = true;
     }
-    Require(rejected, "Termination inside an active callback operation must be explicitly rejected before teardown");
+    Require(rejected, "Unsafe callback termination must be explicitly rejected before teardown");
     Require(*trace.owner == 1 && trace.live == before, "Rejected callback termination must preserve the entire module allocation generation and active byte");
     ++trace.refused;
 }
@@ -189,6 +196,24 @@ static void CheckStandaloneFree() {
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Reinitialization must own fresh resource generations after free-callback termination");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release standalone free lifecycle retry");
 }
+static void CheckTeardownReentry(unsigned target) {
+    LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
+    std::uint8_t initializer = 0; trace.owner = &initializer;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && trace.live.size() == 12,
+            "Teardown reentry requires the actual twelve independently allocated module resources");
+    trace.freeCalls = 0; trace.teardownTarget = target;
+    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty() && trace.freeCalls == 12 && trace.refused == 1 && !trace.teardownTarget,
+            "Each teardown callback must reject nested owner termination while allowing the outer call to release every resource exactly once");
+    const auto generation = trace.generation;
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12,
+            "Initialization must admit a fresh module after rejected teardown reentry at every release position");
+    for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Teardown reentry retry must retain no old allocation generations");
+    try {
+        Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty() && trace.refused == 1,
+                "The teardown guard must reset so ordinary termination remains usable for the next module generation");
+    } catch (const std::runtime_error&) { Require(false, "Completed teardown must clear its guard before ordinary termination of a fresh module generation"); }
+}
 int main() {
     CheckRecovery(false);
     CheckRecovery(true);
@@ -197,5 +222,6 @@ int main() {
     CheckAllocator(true);
     CheckAllocator(false);
     CheckStandaloneFree();
+    for (unsigned target = 1; target <= 12; ++target) CheckTeardownReentry(target);
     return 0;
 }
