@@ -43,4 +43,10 @@ void APS5_VABI UI_destroy_method_nid_postfix(LibreSslUiMethod* method) {
     free_nid_postfix(method);
 }
 
+int APS5_VABI UI_method_set_opener_nid_postfix(LibreSslUiMethod* method, UiSessionFunction opener) {
+    if (!method) return -1;
+    method->openSession = opener;
+    return 0;
+}
+
 }

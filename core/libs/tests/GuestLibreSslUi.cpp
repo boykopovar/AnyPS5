@@ -22,8 +22,11 @@ struct TestUiMethod {
 extern "C" {
 TestUiMethod* APS5_VABI UI_create_method_nid_postfix(char*);
 void APS5_VABI UI_destroy_method_nid_postfix(TestUiMethod*);
+int APS5_VABI UI_method_set_opener_nid_postfix(TestUiMethod*, SessionFunction);
 void APS5_VABI free_nid_postfix(void*);
 }
+
+static int APS5_VABI Open(void*) { return 1; }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -68,9 +71,19 @@ static void TestDestroy() {
     RequireThrows([] { UI_destroy_method_nid_postfix(nullptr); });
 }
 
+static void TestSetOpener() {
+    TestUiMethod* method = UI_create_method_nid_postfix(nullptr);
+    Require(UI_method_set_opener_nid_postfix(method, Open) == 0 && method->openSession == Open);
+    Require(!method->writeString && !method->readString && !method->closeSession && !method->flush && !method->constructPrompt);
+    Require(UI_method_set_opener_nid_postfix(method, nullptr) == 0 && method->openSession == nullptr);
+    Require(UI_method_set_opener_nid_postfix(nullptr, Open) == -1);
+    UI_destroy_method_nid_postfix(method);
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
     TestDestroy();
+    TestSetOpener();
     std::puts("libSceLibreSsl UI method tests passed");
 }
