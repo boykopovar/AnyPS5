@@ -102,6 +102,7 @@ int APS5_VABI rand_nid_postfix();
 void APS5_VABI srand_nid_postfix(unsigned int);
 int APS5_VABI rand_r_nid_postfix(unsigned int*);
 float APS5_VABI log10f_nid_postfix(float);
+float APS5_VABI log2f_nid_postfix(float);
 float APS5_VABI powf_nid_postfix(float, float);
 double APS5_VABI log1p_nid_postfix(double);
 float APS5_VABI log1pf_nid_postfix(float);
@@ -931,6 +932,31 @@ static void CheckHyperbolic() {
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
 }
 
+static void CheckLog10fLog2fConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t log10;
+        std::uint32_t log2;
+        int error;
+    } cases[] = {
+        {0x0000a53cu, 0xc220e895u, 0xc305a1b2u, 0}, {0x3f7f1a73u, 0xbac7bc3bu, 0xbba5e066u, 0}, {0x3f810f30u, 0x3b6a94c3u, 0x3c42d0beu, 0},
+        {0x40400990u, 0x3ef45450u, 0x3fcae940u, 0}, {0x3f800000u, 0x00000000u, 0x00000000u, 0}, {0x42c80000u, 0x40000000u, 0x40d49a78u, 0},
+        {0x40000000u, 0x3e9a209bu, 0x3f800000u, 0}, {0x41000000u, 0x3f6730e8u, 0x40400000u, 0}, {0x00000001u, 0xc23369f4u, 0xc3150000u, 0},
+        {0x00800000u, 0xc217b818u, 0xc2fc0000u, 0}, {0x7f7fffffu, 0x421a209bu, 0x43000000u, 0}, {0x7f800000u, 0x7f800000u, 0x7f800000u, 0},
+        {0x00000000u, 0xff800000u, 0xff800000u, 0}, {0x80000000u, 0xff800000u, 0xff800000u, 0}, {0x80000001u, 0xffc00000u, 0xffc00000u, EDOM},
+        {0xbf800000u, 0xffc00000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, 0xffc00000u, EDOM}, {0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0},
+        {0xffc00002u, 0xffc00002u, 0xffc00002u, EDOM}, {0x3f800001u, 0x335e5bd8u, 0x3438aa3au, 0}, {0x3f7fffffu, 0xb2de5bd9u, 0xb3b8aa3cu, 0},
+    };
+    for (const auto& item : cases) {
+        const float x = std::bit_cast<float>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(log10f_nid_postfix(x)) == item.log10 && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(log2f_nid_postfix(x)) == item.log2 && errno == expected);
+    }
+}
+
 static void CheckScaledHyperbolic() {
     const int rounding = std::fegetround();
     Require(std::fesetround(FE_TONEAREST) == 0);
@@ -1650,6 +1676,7 @@ int main() {
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
     CheckScaledHyperbolic();
+    CheckLog10fLog2fConsoleBits();
     CheckSinhf();
     CheckAtanhf();
     CheckHypotSpecialValue();
