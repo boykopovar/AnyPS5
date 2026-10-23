@@ -1059,7 +1059,8 @@ void CopyObjectStorage(ObjectStorage& destination, const ObjectStorage& source) 
         replacement->parent = CloneObjectTree(source.head->parent, replacement, replacement);
         if (replacement->parent != replacement) { pending.count = source.count; pending.RefreshEndpoints(); }
     }
-    destination.clear(); Release(destination.head);
+    destination.clear();
+    if (destination.head) Release(destination.head);
     destination.head = replacement;
     destination.count = pending.count;
 }
