@@ -2227,10 +2227,7 @@ public:
     Parser(const char* text, std::size_t size) : text(text), end(text + size) {}
     Parser(ParserReadCallback read, void* context) : read(read), context(context) {}
 
-    bool Parse(Node& out) {
-        skip();
-        return value(out);
-    }
+    bool Parse(Node& out) { return value(out); }
 
     int Error() const { return readError < 0 ? readError : JsonErrorParse; }
 
@@ -2382,7 +2379,9 @@ private:
         return true;
     }
     bool value(Node& out, const Value* parent = nullptr) {
-        if (AllocationOperation::Failed() || peek() < 0) return false;
+        if (AllocationOperation::Failed()) return false;
+        skip();
+        if (peek() < 0) return false;
         switch (peek()) {
             case 'n': if (!literal("null")) return false; SetType(out, TypeNull); Admit(out, parent); return true;
             case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; Admit(out, parent); return true;
