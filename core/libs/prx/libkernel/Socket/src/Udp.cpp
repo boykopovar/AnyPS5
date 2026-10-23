@@ -34,6 +34,7 @@
 #include "prx/libkernel/Socket/include/SocketError.hpp"
 #include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -1480,10 +1481,117 @@ static std::int64_t MessageLength(const GuestMsghdr* message) {
     }
     return static_cast<std::int64_t>(total);
 }
+constexpr int GuestControlCloseOnExec = 0x40000;
+#ifndef _WIN32
+constexpr int GuestSocketLevel = 0xffff;
+constexpr int GuestRights = 1;
+constexpr int GuestControlTruncated = 0x20;
+constexpr std::size_t GuestControlHeader = 16;
+constexpr std::size_t MostPassedDescriptors = 253;
+std::size_t GuestControlSpace(std::size_t bytes) {
+    return GuestControlHeader + ((bytes + 7u) & ~std::size_t{7});
+}
+int PassedDescriptors(const GuestMsghdr& message, std::vector<int>& descriptors) {
+    const auto* control = static_cast<const unsigned char*>(message.control);
+    std::size_t left = message.controlLength;
+    std::size_t at = 0;
+    while (left != 0) {
+        std::uint32_t length = 0;
+        int level = 0;
+        int type = 0;
+        if (left < 12) return 22;
+        std::memcpy(&length, control + at, sizeof(length));
+        std::memcpy(&level, control + at + 4, sizeof(level));
+        std::memcpy(&type, control + at + 8, sizeof(type));
+        if (level != GuestSocketLevel || length > left || length < GuestControlHeader) return 22;
+        if (type != GuestRights) throw std::runtime_error("sendmsg: control message type " + std::to_string(type) + " is not implemented");
+        const std::size_t count = (length - GuestControlHeader) / sizeof(int);
+        for (std::size_t index = 0; index < count; ++index) {
+            int passed = -1;
+            std::memcpy(&passed, control + at + GuestControlHeader + index * sizeof(int), sizeof(passed));
+            if (passed < 0 || !DescriptorIsOpen_nid_no_patch(passed)) return 9;
+            File::RefuseArchivedFile(passed, "sendmsg");
+            descriptors.push_back(passed);
+        }
+        const auto space = GuestControlSpace(length - GuestControlHeader);
+        if (space >= left) break;
+        at += space;
+        left -= space;
+    }
+    return 0;
+}
+std::int64_t SendPassing(Socket& socket, const GuestMsghdr& message, std::vector<char>& data, int flags) {
+    std::vector<int> descriptors;
+    if (const int error = PassedDescriptors(message, descriptors)) return Fail(error);
+    if ((flags & ~GuestSendFlags) != 0) return Fail(45);
+    if (message.name) return Fail(47);
+    if (const int waited = WaitForTransfer(socket, true, flags)) return Fail(waited);
+    iovec vector{data.data(), data.size()};
+    msghdr host{};
+    host.msg_iov = &vector;
+    host.msg_iovlen = 1;
+    std::vector<char> control(CMSG_SPACE(descriptors.size() * sizeof(int)));
+    if (!descriptors.empty()) {
+        host.msg_control = control.data();
+        host.msg_controllen = control.size();
+        auto* header = CMSG_FIRSTHDR(&host);
+        header->cmsg_level = SOL_SOCKET;
+        header->cmsg_type = SCM_RIGHTS;
+        header->cmsg_len = CMSG_LEN(descriptors.size() * sizeof(int));
+        std::memcpy(CMSG_DATA(header), descriptors.data(), descriptors.size() * sizeof(int));
+    }
+    const auto result = ::sendmsg(socket.value, &host, SocketSendFlags(socket, flags));
+    return result < 0 ? Fail(SendError(socket.type)) : result;
+}
+int GuestFromHostSocket(int domain) {
+    return domain == AF_UNIX ? GuestUnix : domain == AF_INET ? 2 : domain == AF_INET6 ? 28 : -1;
+}
+int GuestFromHostSocketType(int type) {
+    return type == SOCK_STREAM ? 1 : type == SOCK_DGRAM ? 2 : type == SOCK_SEQPACKET ? 5 : -1;
+}
+void ClosePassed(const std::vector<int>& passed) {
+    for (const int number : passed) {
+        if (GuestSockets::IsOpen(number)) GuestSockets::Close(number);
+        else ::close(number);
+    }
+}
+int InstallPassed(int native, bool closeOnExec) {
+    struct stat status{};
+    if (::fstat(native, &status) != 0) throw std::runtime_error("recvmsg: a received descriptor cannot be queried, errno " + std::to_string(errno));
+    if (!S_ISSOCK(status.st_mode)) return native;
+    sockaddr_storage address{};
+    socklen_t addressLength = sizeof(address);
+    int type = 0;
+    socklen_t length = sizeof(type);
+    if (::getsockname(native, reinterpret_cast<sockaddr*>(&address), &addressLength) != 0 || ::getsockopt(native, SOL_SOCKET, SO_TYPE, &type, &length) != 0)
+        throw std::runtime_error("recvmsg: a received socket cannot be queried, errno " + std::to_string(errno));
+    const int domain = address.ss_family;
+    const int family = GuestFromHostSocket(domain);
+    const int guestType = GuestFromHostSocketType(type);
+    if (family < 0 || guestType < 0) throw std::runtime_error("recvmsg: a received socket of host domain " + std::to_string(domain) + " and type " + std::to_string(type) + " is not supported");
+    const int number = Install(std::make_shared<Socket>(native, family, guestType));
+    if (number < 0) return -1;
+    if (closeOnExec) {
+        std::lock_guard lock(socketsMutex);
+        closeOnExecDescriptors.insert(number);
+    }
+    return number;
+}
+#endif
 std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
     const auto total = MessageLength(message);
     if (total < 0) return -1;
-    if (message->control && message->controlLength) throw std::runtime_error("sendmsg: control data is not supported");
+    const bool control = message->control && message->controlLength;
+#ifdef _WIN32
+    if (control) throw std::runtime_error("sendmsg: control data is not supported on Windows");
+#else
+    std::shared_ptr<Socket> passing;
+    if (control) {
+        passing = Lookup(descriptor);
+        if (!passing) return -1;
+        if (passing->family != GuestUnix) throw std::runtime_error("sendmsg: control data on an IP socket is not implemented");
+    }
+#endif
     std::vector<char> buffer;
     try {
         buffer.resize(static_cast<std::size_t>(total));
@@ -1495,6 +1603,9 @@ std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* me
         if (message->iov[i].length) std::memcpy(buffer.data() + offset, message->iov[i].base, message->iov[i].length);
         offset += message->iov[i].length;
     }
+#ifndef _WIN32
+    if (passing) return SendPassing(*passing, *message, buffer, flags);
+#endif
     return sendto_nid_postfix(descriptor, buffer.data(), buffer.size(), flags, message->name, message->name ? message->nameLength : 0u);
 }
 #ifdef _WIN32
@@ -1574,7 +1685,14 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     if (total < 0) return -1;
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
+#ifdef _WIN32
+    const bool passing = false;
+#else
+    const bool passing = socket->family == GuestUnix && header.control && header.controlLength;
+    const std::size_t controlCapacity = header.controlLength;
+    if (passing && (flags & GuestPeek) != 0) throw std::runtime_error("recvmsg: MSG_PEEK with a control buffer on a Unix socket is not implemented");
+#endif
+    if ((flags & ~(GuestReceiveFlags | (passing ? GuestControlCloseOnExec : 0))) != 0) return Fail(45);
     const bool records = socket->type == 2 || socket->type == 5;
     std::vector<char> buffer;
     try {
@@ -1585,7 +1703,64 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
     if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
-    std::int64_t received = ::recvfrom(socket->value, buffer.data(), static_cast<int>(buffer.size()),
+    std::int64_t received = 0;
+#ifndef _WIN32
+    std::vector<int> passed;
+    bool controlTruncated = false;
+    const auto faulted = [&passed] {
+        ClosePassed(passed);
+        return Fail(14);
+    };
+#else
+    const auto faulted = [] { return Fail(14); };
+#endif
+#ifndef _WIN32
+    if (passing) {
+        std::vector<char> control(CMSG_SPACE(MostPassedDescriptors * sizeof(int)));
+        iovec vector{buffer.data(), buffer.size()};
+        msghdr host{};
+        host.msg_name = &native;
+        host.msg_namelen = size;
+        host.msg_iov = &vector;
+        host.msg_iovlen = 1;
+        host.msg_control = control.data();
+        host.msg_controllen = control.size();
+#ifdef MSG_CMSG_CLOEXEC
+        constexpr int receiveCloseOnExec = MSG_CMSG_CLOEXEC;
+#else
+        constexpr int receiveCloseOnExec = 0;
+#endif
+        received = ::recvmsg(socket->value, &host, NativeReceiveFlags(flags, socket->type) | ((flags & GuestControlCloseOnExec) != 0 ? receiveCloseOnExec : 0));
+        if (received < 0) return Fail(NativeError());
+        size = host.msg_namelen;
+        controlTruncated = (host.msg_flags & MSG_CTRUNC) != 0;
+        for (auto* header = CMSG_FIRSTHDR(&host); header; header = CMSG_NXTHDR(&host, header)) {
+            if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) continue;
+            const auto count = (header->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+            for (std::size_t index = 0; index < count; ++index) {
+                int handed = -1;
+                std::memcpy(&handed, CMSG_DATA(header) + index * sizeof(int), sizeof(handed));
+                passed.push_back(handed);
+            }
+        }
+        if constexpr (receiveCloseOnExec == 0) {
+            if ((flags & GuestControlCloseOnExec) != 0) {
+                for (const int handed : passed) ::fcntl(handed, F_SETFD, FD_CLOEXEC);
+            }
+        }
+        for (std::size_t index = 0; index < passed.size(); ++index) {
+            const int number = InstallPassed(passed[index], (flags & GuestControlCloseOnExec) != 0);
+            if (number < 0) {
+                const int error = *__error_nid_postfix();
+                for (std::size_t rest = index; rest < passed.size(); ++rest) ::close(passed[rest]);
+                passed.resize(index);
+                return Fail(error);
+            }
+            passed[index] = number;
+        }
+    } else
+#endif
+    received = ::recvfrom(socket->value, buffer.data(), static_cast<int>(buffer.size()),
         NativeReceiveFlags(flags, socket->type), reinterpret_cast<sockaddr*>(&native), &size);
     if (received < 0) {
 #ifdef _WIN32
@@ -1604,7 +1779,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     for (const auto& vector : vectors) {
         if (offset >= static_cast<std::size_t>(received)) break;
         const auto count = std::min<std::size_t>(vector.length, static_cast<std::size_t>(received) - offset);
-        if (!WriteGuest(vector.base, buffer.data() + offset, count)) return Fail(14);
+        if (!WriteGuest(vector.base, buffer.data() + offset, count)) return faulted();
         offset += count;
     }
     if (header.name) {
@@ -1616,10 +1791,30 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
         } else {
             header.nameLength = 0;
         }
-        if (!WriteGuest(header.name, address, header.nameLength)) return Fail(14);
-        if (!WriteGuest(&message->nameLength, &header.nameLength, sizeof(header.nameLength))) return Fail(14);
+        if (!WriteGuest(header.name, address, header.nameLength)) return faulted();
+        if (!WriteGuest(&message->nameLength, &header.nameLength, sizeof(header.nameLength))) return faulted();
     }
     header.controlLength = 0;
+#ifndef _WIN32
+    if (passing && !passed.empty()) {
+        const auto bytes = passed.size() * sizeof(int);
+        std::vector<unsigned char> record(GuestControlSpace(bytes), 0);
+        const auto length = static_cast<std::uint32_t>(GuestControlHeader + bytes);
+        std::memcpy(record.data(), &length, sizeof(length));
+        std::memcpy(record.data() + 4, &GuestSocketLevel, sizeof(GuestSocketLevel));
+        std::memcpy(record.data() + 8, &GuestRights, sizeof(GuestRights));
+        std::memcpy(record.data() + GuestControlHeader, passed.data(), bytes);
+        const bool fits = record.size() <= controlCapacity;
+        if (fits && WriteGuest(header.control, record.data(), record.size())) {
+            header.controlLength = static_cast<std::uint32_t>(record.size());
+        } else {
+            if (fits) return faulted();
+            ClosePassed(passed);
+            controlTruncated = true;
+        }
+    }
+    if (controlTruncated) header.flags |= GuestControlTruncated;
+#endif
     constexpr auto results = offsetof(GuestMsghdr, controlLength);
     if (!WriteGuest(reinterpret_cast<char*>(message) + results, reinterpret_cast<const char*>(&header) + results, sizeof(header) - results)) return Fail(14);
     return received;
