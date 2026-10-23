@@ -229,7 +229,6 @@ static void CheckWcsftime() {
     time.tm_year = 124;
     time.tm_wday = 4;
     time.tm_yday = 59;
-    time.tm_zone = "UTC";
     struct Case {
         const char16_t* wide;
         const char* narrow;

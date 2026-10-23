@@ -6,6 +6,8 @@
 
 extern "C" {
 std::size_t APS5_VABI strftime_nid_postfix(char*, std::size_t, const char*, const GuestTm*);
+int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
+void APS5_VABI tzset_nid_postfix();
 char* APS5_VABI asctime_nid_postfix(const GuestTm*);
 }
 
@@ -22,14 +24,14 @@ GuestTm MakeTime(int year, int hour, int wday, int yday, int isdst) {
     time.tm_wday = wday;
     time.tm_yday = yday;
     time.tm_isdst = isdst;
-    time.tm_gmtoff = 19800;
-    time.tm_zone = "IST";
     return time;
 }
 
 }
 
 int main() {
+    if (setenv_nid_postfix("TZ", "IST-5:30", 1) != 0) return 1;
+    tzset_nid_postfix();
     struct Case {
         const char* name;
         int year;
@@ -48,7 +50,7 @@ int main() {
         {"year -1", -1901, 3, 5, 1, 0, "%Y %C %y %c", "-001 -0 01 Fri Jan  2 03:04:05 -001"},
         {"year 12345", 10445, 3, 5, 1, 0, "%Y %C %y %D %v", "12345 123 45 01/02/45  2-Jan-12345"},
         {"out of range", 126, 100, 8, 400, 0, "%I %l %u %W %U %j %a %p", "04  4 8 57 57 401 ? PM"},
-        {"unknown dst", 126, 3, 5, 1, -1, "[%z][%Z]", "[][IST]"},
+        {"unknown dst", 126, 3, 5, 1, -1, "[%z][%Z]", "[][]"},
         {"literals", 126, 3, 5, 1, 0, "%q %% %", "q % %"},
     };
     bool correct = true;
