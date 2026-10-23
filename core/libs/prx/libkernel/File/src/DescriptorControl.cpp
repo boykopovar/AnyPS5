@@ -4,6 +4,7 @@
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -648,5 +649,5 @@ bool IsVnode(int fd) {
 }
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
-    return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
+    return IsKqueueDescriptor(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
 }
