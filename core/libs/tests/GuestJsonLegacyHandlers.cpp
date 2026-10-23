@@ -428,11 +428,11 @@ static int APS5_VABI ReadInheritedMap(char& character, void* data) {
 }
 static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& second) {
     const auto guestBaseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
-    for (bool existing : {false, true}) for (unsigned mode = 0; mode < 3; ++mode) for (unsigned alias = 0; alias < 3; ++alias) {
+    for (unsigned shape = 0; shape < 3; ++shape) for (bool existing : {false, true}) for (unsigned mode = 0; mode < 3; ++mode) for (unsigned alias = 0; alias < 3; ++alias) {
         Value target{}, scalarCopy{}, outer{}; Pair pair; std::memset(&pair, 0xa5, sizeof(pair));
         Value& copy = alias ? pair.value : scalarCopy;
         String key{}; if (alias) _ZN3sce4Json6StringC1EPKc(&key, "key");
-        ParseLegacy(target);
+        ParseLegacy(target, shape == 0 ? "9" : shape == 1 ? "[{\"s\":\"text\"}]" : "{\"a\":[\"text\"]}");
         if (existing) Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&target, RecoverLegacy, &first) == 0, "Prepare an existing legacy mismatch record before inherited failure");
         std::vector<LegacySnapshot> targetAllocations;
         for (const auto& [pointer, generation] : trace.guestGenerations) {
@@ -451,6 +451,11 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
                 "Legacy map updates must observe failure only after notifier return without clearing the outer parser error or interrupting its admitted literal");
         auto expected = mode ? std::vector<std::size_t>{8} : std::vector<std::size_t>{};
         if (alias) { expected.push_back(24); expected.push_back(4); }
+        if (shape) {
+            const auto payload = shape == 1 ? std::vector<std::size_t>{8, 24, 48, 48, 48, 8, 24, 104, 104, 104, 2, 24, 2, 8, 24, 5}
+                                            : std::vector<std::size_t>{8, 24, 104, 104, 104, 2, 24, 2, 8, 24, 48, 48, 48, 8, 24, 5};
+            expected.insert(expected.end(), payload.begin(), payload.end());
+        }
         expected.push_back(24); expected.push_back(32);
         if (alias) Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && pair.key.storage != key.storage && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0,
                 "Inherited failure must preserve independent Pair key ownership, complete key contents and inactive padding");
@@ -459,8 +464,15 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
         Context* targetContext = mode == 1 ? existing ? &first : nullptr : &second;
         Context* copyContext = mode == 1 ? nullptr : &second;
         CheckMap(trace, {{&target, targetContext}, {&copy, copyContext}});
-        Require(!copy.parent && !copy.auxiliary && copy.type == 3 && copy.payload == 9 && std::memcmp(&target, &targetValue, sizeof(target)) == 0,
-                "Inherited callback-map failure must not discard copied scalar contents or change the source ownership metadata");
+        Require(!copy.parent && !copy.auxiliary && copy.type == (shape ? shape == 1 ? 6 : 7 : 3) && (shape || copy.payload == 9) && std::memcmp(&target, &targetValue, sizeof(target)) == 0,
+                "Inherited callback-map failure must preserve copied payload type and source ownership metadata");
+        const auto verifyShape = [&] {
+            std::string actual; std::vector<const Value*> values;
+            CollectionShape(copy, nullptr, actual, values);
+            const char* expectedShape = shape == 0 ? "3:0=9;" : shape == 1 ? "6:0a1[7:0o1{k=s/q=s/5:0s=text;};];" : "7:0o1{k=a/q=a/6:0a1[5:0s=text;];};";
+            Require(actual == expectedShape, "Inherited copies must preserve complete nested payloads, independent internal/public keys and unbound descendant parents");
+        };
+        verifyShape();
         const auto verifyRecovery = [&](const Value& value, Context* expectedContext) {
             const auto firstCalls = first.calls, secondCalls = second.calls;
             const auto* result = _ZNK3sce4Json5Value10getBooleanEv(&value);
@@ -474,8 +486,9 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
         const auto beforeRetry = trace.requests.size();
         Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&target, RecoverLegacy, &second) == 0 && _ZN3sce4Json5ValueaSERKS1_(&copy, &target) == &copy,
                 "Independent registration and copy retry must succeed after the outer failure scope completes");
-        Require(trace.guestGenerations == guest && trace.heapGenerations == heap && trace.requests.size() == beforeRetry,
-                "Retry must reuse both existing or empty legacy callback records without replacing allocation generations");
+        Require((shape ? trace.guestGenerations.size() == guest.size() && trace.requests.size() > beforeRetry : trace.guestGenerations == guest && trace.requests.size() == beforeRetry) && trace.heapGenerations == heap,
+                "Retry must reuse legacy callback records and retain balanced payload ownership across collection replacement");
+        verifyShape();
         CheckMap(trace, {{&target, &second}, {&copy, &second}});
         verifyRecovery(target, &second); verifyRecovery(copy, &second);
         for (const auto& snapshot : targetAllocations) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0,
