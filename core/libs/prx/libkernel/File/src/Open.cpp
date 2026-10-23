@@ -29,6 +29,7 @@
 #include <io.h>
 #include <sys/stat.h>
 #include <windows.h>
+#include "prx/libkernel/File/include/WindowsExtendedPath.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
@@ -38,7 +39,8 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     else if (nativeFlags & _O_TRUNC) disposition = TRUNCATE_EXISTING;
     const DWORD attributes = (nativeFlags & _O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    const auto handle = CreateFileW(p.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
+    const auto openPath = File::WindowsExtendedPath(p);
+    const auto handle = CreateFileW(openPath.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
