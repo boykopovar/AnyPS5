@@ -88,6 +88,58 @@ int main() {
         _ZN3sce4Json5ValueD1Ev(&partial);
         Require(live.size() == baseline, "String parser failure must reclaim partial storage and metadata");
     }
+    struct ArrayFailure { bool once; int budget; int type; std::size_t count; std::uint64_t number; int lastType; const char* text; unsigned notifications; std::size_t requests; };
+    const ArrayFailure arrayFailures[]{
+        {0, 0, 0, 0, 0, 0, "", 2, 2},
+        {0, 1, 0, 0, 0, 0, "", 2, 3},
+        {0, 3, 6, 0, 0, 0, "", 2, 5},
+        {0, 4, 6, 0, 0, 0, "", 2, 6},
+        {0, 5, 6, 0, 0, 0, "", 1, 6},
+        {0, 6, 6, 0, 0, 0, "", 2, 8},
+        {0, 7, 6, 0, 0, 0, "", 2, 9},
+        {0, 8, 6, 0, 0, 0, "", 1, 9},
+        {0, 9, 6, 2, 1, 0, "", 1, 10},
+        {0, 10, 6, 2, 1, 0, "", 1, 11},
+        {0, 11, 6, 2, 1, 5, "", 3, 14},
+        {0, 12, 6, 2, 1, 5, "abc", 0, 12},
+        {1, 0, 0, 0, 0, 0, "", 1, 3},
+        {1, 1, 0, 0, 0, 0, "", 1, 4},
+        {1, 3, 6, 0, 0, 0, "", 1, 5},
+        {1, 4, 6, 0, 0, 0, "", 1, 6},
+        {1, 5, 6, 0, 0, 0, "", 1, 6},
+        {1, 6, 6, 1, 0, 0, "", 1, 8},
+        {1, 7, 6, 1, 0, 0, "", 1, 9},
+        {1, 8, 6, 0, 0, 0, "", 1, 9},
+        {1, 9, 6, 2, 1, 0, "", 1, 10},
+        {1, 10, 6, 2, 1, 0, "", 1, 11},
+        {1, 11, 6, 2, 1, 5, "bc", 1, 13},
+        {1, 12, 6, 2, 1, 5, "abc", 0, 12},
+    };
+    for (const auto& failure : arrayFailures) {
+        Value partial{}; _ZN3sce4Json5ValueC1El(&partial, 77);
+        const auto notifications = live.notifications;
+        const auto requests = live.requests;
+        live.budget = failure.budget; live.once = failure.once;
+        const auto status = static_cast<unsigned>(Parse(partial, "[1,\"abc\"]"));
+        live.budget = -1; live.once = false;
+        Require(status == (failure.notifications ? 0x80848102u : 0u) && partial.type == failure.type, "Array parser allocation failures must retain the reference status and type");
+        Require(live.notifications - notifications == failure.notifications && live.requests - requests == failure.requests, "Array parser failures must account for numeric-token storage and inherited append errors");
+        if (partial.type == 6) {
+            Require(_ZNK3sce4Json5Value5countEv(&partial) == failure.count, "Array parser failures must retain the reference partial count");
+            if (failure.count) {
+                const auto* array = reinterpret_cast<const Array*>(partial.payload);
+                const auto* first = _ZNK3sce4Json5Array5frontEv(array);
+                const auto* last = _ZNK3sce4Json5Array4backEv(array);
+                Require(first->type == 3 && first->payload == failure.number && first->parent == &partial && last->parent == &partial, "Array parser failures must retain numeric values and admitted parent links");
+                if (failure.count == 2) {
+                    Require(last->type == failure.lastType, "Array parser failures must preserve the final admitted value type");
+                    if (last->type == 5) Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(reinterpret_cast<const String*>(last->payload)), failure.text) == 0, "Array parser failures must retain the admitted string suffix");
+                }
+            }
+        }
+        _ZN3sce4Json5ValueD1Ev(&partial);
+        Require(live.size() == baseline, "Array parser failure must reclaim all admitted resources");
+    }
     for (const char* text : {"", "?", "tru"}) {
         Value value{}; _ZN3sce4Json5ValueC1El(&value, 77);
         Require(static_cast<unsigned>(Parse(value, text)) == 0x80848101 && value.type == 2 && value.payload == 77 && !value.auxiliary, "Unrecognized or incomplete scalar input must preserve the previous payload");

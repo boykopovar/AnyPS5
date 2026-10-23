@@ -158,6 +158,8 @@ struct Globals {
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
     std::uint64_t allocationFailures = 0;
+    std::uint32_t allocationDepth = 0;
+    bool allocationFailed = false;
 };
 
 Globals& State() {
@@ -173,6 +175,36 @@ struct KernelMutexLock {
     ~KernelMutexLock() { if (mutex) scePthreadMutexUnlock(mutex); }
     KernelMutexLock(const KernelMutexLock&) = delete;
     KernelMutexLock& operator=(const KernelMutexLock&) = delete;
+};
+
+class AllocationOperation {
+public:
+    AllocationOperation() {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        KernelMutexLock kernelLock(state.internalMutex);
+        ++state.allocationDepth;
+    }
+    ~AllocationOperation() { if (active) Finish(); }
+    AllocationOperation(const AllocationOperation&) = delete;
+    AllocationOperation& operator=(const AllocationOperation&) = delete;
+    static bool Failed() {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        KernelMutexLock kernelLock(state.internalMutex);
+        return state.allocationFailed;
+    }
+    bool Finish() {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        KernelMutexLock kernelLock(state.internalMutex);
+        const bool failed = state.allocationFailed;
+        if (--state.allocationDepth == 0) state.allocationFailed = false;
+        active = false;
+        return failed;
+    }
+private:
+    bool active = true;
 };
 
 struct CallbackScope {
@@ -201,6 +233,7 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
         std::lock_guard lock(state.mutex);
         KernelMutexLock kernelLock(state.internalMutex);
         ++state.allocationFailures;
+        if (state.allocationDepth) state.allocationFailed = true;
     }
     return memory;
 }
@@ -1779,6 +1812,31 @@ Value& ObjectEntry(Object& object, std::string_view input) {
     return *value;
 }
 
+void AppendArray(Array* self, const Value* value) {
+    if (!self->items || !self->items->head) return;
+    AllocationOperation operation;
+    if (!ModernValues()) {
+        try { CopyInto(self->items->emplace_back(), *value); }
+        catch (const GuestOutOfMemory&) {}
+        if (operation.Finish()) self->items->PopBack();
+        return;
+    }
+    Value copy{};
+    copy.parent = self->items->Owner();
+    try {
+        AssignNode(copy, *value);
+        auto& inserted = self->items->emplace_back();
+        inserted.parent = self->items->Owner();
+        TransferPayload(inserted, copy);
+    } catch (const GuestOutOfMemory&) {
+    } catch (...) {
+        Destroy(copy);
+        throw;
+    }
+    Destroy(copy);
+    if (operation.Finish()) self->items->PopBack();
+}
+
 using ParserReadCallback = int (APS5_VABI*)(char&, void*);
 
 class Parser {
@@ -1787,7 +1845,6 @@ public:
     Parser(ParserReadCallback read, void* context) : read(read), context(context) {}
 
     bool Parse(Node& out) {
-        failures = AllocationFailures();
         skip();
         return value(out);
     }
@@ -1802,7 +1859,6 @@ private:
     ParserReadCallback read = nullptr;
     void* context = nullptr;
     std::size_t depth = 0;
-    std::uint64_t failures = 0;
     int current = -2;
     int readError = 0;
 
@@ -1897,32 +1953,39 @@ private:
         if (!out.parent) EnsureAuxiliary(out);
     }
     bool number(Node& out) {
-        std::string token;
-        if (peek() >= 0 && peek() == '-') token.push_back(static_cast<char>(take()));
+        ScopedString token{std::string_view{}};
+        auto append = [&](char character) { AppendText(token.string, {&character, 1}); };
+        if (peek() >= 0 && peek() == '-') append(static_cast<char>(take()));
         if (peek() < 0 || peek() < '0' || peek() > '9') return false;
-        while (peek() >= '0' && peek() <= '9') token.push_back(static_cast<char>(take()));
+        while (peek() >= '0' && peek() <= '9') append(static_cast<char>(take()));
         bool integral = true;
         if (peek() >= 0 && peek() == '.') {
             integral = false;
-            token.push_back(static_cast<char>(take()));
+            append(static_cast<char>(take()));
             if (peek() < 0 || peek() < '0' || peek() > '9') return false;
-            while (peek() >= 0 && peek() >= '0' && peek() <= '9') token.push_back(static_cast<char>(take()));
+            while (peek() >= 0 && peek() >= '0' && peek() <= '9') append(static_cast<char>(take()));
         }
         if (peek() >= 0 && (peek() == 'e' || peek() == 'E')) {
             integral = false;
-            token.push_back(static_cast<char>(take()));
-            if (peek() >= 0 && (peek() == '+' || peek() == '-')) token.push_back(static_cast<char>(take()));
+            append(static_cast<char>(take()));
+            if (peek() >= 0 && (peek() == '+' || peek() == '-')) append(static_cast<char>(take()));
             if (peek() < 0 || peek() < '0' || peek() > '9') return false;
-            while (peek() >= 0 && peek() >= '0' && peek() <= '9') token.push_back(static_cast<char>(take()));
+            while (peek() >= 0 && peek() >= '0' && peek() <= '9') append(static_cast<char>(take()));
         }
-        const std::string& text = token;
+        const auto text = View(token.string);
+        if (text.empty()) {
+            SetType(out, TypeUInteger);
+            out.uinteger = 0;
+            Admit(out);
+            return true;
+        }
         if (integral) {
             errno = 0;
             if (text[0] == '-') {
-                const long long value = std::strtoll(text.c_str(), nullptr, 10);
+                const long long value = std::strtoll(Characters(token.string), nullptr, 10);
                 if (errno == 0) { SetType(out, TypeInteger); out.integer = value; Admit(out); return true; }
             } else {
-                const unsigned long long value = std::strtoull(text.c_str(), nullptr, 10);
+                const unsigned long long value = std::strtoull(Characters(token.string), nullptr, 10);
                 if (errno == 0) {
                     SetType(out, TypeUInteger);
                     out.uinteger = value;
@@ -1935,19 +1998,19 @@ private:
         const auto parsed = std::from_chars(text.data(), text.data() + text.size(), real);
         bool converted = parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
         if (parsed.ec == std::errc::result_out_of_range) {
-            std::istringstream stream(text);
+            std::istringstream stream(std::string{text});
             stream.imbue(std::locale::classic());
             stream >> real;
             converted = !stream.fail() && stream.eof();
         }
-        if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
+        if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + std::string{text} + " overflows a double; the console's behaviour is unverified");
         SetType(out, TypeReal);
         out.real = real;
         Admit(out);
         return true;
     }
     bool value(Node& out) {
-        if (peek() < 0) return false;
+        if (AllocationOperation::Failed() || peek() < 0) return false;
         switch (peek()) {
             case 'n': if (!literal("null")) return false; SetType(out, TypeNull); Admit(out); return true;
             case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; Admit(out); return true;
@@ -1956,7 +2019,7 @@ private:
                 SetType(out, TypeString);
                 Admit(out);
                 if (out.type != TypeString) throw GuestOutOfMemory{};
-                if (AllocationFailures() != failures) return false;
+                if (AllocationOperation::Failed()) return false;
                 ParsedText text{*out.string};
                 return string(text);
             }
@@ -1971,8 +2034,11 @@ private:
                 if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
                 for (;;) {
                     if (!out.array->items) throw GuestOutOfMemory{};
-                    auto& item = out.array->items->emplace_back();
-                    Construct(item);
+                    if (!out.array->items->head) NotImplemented_nid_no_patch(__func__);
+                    Value placeholder{};
+                    AppendArray(out.array, &placeholder);
+                    if (AllocationOperation::Failed()) return false;
+                    auto& item = out.array->items->back();
                     item.parent = &out;
                     skip();
                     if (!value(item)) return false;
@@ -2008,20 +2074,22 @@ private:
                 }
             }
             default:
+                if (peek() != '-' && (peek() < '0' || peek() > '9')) return false;
                 return number(out);
         }
     }
 };
 
 int ParseValue(Value* out, Parser& parser) {
-    const auto failures = AllocationFailures();
+    AllocationOperation operation;
     bool parsedOk = false;
     try {
         parsedOk = parser.Parse(NodeOf(*out));
     } catch (const GuestOutOfMemory&) {
+        operation.Finish();
         return JsonErrorOutOfMemory;
     }
-    if (AllocationFailures() != failures) return JsonErrorOutOfMemory;
+    if (operation.Finish()) return JsonErrorOutOfMemory;
     return parsedOk ? 0 : parser.Error();
 }
 
@@ -2180,30 +2248,7 @@ void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
 Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) { AssignArray(*self, *other); return self; }
-void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
-    if (!self->items || !self->items->head) return;
-    const auto failures = AllocationFailures();
-    if (!ModernValues()) {
-        try { CopyInto(self->items->emplace_back(), *value); }
-        catch (const GuestOutOfMemory&) {}
-        if (AllocationFailures() != failures) self->items->PopBack();
-        return;
-    }
-    Value copy{};
-    copy.parent = self->items->Owner();
-    try {
-        AssignNode(copy, *value);
-        auto& inserted = self->items->emplace_back();
-        inserted.parent = self->items->Owner();
-        TransferPayload(inserted, copy);
-    } catch (const GuestOutOfMemory&) {
-    } catch (...) {
-        Destroy(copy);
-        throw;
-    }
-    Destroy(copy);
-    if (AllocationFailures() != failures) self->items->PopBack();
-}
+void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) { AppendArray(self, value); }
 
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
     result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
