@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -70,6 +72,8 @@ struct ArrayTrace {
     bool once = false;
     unsigned notifications = 0;
     std::set<void*> headers;
+    std::map<void*, std::size_t> generations;
+    std::size_t generation = 0;
 };
 static void* APS5_VABI AllocateArray(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<ArrayTrace*>(context); trace.requests.push_back(bytes);
@@ -77,7 +81,9 @@ static void* APS5_VABI AllocateArray(void*, std::size_t bytes, void* context) {
     if (trace.budget > 0) --trace.budget;
     void* memory = std::malloc(bytes);
     Require(memory != nullptr, "Tracking allocator requires host memory");
-    std::memset(memory, 0xa5, bytes); trace.live.emplace(memory, bytes); return memory;
+    std::memset(memory, 0xa5, bytes); trace.live.emplace(memory, bytes);
+    Require(trace.generations.emplace(memory, ++trace.generation).second, "Each insertion allocation must own a fresh live generation");
+    return memory;
 }
 static void APS5_VABI FreeArray(void*, void* memory, void* context) {
     if (!memory) return;
@@ -86,7 +92,7 @@ static void APS5_VABI FreeArray(void*, void* memory, void* context) {
         const auto* words = static_cast<const std::uint64_t*>(memory);
         Require(words[0] == 0xffffffff && words[1] == UINT64_MAX, "Array teardown must expose the native header poison before allocator release");
     }
-    Require(trace.live.erase(memory) == 1, "Array must release through its owning allocator"); std::free(memory);
+    Require(trace.live.erase(memory) == 1 && trace.generations.erase(memory) == 1, "Array must release through its owning allocator exactly once"); std::free(memory);
 }
 static void APS5_VABI NotifyArray(void*, int error, std::size_t bytes, void* context) {
     auto& trace = *static_cast<ArrayTrace*>(context);
@@ -126,6 +132,79 @@ static void CheckSequence(const Array& array, bool front, bool once, int budget)
         node = static_cast<void* const*>(node[1]); ++seen;
     }
     Require(node == head && _ZNK3sce4Json5Array4sizeEv(&array) == seen, "Insertion links and element count must agree");
+}
+struct TransferSnapshot {
+    void* pointer;
+    std::size_t generation;
+    std::vector<unsigned char> bytes;
+};
+static void CheckNestedTransferFailures(ArrayTrace& trace) {
+    const auto baseline = trace.generations;
+    for (bool front : {false, true}) for (bool once : {false, true}) for (int failure = 0; failure <= 5; ++failure) {
+        Array inner{}; Fill(inner);
+        Value source{}; _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(&source, &inner);
+        Array destination{}; Fill(destination);
+        Iterator position{}, result{}; _ZNK3sce4Json5Array5beginEv(&position, &destination);
+        _ZN3sce4Json5Array8iterator7advanceEm(&position, 1);
+        const auto* survivor = _ZNK3sce4Json5Array8iteratordeEv(&position);
+        const auto sourceValue = source;
+        const auto* sourceArray = reinterpret_cast<const Array*>(source.payload);
+        auto* sourceHead = *static_cast<void* const* const*>(sourceArray->storage);
+        std::vector<TransferSnapshot> sourceAllocations;
+        const auto capture = [&](void* pointer) {
+            const auto size = trace.live.at(pointer);
+            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            sourceAllocations.push_back({pointer, trace.generations.at(pointer), {bytes, bytes + size}});
+        };
+        capture(reinterpret_cast<void*>(source.payload)); capture(sourceArray->storage); capture(const_cast<void*>(static_cast<const void*>(sourceHead)));
+        for (auto* node = static_cast<void* const*>(sourceHead[1]); node != sourceHead; node = static_cast<void* const*>(node[1])) capture(const_cast<void*>(static_cast<const void*>(node)));
+        const auto requests = trace.requests.size(); const auto notices = trace.notifications;
+        trace.budget = (front ? 9 : 10) + failure; trace.once = once;
+        if (front) _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(&destination, &source);
+        else Require(_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(&result, &destination, &position, &source) == &result, "Nested insertion must return its actual caller-owned iterator");
+        trace.budget = -1; trace.once = false;
+        std::vector<std::size_t> expected;
+        if (!front) expected.push_back(8);
+        for (const auto size : {8, 32, 48, 32, 48, 48, 48, 48, 48}) expected.push_back(size);
+        expected.insert(expected.end(), std::max(2, std::min(failure + 1, 5)), 8);
+        Require(std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected, "Nested transfer must retain the measured copy, node and interrupted iterator allocation sequence");
+        const unsigned failures = failure == 5 ? 0 : failure == 0 && !once ? 2 : 1;
+        Require(trace.notifications == notices + failures, "Nested transfer must notify every rejected iterator allocation without retrying the interrupted traversal");
+        const bool rolledBack = front && failure < 5;
+        Require(_ZNK3sce4Json5Array4sizeEv(&destination) == (rolledBack ? 3u : 4u), "Prepending must remove its new entry after transfer failure while insertion retains it");
+        Require(_ZNK3sce4Json5Array8iteratordeEv(&position) == survivor && survivor->type == 2 && survivor->payload == 20, "Interrupted nested transfer must preserve surviving iterator and element identity");
+        auto* head = *static_cast<void* const* const*>(destination.storage);
+        auto* node = static_cast<void* const*>(head[1]);
+        const Value* inserted = nullptr;
+        for (int original = 0; original < 3; ++original) {
+            if (!rolledBack && original == (front ? 0 : 1)) {
+                inserted = reinterpret_cast<const Value*>(node + 2); node = static_cast<void* const*>(node[1]);
+            }
+            Require(node != head && reinterpret_cast<const Value*>(node + 2)->type == 2 && reinterpret_cast<const Value*>(node + 2)->payload == static_cast<unsigned>((original + 1) * 10), "Transfer failure must preserve the full order of all existing destination entries");
+            node = static_cast<void* const*>(node[1]);
+        }
+        Require(node == head, "Interrupted nested transfer must preserve list closure");
+        if (!rolledBack) {
+            Require(inserted && !inserted->parent && !inserted->auxiliary && inserted->type == 6 && inserted->payload && inserted->payload != source.payload, "Transferred nested arrays must own an independent root payload");
+            if (!front) Require(_ZNK3sce4Json5Array8iteratordeEv(&result) == inserted, "Returning iterator must retain the new node after an interrupted child transfer");
+            const auto* nested = reinterpret_cast<const Array*>(inserted->payload);
+            auto* nestedHead = *static_cast<void* const* const*>(nested->storage);
+            auto* child = static_cast<void* const*>(nestedHead[1]);
+            const auto rebound = std::max(0, std::min(failure - 1, 3));
+            for (int index = 0; index < 3; ++index) {
+                Require(child != nestedHead, "Interrupted child rebinding must preserve every copied node");
+                const auto* value = reinterpret_cast<const Value*>(child + 2);
+                Require(value->type == 2 && value->payload == static_cast<unsigned>((index + 1) * 10) && (value->parent == inserted) == (index < rebound), "Transfer must rebind only the child prefix admitted before iterator failure");
+                child = static_cast<void* const*>(child[1]);
+            }
+            Require(child == nestedHead && _ZNK3sce4Json5Array4sizeEv(nested) == 3, "Nested payload count and circular links must survive interrupted transfer");
+        }
+        Require(std::memcmp(&source, &sourceValue, sizeof(Value)) == 0, "Interrupted transfer must preserve the source Value bytes");
+        for (const auto& snapshot : sourceAllocations) Require(trace.generations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0, "Interrupted transfer must preserve all source payload allocation generations and bytes");
+        _ZN3sce4Json5Array8iteratorD1Ev(&result); _ZN3sce4Json5Array8iteratorD1Ev(&position);
+        _ZN3sce4Json5ArrayD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ArrayD1Ev(&inner);
+        Require(trace.generations == baseline, "Both retained and rolled-back nested transfers must reclaim every newly admitted allocation generation");
+    }
 }
 int main() {
     ArrayTrace trace; ArrayAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
@@ -186,6 +265,7 @@ int main() {
         _ZN3sce4Json5ArrayD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ArrayD1Ev(&inner);
         Require(trace.live.size() == baseline, "Nested insertion and iterator traversal must release every admitted allocation");
     }
-    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Terminate insertion allocation contracts");
+    CheckNestedTransferFailures(trace);
+    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty() && trace.generations.empty(), "Terminate insertion allocation contracts");
     return 0;
 }
