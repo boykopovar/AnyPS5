@@ -10,6 +10,7 @@
 #include <iterator>
 #include <locale>
 #include <mutex>
+#include <new>
 #include <type_traits>
 #include <sstream>
 #include <stdexcept>
@@ -45,6 +46,7 @@ constexpr int JsonErrorInvalidArgument = static_cast<int>(0x80848120);
 struct Value;
 struct Handlers;
 struct Auxiliary;
+struct LegacyHandlerMap;
 struct Text { char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
 static_assert(sizeof(Text) == 24);
 struct String { Text* text; };
@@ -105,7 +107,6 @@ static_assert(sizeof(Value) == 32 && sizeof(String) == 8 && sizeof(Array) == 8 &
 static_assert(sizeof(ArrayIterator) == 8 && sizeof(ObjectIterator) == 8);
 static_assert(offsetof(Pair, value) == 0x10);
 
-
 using NullAccessCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 template<typename TCallback>
 struct HandlerRecord { TCallback callback = nullptr; void* context = nullptr; };
@@ -151,6 +152,7 @@ struct Globals {
     Handlers handlers{};
     AllocationContext* allocation = nullptr;
     Value* fallback = nullptr;
+    LegacyHandlerMap* legacyHandlers = nullptr;
     PthreadMutex* internalMutex = nullptr;
     PthreadMutex* recoveryMutex = nullptr;
     std::recursive_mutex callbackMutex;
@@ -514,6 +516,136 @@ struct InlineText {
     void Assign(std::string_view bytes) { String string{&text}; AssignText(string, bytes, true); }
 };
 
+template<typename Node>
+void RefreshTreeEndpoints(Node* head) {
+    auto* first = head->parent;
+    auto* last = first;
+    if (!first->nil) {
+        while (!first->left->nil) first = first->left;
+        while (!last->right->nil) last = last->right;
+    }
+    head->left = first;
+    head->right = last;
+}
+
+template<typename Node>
+void RotateTreeLeft(Node* head, Node* node) {
+    auto* pivot = node->right;
+    node->right = pivot->left;
+    if (!pivot->left->nil) pivot->left->parent = node;
+    pivot->parent = node->parent;
+    if (node->parent->nil) head->parent = pivot;
+    else if (node == node->parent->left) node->parent->left = pivot;
+    else node->parent->right = pivot;
+    pivot->left = node;
+    node->parent = pivot;
+}
+
+template<typename Node>
+void RotateTreeRight(Node* head, Node* node) {
+    auto* pivot = node->left;
+    node->left = pivot->right;
+    if (!pivot->right->nil) pivot->right->parent = node;
+    pivot->parent = node->parent;
+    if (node->parent->nil) head->parent = pivot;
+    else if (node == node->parent->right) node->parent->right = pivot;
+    else node->parent->left = pivot;
+    pivot->right = node;
+    node->parent = pivot;
+}
+
+template<typename Node>
+void BalanceTreeInsertion(Node* head, Node* node) {
+    while (node->parent->color == 1) {
+        auto* parent = node->parent;
+        auto* grandparent = parent->parent;
+        if (parent == grandparent->left) {
+            auto* uncle = grandparent->right;
+            if (uncle->color == 1) { parent->color = 0; uncle->color = 0; grandparent->color = 1; node = grandparent; }
+            else {
+                if (node == parent->right) { node = parent; RotateTreeLeft(head, node); parent = node->parent; grandparent = parent->parent; }
+                parent->color = 0; grandparent->color = 1; RotateTreeRight(head, grandparent);
+            }
+        } else {
+            auto* uncle = grandparent->left;
+            if (uncle->color == 1) { parent->color = 0; uncle->color = 0; grandparent->color = 1; node = grandparent; }
+            else {
+                if (node == parent->left) { node = parent; RotateTreeRight(head, node); parent = node->parent; grandparent = parent->parent; }
+                parent->color = 0; grandparent->color = 1; RotateTreeLeft(head, grandparent);
+            }
+        }
+    }
+    head->parent->color = 0;
+}
+
+template<typename Node>
+void ReplaceTreeNode(Node* head, Node* node, Node* replacement) {
+    if (node->parent->nil) head->parent = replacement;
+    else if (node == node->parent->left) node->parent->left = replacement;
+    else node->parent->right = replacement;
+    if (!replacement->nil) replacement->parent = node->parent;
+}
+
+template<typename Node>
+void BalanceTreeErasure(Node* head, Node* node, Node* parent) {
+    while (node != head->parent && node->color == 0) {
+        if (node == parent->left) {
+            auto* sibling = parent->right;
+            if (sibling->color == 1) { sibling->color = 0; parent->color = 1; RotateTreeLeft(head, parent); sibling = parent->right; }
+            if (sibling->left->color == 0 && sibling->right->color == 0) {
+                if (!sibling->nil) sibling->color = 1;
+                node = parent; parent = node->parent;
+            } else {
+                if (sibling->right->color == 0) { sibling->left->color = 0; sibling->color = 1; RotateTreeRight(head, sibling); sibling = parent->right; }
+                sibling->color = parent->color; parent->color = 0; sibling->right->color = 0;
+                RotateTreeLeft(head, parent); node = head->parent;
+            }
+        } else {
+            auto* sibling = parent->left;
+            if (sibling->color == 1) { sibling->color = 0; parent->color = 1; RotateTreeRight(head, parent); sibling = parent->left; }
+            if (sibling->right->color == 0 && sibling->left->color == 0) {
+                if (!sibling->nil) sibling->color = 1;
+                node = parent; parent = node->parent;
+            } else {
+                if (sibling->left->color == 0) { sibling->right->color = 0; sibling->color = 1; RotateTreeLeft(head, sibling); sibling = parent->left; }
+                sibling->color = parent->color; parent->color = 0; sibling->left->color = 0;
+                RotateTreeRight(head, parent); node = head->parent;
+            }
+        }
+    }
+    node->color = 0;
+}
+
+template<typename Node>
+void UnlinkTreeNode(Node* head, Node* removed) {
+    if (!removed || removed->nil) return;
+    auto* successor = removed;
+    auto color = successor->color;
+    Node* child;
+    Node* parent;
+    if (removed->left->nil) { child = removed->right; parent = removed->parent; ReplaceTreeNode(head, removed, child); }
+    else if (removed->right->nil) { child = removed->left; parent = removed->parent; ReplaceTreeNode(head, removed, child); }
+    else {
+        successor = removed->right;
+        while (!successor->left->nil) successor = successor->left;
+        color = successor->color;
+        child = successor->right;
+        if (successor->parent == removed) parent = successor;
+        else {
+            parent = successor->parent;
+            ReplaceTreeNode(head, successor, child);
+            successor->right = removed->right;
+            successor->right->parent = successor;
+        }
+        ReplaceTreeNode(head, removed, successor);
+        successor->left = removed->left;
+        successor->left->parent = successor;
+        successor->color = removed->color;
+    }
+    if (color == 0) BalanceTreeErasure(head, child, parent);
+    RefreshTreeEndpoints(head);
+}
+
 struct ObjectLink {
     ObjectLink* parent;
     ObjectLink* left;
@@ -611,60 +743,9 @@ struct ObjectStorage {
         }
         return head;
     }
-    void RefreshEndpoints() {
-        auto* first = head->parent;
-        auto* last = first;
-        if (!first->nil) {
-            while (!first->left->nil) first = first->left;
-            while (!last->right->nil) last = last->right;
-        }
-        head->left = first;
-        head->right = last;
-    }
-    void RotateLeft(ObjectLink* node) {
-        auto* pivot = node->right;
-        node->right = pivot->left;
-        if (!pivot->left->nil) pivot->left->parent = node;
-        pivot->parent = node->parent;
-        if (node->parent->nil) head->parent = pivot;
-        else if (node == node->parent->left) node->parent->left = pivot;
-        else node->parent->right = pivot;
-        pivot->left = node;
-        node->parent = pivot;
-    }
-    void RotateRight(ObjectLink* node) {
-        auto* pivot = node->left;
-        node->left = pivot->right;
-        if (!pivot->right->nil) pivot->right->parent = node;
-        pivot->parent = node->parent;
-        if (node->parent->nil) head->parent = pivot;
-        else if (node == node->parent->right) node->parent->right = pivot;
-        else node->parent->left = pivot;
-        pivot->right = node;
-        node->parent = pivot;
-    }
-    void BalanceInsertion(ObjectLink* node) {
-        while (node->parent->color == 1) {
-            auto* parent = node->parent;
-            auto* grandparent = parent->parent;
-            if (parent == grandparent->left) {
-                auto* uncle = grandparent->right;
-                if (uncle->color == 1) { parent->color = 0; uncle->color = 0; grandparent->color = 1; node = grandparent; }
-                else {
-                    if (node == parent->right) { node = parent; RotateLeft(node); parent = node->parent; grandparent = parent->parent; }
-                    parent->color = 0; grandparent->color = 1; RotateRight(grandparent);
-                }
-            } else {
-                auto* uncle = grandparent->left;
-                if (uncle->color == 1) { parent->color = 0; uncle->color = 0; grandparent->color = 1; node = grandparent; }
-                else {
-                    if (node == parent->left) { node = parent; RotateRight(node); parent = node->parent; grandparent = parent->parent; }
-                    parent->color = 0; grandparent->color = 1; RotateLeft(grandparent);
-                }
-            }
-        }
-        head->parent->color = 0;
-    }
+    void RefreshEndpoints() { RefreshTreeEndpoints(head); }
+
+    void BalanceInsertion(ObjectLink* node) { BalanceTreeInsertion(head, node); }
     ObjectLink* Insert(const Text& key, const Pair& pair, bool& inserted) {
         inserted = false;
         if (!head) return nullptr;
@@ -699,67 +780,10 @@ struct ObjectStorage {
         inserted = true;
         return node;
     }
-    void Replace(ObjectLink* node, ObjectLink* replacement) {
-        if (node->parent->nil) head->parent = replacement;
-        else if (node == node->parent->left) node->parent->left = replacement;
-        else node->parent->right = replacement;
-        if (!replacement->nil) replacement->parent = node->parent;
-    }
-    void BalanceErasure(ObjectLink* node, ObjectLink* parent) {
-        while (node != head->parent && node->color == 0) {
-            if (node == parent->left) {
-                auto* sibling = parent->right;
-                if (sibling->color == 1) { sibling->color = 0; parent->color = 1; RotateLeft(parent); sibling = parent->right; }
-                if (sibling->left->color == 0 && sibling->right->color == 0) {
-                    if (!sibling->nil) sibling->color = 1;
-                    node = parent; parent = node->parent;
-                } else {
-                    if (sibling->right->color == 0) { sibling->left->color = 0; sibling->color = 1; RotateRight(sibling); sibling = parent->right; }
-                    sibling->color = parent->color; parent->color = 0; sibling->right->color = 0;
-                    RotateLeft(parent); node = head->parent;
-                }
-            } else {
-                auto* sibling = parent->left;
-                if (sibling->color == 1) { sibling->color = 0; parent->color = 1; RotateRight(parent); sibling = parent->left; }
-                if (sibling->right->color == 0 && sibling->left->color == 0) {
-                    if (!sibling->nil) sibling->color = 1;
-                    node = parent; parent = node->parent;
-                } else {
-                    if (sibling->left->color == 0) { sibling->right->color = 0; sibling->color = 1; RotateLeft(sibling); sibling = parent->left; }
-                    sibling->color = parent->color; parent->color = 0; sibling->left->color = 0;
-                    RotateRight(parent); node = head->parent;
-                }
-            }
-        }
-        node->color = 0;
-    }
+
     void Erase(ObjectLink* removed) {
         if (!removed || removed->nil) return;
-        auto* successor = removed;
-        auto color = successor->color;
-        ObjectLink* child;
-        ObjectLink* parent;
-        if (removed->left->nil) { child = removed->right; parent = removed->parent; Replace(removed, child); }
-        else if (removed->right->nil) { child = removed->left; parent = removed->parent; Replace(removed, child); }
-        else {
-            successor = removed->right;
-            while (!successor->left->nil) successor = successor->left;
-            color = successor->color;
-            child = successor->right;
-            if (successor->parent == removed) parent = successor;
-            else {
-                parent = successor->parent;
-                Replace(successor, child);
-                successor->right = removed->right;
-                successor->right->parent = successor;
-            }
-            Replace(removed, successor);
-            successor->left = removed->left;
-            successor->left->parent = successor;
-            successor->color = removed->color;
-        }
-        if (color == 0) BalanceErasure(child, parent);
-        RefreshEndpoints();
+        UnlinkTreeNode(head, removed);
         DestroyObjectLink(removed);
         --count;
     }
@@ -771,6 +795,134 @@ struct ObjectStorage {
     }
 };
 static_assert(sizeof(ObjectStorage) == 24 && sizeof(ObjectIteratorState) == 8);
+
+extern "C" void* APS5_VABI _Znwm_nid_postfix(std::size_t bytes);
+extern "C" void APS5_VABI _ZdlPv_nid_postfix(void* memory);
+
+struct LegacyHandlerNode {
+    LegacyHandlerNode* parent;
+    LegacyHandlerNode* left;
+    LegacyHandlerNode* right;
+    const Value* key;
+    HandlerRecord<TypeMismatchHandler> record;
+    std::uint8_t color;
+    std::uint8_t nil;
+    std::uint8_t reserved[6];
+};
+static_assert(sizeof(LegacyHandlerNode) == 56 && offsetof(LegacyHandlerNode, record) == 32 && offsetof(LegacyHandlerNode, nil) == 49);
+
+struct LegacyHandlerMap {
+    LegacyHandlerNode* head;
+    std::size_t count;
+    std::uint64_t reserved;
+    LegacyHandlerNode* Find(const Value* key) const {
+        auto* node = head->parent;
+        while (!node->nil) {
+            const auto requested = reinterpret_cast<std::uintptr_t>(key);
+            const auto stored = reinterpret_cast<std::uintptr_t>(node->key);
+            if (requested == stored) return node;
+            node = requested < stored ? node->left : node->right;
+        }
+        return head;
+    }
+    void RefreshEndpoints() { RefreshTreeEndpoints(head); }
+
+    void BalanceInsertion(LegacyHandlerNode* node) { BalanceTreeInsertion(head, node); }
+    LegacyHandlerNode* Insert(const Value* key) {
+        auto* parent = head;
+        auto* position = head->parent;
+        bool left = false;
+        while (!position->nil) {
+            parent = position;
+            const auto requested = reinterpret_cast<std::uintptr_t>(key);
+            const auto stored = reinterpret_cast<std::uintptr_t>(position->key);
+            if (requested == stored) return position;
+            left = requested < stored;
+            position = left ? position->left : position->right;
+        }
+        auto* node = static_cast<LegacyHandlerNode*>(_Znwm_nid_postfix(sizeof(LegacyHandlerNode)));
+        node->parent = parent; node->left = head; node->right = head;
+        node->key = key; node->record = {};
+        node->color = 1; node->nil = 0;
+        if (parent->nil) head->parent = node;
+        else if (left) parent->left = node;
+        else parent->right = node;
+        ++count;
+        BalanceInsertion(node);
+        RefreshEndpoints();
+        return node;
+    }
+
+    void Erase(LegacyHandlerNode* removed) {
+        if (!removed || removed->nil) return;
+        UnlinkTreeNode(head, removed);
+        _ZdlPv_nid_postfix(removed);
+        --count;
+    }
+    void ReleaseTree(LegacyHandlerNode* node) {
+        if (node->nil) return;
+        ReleaseTree(node->left); ReleaseTree(node->right);
+        _ZdlPv_nid_postfix(node);
+    }
+};
+static_assert(sizeof(LegacyHandlerMap) == 24);
+
+HandlerRecord<TypeMismatchHandler> LegacyHandlerOf(const Value& value) {
+    auto& state = State();
+    KernelMutexLock lock(state.recoveryMutex);
+    if (!state.legacyHandlers) return {};
+    const auto* node = state.legacyHandlers->Find(&value);
+    return node->nil ? HandlerRecord<TypeMismatchHandler>{} : node->record;
+}
+
+int RegisterLegacyHandler(Value& value, TypeMismatchHandler callback, void* context) {
+    auto& state = State();
+    KernelMutexLock lock(state.recoveryMutex);
+    if (!state.legacyHandlers) {
+        auto* map = static_cast<LegacyHandlerMap*>(Allocate(sizeof(LegacyHandlerMap)));
+        if (!map) return JsonErrorOutOfMemory;
+        map->count = 0;
+        try { map->head = static_cast<LegacyHandlerNode*>(_Znwm_nid_postfix(sizeof(LegacyHandlerNode))); }
+        catch (const std::bad_alloc&) { Release(map); NotImplemented_nid_no_patch(__func__); }
+        map->head->parent = map->head; map->head->left = map->head; map->head->right = map->head;
+        map->head->color = 0; map->head->nil = 1;
+        state.legacyHandlers = map;
+    }
+    const auto failures = AllocationFailures();
+    auto* node = state.legacyHandlers->Insert(&value);
+    if (AllocationFailures() != failures) return JsonErrorOutOfMemory;
+    node->record = {callback, context};
+    return 0;
+}
+
+void EraseLegacyHandler(const Value& value) {
+    auto& state = State();
+    KernelMutexLock lock(state.recoveryMutex);
+    if (state.legacyHandlers) state.legacyHandlers->Erase(state.legacyHandlers->Find(&value));
+}
+
+void CopyLegacyHandler(Value& destination, const Value& source) {
+    auto& state = State();
+    KernelMutexLock lock(state.recoveryMutex);
+    if (!state.legacyHandlers) return;
+    const auto* sourceNode = state.legacyHandlers->Find(&source);
+    if (!sourceNode->nil) {
+        const auto record = sourceNode->record;
+        RegisterLegacyHandler(destination, record.callback, record.context);
+    }
+}
+
+void ReleaseLegacyHandlers() {
+    auto& state = State();
+    auto* map = state.legacyHandlers;
+    if (!map) return;
+    map->ReleaseTree(map->head->parent);
+    _ZdlPv_nid_postfix(map->head);
+    map->head = reinterpret_cast<LegacyHandlerNode*>(std::uintptr_t{0xffffffff});
+    map->count = std::numeric_limits<std::size_t>::max();
+    Release(map);
+    state.legacyHandlers = nullptr;
+}
 
 void Construct(Object& object) {
     object.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
@@ -864,7 +1016,13 @@ Handlers HandlersOf(const Node& n) {
         std::lock_guard lock(state.mutex);
         if (state.initialized) handlers = state.handlers;
     }
-    if (!auxiliary || !ModernValues()) return handlers;
+    if (!ModernValues()) {
+        const auto record = LegacyHandlerOf(RootOf(n));
+        handlers.typeMismatch = record.callback;
+        handlers.typeMismatchContext = record.context;
+        return handlers;
+    }
+    if (!auxiliary) return handlers;
     if (auxiliary->typeMismatch && auxiliary->typeMismatch->callback) {
         handlers.typeMismatch = auxiliary->typeMismatch->callback;
         handlers.typeMismatchContext = auxiliary->typeMismatch->context;
@@ -926,6 +1084,7 @@ void Destroy(Value& v) {
         Release(v.auxiliary);
         v.auxiliary = nullptr;
     }
+    if (!ModernValues()) EraseLegacyHandler(v);
 }
 
 int EnsureAuxiliary(Node& n) {
@@ -959,7 +1118,6 @@ void TransferPayload(Node& destination, Node& source) {
     source.type = TypeNull;
     BindChildren(destination);
 }
-
 
 bool HasStorage(const String& value) { return value.text != nullptr; }
 bool HasStorage(const Array& value) { return value.items != nullptr; }
@@ -1019,14 +1177,13 @@ void CopyObject(Object& destination, const Object& source) {
     destination = pending;
 }
 
-
 void AssignReal(Node& n, double value);
 
 void SetType(Node& n, ValueType type);
 void AssignArray(Array& destination, const Array& source);
 void AssignObject(Object& destination, const Object& source);
 
-void AssignNode(Node& destination, const Node& source) {
+void AssignPayload(Node& destination, const Node& source) {
     if (source.type == TypeNull) { SetType(destination, TypeNull); return; }
     if (source.type == TypeBoolean) {
         const auto value = source.boolean;
@@ -1066,6 +1223,11 @@ void AssignNode(Node& destination, const Node& source) {
         return;
     }
     NotImplemented_nid_no_patch(__func__);
+}
+
+void AssignNode(Node& destination, const Node& source) {
+    AssignPayload(destination, source);
+    if (!ModernValues()) CopyLegacyHandler(destination, source);
 }
 
 void RecoverSpecial(const Node& source, const Handlers& handlers, int function, double number, Value& result, bool* error) {
@@ -1152,6 +1314,7 @@ PthreadMutex* CreateKernelMutex() {
 
 void ReleaseInitialization() {
     auto& state = State();
+    ReleaseLegacyHandlers();
     if (state.fallback) { Destroy(*state.fallback); Release(state.fallback); state.fallback = nullptr; }
     if (state.recoveryMutex && state.recoveryMutex != state.internalMutex) {
         scePthreadMutexDestroy(state.recoveryMutex);
@@ -1222,6 +1385,11 @@ const Node& Typed(const Value* self, ValueType requested) {
     if (self->type == requested ||
             ((requested == TypeInteger || requested == TypeUInteger) &&
              (self->type == TypeInteger || self->type == TypeUInteger))) return *self;
+    if (!ModernValues() && self->type == TypeNull) {
+        const auto* auxiliary = RootOf(*self).auxiliary;
+        if (auxiliary && auxiliary->nullAccess)
+            return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested);
+    }
     CallbackScope scope;
     if (!scope.entered) return Defaults(requested);
     NullAccessCallback callback = nullptr;
@@ -1235,6 +1403,11 @@ const Node& Typed(const Value* self, ValueType requested) {
         context = state.context;
     }
     if (!initialized) return Defaults(requested);
+    if (!ModernValues()) {
+        const auto record = LegacyHandlerOf(RootOf(*self));
+        if (record.callback) return Typed(&record.callback(requested, self, self->parent, record.context), requested);
+        return Defaults(requested);
+    }
     if (self->type == TypeNull) {
         const auto* auxiliary = RootOf(*self).auxiliary;
         if (auxiliary && auxiliary->nullAccess)
@@ -1273,13 +1446,18 @@ const Value& MissingElement(const Value* self, int error, const String* key, con
 template <typename TCallback>
 int SetHandler(Node& n, HandlerRecord<TCallback>* Auxiliary::* member, TCallback callback, void* context, bool modernOnly = false) {
     if (n.parent) return static_cast<int>(0x80848104);
+    const bool legacyMismatch = !ModernValues() && std::is_same_v<TCallback, TypeMismatchHandler>;
+    if (legacyMismatch && !n.auxiliary) return static_cast<int>(0x80848104);
     {
         auto& state = State();
         std::lock_guard lock(state.mutex);
         if (!state.allocation) return JsonErrorNotInitialized;
         if (modernOnly && !state.floatFormatEnabled) return static_cast<int>(0x80848113);
     }
-    if (!ModernValues()) NotImplemented_nid_no_patch(__func__);
+    if (!ModernValues()) {
+        if constexpr (std::is_same_v<TCallback, TypeMismatchHandler>) return RegisterLegacyHandler(n, callback, context);
+        else NotImplemented_nid_no_patch(__func__);
+    }
     const auto status = EnsureAuxiliary(n);
     if (status) return status;
     auto& record = n.auxiliary->*member;
@@ -1857,7 +2035,6 @@ void* const JsonMemAllocatorVtable[] = {
     reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
 };
 
-
 }
 
 extern "C" {
@@ -2005,6 +2182,12 @@ Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) { A
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     if (!self->items || !self->items->head) return;
     const auto failures = AllocationFailures();
+    if (!ModernValues()) {
+        try { CopyInto(self->items->emplace_back(), *value); }
+        catch (const GuestOutOfMemory&) {}
+        if (AllocationFailures() != failures) self->items->PopBack();
+        return;
+    }
     Value copy{};
     copy.parent = self->items->Owner();
     try {
@@ -2202,10 +2385,10 @@ void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
         AssignNode(NodeOf(*self), NodeOf(*other));
         AssignNode(NodeOf(*other), temporary);
     } catch (...) {
-        Clear(temporary);
+        Destroy(temporary);
         throw;
     }
-    Clear(temporary);
+    Destroy(temporary);
 }
 
 int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) { SetType(NodeOf(*self), type); return 0; }
@@ -2363,7 +2546,6 @@ void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Str
     }
 }
 
-
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
     Parser parser(read, context);
@@ -2376,7 +2558,6 @@ int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char*
     Parser parser(text, size);
     return ParseValue(out, parser);
 }
-
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKc(Value* out, const char* path) {
     AllocationContext allocation;
@@ -2484,7 +2665,7 @@ int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS
     {
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        if (!state.allocation) return JsonErrorNotInitialized;
+        if (ModernValues() && !state.allocation) return JsonErrorNotInitialized;
     }
     if (!ModernValues() && !self->auxiliary) return static_cast<int>(0x80848104);
     const auto status = EnsureAuxiliary(*self);
