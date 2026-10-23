@@ -289,7 +289,11 @@ int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManag
 int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle) {
     std::lock_guard lock(arenaMutex);
     const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
-    return found == arenas.end() || found->second->inUse == 0;
+    if (found == arenas.end()) {
+        Error(22);
+        throw std::runtime_error("sceLibcMspaceIsHeapEmpty: unknown handle behavior");
+    }
+    return found->second->inUse == 0;
 }
 
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
