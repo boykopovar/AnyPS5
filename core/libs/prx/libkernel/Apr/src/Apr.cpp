@@ -443,7 +443,7 @@ void _requirePrt(AmmState& state, std::uint64_t address, std::uint64_t size) {
 void _zeroPrt(std::uint64_t address, std::uint64_t size) {
     constexpr int GpuRead = 0x10;
     void* target = reinterpret_cast<void*>(address);
-    if (DoMapAnon(&target, size, GpuRead, GuestMapFixed) != 0) throw std::runtime_error("AMM: cannot map the unbacked PRT pages");
+    if (DoMapZero(&target, size, GpuRead, GuestMapFixed) != 0) throw std::runtime_error("AMM: cannot map the unbacked PRT pages");
 }
 
 void _ammUnmap(const Apr::AmmUnmapCommand& command) {

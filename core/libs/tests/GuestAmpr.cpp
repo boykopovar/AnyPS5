@@ -15,6 +15,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #ifdef _WIN32
 #include <windows.h>
@@ -112,6 +113,7 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeMapBegin(std::uint64_t, std::ui
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeMapDirectBegin(std::uint64_t, std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeMapEnd();
 int APS5_VABI sceKernelQueryMemoryProtection(void*, void**, void**, int*);
+int APS5_VABI sceKernelMprotect(const void*, size_t, int);
 int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
 int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
 int APS5_VABI sceKernelMunmap(void*, std::size_t);
@@ -1323,6 +1325,30 @@ void TestAmmRemapAndProtect() {
     Require(sceAmprAmmMeasureAmmCommandSizeModifyMtypeProtect(returned, page, 0, 0x08, 0x03) == ammRejected);
 }
 
+void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
+#ifdef _WIN32
+    for (std::uint64_t offset = 0; offset < size; offset += page) {
+        auto* pointer = reinterpret_cast<void*>(address + offset);
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(pointer, &info, sizeof(info)) == sizeof(info));
+        Require(info.Type == MEM_MAPPED && info.AllocationProtect == PAGE_READONLY && info.Protect == PAGE_READONLY);
+        DWORD previous = 0;
+        Require(!VirtualProtect(pointer, page, PAGE_READWRITE, &previous));
+        bool refused = false;
+        try {
+            sceKernelMprotect(pointer, page, 0x03);
+        } catch (const std::system_error&) {
+            refused = true;
+        }
+        Require(refused);
+        Require(At(address + offset) == 0);
+    }
+#else
+    (void)address;
+    (void)size;
+#endif
+}
+
 void TestAmmPrt() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1344,6 +1370,7 @@ void TestAmmPrt() {
     SubmitAmm(reserve);
     Require(Protection(prt) == 0x10 && Protection(prt + 3 * page) == 0x10);
     Require(At(prt) == 0 && At(prt + 4 * page - 8) == 0);
+    RequireReadOnlyZeroPages(prt, 4 * page);
     At(source) = 0x88;
 
     Recorder back;
@@ -1366,6 +1393,7 @@ void TestAmmPrt() {
     RequireAppended(release, offset, commands, Apr::Opcode::AmmUnmapToPrt, sceAmprAmmMeasureAmmCommandSizeUnmap(prt + page, 2 * page));
     SubmitAmm(release);
     Require(Protection(prt + page) == 0x10 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0x88);
+    RequireReadOnlyZeroPages(prt + page, 2 * page);
 
     Recorder rebuild;
     Require(sceAmprAmmCommandBufferAllocatePaForPrt(&rebuild.buffer, prt, 3 * page, 0, cpuReadWrite) == 0);

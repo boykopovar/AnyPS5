@@ -76,6 +76,17 @@ public:
         reset(reinterpret_cast<std::uintptr_t>(address), bytes);
     }
 
+    void MapZero(void* address, std::size_t bytes) {
+        std::lock_guard lock(mutex);
+        if (zeroSection == nullptr && (zeroSection = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READONLY, 0, static_cast<DWORD>(pageBytes), nullptr)) == nullptr) fail("create the read-only zero guest page");
+        const auto start = reinterpret_cast<std::uintptr_t>(address);
+        reset(start, bytes);
+        for (auto cursor = start; cursor < start + bytes; cursor += pageBytes) {
+            split(cursor, pageBytes);
+            if (!map(zeroSection, GetCurrentProcess(), reinterpret_cast<void*>(cursor), 0, pageBytes, MEM_REPLACE_PLACEHOLDER, PAGE_READONLY, nullptr, 0)) fail("map the read-only zero guest page");
+        }
+    }
+
     void Map(void* address, std::size_t bytes, HANDLE section, std::uint64_t offset, DWORD protection, bool watched = false, bool resident = false, DWORD viewProtection = PAGE_EXECUTE_READWRITE, std::size_t sectionBytes = SIZE_MAX, std::vector<std::pair<std::uintptr_t, std::size_t>>* createdPrivate = nullptr) {
         if (sectionBytes < bytes && (resident || sectionBytes == 0 || bytes - sectionBytes >= pageBytes)) throw std::runtime_error("shared guest mapping extends a whole page past its section");
         std::lock_guard lock(mutex);
@@ -1024,6 +1035,7 @@ private:
     std::size_t granularity = 0x10000;
     bool watchResident = false;
     std::mutex mutex;
+    HANDLE zeroSection = nullptr;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;
     UnmapFunction unmap = nullptr;
