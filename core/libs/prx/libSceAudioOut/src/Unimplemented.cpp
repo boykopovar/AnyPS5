@@ -36,8 +36,7 @@ int APS5_VABI sceAudioOutChangeAppModuleState(void) {
 }
 
 int APS5_VABI sceAudioOutGetSimulatedHandleStatusInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x809B00FF);
 }
 
 int APS5_VABI sceAudioOutGetSimulatedBusUsableStatusByBusType(void) {
@@ -91,12 +90,10 @@ int APS5_VABI sceAudioOutExGetLastOutputTime(void) {
 }
 
 int APS5_VABI sceAudioOutGetInfoOpenNum(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceAudioOutGetInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -361,11 +358,6 @@ int APS5_VABI sceAudioOut2GetIpcHandle(void) {
 }
 
 int APS5_VABI sceAudioOut2GetSystemStateEx(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOut2MasteringInitEx(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

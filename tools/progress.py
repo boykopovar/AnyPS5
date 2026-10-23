@@ -526,7 +526,10 @@ def main(argv=None):
         except ValueError as error:
             parser.error(str(error))
         if args.output:
-            write_site(args.output, libraries, shaders)
+            try:
+                write_site(args.output, libraries, shaders)
+            except OSError as error:
+                parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:
             print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
         else:

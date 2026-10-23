@@ -124,7 +124,7 @@ int main() {
         require(mblen_nid_postfix(nullptr, 1) == 0 && mblen_nid_postfix("ab", 2) == 1 && mblen_nid_postfix("", 1) == 0);
         require(wctomb_nid_postfix(nullptr, 0x41) == 0);
         require(wctomb_nid_postfix(out, 0x42) == 1 && out[0] == 'B');
-        require(wctomb_nid_postfix(out, 0x263a) == -1);
+        require(wctomb_nid_postfix(out, 0x263a) == 3 && std::memcmp(out, "\xe2\x98\xba", 3) == 0);
     }
     const char16_t split[] = {u'a', u'b', 0, u'c', 0};
     require(wcslen_nid_postfix(u"") == 0);
@@ -239,6 +239,11 @@ int main() {
     require(wcsncat_s_nid_postfix(strBuf, 8, u"12345", 5) == 34 && strBuf[0] == 0);
     wmemset_nid_postfix(strBuf, u'x', 4);
     require(wcsncat_s_nid_postfix(strBuf, 4, u"a", 1) == 34 && strBuf[0] == 0);
+    wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
+    require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 1, 2) == 0 && same(strBuf, u"abcbc", 6));
+    const char16_t splitSource[] = u"abc\0xyz";
+    std::memcpy(strBuf, splitSource, sizeof(splitSource));
+    require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 4, 3) == 22 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
     require(wcscat_s_nid_postfix(strBuf, 16, u"def") == 0 && same(strBuf, u"abcdef", 7));
     wcsncpy_s_nid_postfix(strBuf, 8, u"12345", 5);

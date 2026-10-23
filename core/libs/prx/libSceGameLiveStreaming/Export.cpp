@@ -5,6 +5,8 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 
 static std::mutex g_mutex;
 static bool g_initialized = false;
@@ -271,8 +273,10 @@ int APS5_VABI sceGameLiveStreamingStopDebugBroadcast(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(bool isEnableLiveStreaming) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) throw std::logic_error(std::string(__func__) + ": not initialized");
+    (void)isEnableLiveStreaming;
     return 0;
 }
 

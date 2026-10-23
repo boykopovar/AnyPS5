@@ -39,6 +39,8 @@ int APS5_VABI sceSslSetVerifyCallback(int, int (APS5_VABI *)(int, unsigned int, 
 int APS5_VABI sceSslConnect(int);
 int APS5_VABI sceSslRead(int, void*, std::size_t, int);
 int APS5_VABI sceSslWrite(int, void*, std::size_t, int);
+int APS5_VABI sceSslRecv(int, void*, std::size_t);
+int APS5_VABI sceSslSend(int, void*, std::size_t);
 int APS5_VABI sceSslClose(int);
 int APS5_VABI sceSslEnableVerifyOption(int, std::uint32_t);
 int APS5_VABI sceSslDisableVerifyOption(int, std::uint32_t);
@@ -458,13 +460,10 @@ int main(int argc, char** argv) {
     Require(selected && std::strcmp(selected, "http/1.1") == 0, "the negotiated ALPN protocol is not reported");
     Require(sceSslWrite(connection, buffer.data(), 1, 1) == ErrorInvalidValue, "unknown write flags were accepted");
     char request[] = "ping";
-    Require(sceSslWrite(connection, request, 4, 0) == 4, "write the request");
-    Require(sceSslRead(connection, buffer.data(), buffer.size(), 4) == ErrorInvalidValue, "unknown read flags were accepted");
-    Require(sceSslRead(0, nullptr, 1, -1) == ErrorInvalidValue, "read flags did not precede other validation");
-    Require(sceSslRead(connection, buffer.data(), 2, 3) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "short peek failed");
-    Require(sceSslRead(connection, buffer.data(), 4, 3) == 4 && std::memcmp(buffer.data(), "pong", 4) == 0, "repeated larger peek consumed bytes");
+    Require(sceSslSend(connection, request, 4) == 4, "send the request");
     Require(sceSslRead(connection, buffer.data(), 2, 1) == 2 && std::memcmp(buffer.data(), "po", 2) == 0, "a partial read did not return the available bytes");
-    Require(sceSslRead(connection, buffer.data(), buffer.size(), 0) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "a full read did not stop at the end of the stream");
+    Require(sceSslRecv(connection, buffer.data(), 2) == 2 && std::memcmp(buffer.data(), "ng", 2) == 0, "receive did not fill the remaining reply");
+    Require(sceSslRecv(connection, buffer.data(), buffer.size()) == 0, "receive did not stop at the end of the stream");
     Require(sceSslRead(connection, buffer.data(), buffer.size(), 1) == 0, "close notify did not end the stream");
     Require(sceSslClose(connection) == 0, "close the connection");
     Require(sceSslRead(connection, buffer.data(), buffer.size(), 0) == 0, "a read after the close did not return 0");

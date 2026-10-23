@@ -12,11 +12,12 @@ SKIP = {"build", "build-linux", "build-relinker", "3rdparty", ".git"}
 
 INTEGER_READERS = {"kibSetting", "MaskFromEnvironment", "EnvInt", "configured", "environmentCount"}
 STRING_READERS = {"GetEnvironmentVariableA", "GetEnvironmentVariableW", "addWideString"}
-NULL_TEST = re.compile(r"[!=]=\s*(nullptr|NULL|0)\b|!\s*(?:std::)?_?w?getenv\(")
+NULL_TEST = re.compile(r"[!=]=\s*(nullptr|NULL|0)\b|!\s*(?:std::)?_?w?getenv\s*\(")
 INTEGER_TEST = re.compile(r"\b(atoi|strtol|strtoul|strtoll|strtoull|stoi|stol|stoul|from_chars|atoi64|_wtoi|_wtol|_wtoi64)\s*\(")
 GREP = (r'(getenv|_wgetenv|wgetenv|IsEnvironmentSet|kibSetting|MaskFromEnvironment|EnvInt|GetEnvironmentVariable[AW]'
         r'|configured|PipelineSwitch|environmentCount|addWideString)'
         r'\([[:space:]]*(u|L)?"(APS5|ANYPS5)_[A-Za-z0-9_]+"')
+GREP = GREP.replace(r"\(", r"[[:space:]]*\(")
 
 
 def _name(prefixes):
@@ -26,7 +27,7 @@ def _name(prefixes):
 @functools.lru_cache(maxsize=None)
 def forms(prefixes=PREFIXES):
     name = _name(prefixes)
-    return (
+    readers = (
         ("getenv", re.compile(r'(?:std::)?getenv\(\s*"(?P<name>' + name + r')"\s*\)')),
         ("_wgetenv", re.compile(r'(?:std::)?_?wgetenv\(\s*L"(?P<name>' + name + r')"\s*\)')),
         ("IsEnvironmentSet", re.compile(r'IsEnvironmentSet\(\s*"(?P<name>' + name + r')"\s*\)')),
@@ -40,6 +41,7 @@ def forms(prefixes=PREFIXES):
         ("GetEnvironmentVariableW", re.compile(r'GetEnvironmentVariableW\(\s*L"(?P<name>' + name + r')"')),
         ("addWideString", re.compile(r'\baddWideString\(\s*u"(?P<name>' + name + r')"\s*\)')),
     )
+    return tuple((reader, re.compile(form.pattern.replace(r"\(", r"\s*\(", 1), form.flags)) for reader, form in readers)
 
 
 def line_reads(line, prefixes=PREFIXES):
@@ -92,10 +94,12 @@ def reads(roots, prefixes=PREFIXES):
                 continue
             lines = text.splitlines()
             for number, line in enumerate(lines, 1):
-                if not any(prefix in line for prefix in prefixes):
-                    continue
                 window = "\n".join(lines[number - 1:number + 2])
-                for reader, match in line_reads(line, prefixes):
+                if not any(prefix in window for prefix in prefixes):
+                    continue
+                for reader, match in line_reads(window, prefixes):
+                    if match.start() >= len(line):
+                        continue
                     found.setdefault(match.group("name"), []).append(
                         (path.as_posix(), number, kind_of(reader, window), default_of(match, window)))
     for sites in found.values():

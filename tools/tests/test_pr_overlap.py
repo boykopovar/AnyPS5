@@ -312,6 +312,62 @@ class UnicodePathTests(unittest.TestCase):
                 os.chdir(previous)
 
 
+class SubdirectoryTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "fake gh is a shell script")
+    def test_branch_report_from_a_subdirectory_matches_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "repo"
+            fake = Path(directory) / "bin"
+            fake.mkdir()
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", *args], cwd=root,
+                    capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
+
+            filename = "core/libs/prx/libSceExample/Export.cpp"
+            source = root / filename
+            source.parent.mkdir(parents=True)
+            source.write_text("int value = 0;\n", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools" / "tool.py").write_text("print()\n", encoding="utf-8")
+            git("init", "-q", "-b", "main")
+            git("add", ".")
+            git("commit", "-qm", "test: create base")
+            heads = {}
+            for branch, value in (("theirs", 1), ("mine", 2)):
+                git("checkout", "-qb", branch, "main")
+                source.write_text(f"int value = {value};\nint APS5_VABI sceExample() {{ return {value}; }}\n", encoding="utf-8")
+                git("add", ".")
+                git("commit", "-qm", "fix: change value")
+                heads[branch] = git("rev-parse", "HEAD")
+            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
+            (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
+            (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
+            (fake / "gh").chmod(0o755)
+            environment = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "GIT_CONFIG_COUNT": "1",
+                           "GIT_CONFIG_KEY_0": f"url.{root.as_uri()}.insteadOf", "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git"}
+            environment.pop("GITHUB_REPOSITORY", None)
+            script = Path(pr_overlap.__file__).resolve()
+            outputs = {}
+            for subdirectory in (".", "tools", "core/libs/prx"):
+                result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--branch", "mine"],
+                                        cwd=root / subdirectory, env=environment, capture_output=True, text=True,
+                                        encoding="utf-8", timeout=60)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs[subdirectory] = result.stdout
+            self.assertIn(f"`{filename}` [L1](", outputs["."])
+            self.assertIn("| `sceExample` |", outputs["."])
+            self.assertEqual(outputs["tools"], outputs["."])
+            self.assertEqual(outputs["core/libs/prx"], outputs["."])
+            result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--out", "reports"],
+                                    cwd=root / "tools", env=environment, capture_output=True, text=True,
+                                    encoding="utf-8", timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((root / "tools" / "reports" / "7.md").is_file())
+
+
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
         if os.name == "nt" or not all(shutil.which(tool) for tool in ("bash", "jq", "sed", "sha256sum")):

@@ -957,6 +957,7 @@ std::uint32_t BufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst) {
 struct AtomicFloatBits {
     SpirvEmitterState& state;
     bool wide;
+    bool flushInputs = false;
     std::uint32_t type() const { return wide ? TypeScalarU64(state) : TypeU32(state); }
     std::uint32_t constant(std::uint64_t value) const {
         return wide ? state.module.Constant(spv::OpConstant, TypeScalarU64(state), static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u)) : ConstantU32(state, static_cast<std::uint32_t>(value));
@@ -986,6 +987,8 @@ struct AtomicFloatBits {
         return Binary(state, spv::OpLogicalOr, TypeBool(state), same, zeros);
     }
     std::uint32_t minMax(std::uint32_t old, std::uint32_t source, bool maxValue) const {
+        old = flush(old, flushInputs);
+        source = flush(source, flushInputs);
         const auto better = test(maxValue ? spv::OpUGreaterThan : spv::OpULessThan, orderKey(source), orderKey(old));
         auto result = select(better, source, old);
         result = select(nan(old), source, result);
@@ -995,7 +998,7 @@ struct AtomicFloatBits {
         return select(signalingNan(source), op(spv::OpBitwiseOr, source, constant(quiet())), result);
     }
     std::uint32_t compareSwap(std::uint32_t old, std::uint32_t comparator, std::uint32_t desired) const {
-        return select(equal(old, comparator), desired, old);
+        return select(equal(flush(old, flushInputs), flush(comparator, flushInputs)), desired, old);
     }
     std::uint32_t increment(std::uint32_t old, std::uint32_t limit) const {
         return select(test(spv::OpUGreaterThanEqual, old, limit), constant(0u), op(spv::OpIAdd, old, constant(1u)));
@@ -1007,8 +1010,9 @@ struct AtomicFloatBits {
 };
 
 std::uint32_t BufferFloatAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, bool maxValue) {
-    return EmitAtomicUpdate(ctx, inst, BufferMemory(ctx, inst), [maxValue](SpirvEmitterState& state, std::uint32_t old, std::uint32_t value) {
-        return AtomicFloatBits{state, false}.minMax(old, value, maxValue);
+    const auto& mem = BufferMemory(ctx, inst);
+    return EmitAtomicUpdate(ctx, inst, mem, [maxValue, flush = mem.flushDenormals](SpirvEmitterState& state, std::uint32_t old, std::uint32_t value) {
+        return AtomicFloatBits{state, false, flush}.minMax(old, value, maxValue);
     });
 }
 
@@ -1044,8 +1048,7 @@ std::uint32_t SharedFloatMinMax(SpirvValueEmitContext& ctx, const IrValue& inst,
     const auto data = ctx.Arg(inst, 1);
     const bool flush = SharedMemory(ctx, inst).flushDenormals;
     return SharedAtomicUpdate(ctx, inst, [&](SpirvEmitterState& state, std::uint32_t old) {
-        const AtomicFloatBits bits{state, false};
-        return bits.minMax(bits.flush(old, flush), bits.flush(data, flush), maxValue);
+        return AtomicFloatBits{state, false, flush}.minMax(old, data, maxValue);
     });
 }
 
@@ -1089,7 +1092,7 @@ std::uint32_t AddressAtomicOpcode(IrOpcode opcode) {
     }
 }
 
-std::uint32_t FlatAtomicNext32(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator) {
+std::uint32_t FlatAtomicNext32(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator, bool flush) {
     switch (opcode) {
     case IrOpcode::AddressAtomicSwap32:
     case IrOpcode::AddressAtomicCmpSwap32:
@@ -1110,11 +1113,11 @@ std::uint32_t FlatAtomicNext32(SpirvEmitterState& state, IrOpcode opcode, std::u
     case IrOpcode::AddressAtomicUSubSat32:
         return AtomicUSubSat(state, old, value);
     case IrOpcode::AddressAtomicFMin32:
-        return AtomicFloatBits{state, false}.minMax(old, value, false);
+        return AtomicFloatBits{state, false, flush}.minMax(old, value, false);
     case IrOpcode::AddressAtomicFMax32:
-        return AtomicFloatBits{state, false}.minMax(old, value, true);
+        return AtomicFloatBits{state, false, flush}.minMax(old, value, true);
     case IrOpcode::AddressAtomicFCmpSwap32:
-        return AtomicFloatBits{state, false}.compareSwap(old, comparator, value);
+        return AtomicFloatBits{state, false, flush}.compareSwap(old, comparator, value);
     default:
         throw std::runtime_error("FlatAtomicNext32: opcode has no aperture lowering");
     }
@@ -1122,6 +1125,7 @@ std::uint32_t FlatAtomicNext32(SpirvEmitterState& state, IrOpcode opcode, std::u
 
 std::uint32_t ApertureAtomic32(SpirvValueEmitContext& ctx, const IrValue& inst, ResourceKind kind, std::uint32_t address, std::uint32_t byteOffset, std::uint32_t value, std::uint32_t comparator) {
     auto& state = ctx.state;
+    const bool flush = ctx.Memory(inst).flushDenormals;
     const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
     const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), byteOffset, ConstantU32(state, 3u)), ConstantU32(state, 0u));
     EmitIfCondition(state, unaligned, [&] { RecordBdaFault(state, address, ConstantU32(state, 4u), instruction, BdaAbi::FaultReason::Unaligned); });
@@ -1136,20 +1140,20 @@ std::uint32_t ApertureAtomic32(SpirvValueEmitContext& ctx, const IrValue& inst, 
         return EmitValueOrZeroIfCondition(state, EmitMemoryElementInBounds(state, resource, index), [&] {
             const auto pointer = EmitMemoryElementPointer(state, resource, index);
             if (kind == ResourceKind::Lds) {
-                const auto update = [&]() { return AtomicUpdate(state, pointer, kind, [&](std::uint32_t current) { return FlatAtomicNext32(state, opcode, current, value, comparator); }); };
+                const auto update = [&]() { return AtomicUpdate(state, pointer, kind, [&](std::uint32_t current) { return FlatAtomicNext32(state, opcode, current, value, comparator, flush); }); };
                 return state.requirements.ldsLock ? LockedLdsUpdate(state, TypeU32(state), ConstantU32(state, 0u), update) : update();
             }
             const auto old = state.module.AllocateId();
             state.module.AddFunction(spv::OpLoad, TypeU32(state), old, pointer);
-            state.module.AddFunction(spv::OpStore, pointer, FlatAtomicNext32(state, opcode, old, value, comparator));
+            state.module.AddFunction(spv::OpStore, pointer, FlatAtomicNext32(state, opcode, old, value, comparator, flush));
             return old;
         });
     });
 }
 
-std::uint32_t FlatAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator) {
+std::uint32_t FlatAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::uint32_t old, std::uint32_t value, std::uint32_t comparator, bool flush) {
     const auto u64 = TypeScalarU64(state);
-    const AtomicFloatBits bits{state, true};
+    const AtomicFloatBits bits{state, true, flush};
     const auto winner = [&](spv::Op compare) {
         return Select(state, u64, Binary(state, compare, TypeBool(state), old, value), old, value);
     };
@@ -1193,6 +1197,7 @@ std::uint32_t FlatAtomicNext64(SpirvEmitterState& state, IrOpcode opcode, std::u
 
 std::uint32_t ApertureAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, ResourceKind kind, std::uint32_t address, std::uint32_t byteOffset, std::uint32_t value, std::uint32_t comparator) {
     auto& state = ctx.state;
+    const bool flush = ctx.Memory(inst).flushDenormals;
     const auto instruction = ConstantU32(state, inst.Flags<MemoryFlags>().pc);
     const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), byteOffset, ConstantU32(state, 7u)), ConstantU32(state, 0u));
     EmitIfCondition(state, unaligned, [&] { RecordBdaFault(state, address, ConstantU32(state, 8u), instruction, BdaAbi::FaultReason::Unaligned); });
@@ -1207,7 +1212,7 @@ std::uint32_t ApertureAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, 
     const auto opcode = inst.Opcode();
     return EmitValueOrDefaultIfCondition(state, aligned, TypeU64(state), ConstantU64(state, 0u), [&] {
         return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, high), TypeU64(state), ConstantU64(state, 0u), [&] {
-            if (kind == ResourceKind::Lds && state.requirements.ldsBufferInt64Atomics) return LdsBufferAtomic64(state, low, [&](std::uint32_t old) { return FlatAtomicNext64(state, opcode, old, value, comparator); });
+            if (kind == ResourceKind::Lds && state.requirements.ldsBufferInt64Atomics) return LdsBufferAtomic64(state, low, [&](std::uint32_t old) { return FlatAtomicNext64(state, opcode, old, value, comparator, flush); });
             const auto update = [&]() {
                 const auto lowPointer = EmitMemoryElementPointer(state, resource, low);
                 const auto highPointer = EmitMemoryElementPointer(state, resource, high);
@@ -1217,7 +1222,7 @@ std::uint32_t ApertureAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, 
                 state.module.AddFunction(spv::OpLoad, TypeU32(state), highValue, highPointer);
                 const auto old = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeConstruct, TypeU64(state), old, lowValue, highValue);
-                const auto next = Unary(state, spv::OpBitcast, TypeU64(state), FlatAtomicNext64(state, opcode, Unary(state, spv::OpBitcast, TypeScalarU64(state), old), value, comparator));
+                const auto next = Unary(state, spv::OpBitcast, TypeU64(state), FlatAtomicNext64(state, opcode, Unary(state, spv::OpBitcast, TypeScalarU64(state), old), value, comparator, flush));
                 const auto nextLow = state.module.AllocateId();
                 const auto nextHigh = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextLow, next, 0u);
@@ -1254,7 +1259,7 @@ std::uint32_t AddressAtomic(SpirvValueEmitContext& ctx, const IrValue& inst) {
             if (inst.Opcode() == IrOpcode::AddressAtomicUSubSat32) {
                 return AtomicUpdate(state, pointer, mem.kind, [&](std::uint32_t current) { return AtomicUSubSat(state, current, value); });
             }
-            const AtomicFloatBits bits{state, wide};
+            const AtomicFloatBits bits{state, wide, mem.flushDenormals};
             const auto update = [&](auto&& replacement) { return AtomicUpdateTyped(state, pointer, mem.kind, scalarType, replacement); };
             switch (inst.Opcode()) {
             case IrOpcode::AddressAtomicFCmpSwap32:
@@ -1491,8 +1496,7 @@ std::uint32_t SharedAtomic64Select(SpirvValueEmitContext& ctx, const IrValue& in
 std::uint32_t SharedFloatMinMax64(SpirvValueEmitContext& ctx, const IrValue& inst, bool maxValue) {
     const bool flush = SharedMemory(ctx, inst).flushDenormals;
     return SharedAtomic64Binary(ctx, inst, [&](SpirvEmitterState& state, std::uint32_t old, std::uint32_t data) {
-        const AtomicFloatBits bits{state, true};
-        return bits.minMax(bits.flush(old, flush), bits.flush(data, flush), maxValue);
+        return AtomicFloatBits{state, true, flush}.minMax(old, data, maxValue);
     });
 }
 
@@ -1522,13 +1526,12 @@ std::uint32_t AtomicUSubSat(SpirvEmitterState& state, std::uint32_t old, std::ui
     return Select(state, TypeU32(state), fits, difference, ConstantU32(state, 0u));
 }
 
-std::uint32_t AtomicFloatMinMax(SpirvEmitterState& state, std::uint32_t old, std::uint32_t source, bool maxValue) {
-    return AtomicFloatBits{state, false}.minMax(old, source, maxValue);
+std::uint32_t AtomicFloatMinMax(SpirvEmitterState& state, std::uint32_t old, std::uint32_t source, bool maxValue, bool flush) {
+    return AtomicFloatBits{state, false, flush}.minMax(old, source, maxValue);
 }
 
-std::uint32_t AtomicFloatCompareSwap(SpirvEmitterState& state, std::uint32_t old, std::uint32_t desired, std::uint32_t comparator) {
-    const AtomicFloatBits bits{state, false};
-    return bits.select(bits.equal(old, comparator), desired, old);
+std::uint32_t AtomicFloatCompareSwap(SpirvEmitterState& state, std::uint32_t old, std::uint32_t desired, std::uint32_t comparator, bool flush) {
+    return AtomicFloatBits{state, false, flush}.compareSwap(old, comparator, desired);
 }
 
 std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
@@ -1948,8 +1951,7 @@ std::uint32_t EmitSharedAtomicCmpstF32(SpirvValueEmitContext& ctx, const IrValue
     const auto source = ctx.Arg(inst, 2);
     const bool flush = SharedMemory(ctx, inst).flushDenormals;
     return SharedAtomicUpdate(ctx, inst, [&](SpirvEmitterState& state, std::uint32_t old) {
-        const AtomicFloatBits bits{state, false};
-        return bits.select(bits.equal(bits.flush(old, flush), bits.flush(compare, flush)), source, old);
+        return AtomicFloatBits{state, false, flush}.compareSwap(old, compare, source);
     });
 }
 
@@ -2051,8 +2053,7 @@ std::uint32_t EmitSharedAtomicCmpstF64(SpirvValueEmitContext& ctx, const IrValue
     const auto source = ScalarU64Argument(ctx, inst, 2u);
     const bool flush = SharedMemory(ctx, inst).flushDenormals;
     return SharedAtomic64(ctx, inst, [&](SpirvEmitterState& state, std::uint32_t old) {
-        const AtomicFloatBits bits{state, true};
-        return bits.select(bits.equal(bits.flush(old, flush), bits.flush(compare, flush)), source, old);
+        return AtomicFloatBits{state, true, flush}.compareSwap(old, compare, source);
     });
 }
 
@@ -2118,24 +2119,27 @@ std::uint32_t EmitBufferAtomicFCmpSwap32(SpirvValueEmitContext& ctx, const IrVal
     const auto comparator = ctx.Arg(inst, inst.ArgumentCount() - 2u);
     const auto& mem = BufferMemory(ctx, inst);
     return EmitAtomicAccess(ctx, inst, mem, [&](std::uint32_t pointer) {
-        return AtomicUpdate(ctx.state, pointer, mem.kind, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, false}.compareSwap(old, comparator, desired); });
+        return AtomicUpdate(ctx.state, pointer, mem.kind, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, false, mem.flushDenormals}.compareSwap(old, comparator, desired); });
     });
 }
 
 std::uint32_t EmitBufferAtomicFCmpSwap64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto desired = ScalarU64Argument(ctx, inst, 3u);
     const auto comparator = ScalarU64Argument(ctx, inst, 2u);
-    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true}.compareSwap(old, comparator, desired); });
+    const bool flush = BufferMemory(ctx, inst).flushDenormals;
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true, flush}.compareSwap(old, comparator, desired); });
 }
 
 std::uint32_t EmitBufferAtomicFMin64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto value = ScalarU64Argument(ctx, inst, 2u);
-    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true}.minMax(old, value, false); });
+    const bool flush = BufferMemory(ctx, inst).flushDenormals;
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true, flush}.minMax(old, value, false); });
 }
 
 std::uint32_t EmitBufferAtomicFMax64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto value = ScalarU64Argument(ctx, inst, 2u);
-    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true}.minMax(old, value, true); });
+    const bool flush = BufferMemory(ctx, inst).flushDenormals;
+    return BufferAtomic64Update(ctx, inst, [&](std::uint32_t old) { return AtomicFloatBits{ctx.state, true, flush}.minMax(old, value, true); });
 }
 
 std::uint32_t EmitBufferAtomicInc64(SpirvValueEmitContext& ctx, const IrValue& inst) {

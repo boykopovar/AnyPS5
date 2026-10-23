@@ -132,6 +132,27 @@ class UnwrapTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_program_table_overlapping_elf_header_preserves_output(self):
+        for offset in (0, 8, 32, 63):
+            for previous in (None, b"previous output"):
+                with self.subTest(offset=offset, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    struct.pack_into("<Q", container, ELF_HEADER_OFFSET + 0x20, offset)
+                    output = Path(self.directory) / "output.elf"
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    else:
+                        output.unlink(missing_ok=True)
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("ELF program header table overlaps the ELF header", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
     def test_record_table_places_the_segments_and_keeps_the_alignment(self):
         container = build_container(default_segments(), default_records(), default_payloads())
         result, output = self.convert(container)
@@ -756,6 +777,34 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn(f"wrote {output}", result.stdout.decode("utf-8"))
         self.assertTrue(output.exists())
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(unwrap_self.sys, "stdout", out), mock.patch.object(unwrap_self.sys, "stderr", err):
+            try:
+                unwrap_self.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":
