@@ -147,6 +147,7 @@ struct Globals {
     void* context = nullptr;
     std::int32_t floatFormat = 2;
     bool floatFormatEnabled = false;
+    bool paddedStringGrowth = false;
     bool initialized = false;
     AllocParamRtti rtti{};
     Handlers handlers{};
@@ -387,8 +388,13 @@ bool Grow(Text& text, std::size_t requested) {
         throw std::length_error("sce::Json::String: capacity exceeds 32 bits");
     if (requested <= text.capacity) return true;
     std::uint32_t capacity = static_cast<std::uint32_t>(requested);
-    const auto sdk = CompiledSdk();
-    if (sdk > 0x044fffff) {
+    bool padded;
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        padded = state.paddedStringGrowth;
+    }
+    if (padded) {
         capacity |= 0x10;
         if (capacity / 3 < text.capacity / 2) {
             const auto grown = std::uint64_t{text.capacity} + text.capacity / 2;
@@ -1394,6 +1400,7 @@ void ReleaseInitialization() {
     }
     state.floatFormat = 2;
     state.floatFormatEnabled = false;
+    state.paddedStringGrowth = false;
     state.initialized = false;
 }
 
@@ -1439,6 +1446,7 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
         if (admitted) state.recoveryMutex = ModernValues() ? CreateKernelMutex() : state.internalMutex;
         if (!admitted || !state.recoveryMutex) { ReleaseInitialization(); return JsonErrorOutOfMemory; }
     } catch (...) { ReleaseInitialization(); throw; }
+    state.paddedStringGrowth = CompiledSdk() > 0x044fffff;
     state.initialized = true;
     *static_cast<std::uint8_t*>(self) = 1;
     return 0;
@@ -2153,6 +2161,27 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*
     if (!*static_cast<void* const*>(parameter)) return JsonErrorOutOfMemory;
     ResetDefaults();
     return InitializeResources(self, parameter, 2, false);
+}
+
+void APS5_VABI _ZN3sce4Json19InternalInitializerC1Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }
+
+void APS5_VABI _ZN3sce4Json19InternalInitializerC2Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }
+
+void APS5_VABI _ZN3sce4Json19InternalInitializerD1Ev(void* self) {
+    _ZN3sce4Json11Initializer9terminateEv(self);
+    _ZN3sce4Json11Initializer9terminateEv(self);
+}
+
+void APS5_VABI _ZN3sce4Json19InternalInitializerD2Ev(void* self) { _ZN3sce4Json19InternalInitializerD1Ev(self); }
+
+int APS5_VABI _ZN3sce4Json19InternalInitializer19terminate_staticlibEv(void* self) { return _ZN3sce4Json11Initializer9terminateEv(self); }
+
+int APS5_VABI _ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13InitParameterENS1_10InitOptionE(void* self, const void* parameter, std::int32_t option) {
+    auto& state = State();
+    std::lock_guard callbackLock(state.callbackMutex);
+    std::lock_guard lock(state.mutex);
+    state.paddedStringGrowth = option == 1;
+    return _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(self, parameter);
 }
 
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
