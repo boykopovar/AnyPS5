@@ -1870,7 +1870,8 @@ void AssignObject(Object& destination, const Object& source) {
     if (!pending.items) return;
     pending.items->SetOwner(destination.items->Owner());
     try {
-        for (const auto& pair : *source.items) {
+        for (auto position = source.items->begin(), end = source.items->end(); position != end; ++position) {
+            const auto& pair = *position;
             ScopedValue placeholder;
             SetType(placeholder.value, pair.value.type);
             ScopedPair copied;
@@ -1883,7 +1884,7 @@ void AssignObject(Object& destination, const Object& source) {
             ObjectLink* node;
             bool inserted;
             {
-                InlineText key; key.Assign(Characters(pair.key));
+                InlineText key; key.Assign(position.node->key.characters);
                 TemporaryTreeEntry entry(key.text, copied.pair);
                 node = pending.items->Insert(entry.key.text, entry.pair, inserted);
             }
