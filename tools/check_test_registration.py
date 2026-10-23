@@ -160,7 +160,7 @@ def unrun_scripts(root):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
     parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")

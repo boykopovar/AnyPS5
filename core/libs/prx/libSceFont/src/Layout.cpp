@@ -366,7 +366,7 @@ int Font::ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style,
     return SCE_FONT_OK;
 }
 
-int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle) {
+int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW, float* usedScaleH) {
     const auto clearMetrics = [&] {
         if (metrics) *metrics = {};
     };
@@ -435,6 +435,8 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
     metrics->Vertical.bearingX = static_cast<float>(vertBearingX) / 64.0f * ratioX;
     metrics->Vertical.bearingY = static_cast<float>(vertBearingY) / 64.0f * ratioY;
     metrics->Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f * ratioY;
+    if (usedScaleW) *usedScaleW = scaleW;
+    if (usedScaleH) *usedScaleH = scaleH;
     return finish(SCE_FONT_OK);
 }
 
