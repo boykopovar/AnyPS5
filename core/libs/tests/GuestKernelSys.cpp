@@ -1075,6 +1075,10 @@ int main() {
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
     Require(fchown_nid_postfix(-1, 0, 0) == -1 && Error() == 9);
+    const int kqueueDescriptor = kqueue_nid_postfix();
+    Require(kqueueDescriptor >= 0);
+    Require(fchown_nid_postfix(kqueueDescriptor, 0, 0) == -1 && Error() == 22);
+    Require(close_nid_postfix(kqueueDescriptor) == 0);
     bool fchownThrew = false;
     try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);

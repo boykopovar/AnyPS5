@@ -8,6 +8,7 @@
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -26,8 +27,8 @@
 
 static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
-static constexpr int GuestEbadf = 9;
 static constexpr int GuestEinval = 22;
+static constexpr int GuestEbadf = 9;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
 static constexpr int SetStatusFlags = 4;
@@ -126,6 +127,20 @@ template <typename TCall> static std::string ThrownMessage(TCall call) {
         return error.what();
     }
     return {};
+}
+
+static void KqueueDescriptorMetadata() {
+    constexpr int GuestEnotty = 25;
+    constexpr std::uint64_t Fionread = 0x4004667f;
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    FileStat status;
+    std::memset(&status, 0xff, sizeof(status));
+    Require(fstat_nid_disambig1_nid_postfix(kq, &status) == 0);
+    Require(status.st_mode == 0010000 && status.st_size == 0 && status.st_nlink == 0 && status.st_ino == 0);
+    int available = 0;
+    RequireFailure(ioctl_nid_postfix(kq, Fionread, &available), GuestEnotty);
+    Require(close_nid_postfix(kq) == 0);
 }
 
 static void CreateAndClose() {
@@ -1272,6 +1287,7 @@ int main() {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    KqueueDescriptorMetadata();
     Timers();
     TimerReadd();
     UnsupportedFilters();
