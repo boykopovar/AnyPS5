@@ -11508,6 +11508,16 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(partialKey, context, partialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(partialReplayed, context, partialDecoded.state, partialDecoded.vertexInput, layouts.View(), shaders, partialDecoded.attachmentLayout);
         Require(partialKey != original && partialKey == partialReplayed, "the decoded partial write state keys another pipeline");
+        auto layeredPartialState = partialState;
+        layeredPartialState.meshLayerBase = 2048u;
+        layeredPartialState.meshLayerCount = 32u;
+        GraphicsPipelineRecipe layeredPartialDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(layeredPartialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), layeredPartialDecoded), "the layered partial write recipe does not decode");
+        Require(layeredPartialDecoded.state.meshLayerBase == 2048u && layeredPartialDecoded.state.meshLayerCount == 32u && layeredPartialDecoded.state.colors[0].partialWriteMask == 0xf000u, "the recipe lost mesh layers or the partial write mask");
+        std::vector<std::byte> layeredPartialKey, layeredPartialReplayed;
+        BuildPipelineStoreKey(layeredPartialKey, context, layeredPartialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(layeredPartialReplayed, context, layeredPartialDecoded.state, layeredPartialDecoded.vertexInput, layouts.View(), shaders, layeredPartialDecoded.attachmentLayout);
+        Require(layeredPartialKey != partialKey && layeredPartialKey == layeredPartialReplayed, "the decoded layered partial write state keys another pipeline");
         auto movedState = state;
         movedState.viewport.x = 5;
         movedState.colors[0].address = 0x9000;
