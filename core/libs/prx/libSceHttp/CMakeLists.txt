@@ -22,6 +22,23 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_http_transport_context_allocation_tests
+        ${LIBS_INCLUDE_DIR}/tests/HttpTransportContextAllocation.cpp
+        Export.cpp src/Options.cpp src/Parse.cpp src/Request.cpp src/Resolver.cpp src/Uri.cpp)
+    target_include_directories(guest_http_transport_context_allocation_tests PRIVATE
+        ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/mbedtls/include)
+    target_link_libraries(guest_http_transport_context_allocation_tests PRIVATE libSceNet libSceSsl libkernel libc)
+    configure_windows_unwind(guest_http_transport_context_allocation_tests)
+    add_test(NAME guest_http_transport_context_allocation COMMAND guest_http_transport_context_allocation_tests)
+    set_tests_properties(guest_http_transport_context_allocation PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        target_link_libraries(guest_http_transport_context_allocation_tests PRIVATE bcrypt ws2_32)
+        set_tests_properties(guest_http_transport_context_allocation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(guest_http_transport_tests ${LIBS_INCLUDE_DIR}/tests/networking/GuestHttpTransport.cpp)
     target_include_directories(guest_http_transport_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/tests ${CMAKE_SOURCE_DIR}/3rdparty/mbedtls/include)
     target_link_libraries(guest_http_transport_tests PRIVATE libSceHttp libSceNet libSceSsl libc mbedtls mbedx509 mbedcrypto)
