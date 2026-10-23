@@ -305,6 +305,7 @@ private:
         append(key, value.fusedExactArithmetic);
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);
+        append(key, value.deviceScopeLdsMemoryBarriers);
     }
 };
 

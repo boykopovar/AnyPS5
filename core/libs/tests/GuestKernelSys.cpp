@@ -69,6 +69,10 @@ int APS5_VABI renameat_nid_postfix(int, const char*, int, const char*);
 int APS5_VABI fchmodat_nid_postfix(int, const char*, int, int);
 int APS5_VABI lchmod_nid_postfix(const char*, std::uint16_t);
 int APS5_VABI fchown_nid_postfix(int, std::uint32_t, std::uint32_t);
+int APS5_VABI chown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
+int APS5_VABI lchown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
+int APS5_VABI fchownat_nid_postfix(int, const char*, std::uint32_t, std::uint32_t, int);
+int APS5_VABI linkat_nid_postfix(int, const char*, int, const char*, int);
 int APS5_VABI fstatat_nid_postfix(int, const char*, FileStat*, int);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
@@ -106,6 +110,82 @@ bool ChrootThrows(const std::string& path) {
         return std::strstr(error.what(), path.c_str()) != nullptr;
     }
     return false;
+}
+
+template <typename Call>
+bool ThrowsNaming(Call call, const char* text) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::strstr(error.what(), text) != nullptr;
+    }
+    return false;
+}
+
+void OwnershipAndLinkTests(const std::filesystem::path& root) {
+    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
+    const auto file = (root / "owned.txt").string();
+    std::ofstream(file).put('x');
+    const auto missing = (root / "missing.txt").string();
+    const auto throughFile = file + "/inner";
+    const auto linked = (root / "linked.txt").string();
+    const auto other = (root / "other.txt").string();
+    Require(chown_nid_postfix(file.c_str(), 0, 0) == 0);
+    Require(chown_nid_postfix(file.c_str(), Unchanged, Unchanged) == 0);
+    Require(lchown_nid_postfix(file.c_str(), 0, Unchanged) == 0);
+    Require(fchownat_nid_postfix(-100, file.c_str(), Unchanged, 0, 0) == 0);
+    Require(fchownat_nid_postfix(-100, file.c_str(), 0, 0, 0x200) == 0);
+    for (const auto call : {chown_nid_postfix, lchown_nid_postfix}) {
+        Require(call(missing.c_str(), 0, 0) == -1 && Error() == 2);
+        Require(call(throughFile.c_str(), 0, 0) == -1 && Error() == 20);
+        Require(call("", 0, 0) == -1 && Error() == 2);
+        Require(call(nullptr, 0, 0) == -1 && Error() == 14);
+    }
+    Require(fchownat_nid_postfix(-100, missing.c_str(), 0, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(-100, file.c_str(), 0, 0, 0x400) == -1 && Error() == 22);
+    Require(chown_nid_postfix(missing.c_str(), 1000, 0) == -1 && Error() == 2);
+    Require(chown_nid_postfix(nullptr, 1000, 0) == -1 && Error() == 14);
+    Require(lchown_nid_postfix(throughFile.c_str(), 0, 1000) == -1 && Error() == 20);
+    Require(fchownat_nid_postfix(-100, missing.c_str(), 1000, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(4321, "owned.txt", 1000, 0, 0) == -1 && Error() == 9);
+    Require(fchownat_nid_postfix(-100, file.c_str(), 1000, 0, 0x400) == -1 && Error() == 22);
+    Require(ThrowsNaming([&] { chown_nid_postfix(file.c_str(), 1000, 0); }, "chown: an owner"));
+    Require(ThrowsNaming([&] { lchown_nid_postfix(file.c_str(), 0, 1000); }, "lchown: a group"));
+    Require(ThrowsNaming([&] { fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0); }, "fchownat: an owner"));
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    Require(fchownat_nid_postfix(directory, "owned.txt", 0, 0, 0) == 0);
+    Require(fchownat_nid_postfix(directory, "missing.txt", 0, 0, 0) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0) == 0);
+    Require(std::filesystem::hard_link_count(file) == 2);
+    Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0x400) == -1 && Error() == 17);
+    Require(linkat_nid_postfix(-100, missing.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 2);
+    Require(linkat_nid_postfix(-100, file.c_str(), -100, other.c_str(), 0x200) == -1 && Error() == 22);
+    Require(linkat_nid_postfix(-100, nullptr, -100, other.c_str(), 0) == -1 && Error() == 14);
+    Require(linkat_nid_postfix(-100, "", -100, other.c_str(), 0) == -1 && Error() == 2);
+    Require(ThrowsNaming([&] { linkat_nid_postfix(directory, "owned.txt", -100, other.c_str(), 0); }, "linkat: a relative path"));
+    Require(ThrowsNaming([&] { linkat_nid_postfix(-100, file.c_str(), directory, "other.txt", 0); }, "linkat: a relative path"));
+    const auto symbolic = (root / "owned.link").string();
+    const auto dangling = (root / "dangling.link").string();
+    if (symlink_nid_postfix("owned.txt", symbolic.c_str()) == 0) {
+        Require(symlink_nid_postfix("missing.txt", dangling.c_str()) == 0);
+        Require(chown_nid_postfix(symbolic.c_str(), 0, 0) == 0 && lchown_nid_postfix(symbolic.c_str(), 0, 0) == 0);
+        Require(chown_nid_postfix(dangling.c_str(), 0, 0) == -1 && Error() == 2);
+        Require(lchown_nid_postfix(dangling.c_str(), 0, 0) == 0);
+        Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0) == -1 && Error() == 2);
+        Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0x200) == 0);
+        Require(ThrowsNaming([&] { linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0); }, "symbolic link itself"));
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0x400) == 0);
+#ifdef _WIN32
+        Require((GetFileAttributesW(std::filesystem::path(other).c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
+#else
+        Require(!std::filesystem::is_symlink(std::filesystem::symlink_status(other)));
+#endif
+        Require(std::filesystem::hard_link_count(file) == 3);
+        Require(std::filesystem::remove(other) && std::filesystem::remove(symbolic) && std::filesystem::remove(dangling));
+    }
+    Require(sceKernelClose(directory) == 0);
+    Require(std::filesystem::remove(linked) && std::filesystem::remove(file));
 }
 
 bool SymlinkTargetThrows(const char* target, const std::string& created) {
@@ -376,6 +456,7 @@ int main() {
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
     DirectoryRenameTests(root);
+    OwnershipAndLinkTests(root);
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);

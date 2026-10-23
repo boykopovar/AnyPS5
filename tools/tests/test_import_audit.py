@@ -684,6 +684,46 @@ class ImportAuditTests(unittest.TestCase):
         records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}))
         self.assertEqual((records[0]["class"], missing), ("absent", {"SDK-Shipping.debug_prx": 1}))
 
+    def test_windows_module_suffix_case_does_not_report_existing_modules_as_missing(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(build_pe([]))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        cases = (("sdk-shipping.prx", "SDK-Shipping.DEBUG_PRX"),
+                 ("SDK-SHIPPING.PRX", "sdk-shipping.sprx"),
+                 ("Sdk-Shipping.SuPrX", "SDK-SHIPPING.debug_prx"),
+                 ("SDK-SHIPPING.DEBUG_PRX", "sdk-shipping.PRX"))
+        for filename, needed in cases:
+            with self.subTest(filename=filename, needed=needed):
+                module = work.modules / filename
+                module.write_bytes(exporting("AAAAAAAAAAA"))
+                try:
+                    write_registry(registry, [("AAAAAAAAAAA", needed)])
+                    import_audit.needed_registry_path(registry).write_text(json.dumps([needed]), encoding="utf-8")
+                    code, _, err = work.run(registry, "--json", str(report), "--strict-providers")
+                    self.assertEqual((code, err), (0, ""))
+                    data = json.loads(report.read_text(encoding="utf-8"))
+                    self.assertEqual(data["missing_libraries"], {})
+                    self.assertEqual(data["unique_by_class"], {"implemented": 0, "stub": 0, "absent": 0, "module": 1})
+                    self.assertEqual(data["references"], 1)
+                    self.assertEqual(data["imports"][0]["library"], needed)
+                finally:
+                    module.unlink()
+
+    def test_elf_module_suffix_case_stays_significant(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / "sdk-shipping.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        for suffix in ("PRX", "SPRX", "SUPRX", "DEBUG_PRX"):
+            needed = "sdk-shipping." + suffix
+            with self.subTest(needed=needed):
+                write_registry(registry, [("AAAAAAAAAAA", needed)])
+                code, _, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (1, ""))
+                data = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(data["missing_libraries"], {needed: 1})
+                self.assertEqual(data["unique_by_class"], {"implemented": 0, "stub": 0, "absent": 1, "module": 0})
+
     def test_converted_module_matches_imports_of_its_base_name(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())

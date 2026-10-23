@@ -146,11 +146,14 @@ def relative(path, root):
 def chunks(names):
     batch, size = [], 0
     for name in names:
-        if batch and size + len(name) + 1 > BATCH:
+        length = len(name) + 1
+        if sys.platform == "win32":
+            length = len(subprocess.list2cmdline([name]).encode("utf-16-le", "surrogatepass")) // 2 + 1
+        if batch and size + length > BATCH:
             yield batch
             batch, size = [], 0
         batch.append(name)
-        size += len(name) + 1
+        size += length
     if batch:
         yield batch
 

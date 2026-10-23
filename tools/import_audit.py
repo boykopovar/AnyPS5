@@ -539,11 +539,13 @@ MODULE_FILE_SUFFIXES = (".debug_prx", ".suprx", ".sprx", ".prx")
 
 
 def module_stem(name, fold):
+    if fold:
+        name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
             name = name[:-len(suffix)]
             break
-    return name.lower() if fold else name
+    return name
 
 
 class ModuleNames(set):

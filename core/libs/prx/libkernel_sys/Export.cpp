@@ -107,6 +107,7 @@ constexpr int PcAclPathMax = 60;
 constexpr int PcMacPresent = 63;
 constexpr int PcAclNfs4 = 64;
 constexpr int GuestAtSymlinkNofollow = 0x0200;
+constexpr int GuestAtSymlinkFollow = 0x0400;
 
 int GuestFileError(int error) {
     switch (error) {
@@ -187,6 +188,22 @@ bool HasNonDirectoryPrefix(const std::filesystem::path& native) {
         if (std::filesystem::exists(status)) return !std::filesystem::is_directory(status);
     }
     return false;
+}
+
+void RequireGuestOwner(const char* call, std::uint32_t uid, std::uint32_t gid) {
+    constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
+    if (uid != 0 && uid != Unchanged) NotImplemented_nid_no_patch((std::string(call) + ": an owner other than the guest user").c_str());
+    if (gid != 0 && gid != Unchanged) NotImplemented_nid_no_patch((std::string(call) + ": a group other than the guest group").c_str());
+}
+
+bool IsSymbolicLink(const std::filesystem::path& native) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    std::error_code error;
+    return std::filesystem::is_symlink(std::filesystem::symlink_status(native, error));
+#endif
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
@@ -451,6 +468,17 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     return 0;
 }
 
+int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char* path2, int flag) {
+    if (flag & ~GuestAtSymlinkFollow) return static_cast<int>(Fail(GuestEinval));
+    if (path1 == nullptr || path2 == nullptr) return static_cast<int>(Fail(GuestEfault));
+    if ((fd1 != GuestAtFdcwd && *path1 != '/') || (fd2 != GuestAtFdcwd && *path2 != '/'))
+        NotImplemented_nid_no_patch("linkat: a relative path with a directory descriptor");
+    std::filesystem::path source;
+    if (flag == 0 && *path1 != '\0' && ResolvePathError_nid_no_patch(path1, source) == 0 && IsSymbolicLink(source))
+        NotImplemented_nid_no_patch("linkat: a hard link to a symbolic link itself");
+    return link_nid_postfix(path1, path2);
+}
+
 int APS5_VABI fchdir_nid_postfix(int fd) {
     int error = 0;
     const char* path = GetDirectoryDescriptorPath_nid_no_patch(fd, &error);
@@ -672,6 +700,29 @@ int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interva
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
 int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb);
+int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int flag);
+
+int APS5_VABI chown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
+    FileStat status{};
+    if (stat_nid_postfix(path, &status) != 0) return -1;
+    RequireGuestOwner("chown", uid, gid);
+    return 0;
+}
+
+int APS5_VABI lchown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
+    FileStat status{};
+    if (lstat_nid_postfix(path, &status) != 0) return -1;
+    RequireGuestOwner("lchown", uid, gid);
+    return 0;
+}
+
+int APS5_VABI fchownat_nid_postfix(int fd, const char* path, std::uint32_t uid, std::uint32_t gid, int flag) {
+    if (flag & ~GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));
+    FileStat status{};
+    if (fstatat_nid_postfix(fd, path, &status, flag) != 0) return -1;
+    RequireGuestOwner("fchownat", uid, gid);
+    return 0;
+}
 
 int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int flag) {
     if (flag & ~GuestAtSymlinkNofollow) return static_cast<int>(Fail(GuestEinval));

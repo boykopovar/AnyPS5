@@ -11,6 +11,13 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
+#include <cstdarg>
+
+#if defined(__clang__) && !defined(_WIN32)
+#define __builtin_sysv_va_list va_list
+#define __builtin_sysv_va_start va_start
+#define __builtin_sysv_va_end va_end
+#endif
 
 extern "C" {
 int APS5_VABI snprintf_nid_postfix(char*, size_t, const char*, ...);
