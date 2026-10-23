@@ -27,7 +27,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
-int APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value*, const Value*);
+void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value*, const Value*);
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);

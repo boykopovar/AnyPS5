@@ -2961,10 +2961,10 @@ void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
     Destroy(temporary);
 }
 
-int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) { SetType(NodeOf(*self), type); return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) { SetType(NodeOf(*self), TypeBoolean); self->boolean = value; return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) { SetType(NodeOf(*self), TypeInteger); self->integer = value; return 0; }
-int APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetType(NodeOf(*self), TypeUInteger); self->uinteger = value; return 0; }
+void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) { SetType(NodeOf(*self), type); }
+void APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) { SetType(NodeOf(*self), TypeBoolean); self->boolean = value; }
+void APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) { SetType(NodeOf(*self), TypeInteger); self->integer = value; }
+void APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetType(NodeOf(*self), TypeUInteger); self->uinteger = value; }
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { AssignReal(NodeOf(*self), value); }
 void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
@@ -2973,11 +2973,10 @@ void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     SetType(NodeOf(*self), TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
-int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
     const std::string copy(View(*text));
     SetType(NodeOf(*self), TypeString);
     if (self->type == TypeString) AssignText(*self->string, copy, true);
-    return 0;
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
     if (!array->items) return;
@@ -2989,9 +2988,8 @@ void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* 
     SetType(*self, TypeObject);
     if (self->object) AssignObject(*self->object, *object);
 }
-int APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
+void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
     if (self != other) AssignNode(NodeOf(*self), NodeOf(*other));
-    return 0;
 }
 
 ValueType APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value* self) { return NodeOf(*self).type; }

@@ -24,7 +24,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5Value5clearEv(Value*);
-int APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
+void APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
 const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
 const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv(const Value*);
 const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value*);

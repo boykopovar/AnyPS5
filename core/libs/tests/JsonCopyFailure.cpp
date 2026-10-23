@@ -37,7 +37,7 @@ void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value*, const Array*);
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value*, const Object*);
-int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
+void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
 std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
 const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value*);

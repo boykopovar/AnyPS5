@@ -21,7 +21,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5Value5clearEv(Value*);
-int APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
+void APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
 void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value*, const char*);
 int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, Handler, void*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
