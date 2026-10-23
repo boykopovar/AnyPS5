@@ -64,16 +64,13 @@ jobs:
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs
       - if: matrix.platform == 'windows'
         run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - name: Install the Jemspace source-build tools
-        if: matrix.platform == 'windows'
-        run: C:/msys64/usr/bin/bash.exe -lc 'pacman -S --needed --noconfirm autoconf make'
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ matrix.platform }}
           save: false
       - name: Install lavapipe for the GPU execution tests and the audio development files
         if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends autoconf make libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libpipewire-0.3-dev libpulse-dev libasound2-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev
       - name: Configure Linux
         if: matrix.platform == 'linux'
         run: cmake -S . -B build $CONFIGURE

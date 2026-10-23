@@ -626,8 +626,6 @@ jobs:
           curl -sSfL -o "$RUNNER_TEMP/winlibs.zip" "https://github.com/brechtsanders/winlibs_mingw/releases/download/$WINLIBS_RELEASE/$WINLIBS_ZIP"
           7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
       - run: echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
-      - name: Install the Jemspace source-build tools
-        run: C:/msys64/usr/bin/bash.exe -lc 'pacman -S --needed --noconfirm autoconf make'
       - uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: ${{ github.event_name == 'workflow_dispatch' && 'dispatch-windows' || 'windows' }}

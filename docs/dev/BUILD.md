@@ -60,8 +60,6 @@ therefore tests the previous binaries and can show no effect at all.
 
 [Relinker usage and runtime layout](../user/USAGE.md).
 
-The Jemspace allocator also requires GNU Autoconf and GNU Make to build its pinned source submodule through CMake. On Windows, install those tools in MSYS2; CMake searches `C:/msys64/usr/bin`. `JEMSPACE_AUTOCONF`, `JEMSPACE_MAKE` and `JEMSPACE_BASH` can select their absolute paths while the C compiler remains the supported WinLibs compiler. The allocator configure host comes from that compiler so MSYS2 supplies build tools without selecting an MSYS runtime ABI.
-
 ## Windows setup and troubleshooting
 
 The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
