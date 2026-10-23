@@ -29,6 +29,7 @@
 #include "BdaAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "ShaderDiskCache.hpp"
+#include <limits>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <set>
@@ -5033,7 +5034,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQS0AAAA=", "new requests did not use serialization version 45");
+    require(requestPrefix(encoded, 8u) == "NVNQQS8AAAA=", "new requests did not use serialization version 47");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -5151,7 +5152,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQS4AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -5221,6 +5222,107 @@ std::string encodeBase64(const std::vector<std::uint8_t>& bytes) {
         }
     }
     return text;
+}
+
+void verifyDepthExportClamp() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 3> code{0xf8001881u, 0x00000000u, 0xbf810000u};
+    ShaderPixelStageInfo pixel{};
+    pixel.inputAddr = PixelInputBit(PixelInput::PerspectiveCenter);
+    pixel.hasPerspectiveCenterVgpr = true;
+    pixel.depthExportEnable = true;
+    pixel.depthExportMin = 0.25f;
+    pixel.depthExportMax = 0.75f;
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Fragment, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.pixel = pixel;
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 64;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    const auto result = Recompile(request);
+    const auto& words = result.spirv.Words();
+    std::map<std::uint32_t, std::uint32_t> floats;
+    std::vector<std::array<std::uint32_t, 3>> clamps;
+    std::vector<std::uint32_t> stored;
+    std::uint32_t depthVariable = 0;
+    bool depthReplacing = false;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        if (op == spv::OpConstant && (words[at] >> 16u) == 4u) floats[words[at + 2]] = words[at + 3];
+        if (op == spv::OpExtInst && words[at + 4] == 81u) clamps.push_back({words[at + 2], words[at + 6], words[at + 7]});
+        if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn && words[at + 3] == spv::BuiltInFragDepth) depthVariable = words[at + 1];
+        if (op == spv::OpStore) stored.push_back(words[at + 1]), stored.push_back(words[at + 2]);
+        if (op == spv::OpExecutionMode && words[at + 2] == spv::ExecutionModeDepthReplacing) depthReplacing = true;
+    }
+    require(depthVariable != 0u && depthReplacing, "depth export: the pixel shader does not replace gl_FragDepth");
+    require(clamps.size() == 1u && floats[clamps[0][1]] == 0x3e800000u && floats[clamps[0][2]] == 0x3f400000u, "depth export: the exported depth was not NClamped to [ZMIN, ZMAX]");
+    bool clampStored = false;
+    for (std::size_t i = 0; i + 1 < stored.size(); i += 2) clampStored = clampStored || (stored[i] == depthVariable && stored[i + 1] == clamps[0][0]);
+    require(clampStored, "depth export: gl_FragDepth was not written from the clamped value");
+    const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
+    require(replay.request.context.pixel->depthExportMin == 0.25f && replay.request.context.pixel->depthExportMax == 0.75f, "depth export: the clamp did not survive serialization");
+    {
+        auto tail = request;
+        tail.target.largePixelFunctionLdsBuffer = true;
+        tail.target.pixelFunctionStorageDwords = 2048u;
+        const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
+        require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
+                    both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
+            "depth export: a version 47 request lost the bounds or the version 45 target tail");
+        auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
+        require(bytes.size() > 8u && bytes[4] == 47u, "depth export: a depth exporting request did not use serialization version 47");
+        static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
+        const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
+        require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
+            "depth export: the clamp bounds were not written exactly once");
+        bytes.erase(found, found + boundBytes.size());
+        bytes[4] = 45u;
+        const auto legacy = RequestSerializer{}.Deserialize(encodeBase64(bytes));
+        require(legacy.request.context.pixel->depthExportEnable && legacy.request.context.pixel->depthExportMin == 0.0f &&
+                    legacy.request.context.pixel->depthExportMax == 1.0f && legacy.request.target.largePixelFunctionLdsBuffer &&
+                    legacy.request.target.pixelFunctionStorageDwords == 2048u,
+            "depth export: a version 45 depth exporting request did not read with default bounds and its target tail");
+    }
+    std::vector<std::uint64_t> key;
+    RecompileCacheKey::Build(request, key);
+    const auto first = key;
+    auto other = request;
+    auto changed = pixel;
+    changed.depthExportMax = 1.0f;
+    other.context.pixel = changed;
+    RecompileCacheKey::Build(other, key);
+    require(key != first && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(other), "depth export: the cache keys ignore the clamp");
+    auto plain = pixel;
+    plain.depthExportEnable = false;
+    auto unexported = request;
+    unexported.context.pixel = plain;
+    RecompileCacheKey::Build(unexported, key);
+    const auto plainKey = key;
+    plain.depthExportMin = 0.0f;
+    plain.depthExportMax = 1.0f;
+    unexported.context.pixel = plain;
+    RecompileCacheKey::Build(unexported, key);
+    require(key == plainKey, "depth export: the clamp keyed a shader without depth export");
+    auto open = pixel;
+    open.depthExportMin = -std::numeric_limits<float>::infinity();
+    open.depthExportMax = std::numeric_limits<float>::infinity();
+    auto unclamped = request;
+    unclamped.context.pixel = open;
+    const auto unclampedResult = Recompile(unclamped);
+    const auto& openWords = unclampedResult.spirv.Words();
+    bool openClamp = false;
+    bool openStore = false;
+    std::uint32_t openDepth = 0;
+    for (std::size_t at = 5; at < openWords.size() && (openWords[at] >> 16u) != 0; at += openWords[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(openWords[at] & 0xffffu);
+        if (op == spv::OpExtInst && openWords[at + 4] == 81u) openClamp = true;
+        if (op == spv::OpDecorate && openWords[at + 2] == spv::DecorationBuiltIn && openWords[at + 3] == spv::BuiltInFragDepth) openDepth = openWords[at + 1];
+        if (op == spv::OpStore && openWords[at + 1] == openDepth && openDepth != 0u) openStore = true;
+    }
+    require(!openClamp && openStore, "depth export: an unclamped export (DISABLE_VIEWPORT_CLAMP) was clamped or not stored");
 }
 
 void verifyVertexInfoVersion19() {
@@ -5540,7 +5642,7 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 54u + pointTailBytes && legacy[4] == 45u, "a merged hull request did not use serialization version 45");
+    require(legacy.size() > 54u + pointTailBytes && legacy[4] == 47u, "a merged hull request did not use serialization version 47");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 2u - pointTailBytes);
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
@@ -8083,6 +8185,7 @@ int main(int argc, char** argv) {
         verifyVertexInfoVersion19();
         verifyDepthRemapRequests();
         verifyMergedHullConfiguration();
+        verifyDepthExportClamp();
         verifyPositionExportComponents();
         verifyLegacyPixelRequests();
         verifyPixelExportReplay();
