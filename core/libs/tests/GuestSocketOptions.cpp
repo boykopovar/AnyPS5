@@ -37,6 +37,7 @@ constexpr int SoNoSigpipe = 0x800;
 constexpr int SoSendBuffer = 0x1001;
 constexpr int SoError = 0x1007;
 constexpr int SoType = 0x1008;
+constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
 constexpr int ErrorNoProtocolOption = 42;
@@ -216,6 +217,32 @@ void UnknownRequestsFail() {
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
 
+void NullPointersFollowFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    Require(stream >= 0, "socket failed");
+    const int one = 1;
+    int value = 0;
+    std::uint32_t size = sizeof(value);
+    Require(setsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, nullptr, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt with a null value and a length must fail with EFAULT (14)");
+    Require(setsockopt_nid_postfix(-1, SolSocket, SoKeepAlive, nullptr, sizeof(one)) == -1 && *__error_nid_postfix() == ErrorFault, "setsockopt checks the value pointer before the descriptor (EFAULT before EBADF)");
+    Require(setsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, &one, 0xffffffffu) == -1 && *__error_nid_postfix() == ErrorInvalid, "setsockopt with a negative length must fail with EINVAL (22)");
+    Require(setsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, nullptr, 0) == -1 && *__error_nid_postfix() == ErrorInvalid, "setsockopt with a null value and no length must fail with EINVAL (22)");
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with a value and no length pointer must fail with EFAULT (14)");
+    Require(getsockopt_nid_postfix(-1, SolSocket, SoKeepAlive, &value, nullptr) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt checks the length pointer before the descriptor (EFAULT before EBADF)");
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, nullptr, nullptr) == -1 && *__error_nid_postfix() == ErrorFault, "getsockopt with neither pointer fails with EFAULT (14) on the final copyout");
+    Require(getsockopt_nid_postfix(-1, SolSocket, SoKeepAlive, nullptr, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor, "getsockopt with neither pointer on a bad descriptor must fail with EBADF (9) first");
+    Require(getsockopt_nid_postfix(stream, SolSocket, 0x7fff, nullptr, nullptr) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "getsockopt with neither pointer on an unknown option must fail with ENOPROTOOPT (42) first");
+    size = 0xffffffffu;
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt with a negative length must fail with EINVAL (22)");
+    size = 0xffffffffu;
+    Require(getsockopt_nid_postfix(-1, SolSocket, SoKeepAlive, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt checks a negative length before the descriptor (EINVAL before EBADF)");
+    size = 0xffffffffu;
+    Require(getsockopt_nid_postfix(stream, 0, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt checks a negative length before the level (EINVAL before ENOPROTOOPT)");
+    size = sizeof(value);
+    Require(getsockopt_nid_postfix(stream, SolSocket, SoKeepAlive, nullptr, &size) == 0 && size == 0, "getsockopt with a null value reports a zero length");
+    Require(close_nid_postfix(stream) == 0, "close failed");
+}
+
 }
 
 int main() {
@@ -225,5 +252,6 @@ int main() {
     LingerFollowsFreeBsd();
     LengthsFollowFreeBsd();
     UnknownRequestsFail();
+    NullPointersFollowFreeBsd();
     return 0;
 }

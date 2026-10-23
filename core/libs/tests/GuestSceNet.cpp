@@ -788,6 +788,8 @@ static void CheckKernelTimeouts() {
     Require(setsockopt_nid_postfix(descriptor, 0xffff, 0x1005, &negative, sizeof(negative)) == -1 && *__error_nid_postfix() == 33);
     const int microseconds = 1000;
     Require(setsockopt_nid_postfix(descriptor, 0xffff, 0x1006, &microseconds, sizeof(microseconds)) == -1 && *__error_nid_postfix() == 22);
+    Require(setsockopt_nid_postfix(descriptor, 0xffff, 0x1008, nullptr, sizeof(microseconds)) == -1 && *__error_nid_postfix() == 14);
+    Require(setsockopt_nid_postfix(descriptor, 0xffff, 0x1008, &microseconds, 0xffffffffu) == -1 && *__error_nid_postfix() == 22);
     RequireTimeout(descriptor, 0x1006, 1250000);
     RequireTimeout(descriptor, 0x1005, 500000);
     Require(Failed(sceNetSetsockopt(descriptor, 0xffff, 0x1006, &microseconds, sizeof(microseconds)), 22));
