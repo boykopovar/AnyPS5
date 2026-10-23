@@ -271,7 +271,7 @@ int APS5_VABI sceNpTrophyRegisterContext(int contextId, int handle, std::uint64_
     if (options != 0) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (context->registered) return NP_TROPHY_ERROR_ALREADY_REGISTERED;
     char name[32];
     std::snprintf(name, sizeof(name), "trophy%02u.trp", context->serviceLabel);
