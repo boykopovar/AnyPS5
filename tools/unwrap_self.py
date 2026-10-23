@@ -336,7 +336,7 @@ def unwrap(path, output, verbose=False):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="unwrap a decrypted SELF or fSELF container into a clean ELF")
     parser.add_argument("input", help="SELF container to read")
     parser.add_argument("output", help="ELF executable to write")

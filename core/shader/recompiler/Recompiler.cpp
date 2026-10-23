@@ -326,6 +326,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         tessellationLowering.Lower(program, inputInfo.vertex->tess, request.target.tessellation ? &*request.target.tessellation : nullptr);
     }
 
+    deadCodeEliminator.EliminateUnobservedPhis(program);
+    deadCodeEliminator.Eliminate(program);
     constexpr SrtWalker srtWalker;
     srtWalker.BuildPlan(program);
     deadCodeEliminator.Eliminate(program);

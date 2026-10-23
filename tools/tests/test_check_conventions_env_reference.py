@@ -85,6 +85,27 @@ class EnvReferenceDiffTests(unittest.TestCase):
             with self.subTest(directory=directory):
                 self.assertEqual(self.run_case(base, head, target, directory), expected)
 
+    def test_a_new_spaced_read_is_reported_at_its_line(self):
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        head = {SAMPLE: base[SAMPLE] + 'auto value = !std::getenv \t("APS5_NEW_READ");\n'}
+        self.assertEqual(self.run_case(base, head), [("env-reference", SAMPLE, 2,
+                                                    f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
+    def test_removing_a_compact_read_keeps_a_row_still_used_by_a_spaced_read(self):
+        other = "core/libs/prx/libSceExample/Other.cpp"
+        base = {
+            DOC: DOC_TEXT,
+            SAMPLE: 'auto a = std::getenv("APS5_DOCUMENTED");\n',
+            other: 'auto b = _wgetenv \t(L"APS5_DOCUMENTED");\n',
+        }
+        self.assertEqual(self.run_case(base, {SAMPLE: "int unrelated;\n"}), [])
+
+    def test_a_removed_row_is_reported_when_a_spaced_read_remains(self):
+        base = {DOC: DOC_TEXT, SAMPLE: 'auto value = std::getenv \t("APS5_DOCUMENTED");\n'}
+        head = {DOC: "| `APS5_GONE` | presence |\n"}
+        self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
+                                                    "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
+
     def test_only_a_name_the_pull_request_adds_is_reported_at_its_line(self):
         base = {
             DOC: DOC_TEXT,
