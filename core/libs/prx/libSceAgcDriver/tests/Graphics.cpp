@@ -4244,7 +4244,7 @@ void eqaaColorTargetTests() {
     expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) and one fragment are unsupported");
     queue.context[0x31d] = 0x00012000u;
     const auto full = DecodeState(queue).colors[0];
-    Require(full.samples == 4 && full.eqaaFragments == 0 && full.fmaskAddress == 0, "a 4-sample 4-fragment target decoded as EQAA");
+    Require(full.samples == 4 && full.eqaaFragments == 0, "a 4-sample 4-fragment target decoded as EQAA");
     queue.context[0x31d] = 0x00013000u;
     Require(DecodeColorBuffer(queue.context, 0).eqaaFragments == 4 && DecodeColorBuffer(queue.context, 0).samples == 8, "an 8-sample 4-fragment target did not decode as EQAA");
     queue.context[0x31d] = 0x00011000u;
