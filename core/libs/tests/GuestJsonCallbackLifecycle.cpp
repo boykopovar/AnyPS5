@@ -22,22 +22,30 @@ void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
 int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatHandler, void*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
 void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t);
+void APS5_VABI _ZN3sce4Json4FreeEPv(void*);
 }
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 enum class NoticeAction { None, Terminate, RejectTermination };
+enum class AllocatorAction { None, RejectAllocate, RejectFree, TerminateFree };
 struct LifecycleTrace {
     std::map<void*, std::size_t> live;
     std::size_t generation = 0;
     bool failNext = false;
     std::uint8_t* owner = nullptr;
     NoticeAction noticeAction = NoticeAction::None;
+    AllocatorAction allocatorAction = AllocatorAction::None;
     unsigned notices = 0;
     unsigned refused = 0;
 };
+static void RejectOwnerTermination(LifecycleTrace& trace);
 static void* APS5_VABI AllocateLifecycle(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<LifecycleTrace*>(context);
+    if (trace.allocatorAction == AllocatorAction::RejectAllocate) {
+        trace.allocatorAction = AllocatorAction::None;
+        RejectOwnerTermination(trace);
+    }
     if (trace.failNext) { trace.failNext = false; return nullptr; }
     void* memory = std::malloc(bytes);
     Require(memory != nullptr, "Tracking allocator requires host memory");
@@ -46,8 +54,20 @@ static void* APS5_VABI AllocateLifecycle(void*, std::size_t bytes, void* context
     return memory;
 }
 static void APS5_VABI FreeLifecycle(void*, void* memory, void* context) {
+    auto& trace = *static_cast<LifecycleTrace*>(context);
+    if (trace.allocatorAction == AllocatorAction::RejectFree) {
+        trace.allocatorAction = AllocatorAction::None;
+        RejectOwnerTermination(trace);
+    } else if (trace.allocatorAction == AllocatorAction::TerminateFree) {
+        trace.allocatorAction = AllocatorAction::None;
+        const auto identity = trace.live.at(memory);
+        try {
+            Require(_ZN3sce4Json11Initializer9terminateEv(trace.owner) == 0 && *trace.owner == 0 && trace.live.size() == 1 && trace.live.at(memory) == identity,
+                    "Standalone free-callback termination must release module resources while retaining the current allocation for its original free callback");
+        } catch (const std::runtime_error&) { Require(false, "Reference-supported standalone free-callback termination must not be rejected"); }
+    }
     if (!memory) return;
-    Require(static_cast<LifecycleTrace*>(context)->live.erase(memory) == 1, "Lifecycle cleanup must release each allocation through its owner exactly once");
+    Require(trace.live.erase(memory) == 1, "Lifecycle cleanup must release each allocation through its owner exactly once");
     std::free(memory);
 }
 static void RejectOwnerTermination(LifecycleTrace& trace) {
@@ -133,10 +153,49 @@ static void CheckNotice(bool activeOperation) {
     for (const auto& [memory, identity] : trace.live) Require(memory && identity > generation, "Lifecycle retry must never retain stale allocation identities");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release retried notifier lifecycle generation");
 }
+static void CheckAllocator(bool allocate) {
+    LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
+    std::uint8_t initializer = 0; trace.owner = &initializer;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize direct allocator lifecycle contracts");
+    const auto baseline = trace.live;
+    Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
+    trace.allocatorAction = allocate ? AllocatorAction::RejectAllocate : AllocatorAction::RejectFree;
+    const char* document = allocate ? "true" : "42";
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, document, std::strlen(document)) == 0 && initializer == 1 && trace.refused == 1 && trace.allocatorAction == AllocatorAction::None,
+            "Caught allocator callback termination must preserve actual parser completion and the active module");
+    Require(allocate ? value.type == 1 && (value.payload & 0xff) == 1 : value.type == 3 && value.payload == 42,
+            "Allocator lifecycle refusal must preserve the parser's exact scalar result");
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, "false", 5) == 0 && value.type == 1 && !(value.payload & 0xff) && trace.refused == 1,
+            "Following operations must remain usable after allocation/free callback lifecycle refusal");
+    _ZN3sce4Json5ValueD1Ev(&value);
+    Require(trace.live == baseline && _ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(),
+            "Direct allocator lifecycle refusal must preserve original module generations through ordinary teardown");
+}
+static void CheckStandaloneFree() {
+    LifecycleTrace trace; LifecycleAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
+    std::uint8_t initializer = 0; trace.owner = &initializer;
+    _ZN3sce4Json11InitializerC1Ev(&initializer);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize standalone free lifecycle contract");
+    void* memory = _ZN3sce4Json6MallocEm(8);
+    Require(memory != nullptr, "Standalone lifecycle preservation requires a real allocated buffer");
+    trace.allocatorAction = AllocatorAction::TerminateFree;
+    _ZN3sce4Json4FreeEPv(memory);
+    Require(initializer == 0 && trace.live.empty() && trace.allocatorAction == AllocatorAction::None && !trace.refused,
+            "Standalone free must complete callback-driven termination and release the original buffer");
+    const auto generation = trace.generation;
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12,
+            "Initialization must remain usable after standalone free-callback termination");
+    for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Reinitialization must own fresh resource generations after free-callback termination");
+    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release standalone free lifecycle retry");
+}
 int main() {
     CheckRecovery(false);
     CheckRecovery(true);
     CheckNotice(false);
     CheckNotice(true);
+    CheckAllocator(true);
+    CheckAllocator(false);
+    CheckStandaloneFree();
     return 0;
 }

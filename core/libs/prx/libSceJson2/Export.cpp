@@ -166,13 +166,13 @@ Globals& State() {
     return globals;
 }
 
-thread_local std::uint32_t notificationDepth = 0;
+thread_local std::uint32_t allocatorCallbackDepth = 0;
 
-struct NotificationScope {
-    NotificationScope() { ++notificationDepth; }
-    ~NotificationScope() { --notificationDepth; }
-    NotificationScope(const NotificationScope&) = delete;
-    NotificationScope& operator=(const NotificationScope&) = delete;
+struct AllocatorCallbackScope {
+    AllocatorCallbackScope() { ++allocatorCallbackDepth; }
+    ~AllocatorCallbackScope() { --allocatorCallbackDepth; }
+    AllocatorCallbackScope(const AllocatorCallbackScope&) = delete;
+    AllocatorCallbackScope& operator=(const AllocatorCallbackScope&) = delete;
 };
 
 struct KernelMutexLock {
@@ -233,11 +233,15 @@ AllocParamRtti RttiCallbacks() {
 void* Allocate(const AllocationContext& context, std::size_t size) {
     auto* const* table = *static_cast<void* const* const*>(context.allocator);
     const auto allocate = reinterpret_cast<void* (APS5_VABI*)(void*, std::size_t, void*)>(table[2]);
-    void* memory = allocate(context.allocator, size, context.userData);
+    void* memory;
+    {
+        AllocatorCallbackScope scope;
+        memory = allocate(context.allocator, size, context.userData);
+    }
     if (!memory) {
         const auto notify = reinterpret_cast<void (APS5_VABI*)(void*, int, std::size_t, void*)>(table[4]);
         {
-            NotificationScope scope;
+            AllocatorCallbackScope scope;
             notify(context.allocator, JsonErrorOutOfMemory, size, context.userData);
         }
         auto& state = State();
@@ -251,6 +255,7 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
 void Release(const AllocationContext& context, void* memory) {
     auto* const* table = *static_cast<void* const* const*>(context.allocator);
     const auto free = reinterpret_cast<void (APS5_VABI*)(void*, void*, void*)>(table[3]);
+    AllocatorCallbackScope scope;
     free(context.allocator, memory, context.userData);
 }
 
@@ -2547,7 +2552,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
-    if (state.callbackActive || (notificationDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
+    if (state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
     state.callback = nullptr;
     state.context = nullptr;
     state.handlers = {};
