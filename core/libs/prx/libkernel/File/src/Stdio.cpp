@@ -245,7 +245,7 @@ void File::SharePositionedTransfer(int from, int to) {
     if (!source) source = std::make_shared<PositionedLock>();
     g_positionedLocks[to] = source;
 }
-static bool LimitSharedMemoryWrite(int descriptor, std::size_t& size, std::int64_t offset) {
+bool File::LimitSharedMemoryWrite_nid_no_patch(int descriptor, std::size_t& size, std::int64_t offset) {
     if (offset < 0) { errno = EINVAL; return false; }
     const auto length = WithoutParameterHandler([descriptor] { return ::_filelengthi64(descriptor); });
     if (length < 0) return false;
@@ -258,7 +258,7 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         throw std::runtime_error("NativePositioned: nbytes exceeds platform limit");
     }
     if (write && File::HasFixedSizeWrites(descriptor)) {
-        if (!LimitSharedMemoryWrite(descriptor, nbytes, offset)) return -1;
+        if (!File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, offset)) return -1;
         if (nbytes == 0) return 0;
     }
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
@@ -325,7 +325,7 @@ static std::int64_t NativeTransferBuffer(int descriptor, void* buf, std::size_t 
     if (write) {
         if (File::HasFixedSizeWrites(descriptor)) {
             const auto position = WithoutParameterHandler([descriptor] { return ::_lseeki64(descriptor, 0, SEEK_CUR); });
-            if (position < 0 || !LimitSharedMemoryWrite(descriptor, nbytes, position)) return -1;
+            if (position < 0 || !File::LimitSharedMemoryWrite_nid_no_patch(descriptor, nbytes, position)) return -1;
             if (nbytes == 0) return 0;
         }
         const auto result = File::WriteSharedMemory_nid_no_patch(descriptor, buf, nbytes);

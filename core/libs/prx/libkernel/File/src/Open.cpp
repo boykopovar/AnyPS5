@@ -74,6 +74,11 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
         throw std::runtime_error("sceKernelWrite: nbytes exceeds platform limit");
     }
     const auto positioned = File::LockPositionedTransfer(fd);
+    if (File::HasFixedSizeWrites(fd)) {
+        const auto position = ::_lseeki64(fd, 0, SEEK_CUR);
+        if (position < 0 || !File::LimitSharedMemoryWrite_nid_no_patch(fd, n, position)) return -1;
+        if (n == 0) return 0;
+    }
     const auto shared = File::WriteSharedMemory_nid_no_patch(fd, buf, n);
     if (shared != -2) return static_cast<int>(shared);
     if (File::Appends(fd)) {
