@@ -20,6 +20,19 @@ int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 }
+#if defined(JSON2_PUBLICATION_LEGACY_SDK)
+extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
+    static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
+    return words;
+}
+static constexpr std::size_t ModuleResources = 11;
+static constexpr unsigned KernelResources = 1;
+static constexpr std::size_t ModuleFreeCalls = ModuleResources + 1;
+#else
+static constexpr std::size_t ModuleResources = 12;
+static constexpr unsigned KernelResources = 2;
+static constexpr std::size_t ModuleFreeCalls = ModuleResources;
+#endif
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -75,9 +88,9 @@ static void* AllocateStorage(PublicationTrace& trace, std::size_t size) {
             ConfigureRtti(trace.nestedLegacy, *trace.pendingParameter, *trace.pendingCallbacks, trace.pendingContext);
             Require(trace.pendingParameter->allocator == trace.adapter, "Reentrant RTTI configuration must update the shared adapter before context publication");
         }
-        Require(Initialize(trace.nestedLegacy, trace.nestedOwner, trace.nestedParameter) == 0 && *trace.nestedOwner == 1 && trace.nestedTrace->live.size() == 12,
+        Require(Initialize(trace.nestedLegacy, trace.nestedOwner, trace.nestedParameter) == 0 && *trace.nestedOwner == 1 && trace.nestedTrace->live.size() == ModuleResources,
                 "Nested initialization in the unpublished-context callback must publish its actual complete resource generation");
-        CheckContext(*trace.nestedTrace, trace.nestedTrace->generation - 11, *trace.nestedParameter);
+        CheckContext(*trace.nestedTrace, trace.nestedTrace->generation - (ModuleResources - 1), *trace.nestedParameter);
         trace.nested = trace.nestedTrace->live; trace.nestedGeneration = trace.nestedTrace->generation;
         if (trace.action == Publication::CompleteNested)
             Require(_ZN3sce4Json11Initializer9terminateEv(trace.nestedOwner) == 0 && trace.nestedTrace->live.empty() && *trace.nestedOwner == 0, "The initial allocation callback may complete a nested module lifecycle before returning its allocation");
@@ -130,16 +143,16 @@ static void APS5_VABI NotifyPublication(void*, int, std::size_t, void*) { Requir
 static void* const PublicationVtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocatePublication), reinterpret_cast<void*>(FreePublication), reinterpret_cast<void*>(NotifyPublication)};
 struct PublicationAllocator { void* const* vtable = PublicationVtable; };
 static void ReclaimOrphanedFixtureEpoch(PublicationTrace& trace, const std::map<void*, AllocationIdentity>& nested, std::size_t generation) {
-    Require(trace.live == nested && trace.live.size() == 12, "The fixture may reclaim only the exact orphaned epoch already observed after library teardown");
+    Require(trace.live == nested && trace.live.size() == ModuleResources, "The fixture may reclaim only the exact orphaned epoch already observed after library teardown");
     unsigned mutexes = 0;
     for (const auto& [pointer, identity] : nested) {
-        if (identity.generation + 1 >= generation) {
+        if (identity.generation + KernelResources > generation) {
             Require(identity.size == sizeof(PthreadMutex) && scePthreadMutexDestroy(static_cast<PthreadMutex*>(pointer)) == 0,
-                    "Fixture cleanup must destroy the two real orphaned kernel mutex resources before reclaiming their handle storage");
+                    "Fixture cleanup must destroy the actual orphaned kernel mutex resources before reclaiming their handle storage");
             ++mutexes;
         }
     }
-    Require(mutexes == 2, "The SDK 6 orphaned epoch must retain its two actual mutex handles");
+    Require(mutexes == KernelResources, "The orphaned epoch must retain its SDK-specific count of actual mutex handles");
     for (const auto& [pointer, identity] : nested) {
         Require(trace.live.at(pointer) == identity, "Fixture reclamation must retain the observed orphan allocation generation");
         FreeStorage(trace, pointer);
@@ -171,19 +184,19 @@ static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool n
     trace.nestedParameter = separate ? &separateParameter : &parameter;
     trace.nestedTrace = separate ? &separateTrace : &trace;
     const int status = Initialize(outerLegacy, &outer, &parameter);
-    Require(!trace.armed && trace.nested.size() == 12 && trace.nestedGeneration == 12, "Every publication case must exercise actual first-allocation callback reentry");
+    Require(!trace.armed && trace.nested.size() == ModuleResources && trace.nestedGeneration == ModuleResources, "Every publication case must exercise actual first-allocation callback reentry");
     if (action == Publication::Handoff) {
         Require(static_cast<unsigned>(status) == 0x80848102 && *trace.nestedOwner == 1 && outer == unsigned(sharedOwner) && trace.nestedTrace->live == trace.nested && trace.releases.empty() && trace.nestedTrace->releases.empty(),
                 "A failed outer context allocation must retain the nested initializer's ownership, active byte and untouched resource generation");
-        Require(trace.live.size() == (separate ? 0u : 12u), "Outer context failure must allocate no resources in a separate outer allocator domain");
+        Require(trace.live.size() == (separate ? 0u : ModuleResources), "Outer context failure must allocate no resources in a separate outer allocator domain");
         Require(_ZN3sce4Json11Initializer9terminateEv(trace.nestedOwner) == 0 && *trace.nestedOwner == 0 && trace.live.empty() && separateTrace.live.empty(),
                 "The nested owner must terminate through its original allocator after outer initialization reports OOM");
     } else {
-        Require(status == 0 && outer == 1 && trace.live.size() == (action == Publication::Overwrite && !separate ? 24u : 12u),
+        Require(status == 0 && outer == 1 && trace.live.size() == (action == Publication::Overwrite && !separate ? 2 * ModuleResources : ModuleResources),
                 "Successful outer initialization must preserve the reference resource count in each allocator domain");
         CheckContext(trace, separate ? 1u : trace.nestedGeneration + 1, parameter);
         if (action == Publication::CompleteNested) {
-            Require(nested == 0 && trace.nestedTrace->releases.size() == 12, "Completed nested teardown must reclaim exactly its original resource generation");
+            Require(nested == 0 && trace.nestedTrace->releases.size() == ModuleResources, "Completed nested teardown must reclaim exactly its original resource generation");
             Require(!separate || (separateTrace.live.empty() && trace.releases.empty()), "A completed nested lifecycle must release only its owning allocator domain");
             for (const auto& [pointer, identity] : trace.live) Require(pointer && identity.generation > (separate ? 0u : trace.nestedGeneration), "Outer initialization after a nested lifecycle must own a fresh generation in its own domain");
         } else if (separate) {
@@ -191,7 +204,7 @@ static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool n
         }
         Require(_ZN3sce4Json11Initializer9terminateEv(&outer) == 0 && outer == 0, "Terminate the final published outer module generation");
         if (action == Publication::Overwrite) {
-            Require(trace.nestedTrace->live == trace.nested && nested == unsigned(!sharedOwner) && trace.releases.size() == 12 && (!separate || (trace.live.empty() && separateTrace.releases.empty())),
+            Require(trace.nestedTrace->live == trace.nested && nested == unsigned(!sharedOwner) && trace.releases.size() == ModuleResources && (!separate || (trace.live.empty() && separateTrace.releases.empty())),
                     "Double successful publication must retain the reference's orphaned first epoch in its original allocator domain");
             const auto released = trace.releases, nestedReleased = trace.nestedTrace->releases;
             Require(static_cast<unsigned>(_ZN3sce4Json11Initializer9terminateEv(trace.nestedOwner)) == 0x80848110 && trace.nestedTrace->live == trace.nested && trace.releases == released && trace.nestedTrace->releases == nestedReleased,
@@ -202,14 +215,14 @@ static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool n
     std::uint8_t retry = 0; _ZN3sce4Json11InitializerC1Ev(&retry);
     const auto generation = trace.generation, separateGeneration = separateTrace.generation;
     const auto separateReleases = separateTrace.releases;
-    Require(Initialize(outerLegacy, &retry, &parameter) == 0 && retry == 1 && trace.live.size() == 12, "A fresh initializer must work after every measured publication outcome");
+    Require(Initialize(outerLegacy, &retry, &parameter) == 0 && retry == 1 && trace.live.size() == ModuleResources, "A fresh initializer must work after every measured publication outcome");
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity.generation > generation, "Publication retry must retain no old fixture allocation generations");
     Require(_ZN3sce4Json11Initializer9terminateEv(&retry) == 0 && retry == 0 && trace.live.empty() && separateTrace.live.empty() && separateTrace.generation == separateGeneration && separateTrace.releases == separateReleases,
             "A fresh outer generation must not call into a stale nested allocator domain");
     if (rtti) {
         Require(trace.rttiAllocations[0] == unsigned(deferredConfiguration) && !trace.rttiReleases[0] && !separateTrace.rttiAllocations[0] && !separateTrace.rttiReleases[0] && trace.rttiAllocations[1] && trace.rttiReleases[1],
                 "RTTI module allocation and release must use the most recently configured callback table even through an older parameter object");
-        Require(!separate || (separateTrace.rttiAllocations[1] == 12 && separateTrace.rttiReleases[1] == (action == Publication::Overwrite ? 0u : 12u)), "RTTI callbacks must preserve the nested user context and leave an orphaned epoch unreleased by the library");
+        Require(!separate || (separateTrace.rttiAllocations[1] == ModuleResources && separateTrace.rttiReleases[1] == (action == Publication::Overwrite ? 0u : ModuleFreeCalls)), "RTTI callbacks must preserve the nested user context and leave an orphaned epoch unreleased by the library");
     }
 }
 int main() {
