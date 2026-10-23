@@ -1,4 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,7 +14,19 @@ struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint3
 struct String { void* storage; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
+using NullHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
+using MismatchHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
+using FloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
+using ElementHandler = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
 extern "C" {
+void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
+void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
+const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
+const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
+int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullHandler, void*);
+int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, MismatchHandler, void*);
+int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatHandler, void*);
+int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, ElementHandler, void*);
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
@@ -468,17 +482,73 @@ static const Expected Cases[]{
     {4, 1, 46, 6, "key", "[[\"recovery\"],{\"\":0}]", "6:0a2:1[6:1a1:1[5:1;];7:1o1:1{3:0;};];", 1, 47, UINT64_C(0xcebda3e1df431290), 26, UINT64_C(0x3628a04973bf9fa0), 20, UINT64_C(0xdda94b1d3104c283)},
     {4, 1, 47, 6, "key", "[[\"recovery\"],{\"k\":1}]", "6:0a2:1[6:1a1:1[5:1;];7:1o1:1{3:1;};];", 0, 47, UINT64_C(0xcebda3e1df431290), 26, UINT64_C(0x3628a04973bf9fa0), 21, UINT64_C(0xf0d02532e8d6f88c)},
 };
+struct PairCallbackContext {
+    Value replacement{};
+    const Value* receiver = nullptr;
+    unsigned nulls = 0, mismatches = 0, floats = 0, elements = 0;
+};
+static const Value& APS5_VABI NullCopy(std::int32_t type, const Value* parent, void* context) {
+    Require(type == 2 && !parent, "Copied null recovery must preserve requested type and parent ABI");
+    auto& state = *static_cast<PairCallbackContext*>(context); ++state.nulls;
+    return state.replacement;
+}
+static const Value& APS5_VABI MismatchCopy(std::int32_t type, const Value* self, const Value* parent, void* context) {
+    auto& state = *static_cast<PairCallbackContext*>(context);
+    Require(type == 2 && self == state.receiver && !parent, "Copied mismatch recovery must preserve receiver, type and parent ABI");
+    ++state.mismatches;
+    return state.replacement;
+}
+static Value* APS5_VABI FloatCopy(Value* result, std::int32_t function, double number, const Value* parent, void* context, bool* error) {
+    Require(function == 1 && number == std::numeric_limits<double>::infinity() && !parent && !error, "Copied float recovery must preserve its assignment ABI");
+    auto& state = *static_cast<PairCallbackContext*>(context); ++state.floats;
+    _ZN3sce4Json5ValueC1El(result, static_cast<std::int64_t>(state.replacement.payload));
+    return result;
+}
+static void APS5_VABI ElementCopy(int error, const String* key, const std::size_t* index, const Value* parent, const Value* self, void* context) {
+    auto& state = *static_cast<PairCallbackContext*>(context);
+    Require(static_cast<unsigned>(error) == 0x80848115 && key && !index && !parent && self == state.receiver && std::strcmp(_ZNK3sce4Json6String5c_strEv(key), "missing") == 0, "Copied element recovery must retain its exact key, receiver and parent ABI");
+    ++state.elements;
+}
+static void Register(Value& value, PairCallbackContext& context) {
+    context.receiver = &value;
+    Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&value, NullCopy, &context) == 0, "Register source null recovery");
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&value, MismatchCopy, &context) == 0, "Register source mismatch recovery");
+    Require(_ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(&value, FloatCopy, &context) == 0, "Register source float recovery");
+    Require(_ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(&value, ElementCopy, &context) == 0, "Register source element recovery");
+}
+struct MetadataSnapshot {
+    std::array<std::byte, 72> bytes;
+    std::array<void*, 5> allocations;
+    std::array<std::size_t, 5> generations;
+};
+static MetadataSnapshot Capture(const Value& value, const PairTrace& trace) {
+    MetadataSnapshot snapshot{};
+    const auto* words = static_cast<void* const*>(value.auxiliary);
+    snapshot.allocations = {value.auxiliary, words[2], words[3], words[4], words[5]};
+    std::memcpy(snapshot.bytes.data(), value.auxiliary, snapshot.bytes.size());
+    for (unsigned i = 0; i < snapshot.allocations.size(); ++i) snapshot.generations[i] = trace.live.at(snapshot.allocations[i]);
+    return snapshot;
+}
+static void Verify(const Value& value, const MetadataSnapshot& snapshot, const PairTrace& trace) {
+    Require(value.auxiliary == snapshot.allocations[0] && std::memcmp(value.auxiliary, snapshot.bytes.data(), snapshot.bytes.size()) == 0, "Copying must preserve complete source/destination auxiliary bytes and handler/context identities");
+    for (unsigned i = 0; i < snapshot.allocations.size(); ++i) Require(trace.live.at(snapshot.allocations[i]) == snapshot.generations[i], "Copying must preserve auxiliary, fallback and all three callback-record allocation generations");
+    Require(static_cast<const Value*>(snapshot.allocations[1])->parent == &value, "Copied callback metadata must retain its original fallback owner");
+}
 int main() {
     PairTrace trace; PairAllocator allocator; Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize pair allocation contracts");
     const char* documents[]{"", "null", "\"recovery\"", "{\"k\":\"recovery\",\"o\":{\"q\":1},\"a\":[true]}", "[[\"recovery\"],{\"k\":1}]"};
     const auto moduleBaseline = trace.live;
-    for (const auto& expected : Cases) for (bool base : {false, true}) {
+    for (const auto& expected : Cases) for (bool base : {false, true}) for (bool callbackSource : {false, true}) {
         String key{}; _ZN3sce4Json6StringC1EPKc(&key, "key");
         Value source{}; _ZN3sce4Json5ValueC1Ev(&source);
         const char* document = documents[expected.source];
         if (expected.source) Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&source, document, std::strlen(document)) == 0, "Construct independent pair source");
+        PairCallbackContext context;
+        _ZN3sce4Json5ValueC1El(&context.replacement, 77);
+        MetadataSnapshot sourceMetadata{};
+        if (callbackSource) { Register(source, context); sourceMetadata = Capture(source, trace); }
         const auto sourceText = Serialize(source);
         const auto baseline = trace.live;
         Pair pair; std::memset(&pair, 0xa5, sizeof(pair));
@@ -511,7 +581,19 @@ int main() {
         Require(trace.releases.size() - teardown == expected.destructionReleases && Fingerprint(trace.releases, teardown, trace.releases.size(), generation) == expected.destructionOrder,
                 "Pair destruction must release the value before its key in the reference allocation-identity order");
         Require(trace.live == baseline && Serialize(source) == sourceText, "Partial pair cleanup must preserve every source allocation generation and value");
-        _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json6StringD1Ev(&key);
+        if (callbackSource) {
+            Verify(source, sourceMetadata, trace);
+            const auto* borrowed = _ZNK3sce4Json5Value10getIntegerEv(&source);
+            Require(borrowed == reinterpret_cast<const std::int64_t*>(&context.replacement.payload) && *borrowed == 77,
+                    "Source null/mismatch callbacks must retain their borrowed result identity after failed copies are destroyed");
+            const bool nullSource = source.type == 0, objectSource = source.type == 7;
+            if (objectSource) _ZNK3sce4Json5ValueixEPKc(&source, "missing");
+            _ZN3sce4Json5Value3setEd(&source, std::numeric_limits<double>::infinity());
+            Require(source.type == 2 && source.payload == 77 && context.nulls == unsigned(nullSource) && context.mismatches == unsigned(!nullSource) && context.elements == unsigned(objectSource) && context.floats == 1,
+                    "Every partial-copy failure must leave the source's four independent handlers usable and correctly bound");
+            Verify(source, sourceMetadata, trace);
+        }
+        _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement); _ZN3sce4Json6StringD1Ev(&key);
         Require(trace.live == moduleBaseline, "Pair failure schedules must leave only the original module resources");
     }
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Release pair allocation resources");
