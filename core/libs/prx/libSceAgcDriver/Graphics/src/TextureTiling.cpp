@@ -466,23 +466,26 @@ bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t leve
     return true;
 }
 
-GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed) {
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed, bool keysReadAsStored) {
     const bool layered = viewed.dimension == TextureDimension::k2DArray || viewed.dimension == TextureDimension::k1DArray || viewed.dimension == TextureDimension::kCube;
-    if (!layered || viewed.baseArray == 0 || viewed.baseArray > viewed.depthOrLastArray || viewed.dccAddress != 0) return viewed;
+    if (!layered || viewed.baseArray == 0 || viewed.baseArray > viewed.depthOrLastArray || (viewed.dccAddress != 0 && !keysReadAsStored)) return viewed;
+    std::uint32_t sliceMask = 0;
     if (const auto xorMode = XorSwizzleMode(viewed.tileMode); xorMode != 0u) {
         const auto* equation = FindTextureSwizzleEquation(xorMode, BytesPerElement(viewed.format));
         if (equation == nullptr) return viewed;
         std::uint32_t sliceBits = 0;
         for (const auto bit : equation->bits) sliceBits |= bit >> 24u;
-        const auto sliceMask = sliceBits == 0 ? 0u : (1u << std::bit_width(sliceBits)) - 1u;
-        if ((viewed.baseArray & sliceMask) != 0) return viewed;
+        sliceMask = sliceBits == 0 ? 0u : (1u << std::bit_width(sliceBits)) - 1u;
     }
+    const auto first = viewed.baseArray & ~sliceMask;
+    if (first == 0) return viewed;
     const auto geometry = DescribeSurface(viewed);
     if (geometry.thick || geometry.layers != viewed.depthOrLastArray + 1u) return viewed;
     auto window = viewed;
-    window.baseAddress = viewed.baseAddress + geometry.GuestLayerOffset(viewed.baseArray);
-    window.depthOrLastArray = viewed.depthOrLastArray - viewed.baseArray;
-    window.baseArray = 0;
+    window.baseAddress = viewed.baseAddress + geometry.GuestLayerOffset(first);
+    window.depthOrLastArray = viewed.depthOrLastArray - first;
+    window.baseArray = viewed.baseArray - first;
+    window.dccAddress = 0;
     return window;
 }
 

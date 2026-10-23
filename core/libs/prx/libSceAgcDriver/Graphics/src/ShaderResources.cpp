@@ -752,7 +752,14 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         normalized.format = unorm16;
         return cachedTexture(context, words, normalized, components, guestBytes, depthCompare);
     }
-    if (const auto window = ViewedArrayWindow(resource); window.baseAddress != resource.baseAddress) {
+    const auto viewedWindow = [&] {
+        const auto window = ViewedArrayWindow(resource, false);
+        if (window.baseAddress != resource.baseAddress || resource.dccAddress == 0) return window;
+        if (ViewedArrayWindow(resource, true).baseAddress == resource.baseAddress) return window;
+        if (TextureClearKeys(resource, guestBytes != 0 ? guestBytes : DescribeSurface(resource).guestBytes) != DccKeys::Uncompressed) return window;
+        return ViewedArrayWindow(resource, true);
+    };
+    if (const auto window = viewedWindow(); window.baseAddress != resource.baseAddress) {
         static std::atomic<std::uint64_t> windows{0};
         const auto count = windows.fetch_add(1) + 1;
         if (count <= 5 || (count & (count - 1)) == 0) std::fprintf(stderr, "[gpu] sampled array view 0x%llx (%ux%u format %u, dimension %d, slices %u..%u) served from its viewed slices at 0x%llx; %llu such views\n", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<int>(resource.dimension), resource.baseArray, resource.depthOrLastArray, static_cast<unsigned long long>(window.baseAddress), static_cast<unsigned long long>(count));
