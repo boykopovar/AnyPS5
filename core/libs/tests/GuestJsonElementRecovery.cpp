@@ -6,6 +6,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <map>
+#include <vector>
+#include <limits>
 
 struct Value { Value* parent; void* auxiliary; std::uintptr_t payload; std::uint32_t reserved; std::int32_t type; };
 struct String { void* text; };
@@ -64,6 +67,97 @@ static void Event(const Context& trace, int calls, unsigned error, const Value* 
     Require(trace.calls == calls && trace.error == error && trace.value == value && trace.parent == parent,
             "Recovery must receive the exact error, source value, parent and context");
 }
+struct PartialElementTrace {
+    std::map<void*, std::size_t> live;
+    std::map<void*, unsigned> generations;
+    std::vector<std::size_t> requests;
+    unsigned nextGeneration = 0;
+    int budget = -1;
+    unsigned notifications = 0;
+    unsigned calls = 0;
+    const Value* expectedValue = nullptr;
+    const Value* expectedParent = nullptr;
+    const Value* expectedFallback = nullptr;
+    bool reenter = false;
+};
+static void* APS5_VABI AllocatePartialElement(void*, std::size_t size, void* data) {
+    auto& trace = *static_cast<PartialElementTrace*>(data); trace.requests.push_back(size);
+    if (!trace.budget) return nullptr;
+    if (trace.budget > 0) --trace.budget;
+    void* memory = std::malloc(size);
+    Require(memory && trace.live.emplace(memory, size).second && trace.generations.emplace(memory, ++trace.nextGeneration).second, "Partial metadata requires independent allocation generations");
+    std::memset(memory, 0xa5, size); return memory;
+}
+static void APS5_VABI FreePartialElement(void*, void* memory, void* data) {
+    if (!memory) return;
+    auto& trace = *static_cast<PartialElementTrace*>(data);
+    Require(trace.live.erase(memory) == 1 && trace.generations.erase(memory) == 1, "Partial recovery metadata must release through its owning allocator exactly once");
+    std::free(memory);
+}
+static void APS5_VABI NotifyPartialElement(void*, int error, std::size_t size, void* data) {
+    auto& trace = *static_cast<PartialElementTrace*>(data);
+    Require(static_cast<unsigned>(error) == 0x80848102 && trace.requests.back() == size, "Failure notices must identify the rejected metadata allocation");
+    ++trace.notifications;
+}
+static void APS5_VABI RecoverPartialElement(int error, const String* key, const std::size_t* index, const Value* parent, const Value* value, void* data) {
+    auto& trace = *static_cast<PartialElementTrace*>(data); ++trace.calls;
+    Require(static_cast<unsigned>(error) == 0x80848118 && !key && index && *index == std::numeric_limits<std::size_t>::max() && value == trace.expectedValue && parent == trace.expectedParent,
+            "Partial recovery must preserve error, all index bits, source, immediate parent and context");
+    if (trace.reenter) {
+        const auto calls = trace.calls;
+        Require(_ZNK3sce4Json5Value8getValueEm(value, *index) == trace.expectedFallback && trace.calls == calls, "Reentry must share the fallback while suppressing recursive callbacks");
+        _ZN3sce4Json5Value3setEl(const_cast<Value*>(trace.expectedFallback), 77);
+    }
+}
+static void* const PartialElementTable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocatePartialElement), reinterpret_cast<void*>(FreePartialElement), reinterpret_cast<void*>(NotifyPartialElement)};
+struct PartialElementAllocator { void* const* table = PartialElementTable; };
+static void CheckPartialElementFallbacks() {
+    for (unsigned budget = 0; budget <= 3; ++budget) for (bool reenter : {false, true}) {
+        PartialElementTrace trace; PartialElementAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 2, {}};
+        std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
+        Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, &parameter) == 0, "Initialize partial element recovery");
+        Value root{}; _ZN3sce4Json5ValueC1Ev(&root);
+        const auto* moduleFallback = _ZNK3sce4Json5Value8getValueEm(&root, std::numeric_limits<std::size_t>::max());
+        Require(moduleFallback && trace.live.at(const_cast<Value*>(moduleFallback)) == 32, "Initial recovery must expose the initialized module fallback");
+        const auto requests = trace.requests.size(); trace.budget = static_cast<int>(budget);
+        const int status = _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(&root, RecoverPartialElement, &trace);
+        std::vector<std::size_t> expected{72}; if (budget) expected.push_back(32); if (budget >= 2) expected.push_back(16);
+        Require(status == (budget < 3 ? static_cast<int>(0x80848102) : 0) && trace.notifications == unsigned(budget < 3) &&
+                std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
+                "Partial handler admission must preserve exact auxiliary, fallback and record request order");
+        void* originalAuxiliary = root.auxiliary; const auto retryRequests = trace.requests.size(); trace.budget = -1;
+        Require(_ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(&root, RecoverPartialElement, &trace) == 0, "Independent registration retry must succeed");
+        const auto retryExpected = budget == 0 ? std::vector<std::size_t>{72, 32, 16} : budget < 3 ? std::vector<std::size_t>{16} : std::vector<std::size_t>{};
+        Require(std::vector<std::size_t>(trace.requests.begin() + retryRequests, trace.requests.end()) == retryExpected && (!originalAuxiliary || root.auxiliary == originalAuxiliary),
+                "Registration retry must reuse admitted metadata without recreating a missing fallback");
+        auto* auxiliary = static_cast<void**>(root.auxiliary); auto* fallback = static_cast<Value*>(auxiliary[2]);
+        Require(bool(fallback) == (budget != 1) && auxiliary[5], "Failed fallback admission must remain missing after successful handler retry");
+        const auto auxiliaryGeneration = trace.generations.at(auxiliary), recordGeneration = trace.generations.at(auxiliary[5]);
+        const auto fallbackGeneration = fallback ? trace.generations.at(fallback) : 0;
+        trace.expectedFallback = fallback ? fallback : moduleFallback; trace.reenter = reenter;
+        const auto dispatch = [&](const Value* source, const Value* parent, unsigned calls) {
+            trace.expectedValue = source; trace.expectedParent = parent;
+            const auto before = trace.requests.size(); const auto notices = trace.notifications;
+            trace.budget = 0;
+            Require(_ZNK3sce4Json5Value8getValueEm(source, std::numeric_limits<std::size_t>::max()) == trace.expectedFallback && trace.calls == calls &&
+                    trace.requests.size() == before && trace.notifications == notices,
+                    "Partial fallback dispatch and callback reentry must preserve identity without allocation or notifications");
+            trace.budget = -1;
+            Require(!reenter || (trace.expectedFallback->type == 2 && trace.expectedFallback->payload == 77), "Callback mutation must remain visible through the returned fallback");
+        };
+        dispatch(&root, nullptr, 1);
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "[1]", 3) == 0, "Parsing must retain partial root recovery metadata");
+        const auto* child = _ZNK3sce4Json5Value8getValueEm(&root, 0);
+        Require(child && child->parent == &root, "The parsed child must retain its actual parent"); dispatch(child, &root, 2);
+        Require(root.auxiliary == auxiliary && auxiliary[2] == fallback && trace.generations.at(auxiliary) == auxiliaryGeneration && trace.generations.at(auxiliary[5]) == recordGeneration &&
+                (!fallback || (trace.generations.at(fallback) == fallbackGeneration && fallback->parent == &root)) &&
+                static_cast<void**>(auxiliary[5])[0] == reinterpret_cast<void*>(&RecoverPartialElement) && static_cast<void**>(auxiliary[5])[1] == &trace,
+                "Parsing and dispatch must preserve auxiliary, fallback and handler generations, callback ABI and ownership");
+        _ZN3sce4Json5ValueD1Ev(&root);
+        Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.live.empty() && trace.generations.empty(), "Every partial admission and retry must reclaim real allocation ownership");
+    }
+}
+
 int main() {
     Value root{};
     _ZN3sce4Json5ValueC1Ev(&root);
@@ -125,5 +219,6 @@ int main() {
     _ZN3sce4Json6StringD1Ev(&missing);
     _ZN3sce4Json5ValueD1Ev(&root);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0, "Terminate element recovery");
+    CheckPartialElementFallbacks();
     return 0;
 }
