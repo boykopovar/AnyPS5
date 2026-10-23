@@ -400,11 +400,17 @@ struct MapReadContext {
     unsigned mode;
     unsigned reads = 0;
     int registration = -1;
+    Pair* pair = nullptr;
+    const String* key = nullptr;
+    unsigned alias = 0;
 };
 static void UpdateInheritedMap(void* data) {
     auto& context = *static_cast<MapReadContext*>(data);
     context.registration = _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(context.target, RecoverLegacy, context.replacement);
-    _ZN3sce4Json5ValueC1ERKS1_(context.copy, context.target);
+    if (context.pair) {
+        if (context.alias == 1) _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(context.pair, context.key, context.target);
+        else _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(context.pair, context.key, context.target);
+    } else _ZN3sce4Json5ValueC1ERKS1_(context.copy, context.target);
 }
 static int APS5_VABI ReadInheritedMap(char& character, void* data) {
     auto& context = *static_cast<MapReadContext*>(data);
@@ -422,8 +428,11 @@ static int APS5_VABI ReadInheritedMap(char& character, void* data) {
 }
 static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& second) {
     const auto guestBaseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
-    for (bool existing : {false, true}) for (unsigned mode = 0; mode < 3; ++mode) {
-        Value target{}, copy{}, outer{}; ParseLegacy(target);
+    for (bool existing : {false, true}) for (unsigned mode = 0; mode < 3; ++mode) for (unsigned alias = 0; alias < 3; ++alias) {
+        Value target{}, scalarCopy{}, outer{}; Pair pair; std::memset(&pair, 0xa5, sizeof(pair));
+        Value& copy = alias ? pair.value : scalarCopy;
+        String key{}; if (alias) _ZN3sce4Json6StringC1EPKc(&key, "key");
+        ParseLegacy(target);
         if (existing) Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&target, RecoverLegacy, &first) == 0, "Prepare an existing legacy mismatch record before inherited failure");
         std::vector<LegacySnapshot> targetAllocations;
         for (const auto& [pointer, generation] : trace.guestGenerations) {
@@ -434,12 +443,17 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
         const Value targetValue = target;
         _ZN3sce4Json5ValueC1Ev(&outer);
         MapReadContext context{&trace, &target, &copy, &second, mode};
+        if (alias) { context.pair = &pair; context.key = &key; context.alias = alias; }
         const auto requests = trace.requests.size(); const auto notices = trace.notifications;
         const int status = _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&outer, ReadInheritedMap, &context);
         const auto error = static_cast<int>(0x80848102);
         Require(status == (mode ? error : 0) && context.registration == (mode == 1 ? error : 0) && context.reads == 4 && outer.type == 1 && (outer.payload & 0xff) == 1 && outer.auxiliary,
                 "Legacy map updates must observe failure only after notifier return without clearing the outer parser error or interrupting its admitted literal");
-        const auto expected = mode ? std::vector<std::size_t>{8, 24, 32} : std::vector<std::size_t>{24, 32};
+        auto expected = mode ? std::vector<std::size_t>{8} : std::vector<std::size_t>{};
+        if (alias) { expected.push_back(24); expected.push_back(4); }
+        expected.push_back(24); expected.push_back(32);
+        if (alias) Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && pair.key.storage != key.storage && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0,
+                "Inherited failure must preserve independent Pair key ownership, complete key contents and inactive padding");
         Require(std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected && trace.notifications == notices + unsigned(mode != 0) && !trace.onNotify,
                 "Inherited map registration must preserve actual failure, root-admission and notifier ordering");
         Context* targetContext = mode == 1 ? existing ? &first : nullptr : &second;
@@ -468,7 +482,12 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
                 "Inherited failure, registration retry and copying must preserve the original source auxiliary and fallback generations");
         Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&outer, "false", 5) == 0 && outer.type == 1 && !(outer.payload & 0xff),
                 "The next independent parse must not inherit an already completed callback-map failure");
-        _ZN3sce4Json5ValueD1Ev(&copy); _ZN3sce4Json5ValueD1Ev(&target); _ZN3sce4Json5ValueD1Ev(&outer); CheckMap(trace, {});
+        if (alias) {
+            if (alias == 1) _ZN3sce4Json6Object4PairD1Ev(&pair);
+            else _ZN3sce4Json6Object4PairD2Ev(&pair);
+            _ZN3sce4Json6StringD1Ev(&key);
+        } else _ZN3sce4Json5ValueD1Ev(&copy);
+        _ZN3sce4Json5ValueD1Ev(&target); _ZN3sce4Json5ValueD1Ev(&outer); CheckMap(trace, {});
         Require(trace.guestGenerations == guestBaseline && trace.heapGenerations == heapBaseline,
                 "Inherited map updates and retries must reclaim every temporary generation in both allocator domains");
     }
