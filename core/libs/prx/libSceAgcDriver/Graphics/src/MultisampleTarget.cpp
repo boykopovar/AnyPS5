@@ -812,6 +812,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
             std::erase_if(guarded(), [&](const auto& range) { return range.active == target->active && range.plane == fmaskPlane; });
             guarded().push_back({context.device, use.fmaskAddress, fmaskBytes(use), use.samples, target->active, nullptr, fmaskPlane});
             target->target.fmaskAddress = use.fmaskAddress;
+            target->target.fmaskPipeBankXor = use.fmaskPipeBankXor;
         }
         if (target->fromTexture && use.cmaskAddress != 0) {
             target->fromTexture = false;
