@@ -59,4 +59,8 @@ int APS5_VABI UI_method_set_writer_nid_postfix(LibreSslUiMethod* method, UiStrin
     return 0;
 }
 
+UiStringFunction APS5_VABI UI_method_get_writer_nid_postfix(const LibreSslUiMethod* method) {
+    return method ? method->writeString : nullptr;
+}
+
 }
