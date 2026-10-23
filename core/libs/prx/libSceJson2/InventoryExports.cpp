@@ -75,31 +75,6 @@ int APS5_VABI _ZN3sce4Json5Array8pop_backEv() {
     return 0;
 }
 
-int APS5_VABI _ZN3sce4Json5Value11referStringEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce4Json5Value12referBooleanEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce4Json5Value12referIntegerEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce4Json5Value13referUIntegerEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce4Json5Value9referRealEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -111,26 +86,6 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_() {
 }
 
 int APS5_VABI _ZN3sce4Json6MallocEm() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

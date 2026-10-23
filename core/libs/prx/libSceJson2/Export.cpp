@@ -2886,4 +2886,14 @@ void APS5_VABI _ZN3sce4Json6StringC2EPKc(String* self, const char* text) { _ZN3s
 void APS5_VABI _ZN3sce4Json6StringC2ERKS1_(String* self, const String* other) { _ZN3sce4Json6StringC1ERKS1_(self, other); }
 void APS5_VABI _ZN3sce4Json6StringC2Ev(String* self) { _ZN3sce4Json6StringC1Ev(self); }
 void APS5_VABI _ZN3sce4Json6StringD2Ev(String* self) { _ZN3sce4Json6StringD1Ev(self); }
+
+String* APS5_VABI _ZN3sce4Json5Value11referStringEv(Value* self) { return self->type == TypeString ? self->string : nullptr; }
+bool* APS5_VABI _ZN3sce4Json5Value12referBooleanEv(Value* self) { return self->type == TypeBoolean ? &self->boolean : nullptr; }
+std::int64_t* APS5_VABI _ZN3sce4Json5Value12referIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->integer : nullptr; }
+std::uint64_t* APS5_VABI _ZN3sce4Json5Value13referUIntegerEv(Value* self) { return self->type == TypeInteger || self->type == TypeUInteger ? &self->uinteger : nullptr; }
+double* APS5_VABI _ZN3sce4Json5Value9referRealEv(Value* self) { return self->type == TypeReal ? &self->real : nullptr; }
+void* APS5_VABI _ZNK3sce4Json14InitParameter211getUserDataEv(const InitParameter2* self) { return self->userData; }
+void* APS5_VABI _ZNK3sce4Json14InitParameter212getAllocatorEv(const InitParameter2* self) { return self->allocator; }
+std::size_t APS5_VABI _ZNK3sce4Json14InitParameter217getFileBufferSizeEv(const InitParameter2* self) { return self->fileBufferSize; }
+std::int32_t APS5_VABI _ZNK3sce4Json14InitParameter225getSpecialFloatFormatTypeEv(const InitParameter2* self) { return self->specialFloatFormatType; }
 }
