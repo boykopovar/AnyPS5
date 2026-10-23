@@ -1133,8 +1133,7 @@ void Clear(Node& n) {
     n.type = TypeNull;
 }
 
-void Destroy(Value& v) {
-    Clear(v);
+void ReleaseValueAuxiliary(Value& v) {
     if (v.auxiliary) {
         if (ModernValues()) {
             if (v.auxiliary->typeMismatch) Release(v.auxiliary->typeMismatch);
@@ -1152,6 +1151,11 @@ void Destroy(Value& v) {
         Release(v.auxiliary);
         v.auxiliary = nullptr;
     }
+}
+
+void Destroy(Value& v) {
+    Clear(v);
+    ReleaseValueAuxiliary(v);
     if (!ModernValues()) EraseLegacyHandler(v);
 }
 
@@ -1995,17 +1999,12 @@ struct SerializationIterator {
 template<typename TLink>
 struct SerializationPosition { TLink* first; TLink* head; bool invalid; };
 
-void PrepareLegacySerialization(Value& value, const Value* parent) {
+void PrepareValueAdmission(Value& value, const Value* parent) {
     value.parent = const_cast<Value*>(parent);
-    if (parent) {
-        if (value.auxiliary) {
-            if (value.auxiliary->fallback) { Destroy(*value.auxiliary->fallback); Release(value.auxiliary->fallback); }
-            Release(value.auxiliary);
-            value.auxiliary = nullptr;
-        }
-    } else {
+    if (parent) ReleaseValueAuxiliary(value);
+    else {
         EnsureAuxiliary(value);
-        if (value.auxiliary) { value.auxiliary->nullAccess = nullptr; value.auxiliary->nullAccessContext = nullptr; }
+        if (!ModernValues() && value.auxiliary) { value.auxiliary->nullAccess = nullptr; value.auxiliary->nullAccessContext = nullptr; }
     }
 }
 
@@ -2042,7 +2041,7 @@ public:
     CallbackSerializer(String& buffer, String* destination, SerializationCallback callback, void* context, bool collect)
         : buffer(buffer), destination(destination), callback(callback), context(context), collect(collect) {}
     int SerializeValue(const Value& value, const Value* parent = nullptr) {
-        if (!ModernValues()) PrepareLegacySerialization(const_cast<Value&>(value), parent);
+        if (!ModernValues()) PrepareValueAdmission(const_cast<Value&>(value), parent);
         if (value.type == TypeReal && !std::isfinite(value.real) && FloatConfiguration().enabled) {
             CallbackScope scope;
             const auto handlers = HandlersOf(value);
@@ -2324,10 +2323,8 @@ private:
         take();
         return true;
     }
-    void Admit(Node& out) {
-        if (!out.parent) EnsureAuxiliary(out);
-    }
-    bool number(Node& out) {
+    void Admit(Node& out, const Value* parent) { PrepareValueAdmission(out, parent); }
+    bool number(Node& out, const Value* parent) {
         ScopedString token{std::string_view{}};
         auto append = [&](char character) { AppendText(token.string, {&character, 1}); };
         if (peek() >= 0 && peek() == '-') append(static_cast<char>(take()));
@@ -2351,38 +2348,38 @@ private:
         if (text.empty()) {
             SetType(out, TypeUInteger);
             out.uinteger = 0;
-            Admit(out);
+            Admit(out, parent);
             return true;
         }
         if (integral) {
             errno = 0;
             if (text[0] == '-') {
                 const long long value = std::strtoll(Characters(token.string), nullptr, 10);
-                if (errno == 0) { SetType(out, TypeInteger); out.integer = value; Admit(out); return true; }
+                if (errno == 0) { SetType(out, TypeInteger); out.integer = value; Admit(out, parent); return true; }
             } else {
                 const unsigned long long value = std::strtoull(Characters(token.string), nullptr, 10);
                 if (errno == 0) {
                     SetType(out, TypeUInteger);
                     out.uinteger = value;
-                    Admit(out);
+                    Admit(out, parent);
                     return true;
                 }
             }
         }
         const double real = ParseDecimal(text);
-        Admit(out);
+        Admit(out, parent);
         AssignReal(out, real);
         return true;
     }
-    bool value(Node& out) {
+    bool value(Node& out, const Value* parent = nullptr) {
         if (AllocationOperation::Failed() || peek() < 0) return false;
         switch (peek()) {
-            case 'n': if (!literal("null")) return false; SetType(out, TypeNull); Admit(out); return true;
-            case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; Admit(out); return true;
-            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); out.boolean = false; Admit(out); return true;
+            case 'n': if (!literal("null")) return false; SetType(out, TypeNull); Admit(out, parent); return true;
+            case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; Admit(out, parent); return true;
+            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); out.boolean = false; Admit(out, parent); return true;
             case '"': {
                 SetType(out, TypeString);
-                Admit(out);
+                Admit(out, parent);
                 if (out.type != TypeString) throw GuestOutOfMemory{};
                 if (AllocationOperation::Failed()) return false;
                 ParsedText text{*out.string};
@@ -2393,7 +2390,7 @@ private:
                 take();
                 ++depth;
                 SetType(out, TypeArray);
-                Admit(out);
+                Admit(out, parent);
                 if (out.type != TypeArray) throw GuestOutOfMemory{};
                 skip();
                 if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
@@ -2406,7 +2403,7 @@ private:
                     auto& item = out.array->items->back();
                     item.parent = &out;
                     skip();
-                    if (!value(item)) return false;
+                    if (!value(item, &out)) return false;
                     skip();
                     if (peek() >= 0 && peek() == ',') { take(); continue; }
                     if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
@@ -2418,7 +2415,7 @@ private:
                 take();
                 ++depth;
                 SetType(out, TypeObject);
-                Admit(out);
+                Admit(out, parent);
                 if (out.type != TypeObject) throw GuestOutOfMemory{};
                 skip();
                 if (peek() >= 0 && peek() == '}') { take(); --depth; return true; }
@@ -2432,7 +2429,7 @@ private:
                     take();
                     skip();
                     Value& entry = *ObjectAccess(*out.object, key.string);
-                    if (!value(entry)) return false;
+                    if (!value(entry, &out)) return false;
                     ClearText(key.string);
                     skip();
                     if (peek() >= 0 && peek() == ',') { take(); continue; }
@@ -2442,7 +2439,7 @@ private:
             }
             default:
                 if (peek() != '-' && (peek() < '0' || peek() > '9')) return false;
-                return number(out);
+                return number(out, parent);
         }
     }
 };
