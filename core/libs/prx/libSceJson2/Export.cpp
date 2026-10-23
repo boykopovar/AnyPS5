@@ -1787,6 +1787,7 @@ public:
     Parser(ParserReadCallback read, void* context) : read(read), context(context) {}
 
     bool Parse(Node& out) {
+        failures = AllocationFailures();
         skip();
         return value(out);
     }
@@ -1801,6 +1802,7 @@ private:
     ParserReadCallback read = nullptr;
     void* context = nullptr;
     std::size_t depth = 0;
+    std::uint64_t failures = 0;
     int current = -2;
     int readError = 0;
 
@@ -1891,6 +1893,9 @@ private:
         take();
         return true;
     }
+    void Admit(Node& out) {
+        if (!out.parent) EnsureAuxiliary(out);
+    }
     bool number(Node& out) {
         std::string token;
         if (peek() >= 0 && peek() == '-') token.push_back(static_cast<char>(take()));
@@ -1915,12 +1920,13 @@ private:
             errno = 0;
             if (text[0] == '-') {
                 const long long value = std::strtoll(text.c_str(), nullptr, 10);
-                if (errno == 0) { SetType(out, TypeInteger); out.integer = value; return true; }
+                if (errno == 0) { SetType(out, TypeInteger); out.integer = value; Admit(out); return true; }
             } else {
                 const unsigned long long value = std::strtoull(text.c_str(), nullptr, 10);
                 if (errno == 0) {
                     SetType(out, TypeUInteger);
                     out.uinteger = value;
+                    Admit(out);
                     return true;
                 }
             }
@@ -1937,17 +1943,20 @@ private:
         if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
         SetType(out, TypeReal);
         out.real = real;
+        Admit(out);
         return true;
     }
     bool value(Node& out) {
         if (peek() < 0) return false;
         switch (peek()) {
-            case 'n': if (!literal("null")) return false; SetType(out, TypeNull); return true;
-            case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; return true;
-            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); out.boolean = false; return true;
+            case 'n': if (!literal("null")) return false; SetType(out, TypeNull); Admit(out); return true;
+            case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; Admit(out); return true;
+            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); out.boolean = false; Admit(out); return true;
             case '"': {
                 SetType(out, TypeString);
+                Admit(out);
                 if (out.type != TypeString) throw GuestOutOfMemory{};
+                if (AllocationFailures() != failures) return false;
                 ParsedText text{*out.string};
                 return string(text);
             }
@@ -1956,6 +1965,7 @@ private:
                 take();
                 ++depth;
                 SetType(out, TypeArray);
+                Admit(out);
                 if (out.type != TypeArray) throw GuestOutOfMemory{};
                 skip();
                 if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
@@ -1977,6 +1987,7 @@ private:
                 take();
                 ++depth;
                 SetType(out, TypeObject);
+                Admit(out);
                 if (out.type != TypeObject) throw GuestOutOfMemory{};
                 skip();
                 if (peek() >= 0 && peek() == '}') { take(); --depth; return true; }
@@ -2003,10 +2014,6 @@ private:
 };
 
 int ParseValue(Value* out, Parser& parser) {
-    if (!out->parent) {
-        const auto status = EnsureAuxiliary(*out);
-        if (status) return status;
-    }
     const auto failures = AllocationFailures();
     bool parsedOk = false;
     try {

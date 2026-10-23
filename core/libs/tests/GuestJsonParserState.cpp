@@ -28,33 +28,69 @@ const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
 static void Require(bool valid, const char* message) {
     if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
+struct ParserTrace : std::map<void*, std::size_t> {
+    int budget = -1;
+    bool once = false;
+    unsigned notifications = 0;
+    std::size_t requests = 0;
+};
 static void* APS5_VABI AllocateTracked(void*, std::size_t size, void* context) {
+    auto& trace = *static_cast<ParserTrace*>(context);
+    ++trace.requests;
+    if (trace.budget == 0) { if (trace.once) trace.budget = -1; return nullptr; }
+    if (trace.budget > 0) --trace.budget;
     void* memory = std::malloc(size);
     Require(memory != nullptr, "Tracking allocator requires host memory");
-    static_cast<std::map<void*, std::size_t>*>(context)->emplace(memory, size);
+    static_cast<ParserTrace*>(context)->emplace(memory, size);
     return memory;
 }
 static void APS5_VABI FreeTracked(void*, void* memory, void* context) {
     if (!memory) return;
-    Require(static_cast<std::map<void*, std::size_t>*>(context)->erase(memory) == 1, "Parser allocations must be freed exactly once by their owning allocator");
+    Require(static_cast<ParserTrace*>(context)->erase(memory) == 1, "Parser allocations must be freed exactly once by their owning allocator");
     std::free(memory);
+}
+static void APS5_VABI NotifyTracked(void*, int error, std::size_t, void* context) {
+    Require(static_cast<unsigned>(error) == 0x80848102, "Parser allocation failures must report the Json2 out-of-memory error");
+    ++static_cast<ParserTrace*>(context)->notifications;
 }
 static int Parse(Value& value, const char* text) {
     return _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, text, std::strlen(text));
 }
 int main() {
     JsonTest::Allocator allocator;
-    void* const vtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateTracked), reinterpret_cast<void*>(FreeTracked), reinterpret_cast<void*>(JsonTest::Notify)};
+    void* const vtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateTracked), reinterpret_cast<void*>(FreeTracked), reinterpret_cast<void*>(NotifyTracked)};
     allocator.vtable = vtable;
-    std::map<void*, std::size_t> live;
+    ParserTrace live;
     Parameter parameter{&allocator, &live, 512};
     std::uint64_t initializer[2]{};
     _ZN3sce4Json11InitializerC1Ev(initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(initializer, &parameter) == 0, "Initialize parser state tests");
     const auto baseline = live.size();
+    struct FailureCase { bool once; int budget; int type; unsigned notifications; std::size_t requests; const char* text; };
+    const FailureCase failures[]{
+        {false, 0, 0, 2, 2, ""}, {false, 1, 0, 2, 3, ""},
+        {false, 2, 5, 1, 3, ""}, {false, 3, 5, 1, 4, ""},
+        {false, 4, 5, 9, 13, ""}, {false, 5, 5, 0, 5, "abcdefghi"},
+        {true, 0, 0, 1, 3, ""}, {true, 1, 0, 1, 4, ""},
+        {true, 2, 5, 1, 3, ""}, {true, 3, 5, 1, 4, ""},
+        {true, 4, 5, 1, 6, "bcdefghi"}, {true, 5, 5, 0, 5, "abcdefghi"},
+    };
+    for (const auto& failure : failures) {
+        Value partial{}; _ZN3sce4Json5ValueC1El(&partial, 77);
+        const auto notifications = live.notifications;
+        const auto requests = live.requests;
+        live.budget = failure.budget; live.once = failure.once;
+        const auto status = static_cast<unsigned>(Parse(partial, "\"abcdefghi\""));
+        live.budget = -1; live.once = false;
+        Require(status == (failure.notifications ? 0x80848102u : 0u) && partial.type == failure.type, "String parser allocation failures must retain the reference type and status");
+        Require(live.notifications - notifications == failure.notifications && live.requests - requests == failure.requests, "String parser failures must follow storage-before-metadata admission and character retries");
+        if (partial.type == 5) Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(reinterpret_cast<const String*>(partial.payload)), failure.text) == 0, "Failed string parsing must retain the admitted character suffix");
+        _ZN3sce4Json5ValueD1Ev(&partial);
+        Require(live.size() == baseline, "String parser failure must reclaim partial storage and metadata");
+    }
     for (const char* text : {"", "?", "tru"}) {
         Value value{}; _ZN3sce4Json5ValueC1El(&value, 77);
-        Require(static_cast<unsigned>(Parse(value, text)) == 0x80848101 && value.type == 2 && value.payload == 77, "Unrecognized or incomplete scalar input must preserve the previous payload");
+        Require(static_cast<unsigned>(Parse(value, text)) == 0x80848101 && value.type == 2 && value.payload == 77 && !value.auxiliary, "Unrecognized or incomplete scalar input must preserve the previous payload");
         _ZN3sce4Json5ValueD1Ev(&value);
     }
     for (const char* text : {"[1,", "[1,?]"}) {
