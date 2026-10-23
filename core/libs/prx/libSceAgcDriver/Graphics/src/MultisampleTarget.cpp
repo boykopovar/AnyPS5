@@ -1216,7 +1216,7 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
     }
     if (other == nullptr) {
         Require(Recorder::Active() != nullptr, "a multisampled texture is only sampled by recorded draws and dispatches");
-        return createFilled(context, resource, format, "sampling").FirstSample(components);
+        return createFilled(context, resource, format, "sampling", false).FirstSample(components);
     }
     char text[320];
     std::snprintf(text, sizeof(text), "AGC graphics: reading sample 0 of multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));
