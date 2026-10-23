@@ -107,6 +107,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/RequestSerializerTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp)
     target_include_directories(request_serializer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/libs
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
     add_test(NAME request_serializer COMMAND request_serializer_tests)

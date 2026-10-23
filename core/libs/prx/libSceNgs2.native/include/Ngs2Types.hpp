@@ -9,9 +9,14 @@
 static constexpr int SCE_NGS2_OK = 0;
 static constexpr int SCE_NGS2_ERROR_INVALID_OUT_ADDRESS = static_cast<int>(0x804A8010);
 static constexpr int SCE_NGS2_ERROR_INVALID_OUT_SIZE = static_cast<int>(0x804A8011);
+static constexpr int SCE_NGS2_ERROR_INVALID_BUFFER_INFO = static_cast<int>(0x804A8020);
+static constexpr int SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR = static_cast<int>(0x804A8023);
+static constexpr int SCE_NGS2_ERROR_INVALID_SAMPLE_RATE = static_cast<int>(0x804A8051);
 static constexpr int SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE = static_cast<int>(0x804A8201);
 static constexpr int SCE_NGS2_ERROR_INVALID_RACK_HANDLE = static_cast<int>(0x804A8202);
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_INDEX = static_cast<int>(0x804A8305);
+static constexpr int SCE_NGS2_ERROR_INVALID_NUM_GRAIN_SAMPLES = static_cast<int>(0x804A8310);
+static constexpr int SCE_NGS2_ERROR_INVALID_MAX_GRAIN_SAMPLES = static_cast<int>(0x804A8311);
 static constexpr int SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA = static_cast<int>(0x804A8430);
 static constexpr int SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT = static_cast<int>(0x804A8431);
 static constexpr int SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT = static_cast<int>(0x804A8432);

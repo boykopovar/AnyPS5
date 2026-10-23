@@ -124,7 +124,7 @@ int main() {
         require(mblen_nid_postfix(nullptr, 1) == 0 && mblen_nid_postfix("ab", 2) == 1 && mblen_nid_postfix("", 1) == 0);
         require(wctomb_nid_postfix(nullptr, 0x41) == 0);
         require(wctomb_nid_postfix(out, 0x42) == 1 && out[0] == 'B');
-        require(wctomb_nid_postfix(out, 0x263a) == -1);
+        require(wctomb_nid_postfix(out, 0x263a) == 3 && std::memcmp(out, "\xe2\x98\xba", 3) == 0);
     }
     const char16_t split[] = {u'a', u'b', 0, u'c', 0};
     require(wcslen_nid_postfix(u"") == 0);

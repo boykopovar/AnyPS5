@@ -236,6 +236,216 @@ bool ProgramUsesWorkgroup(const ShaderSnapshot& snapshot, std::size_t codeOffset
     return used;
 }
 
+namespace {
+
+bool readOnlyMemoryOp(ShaderRecompiler::RdnaOpcode op) {
+    using Op = ShaderRecompiler::RdnaOpcode;
+    switch (op) {
+        case Op::SLoadDword:
+        case Op::SLoadDwordx2:
+        case Op::SLoadDwordx4:
+        case Op::SLoadDwordx8:
+        case Op::SLoadDwordx16:
+        case Op::BufferLoadFormatX:
+        case Op::BufferLoadFormatXy:
+        case Op::BufferLoadFormatXyz:
+        case Op::BufferLoadFormatXyzw:
+        case Op::BufferLoadDword:
+        case Op::BufferLoadDwordx2:
+        case Op::BufferLoadDwordx4:
+        case Op::ImageSample:
+        case Op::ImageSampleLz:
+        case Op::ImageSampleBCl:
+        case Op::ImageSampleBClO:
+        case Op::ImageSampleBO:
+        case Op::ImageSampleC:
+        case Op::ImageSampleCB:
+        case Op::ImageSampleCBCl:
+        case Op::ImageSampleCBClO:
+        case Op::ImageSampleCBO:
+        case Op::ImageSampleCCl:
+        case Op::ImageSampleCClO:
+        case Op::ImageSampleCD:
+        case Op::ImageSampleCDCl:
+        case Op::ImageSampleCDClO:
+        case Op::ImageSampleCDO:
+        case Op::ImageSampleCL:
+        case Op::ImageSampleCLzO:
+        case Op::ImageSampleCLO:
+        case Op::ImageSampleCO:
+        case Op::ImageSampleCl:
+        case Op::ImageSampleClO:
+        case Op::ImageSampleD:
+        case Op::ImageSampleDCl:
+        case Op::ImageSampleDO:
+        case Op::ImageSampleLzO:
+        case Op::ImageSampleO:
+        case Op::ImageSampleCd:
+        case Op::ImageSampleCdCl:
+        case Op::ImageSampleCCd:
+        case Op::ImageSampleCCdCl:
+        case Op::ImageSampleCdO:
+        case Op::ImageSampleCdClO:
+        case Op::ImageSampleCCdO:
+        case Op::ImageSampleCCdClO:
+        case Op::ImageSampleDG16:
+        case Op::ImageSampleDClG16:
+        case Op::ImageSampleCDG16:
+        case Op::ImageSampleCDClG16:
+        case Op::ImageSampleDOG16:
+        case Op::ImageSampleDClOG16:
+        case Op::ImageSampleCDOG16:
+        case Op::ImageSampleCDClOG16:
+        case Op::ImageSampleCdG16:
+        case Op::ImageSampleCdClG16:
+        case Op::ImageSampleCCdG16:
+        case Op::ImageSampleCCdClG16:
+        case Op::ImageSampleCdOG16:
+        case Op::ImageSampleCdClOG16:
+        case Op::ImageSampleCCdOG16:
+        case Op::ImageSampleCCdClOG16:
+        case Op::ImageLoad:
+        case Op::ImageGetResinfo:
+        case Op::SBufferLoadDword:
+        case Op::SBufferLoadDwordx2:
+        case Op::SBufferLoadDwordx4:
+        case Op::SBufferLoadDwordx8:
+        case Op::SBufferLoadDwordx16:
+        case Op::SScratchLoadDword:
+        case Op::SScratchLoadDwordx2:
+        case Op::SScratchLoadDwordx4:
+        case Op::BufferLoadUbyte:
+        case Op::BufferLoadSbyte:
+        case Op::BufferLoadUshort:
+        case Op::BufferLoadSshort:
+        case Op::BufferLoadDwordx3:
+        case Op::BufferLoadUbyteD16:
+        case Op::BufferLoadUbyteD16Hi:
+        case Op::BufferLoadSbyteD16:
+        case Op::BufferLoadSbyteD16Hi:
+        case Op::BufferLoadShortD16:
+        case Op::BufferLoadShortD16Hi:
+        case Op::TbufferLoadFormatX:
+        case Op::TbufferLoadFormatXy:
+        case Op::TbufferLoadFormatXyz:
+        case Op::TbufferLoadFormatXyzw:
+        case Op::TbufferLoadFormatD16X:
+        case Op::TbufferLoadFormatD16Xy:
+        case Op::TbufferLoadFormatD16Xyz:
+        case Op::TbufferLoadFormatD16Xyzw:
+        case Op::BufferLoadFormatD16X:
+        case Op::BufferLoadFormatD16Xy:
+        case Op::BufferLoadFormatD16Xyz:
+        case Op::BufferLoadFormatD16Xyzw:
+        case Op::BufferLoadFormatD16HiX:
+        case Op::FlatLoadUbyte:
+        case Op::FlatLoadSbyte:
+        case Op::FlatLoadUshort:
+        case Op::FlatLoadSshort:
+        case Op::FlatLoadDword:
+        case Op::FlatLoadDwordx2:
+        case Op::FlatLoadDwordx3:
+        case Op::FlatLoadDwordx4:
+        case Op::GlobalLoadDwordAddtid:
+        case Op::FlatLoadUbyteD16:
+        case Op::FlatLoadUbyteD16Hi:
+        case Op::FlatLoadSbyteD16:
+        case Op::FlatLoadSbyteD16Hi:
+        case Op::FlatLoadShortD16:
+        case Op::FlatLoadShortD16Hi:
+        case Op::ImageGetLod:
+        case Op::ImageLoadMip:
+        case Op::ImageLoadPck:
+        case Op::ImageLoadPckSgn:
+        case Op::ImageLoadMipPck:
+        case Op::ImageLoadMipPckSgn:
+        case Op::ImageLoadBy2:
+        case Op::ImageLoadBy4:
+        case Op::ImageLoadMipBy2:
+        case Op::ImageLoadMipBy4:
+        case Op::ImageLoadPck2:
+        case Op::ImageLoadPck4:
+        case Op::ImageLoadMipPck2:
+        case Op::ImageLoadMipPck4:
+        case Op::ImageMsaaLoad:
+        case Op::ImageGather4Lz:
+        case Op::ImageGather4C:
+        case Op::ImageGather4CLz:
+        case Op::ImageGather4LzO:
+        case Op::ImageGather4CO:
+        case Op::ImageGather4CLzO:
+        case Op::ImageGather4h:
+        case Op::ImageGather4hPck:
+        case Op::ImageGather4:
+        case Op::ImageGather4B:
+        case Op::ImageGather4BCl:
+        case Op::ImageGather4BClO:
+        case Op::ImageGather4BO:
+        case Op::ImageGather4Cl:
+        case Op::ImageGather4ClO:
+        case Op::ImageGather4CB:
+        case Op::ImageGather4CBCl:
+        case Op::ImageGather4CBClO:
+        case Op::ImageGather4CBO:
+        case Op::ImageGather4CCl:
+        case Op::ImageGather4CClO:
+        case Op::ImageGather4CL:
+        case Op::ImageGather4CLO:
+        case Op::ImageGather4L:
+        case Op::ImageGather4LO:
+        case Op::ImageGather4O:
+        case Op::ImageBvhIntersectRay:
+        case Op::SGl1Inv:
+        case Op::SDcacheInv:
+        case Op::SDcacheWb:
+        case Op::SMemtime:
+        case Op::SMemrealtime:
+        case Op::SDcacheDiscard:
+        case Op::SDcacheDiscardX2:
+        case Op::BufferGl0Inv:
+        case Op::BufferGl1Inv:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool decodedWritesMemory(std::span<const std::uint32_t> code) {
+    using Family = ShaderRecompiler::RdnaInstructionFamily;
+    using Op = ShaderRecompiler::RdnaOpcode;
+    try {
+        const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(code);
+        return std::any_of(decoded.instructions.begin(), decoded.instructions.end(), [](const auto& instruction) {
+            switch (instruction.family) {
+            case Family::MUBUF: case Family::MTBUF: case Family::FLAT: case Family::MIMG: case Family::SMEM:
+                return !readOnlyMemoryOp(instruction.op);
+            case Family::DS:
+                return instruction.gds || instruction.op == Op::DsGwsInit || instruction.op == Op::DsGwsBarrier || instruction.op == Op::DsGwsSemaV || instruction.op == Op::DsGwsSemaP || instruction.op == Op::DsGwsSemaBr || instruction.op == Op::DsGwsSemaReleaseAll || instruction.op == Op::DsOrderedCount || instruction.op == Op::DsAppend || instruction.op == Op::DsConsume;
+            case Family::Unknown:
+                return true;
+            default:
+                return instruction.op == Op::SSetpcB64 || instruction.op == Op::SSwappcB64 || instruction.op == Op::SRfeB64;
+            }
+        });
+    } catch (const std::exception&) {
+        return true;
+    }
+}
+
+}
+
+bool ProgramWritesMemory(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    constexpr std::uint8_t Unknown = 0, Reads = 1, Writes = 2;
+    if (codeOffset == 0) {
+        const auto cached = snapshot.memoryWrites->load(std::memory_order_acquire);
+        if (cached != Unknown) return cached == Writes;
+    }
+    if (codeOffset > snapshot.code.size()) return true;
+    const bool writes = decodedWritesMemory(std::span(snapshot.code).subspan(codeOffset));
+    if (codeOffset == 0) snapshot.memoryWrites->store(writes ? Writes : Reads, std::memory_order_release);
+    return writes;
+}
+
 std::uint32_t PositionExportLayout(const ShaderSnapshot* snapshot, std::size_t codeOffset, std::span<const std::uint32_t> code, std::uint32_t paClVsOutCntl, const ShaderSnapshot* continuation) {
     constexpr std::uint8_t Unknown = 0, Unused = 1, Used = 2;
     const auto bits = paClVsOutCntl & Graphics::PositionExportLayoutBits;

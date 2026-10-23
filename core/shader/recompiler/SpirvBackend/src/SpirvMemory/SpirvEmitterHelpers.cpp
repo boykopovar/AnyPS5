@@ -218,13 +218,18 @@ void DefineInputs(SpirvEmitterState& state) {
         const auto reads = [&](StageInputKind kind) {
             return std::any_of(state.inputs.begin(), state.inputs.end(), [&](const SpirvInputBinding& input) { return input.kind == kind; });
         };
-        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective)}, state.meshBarycentricPixel);
+        emulation = LayoutBarycentricEmulation(parameters, {true, reads(StageInputKind::BaryCoordSmooth), reads(StageInputKind::BaryCoordNoPerspective), state.program.Info().smoothOffsetBarycentrics}, state.meshBarycentricPixel);
         if (state.meshBarycentricPixel && emulation.positionsLocation != BarycentricEmulationLayout::NoLocation) {
             state.pixelFlatPositions = DefineInterfaceVariable(state, state.module.Type(spv::OpTypeArray, TypeF32Vector(state, 4u), ConstantU32(state, 3u)), spv::StorageClassInput, "meshBarycentricPositions");
             state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationLocation, emulation.positionsLocation);
             state.module.AddAnnotation(spv::OpDecorate, state.pixelFlatPositions, spv::DecorationPerPrimitiveEXT);
             state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
             state.module.EmitExtension("SPV_EXT_mesh_shader");
+        }
+        if (emulation.reciprocalWLocation != BarycentricEmulationLayout::NoLocation) {
+            state.barycentricReciprocalWVariable = DefineInterfaceVariable(state, TypeF32Vector(state, 3u), spv::StorageClassInput, "gl_BarycentricReciprocalW");
+            state.module.AddAnnotation(spv::OpDecorate, state.barycentricReciprocalWVariable, spv::DecorationNoPerspective);
+            state.module.AddAnnotation(spv::OpDecorate, state.barycentricReciprocalWVariable, spv::DecorationLocation, emulation.reciprocalWLocation);
         }
     }
     for (auto& input : state.inputs) {

@@ -4642,6 +4642,9 @@ bool unitShadowTests(const Device& device, Recorder& recorder) {
     retile(*half, unit3, unit / 2, 0x22, true);
     Require(AnyShadowedOverlaps(unit3, 1) && AnyShadowedOverlaps(unit4 - 1, 1) && AnyShadowedOverlaps(unit3 + 1000, 64), "a fresh unit is not seen as shadowed");
     Require(!AnyShadowedOverlaps(unit3 - 1, 1) && !AnyShadowedOverlaps(unit4, unit) && !AnyShadowedOverlaps(address, 3 * unit), "a range outside the unit is seen as shadowed");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> outside{{{unit3 - 8, unit3}, {unit4, unit4 + unit}}};
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> reaching{{{unit3 - 8, unit3}, {unit4 - 4, unit4}}};
+    Require(!AnyShadowedOverlaps(outside) && AnyShadowedOverlaps(reaching), "a set of ranges around the fresh unit was answered wrongly");
     {
         // An upload's runs over units 2..4 split at unit 3's freshness; the fresh piece reads the slab.
         const std::pair<std::uint64_t, std::uint64_t> run{2 * unit, 5 * unit};
@@ -6420,6 +6423,9 @@ void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
                 context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
                 image->MarkDirty();
+                const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> beside{{{address - 64, address - 16}, {address + surfaceBytes, address + surfaceBytes + 64}}};
+                const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> touching{{{address - 64, address - 16}, {address + surfaceBytes - 4, address + surfaceBytes}}};
+                Require(!StorageTexture::AnyPendingOverlaps(beside) && StorageTexture::AnyPendingOverlaps(touching), "(c) " + what + ": a set of ranges beside the pending image or touching its last word was answered wrongly");
                 for (std::size_t i = 0; i < 4096; ++i) memory[offset + i] = pattern(offset + i);
                 if (changed) memory[offset + 16] = static_cast<std::uint8_t>(~pattern(offset + 16));
                 AgcDriver::GuestMemory::CollectWritesUncached(blockAddress, bytes);

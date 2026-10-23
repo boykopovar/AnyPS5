@@ -623,7 +623,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
     CheckClosedStreamWrites();
     CheckDescriptorAccessModes();
-    Require(_Getmbcurmax_nid_postfix() == 1 && _Getmbcurmax_nid_postfix() == ___mb_cur_max_nid_postfix());
+    Require(_Getmbcurmax_nid_postfix() == 3 && ___mb_cur_max_nid_postfix() == 1);
     CheckFlushWhileReading();
     Require(fdopen_nid_postfix(-1, "rb") == nullptr && *__error_nid_postfix() == 9);
     Require(fdopen_nid_postfix(0, nullptr) == nullptr && *__error_nid_postfix() == 22);

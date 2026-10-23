@@ -1673,7 +1673,7 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     };
     if (received < 0) return finish(received == -21 || received == -29 ? 22 : static_cast<int>(-received));
     const auto socket = Lookup(descriptor);
-    if (!socket) return finish(9);
+    if (!socket) return finish(*__error_nid_postfix());
     if (socket->type != 1) return finish(22);
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);

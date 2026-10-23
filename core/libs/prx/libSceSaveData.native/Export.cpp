@@ -37,6 +37,7 @@ static std::string save_root() {
 static std::mutex g_state_mutex;
 static std::deque<SaveDataEvent> g_events;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_BACKUP = 2;
+constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_CONVERT = 5;
 
 static bool dir_name_match(const char* str, const char* pattern) {
     if (pattern == nullptr || pattern[0] == '\0') {
@@ -952,6 +953,13 @@ static int convert(const SaveDataConvert* param) {
         return SAVE_DATA_ERROR_NOT_FOUND;
     }
     g_convertProgress = 1.0f;
+    SaveDataEvent event{};
+    event.type = SAVE_DATA_EVENT_TYPE_CONVERT;
+    event.error_code = SAVE_DATA_OK;
+    event.user_id = param->user_id;
+    event.dir_name = *param->dir_name;
+    std::lock_guard lock(g_state_mutex);
+    g_events.push_back(event);
     return SAVE_DATA_OK;
 }
 

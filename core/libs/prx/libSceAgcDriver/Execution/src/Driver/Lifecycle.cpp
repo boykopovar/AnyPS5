@@ -161,7 +161,13 @@ void Driver::stop() {
     for (auto& [queue, worker] : workers) {
         if (worker.thread.joinable()) worker.thread.join();
     }
+    try {
+        DrawFinisher::Get().Drain();
+    } catch (...) {
+    }
     DrawPipeline::Queue0().Stop();
+    DrawPipeline::Queue0().ReleaseRetired();
+    DrawFinisher::Get().ReleaseRan();
     StopWorkerSampler();
     CloseRegistrationPreparation();
     Graphics::StopPipelineLibraryWorker();

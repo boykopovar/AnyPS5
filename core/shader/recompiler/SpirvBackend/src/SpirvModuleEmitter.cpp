@@ -142,7 +142,10 @@ std::uint32_t EmitSampleOffset(SpirvEmitterState& state) {
 }
 
 std::uint32_t EmitOffsetBarycentricU32(SpirvEmitterState& state, StageInputKind kind, std::uint32_t component) {
-    const auto variable = InputVariableForKind(state, BarycentricInputOf(kind));
+    const bool smoothOffset = kind == StageInputKind::BaryCoordSmoothCenter || kind == StageInputKind::BaryCoordSmoothSample;
+    const auto variable = smoothOffset && state.barycentricReciprocalWVariable != 0u
+        ? state.barycentricReciprocalWVariable
+        : InputVariableForKind(state, BarycentricInputOf(kind));
     if (variable == 0u) {
         throw std::runtime_error("an offset barycentric read lacks its barycentric input");
     }
@@ -156,6 +159,20 @@ std::uint32_t EmitOffsetBarycentricU32(SpirvEmitterState& state, StageInputKind 
     state.module.AddFunction(spv::OpExtInst, TypeF32Vector(state, 3u), weights, GlslStd450(state), GLSLstd450InterpolateAtOffset, variable, offset);
     const auto weight = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), weight, weights, component + 1u);
+    if (smoothOffset && state.barycentricReciprocalWVariable != 0u) {
+        std::array<std::uint32_t, 3> components{};
+        for (std::uint32_t index = 0; index < components.size(); ++index) {
+            components[index] = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), components[index], weights, index);
+        }
+        const auto firstSum = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFAdd, TypeF32(state), firstSum, components[0], components[1]);
+        const auto sum = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFAdd, TypeF32(state), sum, firstSum, components[2]);
+        const auto normalized = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFDiv, TypeF32(state), normalized, weight, sum);
+        return Unary(state, spv::OpBitcast, TypeU32(state), normalized);
+    }
     return Unary(state, spv::OpBitcast, TypeU32(state), weight);
 }
 

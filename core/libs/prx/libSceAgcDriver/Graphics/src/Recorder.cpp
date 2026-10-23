@@ -3451,6 +3451,7 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
     } else {
         ++batch.completionLabelCount;
         completionLabels.fetch_add(1, std::memory_order_acq_rel);
+        GuestMemory::BreakProofs();
     }
     // The table entry before the write note: the note bumps the generation a poller watches, and a
     // poller that sees the bump then finds the label without the GPU mutex.
@@ -3467,6 +3468,7 @@ bool Recorder::AfterRecordedWork(std::function<void()> action) {
     batch.completions.push_back(std::move(action));
     ++batch.completionLabelCount;
     completionLabels.fetch_add(1, std::memory_order_acq_rel);
+        GuestMemory::BreakProofs();
     if (&batch == open.get() && activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
         pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
     }
@@ -3494,6 +3496,7 @@ void Recorder::NoteWrittenBack(std::uint64_t address, std::size_t bytes) {
             label.counted = true;
             ++batch.completionLabelCount;
             completionLabels.fetch_add(1, std::memory_order_acq_rel);
+        GuestMemory::BreakProofs();
             completionLabelsCountedLate.fetch_add(1, std::memory_order_relaxed);
             recorder->markBehindCompletion(batch, label.begin, label.end);
         }

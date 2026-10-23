@@ -7969,6 +7969,9 @@ void barycentricEmulationTests() {
     const std::array<FragmentParameter, 3> parameters{{{0u, 0u, false, false}, {1u, 1u, false, true}, {2u, 2u, true, false}}};
     const auto layout = LayoutBarycentricEmulation(parameters, {true, true, true});
     Require(layout.smoothLocation == 1u && layout.linearLocation == 3u && layout.perVertexLocations == std::vector<std::pair<std::uint32_t, std::uint32_t>>{{1u, 4u}}, "emulated barycentrics did not take the free locations in order");
+    const auto offsetLayout = LayoutBarycentricEmulation(parameters, {true, true, false, true});
+    Require(offsetLayout.smoothLocation == 1u && offsetLayout.reciprocalWLocation == 3u && offsetLayout.perVertexLocations == std::vector<std::pair<std::uint32_t, std::uint32_t>>{{1u, 4u}}, "perspective offset emulation did not reserve reciprocal-w inputs");
+    Require(LayoutBarycentricEmulation(parameters, {true, true, false}).reciprocalWLocation == BarycentricEmulationLayout::NoLocation, "non-offset perspective barycentrics reserved reciprocal-w inputs");
     Require(LayoutBarycentricEmulation(parameters, {}).perVertexLocations.empty() && LayoutBarycentricEmulation(parameters, {}).smoothLocation == BarycentricEmulationLayout::NoLocation, "an inactive emulation was given locations");
     std::vector<FragmentParameter> crowded;
     for (std::uint32_t location = 0; location < 11u; ++location) crowded.push_back({location, location, false, true});

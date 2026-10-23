@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 // For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -2057,10 +2058,25 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const bool scoped = firstLayer != 0 || lastLayer != trackedLayers;
+    const bool epochProofs = ShaderResources::EpochProofs();
+    const auto epoch = epochProofs ? GuestMemory::CollectEpoch() : 0;
+    if (epoch != 0 && provedEpoch.load(std::memory_order_relaxed) == epoch && provedProof.load(std::memory_order_relaxed) == GuestMemory::ProofSerial() && provedPending.load(std::memory_order_relaxed) == PendingSerial()) {
+        NoteProved();
+        refreshesProved.fetch_add(1, std::memory_order_relaxed);
+        epochRefreshes.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    const auto proofBefore = GuestMemory::ProofSerial();
+    const auto pendingBefore = PendingSerial();
     CompletePendingCpuWrites(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     if (descriptor.dccAddress != 0) CompletePendingCpuWrites(context, descriptor.dccAddress, DccKeyBytes(guestBytes));
     if (refreshProved()) {
         layerBehind.clear();
+        if (epoch != 0) {
+            provedEpoch.store(epoch, std::memory_order_relaxed);
+            provedProof.store(proofBefore, std::memory_order_relaxed);
+            provedPending.store(pendingBefore, std::memory_order_relaxed);
+        }
         NoteProved();
         refreshesProved.fetch_add(1, std::memory_order_relaxed);
         if (profile) LookupOutcomes::Add(LookupOutcomes::RefreshProved, start);
@@ -3730,11 +3746,19 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
-    std::vector<bool> unsaved(trackedLayers, false);
+    std::vector<bool> unsaved;
     bool anyUnsaved = false;
-    for (std::uint32_t layer = first; layer < first + count; ++layer) {
-        unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
-        anyUnsaved = anyUnsaved || unsaved[layer];
+    const bool trims = CommitTrims();
+    if (trims) {
+        for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
+    }
+    if (!trims || anyUnsaved) {
+        unsaved.assign(trackedLayers, false);
+        anyUnsaved = false;
+        for (std::uint32_t layer = first; layer < first + count; ++layer) {
+            unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
+            anyUnsaved = anyUnsaved || unsaved[layer];
+        }
     }
     if (anyUnsaved && !GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) captureGuestBytes(&unsaved);
     for (std::uint32_t layer = first; layer < first + count; ++layer) layerPending[layer] = true;
@@ -4252,8 +4276,10 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
         }
         return false;
     };
-    for (const auto* texture : pending.textures) {
-        if (overlapsAny(texture)) return true;
+    if (std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.second > range.first && pending.textures.MayOverlap(range.first, static_cast<std::size_t>(range.second - range.first)); })) {
+        for (const auto* texture : pending.textures) {
+            if (overlapsAny(texture)) return true;
+        }
     }
     for (const auto* texture : pending.flushing) {
         if (overlapsAny(texture)) return true;

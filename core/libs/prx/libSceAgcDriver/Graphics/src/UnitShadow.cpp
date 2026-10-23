@@ -492,11 +492,11 @@ std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope
     return units;
 }
 
-bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
-    if (!UnitShadowEnabled() || bytes == 0) return false;
+namespace {
+
+bool anyShadowedLocked(const Shadows& registry, std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0) return false;
     const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
-    auto& registry = Registry();
-    std::lock_guard lock(registry.mutex);
     return anyOverlapping(registry, address, end, [&](const std::shared_ptr<UnitShadow>& shadow) {
         if (shadow->liveUnits == 0) return false;
         const auto begin = std::max(address, shadow->importBase);
@@ -508,10 +508,21 @@ bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
     });
 }
 
+}
+
+bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
+    if (!UnitShadowEnabled() || bytes == 0) return false;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    return anyShadowedLocked(registry, address, bytes);
+}
+
 bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
-    if (!UnitShadowEnabled()) return false;
+    if (!UnitShadowEnabled() || ranges.empty()) return false;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
     for (const auto& [begin, end] : ranges) {
-        if (end > begin && AnyShadowedOverlaps(begin, static_cast<std::size_t>(end - begin))) return true;
+        if (end > begin && anyShadowedLocked(registry, begin, static_cast<std::size_t>(end - begin))) return true;
     }
     return false;
 }

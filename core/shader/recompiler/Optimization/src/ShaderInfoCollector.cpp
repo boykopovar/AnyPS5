@@ -423,8 +423,11 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     AddInput(info, kind, 0, 1, "gl_SampleMaskIn");
                     break;
                 case StageInputKind::BaryCoordSmooth:
+                    AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
+                    break;
                 case StageInputKind::BaryCoordSmoothCenter:
                 case StageInputKind::BaryCoordSmoothSample:
+                    info.smoothOffsetBarycentrics = true;
                     AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
                     if (kind == StageInputKind::BaryCoordSmoothSample && program.Metadata().pixelIteratesSamples) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
                     break;

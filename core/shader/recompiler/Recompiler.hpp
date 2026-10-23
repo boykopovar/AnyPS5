@@ -3,6 +3,7 @@
 
 #include "RuntimeAbi.hpp"
 #include "PipelineSpecialization.hpp"
+#include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -389,6 +390,7 @@ struct BarycentricEmulation {
     bool active = false;
     bool smooth = false;
     bool linear = false;
+    bool smoothOffset = false;
     bool operator==(const BarycentricEmulation&) const = default;
 };
 
@@ -513,6 +515,7 @@ struct BarycentricEmulationLayout {
     std::uint32_t smoothLocation = NoLocation;
     std::uint32_t linearLocation = NoLocation;
     std::uint32_t positionsLocation = NoLocation;
+    std::uint32_t reciprocalWLocation = NoLocation;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> perVertexLocations;
 };
 
@@ -708,7 +711,18 @@ struct PipelineIdentity {
     auto operator<=>(const PipelineIdentity&) const = default;
 };
 
+struct ResultKeyMemo {
+    mutable AtomicSharedPtr<const std::vector<std::uint32_t>> words;
+    ResultKeyMemo() = default;
+    ResultKeyMemo(const ResultKeyMemo&) {}
+    ResultKeyMemo& operator=(const ResultKeyMemo&) {
+        words.store(nullptr, std::memory_order_relaxed);
+        return *this;
+    }
+};
+
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
