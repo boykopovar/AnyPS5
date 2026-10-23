@@ -59,6 +59,7 @@ struct Ring {
     std::once_flag allocated;
     std::atomic<std::uint64_t> recorded{0};
     std::atomic<std::uint64_t> shaderUses{0};
+    std::atomic<bool> shaderUsesReady{false};
     std::unique_ptr<Entry[]> entries;
     std::unique_ptr<ShaderUse[]> shaderUseEntries;
 };
@@ -282,6 +283,7 @@ void PrepareSubmissionRing(std::uint32_t queue) {
         std::lock_guard lock(ring.mutex);
         ring.entries = std::make_unique<Entry[]>(capacity);
         ring.shaderUseEntries = std::make_unique<ShaderUse[]>(ShaderUsesKept);
+        ring.shaderUsesReady.store(true, std::memory_order_release);
     });
 }
 
@@ -308,6 +310,7 @@ void RecordSubmission(std::uint32_t queue, std::uint64_t serial, std::span<const
 void RecordShaderUse(std::uint32_t queue, std::uint64_t serial, std::uint32_t stage, std::uint64_t target, std::uint64_t codeAddress, std::uint64_t entryAddress, const std::array<std::uint32_t, 3>& groups) {
     if (queue >= SubmissionQueueEnd) return;
     auto& ring = rings().queues[queue];
+    if (!ring.shaderUsesReady.load(std::memory_order_acquire)) return;
     const auto tenthsOfMs = static_cast<std::uint64_t>(std::max(TraceMs(), 0.0) * 10.0 + 0.5);
     std::lock_guard lock(ring.mutex);
     if (ring.shaderUseEntries == nullptr) return;
