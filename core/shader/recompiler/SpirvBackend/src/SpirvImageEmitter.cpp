@@ -2435,7 +2435,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
     const auto selector = tables ? tableSelector : state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + memory.resource * PipelineSpecialization::ImageWords, 0u);
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
     const auto guardedId = returnsValue ? ctx.Result(inst) : 0u;
-    ctx.definitions.erase(&inst);
+    ctx.definitions.Erase(&inst);
     const bool exits = !state.continueTarget;
     const auto guardMerge = samplerGuard != 0u ? state.module.AllocateId() : 0u;
     const auto guardSkip = samplerGuard != 0u ? state.module.AllocateId() : 0u;
@@ -2481,7 +2481,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         EmitLabel(state, labels[index]);
         emitMode(modes[index]);
         if (returnsValue) incoming.insert(incoming.end(), {ctx.Def(&inst), state.currentLabel});
-        ctx.definitions.erase(&inst);
+        ctx.definitions.Erase(&inst);
         state.module.AddFunction(spv::OpBranch, merge);
     }
     state.runtimeImage = nullptr;
@@ -2507,7 +2507,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         EmitLabel(state, guardMerge);
         if (returnsValue) state.module.AddFunction(spv::OpPhi, TypeId(state, inst.Type()), guardedId, resultId, merge, ZeroResult(ctx, inst), guardSkip);
     }
-    if (returnsValue) ctx.definitions.emplace(&inst, guardedId);
+    if (returnsValue) ctx.definitions.Emplace(&inst, guardedId);
 }
 
 void EmitGetImageResource(SpirvValueEmitContext& context) {
