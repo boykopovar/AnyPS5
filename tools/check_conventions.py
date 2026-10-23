@@ -57,10 +57,11 @@ NID_SOURCES = r"APS5_EXPORT|APS5_VABI|_nid_postfix|ASM_FUNCTION"
 STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s*;)*"
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
 BUILD_PROGRAM = r"(?:autoconf|bash|gmake|make|mingw32-make)"
+BUILD_PROGRAM_TAIL = r'(?:\s+(?:REQUIRED|(?:HINTS|PATHS)\s+(?:"[^"]*"|[^\s)"]+)))*\s*\)'
 SYSTEM_DEPENDENCY = re.compile(
     r"\b(find_package\s*\((?!\s*(Python3|Threads|Git)\b)|pkg_check_modules\b|pkg_search_module\b|"
     r"find_(library|path|file)\b|find_program\b(?!\s*\(\s*\w+\s+NAMES\s+" + BUILD_PROGRAM +
-    r"(?:\s+" + BUILD_PROGRAM + r")*\s*(?:\)|\b(?:HINTS|PATHS|REQUIRED)\b)))", re.I)
+    r"(?:\s+" + BUILD_PROGRAM + r")*" + BUILD_PROGRAM_TAIL + r"))", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
 EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
 LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")

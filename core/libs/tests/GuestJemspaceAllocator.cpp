@@ -1,3 +1,4 @@
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <barrier>
@@ -33,6 +34,41 @@ void Require(bool condition, const char* message) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+void* APS5_VABI HostAllocate(std::size_t size) { return std::malloc(size); }
+void APS5_VABI HostFree(void* pointer) { std::free(pointer); }
+void* APS5_VABI HostReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI HostCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+void* APS5_VABI HostAlign(std::size_t, std::size_t size) { return std::malloc(size); }
+void* APS5_VABI HostRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+int APS5_VABI HostPosixAlign(void** pointer, std::size_t, std::size_t size) {
+    *pointer = std::malloc(size);
+    return *pointer ? 0 : 12;
+}
+
+void InitializeGuestHeap() {
+    alignas(16) static std::array<std::byte, 0x40> process{};
+    alignas(16) static std::array<std::byte, 0x38> libc{};
+    alignas(16) static std::array<std::byte, 0x78> replacement{};
+    const auto write = [](auto& data, std::size_t offset, auto value) {
+        std::memcpy(data.data() + offset, &value, sizeof(value));
+    };
+    write(process, 0, std::uint64_t{0x40});
+    write(process, 8, std::uint32_t{0x4942524f});
+    write(process, 0x38, libc.data());
+    write(libc, 0, std::uint64_t{0x38});
+    write(libc, 0x30, replacement.data());
+    write(replacement, 0, std::uint64_t{0x78});
+    write(replacement, 8, std::uint64_t{2});
+    write(replacement, 0x20, reinterpret_cast<void*>(&HostAllocate));
+    write(replacement, 0x28, reinterpret_cast<void*>(&HostFree));
+    write(replacement, 0x30, reinterpret_cast<void*>(&HostCalloc));
+    write(replacement, 0x38, reinterpret_cast<void*>(&HostReallocate));
+    write(replacement, 0x40, reinterpret_cast<void*>(&HostAlign));
+    write(replacement, 0x48, reinterpret_cast<void*>(&HostRealign));
+    write(replacement, 0x50, reinterpret_cast<void*>(&HostPosixAlign));
+    ApplicationHeapInitialize_nid_no_patch(process.data());
 }
 
 void CheckBytes(const void* allocation, std::size_t bytes, unsigned char value) {
@@ -175,6 +211,7 @@ void CheckThreads() {
 }
 
 int main() {
+    InitializeGuestHeap();
     Require(sceJemspaceCreate("invalid", 0, 1) == nullptr, "Create must reject nonzero flags");
     Require(sceJemspaceCreate("tiny", 1, 0) == nullptr, "A limit below arena metadata must reject creation");
     Require(sceJemspaceDestroy(nullptr) == 22, "Destroy must reject a null arena");

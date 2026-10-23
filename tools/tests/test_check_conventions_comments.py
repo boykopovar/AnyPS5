@@ -601,7 +601,8 @@ class SpacedPathTests(unittest.TestCase):
 class SystemDependencyTests(unittest.TestCase):
     def test_flags_system_lookups(self):
         for line in ("find_package( SDL2 REQUIRED)", "FIND_PACKAGE(SDL2)", "find_path(X x.h)", "find_program(P prog)", "find_program(P NAMES make vendor-tool)",
-                     "find_program(P NAMES makevendor REQUIRED)"):
+                     "find_program(P NAMES makevendor REQUIRED)", "find_program(P NAMES make HINTS x NAMES uname)",
+                     "find_program(P NAMES make REQUIRED uname)"):
             with self.subTest(line=line):
                 self.assertIsNotNone(SYSTEM_DEPENDENCY.search(line))
 
