@@ -157,7 +157,6 @@ struct Globals {
     PthreadMutex* recoveryMutex = nullptr;
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
-    std::uint64_t allocationFailures = 0;
     std::uint32_t allocationDepth = 0;
     bool allocationFailed = false;
 };
@@ -232,7 +231,6 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
         auto& state = State();
         std::lock_guard lock(state.mutex);
         KernelMutexLock kernelLock(state.internalMutex);
-        ++state.allocationFailures;
         if (state.allocationDepth) state.allocationFailed = true;
     }
     return memory;
@@ -343,13 +341,6 @@ std::uint32_t CompiledSdk() {
 bool ModernValues() {
     const auto sdk = CompiledSdk();
     return sdk >= 0x06000000 || (sdk >= 0x05508700 && sdk < 0x05510000);
-}
-
-std::uint64_t AllocationFailures() {
-    auto& state = State();
-    std::lock_guard lock(state.mutex);
-    KernelMutexLock kernelLock(state.internalMutex);
-    return state.allocationFailures;
 }
 
 bool Grow(Text& text, std::size_t requested) {
@@ -921,9 +912,9 @@ int RegisterLegacyHandler(Value& value, TypeMismatchHandler callback, void* cont
         map->head->color = 0; map->head->nil = 1;
         state.legacyHandlers = map;
     }
-    const auto failures = AllocationFailures();
+    AllocationOperation operation;
     auto* node = state.legacyHandlers->Insert(&value);
-    if (AllocationFailures() != failures) return JsonErrorOutOfMemory;
+    if (operation.Finish()) return JsonErrorOutOfMemory;
     node->record = {callback, context};
     return 0;
 }
@@ -1725,10 +1716,10 @@ void AssignArray(Array& destination, const Array& source) {
         for (const auto& item : *source.items) {
             ScopedValue placeholder;
             SetType(placeholder.value, item.type);
-            const auto failures = AllocationFailures();
+            AllocationOperation operation;
             try { CopyInto(pending.items->emplace_back(), placeholder.value); }
             catch (const GuestOutOfMemory&) {}
-            if (AllocationFailures() == failures) {
+            if (!operation.Finish()) {
                 auto& value = pending.items->back();
                 value.parent = destination.items->Owner();
                 AssignNode(value, item);
@@ -1765,7 +1756,7 @@ void AssignObject(Object& destination, const Object& source) {
                 Construct(copied.pair.key, key.string);
                 CopyInto(copied.pair.value, placeholder.value);
             }
-            const auto failures = AllocationFailures();
+            AllocationOperation operation;
             ObjectLink* node;
             bool inserted;
             {
@@ -1773,7 +1764,8 @@ void AssignObject(Object& destination, const Object& source) {
                 TemporaryTreeEntry entry(key.text, copied.pair);
                 node = pending.items->Insert(entry.key.text, entry.pair, inserted);
             }
-            if (inserted && AllocationFailures() == failures) {
+            const bool failed = operation.Finish();
+            if (inserted && !failed) {
                 node->pair.value.parent = destination.items->Owner();
                 AssignNode(node->pair.value, pair.value);
             }
@@ -2789,7 +2781,7 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
     ScopedValue value;
     value.value.parent = self->items->Owner();
     AssignNode(value.value, pair->value);
-    const auto failures = AllocationFailures();
+    AllocationOperation operation;
     ObjectLink* node;
     bool inserted;
     {
@@ -2799,7 +2791,8 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
         TemporaryTreeEntry entry(key.text, source);
         node = self->items->Insert(entry.key.text, entry.pair, inserted);
     }
-    if (inserted && AllocationFailures() == failures) {
+    const bool failed = operation.Finish();
+    if (inserted && !failed) {
         TransferPayload(node->pair.value, value.value);
         node->pair.value.parent = self->items->Owner();
         BindChildren(node->pair.value);

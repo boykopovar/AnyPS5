@@ -14,6 +14,7 @@
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
 struct String { void* storage; };
 struct Object { void* storage; };
+struct Array { void* storage; };
 struct Iterator { void* state; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 struct StoredText { const char* characters; std::uint32_t length; std::uint32_t capacity; std::uint64_t reserved; };
@@ -21,6 +22,7 @@ struct TreeNode { TreeNode* parent; TreeNode* left; TreeNode* right; StoredText 
 struct TreeHeader { TreeNode* head; std::size_t count; std::uint64_t reserved; Value* owner; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static_assert(sizeof(TreeNode) == 104 && offsetof(TreeNode, pair) == 48 && offsetof(TreeNode, color) == 96);
+using ReadCallback = int (APS5_VABI*)(char&, void*);
 extern "C" {
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
@@ -34,6 +36,8 @@ std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value*);
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value*, std::size_t);
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
+int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value*, ReadCallback, void*);
 void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object*);
 void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object*, const Object*);
 void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
@@ -396,6 +400,60 @@ static std::string NestedObjectFailureState(const Value& value, const Value* par
         visit(head->parent);
     }
     return state + "]";
+}
+struct NestedReader {
+    unsigned operation;
+    Value* source;
+    Value* destination;
+    Pair* pair;
+    Iterator* iterator;
+    std::size_t offset = 0;
+    unsigned calls = 0;
+};
+static int APS5_VABI ReadWithCollectionOperation(char& character, void* context) {
+    auto& reader = *static_cast<NestedReader*>(context);
+    if (reader.offset == 2) {
+        ++reader.calls;
+        if (reader.operation == 0) _ZN3sce4Json5ArrayaSERKS1_(reinterpret_cast<Array*>(reader.destination->payload), reinterpret_cast<const Array*>(reader.source->payload));
+        else if (reader.operation == 1) _ZN3sce4Json6ObjectaSERKS1_(reinterpret_cast<Object*>(reader.destination->payload), reinterpret_cast<const Object*>(reader.source->payload));
+        else _ZN3sce4Json6Object6insertERKNS1_4PairE(reader.iterator, reinterpret_cast<Object*>(reader.destination->payload), reader.pair);
+    }
+    const char text[] = "\"abc\"";
+    if (reader.offset == sizeof(text) - 1) return static_cast<int>(0x80848101u);
+    character = text[reader.offset++];
+    return 0;
+}
+static void CheckInheritedCollectionErrors(ObjectAllocationTrace& trace) {
+    const char* const failedStates[]{"6po2[3-:0;3-:0;]", "7po2[a=3-:0;c=3-:0;]", "7po2[a=0-;z=3p:99;]"};
+    const char* const healthyStates[]{"6po2[3p:10;3p:20;]", "7po2[a=3p:11;c=3p:33;]", "7po2[a=2p:11;z=3p:99;]"};
+    const auto baseline = trace.live.size();
+    for (unsigned operation = 0; operation < 3; ++operation) for (bool fail : {false, true}) {
+        Value source{}, destination{}, parsed{};
+        _ZN3sce4Json5ValueC1Ev(&source); _ZN3sce4Json5ValueC1Ev(&destination); _ZN3sce4Json5ValueC1Ev(&parsed);
+        const auto* input = operation == 0 ? "[10,20]" : "{\"a\":11,\"c\":33}";
+        const auto* previous = operation == 0 ? "[99]" : "{\"z\":99}";
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&source, input, std::strlen(input)) == 0 && _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&destination, previous, std::strlen(previous)) == 0, "Prepare nested operation source and destination");
+        const auto sourceState = NestedObjectFailureState(source);
+        Pair pair{}; _ZN3sce4Json6StringC1EPKc(&pair.key, "a"); _ZN3sce4Json5Value3setEl(&pair.value, 11);
+        Iterator iterator{};
+        NestedReader reader{operation, &source, &destination, &pair, &iterator};
+        const auto notifications = trace.notifications;
+        trace.budget = fail ? 4 : -1; trace.failOnce = fail;
+        const auto status = static_cast<unsigned>(_ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&parsed, ReadWithCollectionOperation, &reader));
+        trace.budget = -1; trace.failOnce = false;
+        const auto actual = NestedObjectFailureState(destination);
+        const auto* expected = fail ? failedStates[operation] : healthyStates[operation];
+        if (actual != expected) std::fprintf(stderr, "Nested operation=%u fail=%d expected=%s actual=%s\n", operation, fail, expected, actual.c_str());
+        Require(reader.calls == 1 && actual == expected, "Nested collection operations must retain inherited errors and preserve healthy behavior");
+        Require(status == (fail ? 0x80848102u : 0u) && trace.notifications - notifications == (fail ? 1u : 0u), "Nested operation completion must retain the parser failure until outer completion");
+        Require(NestedObjectFailureState(source) == sourceState, "Nested failure propagation must preserve its source");
+        Require(parsed.type == 5 && std::strcmp(_ZNK3sce4Json6String5c_strEv(reinterpret_cast<const String*>(parsed.payload)), fail ? "bc" : "abc") == 0, "Nested calls must preserve the parser character-retry result");
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&parsed, "true", 4) == 0, "Outer completion must clear inherited errors before the next independent parse");
+        _ZN3sce4Json6Object8iteratorD1Ev(&iterator);
+        _ZN3sce4Json6StringD1Ev(&pair.key); _ZN3sce4Json5ValueD1Ev(&pair.value);
+        _ZN3sce4Json5ValueD1Ev(&parsed); _ZN3sce4Json5ValueD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&source);
+        Require(trace.live.size() == baseline, "Nested operation completion must reclaim parser, collection and iterator resources");
+    }
 }
 static void CheckParserObjectFailures(ObjectAllocationTrace& trace) {
     static const char* const states[]{
@@ -1103,6 +1161,7 @@ int main() {
     CheckNestedAssignment(trace);
     CheckNestedFailureCases(trace);
     CheckParserObjectFailures(trace);
+    CheckInheritedCollectionErrors(trace);
     CheckBinaryKeys();
     Require(trace.live.size() == baseline, "Binary-key operations must release their storage");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Terminate object allocation contract");
