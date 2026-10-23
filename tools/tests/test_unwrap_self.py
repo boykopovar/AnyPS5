@@ -132,6 +132,27 @@ class UnwrapTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_program_table_overlapping_elf_header_preserves_output(self):
+        for offset in (0, 8, 32, 63):
+            for previous in (None, b"previous output"):
+                with self.subTest(offset=offset, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    struct.pack_into("<Q", container, ELF_HEADER_OFFSET + 0x20, offset)
+                    output = Path(self.directory) / "output.elf"
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    else:
+                        output.unlink(missing_ok=True)
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("ELF program header table overlaps the ELF header", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
     def test_record_table_places_the_segments_and_keeps_the_alignment(self):
         container = build_container(default_segments(), default_records(), default_payloads())
         result, output = self.convert(container)

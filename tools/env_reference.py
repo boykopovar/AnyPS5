@@ -92,10 +92,12 @@ def reads(roots, prefixes=PREFIXES):
                 continue
             lines = text.splitlines()
             for number, line in enumerate(lines, 1):
-                if not any(prefix in line for prefix in prefixes):
-                    continue
                 window = "\n".join(lines[number - 1:number + 2])
-                for reader, match in line_reads(line, prefixes):
+                if not any(prefix in window for prefix in prefixes):
+                    continue
+                for reader, match in line_reads(window, prefixes):
+                    if match.start() >= len(line):
+                        continue
                     found.setdefault(match.group("name"), []).append(
                         (path.as_posix(), number, kind_of(reader, window), default_of(match, window)))
     for sites in found.values():

@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <poll.h>
 #include <unistd.h>
@@ -232,6 +233,7 @@ constexpr int NET_EBADF = 9;
 constexpr int NET_EACCES = 13;
 constexpr int NET_EFAULT = 14;
 constexpr int NET_EINVAL = 22;
+constexpr int NET_ENOTTY = 25;
 constexpr int NET_ENOSPC = 28;
 constexpr int NET_EDOM = 33;
 constexpr int NET_EAGAIN = 35;
@@ -685,12 +687,23 @@ int native_message_flags(int flags) {
     return native;
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
+#ifdef __APPLE__
+bool has_local_address(NativeSocket native) {
+    sockaddr_storage local{};
+    NativeLength local_length = sizeof(local);
+    if (::getsockname(native, reinterpret_cast<sockaddr*>(&local), &local_length) != 0) return true;
+    if (local.ss_family == AF_INET) return reinterpret_cast<const sockaddr_in&>(local).sin_port != 0;
+    if (local.ss_family == AF_INET6) return reinterpret_cast<const sockaddr_in6&>(local).sin6_port != 0;
+    return true;
+}
+#else
 bool has_local_address(NativeSocket native) {
     sockaddr_storage local{};
     NativeLength local_length = sizeof(local);
     return ::getsockname(native, reinterpret_cast<sockaddr*>(&local), &local_length) == 0 || WSAGetLastError() != WSAEINVAL;
 }
+#endif
 
 void note_local_address(int s, const Sock& socket) {
     if (socket.type == NET_SOCK_STREAM || socket.bound || !has_local_address(socket.native->value)) return;
@@ -707,10 +720,17 @@ int wait_for_datagram(const Sock& socket, std::chrono::steady_clock::time_point 
     const auto now = std::chrono::steady_clock::now();
     if (now >= deadline) return NET_EAGAIN;
     const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+#ifdef _WIN32
     WSAPOLLFD descriptor{};
     descriptor.fd = socket.native->value;
     descriptor.events = POLLRDNORM;
     return WSAPoll(&descriptor, 1, static_cast<INT>(std::min<long long>(remaining, INT_MAX))) == 0 ? NET_EAGAIN : 0;
+#else
+    pollfd descriptor{};
+    descriptor.fd = socket.native->value;
+    descriptor.events = POLLIN;
+    return ::poll(&descriptor, 1, static_cast<int>(std::min<long long>(remaining, INT_MAX))) == 0 ? NET_EAGAIN : 0;
+#endif
 }
 
 int wait_for_local_address(int s, const Sock& socket, bool empty, int flags) {
@@ -1211,7 +1231,7 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
 #endif
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
 #endif
         return 0;
@@ -1247,7 +1267,7 @@ int64_t APS5_VABI sceNetRecv(int s, void* buf, size_t len, int flags) {
         if (it == g_socks.end()) return fail(NET_EBADF);
         socket = it->second;
     }
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, len == 0, flags)) return wait == RECEIVE_NOTHING ? 0 : fail(wait);
 #endif
     const GuestArena::HostWrite destination(len == 0 ? nullptr : buf, len);
@@ -1276,7 +1296,7 @@ int64_t APS5_VABI sceNetRecvfrom(int s, void* buf, size_t len, int flags, void* 
     }
     const GuestArena::HostWrite lengthOutput(from == nullptr ? nullptr : fromlen, from == nullptr ? 0 : sizeof(*fromlen));
     if (!lengthOutput.Open()) return fail(NET_EFAULT);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, len == 0, flags)) {
         if (wait != RECEIVE_NOTHING) return fail(wait);
         if (from) *fromlen = 0;
@@ -1350,7 +1370,7 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         }, true, static_cast<int>(len));
     }
     if (result < 0) return fail(native_error());
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     note_local_address(s, socket);
 #endif
     return result;
@@ -1394,7 +1414,7 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
         if (!destinations.emplace_back(entry.base, static_cast<std::size_t>(entry.length)).Open()) return fail(NET_EFAULT);
     }
     const bool datagram = socket.type != NET_SOCK_STREAM;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, total == 0, flags)) {
         if (wait != RECEIVE_NOTHING) return fail(wait);
         msg->flags = 0;
@@ -2467,8 +2487,35 @@ int APS5_VABI sceNetInetPtonEx(int af, const char* src, void* dst, int) {
     return 1;
 }
 
+extern "C" int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* argument);
+
 int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
-    NotImplemented_nid_no_patch(__func__);
+    constexpr std::uint32_t nonblockingRequest = 0x8004667e;
+    constexpr std::uint32_t readableRequest = 0x4004667f;
+    std::shared_ptr<NativeSocketHandle> native;
+    {
+        std::lock_guard lk(g_mutex);
+        const auto it = g_socks.find(socketId);
+        if (it != g_socks.end()) native = it->second.native;
+    }
+    if (!native) {
+        if (!GuestSocketIsOpen_nid_no_patch(socketId)) return fail(NET_EBADF);
+        return ioctl_nid_postfix(socketId, command, argument) == 0 ? 0 : fail(*__error_nid_postfix());
+    }
+    if (command != nonblockingRequest && command != readableRequest) return fail(NET_ENOTTY);
+    if (!argument) return fail(NET_EFAULT);
+    if (command == nonblockingRequest) {
+        const int enabled = *static_cast<const int*>(argument) != 0;
+        return sceNetSetsockopt(socketId, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled));
+    }
+#ifdef _WIN32
+    u_long available = 0;
+    if (ioctlsocket(native->value, FIONREAD, &available) != 0) return fail(native_error());
+#else
+    int available = 0;
+    if (::ioctl(native->value, FIONREAD, &available) != 0) return fail(native_error());
+#endif
+    *static_cast<int*>(argument) = static_cast<int>(available);
     return 0;
 }
 

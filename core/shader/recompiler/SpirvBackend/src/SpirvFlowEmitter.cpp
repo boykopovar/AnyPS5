@@ -865,6 +865,7 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
         if (block == nullptr) {
             context.Fail("structured control flow contains a null block");
         }
+        state.bufferLengths.clear();
         const BlockInfo* info = BlockInfoFor(program, block);
         if (info == nullptr) {
             context.Fail("structured control flow block has no terminator metadata");

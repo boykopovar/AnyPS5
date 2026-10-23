@@ -33,8 +33,14 @@ class Trace:
         self.presents = []
         self.folded = collections.defaultdict(float)
         self.batched = []
-        events = document if isinstance(document, list) else (document.get("traceEvents") or [])
-        for event in events:
+        if not isinstance(document, (list, dict)):
+            raise ValueError("trace must be an event array or object")
+        events = document if isinstance(document, list) else document.get("traceEvents", [])
+        if not isinstance(events, list):
+            raise ValueError("traceEvents must be an array")
+        for index, event in enumerate(events):
+            if not isinstance(event, dict):
+                raise ValueError(f"trace event {index} must be an object")
             phase = event.get("ph")
             if phase == "M" and event.get("name") == "thread_name":
                 self.threads[event["tid"]] = event["args"]["name"]

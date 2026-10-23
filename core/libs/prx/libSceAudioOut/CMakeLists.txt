@@ -47,6 +47,21 @@ if(BUILD_TESTING)
         endif()
     endforeach()
 
+    add_test_executable(audio_out_buffer_size_tests tests/AudioOutBufferSize.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp)
+    target_compile_definitions(audio_out_buffer_size_tests PRIVATE SDL_MAIN_HANDLED)
+    target_include_directories(audio_out_buffer_size_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(audio_out_buffer_size_tests PRIVATE libc libkernel libScePad)
+    configure_windows_unwind(audio_out_buffer_size_tests)
+    foreach(bufferSizeMode IN ITEMS pass_through wrap mix threshold)
+        set(bufferSizeTest "audio_out_buffer_size_${bufferSizeMode}")
+        add_test(NAME ${bufferSizeTest} COMMAND audio_out_buffer_size_tests ${bufferSizeMode})
+        set_tests_properties(${bufferSizeTest} PROPERTIES TIMEOUT 5)
+        if(WIN32)
+            set_tests_properties(${bufferSizeTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
     add_test_executable(audio_out_vibration_tests tests/AudioOutVibration.cpp)
     target_include_directories(audio_out_vibration_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out_vibration_tests PRIVATE libSceAudioOut libScePad libc)
@@ -168,6 +183,16 @@ if(BUILD_TESTING)
     add_test(NAME audio_out2_latency COMMAND audio_out2_latency_tests)
     if(WIN32)
         set_tests_properties(audio_out2_latency PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(audio_out_info_tests tests/AudioOutInfo.cpp)
+    target_include_directories(audio_out_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_info_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out_info_tests)
+    add_test(NAME audio_out_info COMMAND audio_out_info_tests)
+    if(WIN32)
+        set_tests_properties(audio_out_info PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 

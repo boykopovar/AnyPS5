@@ -141,6 +141,10 @@ struct ShaderVertexInputInfo {
     std::uint32_t scratchSizeDwords = 0;
     std::uint32_t hostSubgroupSize = 64;
     std::uint32_t paClVsOutCntl = 0;
+    bool pointList = false;
+    float pointSize = 1.0f;
+    float pointSizeMin = 0.0f;
+    float pointSizeMax = 0.0f;
     ShaderClipSpaceTransform clipSpace;
     ShaderDepthRemap depthRemap;
     ShaderMeshInputInfo mesh;

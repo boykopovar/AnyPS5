@@ -46,9 +46,9 @@ def repository(root, base, head, target=None):
     git("commit", "-qm", "feat: read a new name")
 
 
-def findings_of(root, base, head, ref="base"):
+def findings_of(root, base, head, ref="base", directory="."):
     previous = os.getcwd()
-    os.chdir(root)
+    os.chdir(root / directory)
     try:
         check = Check(ref, "HEAD")
         check.env_reference()
@@ -58,12 +58,32 @@ def findings_of(root, base, head, ref="base"):
 
 
 class EnvReferenceDiffTests(unittest.TestCase):
-    def run_case(self, base, head, target=None):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
+    def run_case(self, base, head, target=None, directory="."):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
         repository(root, base, head, target)
-        return findings_of(root, base, head, "base" if target is None else "target")
+        return findings_of(root, base, head, "base" if target is None else "target", directory)
+
+    def test_a_check_from_a_subdirectory_reports_the_same_findings(self):
+        other = "core/libs/prx/libSceExample/Other.cpp"
+        base = {
+            DOC: DOC_TEXT,
+            SAMPLE: 'static bool a = std::getenv("APS5_DOCUMENTED") != nullptr;\n',
+            other: 'static bool b = std::getenv("APS5_DOCUMENTED") != nullptr;\n',
+        }
+        target = {DOC: DOC_TEXT + "| `APS5_TARGET_ROW` | presence |\n"}
+        head = {
+            DOC: "| `APS5_DOCUMENTED` | presence |\n",
+            SAMPLE: base[SAMPLE] + 'static bool c = std::getenv("APS5_NEW_READ") != nullptr;\n'
+                    'static bool d = std::getenv("APS5_TARGET_ROW") != nullptr;\n',
+            other: None,
+        }
+        expected = [("env-reference", SAMPLE, 2, f"APS5_NEW_READ is read here but has no row in {DOC}")]
+        self.assertEqual(self.run_case(base, head, target), expected)
+        for directory in ("core", "core/libs/prx/libSceExample", "docs/dev"):
+            with self.subTest(directory=directory):
+                self.assertEqual(self.run_case(base, head, target, directory), expected)
 
     def test_only_a_name_the_pull_request_adds_is_reported_at_its_line(self):
         base = {

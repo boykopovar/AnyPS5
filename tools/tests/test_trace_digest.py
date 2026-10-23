@@ -46,6 +46,25 @@ STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll
 
 
 class TraceDigestTests(unittest.TestCase):
+    def test_cli_rejects_invalid_event_container_shapes_without_partial_output(self):
+        cases = [(value, "trace must be an event array or object") for value in (None, True, 7, "trace")]
+        cases += [({"traceEvents": value}, "traceEvents must be an array")
+                  for value in (None, False, 0, "", {}, "events")]
+        cases += [([value], "trace event 0 must be an object") for value in (None, True, 7, "event", [])]
+        cases.append(({"traceEvents": [{}, None]}, "trace event 1 must be an object"))
+        for document, message in cases:
+            for compressed in (False, True):
+                with self.subTest(document=document, compressed=compressed):
+                    path = Path(self.directory.name) / ("invalid.json.gz" if compressed else "invalid.json")
+                    data = json.dumps(document).encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("FAIL: " + message, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_cli_reports_unreadable_inputs_without_partial_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -123,6 +142,8 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(empty_dict.presents, [])
         empty_list = trace_digest.Trace([])
         self.assertEqual(empty_list.presents, [])
+        empty_events = trace_digest.Trace({"traceEvents": []})
+        self.assertEqual(empty_events.presents, [])
 
     def result(self):
         return trace_digest.digest(trace_digest.load_trace(self.trace), trace_digest.load_summary(None, self.trace),

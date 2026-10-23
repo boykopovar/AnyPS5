@@ -395,5 +395,21 @@ int main(int argc, char** argv) {
     for (auto& reader : readers) reader.join();
     Check(!misread);
     Check(sceKernelClose(sharedFd) == 0);
+    const auto appendFile = root / "append.bin";
+    { std::ofstream stream(appendFile, std::ios::binary); stream << seed; }
+    const int appendFd = sceKernelOpen(appendFile.string().c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_APPEND, 0);
+    Check(appendFd >= 0);
+    std::array<char, 4> appendBuffer = {'T', 'A', 'I', 'L'};
+    KernelAioResult appendResult{-1, 0};
+    KernelAioRwRequest appendRequest{0, appendBuffer.size(), appendBuffer.data(), &appendResult, appendFd};
+    std::int32_t appendId = 0;
+    Check(sceKernelAioSubmitWriteCommands(&appendRequest, 1, 0, &appendId) == 0);
+    std::int32_t appendState = 0;
+    Check(sceKernelAioWaitRequest(appendId, &appendState, nullptr) == 0);
+    Check(appendState == 3 && appendResult.state == 3 && appendResult.return_value == 4);
+    Check(sceKernelClose(appendFd) == 0);
+    { std::ifstream stream(appendFile, std::ios::binary);
+      std::string contents{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+      Check(contents == seed + "TAIL"); }
     Check(std::filesystem::remove_all(root) > 0);
 }

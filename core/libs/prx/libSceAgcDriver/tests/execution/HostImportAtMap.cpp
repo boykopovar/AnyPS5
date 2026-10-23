@@ -147,7 +147,13 @@ int main() {
         remapped.Unregister();
         remapped.Register();
         Import(*device, remapped.Ranges());
-        Require(Imported(handle, remapped.Address(), AllocationBytes), "host import at map: a range mapped again was not imported");
+        Require(!Imported(handle, remapped.Address(), AllocationBytes), "host import at map: a range mapped again was imported at map instead of on first use");
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const std::array<std::uint32_t, 4> pattern{9u, 10u, 11u, 12u};
+            Require(device->FillBuffer(remapped.Address(), BlockBytes, pattern), "host import at map: the first use of a range mapped again was not imported");
+            device->WaitIdle();
+        }
         GuestAllocation gone;
         const auto goneRanges = gone.Ranges();
         gone.Unregister();

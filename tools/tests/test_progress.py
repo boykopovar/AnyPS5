@@ -497,6 +497,17 @@ class ProgressTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 2)
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_output_directory_that_cannot_be_written_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory) / "blocked output"
+            blocked.write_text("a file, not a directory", encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                progress.main([str(blocked)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(blocked), stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             empty = Path(directory) / "empty tree"

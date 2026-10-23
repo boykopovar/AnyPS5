@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <chrono>
@@ -30,6 +31,8 @@
 extern "C" {
 int APS5_VABI fstatfs_nid_postfix(int, void*);
 int APS5_VABI _fstatfs_nid_postfix(int, void*);
+int APS5_VABI fstat_nid_postfix(int, FileStat*);
+std::int64_t APS5_VABI _fstat_nid_postfix(int, FileStat*);
 int APS5_VABI open_nid_postfix(const char*, int, int);
 int APS5_VABI close_nid_postfix(int);
 int APS5_VABI pipe_nid_postfix(int*);
@@ -41,6 +44,9 @@ int APS5_VABI fchdir_nid_postfix(int);
 int APS5_VABI chdir_nid_postfix(const char*);
 int APS5_VABI chroot_nid_postfix(const char*);
 char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
+int APS5_VABI getpid_nid_postfix();
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const void*, std::int32_t, std::int32_t*);
+int APS5_VABI sceKernelGetProcessType(int);
 int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelRename(const char*, const char*);
@@ -59,10 +65,15 @@ std::int64_t APS5_VABI readlinkat_nid_postfix(int, const char*, char*, std::size
 int APS5_VABI mkdirat_nid_postfix(int, const char*, std::uint16_t);
 int APS5_VABI renameat_nid_postfix(int, const char*, int, const char*);
 int APS5_VABI fchmodat_nid_postfix(int, const char*, int, int);
+int APS5_VABI lchmod_nid_postfix(const char*, std::uint16_t);
 int APS5_VABI fchown_nid_postfix(int, std::uint32_t, std::uint32_t);
 int APS5_VABI fstatat_nid_postfix(int, const char*, FileStat*, int);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
+int APS5_VABI scePthreadCondattrInit(PthreadCondattr*);
+int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr*);
+int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr*, KernelClockid);
+int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr*, KernelClockid*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -144,6 +155,26 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
         Require(link == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink target success cases not tested\n");
     }
+}
+
+void CheckCondattrClock() {
+    constexpr KernelClockid Realtime = 0;
+    constexpr KernelClockid Monotonic = 4;
+    PthreadCondattr attr = nullptr;
+    KernelClockid clock = -1;
+    Require(scePthreadCondattrGetclock(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrGetclock(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrInit(&attr) == 0 && attr != nullptr);
+    Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Realtime);
+    Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
+    Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
+    bool getclockThrew = false;
+    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::runtime_error&) { getclockThrew = true; }
+    Require(getclockThrew);
+    Require(scePthreadCondattrDestroy(&attr) == 0 && attr == nullptr);
+    clock = -1;
+    Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
 }
 
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
@@ -260,16 +291,39 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void CheckProcessQueries() {
+    struct {
+        std::int32_t version;
+        std::int32_t align;
+        std::uint64_t ids[2];
+    } workaround{1, 0, {(1ull << 3) | (1ull << 0x39), ~0ull}};
+    std::int32_t enabled = -1;
+    Require(sceKernelTitleWorkaroundIsEnabled(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x3A, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, &enabled) == 0 && enabled == 1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 4, &enabled) == 0 && enabled == 0);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 63, &enabled) == static_cast<int>(0x80020016));
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x39, &enabled) == 0 && enabled == 1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x38, &enabled) == 0 && enabled == 0);
+    Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
+    Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
+    Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
     CharUpperBuffW(hostDirectorySpelling.data(), static_cast<DWORD>(hostDirectorySpelling.size()));
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
+    CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
+    CheckCondattrClock();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
@@ -285,8 +339,15 @@ int main() {
     Require(std::memcmp(viaPublic, viaSyscall, 4) == 0 && std::memcmp(viaPublic + 16, viaSyscall + 16, 8) == 0);
     Require(std::memcmp(viaPublic + 280, viaSyscall + 280, 16) == 0);
     Require(fstatfs_nid_postfix(descriptor, nullptr) == -1 && Error() == 14);
+    FileStat viaFstat{};
+    FileStat viaUnderscore{};
+    Require(fstat_nid_postfix(descriptor, &viaFstat) == 0 && _fstat_nid_postfix(descriptor, &viaUnderscore) == 0);
+    Require(std::memcmp(&viaFstat, &viaUnderscore, sizeof(FileStat)) == 0 && viaFstat.st_size == 1);
+    Require(fstat_nid_postfix(descriptor, nullptr) == -1 && Error() == 14);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, viaPublic) == -1 && Error() == 9);
+    Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);
+    Require(fstat_nid_postfix(-1, &viaFstat) == -1 && Error() == 9);
     char buffer[64];
     for (const auto& component : {std::string("missing"), std::string("file.txt")}) {
         const auto prefix = root.generic_string() + "/" + component + "/../";
@@ -724,6 +785,38 @@ int main() {
     Require(symlink_nid_postfix("loop", (root / "loop").string().c_str()) == 0);
     Require(fchmodat_nid_postfix(base, "loop/x", 0600, 0) == -1 && Error() == 62);
     Require(fchmodat_nid_postfix(base, longName.c_str(), 0600, 0) == -1 && Error() == 63);
+#endif
+    const auto modeFile = (root / "file.txt").string();
+#ifndef _WIN32
+    const auto ownerOnly = std::filesystem::perms::owner_read | std::filesystem::perms::owner_write;
+    const auto readable = ownerOnly | std::filesystem::perms::group_read | std::filesystem::perms::others_read;
+#endif
+    Require(lchmod_nid_postfix(modeFile.c_str(), 0600) == 0);
+#ifndef _WIN32
+    Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == ownerOnly);
+#endif
+    Require(lchmod_nid_postfix(guestFile.c_str(), 0100644) == 0);
+#ifndef _WIN32
+    Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == readable);
+#endif
+    Require(lchmod_nid_postfix((root / "missing.bin").string().c_str(), 0600) == -1 && Error() == 2);
+    Require(lchmod_nid_postfix(nullptr, 0600) == -1 && Error() == 14);
+    Require(lchmod_nid_postfix("", 0600) == -1 && Error() == 2);
+#ifndef _WIN32
+    Require(lchmod_nid_postfix((root / "loop" / "x").string().c_str(), 0600) == -1 && Error() == 62);
+    Require(lchmod_nid_postfix((root / longName).string().c_str(), 0600) == -1 && Error() == 63);
+    const auto modeLink = (root / "mode-link.txt").string();
+    Require(symlink_nid_postfix("file.txt", modeLink.c_str()) == 0);
+#ifdef __APPLE__
+    Require(lchmod_nid_postfix(modeLink.c_str(), 0600) == 0);
+    Require((std::filesystem::symlink_status(modeLink).permissions() & std::filesystem::perms::all) == ownerOnly);
+#else
+    bool lchmodThrew = false;
+    try { lchmod_nid_postfix(modeLink.c_str(), 0600); } catch (const std::exception&) { lchmodThrew = true; }
+    Require(lchmodThrew);
+#endif
+    Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == readable);
+    Require(RemoveSymlink(modeLink));
 #endif
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);

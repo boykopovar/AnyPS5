@@ -190,6 +190,10 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;
         vertexStorage.paClVsOutCntl = vertex.paClVsOutCntl;
         vertexStorage.depthRemap = {vertex.depthRemapMode};
+        vertexStorage.pointList = vertex.pointList;
+        vertexStorage.pointSize = vertex.pointSize;
+        vertexStorage.pointSizeMin = vertex.pointSizeMin;
+        vertexStorage.pointSizeMax = vertex.pointSizeMax;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);
@@ -235,6 +239,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.provokingVertex = mesh->provokingVertex;
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
+            if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
         }
         ShaderStageInputInfo result;
         result.vertex = &vertexStorage;

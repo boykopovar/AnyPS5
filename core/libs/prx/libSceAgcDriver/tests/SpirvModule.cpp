@@ -1,5 +1,7 @@
 #include "SpirvBackend/SpirvModule.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include "Recompiler.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -356,6 +358,22 @@ void testBlockBallotsOfOnePredicateShareOneBallot() {
     check(ballotSources.contains(afterLabel), "a ballot in a later block reused one from an earlier block");
 }
 
+void testInternedSpirvSharesEqualWords() {
+    const std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010400u, 0u, 7u, 0u, (2u << 16u) | spv::OpCapability, spv::CapabilityShader};
+    auto changed = words;
+    changed.back() = spv::CapabilityInt64;
+    const auto first = InternSpirv(words);
+    const auto second = InternSpirv(words);
+    const auto other = InternSpirv(changed);
+    check(std::ranges::equal(first.Words(), words) && std::ranges::equal(other.Words(), changed), "interned SPIR-V changed its words");
+    check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+    check(first.data() != other.data(), "different SPIR-V was interned into one copy");
+    auto edited = second;
+    edited[6] = spv::CapabilityFloat64;
+    const auto again = InternSpirv(words);
+    check(edited[6] == spv::CapabilityFloat64 && first[6] == spv::CapabilityShader && again.data() == first.data(), "a write to one holder of interned SPIR-V changed the others");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();
@@ -371,6 +389,7 @@ int main() {
     testIdsStayUniqueBeyondCacheCapacity();
     testEmittedWordsAreStable();
     testBlockBallotsOfOnePredicateShareOneBallot();
+    testInternedSpirvSharesEqualWords();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

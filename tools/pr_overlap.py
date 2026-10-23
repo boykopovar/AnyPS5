@@ -9,6 +9,8 @@ from itertools import combinations
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+from nid_names import compute_nid, source_aliases
+
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
 EXPORT = re.compile(r"^\+.*\bAPS5_VABI\s+(\w+)\s*\(")
 NID_DISAMBIG = re.compile(r"_nid_disambig[0-9]+$")
@@ -122,6 +124,21 @@ def exports(diff):
     return found
 
 
+def aliases(diff):
+    added = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    return {nid for nid, _ in source_aliases(added)}
+
+
+def export_ids(pr):
+    return {compute_nid(name) for name in pr["exports"]} | pr.get("aliases", set())
+
+
+def same_exports(pa, pb, shared):
+    common = (export_ids(pa) & export_ids(pb)).difference(*(export_ids(pr) for pr in shared))
+    named = {name for name in pa["exports"] | pb["exports"] if compute_nid(name) in common}
+    return named | common.difference(compute_nid(name) for name in named)
+
+
 def scan(pr):
     tree, conflicted = merge("refs/pr/base", pr["ref"])
     pr["tree"] = None if conflicted else commit(tree)
@@ -134,6 +151,7 @@ def scan(pr):
             pr["added"].add(path)
     diff = git("diff", "-U0", "--no-color", old, new, "--", "core/libs/prx/*.cpp")
     pr["exports"] = exports(diff)
+    pr["aliases"] = aliases(diff)
 
 
 def scan_all(prs, jobs):
@@ -188,7 +206,7 @@ def overlaps(prs, a, b):
     found = {"added": (pa["added"] & pb["added"]).difference(*(pr["added"] for pr in shared))}
     if pa["author"] != pb["author"]:
         found["conflicts"] = conflicts(pa, pb)
-        found["exports"] = (pa["exports"] & pb["exports"]).difference(*(pr["exports"] for pr in shared))
+        found["exports"] = same_exports(pa, pb, shared)
         if not (pa["tree"] and pb["tree"]):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:
@@ -270,7 +288,10 @@ def main(argv=None):
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
     global REPO
+    if args.out:
+        args.out = args.out.resolve()
     try:
+        os.chdir(git("rev-parse", "--show-toplevel").strip())
         REPO = args.repo or upstream()
         prs = open_prs(args.base)
         fetch(args.base, prs)

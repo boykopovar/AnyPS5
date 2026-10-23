@@ -173,6 +173,7 @@ public:
     BasicEvaluator& operator=(const BasicEvaluator&) = delete;
 
     static bool MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask = nullptr);
+    static bool MayDecide(const IrResourcePlan& program, IrValue* value);
     bool Evaluate(TNode value, std::uint32_t& result);
     bool EvaluateWide(TNode value, std::uint64_t& result);
     void ReportInaccessibleReads(InaccessibleRead* sink) { _inaccessible = sink; }
