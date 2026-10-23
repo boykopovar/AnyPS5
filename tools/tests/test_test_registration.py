@@ -15,6 +15,32 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_bracket_arguments_ignore_only_one_initial_newline(self):
+        values = (("path", "path"), ("\npath", "path"), ("\n\npath", "\npath"),
+                  ("\n path", " path"), (" \npath", " \npath"), ("\\npath", "\\npath"),
+                  ("\n", ""), ("\npath\n", "path\n"))
+        for equals in ("", "=", "==="):
+            for content, expected in values:
+                with self.subTest(equals=equals, content=content):
+                    command = f"subdirs([{equals}[{content}]{equals}])\n"
+                    self.assertEqual(list(check_test_registration.commands(command)), [("subdirs", [expected])])
+        self.assertEqual(list(check_test_registration.commands('subdirs("\npath")\n')),
+                         [("subdirs", ["\npath"])])
+
+    def test_bracket_initial_newlines_do_not_hide_disabled_tests(self):
+        content = ('add_test([=[\nbounds]=] "/build/tests/buffer_bounds_tests")\n'
+                   'set_tests_properties(bounds PROPERTIES DISABLED [=[\nTRUE]=])\n')
+        self.assertNotIn("buffer_bounds_tests", self.registered(content))
+
+    def test_bracket_initial_newline_in_subdirectory_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "nested").mkdir()
+            (build / "CTestTestfile.cmake").write_text('subdirs([=[\nnested]=])\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
+
     def test_literal_prefixes_cannot_expose_commands_inside_arguments(self):
         prefixes = (r"\#", r"\(", '"prefix" ', '"" ', '"line\nprefix" ', "[[prefix]] ",
                     "[=[prefix]=] ", "[===[line\nprefix]===] ")
@@ -310,6 +336,11 @@ class ScriptRegistrationTests(unittest.TestCase):
         self.assertEqual(self.unrun({
             "core/relinker/CMakeLists.txt": "if(WIN32)\n    add_test(NAME a COMMAND ${Python3_EXECUTABLE}\n        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_a.py)\nendif()\n",
             "core/relinker/relinker/tests/test_a.py": ""}), [])
+
+    def test_script_in_bracket_argument_with_initial_newline_is_registered(self):
+        self.assertEqual(self.unrun({
+            "CMakeLists.txt": "add_test(NAME a COMMAND python [=[\ntools/tests/test_a.py]=])\n",
+            "tools/tests/test_a.py": ""}), [])
 
     def test_unregistered_script_is_reported(self):
         self.assertEqual(self.unrun({

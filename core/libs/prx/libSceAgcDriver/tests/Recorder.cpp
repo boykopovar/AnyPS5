@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
@@ -384,6 +385,7 @@ public:
                 VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &hostProperties};
                 function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
                 context.hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
+                context.discreteGpu = properties.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
             }
             if (driverProperties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
                 extensionsEnabled.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
@@ -1838,6 +1840,16 @@ void storeRunTests(const Device& device, Recorder& recorder) {
     Require(words[0] == 1 && words[1] == 2 && words[2] == 5 && words[4] == 4 && words[3] == 0, "the stores did not land (or the later store of a dword lost)");
     const auto after = Recorder::StoreCounts();
     Require(after.stores == before.stores + 1 && after.replaced == before.replaced + 0 && after.joined == before.joined + 0, "store counters are off");
+    store(8, 1);
+    recorder.NotePendingWrite(address + 32, 4);
+    auto* commandWords = static_cast<std::uint32_t*>(block);
+    CommandBuffer disjoint{commandWords + 12, commandWords + 16, commandWords + 12, nullptr, nullptr, nullptr, 0};
+    Agc::Command::Emit(&disjoint, 0x7a, {0x20000243, 0x400}, __func__);
+    Require(recorder.Recording(), "a disjoint command allocation drained the GPU store");
+    CommandBuffer reused{commandWords + 6, commandWords + 10, commandWords + 6, nullptr, nullptr, nullptr, 0};
+    Agc::Command::Emit(&reused, 0x7a, {0x20000243, 0x400}, __func__);
+    recorder.Sync();
+    Require(words[8] == 0x400, "a pending GPU label overwrote a reused command word");
     // The covered-access mask: reported once by the next Commands() call, then cleared.
     VkAccessFlags covered = 0xffffffffu;
     recorder.Commands(&covered);
@@ -3126,13 +3138,121 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
     HostImportFor(context, address, bytes);
 }
 
+bool bdaStagingTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    if (context.hostImportAlignment == 0 || !context.bufferDeviceAddress || !AddressSpaceCounters().enabled || std::getenv("APS5_NO_BDA_STAGING") != nullptr) {
+        std::cout << "skipped, host imports are unavailable (no device addresses or address space cache)\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 4u << 20u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the test block");
+    std::memset(block, 0x11, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr || import->address == 0) {
+        std::cout << "skipped, host imports are unavailable: the test block's import was refused\n";
+        return false;
+    }
+    const auto importBase = import->base;
+    const auto importAddress = import->address;
+    const auto importBuffer = import->buffer;
+    auto* words = static_cast<std::uint32_t*>(block);
+    const auto fill = context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer");
+    const auto element = address + 8192;
+    constexpr std::size_t elementBytes = 64u << 10u;
+    constexpr std::size_t first = 8192 / 4;
+    const auto checkTable = [&](const std::vector<ShaderRecompiler::BdaAbi::Range>& ranges, bool staged) {
+        for (std::size_t index = 1; index < ranges.size(); ++index) Require(ranges[index - 1].end <= ranges[index].begin, "the BDA table of a staged build has overlapping or unsorted ranges");
+        bool covered = false;
+        std::uint64_t reached = address;
+        for (const auto& range : ranges) {
+            if (range.end <= address || range.begin >= address + bytes) continue;
+            Require(range.begin == reached, "the BDA table leaves a hole in the registered block");
+            reached = range.end;
+            const bool inImport = range.deviceAddress == importAddress + (range.begin - importBase);
+            const bool overElement = range.begin < element + elementBytes && element < range.end;
+            covered = covered || overElement;
+            if (overElement && staged) {
+                Require(range.begin == element && range.end == element + elementBytes && !inImport, "the staged element's BDA range does not send its addresses to the shadow");
+                Require((range.permissions & ShaderRecompiler::BdaAbi::Write) != 0u, "the staged element's BDA range is not writable");
+            } else {
+                Require(inImport, "a BDA range outside the staged element left the import");
+            }
+        }
+        Require(covered, "no BDA range covers the written element");
+        Require(reached == address + bytes, "the BDA table does not reach the end of the registered block");
+    };
+    {
+        GuestBufferMemory memory(context);
+        memory.AllowDeviceStaging();
+        memory.AcquireRegistered();
+        memory.AddWritable(element, elementBytes, false, false);
+        memory.AddReadable(element + 16, 64);
+        memory.AddReadable(address + (1u << 20u), 64);
+        memory.Upload(true);
+        checkTable(memory.AddressRanges(), true);
+        const auto cached = memory.CachedAddressTable();
+        Require(cached.has_value() && cached->ranges != nullptr && cached->ranges->size() == memory.AddressRanges().size(), "the cached BDA table of a staged build differs from its ranges");
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(element, elementBytes, adjustment);
+        Require(view.buffer != importBuffer, "the written element of an address-based build is bound in place");
+        std::uint32_t innerAdjustment = 0;
+        Require(memory.Descriptor(element + 16, 64, innerAdjustment).buffer == view.buffer, "a read inside the staged element does not read its shadow");
+        recorder.Sync();
+        auto commands = recorder.Commands();
+        fill(commands, view.buffer, view.offset + adjustment + 64u * 4u, 64, 0x22222222u);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        memory.RecordCopyBacks(recorder);
+        recorder.Sync();
+        memory.MarkDirectWrites();
+        std::size_t wrong = 0;
+        for (std::size_t index = 0; index < bytes / 4u; ++index) {
+            const auto at = index >= first ? index - first : bytes;
+            const auto expected = at >= 64 && at < 80 ? 0x22222222u : 0x11111111u;
+            if (words[index] != expected && wrong++ < 8) std::cout << "address-based staging copy-back dword " << index << " holds 0x" << std::hex << words[index] << ", expected 0x" << expected << std::dec << "\n";
+        }
+        Require(wrong == 0, "an address-based staged copy-back left the wrong guest bytes");
+        memory.WriteBack();
+    }
+    std::memset(block, 0x11, bytes);
+    {
+        GuestBufferMemory memory(context);
+        memory.AllowDeviceStaging();
+        memory.AcquireRegistered();
+        memory.AddReadable(element - 16, 64);
+        memory.AddWritable(element, elementBytes, false, false);
+        memory.Upload(true);
+        checkTable(memory.AddressRanges(), false);
+        std::uint32_t adjustment = 0;
+        Require(memory.Descriptor(element, elementBytes, adjustment).buffer == importBuffer, "an element crossed by an in-place read was staged");
+        memory.RecordCopyBacks(recorder);
+        recorder.Sync();
+        memory.WriteBack();
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+    }
+    HostImportFor(context, address, bytes);
+    return true;
+}
+
 bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: read and written staging not tested\n";
         return false;
     }
-    constexpr std::size_t bytes = 8u << 20u;
+    constexpr std::size_t bytes = 16u << 20u;
 #ifdef _WIN32
     void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
@@ -3162,11 +3282,12 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
         return direct;
     };
     Require(!boundInPlace(address + 4096, 1u << 20u, false), "a written 1 MiB element was not staged");
-    Require(boundInPlace(address + 4096, 4u << 20u, false), "a written-only 4 MiB element was staged past the written window");
+    Require(boundInPlace(address + 4096, 4u << 20u, false) != context.discreteGpu, context.discreteGpu ? "a written-only 4 MiB element was bound in place on a discrete GPU" : "a written-only 4 MiB element was staged past the written window");
+    Require(boundInPlace(address + 4096, 12u << 20u, false), "a written-only 12 MiB element was staged past the discrete written window");
     Require(!boundInPlace(address + 4096, 4u << 20u, true), "a read and written 4 MiB element was bound in place");
     const auto buildInPlace = [&](std::uint64_t dispatchThreads, bool read, std::uint32_t stride, std::uint32_t extent) {
         const auto element = address + 4096;
-        constexpr std::uint32_t elementBytes = 4u << 20u;
+        constexpr std::uint32_t elementBytes = 12u << 20u;
         const std::uint32_t records = stride != 0 ? elementBytes / stride : elementBytes;
         ShaderRecompiler::RecompileResult program;
         ShaderRecompiler::DescriptorBinding binding;
@@ -3188,13 +3309,13 @@ bool readWrittenStagingTests(const Device& device, Recorder& recorder) {
         recorder.Sync();
         return direct;
     };
-    Require(!buildInPlace((4u << 20u) / 16u, true, 16, 0), "a dispatch sweeping a read and written 4 MiB element bound it in place");
-    Require(buildInPlace(1024, true, 16, 0), "a dispatch touching 16 KiB of a read and written 4 MiB element staged all of it");
-    Require(buildInPlace(0, true, 16, 0), "a dispatch of unknown size staged a read and written 4 MiB element");
-    Require(buildInPlace((4u << 20u) / 16u, false, 16, 0), "a dispatch sweeping a written-only 4 MiB element staged it");
-    Require(!buildInPlace((4u << 20u) / 32u, true, 0, 32), "a dispatch sweeping a read and written 4 MiB raw element bound it in place");
-    Require(buildInPlace(1024, true, 0, 32), "a dispatch touching 32 KiB of a read and written 4 MiB raw element staged all of it");
-    Require(buildInPlace((4u << 20u) / 32u, true, 0, 0), "a raw element without an access extent was staged");
+    Require(!buildInPlace((12u << 20u) / 16u, true, 16, 0), "a dispatch sweeping a read and written 12 MiB element bound it in place");
+    Require(buildInPlace(1024, true, 16, 0), "a dispatch touching 16 KiB of a read and written 12 MiB element staged all of it");
+    Require(buildInPlace(0, true, 16, 0), "a dispatch of unknown size staged a read and written 12 MiB element");
+    Require(buildInPlace((12u << 20u) / 16u, false, 16, 0), "a dispatch sweeping a written-only 12 MiB element staged it");
+    Require(!buildInPlace((12u << 20u) / 32u, true, 0, 32), "a dispatch sweeping a read and written 12 MiB raw element bound it in place");
+    Require(buildInPlace(1024, true, 0, 32), "a dispatch touching 32 KiB of a read and written 12 MiB raw element staged all of it");
+    Require(buildInPlace((12u << 20u) / 32u, true, 0, 0), "a raw element without an access extent was staged");
     Require(std::all_of(static_cast<const std::byte*>(block), static_cast<const std::byte*>(block) + bytes, [](std::byte value) { return value == std::byte{0x11}; }), "a staged copy-back changed the guest bytes");
     {
         GuestAllocations::Mutation mutation;
@@ -7293,35 +7414,7 @@ public:
         const auto commands = start.commands;
         if (!continued) {
             recorder.PrepareSampleSlot();
-            if (context.graphicsPipelineLibrary) {
-                if (!transitioned) {
-                    transitioned = true;
-                    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                    barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-                    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-                    barrier.image = target.Image();
-                    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-                }
-                VkRenderingAttachmentInfoKHR attachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR};
-                attachment.imageView = target.View();
-                attachment.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-                attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-                attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                VkRenderingInfoKHR rendering{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
-                rendering.renderArea = {{0, 0}, {8, 8}};
-                rendering.layerCount = 1;
-                rendering.colorAttachmentCount = 1;
-                rendering.pColorAttachments = &attachment;
-                context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
-            } else {
-                VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-                begin.renderPass = renderPass;
-                begin.framebuffer = framebuffer;
-                begin.renderArea = {{0, 0}, {8, 8}};
-                context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-            }
+            begin(commands);
         }
         context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         recorder.NoteSampledDraw(commands);
@@ -7330,10 +7423,48 @@ public:
         return continued;
     }
 
+    void Record(VkCommandBuffer commands) const {
+        begin(commands);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
+        EndRenderPass(context, commands);
+    }
+
     static constexpr std::uint64_t Samples = 64;
 
 private:
     static constexpr std::uint64_t PassKey = 0xc0de;
+    void begin(VkCommandBuffer commands) const {
+        if (context.graphicsPipelineLibrary) {
+            if (!transitioned) {
+                transitioned = true;
+                VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier.image = target.Image();
+                barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+            }
+            VkRenderingAttachmentInfoKHR attachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR};
+            attachment.imageView = target.View();
+            attachment.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfoKHR rendering{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
+            rendering.renderArea = {{0, 0}, {8, 8}};
+            rendering.layerCount = 1;
+            rendering.colorAttachmentCount = 1;
+            rendering.pColorAttachments = &attachment;
+            context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
+        } else {
+            VkRenderPassBeginInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            info.renderPass = renderPass;
+            info.framebuffer = framebuffer;
+            info.renderArea = {{0, 0}, {8, 8}};
+            context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &info, VK_SUBPASS_CONTENTS_INLINE);
+        }
+    }
     void release() noexcept {
         const auto device = context.device;
         if (pipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(device, pipeline, nullptr);
@@ -7679,6 +7810,24 @@ void sampleDumpTests(const Device& device, Recorder& recorder) {
     }
     CoverPass cover(context);
     inPassSampleDumpTests(recorder, context, cover, words, address, target);
+}
+
+void uncountedPassTests(const Device& device) {
+    auto context = device.GetContext();
+    context.bufferDeviceAddress = false;
+    Recorder recorder(context);
+    CoverPass cover(context);
+    recorder.CountSamples();
+    Require(!recorder.QueuesSampleDumps(), "a recorder without buffer device addresses counted samples in segments");
+    const auto base = recorder.SamplesTotal();
+    cover.Draw(recorder);
+    recorder.RecordUncounted([&](VkCommandBuffer commands) { cover.Record(commands); });
+    cover.Draw(recorder);
+    recorder.Submit();
+    recorder.Sync();
+    const auto counted = recorder.SamplesTotal() - base;
+    Require(counted != 0, "the draws around an uncounted pass were not counted");
+    if (context.occlusionQueryPrecise) Require(counted == 2 * CoverPass::Samples, "the batch-wide occlusion query counted " + std::to_string(counted) + " samples, not the " + std::to_string(2 * CoverPass::Samples) + " of the two draws around an uncounted pass");
 }
 
 void cmaskPassTests(const Device& device, Recorder& recorder) {
@@ -10476,6 +10625,12 @@ int main(int argc, char** argv) {
         std::cout << "host imports " << (PrepareImportWatch(device.GetContext()) == ImportWatch::Unwatch ? "are compared" : "stay watched") << '\n';
         Recorder recorder(device.GetContext());
         recorder.Activate();
+        if (argc == 2 && std::string_view(argv[1]) == "--command-reuse-only") {
+            if (device.GetContext().hostImportAlignment == 0) return 77;
+            const auto before = Recorder::StoreCounts().stores;
+            storeRunTests(device, recorder);
+            return Recorder::StoreCounts().stores != before ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--copied-direct-only") {
             copiedDirectOrderingTests(device, recorder);
             return 0;
@@ -10543,6 +10698,11 @@ int main(int argc, char** argv) {
             lateLabelTests(recorder);
             largeLabelTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--bda-staging-only") {
+            if (!bdaStagingTests(device, recorder)) return 77;
+            std::cout << "address-based staging tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--read-written-staging-only") {
@@ -10672,6 +10832,15 @@ int main(int argc, char** argv) {
             std::cout << "Occlusion counter dump tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--uncounted-passes-only") {
+            if (!device.Graphics()) {
+                std::cout << "skipped, the test queue has no graphics\n";
+                return 77;
+            }
+            uncountedPassTests(device);
+            std::cout << "Uncounted pass tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--shadowed-key-stores-only") {
             if (!shadowedKeyStoreTests(device, recorder)) {
                 std::cout << "skipped, the device imports no watched host memory under a unit shadow\n";
@@ -10749,6 +10918,7 @@ int main(int argc, char** argv) {
         refreshProofTests(device, recorder);
         resourceReadTests(device, recorder);
         readWrittenStagingTests(device, recorder);
+        bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
         tiledResolveTests(device, recorder);

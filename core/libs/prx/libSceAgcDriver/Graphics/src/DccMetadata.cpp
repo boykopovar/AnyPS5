@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -158,7 +159,7 @@ struct GpuKeyStore {
 };
 
 struct KeyStoreMemo {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::vector<GpuKeyStore> entries;
     const Recorder* recorder = nullptr;
 };
@@ -523,7 +524,7 @@ DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
     if (IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110)) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
     std::byte probe[16]{};
     if (!IsDccClear(keys) || !FillDccClear(ResolveTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) {
-        static std::mutex reportedMutex;
+        static AgcDriver::Mutex reportedMutex;
         static std::set<std::pair<std::uint64_t, int>> reported;
         std::lock_guard lock(reportedMutex);
         if (reported.size() < 32 && reported.insert({resource.baseAddress, static_cast<int>(keys)}).second) std::fprintf(stderr, "[gpu] texture 0x%llx (format %u) has %s DCC keys at 0x%llx; its texels are read as stored\n", static_cast<unsigned long long>(resource.baseAddress), resource.format, DccKeysName(keys), static_cast<unsigned long long>(resource.dccAddress));
@@ -664,7 +665,10 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
         return true;
     }
     Layout layout{};
-    if (!IsDccClear(keys) || keys == DccKeys::ClearRegister || !LayoutFor(format, layout)) return false;
+    if (!IsDccClear(keys) || keys == DccKeys::ClearRegister || !LayoutFor(format, layout)) {
+        std::fill(bytes.begin(), bytes.end(), std::byte{0});
+        return false;
+    }
     const bool color = keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111;
     const bool alpha = keys == DccKeys::Clear0001 || keys == DccKeys::Clear1111;
     const int alphaChannel = layout.channels == 3 ? -1 : alphaOnMsb ? static_cast<int>(layout.channels) - 1 : 0;
@@ -679,7 +683,9 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
             if (((value >> i) & 1u) != 0) element[bit / 8u] |= static_cast<std::byte>(1u << (bit % 8u));
         }
     }
-    for (std::size_t offset = 0; offset + element.size() <= bytes.size(); offset += element.size()) std::memcpy(bytes.data() + offset, element.data(), element.size());
+    std::size_t offset = 0;
+    for (; offset + element.size() <= bytes.size(); offset += element.size()) std::memcpy(bytes.data() + offset, element.data(), element.size());
+    std::fill(bytes.begin() + offset, bytes.end(), std::byte{0});
     return true;
 }
 

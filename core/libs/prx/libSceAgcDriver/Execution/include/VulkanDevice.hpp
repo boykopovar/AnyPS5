@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -34,6 +35,18 @@ struct RecipeHit;
 struct RecordedDispatch;
 // The module, layout and pipeline a compute dispatch binds (VulkanDevice::createComputePipeline).
 struct ComputePipelineObjects;
+
+struct DeviceQueuePlan {
+    std::uint32_t mainCount = 1;
+    bool settle = false;
+    std::uint32_t settleFamily = 0;
+    std::uint32_t settleIndex = 0;
+    bool sparseBinding = false;
+    std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
+    std::uint32_t sparseIndex = 0;
+};
+
+DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding);
 
 class VulkanDevice {
 public:

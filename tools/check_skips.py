@@ -27,7 +27,10 @@ def high_refresh_limitation(output):
 
 
 def skips(path):
-    for case in ET.parse(path).getroot().iter("testcase"):
+    root = ET.parse(path).getroot()
+    if root.tag not in ("testsuite", "testsuites"):
+        raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
+    for case in root.iter("testcase"):
         if case.get("status") == "disabled":
             raise ValueError(f"{path}: testcase {case.get('name')!r} is disabled and was not run")
         skipped = case.find("skipped")

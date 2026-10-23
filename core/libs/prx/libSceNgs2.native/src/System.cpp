@@ -345,7 +345,7 @@ int APS5_VABI sceNgs2SystemSetGrainSamples(uintptr_t system_handle, uint32_t num
     const Ngs2Lock lock;
     auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    if (num_samples == 0 || num_samples > system->option.max_grain_samples) APS5_INVALID_ARG_EX;
+    if (num_samples == 0 || num_samples > system->option.max_grain_samples) return SCE_NGS2_ERROR_INVALID_NUM_GRAIN_SAMPLES;
     system->option.num_grain_samples = num_samples;
     return SCE_NGS2_OK;
 }
@@ -354,7 +354,7 @@ int APS5_VABI sceNgs2SystemSetSampleRate(uintptr_t system_handle, uint32_t sampl
     const Ngs2Lock lock;
     auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
-    if (sample_rate == 0) APS5_INVALID_ARG_EX;
+    if (!ValidSampleRate(sample_rate)) return SCE_NGS2_ERROR_INVALID_SAMPLE_RATE;
     for (const auto* rack : system->racks) {
         for (const auto& voice : rack->voices) {
             for (const auto& filter : voice.filters) {
@@ -416,7 +416,16 @@ int APS5_VABI sceNgs2SystemRender(uintptr_t system_handle, const Ngs2RenderBuffe
         system = Ngs2FindSystem(system_handle);
     }
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
+    if (num_buffer_info > 31) return SCE_NGS2_ERROR_INVALID_NUM_RENDER_BUFFERS;
     if (buffer_info == nullptr || num_buffer_info == 0) APS5_INVALID_ARG_EX;
+    for (std::uint32_t i = 0; i < num_buffer_info; i++) {
+        const auto waveform_type = buffer_info[i].waveform_type;
+        if (waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16B &&
+            waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_F32L && waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_F32B) {
+            return SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE;
+        }
+        if (buffer_info[i].buffer == nullptr) return SCE_NGS2_ERROR_INVALID_RENDER_BUFFER;
+    }
     SystemLockState* state = nullptr;
     {
         const auto self = std::this_thread::get_id();

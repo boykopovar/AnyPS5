@@ -14,6 +14,9 @@ static constexpr int SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR = static_cast<int>(
 static constexpr int SCE_NGS2_ERROR_INVALID_SAMPLE_RATE = static_cast<int>(0x804A8051);
 static constexpr int SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE = static_cast<int>(0x804A8201);
 static constexpr int SCE_NGS2_ERROR_INVALID_RACK_HANDLE = static_cast<int>(0x804A8202);
+static constexpr int SCE_NGS2_ERROR_INVALID_WAVEFORM_TYPE = static_cast<int>(0x804A8050);
+static constexpr int SCE_NGS2_ERROR_INVALID_RENDER_BUFFER = static_cast<int>(0x804A8251);
+static constexpr int SCE_NGS2_ERROR_INVALID_NUM_RENDER_BUFFERS = static_cast<int>(0x804A830B);
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_INDEX = static_cast<int>(0x804A8305);
 static constexpr int SCE_NGS2_ERROR_INVALID_NUM_GRAIN_SAMPLES = static_cast<int>(0x804A8310);
 static constexpr int SCE_NGS2_ERROR_INVALID_MAX_GRAIN_SAMPLES = static_cast<int>(0x804A8311);
@@ -42,7 +45,9 @@ static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SAMPLER = 0x4001;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER = 0x4002;
 
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I16L = 0x12;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I16B = 0x13;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32L = 0x18;
+static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_F32B = 0x19;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_ATRAC9 = 0x40;
 
 static constexpr std::uint32_t SCE_NGS2_VOICE_EVENT_PLAY = 1;
@@ -308,6 +313,18 @@ struct Ngs2CustomRackModuleInfo {
     std::uint32_t reserved2;
 };
 static_assert(sizeof(Ngs2CustomRackModuleInfo) == 40);
+
+struct Ngs2CustomModuleInfo {
+    std::uint32_t module_id;
+    std::uint32_t source_buffer_id;
+    std::uint32_t extra_buffer_id;
+    std::uint32_t dest_buffer_id;
+    std::uint32_t state_offset;
+    std::uint32_t state_size;
+    std::uint32_t reserved;
+    std::uint32_t reserved2;
+};
+static_assert(sizeof(Ngs2CustomModuleInfo) == 32);
 
 struct Ngs2CustomRackPortInfo {
     std::uint32_t source_buffer_id;
@@ -650,6 +667,12 @@ struct Ngs2VoicePortInfo {
     Ngs2Handle dest_handle;
 };
 static_assert(sizeof(Ngs2VoicePortInfo) == 24);
+
+struct Ngs2VoiceMatrixInfo {
+    std::uint32_t num_levels;
+    float levels[64];
+};
+static_assert(sizeof(Ngs2VoiceMatrixInfo) == 260);
 
 struct Ngs2VoiceState {
     std::uint32_t state_flags;

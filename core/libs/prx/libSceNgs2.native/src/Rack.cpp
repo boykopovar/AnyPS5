@@ -264,6 +264,17 @@ int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size
     return SCE_NGS2_OK;
 }
 
+int APS5_VABI sceNgs2CustomRackGetModuleInfo(uintptr_t rack_handle, uint32_t module_index, Ngs2CustomModuleInfo* info, size_t info_size) {
+    if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    const Ngs2Lock lock;
+    const auto* rack = Ngs2FindRack(rack_handle);
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    if (module_index >= rack->customModules.size() || info_size < sizeof(Ngs2CustomModuleInfo)) APS5_INVALID_ARG_EX;
+    if (info_size != sizeof(Ngs2CustomModuleInfo)) throw std::runtime_error("NGS2: custom module info of " + std::to_string(info_size) + " bytes is not implemented");
+    *info = rack->customModules[module_index];
+    return SCE_NGS2_OK;
+}
+
 int APS5_VABI sceNgs2RackSetUserData(uintptr_t rack_handle, uintptr_t user_data) {
     std::lock_guard lock(Ngs2Mutex());
     auto* rack = Ngs2FindRack(rack_handle);

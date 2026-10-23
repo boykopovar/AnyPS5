@@ -11,6 +11,7 @@
 #include <deque>
 #include <initializer_list>
 #include <map>
+#include <limits>
 #include <memory>
 #include <new>
 #include <set>
@@ -675,6 +676,7 @@ struct ReclaimMock {
     VkDeviceSize externalBytes = 0;
     std::uint64_t requests = 0;
     VkDeviceSize asked = 0;
+    bool newImage = false;
 };
 
 ReclaimMock reclaimMock;
@@ -689,7 +691,8 @@ VkDeviceMemory ExternalAllocation(VkDeviceSize bytes) {
     return memory;
 }
 
-VkDeviceSize mockCacheReclaim(VkDeviceSize bytes) {
+VkDeviceSize mockCacheReclaim(VkDeviceSize bytes, bool newImage) {
+    Expect(newImage == reclaimMock.newImage, "an allocation used the wrong image-creation cache access");
     ++reclaimMock.requests;
     reclaimMock.asked = bytes;
     if (reclaimMock.external == VK_NULL_HANDLE) return 0;
@@ -701,6 +704,10 @@ VkDeviceSize mockCacheReclaim(VkDeviceSize bytes) {
 void CacheReclaimRecovery() {
     Expect(BufferPool::ReclaimTarget(4 * MiB) == 260 * MiB, "a 4 MiB request does not ask the caches for 256 MiB on top of itself");
     Expect(BufferPool::ReclaimTarget(512 * MiB) == 1024 * MiB, "a 512 MiB request does not ask the caches for twice its size");
+    const auto limit = std::numeric_limits<VkDeviceSize>::max();
+    Expect(BufferPool::ReclaimTarget(limit / 2u) == limit - 1u, "the largest doubled request without overflow lost its reserve");
+    Expect(BufferPool::ReclaimTarget(limit / 2u + 1u) == limit, "a reclaim target wrapped when twice the request overflowed");
+    Expect(BufferPool::ReclaimTarget(limit) == limit, "the largest reclaim request wrapped to a smaller target");
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     mock = MockDevice{};
     reclaimMock = ReclaimMock{};
@@ -775,18 +782,23 @@ void ImageCacheReclaim() {
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation.allocationSize = 8 * MiB;
     allocation.memoryTypeIndex = 0;
-    const auto refuse = [&](std::initializer_list<VkResult> results) {
+    const auto refuse = [&](std::initializer_list<VkResult> results, bool newImage = false) {
         ExternalAllocation(4 * MiB);
+        reclaimMock.newImage = newImage;
         mock.results = results;
         const auto requests = reclaimMock.requests;
-        const auto memory = AllocateImageMemory(context, allocation, 3, "vkAllocateMemory texture");
+        const auto before = mock.attempts;
+        const auto memory = AllocateImageMemory(context, allocation, 3, "vkAllocateMemory texture", nullptr, newImage);
         Expect(reclaimMock.requests == requests + 1 && reclaimMock.external == VK_NULL_HANDLE, "a texture refused device memory did not release the texture caches before retrying");
+        Expect(mock.attempts == before + results.size() + 1, "image recovery or host fallback exceeded its bounded attempts");
         const auto type = mock.memoryTypes.at(memory);
         mockFreeMemory(VK_NULL_HANDLE, memory, nullptr);
         return type;
     };
     Expect(refuse({VK_ERROR_OUT_OF_DEVICE_MEMORY}) == 0, "a texture was placed in host memory although releasing the texture caches made room in device memory");
     Expect(refuse({VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}) == 1, "a texture still refused device memory after releasing the texture caches was not placed in host memory");
+    Expect(refuse({VK_ERROR_OUT_OF_DEVICE_MEMORY}, true) == 0, "a new image was placed in host memory before retrying after cache release");
+    Expect(refuse({VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY}, true) == 1, "a new image refused device memory after cache release lost its host fallback");
     Expect(mock.liveBytes == 0, "a texture allocation leaked memory");
 }
 
@@ -900,7 +912,7 @@ void DeviceBindingFailures() {
 VkDeviceMemory reclaimImage = VK_NULL_HANDLE;
 const Context* reclaimImageContext = nullptr;
 
-VkDeviceSize mockImageReclaim(VkDeviceSize) {
+VkDeviceSize mockImageReclaim(VkDeviceSize, bool) {
     if (reclaimImage == VK_NULL_HANDLE) return 0;
     ReleaseImageMemory(*reclaimImageContext, reclaimImage, 10 * MiB, 0);
     reclaimImage = VK_NULL_HANDLE;

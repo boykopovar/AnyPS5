@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferFill.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
@@ -186,7 +187,7 @@ void Driver::fillClearCount(const Graphics::StorageTexture::FillCoverage& covera
     if (!profile) return;
     using FillCover = Graphics::StorageTexture::FillCover;
     static constexpr std::array<const char*, 8> names{"none", "exact", "inside", "around", "straddle", "several", "keys", "layer"};
-    static std::mutex countsMutex;
+    static AgcDriver::Mutex countsMutex;
     static std::array<std::uint64_t, 8> counts{}, coverBytes{};
     static std::map<std::uint32_t, std::uint64_t> coveredFormats;
     static std::map<std::string, std::uint64_t> refusals;

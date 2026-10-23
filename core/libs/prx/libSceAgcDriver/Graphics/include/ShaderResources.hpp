@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
@@ -29,16 +30,19 @@ class Recorder;
 
 void FlushCachedTextures(VkDevice device);
 void ClearCachedTextures(VkDevice device);
-std::uint64_t ReleaseTextureCaches(std::uint64_t bytes);
+std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage = false);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes);
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
 std::optional<std::uint32_t> LargestDeviceLocalHeap(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCacheBudget(const Context& context);
+inline constexpr std::uint64_t SpareSnapshotPresents = 16;
 struct TextureCacheUse {
     std::size_t sampledEntries = 0;
+    std::size_t spareEntries = 0;
     std::uint64_t sampledBytes = 0;
+    std::uint64_t spareBytes = 0;
     std::uint64_t storageBytes = 0;
 };
 TextureCacheUse TextureCacheUsage();
@@ -49,6 +53,7 @@ bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<c
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
 bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
+void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
 // to date with guest memory before it is returned.
@@ -120,7 +125,7 @@ private:
     PFN_vkDestroyDescriptorPool destroyPool;
     PFN_vkResetDescriptorPool resetPool;
     PFN_vkFreeDescriptorSets freeDescriptorSets = nullptr;
-    mutable std::mutex mutex;
+    mutable AgcDriver::Mutex mutex;
     std::map<std::vector<std::uint32_t>, VkDescriptorSetLayout> layouts;
     struct Pool {
         VkDescriptorPool handle = VK_NULL_HANDLE;
@@ -474,6 +479,7 @@ private:
         std::array<std::uint32_t, 8> words{};
         bool depthCompare = false;
         VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D;
+        bool firstSample = false;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;
@@ -703,6 +709,7 @@ public:
     // meanwhile by another worker stays).
     void Remove(const Key& key, const ShaderResources* object = nullptr);
     void RemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
+    bool TryRemoveImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted = nullptr);
     // Moves the entry to the front of the LRU (a recipe hit uses its template without Find, and a
     // hot template must not age out under the recipes that depend on it); false when no entry.
     bool Touch(const Key& key);
@@ -725,6 +732,7 @@ private:
     void noteEvicted(const Key& key);
     void noteReturn(const Key& key);
     void noteUse(const Key& key);
+    void removeImage(const StorageTexture* image, std::vector<std::shared_ptr<ShaderResources>>* evicted);
     struct KeyHash {
         std::size_t operator()(const Key& key) const noexcept {
             constexpr std::uint64_t Prime = 0x9e3779b97f4a7c15ull;
@@ -749,7 +757,7 @@ private:
             return static_cast<std::size_t>(hash);
         }
     };
-    mutable std::mutex mutex;
+    mutable AgcDriver::Mutex mutex;
     std::list<std::pair<Key, std::shared_ptr<ShaderResources>>> entries;
     std::unordered_map<Key, decltype(entries)::iterator, KeyHash> index;
     std::size_t capacity = 0;

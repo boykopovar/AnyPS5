@@ -493,7 +493,21 @@ std::uint32_t FoldedOffsetCoord(SpirvValueEmitContext& ctx, const ImageEmitAcces
     auto& state = ctx.state;
     const auto components = setup.dimensionInfo.spatialComponents;
     const auto type = components == 1u ? TypeF32(state) : TypeF32Vector(state, components);
-    const auto sum = Binary(state, spv::OpFAdd, type, setup.coord, Unary(state, spv::OpConvertSToF, type, PackedOffset(ctx, access, setup.layout)));
+    const auto offset = Unary(state, spv::OpConvertSToF, type, PackedOffset(ctx, access, setup.layout));
+    if (state.fusedExactArithmetic) {
+        auto one = ConstantF32(state, 0x3f800000u);
+        if (components != 1u) {
+            const auto ones = state.module.AllocateId();
+            std::vector<std::uint32_t> words{spv::OpCompositeConstruct, type, ones};
+            words.insert(words.end(), components, one);
+            state.module.AddFunction(words);
+            one = ones;
+        }
+        const auto fused = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, type, fused, GlslStd450(state), GLSLstd450Fma, one, setup.coord, offset);
+        return fused;
+    }
+    const auto sum = Binary(state, spv::OpFAdd, type, setup.coord, offset);
     state.module.AddAnnotation(spv::OpDecorate, sum, spv::DecorationNoContraction);
     return sum;
 }
@@ -525,19 +539,20 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
         return {};
     }
     const auto info = GetFormatInfo(format);
-    if (SampledTextureNumericClass(format) != IrTextureNumericClass::Uint || RemapTextureFormat(format) == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || info.byteSize != sizeof(std::uint32_t) || info.componentCount == 0u || info.componentCount > 4u) {
-        throw std::runtime_error("image conversion format is not a packed 32-bit unsigned integer, unorm or float format");
+    const auto remapped = image.resourceClass == ImageResourceClass::Storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
+    if (SampledTextureNumericClass(remapped) != IrTextureNumericClass::Uint || remapped == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || (info.byteSize != 2u && info.byteSize != 4u) || info.componentCount == 0u || info.componentCount > 4u) {
+        throw std::runtime_error("image conversion format is not a packed 16-bit or 32-bit unsigned integer, unorm or float format");
     }
     return info;
 }
 
 void RequireConvertedUnormAccess(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SpirvBufferFormatInfo& info) {
-    if (access.mem.dataBits == 16u) {
+    if (access.mem.dataBits == 16u && info.byteSize != 2u) {
         ctx.Fail(access.inst, info.type == SpirvFormatComponentType::Float ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
     }
     for (std::uint32_t component = 0; component < 4u; component++) {
         const auto selector = (access.image.shaderSwizzle >> (component * 3u)) & 7u;
-        if (selector >= 4u && selector - 4u >= info.componentCount) {
+        if (selector >= 4u && selector - 4u >= info.componentCount && info.byteSize != 2u) {
             ctx.Fail(access.inst, "selects a channel the converted image format does not have");
         }
     }
@@ -726,7 +741,8 @@ std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& 
         state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, texel, component);
         auto clamped = value;
         if (unorm) {
-            clamped = EmitFormatStoreComponent(state, info, component, value);
+            if (access.mem.dataBits == 16u) clamped = Unary(state, spv::OpBitcast, TypeU32(state), EmitF16BitsToF32(state, value));
+            clamped = EmitFormatStoreComponent(state, info, component, clamped);
         } else {
             const auto maximum = ConstantU32(state, info.componentBits[component] == 32u ? UINT32_MAX : (1u << info.componentBits[component]) - 1u);
             const auto within = Binary(state, spv::OpULessThan, TypeBool(state), value, maximum);
@@ -1126,13 +1142,13 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         }
         if (opcode == IrOpcode::ImageAtomicFMin32 || opcode == IrOpcode::ImageAtomicFMax32) {
             return AtomicUpdate(state, pointer, ResourceKind::Image, [&](std::uint32_t current) {
-                return AtomicFloatMinMax(state, current, value, opcode == IrOpcode::ImageAtomicFMax32);
+                return AtomicFloatMinMax(state, current, value, opcode == IrOpcode::ImageAtomicFMax32, access.mem.flushDenormals);
             });
         }
         if (opcode == IrOpcode::ImageAtomicFCmpSwap32) {
             const auto comparator = ctx.Arg(access.inst, 3);
             return AtomicUpdate(state, pointer, ResourceKind::Image, [&](std::uint32_t current) {
-                return AtomicFloatCompareSwap(state, current, value, comparator);
+                return AtomicFloatCompareSwap(state, current, value, comparator, access.mem.flushDenormals);
             });
         }
         const auto old = state.module.AllocateId();
@@ -1199,8 +1215,16 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
             return value;
         };
         const auto texelFloor = [&](std::uint32_t address, std::uint32_t length, bool centre) {
-            auto scaled = Binary(state, spv::OpFMul, TypeF32(state), AddressF32(ctx, access, address), Unary(state, spv::OpConvertSToF, TypeF32(state), length));
-            state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
+            const auto addressF32 = AddressF32(ctx, access, address);
+            const auto lengthF32 = Unary(state, spv::OpConvertSToF, TypeF32(state), length);
+            std::uint32_t scaled = 0;
+            if (state.fusedExactArithmetic) {
+                scaled = state.module.AllocateId();
+                state.module.AddFunction(spv::OpExtInst, TypeF32(state), scaled, GlslStd450(state), GLSLstd450Fma, addressF32, lengthF32, ConstantF32(state, 0x80000000u));
+            } else {
+                scaled = Binary(state, spv::OpFMul, TypeF32(state), addressF32, lengthF32);
+                state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
+            }
             if (centre) {
                 scaled = Binary(state, spv::OpFSub, TypeF32(state), scaled, ConstantF32(state, 0x3f000000u));
             }

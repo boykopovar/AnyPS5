@@ -279,6 +279,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float32FlushToZero = target.float32FlushToZero;
     state.waveLdsMemoryBarriers = target.waveLdsMemoryBarriers;
     state.float32DenormPreserve = target.float32DenormPreserve;
+    state.fusedExactArithmetic = target.fusedExactArithmetic;
     state.hostSubgroupSize = target.subgroupSize;
     if (state.requirements.ldsLock && LdsInDeviceMemory(state) && std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != target.supportedCapabilities.end()) {
         state.requirements.ldsLock = false;

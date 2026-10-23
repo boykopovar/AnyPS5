@@ -1883,3 +1883,44 @@ std::int64_t GuestSockets::Writev(int descriptor, const Iovec* iov, int iovcnt) 
     }
     return Write(descriptor, buffer.data(), total);
 }
+
+extern "C" {
+int APS5_VABI _setsockopt_nid_postfix(int descriptor, int level, int option, const void* value, std::uint32_t length) {
+    return setsockopt_nid_postfix(descriptor, level, option, value, length);
+}
+int APS5_VABI _getsockopt_nid_postfix(int descriptor, int level, int option, void* value, std::uint32_t* length) {
+    return getsockopt_nid_postfix(descriptor, level, option, value, length);
+}
+int APS5_VABI _connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return connect_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _listen_nid_postfix(int descriptor, int backlog) {
+    return listen_nid_postfix(descriptor, backlog);
+}
+int APS5_VABI _accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return accept_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _bind_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
+    return bind_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return getsockname_nid_postfix(descriptor, address, length);
+}
+int APS5_VABI _getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    return getpeername_nid_postfix(descriptor, address, length);
+}
+std::int64_t APS5_VABI _sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length,
+    int flags, const void* address, std::uint32_t addressLength) {
+    return sendto_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
+}
+std::int64_t APS5_VABI _recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
+    int flags, void* address, std::uint32_t* addressLength) {
+    return recvfrom_nid_postfix(descriptor, buffer, length, flags, address, addressLength);
+}
+std::int64_t APS5_VABI _sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags) {
+    return sendmsg_nid_postfix(descriptor, message, flags);
+}
+std::int64_t APS5_VABI _recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+    return recvmsg_nid_postfix(descriptor, message, flags);
+}
+}

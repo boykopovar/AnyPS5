@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -220,6 +221,7 @@ public:
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
+    void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -578,6 +580,7 @@ private:
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool samples = VK_NULL_HANDLE;
         std::shared_ptr<void> samplePool;
+        std::vector<VkQueryPool> endedSamples;
         bool sampleActive = false;
         bool samplesDrawn = false;
         VkQueryPool segments = VK_NULL_HANDLE;
@@ -796,7 +799,7 @@ private:
     // Whether a write-back noted after `sequence` overlapped [begin, end); true when the ring no
     // longer reaches back to `sequence` (conservative: the store runs as before).
     bool writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std::uint64_t end);
-    std::mutex writtenBackMutex;
+    AgcDriver::Mutex writtenBackMutex;
     std::deque<std::array<std::uint64_t, 3>> writtenBack;
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
@@ -844,7 +847,7 @@ private:
     // frame would otherwise allocate and free their objects each time).
     std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
     std::vector<VkQueryPool> sparePools;
-    mutable std::mutex completedMutex;
+    mutable AgcDriver::Mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;
     std::uint64_t newestSubmitted = 0;
     std::chrono::steady_clock::time_point newestSubmittedAt{};

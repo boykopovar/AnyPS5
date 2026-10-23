@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <chrono>
@@ -43,6 +44,9 @@ int APS5_VABI fchdir_nid_postfix(int);
 int APS5_VABI chdir_nid_postfix(const char*);
 int APS5_VABI chroot_nid_postfix(const char*);
 char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
+int APS5_VABI getpid_nid_postfix();
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const void*, std::int32_t, std::int32_t*);
+int APS5_VABI sceKernelGetProcessType(int);
 int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI sceKernelClose(int);
 int APS5_VABI sceKernelRename(const char*, const char*);
@@ -66,6 +70,10 @@ int APS5_VABI fchown_nid_postfix(int, std::uint32_t, std::uint32_t);
 int APS5_VABI fstatat_nid_postfix(int, const char*, FileStat*, int);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
+int APS5_VABI scePthreadCondattrInit(PthreadCondattr*);
+int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr*);
+int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr*, KernelClockid);
+int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr*, KernelClockid*);
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -147,6 +155,26 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
         Require(link == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink target success cases not tested\n");
     }
+}
+
+void CheckCondattrClock() {
+    constexpr KernelClockid Realtime = 0;
+    constexpr KernelClockid Monotonic = 4;
+    PthreadCondattr attr = nullptr;
+    KernelClockid clock = -1;
+    Require(scePthreadCondattrGetclock(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrGetclock(nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+    Require(scePthreadCondattrInit(&attr) == 0 && attr != nullptr);
+    Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Realtime);
+    Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
+    Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
+    bool getclockThrew = false;
+    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::runtime_error&) { getclockThrew = true; }
+    Require(getclockThrew);
+    Require(scePthreadCondattrDestroy(&attr) == 0 && attr == nullptr);
+    clock = -1;
+    Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
 }
 
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
@@ -263,16 +291,39 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void CheckProcessQueries() {
+    struct {
+        std::int32_t version;
+        std::int32_t align;
+        std::uint64_t ids[2];
+    } workaround{1, 0, {(1ull << 3) | (1ull << 0x39), ~0ull}};
+    std::int32_t enabled = -1;
+    Require(sceKernelTitleWorkaroundIsEnabled(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x3A, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, &enabled) == 0 && enabled == 1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 4, &enabled) == 0 && enabled == 0);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 63, &enabled) == static_cast<int>(0x80020016));
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x39, &enabled) == 0 && enabled == 1);
+    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x38, &enabled) == 0 && enabled == 0);
+    Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
+    Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
+    Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
     CharUpperBuffW(hostDirectorySpelling.data(), static_cast<DWORD>(hostDirectorySpelling.size()));
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
+    CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
+    CheckCondattrClock();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));

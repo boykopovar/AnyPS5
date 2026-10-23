@@ -112,6 +112,7 @@ private:
     std::array<IrU32, 2> writeMask(const RdnaOperand& operand, IrU1 value, bool write64 = false);
     void writeCompareResult(const RdnaOperand& operand, IrU1 value);
     MemoryFlags addMemoryInfo(const MemoryInfo& memory, std::uint32_t pc);
+    bool floatAtomicFlush(IrOpcode opcode) const;
     ExportFlags addExportInfo(const RdnaInstruction& inst);
     AddressOperands readAddressOperands(const RdnaInstruction& inst, std::uint32_t firstSource);
     IrU32 getResourceDword(std::uint32_t index, std::uint32_t dword);
@@ -157,7 +158,6 @@ private:
     bool dsWrite2(const RdnaInstruction& inst);
     bool dsSrc2(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
-    bool sharedFloatFlush(IrOpcode opcode) const;
     bool dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsCondxchg32(const RdnaInstruction& inst);
     bool dsAppendConsume(const RdnaInstruction& inst, IrOpcode opcode);

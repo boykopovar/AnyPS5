@@ -81,7 +81,7 @@ def commands(content):
                 argument = re.sub(r"\\(.)", lambda match: {"n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]), argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
-                argument = argument[width:-width]
+                argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
 

@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace AgcDriver::DriverDetail {
 
@@ -189,6 +191,17 @@ DrawFinisher::Pending heldWrites(const DrawTail& tail) {
     held.writes = DrawWriteRanges(tail.decode->state, {}, ExactDrawWrites());
     held.unknown = false;
     return held;
+}
+
+bool EmptyIndirectSkip() {
+    static const bool enabled = std::getenv("APS5_NO_EMPTY_INDIRECT_SKIP") == nullptr;
+    return enabled;
+}
+
+struct CpuIndirectProgramsStorage {};
+
+std::unordered_map<std::uint64_t, bool>& CpuIndirectPrograms() {
+    return HostThreadLocal<std::unordered_map<std::uint64_t, bool>, CpuIndirectProgramsStorage>();
 }
 
 }
@@ -386,6 +399,25 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     programs = decode->programs;
     for (const auto& patch : userPatches) programs[patch.program].userData[patch.index] = patch.value;
     if (const auto skipped = SkippedShader(); skipped != 0 && std::any_of(programs.begin(), programs.end(), [skipped](const DrawProgram& program) { return program.binary.codeAddress == skipped; })) return drawn();
+    const bool emptyIndirectSkip = EmptyIndirectSkip();
+    auto& cpuIndirectPrograms = CpuIndirectPrograms();
+    const auto recordDraws = [&](const Pm4::DrawArguments& arguments) { return arguments.count != 0 && arguments.instances != 0 && (!drawParameters.indexed || arguments.firstVertexOrIndex < drawParameters.indexCount); };
+    if (emptyIndirectSkip && drawParameters.indirect && !programs.empty()) {
+        const auto known = cpuIndirectPrograms.find(programs.front().binary.codeAddress);
+        if (known != cpuIndirectPrograms.end() && known->second) {
+            const auto& indirect = *drawParameters.indirect;
+            recordQueuedLabelsBeforeRead(submission.queue);
+            const auto readStart = std::chrono::steady_clock::now();
+            const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+            bool any = false;
+            for (std::uint32_t record = 0; record < count && !any; ++record) any = recordDraws(Pm4::ReadDrawArguments(indirect, record));
+            if (!any) {
+                Graphics::CountEmptyIndirectDraw(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+                timing.Mark("empty_indirect_skipped");
+                return drawn();
+            }
+        }
+    }
     const auto setMeshIndexBuffer = [&](const Pm4::DrawParameters& parameters) {
         if (!graphics.stages.mesh) return;
         auto& words = programs.front().userData;
@@ -448,8 +480,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     const auto decodeVertexInfo = [&](std::size_t i) {
         const auto& program = programs[i];
         if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) return;
-        decodeReads[i].clear();
-        vertexInfos[i] = Graphics::DecodeVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, &decodeReads[i], false, 8u - program.firstUserSgpr);
+        vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], 8u - program.firstUserSgpr);
         if (vertexInfos[i]) {
             vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, readRegister(queue.context, 0x207), program.tailContinuation.get()) | graphics.layerExports;
             vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
@@ -756,6 +787,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         const auto& result = *programResults[i];
         if (i == 0 && drawParameters.indirect) {
             indirectCpu = ClassifyIndirectDraw(result, graphics, programs.front(), localDevice, drawParameters, traceIndirect);
+            if (EmptyIndirectSkip()) CpuIndirectPrograms()[programs.front().binary.codeAddress] = indirectCpu.has_value();
         } else if (i == 0) {
             fold(result, drawParameters);
         }

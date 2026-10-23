@@ -636,6 +636,27 @@ static void CheckVmmapSysctl() {
     const int tooLong[] = {1, 14, 32, self, 0};
     Require(sysctl_nid_postfix(tooLong, 5, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
 }
+static void CheckEnvSysctl() {
+    const int self = getpid_nid_postfix();
+    const int mib[] = {1, 14, 35, self};
+    *__error_nid_postfix() = 13;
+    std::size_t length = 7;
+    Require(sysctl_nid_postfix(mib, 4, nullptr, &length, nullptr, 0) == 0 && length == 0);
+    unsigned char buffer[16];
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    length = sizeof(buffer);
+    Require(sysctl_nid_postfix(mib, 4, buffer, &length, nullptr, 0) == 0 && length == 0 && buffer[0] == 0xaa);
+    Require(*__error_nid_postfix() == 13);
+    length = sizeof(buffer);
+    Require(sysctl_nid_postfix(mib, 4, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
+    const int foreign[] = {1, 14, 35, self + 1000};
+    Require(sysctl_nid_postfix(foreign, 4, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
+    const int current[] = {1, 14, 35, -1};
+    Require(sysctl_nid_postfix(current, 4, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
+    Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+    const int tooLong[] = {1, 14, 35, self, 0};
+    Require(sysctl_nid_postfix(tooLong, 5, nullptr, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+}
 static void CheckPseudoRandomMibSysctl() {
     const int mib[] = {1, 50};
     *__error_nid_postfix() = 13;
@@ -802,6 +823,7 @@ int main() {
     CheckOvercommitSysctl();
     CheckArandomSysctl();
     CheckVmmapSysctl();
+    CheckEnvSysctl();
     CheckPseudoRandomMibSysctl();
     CheckNameToMib();
     *__error_nid_postfix() = 13;

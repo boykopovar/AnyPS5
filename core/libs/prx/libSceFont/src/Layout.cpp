@@ -120,7 +120,8 @@ void FillImageMetrics(FontRenderOutput* result, const FontGlyphMetrics* metrics,
 
 int RenderGlyphIndexToSurface(FontObj& obj, std::uint32_t glyphIndex, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
     ClearRenderOutputs(metrics, result);
-    if (!surface->buffer || surface->width <= 0 || surface->height <= 0 || surface->widthByte <= 0 || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
+    const bool emptyExtent = surface->width == 0 || surface->height == 0;
+    if (!surface->buffer || surface->width < 0 || surface->height < 0 || surface->widthByte < 0 || (!emptyExtent && surface->widthByte == 0) || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
     const int bytesPerPixel = surface->pixelSizeByte;
     if (bytesPerPixel != 1 && bytesPerPixel != 4) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
     const auto face = static_cast<FT_Face>(obj.ft_face);

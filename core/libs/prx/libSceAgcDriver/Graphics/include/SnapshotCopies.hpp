@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SNAPSHOTCOPIES_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SNAPSHOTCOPIES_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +22,7 @@ struct SnapshotCopies {
     using Key = std::tuple<std::uint64_t, std::size_t, VkBufferUsageFlags>;
     static constexpr std::size_t Budget = std::size_t{16} << 20u;
     static constexpr std::size_t MaxEntries = 1024;
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     struct Entry {
         std::shared_ptr<Buffer> buffer;

@@ -137,6 +137,8 @@ def main():
 
         failures = [
             ("tpoff32", [(0x1000, TPOFF32, NULL, 0)], True, (), "Unsupported relocation type 0x17"),
+            ("tpoff32-invalid-sym", [(0x1000, TPOFF32, 0x1234, 0)], True, (), "Unsupported relocation type 0x17"),
+            ("unknown-reloc-invalid-sym", [(0x1000, 0x99, 0x1234, 0)], True, (), "Unsupported relocation type 0x99"),
             ("not-tls-symbol", [(0x1000, TPOFF64, DATA_SYMBOL, 0)], True, (), "not STT_TLS"),
             ("no-tls-segment", [(0x1000, TPOFF64, NULL, 0)], False, (), "without a PT_TLS segment"),
             ("dtpmod-addend", [(0x1000, DTPMOD64, NULL, 1)], True, (), "DTPMOD64 relocation has a nonzero addend"),

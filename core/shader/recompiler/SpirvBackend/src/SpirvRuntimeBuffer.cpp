@@ -164,8 +164,20 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
     state.module.AddFunction(spv::OpAccessChain, wide ? TypeStorageBufferU64Pointer(state) : TypeStorageBufferPointer(state), access.objectPointer, variable, ConstantU32(state, element));
     access.byteOffset = state.memoryByteOffsets.at(element);
     access.memoryAccess = memory.coherent ? spv::MemoryAccessVolatileMask : 0u;
-    access.length = state.module.AllocateId();
-    state.module.AddFunction(spv::OpArrayLength, TypeU32(state), access.length, access.objectPointer, 0u);
+    {
+        const auto* descriptor = instruction.Argument(0u)->Resolve();
+        std::array<const IrValue*, 4> key{};
+        for (std::size_t index = 0; index < key.size(); ++index) key[index] = descriptor->Argument(index)->Resolve();
+        const auto found = std::find_if(state.bufferLengths.begin(), state.bufferLengths.end(), [&](const auto& entry) {
+            return entry.descriptor == key && entry.variable == variable && entry.element == element && entry.label == state.currentLabel;
+        });
+        if (found != state.bufferLengths.end()) access.length = found->length;
+        else {
+            access.length = state.module.AllocateId();
+            state.module.AddFunction(spv::OpArrayLength, TypeU32(state), access.length, access.objectPointer, 0u);
+            state.bufferLengths.push_back({key, variable, element, state.currentLabel, access.length});
+        }
+    }
     return access;
 }
 

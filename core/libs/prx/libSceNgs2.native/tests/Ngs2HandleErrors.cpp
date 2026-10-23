@@ -241,6 +241,44 @@ static void CheckSystemOption() {
     CheckQueryBuffer(&valid, SCE_NGS2_OK, "a valid option");
 }
 
+static void CheckSetGrainSamples() {
+    constexpr int systemError = static_cast<int>(0x804A8201u);
+    constexpr int grainError = static_cast<int>(0x804A8310u);
+    const auto system = CreateSystem();
+    Ngs2SystemInfo info{};
+    Status(sceNgs2SystemSetGrainSamples(0x1234, 100), systemError, "an invalid system handle lost to an invalid grain");
+    for (const std::uint32_t grain : {64u, 192u, 512u}) {
+        Status(sceNgs2SystemSetGrainSamples(system, grain), SCE_NGS2_OK, "a valid grain was refused");
+        Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
+        Require(info.num_grain_samples == grain);
+    }
+    for (const std::uint32_t grain : {0u, 513u, 576u, 2048u, 0xffffffffu}) {
+        Status(sceNgs2SystemSetGrainSamples(system, grain), grainError, "an invalid grain was accepted");
+        Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
+        Require(info.num_grain_samples == 512);
+    }
+    Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
+}
+
+static void CheckSetSampleRate() {
+    constexpr int systemError = static_cast<int>(0x804A8201u);
+    constexpr int rateError = static_cast<int>(0x804A8051u);
+    const auto system = CreateSystem();
+    Ngs2SystemInfo info{};
+    Status(sceNgs2SystemSetSampleRate(0x1234, 7000), systemError, "an invalid system handle lost to an invalid rate");
+    for (const std::uint32_t rate : {11025u, 12000u, 22050u, 24000u, 44100u, 48000u, 88200u, 96000u, 176400u, 192000u}) {
+        Status(sceNgs2SystemSetSampleRate(system, rate), SCE_NGS2_OK, "a valid rate was refused");
+        Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
+        Require(info.sample_rate == rate);
+    }
+    for (const std::uint32_t rate : {0u, 7000u, 8000u, 16000u, 32000u, 47999u, 48001u, 192001u, 0xffffffffu}) {
+        Status(sceNgs2SystemSetSampleRate(system, rate), rateError, "an invalid rate was accepted");
+        Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
+        Require(info.sample_rate == 192000);
+    }
+    Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
+}
+
 int main() {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -276,6 +314,8 @@ int main() {
         CheckCreateArguments();
         CheckResetOption();
         CheckSystemOption();
+        CheckSetGrainSamples();
+        CheckSetSampleRate();
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {

@@ -173,10 +173,13 @@ static int SetTimes(HANDLE handle, const KernelTimeval* times) {
         errno = EINVAL;
         return -1;
     }
-    return SetFileTime(handle, nullptr, &access, &modified) ? 0 : File::WindowsFileTime::Failure(GetLastError());
+    FILETIME creation{};
+    if (!GetFileTime(handle, &creation, nullptr, nullptr)) return File::WindowsFileTime::Failure(GetLastError());
+    const auto birth = CompareFileTime(&modified, &creation) < 0 ? &modified : nullptr;
+    return SetFileTime(handle, birth, &access, &modified) ? 0 : File::WindowsFileTime::Failure(GetLastError());
 }
 static int NativeUtimes(const std::filesystem::path& path, const KernelTimeval* times, bool followLink = true) {
-    const auto handle = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | (followLink ? 0 : FILE_FLAG_OPEN_REPARSE_POINT), nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
     const int result = SetTimes(handle, times);
@@ -189,7 +192,7 @@ static int NativeFutimes(int descriptor, const KernelTimeval* times) {
     const auto original = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));
     if (original == INVALID_HANDLE_VALUE) { errno = EBADF; return -1; }
     if (GetFileType(original) != FILE_TYPE_DISK) { errno = EINVAL; return -1; }
-    const auto handle = ReOpenFile(original, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+    const auto handle = ReOpenFile(original, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
     const int result = SetTimes(handle, times);
     CloseHandle(handle);
@@ -264,9 +267,10 @@ static std::int64_t NativePositionedTransfer(int descriptor, void* buf, std::siz
         errno = ESPIPE;
         return -1;
     }
+    const auto at = write && File::Appends(descriptor) ? ~std::uint64_t{} : static_cast<std::uint64_t>(offset);
     OVERLAPPED overlapped{};
-    overlapped.Offset = static_cast<DWORD>(offset);
-    overlapped.OffsetHigh = static_cast<DWORD>(static_cast<std::uint64_t>(offset) >> 32u);
+    overlapped.Offset = static_cast<DWORD>(at);
+    overlapped.OffsetHigh = static_cast<DWORD>(at >> 32u);
     DWORD done = 0;
     const BOOL ok = write ? ::WriteFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped)
                           : ::ReadFile(handle, buf, static_cast<DWORD>(nbytes), &done, &overlapped);
@@ -722,7 +726,7 @@ int APS5_VABI nmount_nid_postfix(const KernelIovec* iov, unsigned int niov, int 
 }
 
 int APS5_VABI close_nid_postfix(int d) {
-    if (File::IsHostStream(d)) return PosixFailure(GUEST_EBADF);
+    if (File::IsHostStream(d)) return PosixFailure(GUEST_EPERM);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) {
         if (socketError == 0) return 0;
@@ -1240,6 +1244,10 @@ int APS5_VABI getdirentries_nid_postfix(int fd, char* buf, int nbytes, int64_t* 
     return PosixResult(sceKernelGetdirentries(fd, buf, nbytes, basep));
 }
 
+int APS5_VABI _getdirentries_nid_postfix(int fd, char* buf, int nbytes, int64_t* basep) {
+    return getdirentries_nid_postfix(fd, buf, nbytes, basep);
+}
+
 int APS5_VABI getdents_nid_postfix(int fd, char* buf, int nbytes) {
     return PosixResult(sceKernelGetdents(fd, buf, nbytes));
 }
@@ -1369,14 +1377,15 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
         return result < 0 ? SceErrorFromErrno(errno) : 0;
     }
     if (!write && offset == nullptr && File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (write && offset == nullptr && iovcnt > 1 && total <= static_cast<std::size_t>(std::numeric_limits<int>::max()) && File::Appends(d)) {
+    if (write && iovcnt > 1 && total <= static_cast<std::size_t>(std::numeric_limits<int>::max()) && File::Appends(d)) {
         std::vector<char> gathered;
         gathered.reserve(total);
         for (int i = 0; i < iovcnt; ++i) {
             const auto* base = static_cast<const char*>(iov[i].base);
             gathered.insert(gathered.end(), base, base + iov[i].length);
         }
-        const auto result = NativeTransferBuffer(d, gathered.data(), gathered.size(), true);
+        const auto result = offset != nullptr ? NativePositionedTransfer(d, gathered.data(), gathered.size(), *offset, true)
+                                              : NativeTransferBuffer(d, gathered.data(), gathered.size(), true);
         return result < 0 ? SceErrorFromErrno(errno) : result;
     }
     const bool whole = write || offset != nullptr || NativeIsDisk(d);

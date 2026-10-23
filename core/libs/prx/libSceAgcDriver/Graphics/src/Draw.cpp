@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -178,8 +179,8 @@ struct CmaskProof {
     std::uint64_t generation = 0;
 };
 
-std::mutex& cmaskProofMutex() {
-    static std::mutex mutex;
+AgcDriver::Mutex& cmaskProofMutex() {
+    static AgcDriver::Mutex mutex;
     return mutex;
 }
 
@@ -405,7 +406,7 @@ enum DrawKind : std::size_t { KindRecipeHit, KindTemplateHit, KindBuild, KindBda
 constexpr std::array<const char*, KindCount> DrawKindNames{"recipe hit", "template hit", "build", "BDA"};
 
 struct DrawProfile {
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     std::array<double, KindCount> kindUs{};
     std::array<std::uint64_t, KindCount> kindCounts{};
     std::uint64_t fullScissorLookups = 0;
@@ -467,6 +468,7 @@ struct DrawProfile {
     // with a constant, and the time of the CPU record reads (their syncs).
     std::array<std::uint64_t, IndirectPathCount> indirect{};
     std::uint64_t indirectRewritten = 0;
+    std::uint64_t indirectEmpty = 0;
     double indirectReadUs = 0;
     // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
@@ -564,12 +566,12 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; hook waits inside draws %.1f ms (max %.1f; the draws' own syncs, %.1f ms, not counted)", profile.hookWaitUs / 1000.0, profile.maxHookWaitUs / 1000.0, profile.ownSyncUs / 1000.0);
     std::uint64_t indirectCpu = 0;
     for (std::size_t i = 1; i < IndirectPathCount; ++i) indirectCpu += profile.indirect[i];
-    if ((profile.indirect[0] != 0 || indirectCpu != 0) && room()) {
+    if ((profile.indirect[0] != 0 || indirectCpu != 0 || profile.indirectEmpty != 0) && room()) {
         n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; indirect: gpu-side %llu (%llu rewritten), cpu-side %llu (", static_cast<unsigned long long>(profile.indirect[0]), static_cast<unsigned long long>(profile.indirectRewritten), static_cast<unsigned long long>(indirectCpu));
         for (std::size_t i = 1; i < IndirectPathCount && room(); ++i) {
             if (profile.indirect[i] != 0) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", IndirectDrawPathNames[i], static_cast<unsigned long long>(profile.indirect[i]));
         }
-        if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "), argument reads %.1f ms", profile.indirectReadUs / 1000.0);
+        if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "), empty skipped before their stages %llu, argument reads %.1f ms", static_cast<unsigned long long>(profile.indirectEmpty), profile.indirectReadUs / 1000.0);
     }
     if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "; skipped packets:");
     for (std::size_t i = 0; i < profile.skips.size() && room(); ++i) {
@@ -702,8 +704,8 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
     return keyed;
 }
 
-std::mutex& validationMutex() {
-    static std::mutex mutex;
+AgcDriver::Mutex& validationMutex() {
+    static AgcDriver::Mutex mutex;
     return mutex;
 }
 
@@ -898,6 +900,21 @@ std::array<std::uint64_t, IndirectPathCount> IndirectDrawCounts() {
     auto& stats = Profile();
     std::lock_guard lock(stats.mutex);
     return stats.indirect;
+}
+
+void CountEmptyIndirectDraw(double readMs) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    ++stats.indirectEmpty;
+    stats.indirectReadUs += readMs * 1000.0;
+}
+
+std::uint64_t EmptyIndirectDrawCount() {
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    return stats.indirectEmpty;
 }
 
 std::array<DrawPassCounts, 2> DrawPassTotals() {
@@ -1413,7 +1430,7 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
         resident = lookup();
         if (resident != nullptr) materializeRegisterClear(context, color, *resident);
     } catch (const std::exception& error) {
-        static std::mutex reportMutex;
+        static AgcDriver::Mutex reportMutex;
         static std::set<std::uint64_t> reported;
         std::lock_guard lock(reportMutex);
         if (reported.insert(color.address).second) std::fprintf(stderr, "[gpu] color target 0x%llx stays non-resident: %s\n", static_cast<unsigned long long>(color.address), error.what());
@@ -2600,7 +2617,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
 void recordPreparedDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, PreparedDraw& prepared) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
-    static std::mutex dumpMutex;
+    static AgcDriver::Mutex dumpMutex;
     static std::map<std::uint64_t, int> dumped;
     auto& timing = *prepared.timing;
     auto& timer = prepared.timer;

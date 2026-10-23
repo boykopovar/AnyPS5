@@ -127,6 +127,17 @@ IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
     return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
 }
 
+IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {
+    switch (format) {
+        case IrBufferFormat::Format5_6_5UNorm:
+        case IrBufferFormat::Format5_5_5_1UNorm:
+        case IrBufferFormat::Format4_4_4_4UNorm:
+            return IrBufferFormat::Format16UInt;
+        default:
+            return RemapTextureFormat(format);
+    }
+}
+
 std::uint32_t DepthBitsTextureWidth(std::uint32_t word1, std::uint32_t word3) {
     const auto format = static_cast<IrBufferFormat>((word1 >> 20u) & 0x1ffu);
     const auto swizzle = (word3 >> 20u) & 0x1fu;

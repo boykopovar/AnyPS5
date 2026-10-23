@@ -338,6 +338,24 @@ int main() {
     Require(RenderedPixels(mixed, 0x4E00, advance) > 0 && advance == 63.0f);
     Require(RenderedPixels(mixed, 0x0627, advance) > 0 && advance == 66.0f);
     Require(RenderedPixels(mixed, 0xAC00, advance) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    std::vector<std::uint8_t> untouched(128 * 128);
+    FontRenderSurface measuring{};
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 0, 31);
+    FontGlyphMetrics measured{};
+    FontRenderOutput measuredResult{};
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK);
+    Require(measured.Horizontal.advance == 60.0f && measured.width > 0.0f && measuredResult.ImageMetrics.advance > 0.0f);
+    Require(measuredResult.UpdateRect.w == 0 && measuredResult.UpdateRect.h == 0);
+    for (const std::uint8_t pixel : untouched) Require(pixel == 0);
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 128, 1, 128, 0);
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK && measured.Horizontal.advance == 60.0f);
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 128, 1, 128, 128);
+    measuring.width = -1;
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 128, 128);
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    sceFontRenderSurfaceInit(&measuring, nullptr, 0, 1, 0, 31);
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
     Require(sceFontUnbindRenderer(mixed) == SCE_FONT_OK);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK);
 

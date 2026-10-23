@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -426,6 +427,19 @@ public:
         return {shared_from_this(), texture.get()};
     }
 
+    std::shared_ptr<Texture> FirstSample(VkComponentMapping components) {
+        const auto source = Sampled({});
+        if (firstSampleCopy == nullptr) firstSampleCopy = std::make_unique<FirstSampleCopy>(context, target.format, target.extent);
+        firstSampleCopy->Record(*Recorder::Active(), source->View(), source->Layout());
+        const std::array<std::uint32_t, 4> key{static_cast<std::uint32_t>(components.r), static_cast<std::uint32_t>(components.g), static_cast<std::uint32_t>(components.b), static_cast<std::uint32_t>(components.a)};
+        auto& texture = firstSampleTextures[key];
+        if (texture == nullptr) {
+            texture = std::make_shared<Texture>(context, firstSampleCopy->Image(), target.format, VK_IMAGE_ASPECT_COLOR_BIT, components);
+            texture->MarkRefreshedPerUse();
+        }
+        return {shared_from_this(), texture.get()};
+    }
+
     VkImageView View(VkFormat format) {
         if (format == target.format) return view;
         Require(twinFormat != VK_FORMAT_UNDEFINED && format == twinFormat, "a multisampled color target is only viewed in its own format or its sRGB twin");
@@ -516,6 +530,8 @@ private:
     std::map<std::array<std::uint32_t, 5>, std::unique_ptr<Texture>> fmaskTextures;
     std::map<std::array<std::uint32_t, 5>, std::shared_ptr<Texture>> textures;
     std::vector<std::shared_ptr<Texture>> retiredTextures;
+    std::unique_ptr<FirstSampleCopy> firstSampleCopy;
+    std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> firstSampleTextures;
     std::vector<GuestMemory::UnchangedQuery> dccRanges;
     std::optional<std::uint32_t> dccFill;
     std::optional<std::uint32_t> cmaskFill;
@@ -626,6 +642,8 @@ private:
         fmaskTextures.clear();
         textures.clear();
         retiredTextures.clear();
+        firstSampleTextures.clear();
+        firstSampleCopy.reset();
         for (const auto& [format, resolvePass] : resolvePasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
         if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
@@ -1156,6 +1174,29 @@ std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const 
     }
     char text[320];
     std::snprintf(text, sizeof(text), "AGC graphics: sampling multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));
+    throw std::runtime_error(text);
+}
+
+std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, const GuestTextureResource& resource, VkComponentMapping components) {
+    std::lock_guard lock(targetsMutex());
+    discardRetiredTargets();
+    const auto format = ResolveTextureFormat(resource.format);
+    const MultisampleTarget* other = nullptr;
+    for (const auto& target : targets()) {
+        if (!target->active->load(std::memory_order_acquire)) continue;
+        if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
+        const auto& rendered = target->target;
+        const bool sameShape = rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0;
+        if (sameShape && rendered.format == format) return target->FirstSample(components);
+        if (sameShape && redBlueSwapped(rendered.format, format)) return target->FirstSample(swapRedBlue(components));
+        other = target.get();
+    }
+    if (other == nullptr) {
+        Require(Recorder::Active() != nullptr, "a multisampled texture is only sampled by recorded draws and dispatches");
+        return createFilled(context, resource, format, "sampling").FirstSample(components);
+    }
+    char text[320];
+    std::snprintf(text, sizeof(text), "AGC graphics: reading sample 0 of multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));
     throw std::runtime_error(text);
 }
 

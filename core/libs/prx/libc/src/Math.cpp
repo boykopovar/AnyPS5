@@ -290,7 +290,12 @@ std::int64_t APS5_VABI imaxabs_nid_postfix(std::int64_t x) {
     return labs_nid_postfix(x);
 }
 
-float APS5_VABI fmodf_nid_postfix(float x, float y) { return std::fmod(x, y); }
+float APS5_VABI fmodf_nid_postfix(float x, float y) {
+    const int saved_errno = errno;
+    const float result = std::fmod(x, y);
+    errno = saved_errno;
+    return result;
+}
 float APS5_VABI asinf_nid_postfix(float x) {
     const int saved_errno = errno;
     const float result = std::asin(x);

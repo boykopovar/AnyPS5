@@ -192,9 +192,9 @@ void testContextAndBases() {
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
-    for (const auto offset : {0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
+    for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
     execute(state, makePacket(0x12, {0}));
-    for (const auto offset : {0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore stencil defaults");
+    for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
@@ -1060,8 +1060,9 @@ void testInvalidRegisterListEntries() {
     check(!AgcDriver::Pm4::IndirectRegistersValid(std::array<std::uint32_t, 2>{0xffffffffu, 0}), "the sentinel was taken as a register offset");
     check(AgcDriver::Pm4::IndirectRegistersValid(std::array<std::uint32_t, 4>{0x10, 1, 0x70000011u, 2}), "a valid register list was rejected");
     AgcDriver::QueueState state;
+    const auto initial = state.context;
     expectFailure([&] { AgcDriver::Pm4::ExecuteIndirectRegisters(packet, pairs, state); }, "extended register");
-    check(!state.context.contains(0x10) && !state.context.contains(0x11), "a rejected register list partially changed state");
+    check(state.context == initial, "a rejected register list partially changed state");
     AgcDriver::Pm4::ExecuteIndirectRegisters(packet, pairs, state, true);
     check(state.context.at(0x10) == 41 && state.context.at(0x11) == 42 && !state.context.contains(0x38f), "skipping an invalid entry lost the valid ones or wrote the invalid one");
 }
@@ -1207,6 +1208,11 @@ void testConditionalSubmission() {
     rejected(joinPackets({sentinel, indirectBuffer(unaligned)}), "ends inside a packet");
     rejected(joinPackets({sentinel, indirectBuffer(overlong), writeWord(results[13], 1)}), "exceeds its command buffer");
     check(results[13] == 0, "a rejected conditional submission executed a guarded packet");
+}
+
+void testRewindPayloadBits() {
+    for (const auto payload : {0x00000000u, 0x80000000u, 0x01000000u, 0x81000000u}) AgcDriver::Pm4::Validate(makePacket(0x59, {payload}), 0);
+    for (const auto payload : {0x82000000u, 0x80000001u, 0x00800000u}) expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x59, {payload}), 0); }, "unsupported REWIND payload bits");
 }
 
 void testNopPadSubmission() {
@@ -1975,6 +1981,7 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedStoresExactlyTheChangedRuns();
         testRegisters();
