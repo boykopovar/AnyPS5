@@ -83,6 +83,7 @@ float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
 double APS5_VABI asin_nid_postfix(double);
 float APS5_VABI atan2f_nid_postfix(float, float);
+float APS5_VABI atanf_nid_postfix(float);
 float APS5_VABI hypotf_nid_postfix(float, float);
 double APS5_VABI hypot_nid_postfix(double, double);
 double APS5_VABI fdim_nid_postfix(double, double);
@@ -496,6 +497,20 @@ static void CheckFloatUnderflowErrno() {
     Require(strtod_nid_postfix("1e400", &end) == HUGE_VAL && errno == ERANGE);
     errno = 0;
     Require(strtod_nid_postfix("2.2250738585072014e-308", &end) == 0x1p-1022 && errno == 0);
+}
+
+static void CheckAtanfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x3e80000bu, 0x3e7adbc5u}, {0x3e0007c9u, 0x3dfebd2au}, {0xbdccce4cu, 0xbdcc2090u},
+        {0x3ef00334u, 0x3ee07046u}, {0x3f40077eu, 0x3f24c148u}, {0x3fa009a5u, 0x3f656b6au},
+        {0x4080055cu, 0x3fa9b5a8u}, {0xbf12345eu, 0xbf04d718u}, {0x3f800000u, 0x3f490fdbu},
+        {0x4c800000u, 0x3fc90fdbu}, {0xcc800000u, 0xbfc90fdbu}, {0x7f800000u, 0x3fc90fdbu},
+        {0xff800000u, 0xbfc90fdbu}, {0x7fc00001u, 0x7fc00001u}, {0x80000000u, 0x80000000u},
+        {0x00000001u, 0x00000001u}, {0x39000000u, 0x39000000u},
+    };
+    for (const auto& [input, expected] : cases) {
+        Require(std::bit_cast<std::uint32_t>(atanf_nid_postfix(std::bit_cast<float>(input))) == expected);
+    }
 }
 
 static void CheckHypotSpecialValue() {
@@ -1638,6 +1653,7 @@ int main() {
     CheckSinhf();
     CheckAtanhf();
     CheckHypotSpecialValue();
+    CheckAtanfConsoleBits();
     CheckFloatUnderflowErrno();
     CheckFmodErrno();
     CheckFmodfErrno();

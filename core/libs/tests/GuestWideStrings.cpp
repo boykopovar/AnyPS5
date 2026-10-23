@@ -240,6 +240,11 @@ int main() {
     wmemset_nid_postfix(strBuf, u'x', 4);
     require(wcsncat_s_nid_postfix(strBuf, 4, u"a", 1) == 34 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
+    require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 1, 2) == 0 && same(strBuf, u"abcbc", 6));
+    const char16_t splitSource[] = u"abc\0xyz";
+    std::memcpy(strBuf, splitSource, sizeof(splitSource));
+    require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 4, 3) == 22 && strBuf[0] == 0);
+    wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
     require(wcscat_s_nid_postfix(strBuf, 16, u"def") == 0 && same(strBuf, u"abcdef", 7));
     wcsncpy_s_nid_postfix(strBuf, 8, u"12345", 5);
     require(wcscat_s_nid_postfix(strBuf, 8, u"6789") == 34 && strBuf[0] == 0);
