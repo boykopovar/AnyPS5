@@ -473,11 +473,13 @@ int signgam_nid_postfix = 0;
 
 double APS5_VABI lgamma_nid_postfix(double x) {
     const double whole = std::floor(x);
-    if (x == 0) signgam_nid_postfix = std::signbit(x) ? -1 : 1;
-    else signgam_nid_postfix = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
+    signgam_nid_postfix = x < 0 && whole != x && std::fmod(whole, 2.0) != 0 ? -1 : 1;
     const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
     if (magnitude != 0 && magnitude < 0x3c70000000000000ull) return -std::log(std::fabs(x));
-    return std::lgamma(x);
+    const int saved_errno = errno;
+    const double result = std::lgamma(x);
+    errno = std::isfinite(x) && x <= 0 && whole == x ? ERANGE : saved_errno;
+    return result;
 }
 
 float APS5_VABI sinf_nid_postfix(float x) { return std::sin(x); }

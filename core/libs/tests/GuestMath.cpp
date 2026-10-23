@@ -1480,10 +1480,19 @@ int main() {
         lgamma_nid_postfix(x);
         return signgam_nid_postfix;
     };
-    Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == -1);
+    Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == 1);
     Require(gammaSign(-0.5) == -1 && gammaSign(-1.5) == 1 && gammaSign(-2.5) == -1 && gammaSign(-0x1p-80) == -1);
     Require(gammaSign(-1.) == 1 && gammaSign(-2.) == 1 && gammaSign(-0x1p60) == 1 && gammaSign(-4503599627370495.5) == 1);
     Require(gammaSign(INFINITY) == 1 && gammaSign(-INFINITY) == 1 && gammaSign(NAN) == 1);
+    const auto gammaErrno = [](std::uint64_t bits) {
+        errno = 0;
+        lgamma_nid_postfix(std::bit_cast<double>(bits));
+        return errno;
+    };
+    for (const std::uint64_t pole : {0x0000000000000000ull, 0x8000000000000000ull, 0xbff0000000000000ull, 0xc000000000000000ull, 0xc330000000000000ull, 0xff76c8e5ca239029ull})
+        Require(gammaErrno(pole) == ERANGE);
+    for (const std::uint64_t other : {0x3fe0000000000000ull, 0xc004000000000000ull, 0xc32fffffffffffffull, 0x7f76c8e5ca239029ull, 0x7ff0000000000000ull, 0xfff0000000000000ull, 0x7ff8000000000000ull})
+        Require(gammaErrno(other) == 0);
     Require(llroundl_nid_postfix(2.5L) == 3 && llroundl_nid_postfix(-2.5L) == -3 && llroundl_nid_postfix(0.49999999999999999L) == 0);
     Require(llroundl_nid_postfix(9007199254740993.0L) == 9007199254740993LL && llroundl_nid_postfix(-1e30L) == INT64_MIN);
     for (const int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
