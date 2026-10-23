@@ -51,6 +51,8 @@ int main() {
         Require(sceVideoOutGetDeviceCapabilityInfo_(handle, info.data(), size) == INVALID_VALUE);
         Require(info[0] == 0xAA);
     }
+    Require(sceVideoOutGetDeviceCapabilityInfo_(handle, nullptr, 8) == INVALID_VALUE);
+    Require(sceVideoOutGetDeviceCapabilityInfo_(handle, nullptr, 0) == INVALID_VALUE);
     Require(sceVideoOutGetDeviceCapabilityInfo_(handle, info.data(), 8) == 0);
     Require(std::memcmp(info.data(), "\x01\x00\x00\x00\x00\x00\x00\x00", 8) == 0 && info[8] == 0xAA);
     Require(sceVideoOutClose(handle) == 0);

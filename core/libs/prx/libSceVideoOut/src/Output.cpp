@@ -106,10 +106,7 @@ int APS5_VABI sceVideoOutClose(int handle) try {
 
 int APS5_VABI sceVideoOutGetDeviceCapabilityInfo_(int handle, void* info, std::uint64_t size) try {
     if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
-    if (info == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
-    }
-    if (size != sizeof(std::uint64_t)) return VIDEO_OUT_ERROR_INVALID_VALUE;
+    if (info == nullptr || size != sizeof(std::uint64_t)) return VIDEO_OUT_ERROR_INVALID_VALUE;
     const std::uint64_t capabilities = 1;
     std::memcpy(info, &capabilities, sizeof(capabilities));
     return 0;
