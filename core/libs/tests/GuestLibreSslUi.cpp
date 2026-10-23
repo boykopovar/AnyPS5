@@ -23,6 +23,7 @@ extern "C" {
 TestUiMethod* APS5_VABI UI_create_method_nid_postfix(char*);
 void APS5_VABI UI_destroy_method_nid_postfix(TestUiMethod*);
 int APS5_VABI UI_method_set_opener_nid_postfix(TestUiMethod*, SessionFunction);
+SessionFunction APS5_VABI UI_method_get_opener_nid_postfix(TestUiMethod*);
 void APS5_VABI free_nid_postfix(void*);
 }
 
@@ -80,10 +81,21 @@ static void TestSetOpener() {
     UI_destroy_method_nid_postfix(method);
 }
 
+static void TestGetOpener() {
+    TestUiMethod* method = UI_create_method_nid_postfix(nullptr);
+    Require(UI_method_get_opener_nid_postfix(method) == nullptr);
+    Require(UI_method_set_opener_nid_postfix(method, Open) == 0);
+    Require(UI_method_get_opener_nid_postfix(method) == Open);
+    Require(UI_method_get_opener_nid_postfix(method)(nullptr) == 1);
+    Require(UI_method_get_opener_nid_postfix(nullptr) == nullptr);
+    UI_destroy_method_nid_postfix(method);
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
     TestDestroy();
     TestSetOpener();
+    TestGetOpener();
     std::puts("libSceLibreSsl UI method tests passed");
 }

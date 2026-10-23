@@ -49,4 +49,8 @@ int APS5_VABI UI_method_set_opener_nid_postfix(LibreSslUiMethod* method, UiSessi
     return 0;
 }
 
+UiSessionFunction APS5_VABI UI_method_get_opener_nid_postfix(const LibreSslUiMethod* method) {
+    return method ? method->openSession : nullptr;
+}
+
 }
