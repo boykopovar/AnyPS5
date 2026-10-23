@@ -9,6 +9,7 @@ std::size_t APS5_VABI strftime_nid_postfix(char*, std::size_t, const char*, cons
 int APS5_VABI setenv_nid_postfix(const char*, const char*, int);
 void APS5_VABI tzset_nid_postfix();
 char* APS5_VABI asctime_nid_postfix(const GuestTm*);
+GuestTm* APS5_VABI gmtime_s_nid_postfix(const std::int64_t*, GuestTm*);
 }
 
 namespace {
@@ -50,7 +51,7 @@ int main() {
         {"year -1", -1901, 3, 5, 1, 0, "%Y %C %y %c", "-001 -0 01 Fri Jan  2 03:04:05 -001"},
         {"year 12345", 10445, 3, 5, 1, 0, "%Y %C %y %D %v", "12345 123 45 01/02/45  2-Jan-12345"},
         {"out of range", 126, 100, 8, 400, 0, "%I %l %u %W %U %j %a %p", "04  4 8 57 57 401 ? PM"},
-        {"unknown dst", 126, 3, 5, 1, -1, "[%z][%Z]", "[][]"},
+        {"unknown dst", 126, 3, 5, 1, -1, "[%z][%Z]", "[+0530][IST]"},
         {"literals", 126, 3, 5, 1, 0, "%q %% %", "q % %"},
     };
     bool correct = true;
@@ -63,6 +64,14 @@ int main() {
                 test.name, test.format, test.expected, length == 0 ? "" : text, length);
             correct = false;
         }
+    }
+    const std::int64_t moment = 1699992800;
+    GuestTm utc{};
+    char zone[32]{};
+    if (gmtime_s_nid_postfix(&moment, &utc) != &utc || utc.tm_isdst != -1
+        || strftime_nid_postfix(zone, sizeof(zone), "%z %Z", &utc) != 9 || std::strcmp(zone, "+0530 IST") != 0) {
+        std::fprintf(stderr, "strftime of a gmtime result in IST: expected \"+0530 IST\", received \"%s\"\n", zone);
+        correct = false;
     }
     const GuestTm now = MakeTime(126, 3, 5, 1, 0);
     char text[32];

@@ -139,26 +139,18 @@ static void CheckBufferSize(const GuestTm& guest, const char* format, std::size_
     Require(strftime_nid_postfix(buffer, 1, format, &guest) == 0, "strftime accepted a one byte buffer");
 }
 
-static const char* HostZoneName(int isdst) {
-#ifdef _WIN32
-    return _tzname[isdst != 0 ? 1 : 0];
-#else
-    return tzname[isdst != 0 ? 1 : 0];
-#endif
-}
-
 static void CheckFreeBsdConversions() {
     const std::int64_t timer = 1700000000;
     GuestTm guest{};
     Require(gmtime_s_nid_postfix(&timer, &guest) == &guest, "UTC conversion failed");
     CheckFormat(guest, "%k|%l", "22|10");
     CheckFormat(guest, "%v", "14-Nov-2023");
-    CheckFormat(guest, "%+", "Tue Nov 14 22:13:20  2023");
+    CheckFormat(guest, "%+", "Tue Nov 14 22:13:20 UTC 2023");
     CheckFormat(guest, "%s", "1699992800");
     CheckFormat(guest, "%%k %%l %%s %%v %%+", "%k %l %s %v %+");
     CheckFormat(guest, "%%%k", "%22");
     CheckFormat(guest, "[%k][%l]", "[22][10]");
-    CheckFormat(guest, "%Ek|%Ol|%Os|%Ev|%O+", "22|10|1699992800|14-Nov-2023|Tue Nov 14 22:13:20  2023");
+    CheckFormat(guest, "%Ek|%Ol|%Os|%Ev|%O+", "22|10|1699992800|14-Nov-2023|Tue Nov 14 22:13:20 UTC 2023");
     CheckFormat(guest, "%E%k", "%k");
     CheckFormat(guest, "%O%l", "%l");
     CheckFormat(guest, "%E%s", "%s");
@@ -170,15 +162,15 @@ static void CheckFreeBsdConversions() {
     CheckFormat(guest, "%E%k%k", "%k22");
     CheckBufferSize(guest, "%k", 2);
     CheckBufferSize(guest, "%k:%l", 5);
-    CheckBufferSize(guest, "%+", 25);
+    CheckBufferSize(guest, "%+", 28);
     CheckBufferSize(guest, "%Ek", 2);
 
     guest.tm_isdst = 0;
     char expected[96];
-    std::snprintf(expected, sizeof(expected), "Tue Nov 14 22:13:20 %s 2023", HostZoneName(0));
+    std::snprintf(expected, sizeof(expected), "Tue Nov 14 22:13:20 %s 2023", tzname_nid_postfix[0]);
     CheckFormat(guest, "%+", expected);
     guest.tm_isdst = 1;
-    std::snprintf(expected, sizeof(expected), "Tue Nov 14 22:13:20 %s 2023", HostZoneName(1));
+    std::snprintf(expected, sizeof(expected), "Tue Nov 14 22:13:20 %s 2023", tzname_nid_postfix[1]);
     CheckFormat(guest, "%+", expected);
     guest.tm_isdst = 0;
 

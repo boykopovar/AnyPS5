@@ -288,12 +288,7 @@ void addYear(FormatBuffer& buffer, int year, int base, bool century, bool lastDi
 }
 
 const char* guestZoneName(const GuestTm& guest) {
-    if (guest.tm_isdst < 0) return "";
-#ifdef _WIN32
-    return _tzname[guest.tm_isdst != 0 ? 1 : 0];
-#else
-    return tzname[guest.tm_isdst != 0 ? 1 : 0];
-#endif
+    return tzname_nid_postfix[guest.tm_isdst > 0 ? 1 : 0];
 }
 
 void addIsoWeek(FormatBuffer& buffer, char conversion, Padding padding, const GuestTm& time) {
@@ -461,7 +456,6 @@ void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time) {
                     addText(buffer, guestZoneName(time));
                     break;
                 case 'z': {
-                    if (time.tm_isdst < 0) break;
                     int difference = static_cast<int>(-timezone_nid_postfix + (time.tm_isdst > 0 ? 3600 : 0));
                     addText(buffer, difference < 0 ? "-" : "+");
                     if (difference < 0) difference = -difference;
