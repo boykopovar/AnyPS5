@@ -3,7 +3,9 @@ has them in its GOT. The Linux ELF keeps them dynamic and symbolless, with the v
 TLS block as the addend, for the dynamic loader to resolve against where it puts the block; a named one
 against a defined STT_TLS symbol is folded the same way, and one against an import stays named, typed
 STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically against their block,
-AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express."""
+AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
+rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
+ld.so does not apply."""
 
 from pathlib import Path
 import struct
@@ -18,6 +20,8 @@ from test_tls_function_coverage import pe_bytes_at
 PT_LOAD = 1
 PT_TLS = 7
 DTPMOD64, DTPOFF64, TPOFF64, TPOFF32 = 16, 17, 18, 23
+LINK_TIME = {3: "got32", 4: "plt32", 9: "gotpcrel", 11: "32s", 41: "gotpcrelx", 42: "rex-gotpcrelx"}
+TARGETS = {(): "linux", ("--lazy-binding",): "lazy", ("--windows",): "windows", ("--macos",): "macos"}
 TLS_MEMSZ, TLS_ALIGN = 0x24, 16
 TLS_BLOCK = 0x30
 DEFAULT_BASE = 0x400000
@@ -146,7 +150,8 @@ def main():
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
             ("macos-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--macos",), "DTPMOD64 relocation is not supported"),
             ("macos-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--macos",), "Imported TLS relocation"),
-        ]
+        ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x}")
+             for kind, name in LINK_TIME.items() for flags, target in TARGETS.items()]
         for name, relocations, has_tls, flags, error in failures:
             result, output = relink(relinker, directory, name, image(relocations, has_tls), *flags)
             assert result.returncode == 2 and error in result.stderr, (name, result.returncode, result.stderr)

@@ -462,11 +462,11 @@ int APS5_VABI strcpy_s_nid_postfix(char* dest, size_t destsz, const char* src) {
 }
 
 int APS5_VABI strncat_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
-    return SonyAppendStringS("strncat_s", dest, destsz, src, count, true);
+    return SonyAppendStringS("strncat_s", dest, destsz, src, count, true, true);
 }
 
 int APS5_VABI strcat_s_nid_postfix(char* dest, size_t destsz, const char* src) {
-    return SonyAppendStringS("strcat_s", dest, destsz, src, SIZE_MAX, false);
+    return SonyAppendStringS("strcat_s", dest, destsz, src, SIZE_MAX, false, true);
 }
 
 int APS5_VABI memcpy_s_nid_postfix(void* dest, size_t destsz, const void* src, size_t count) {
@@ -720,11 +720,11 @@ char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, siz
 }
 
 int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
-    return SonyAppendStringS("wcsncat_s", dest, destsz, src, count, true);
+    return SonyAppendStringS("wcsncat_s", dest, destsz, src, count, true, false);
 }
 
 int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src) {
-    return SonyAppendStringS("wcscat_s", dest, destsz, src, SIZE_MAX, false);
+    return SonyAppendStringS("wcscat_s", dest, destsz, src, SIZE_MAX, false, false);
 }
 
 }

@@ -37,9 +37,12 @@ std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memor
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
 std::optional<std::uint32_t> LargestDeviceLocalHeap(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCacheBudget(const Context& context);
+inline constexpr std::uint64_t SpareSnapshotPresents = 16;
 struct TextureCacheUse {
     std::size_t sampledEntries = 0;
+    std::size_t spareEntries = 0;
     std::uint64_t sampledBytes = 0;
+    std::uint64_t spareBytes = 0;
     std::uint64_t storageBytes = 0;
 };
 TextureCacheUse TextureCacheUsage();
@@ -149,6 +152,7 @@ struct ImageTableReuseCounts {
     std::uint64_t writesMade = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+std::uint64_t SampledLookupKeyScans();
 
 struct PresyncSurface {
     std::uint64_t address;

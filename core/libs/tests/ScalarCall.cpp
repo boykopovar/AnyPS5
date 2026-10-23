@@ -12,6 +12,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace ShaderRecompiler;
@@ -236,6 +237,21 @@ static void CheckTableCalls() {
     Require(table(10u, 0xbf810000u, 12u).empty());
     Require(table(5u, 0x28000008u).size() == 1u && table(5u, 0x28000008u)[0].entryOffset == 8u);
     Require(table(0u, 0xbe940380u).empty());
+    const auto slice = [&](std::uint32_t load, std::uint32_t bufferLoad) {
+        auto code = caller;
+        code[1] = load;
+        code[4] = bufferLoad;
+        return FindTableCalls(RdnaInstructionDecoder{}.Decode(code), swappc);
+    };
+    for (const auto& [load, bufferLoad, offset] : {std::tuple{0xf40c0606u, 0xf428020cu, 0x270u}, std::tuple{0xf40c0606u, 0xf428020eu, 0x280u}, std::tuple{0xf4100606u, 0xf4280210u, 0x290u}, std::tuple{0xf4100606u, 0xf4280212u, 0x2a0u}}) {
+        const auto sliced = slice(load, bufferLoad);
+        Require(sliced.size() == 1u && sliced[0].userDataRegister == 12u && sliced[0].descriptorOffset == offset && sliced[0].entryOffset == 0u && sliced[0].entryStride == 16u);
+    }
+    Require(slice(0xf40c0606u, 0xf4280210u).empty());
+    Require(slice(0xf40c0606u, 0xf428020du).empty());
+    Require(slice(0xf40c0686u, 0xf428020eu).empty());
+    Require(slice(0xf40c0686u, 0xf428020cu).empty());
+    Require(slice(0xf40c0586u, 0xf428020eu).empty());
     auto readsLane = caller;
     readsLane.insert(readsLane.begin(), {0xd4c2000bu, 0x00020300u});
     const auto readsLaneProgram = RdnaInstructionDecoder{}.Decode(readsLane);

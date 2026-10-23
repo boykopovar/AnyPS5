@@ -183,7 +183,7 @@ int SonyCopyStringS(const char* function, TChar* dest, std::size_t destsz, const
 }
 
 template<typename TChar>
-int SonyAppendStringS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool counted) {
+int SonyAppendStringS(const char* function, TChar* dest, std::size_t destsz, const TChar* src, std::size_t count, bool counted, bool terminators) {
     if (!dest || destsz == 0 || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
     std::size_t used = 0;
     while (used < destsz && dest[used] != 0) ++used;
@@ -197,7 +197,9 @@ int SonyAppendStringS(const char* function, TChar* dest, std::size_t destsz, con
         dest[0] = 0;
         return SonySafeViolation(function, "buffer too small", 34);
     }
-    if (SonySafeOverlaps(dest + used, length + 1, src, length < count ? length + 1 : length)) {
+    const std::size_t written = terminators ? length + 1 : length;
+    const std::size_t read = terminators && length < count ? length + 1 : length;
+    if (SonySafeOverlaps(dest + used, written, src, read)) {
         dest[0] = 0;
         return SonySafeViolation(function, "buffer overlap", 22);
     }

@@ -243,9 +243,14 @@ int main() {
     wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);
     require(wcsncat_s_nid_postfix(strBuf, 8, strBuf, 2) == 0 && same(strBuf, u"abab", 5));
     wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);
-    require(wcscat_s_nid_postfix(strBuf, 8, strBuf + 1) == 22 && strBuf[0] == 0);
+    require(wcscat_s_nid_postfix(strBuf, 8, strBuf + 1) == 0 && same(strBuf, u"abb", 4));
     wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);
     require(wcsncat_s_nid_postfix(strBuf, 8, u"c", std::size_t{1} << 61) == 22 && strBuf[0] == 0);
+    wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
+    require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 1, 2) == 0 && same(strBuf, u"abcbc", 6));
+    const char16_t splitSource[] = u"abc\0xyz";
+    std::memcpy(strBuf, splitSource, sizeof(splitSource));
+    require(wcsncat_s_nid_postfix(strBuf, 16, strBuf + 4, 3) == 22 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abc", 3);
     require(wcscat_s_nid_postfix(strBuf, 16, u"def") == 0 && same(strBuf, u"abcdef", 7));
     wcsncpy_s_nid_postfix(strBuf, 8, u"12345", 5);

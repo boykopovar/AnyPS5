@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <ranges>
 #include <utility>
 #include <string_view>
 #include <vector>
@@ -33,6 +34,17 @@ enum class ShaderStage {
 struct MemoryRegion {
     std::uint64_t guestAddress;
     std::span<const std::byte> bytes;
+};
+
+class MemoryRegionView : public std::span<const MemoryRegion> {
+    using Base = std::span<const MemoryRegion>;
+public:
+    using Base::Base;
+    constexpr MemoryRegionView() noexcept = default;
+    constexpr MemoryRegionView(Base value) noexcept : Base(value) {}
+    template <std::ranges::contiguous_range TRange>
+        requires (!std::ranges::borrowed_range<TRange>)
+    MemoryRegionView(TRange&&) = delete;
 };
 
 struct ShaderBinary {
@@ -114,7 +126,8 @@ enum class ConservativeZExport : std::uint8_t {
 enum class ColorExportPacking : std::uint8_t {
     None,
     Unorm10_11_11,
-    Float11_11_10
+    Float11_11_10,
+    Unorm4_4_4_4
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -242,7 +255,7 @@ struct GuestContext {
     std::optional<ShaderComputeStageInfo> compute;
     std::optional<ShaderPixelStageInfo> pixel;
     std::optional<ShaderVertexStageInfo> vertex;
-    std::span<const MemoryRegion> memory;
+    MemoryRegionView memory;
     std::optional<ShaderFloatMode> floatMode;
     std::span<const std::uint32_t> linkedCallFallbacks;
     bool convertedSamples = false;
@@ -299,6 +312,8 @@ struct SpirvTarget {
     bool waveLdsMemoryBarriers = false;
     bool float32DenormPreserve = false;
     bool fusedExactArithmetic = false;
+    bool largePixelFunctionLdsBuffer = false;
+    std::uint32_t pixelFunctionStorageDwords = 4096u;
 };
 
 struct BindingLayout {
@@ -635,6 +650,8 @@ private:
     std::shared_ptr<Holder> holder;
 };
 
+[[nodiscard]] SharedSpirv InternSpirv(std::vector<std::uint32_t> words);
+
 struct VertexInput {
     std::uint32_t location;
     std::uint32_t components;
@@ -672,12 +689,14 @@ struct CompiledShaderArtifact {
     bool instanceOffsetConflict = false;
     std::uint32_t hostSubgroupSize = 0;
     bool fullSubgroups = false;
+    bool functionLdsBuffer = false;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
     std::vector<std::uint32_t> stencilReferences;
     bool stencilReplaySafe = false;
+    bool bdaWrites = false;
     std::uint32_t stencilReferenceDword = 0xffffffffu;
     std::uint64_t variantId = 0;
 };
@@ -740,7 +759,7 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         };
         mix(specialization.size());
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
-        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
+        mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
         for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
         if (identity.Empty()) identity.low = 1;
