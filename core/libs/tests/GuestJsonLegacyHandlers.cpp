@@ -8,13 +8,23 @@
 #include <functional>
 #include <map>
 #include <new>
+#include <vector>
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
 struct Array { void* storage; };
+struct String { void* storage; };
+struct Pair { String key; std::uint64_t reserved; Value value; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; };
 using Handler = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
 using NullHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
 extern "C" {
+void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
+void APS5_VABI _ZN3sce4Json6StringD1Ev(String*);
+const char* APS5_VABI _ZNK3sce4Json6String5c_strEv(const String*);
+void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair*, const String*, const Value*);
+void APS5_VABI _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(Pair*, const String*, const Value*);
+void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair*);
+void APS5_VABI _ZN3sce4Json6Object4PairD2Ev(Pair*);
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
@@ -43,6 +53,11 @@ struct LegacyTrace {
     std::map<void*, std::size_t> guest;
     std::map<void*, std::size_t> heap;
     int budget = -1;
+    bool once = false;
+    std::vector<std::size_t> requests;
+    std::map<void*, std::size_t> guestGenerations;
+    std::map<void*, std::size_t> heapGenerations;
+    std::size_t generation = 0;
     unsigned notifications = 0;
 };
 static LegacyTrace* HeapTrace = nullptr;
@@ -55,27 +70,30 @@ extern "C" void* APS5_VABI _Znwm_nid_postfix(std::size_t bytes) {
     if (!memory) throw std::bad_alloc();
     std::memset(memory, 0xa5, bytes);
     Require(HeapTrace && bytes == 56, "Legacy map nodes must use the actual libc new allocation boundary");
-    HeapTrace->heap.emplace(memory, bytes);
+    Require(HeapTrace->heap.emplace(memory, bytes).second && HeapTrace->heapGenerations.emplace(memory, ++HeapTrace->generation).second, "Legacy libc allocations must own distinct live generations");
     return memory;
 }
 extern "C" void APS5_VABI _ZdlPv_nid_postfix(void* memory) {
-    Require(HeapTrace && HeapTrace->heap.erase(memory) == 1, "Legacy map nodes must return through libc delete");
+    Require(HeapTrace && HeapTrace->heap.erase(memory) == 1 && HeapTrace->heapGenerations.erase(memory) == 1, "Legacy map nodes must return through libc delete");
     std::free(memory);
 }
 static void* APS5_VABI AllocateLegacy(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<LegacyTrace*>(context);
-    if (trace.budget == 0) return nullptr;
+    trace.requests.push_back(bytes);
+    if (trace.budget == 0) { if (trace.once) trace.budget = -1; return nullptr; }
     if (trace.budget > 0) --trace.budget;
     void* memory = std::malloc(bytes); Require(memory != nullptr, "Tracking allocator requires host memory");
-    std::memset(memory, 0xa5, bytes); trace.guest.emplace(memory, bytes); return memory;
+    std::memset(memory, 0xa5, bytes);
+    Require(trace.guest.emplace(memory, bytes).second && trace.guestGenerations.emplace(memory, ++trace.generation).second, "Legacy guest allocations must own distinct live generations");
+    return memory;
 }
 static void APS5_VABI FreeLegacy(void*, void* memory, void* context) {
     if (!memory) return;
-    Require(static_cast<LegacyTrace*>(context)->guest.erase(memory) == 1, "Legacy metadata must return through its owning allocator");
+    Require(static_cast<LegacyTrace*>(context)->guest.erase(memory) == 1 && static_cast<LegacyTrace*>(context)->guestGenerations.erase(memory) == 1, "Legacy metadata must return through its owning allocator");
     std::free(memory);
 }
 static void APS5_VABI NotifyLegacy(void*, int error, std::size_t bytes, void* context) {
-    Require(static_cast<unsigned>(error) == 0x80848102 && (bytes == 24 || bytes == 48), "Legacy allocation failure must identify its map header or array node");
+    Require(static_cast<unsigned>(error) == 0x80848102 && bytes == static_cast<LegacyTrace*>(context)->requests.back(), "Legacy allocation failure must identify its actual rejected request");
     ++static_cast<LegacyTrace*>(context)->notifications;
 }
 static void* const LegacyVtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateLegacy), reinterpret_cast<void*>(FreeLegacy), reinterpret_cast<void*>(NotifyLegacy)};
@@ -123,6 +141,65 @@ static const Value& APS5_VABI RecoverLegacyNull(std::int32_t requested, const Va
     auto& value = *static_cast<NullContext*>(context);
     Require(requested == 1 && !parent && *_ZNK3sce4Json5Value10getBooleanEv(value.other), "Legacy null recovery must allow independent mismatch recovery before the reentry guard");
     return value.replacement->replacement;
+}
+struct LegacySnapshot { void* pointer; std::size_t generation; std::vector<unsigned char> bytes; };
+static void CheckPairCopies(LegacyTrace& trace, Context& context) {
+    const auto guestBaseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
+    for (bool text : {false, true}) for (bool once : {false, true}) for (unsigned alias = 0; alias < 2; ++alias) for (int budget = 0; budget <= (text ? 5 : 2); ++budget) {
+        Value source{}; ParseLegacy(source, text ? "\"abc\"" : "9");
+        Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Register the actual legacy Pair source map record");
+        std::vector<LegacySnapshot> sourceAllocations;
+        for (const auto& [pointer, generation] : trace.guestGenerations) {
+            if (guestBaseline.contains(pointer)) continue;
+            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            sourceAllocations.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
+        }
+        const LegacyNode* sourceNode = nullptr;
+        for (const auto& [pointer, size] : trace.heap) {
+            const auto* node = static_cast<const LegacyNode*>(pointer);
+            if (!node->nil && node->key == &source) sourceNode = node;
+        }
+        Require(sourceNode && sourceNode->callback == RecoverLegacy && sourceNode->context == &context, "Pair copying requires an independently owned source callback record");
+        const auto sourceGeneration = trace.heapGenerations.at(const_cast<LegacyNode*>(sourceNode));
+        const Value sourceValue = source;
+        String key{}; _ZN3sce4Json6StringC1EPKc(&key, "key");
+        Pair pair; std::memset(&pair, 0xa5, sizeof(pair));
+        const auto requests = trace.requests.size(); const auto notices = trace.notifications;
+        trace.budget = budget; trace.once = once;
+        if (alias) _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &source);
+        else _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &source);
+        trace.budget = -1; trace.once = false;
+        std::vector<std::size_t> expected{24};
+        if (budget > 0) expected.push_back(4);
+        if (text) {
+            expected.push_back(8);
+            if ((once && budget < 2) || budget >= 3) expected.push_back(24);
+            if ((once && budget < 2) || budget >= 4) expected.push_back(4);
+        }
+        Require(std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected, "Legacy Pair failure must preserve the measured key, Value handle, text header and character request order");
+        const unsigned failed = text ? (once ? unsigned(budget < 5) : budget < 2 ? 2u : unsigned(budget < 5)) : unsigned(budget < 2);
+        Require(trace.notifications == notices + failed, "Legacy Pair copies must notify every admitted allocation failure");
+        const int expectedType = text ? ((once && budget < 2) || budget >= 4 ? 5 : 0) : 3;
+        Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && !pair.value.parent && !pair.value.auxiliary && pair.value.type == expectedType, "Legacy Pair copies must preserve inactive Pair bytes and retain independent Value ownership");
+        Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), budget < 2 ? "" : "key") == 0, "Legacy Pair key failures must preserve the measured empty or completed key");
+        if (expectedType == 5) Require(pair.value.payload && std::strcmp(_ZNK3sce4Json6String5c_strEv(reinterpret_cast<const String*>(pair.value.payload)), budget == 4 ? "" : "abc") == 0, "Legacy Pair string failures must preserve the admitted partial text");
+        if (!text) Require(pair.value.payload == 9, "Failed Pair key allocation must not suppress scalar copying");
+        CheckMap(trace, {{&source, &context}, {&pair.value, &context}});
+        const auto calls = context.calls;
+        Require(_ZNK3sce4Json5Value10getBooleanEv(&pair.value) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.calls == calls + 1 && context.source == &pair.value && !context.parent,
+                "Every partial legacy Pair must retain its independently copied map callback and exact borrowed replacement identity");
+        if (alias) _ZN3sce4Json6Object4PairD2Ev(&pair);
+        else _ZN3sce4Json6Object4PairD1Ev(&pair);
+        CheckMap(trace, {{&source, &context}});
+        Require(std::memcmp(&source, &sourceValue, sizeof(source)) == 0 && trace.heapGenerations.at(const_cast<LegacyNode*>(sourceNode)) == sourceGeneration && sourceNode->callback == RecoverLegacy && sourceNode->context == &context,
+                "Pair cleanup must preserve source bytes and its original callback-record generation");
+        for (const auto& snapshot : sourceAllocations) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0,
+                "Failed Pair copies must preserve all source guest allocation generations and bytes");
+        Require(_ZNK3sce4Json5Value10getBooleanEv(&source) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == &source && !context.parent,
+                "Source callbacks must remain usable after failed Pair copy teardown");
+        _ZN3sce4Json6StringD1Ev(&key); _ZN3sce4Json5ValueD1Ev(&source); CheckMap(trace, {});
+        Require(trace.guestGenerations == guestBaseline && trace.heapGenerations == heapBaseline, "Legacy Pair copies must reclaim every new generation in both allocator domains");
+    }
 }
 int main() {
     LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator;
@@ -177,6 +254,7 @@ int main() {
     Require(_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&null, RecoverLegacyNull, &nullContext) == 0 && *_ZNK3sce4Json5Value10getBooleanEv(&null), "Legacy local null recovery must preserve its pre-guard dispatch");
     _ZN3sce4Json5ValueD1Ev(&null); _ZN3sce4Json5ValueD1Ev(&assigned); _ZN3sce4Json5ValueD1Ev(&copy); _ZN3sce4Json5ValueD1Ev(&source);
     CheckMap(trace, {});
+    CheckPairCopies(trace, first);
     std::array<Value, 32> roots{}; std::map<const Value*, Context*> entries;
     for (unsigned index = 0; index < roots.size(); ++index) {
         auto& root = roots[index * 13 % roots.size()]; ParseLegacy(root);
@@ -189,7 +267,7 @@ int main() {
     }
     _ZN3sce4Json5ValueD1Ev(&second.replacement); _ZN3sce4Json5ValueD1Ev(&first.replacement);
     Require(trace.guest.size() == baseline + 1 && trace.heap.size() == 1, "Empty legacy map storage must remain owned until termination");
-    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.guest.empty() && trace.heap.empty(), "Termination must release both allocator domains and all legacy map resources");
+    Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.guest.empty() && trace.heap.empty() && trace.guestGenerations.empty() && trace.heapGenerations.empty(), "Termination must release both allocator domains and all legacy map resources");
     HeapTrace = nullptr;
     return 0;
 }
