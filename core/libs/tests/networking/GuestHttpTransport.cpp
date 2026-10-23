@@ -11,7 +11,6 @@
 
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
-#include "prx/libSceSsl/SslTypes.hpp"
 #include "prx/libSceHttp/src/Resolver.hpp"
 #include "SslCertificateFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -41,7 +40,6 @@ extern "C" {
 int APS5_VABI sceNetInit_nid_postfix(void);
 int APS5_VABI sceSslInit_nid_postfix(std::uint64_t);
 int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslLoadCert(int, int, SceSsl::Data**, SceSsl::Data*, SceSsl::Data*);
 int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
 int APS5_VABI sceHttpTerm_nid_postfix(int);
 int APS5_VABI sceHttpCreateTemplate(int, const char*, int, int);
@@ -53,6 +51,7 @@ int APS5_VABI sceHttpDeleteRequest(int);
 int APS5_VABI sceHttpAddRequestHeader(int, const char*, const char*, std::uint32_t);
 int APS5_VABI sceHttpSetConnectTimeOut(int, std::uint32_t);
 int APS5_VABI sceHttpSetResolveTimeOut(int, std::uint32_t);
+int APS5_VABI sceHttpsSetSslCallback(int, HttpsCallback, void*);
 int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
 int APS5_VABI sceHttpGetStatusCode(int, int*);
 int APS5_VABI sceHttpGetLastErrno(int, int*);
@@ -72,6 +71,11 @@ static void CloseSocket(const NativeSocket socket) { close(socket); }
 #endif
 
 static void Require(const bool value) { if (!value) std::abort(); }
+
+static int APS5_VABI AcceptTlsCertificate(int, unsigned int, void* const*, int, void* argument) {
+    ++*static_cast<int*>(argument);
+    return 0;
+}
 
 class HttpServer {
 public:
@@ -380,14 +384,12 @@ static void CheckTlsTransport() {
     Require(sceNetInit_nid_postfix() == 0);
     const int sslContext = sceSslInit_nid_postfix(1024 * 1024);
     Require(sslContext > 0);
-    std::string root = RootPem;
-    SceSsl::Data authority{reinterpret_cast<std::uint8_t*>(root.data()), root.size()};
-    auto* authorities = &authority;
-    Require(sceSslLoadCert(sslContext, 1, &authorities, nullptr, nullptr) == 0);
     const int context = sceHttpInit_nid_postfix(0, sslContext, 0x10000);
     Require(context > 0);
     const int httpTemplate = sceHttpCreateTemplate(context, "anyps5-https-test", 2, 0);
     Require(httpTemplate > 0);
+    int callbackCount = 0;
+    Require(sceHttpsSetSslCallback(httpTemplate, AcceptTlsCertificate, &callbackCount) == 0);
     const auto url = "https://localhost:" + std::to_string(server.Port()) + "/secure";
     const int connection = sceHttpCreateConnectionWithURL(httpTemplate, url.c_str(), 0);
     Require(connection > 0);
@@ -396,6 +398,7 @@ static void CheckTlsTransport() {
     Require(sceHttpSendRequest(request, nullptr, 0) == 0);
     int status = 0;
     Require(sceHttpGetStatusCode(request, &status) == 0 && status == 200);
+    Require(callbackCount > 0);
     std::array<char, 8> body{};
     Require(sceHttpReadData(request, body.data(), body.size()) == 3 && std::memcmp(body.data(), "tls", 3) == 0);
     Require(sceHttpReadData(request, body.data(), body.size()) == 0);
