@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 
 using StackCompare = int (APS5_VABI*)(const void*, const void*);
+using StackElementFree = void (APS5_VABI*)(void*);
 
 struct LibreSslStack {
     int num;
@@ -30,6 +31,7 @@ char** Elements(const LibreSslStack* stack, const char* function) {
 }
 
 extern "C" {
+void APS5_VABI free_nid_postfix(void* pointer);
 
 int APS5_VABI sk_num_nid_postfix(const LibreSslStack* stack) {
     if (!stack) return -1;
@@ -46,6 +48,20 @@ void* APS5_VABI sk_pop_nid_postfix(LibreSslStack* stack) {
     char* const element = Elements(stack, __func__)[stack->num - 1];
     --stack->num;
     return element;
+}
+
+void APS5_VABI sk_pop_free_nid_postfix(LibreSslStack* stack, StackElementFree release) {
+    if (!stack) return;
+    if (stack->num > 0) {
+        char** const elements = Elements(stack, __func__);
+        for (int index = 0; index < stack->num; ++index) {
+            if (!elements[index]) continue;
+            if (!release) throw std::invalid_argument(std::string(__func__) + ": null free function");
+            release(elements[index]);
+        }
+    }
+    free_nid_postfix(stack->data);
+    free_nid_postfix(stack);
 }
 
 }

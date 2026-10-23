@@ -1,8 +1,12 @@
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <source_location>
 #include <stdexcept>
+#include <vector>
 
 struct TestStack {
     int num;
@@ -16,6 +20,8 @@ extern "C" {
 int APS5_VABI sk_num_nid_postfix(const TestStack*);
 void* APS5_VABI sk_value_nid_postfix(const TestStack*, int);
 void* APS5_VABI sk_pop_nid_postfix(TestStack*);
+void APS5_VABI sk_pop_free_nid_postfix(TestStack*, void (APS5_VABI*)(void*));
+void* APS5_VABI malloc_nid_postfix(std::size_t);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -27,6 +33,11 @@ static void Require(bool condition, std::source_location location = std::source_
 template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
     try { action(); } catch (const std::exception&) { return; }
     Require(false, location);
+}
+
+static void InitializeHeap() {
+    void* const api[10] {};
+    ApplicationHeapRegister_nid_no_patch(api);
 }
 
 static void TestNum() {
@@ -82,9 +93,59 @@ static void TestPop() {
     Require(detached.num == 2);
 }
 
+static std::vector<void*> released;
+
+static void APS5_VABI Release(void* element) {
+    released.push_back(element);
+}
+
+static TestStack* NewStack(std::vector<char*> elements, int capacity) {
+    auto* stack = static_cast<TestStack*>(malloc_nid_postfix(sizeof(TestStack)));
+    Require(stack != nullptr);
+    std::memset(stack, 0, sizeof(TestStack));
+    stack->data = static_cast<char**>(malloc_nid_postfix(sizeof(char*) * static_cast<std::size_t>(capacity > 0 ? capacity : 1)));
+    Require(stack->data != nullptr);
+    for (int index = 0; index < capacity; ++index) stack->data[index] = nullptr;
+    for (std::size_t index = 0; index < elements.size(); ++index) stack->data[index] = elements[index];
+    stack->num = static_cast<int>(elements.size());
+    stack->numAlloc = capacity;
+    return stack;
+}
+
+static void TestPopFree() {
+    char first = 'a';
+    char second = 'b';
+    char third = 'c';
+    sk_pop_free_nid_postfix(nullptr, Release);
+    sk_pop_free_nid_postfix(nullptr, nullptr);
+    Require(released.empty());
+
+    TestStack* stack = NewStack({&first, nullptr, &second, &third}, 4);
+    sk_pop_free_nid_postfix(stack, Release);
+    Require(released == std::vector<void*>({&first, &second, &third}));
+    released.clear();
+
+    stack = NewStack({nullptr, nullptr}, 2);
+    sk_pop_free_nid_postfix(stack, nullptr);
+    stack = NewStack({}, 0);
+    sk_pop_free_nid_postfix(stack, nullptr);
+    stack = NewStack({&first}, 1);
+    stack->num = -2;
+    sk_pop_free_nid_postfix(stack, nullptr);
+    Require(released.empty());
+
+    stack = NewStack({&first, &second}, 2);
+    RequireThrows([&] { sk_pop_free_nid_postfix(stack, nullptr); });
+    stack->data[0] = nullptr;
+    stack->data[1] = nullptr;
+    sk_pop_free_nid_postfix(stack, nullptr);
+}
+
 int main() {
+    InitializeHeap();
     TestNum();
     TestValue();
     TestPop();
+    TestPopFree();
     std::puts("libSceLibreSsl stack tests passed");
 }
