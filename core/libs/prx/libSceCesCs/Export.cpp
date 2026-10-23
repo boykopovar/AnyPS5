@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <initializer_list>
 #include <iterator>
 #include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "JisX0208.hpp"
@@ -256,17 +259,17 @@ uint32_t encodeUtf8(uint32_t code, uint8_t* utf8) {
     return 4;
 }
 
-constexpr uint8_t EUC_JP_TAG[8] = {'E', 'U', 'C', 'J', 'P', '9', '3', '2'};
-constexpr uint8_t EUC_JP_X0208_TAG[8] = {'E', 'U', 'C', 'J', 'X', '2', '0', '8'};
-constexpr uint8_t EUC_JP_X0208_SS2_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', 'S', '2'};
-constexpr uint8_t EUC_JP_X0208_SS3_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', 'S', '3'};
-constexpr uint8_t SJIS_TAG[8] = {'S', 'J', 'I', 'S', '1', '9', '9', '7'};
-constexpr uint8_t SJIS_X0208_TAG[8] = {'S', 'J', 'I', 'S', 'X', '2', '0', '8'};
+constexpr uint8_t EUC_JP_TAG[8] = {'E', 'U', 'C', 'J', 'P', '9', '3', 0};
+constexpr uint8_t EUC_JP_X0208_TAG[8] = {'E', 'U', 'C', 'J', 'X', '2', '0', 0};
+constexpr uint8_t EUC_JP_X0208_SS2_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', '2', 0};
+constexpr uint8_t EUC_JP_X0208_SS3_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', '3', 0};
+constexpr uint8_t SJIS_TAG[8] = {'S', 'J', 'I', 'S', '1', '9', '9', 0};
+constexpr uint8_t SJIS_X0208_TAG[8] = {'S', 'J', 'I', 'S', 'X', '2', '0', 0};
 constexpr uint8_t EUC_JIS2004_TAG[8] = {'E', 'U', 'C', 'J', 'I', 'S', '0', '4'};
 constexpr uint8_t SJIS2004_TAG[8] = {'S', 'J', 'I', 'S', '2', '0', '0', '4'};
 
 bool hasTag(const void* profile, const uint8_t (&tag)[8]) {
-    return profile != nullptr && std::memcmp(profile, tag, sizeof(tag)) == 0;
+    return profile != nullptr && std::memcmp(profile, tag, sizeof(tag) - 1) == 0;
 }
 
 bool isEucJpX0208(const void* profile) {
@@ -341,15 +344,15 @@ uint32_t sjisX0208Single(uint8_t byte) {
     return byte == 0x5C ? 0x00A5 : byte == 0x7E ? 0x203E : byte;
 }
 
-constexpr uint8_t EUC_CN_TAG[8] = {'E', 'U', 'C', 'C', 'N', '9', '3', '6'};
-constexpr uint8_t GBK_TAG[8] = {'G', 'B', 'K', 'C', 'P', '9', '3', '6'};
+constexpr uint8_t EUC_CN_TAG[8] = {'E', 'U', 'C', 'C', 'N', '9', '3', 0};
+constexpr uint8_t GBK_TAG[8] = {'G', 'B', 'K', 'C', 'P', '9', '3', 0};
 
 bool isEucCn(const void* profile) {
-    return profile != nullptr && std::memcmp(profile, EUC_CN_TAG, sizeof(EUC_CN_TAG)) == 0;
+    return hasTag(profile, EUC_CN_TAG);
 }
 
 bool isGbk(const void* profile) {
-    return profile != nullptr && std::memcmp(profile, GBK_TAG, sizeof(GBK_TAG)) == 0;
+    return hasTag(profile, GBK_TAG);
 }
 
 bool isSbc(const void* profile) {
@@ -449,8 +452,8 @@ int encodeGb(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length
     return CES_ERROR_UNASSIGNED_CODE;
 }
 
-constexpr uint8_t GB18030_2000_TAG[8] = {'G', 'B', '1', '8', '2', '0', '0', '0'};
-constexpr uint8_t GB18030_2005_TAG[8] = {'G', 'B', '1', '8', '2', '0', '0', '5'};
+constexpr uint8_t GB18030_2000_TAG[8] = {'G', 'B', '1', '8', '-', '0', '0', 0};
+constexpr uint8_t GB18030_2005_TAG[8] = {'G', 'B', '1', '8', '-', '0', '5', 0};
 constexpr uint32_t GB_CELLS = 126 * 190;
 
 struct Gb18030Tables {
@@ -470,8 +473,8 @@ bool mapsGb18030Supplementary(const Gb18030Tables& tables, uint32_t code) {
 
 const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
-    if (std::memcmp(profile, GB18030_2000_TAG, sizeof(GB18030_2000_TAG)) == 0) return &GB18030_2000;
-    if (std::memcmp(profile, GB18030_2005_TAG, sizeof(GB18030_2005_TAG)) == 0) return &GB18030_2005;
+    if (hasTag(profile, GB18030_2000_TAG)) return &GB18030_2000;
+    if (hasTag(profile, GB18030_2005_TAG)) return &GB18030_2005;
     return nullptr;
 }
 
@@ -615,25 +618,101 @@ const void* contextProfile(const void* context) {
     return profile;
 }
 
-constexpr uint8_t EUC_KR_TAG[8] = {'E', 'U', 'C', 'K', 'R', '9', '4', '9'};
-constexpr uint8_t UHC_TAG[8] = {'U', 'H', 'C', 'C', 'P', '9', '4', '9'};
-constexpr uint8_t BIG5_TAG[8] = {'B', 'I', 'G', '5', 'C', '9', '5', '0'};
+constexpr uint8_t EUC_KR_TAG[8] = {'E', 'U', 'C', 'K', 'R', '9', '4', 0};
+constexpr uint8_t UHC_TAG[8] = {'U', 'H', 'C', 'C', 'P', '9', '4', 0};
+constexpr uint8_t BIG5_TAG[8] = {'B', 'I', 'G', '5', 'C', '9', '5', 0};
 constexpr uint16_t BIG5_LAST_CELL[2] = {0x5341, 0x5345};
 
 bool isEucKr(const void* profile) {
-    return profile != nullptr && std::memcmp(profile, EUC_KR_TAG, sizeof(EUC_KR_TAG)) == 0;
+    return hasTag(profile, EUC_KR_TAG);
 }
 
 bool isUhc(const void* profile) {
-    return profile != nullptr && std::memcmp(profile, UHC_TAG, sizeof(UHC_TAG)) == 0;
+    return hasTag(profile, UHC_TAG);
 }
 
 bool isBig5(const void* profile) {
-    return profile != nullptr && std::memcmp(profile, BIG5_TAG, sizeof(BIG5_TAG)) == 0;
+    return hasTag(profile, BIG5_TAG);
 }
 
 bool isMbcs(const void* profile) {
     return isEucJp(profile) || isSjis(profile) || isJis2004(profile) || isSbc(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
+}
+
+bool isSheet(const void* profile) {
+    return isEucJp(profile) || isSjis(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
+}
+
+uint8_t sbcProfileIndex(const void* sbcs) {
+    for (std::size_t index = 0; index < std::size(PROFILES); ++index) {
+        if (sbcs == PROFILES[index]) return static_cast<uint8_t>(index + 1);
+    }
+    return 0;
+}
+
+const uint8_t* sheetSbcs(const void* profile) {
+    if (!isSheet(profile)) return nullptr;
+    const uint8_t index = static_cast<const uint8_t*>(profile)[7];
+    return index == 0 || index > std::size(PROFILES) ? nullptr : PROFILES[index - 1];
+}
+
+bool sheetSingleByte(const void* profile, uint8_t byte) {
+    return byte < 0x80 || (isSjis(profile) && byte >= 0xA1 && byte <= 0xDF);
+}
+
+int setSheetSbcs(void* sheet, const void* sbcs, bool family, std::initializer_list<const uint8_t*> accepted) {
+    if (!sheet || !sbcs || !family) return CES_ERROR_INVALID_PROFILE;
+    if (std::find(accepted.begin(), accepted.end(), static_cast<const uint8_t*>(sbcs)) == accepted.end()) return CES_ERROR_INVALID_PROFILE;
+    const uint8_t index = sbcProfileIndex(sbcs);
+    if (index == 0) return CES_ERROR_INVALID_PROFILE;
+    static_cast<uint8_t*>(sheet)[7] = index;
+    return 0;
+}
+
+struct Replacement {
+    uint32_t value;
+    uint8_t kind;
+};
+
+std::mutex& replacementMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<const void*, Replacement>& contextReplacements() {
+    static std::unordered_map<const void*, Replacement> replacements;
+    return replacements;
+}
+
+Replacement contextReplacement(const void* context) {
+    const std::lock_guard<std::mutex> lock(replacementMutex());
+    const auto found = contextReplacements().find(context);
+    return found == contextReplacements().end() ? Replacement{} : found->second;
+}
+
+void setContextReplacementEntry(const void* context, Replacement replacement) {
+    const std::lock_guard<std::mutex> lock(replacementMutex());
+    if (replacement.kind == 0) contextReplacements().erase(context);
+    else contextReplacements()[context] = replacement;
+}
+
+int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length);
+
+int setContextReplacement(void* context, uint32_t value, uint8_t kind) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(context);
+    if (!isMbcs(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (kind == 1 && (value > 0xFFFF || (value > 0xFF && (value >> 8) < 0x80))) return CES_ERROR_ILLEGAL_CODE;
+    if (kind == 2 && value != 0) {
+        if (value > 0x10FFFF) return CES_ERROR_INVALID_ENCODE;
+        if (value >= 0xD800 && value <= 0xDFFF) return CES_ERROR_ILLEGAL_CODE;
+        uint8_t encoded[4];
+        uint32_t size = 0;
+        if (const int result = encodeMbcs(profile, value, encoded, size); result != 0) return result;
+    }
+    if (value == 0) kind = 0;
+    setContextReplacementEntry(context, Replacement{value, kind});
+    return 0;
 }
 
 int decodeCp949(bool unified, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
@@ -927,6 +1006,10 @@ int encodeJis2004(bool sjis, uint32_t code, uint8_t* mbcs, uint32_t& length) {
 
 int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
     if (isJis2004(profile)) return decodeJis2004(isSjis2004(profile), mbcs, mbcsMax, length, code);
+    if (const uint8_t* sbcs = sheetSbcs(profile); sbcs && sheetSingleByte(profile, mbcs[0])) {
+        length = 1;
+        return sbcToUnicode(sbcs, mbcs[0], code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    }
     if (isEucKr(profile) || isUhc(profile)) return decodeCp949(isUhc(profile), mbcs, mbcsMax, length, code);
     if (isBig5(profile)) return decodeCp950(mbcs, mbcsMax, length, code);
     if (const Gb18030Tables* tables = gb18030Tables(profile)) return decodeGb18030(*tables, mbcs, mbcsMax, length, code);
@@ -1033,6 +1116,21 @@ uint32_t jisAlias(uint32_t code) {
 
 int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length) {
     if (isJis2004(profile)) return encodeJis2004(isSjis2004(profile), code, mbcs, length);
+    if (const uint8_t* sbcs = sheetSbcs(profile)) {
+        uint8_t byte = 0;
+        if (unicodeToSbc(sbcs, code, byte) && sheetSingleByte(profile, byte)) {
+            length = 1;
+            mbcs[0] = byte;
+            return 0;
+        }
+        if (code == 0x5C && (isSjis(profile) || isEucJp(profile))) {
+            length = 2;
+            mbcs[0] = isSjis(profile) ? 0x81 : 0xA1;
+            mbcs[1] = isSjis(profile) ? 0x5F : 0xC0;
+            return 0;
+        }
+        if (code < 0x80 || (isSjis(profile) && code >= 0xFF61 && code <= 0xFF9F)) return CES_ERROR_UNASSIGNED_CODE;
+    }
     if (isEucKr(profile) || isUhc(profile)) return encodeDbcs(cp949Reverse(), isEucKr(profile), code, mbcs, length);
     if (isBig5(profile)) return encodeDbcs(cp950Reverse(), false, code, mbcs, length);
     if (const Gb18030Tables* tables = gb18030Tables(profile)) return encodeGb18030(*tables, code, mbcs, length);
@@ -1848,6 +1946,7 @@ void* APS5_VABI sceCesUcsProfileInitSJis1997X0208(void* sheet) {
 int APS5_VABI sceCesMbcsUcsContextInit(void* context, const void* profile) {
     if (!context || !profile) return CES_ERROR_INVALID_PARAMETER;
     std::memcpy(context, &profile, sizeof(profile));
+    setContextReplacementEntry(context, Replacement{});
     return 0;
 }
 
@@ -1855,7 +1954,40 @@ int APS5_VABI sceCesMbcsUcsContextInitCopy(void* context, const void* source) {
     if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
     const void* profile = contextProfile(source);
     std::memcpy(context, &profile, sizeof(profile));
+    setContextReplacementEntry(context, contextReplacement(source));
     return 0;
+}
+
+int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharCode(void* context, uint32_t code) {
+    return setContextReplacement(context, code, 1);
+}
+
+int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharUCode(void* context, uint32_t ucode) {
+    return setContextReplacement(context, ucode, 2);
+}
+
+int APS5_VABI sceCesSJisUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isSjis(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::JisX0201Roman), singleByteProfile(SingleByte::JisX0201)});
+}
+
+int APS5_VABI sceCesEucJpUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isEucJp(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::JisX0201Roman)});
+}
+
+int APS5_VABI sceCesEucKrUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isEucKr(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::KsX1003)});
+}
+
+int APS5_VABI sceCesUhcUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isUhc(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::KsX1003)});
+}
+
+int APS5_VABI sceCesEucCnUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isEucCn(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::GbT1988)});
+}
+
+int APS5_VABI sceCesGbUcsProfileSetSbcs(void* p, const void* sbcs) {
+    return setSheetSbcs(p, sbcs, isGb(p), {singleByteProfile(SingleByte::Ascii), singleByteProfile(SingleByte::GbT1988)});
 }
 
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
