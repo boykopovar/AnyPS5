@@ -166,6 +166,15 @@ Globals& State() {
     return globals;
 }
 
+thread_local std::uint32_t notificationDepth = 0;
+
+struct NotificationScope {
+    NotificationScope() { ++notificationDepth; }
+    ~NotificationScope() { --notificationDepth; }
+    NotificationScope(const NotificationScope&) = delete;
+    NotificationScope& operator=(const NotificationScope&) = delete;
+};
+
 struct KernelMutexLock {
     PthreadMutex* mutex;
     explicit KernelMutexLock(PthreadMutex* value) : mutex(value) {
@@ -227,7 +236,10 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
     void* memory = allocate(context.allocator, size, context.userData);
     if (!memory) {
         const auto notify = reinterpret_cast<void (APS5_VABI*)(void*, int, std::size_t, void*)>(table[4]);
-        notify(context.allocator, JsonErrorOutOfMemory, size, context.userData);
+        {
+            NotificationScope scope;
+            notify(context.allocator, JsonErrorOutOfMemory, size, context.userData);
+        }
         auto& state = State();
         std::lock_guard lock(state.mutex);
         KernelMutexLock kernelLock(state.internalMutex);
@@ -2535,7 +2547,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
-    if (state.callbackActive) NotImplemented_nid_no_patch(__func__);
+    if (state.callbackActive || (notificationDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
     state.callback = nullptr;
     state.context = nullptr;
     state.handlers = {};
