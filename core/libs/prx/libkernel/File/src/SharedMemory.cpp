@@ -40,6 +40,10 @@ extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handle
 #include <sys/uio.h>
 #include <unistd.h>
 #include <cstdio>
+#ifdef __APPLE__
+#include <filesystem>
+#include <sys/param.h>
+#endif
 #endif
 
 namespace {
@@ -118,6 +122,14 @@ bool IsHostSharedMemoryDescriptor(int descriptor) {
         return std::all_of(value.begin(), value.end(), [](wchar_t character) { return character >= L'0' && character <= L'9'; });
     };
     return decimal(suffix.substr(0, separator)) && decimal(suffix.substr(separator + 1));
+#elif defined(__APPLE__)
+    struct stat status{};
+    if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode) || status.st_nlink != 0) return false;
+    char objectPath[MAXPATHLEN];
+    if (::fcntl(descriptor, F_GETPATH, objectPath) != 0) return false;
+    const std::string_view path(objectPath);
+    const auto slash = path.rfind('/');
+    return slash != std::string_view::npos && path.substr(slash + 1).starts_with("anyps5-shm-");
 #else
     (void)descriptor;
     return false;
@@ -677,6 +689,11 @@ int CreateAnonymousFile() {
     }
     errno = EEXIST;
     return -1;
+#elif defined(__APPLE__)
+    auto path = (std::filesystem::temp_directory_path() / "anyps5-shm-XXXXXX").string();
+    const int descriptor = mkostemp(path.data(), O_CLOEXEC);
+    if (descriptor >= 0) ::unlink(path.c_str());
+    return descriptor;
 #else
     const int descriptor = memfd_create("anyps5 shm_open", MFD_CLOEXEC);
     return descriptor;
