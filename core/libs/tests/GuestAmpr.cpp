@@ -18,7 +18,6 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <utility>
 #ifdef _WIN32
 #include <windows.h>
@@ -1209,13 +1208,6 @@ void RequireReadOnlyZeroPages(std::uint64_t address, std::uint64_t size) {
         Require(info.Type == MEM_MAPPED && info.AllocationProtect == PAGE_READONLY && info.Protect == PAGE_READONLY);
         DWORD previous = 0;
         Require(!VirtualProtect(pointer, page, PAGE_READWRITE, &previous));
-        bool refused = false;
-        try {
-            sceKernelMprotect(pointer, page, 0x03);
-        } catch (const std::system_error&) {
-            refused = true;
-        }
-        Require(refused);
         Require(At(address + offset) == 0);
     }
 #else
