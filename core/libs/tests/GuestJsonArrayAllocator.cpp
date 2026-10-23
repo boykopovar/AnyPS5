@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <initializer_list>
 #include <set>
 #include <vector>
 
@@ -31,6 +32,7 @@ std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
 void APS5_VABI _ZN3sce4Json5Array5clearEv(Array*);
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array3endEv(Iterator*, const Array*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(Iterator*);
@@ -86,7 +88,8 @@ static void APS5_VABI NotifyArray(void*, int error, std::size_t bytes, void* con
 }
 static void* const ArrayVtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateArray), reinterpret_cast<void*>(FreeArray), reinterpret_cast<void*>(NotifyArray)};
 struct ArrayAllocator { void* const* vtable = ArrayVtable; };
-static void CheckLinks(const Array& array, std::size_t count) {
+static void CheckLinks(const Array& array, std::size_t count, std::initializer_list<std::uint64_t> values = {}) {
+    Require(values.size() == 0 || values.size() == count, "Expected array values must cover every live node");
     const auto* header = static_cast<const std::uintptr_t*>(array.storage);
     Require(header && header[1] == count, "Array header must expose its native element count");
     const auto* head = reinterpret_cast<const std::uintptr_t*>(header[0]);
@@ -95,9 +98,10 @@ static void CheckLinks(const Array& array, std::size_t count) {
     for (auto* node = reinterpret_cast<const std::uintptr_t*>(head[1]); node != head; node = reinterpret_cast<const std::uintptr_t*>(node[1])) {
         Require(node[0] == reinterpret_cast<std::uintptr_t>(previous), "Every array link must retain its predecessor");
         const auto* value = reinterpret_cast<const Value*>(node + 2);
-        Require(!value->parent && !value->auxiliary && value->type == 2 && value->payload == 10 * (++seen), "Array nodes must expose their inline values and ownership");
+        Require(++seen <= count, "Array links must close at the sentinel");
+        const auto expected = values.size() ? *(values.begin() + seen - 1) : 10 * seen;
+        Require(!value->parent && !value->auxiliary && value->type == 2 && value->payload == expected, "Array nodes must expose their inline values and ownership");
         previous = node;
-        Require(seen <= count, "Array links must close at the sentinel");
     }
     Require(seen == count && head[0] == reinterpret_cast<std::uintptr_t>(previous), "Array sentinel must close both list directions");
 }
@@ -201,6 +205,19 @@ int main() {
     Require(_ZNK3sce4Json5Array4sizeEv(&array) == 2 && *_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array4backEv(&array)) == 20, "Failed append must retain the reference module's removal of the existing tail");
     _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &value);
     Require(_ZNK3sce4Json5Array4sizeEv(&array) == 3 && *_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array4backEv(&array)) == 40, "Append remains usable after failure");
+    Iterator retained{}; _ZNK3sce4Json5Array5beginEv(&retained, &array); _ZN3sce4Json5Array8iteratorppEv(&retained);
+    const auto* survivor = _ZNK3sce4Json5Array8iteratordeEv(&retained);
+    const auto requests = trace.requests.size();
+    const auto notifications = trace.notifications;
+    trace.budget = 0;
+    _ZN3sce4Json5Array9pop_frontEv(&array);
+    Require(_ZNK3sce4Json5Array4sizeEv(&array) == 2 && _ZNK3sce4Json5Array5frontEv(&array) == survivor, "Removing the front must preserve the next element and its iterator identity");
+    CheckLinks(array, 2, {20, 40});
+    _ZN3sce4Json5Array9pop_frontEv(&array); _ZN3sce4Json5Array9pop_frontEv(&array);
+    Require(trace.requests.size() == requests && trace.notifications == notifications, "Front removal must reclaim allocator-owned nodes without allocating");
+    CheckLinks(array, 0);
+    trace.budget = -1;
+    _ZN3sce4Json5Array8iteratorD1Ev(&retained);
     _ZN3sce4Json5ValueD1Ev(&value); _ZN3sce4Json5Array5clearEv(&array);
     Require(_ZNK3sce4Json5Array4sizeEv(&array) == 0 && trace.live.size() == baseline + 2, "Clear must retain only the array header and sentinel");
     _ZN3sce4Json5ArrayD1Ev(&array);
