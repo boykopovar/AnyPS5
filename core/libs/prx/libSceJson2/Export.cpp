@@ -1787,7 +1787,7 @@ void AssignObject(Object& destination, const Object& source) {
 Value* ObjectAccess(Object& object, const String& input) {
     if (!object.items || !input.text) return const_cast<Value*>(&Defaults(TypeNull));
     if (!object.items->head) NotImplemented_nid_no_patch(__func__);
-    const auto failures = AllocationFailures();
+    AllocationOperation operation;
     ObjectLink* node;
     {
         InlineText key; key.Assign(Characters(input));
@@ -1797,19 +1797,11 @@ Value* ObjectAccess(Object& object, const String& input) {
         bool inserted;
         node = object.items->Insert(entry.key.text, entry.pair, inserted);
     }
-    if (AllocationFailures() != failures) return const_cast<Value*>(&Defaults(TypeNull));
+    if (operation.Finish()) return const_cast<Value*>(&Defaults(TypeNull));
     if (!node || node->nil) NotImplemented_nid_no_patch(__func__);
     AssignText(node->pair.key, View(input), true);
     node->pair.value.parent = object.items->Owner();
     return &node->pair.value;
-}
-
-Value& ObjectEntry(Object& object, std::string_view input) {
-    const auto failures = AllocationFailures();
-    ScopedString key(input);
-    auto* value = ObjectAccess(object, key.string);
-    if (AllocationFailures() != failures) throw GuestOutOfMemory{};
-    return *value;
 }
 
 void AppendArray(Array* self, const Value* value) {
@@ -1915,6 +1907,7 @@ private:
     };
     template<class Output>
     bool string(Output& out) {
+        if (AllocationOperation::Failed()) return false;
         if (peek() < 0 || peek() != '"') return false;
         take();
         while (peek() >= 0 && peek() != '"') {
@@ -2057,16 +2050,18 @@ private:
                 if (out.type != TypeObject) throw GuestOutOfMemory{};
                 skip();
                 if (peek() >= 0 && peek() == '}') { take(); --depth; return true; }
+                ScopedString key{std::string_view{}};
                 for (;;) {
                     skip();
-                    std::string key;
-                    if (!string(key)) return false;
+                    ParsedText text{key.string};
+                    if (!string(text)) return false;
                     skip();
                     if (peek() < 0 || peek() != ':') return false;
                     take();
                     skip();
-                    Value& entry = ObjectEntry(*out.object, key);
+                    Value& entry = *ObjectAccess(*out.object, key.string);
                     if (!value(entry)) return false;
+                    ClearText(key.string);
                     skip();
                     if (peek() >= 0 && peek() == ',') { take(); continue; }
                     if (peek() >= 0 && peek() == '}') { take(); --depth; return true; }

@@ -397,6 +397,112 @@ static std::string NestedObjectFailureState(const Value& value, const Value* par
     }
     return state + "]";
 }
+static void CheckParserObjectFailures(ObjectAllocationTrace& trace) {
+    static const char* const states[]{
+        "0p",
+        "7po0[]",
+        "7po1[~=0-;]",
+        "7po1[=0p;]",
+        "7po1[a=0p;]",
+        "7po1[a=5p:;]",
+        "7po1[a=5p:abc;]",
+        "7po2[a=5p:abc;~=0-;]",
+        "7po2[a=5p:abc;=0p;]",
+        "7po2[a=5p:abc;b=0p;]",
+        "7po2[a=5p:abc;b=6po0[];]",
+        "7po2[a=5p:abc;b=6po1[3p:0;];]",
+        "7po2[a=5p:abc;b=6po1[3p:2;];]",
+        "7po1[=0-;]",
+        "7po1[a=5p:bc;]",
+        "7po2[=0-;a=5p:abc;]",
+        "7po2[a=5p:abc;=0-;]",
+    };
+    struct Case { bool once; int budget; unsigned notifications; std::size_t requests; unsigned state; };
+    const Case cases[]{
+        {0, 0, 2, 2, 0},
+        {0, 1, 2, 3, 0},
+        {0, 2, 2, 4, 0},
+        {0, 3, 2, 5, 1},
+        {0, 4, 2, 6, 1},
+        {0, 5, 1, 6, 1},
+        {0, 6, 3, 9, 1},
+        {0, 7, 3, 10, 1},
+        {0, 8, 3, 11, 1},
+        {0, 9, 3, 12, 1},
+        {0, 10, 2, 12, 1},
+        {0, 11, 1, 12, 1},
+        {0, 12, 2, 14, 2},
+        {0, 13, 1, 14, 2},
+        {0, 14, 1, 15, 3},
+        {0, 15, 1, 16, 4},
+        {0, 16, 1, 17, 4},
+        {0, 17, 3, 20, 5},
+        {0, 18, 3, 21, 6},
+        {0, 19, 3, 22, 6},
+        {0, 20, 3, 23, 6},
+        {0, 21, 3, 24, 6},
+        {0, 22, 2, 24, 6},
+        {0, 23, 1, 24, 6},
+        {0, 24, 2, 26, 7},
+        {0, 25, 1, 26, 7},
+        {0, 26, 1, 27, 8},
+        {0, 27, 1, 28, 9},
+        {0, 28, 1, 29, 9},
+        {0, 30, 1, 31, 10},
+        {0, 31, 1, 32, 11},
+        {0, 32, 1, 33, 11},
+        {0, 33, 0, 33, 12},
+        {1, 0, 1, 3, 0},
+        {1, 1, 1, 4, 0},
+        {1, 2, 1, 5, 0},
+        {1, 3, 1, 5, 1},
+        {1, 4, 1, 6, 1},
+        {1, 5, 1, 6, 1},
+        {1, 6, 1, 11, 13},
+        {1, 7, 1, 12, 13},
+        {1, 8, 1, 12, 2},
+        {1, 9, 1, 13, 13},
+        {1, 10, 1, 13, 2},
+        {1, 11, 1, 12, 1},
+        {1, 12, 1, 14, 13},
+        {1, 13, 1, 14, 2},
+        {1, 14, 1, 15, 3},
+        {1, 15, 1, 16, 4},
+        {1, 16, 1, 17, 4},
+        {1, 17, 1, 19, 14},
+        {1, 18, 1, 23, 15},
+        {1, 19, 1, 24, 15},
+        {1, 20, 1, 24, 7},
+        {1, 21, 1, 25, 15},
+        {1, 22, 1, 25, 7},
+        {1, 23, 1, 24, 6},
+        {1, 24, 1, 26, 16},
+        {1, 25, 1, 26, 7},
+        {1, 26, 1, 27, 8},
+        {1, 27, 1, 28, 9},
+        {1, 28, 1, 29, 9},
+        {1, 30, 1, 31, 10},
+        {1, 31, 1, 32, 11},
+        {1, 32, 1, 33, 11},
+        {1, 33, 0, 33, 12},
+    };
+    const auto baseline = trace.live.size();
+    for (const auto& test : cases) {
+        Value value{}; _ZN3sce4Json5ValueC1Ev(&value); _ZN3sce4Json5Value3setEl(&value, 77);
+        const auto notifications = trace.notifications;
+        const auto requests = trace.requests.size();
+        const char input[] = "{\"a\":\"abc\",\"b\":[2]}";
+        trace.budget = test.budget; trace.failOnce = test.once;
+        const auto status = static_cast<unsigned>(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, input, sizeof(input) - 1));
+        trace.budget = -1; trace.failOnce = false;
+        const auto actual = NestedObjectFailureState(value);
+        const bool matches = status == (test.notifications ? 0x80848102u : 0u) && actual == states[test.state] && trace.notifications - notifications == test.notifications && trace.requests.size() - requests == test.requests;
+        if (!matches) std::fprintf(stderr, "Object parse once=%d budget=%d expected=%s actual=%s status=%x requests=%zu notifications=%u\n", test.once, test.budget, states[test.state], actual.c_str(), status, trace.requests.size() - requests, trace.notifications - notifications);
+        Require(matches, "Object parser failures must retain reference partial members, ownership and allocation accounting");
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live.size() == baseline, "Object parser failures must reclaim every partial key, member and metadata allocation");
+    }
+}
 static void CheckNestedFailureCases(ObjectAllocationTrace& trace) {
     static const char* const states[]{
         "7po1[z=3p:99;]",
@@ -996,6 +1102,7 @@ int main() {
     CheckAssignments(trace);
     CheckNestedAssignment(trace);
     CheckNestedFailureCases(trace);
+    CheckParserObjectFailures(trace);
     CheckBinaryKeys();
     Require(trace.live.size() == baseline, "Binary-key operations must release their storage");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Terminate object allocation contract");
