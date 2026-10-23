@@ -324,6 +324,45 @@ const char* Characters(const String& string) {
     return string.text ? string.text->characters : emptyCharacters;
 }
 
+bool SearchEqual(const char* left, const char* right, std::size_t count) {
+    const auto bounded = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(count));
+    return bounded <= 0 || std::strncmp(left, right, static_cast<std::size_t>(bounded)) == 0;
+}
+
+std::size_t FindText(const String& string, const char* needle, std::size_t position, std::size_t count) {
+    constexpr auto missing = std::numeric_limits<std::size_t>::max();
+    if (!string.text) return missing;
+    const std::size_t length = string.text->length;
+    if (!count) return position <= length ? position : missing;
+    if (position >= length || count > length - position) return missing;
+    if (!needle) { NotImplemented_nid_no_patch(__func__); return missing; }
+    const char* begin = string.text->characters;
+    const char* cursor = begin + position;
+    while (cursor < begin + length) {
+        const char* candidate = std::strchr(cursor, static_cast<unsigned char>(*needle));
+        if (!candidate) return missing;
+        if (SearchEqual(candidate, needle, count)) return static_cast<std::size_t>(candidate - begin);
+        cursor = candidate + 1;
+    }
+    return missing;
+}
+
+std::size_t ReverseFindText(const String& string, const char* needle, std::size_t position, std::size_t count) {
+    constexpr auto missing = std::numeric_limits<std::size_t>::max();
+    if (!string.text) return missing;
+    const std::size_t length = string.text->length;
+    if (!count) return std::min(position, length);
+    if (count > length) return missing;
+    if (!needle) { NotImplemented_nid_no_patch(__func__); return missing; }
+    std::size_t index = std::min(position, length - count);
+    for (;;) {
+        const char* candidate = string.text->characters + index;
+        if (*candidate == *needle && SearchEqual(candidate, needle, count)) return index;
+        if (!index) return missing;
+        --index;
+    }
+}
+
 std::string_view View(const String& string) {
     return {Characters(string), string.text ? string.text->length : 0};
 }
@@ -2220,8 +2259,17 @@ String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* s
     Construct(*result, View(*self).substr(position, length));
     return result;
 }
-std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return View(*self).find(character, position); }
-std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return View(*self).rfind(character, position); }
+char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t index) {
+    return !self->text ? 0 : index < self->text->length ? self->text->characters[index] : emptyCharacters[0];
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* needle, std::size_t position) { return FindText(*self, needle, position, needle ? std::strlen(needle) : 0); }
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String* self, const char* needle, std::size_t position, std::size_t count) { return FindText(*self, needle, position, count); }
+std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String* self, const String* needle, std::size_t position) { return FindText(*self, Characters(*needle), position, std::strlen(Characters(*needle))); }
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* needle, std::size_t position) { return ReverseFindText(*self, needle, position, needle ? std::strlen(needle) : 0); }
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String* self, const char* needle, std::size_t position, std::size_t count) { return ReverseFindText(*self, needle, position, count); }
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String* self, const String* needle, std::size_t position) { return ReverseFindText(*self, Characters(*needle), position, std::strlen(Characters(*needle))); }
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return FindText(*self, &character, position, 1); }
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return ReverseFindText(*self, &character, position, 1); }
 int APS5_VABI _ZNK3sce4Json6String7compareEPKc(const String* self, const char* text) {
     if (!text) throw std::invalid_argument("sce::Json::String::compare: null text");
     return CompareText(Characters(*self), text);
