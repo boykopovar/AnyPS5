@@ -7,9 +7,9 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
-#include <net/if_arp.h>
 #include <netinet/in.h>
-#ifndef __APPLE__
+#ifdef __linux__
+#include <net/if_arp.h>
 #include <netpacket/packet.h>
 #endif
 #include <sys/ioctl.h>
@@ -78,7 +78,7 @@ static HostInterfaceAddress HostAddress(const sockaddr* address) {
     return entry;
 }
 
-#if !defined(_WIN32) && !defined(__APPLE__)
+#ifdef __linux__
 static std::uint64_t SysfsCounter(const char* name, const char* file) {
     std::ifstream input(std::string("/sys/class/net/") + name + "/statistics/" + file);
     unsigned long long value = 0;
@@ -153,7 +153,7 @@ static std::vector<HostInterfaceAddress> HostSnapshot() {
     try {
         for (auto* item = host; item; item = item->ifa_next) {
             if (!item->ifa_addr) continue;
-#ifndef __APPLE__
+#ifdef __linux__
             if (item->ifa_addr->sa_family == AF_PACKET) {
                 const auto& link = *reinterpret_cast<const sockaddr_ll*>(item->ifa_addr);
                 HostInterfaceAddress entry{};
@@ -196,7 +196,7 @@ int main() {
     const std::uint8_t loopbackAddress[] = {127, 0, 0, 1};
     const std::uint8_t loopbackMask[] = {255, 0, 0, 0};
     bool matched = false;
-#if !defined(_WIN32) && !defined(__APPLE__)
+#ifdef __linux__
     bool linkChecked = false;
     SendLoopbackDatagram();
 #endif
@@ -215,7 +215,7 @@ int main() {
             Require((item->flags & ~knownFlags) == 0);
             const auto* address = static_cast<const std::uint8_t*>(item->address);
             Require(address != nullptr && reinterpret_cast<std::uintptr_t>(address) % 8 == 0);
-#if !defined(_WIN32) && !defined(__APPLE__)
+#ifdef __linux__
             if (address[1] == 18) {
                 Require(item->netmask == nullptr && item->destination == nullptr);
                 const auto* data = static_cast<const std::uint8_t*>(item->data);
@@ -299,7 +299,7 @@ int main() {
         freeifaddrs_nid_postfix(list);
     }
     Require(matched);
-#if !defined(_WIN32) && !defined(__APPLE__)
+#ifdef __linux__
     Require(linkChecked);
 #endif
     GuestInterfaceAddress* released = nullptr;

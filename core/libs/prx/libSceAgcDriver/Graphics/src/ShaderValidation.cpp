@@ -1,4 +1,5 @@
 #include "BdaAbi.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -594,6 +595,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
+            if (*decoration.set == ShaderRecompiler::PixelFunctionLdsDescriptorSet) {
+                Require(fragment && *decoration.binding == 0u, "pixel function LDS buffer binding is wrong");
+                continue;
+            }
             const auto binding = std::find_if(shader.bindings.begin(), shader.bindings.end(), [&](const auto& item) { return item.descriptorSet == key.first && item.binding == key.second; });
             const bool array = binding != shader.bindings.end() && binding->role == ShaderRecompiler::DescriptorRole::GuestBuffers;
             const auto [view, first] = bufferViews.emplace(key, decoration.aliased);

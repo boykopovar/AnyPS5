@@ -249,6 +249,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::PoisonCode
             ImageTableAbi::PoisonReasonName
             ImageTableAbi::TableHeader
+            FmaskLayoutOf
             IsFmaskTextureFormat
             PipelineSpecialization::IsWorkgroupOffset
             PipelineSpecialization::WorkgroupOffsetBase

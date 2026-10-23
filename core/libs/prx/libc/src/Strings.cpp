@@ -880,8 +880,8 @@ int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
     }
     const auto destination = reinterpret_cast<std::uintptr_t>(dest + used);
     const auto source = reinterpret_cast<std::uintptr_t>(src);
-    const auto distance = destination < source ? source - destination : destination - source;
-    if (length != 0 && distance < (length + 1) * sizeof(char16_t)) {
+    const auto bytes = length * sizeof(char16_t);
+    if (destination < source + bytes && source < destination + bytes) {
         dest[0] = 0;
         return GuestEinval;
     }

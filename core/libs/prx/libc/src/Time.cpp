@@ -187,6 +187,7 @@ std::recursive_mutex& zoneMutex() {
 }
 
 char** HostZoneNames();
+char* GuestZoneName(int index);
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -209,9 +210,8 @@ void applyGuestZone() {
 #else
     ::tzset();
 #endif
-    char** names = HostZoneNames();
-    tzname_nid_postfix[0] = names[0];
-    tzname_nid_postfix[1] = names[1];
+    tzname_nid_postfix[0] = GuestZoneName(0);
+    tzname_nid_postfix[1] = GuestZoneName(1);
 }
 
 int& zoneDepth() {
@@ -519,11 +519,22 @@ char** HostZoneNames() {
     return ::tzname;
 #endif
 }
+
+char* GuestZoneName(int index) {
+    static char unnamed[] = "   ";
+    char** names = HostZoneNames();
+#ifdef _WIN32
+    const bool daylightSaving = _daylight != 0;
+#else
+    const bool daylightSaving = ::daylight != 0;
+#endif
+    return index == 1 && !daylightSaving ? unnamed : names[index];
+}
 }
 
 extern "C" {
 
-char* tzname_nid_postfix[2] = {HostZoneNames()[0], HostZoneNames()[1]};
+char* tzname_nid_postfix[2] = {GuestZoneName(0), GuestZoneName(1)};
 int64_t timezone_nid_postfix = 0;
 int daylight_nid_postfix = 0;
 
@@ -537,9 +548,8 @@ int APS5_VABI _Getmbcurmax_nid_postfix();
 
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
-    char** names = HostZoneNames();
-    tzname_nid_postfix[0] = names[0];
-    tzname_nid_postfix[1] = names[1];
+    tzname_nid_postfix[0] = GuestZoneName(0);
+    tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
     GuestTm universal{};
     GuestTm local{};

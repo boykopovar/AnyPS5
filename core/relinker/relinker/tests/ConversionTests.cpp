@@ -256,9 +256,9 @@ void baseRelocations() {
     require(Io::ReadU32(relocs, 4) == 12, "Wrong base relocation block size");
     require(Io::ReadU16(relocs, 8) == 0xa000, "Wrong first relocation entry");
     require(Io::ReadU16(relocs, 10) == 0xa008, "Wrong second relocation entry");
-    reject([&] { (void)builder.BuildBaseRelocations({0x10ffc}); });
-    reject([&] { (void)builder.BuildBaseRelocations({0x10ffd}); });
-    reject([&] { (void)builder.BuildBaseRelocations({0x10fff}); });
+    const auto spanning = builder.BuildBaseRelocations({0x10ffc, 0x10fff});
+    require(spanning.size() == 12 && Io::ReadU32(spanning, 0) == 0x10000, "A page-spanning base relocation was not placed in its first page");
+    require(Io::ReadU16(spanning, 8) == 0xaffc && Io::ReadU16(spanning, 10) == 0xafff, "Wrong page-spanning base relocation entries");
 }
 
 std::size_t fileOffset(const std::vector<std::uint8_t>& pe, std::uint32_t address) {

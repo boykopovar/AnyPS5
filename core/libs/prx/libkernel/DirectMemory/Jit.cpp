@@ -5,7 +5,6 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -22,10 +21,14 @@
 #include <fcntl.h>
 #include <io.h>
 #include <atomic>
+#include <filesystem>
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <filesystem>
+#endif
 #endif
 
 namespace {
@@ -142,12 +145,17 @@ int DuplicateDescriptor(int descriptor) {
 int CreateBacking(std::size_t bytes, int* descriptor, std::shared_ptr<JitObject>* object) {
 #ifdef __APPLE__
     auto path = (std::filesystem::temp_directory_path() / "anyps5-jit-XXXXXX").string();
-    const int file = mkostemp(path.data(), O_CLOEXEC);
-    if (file >= 0) ::unlink(path.c_str());
+    const int file = mkstemp(path.data());
+    if (file < 0) return HostFailure("create JIT shared memory", errno);
+    if (unlink(path.c_str()) != 0 || fcntl(file, F_SETFD, FD_CLOEXEC) != 0) {
+        const int error = errno;
+        ::close(file);
+        return HostFailure("create JIT shared memory", error);
+    }
 #else
     const int file = memfd_create("anyps5 jit shared memory", MFD_CLOEXEC);
-#endif
     if (file < 0) return HostFailure("create JIT shared memory", errno);
+#endif
     const bool representable = bytes <= static_cast<std::uint64_t>(std::numeric_limits<off_t>::max());
     if (!representable || ftruncate(file, static_cast<off_t>(bytes)) != 0) {
         const int error = !representable || errno == EFBIG ? ENOMEM : errno;

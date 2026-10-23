@@ -1343,7 +1343,10 @@ VkFormat SrgbTwinFormat(const Context& context, VkFormat format) {
     switch (format) {
         case VK_FORMAT_R8_UNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8_SRGB;
         case VK_FORMAT_R8G8_UNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8_8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8G8_SRGB;
-        case VK_FORMAT_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_SRGB;
+        case VK_FORMAT_R8_SNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8_SRGB;
+        case VK_FORMAT_R8G8_SNORM: return decoded(ShaderRecompiler::IrBufferFormat::Format8_8Srgb) ? VK_FORMAT_UNDEFINED : VK_FORMAT_R8G8_SRGB;
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_R8G8B8A8_SNORM: return VK_FORMAT_R8G8B8A8_SRGB;
         case VK_FORMAT_B8G8R8A8_UNORM: return VK_FORMAT_B8G8R8A8_SRGB;
         case VK_FORMAT_A8B8G8R8_UNORM_PACK32: return VK_FORMAT_A8B8G8R8_SRGB_PACK32;
         case VK_FORMAT_BC1_RGB_UNORM_BLOCK: return VK_FORMAT_BC1_RGB_SRGB_BLOCK;

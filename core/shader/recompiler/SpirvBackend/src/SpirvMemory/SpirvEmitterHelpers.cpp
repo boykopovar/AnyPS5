@@ -578,6 +578,14 @@ void DefineDescriptors(SpirvEmitterState& state) {
             for (const auto variable : {state.ldsBufferVariable, state.ldsBufferU64Variable}) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationAliased);
         }
     }
+    if (state.pixelFunctionLdsBuffer) {
+        state.ldsBufferVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassStorageBuffer, StorageBufferBlockType(state)), spv::StorageClassStorageBuffer);
+        state.module.AddName(state.ldsBufferVariable, "pixel_function_lds");
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationDescriptorSet, PixelFunctionLdsDescriptorSet);
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationBinding, 0u);
+        state.module.AddAnnotation(spv::OpDecorate, state.ldsBufferVariable, spv::DecorationCoherent);
+        if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.ldsBufferVariable);
+    }
 }
 
 }

@@ -1268,22 +1268,8 @@ int DoMapShared(void** addr, size_t len, int prot, HostSharedMemory object) {
 #ifdef _WIN32
         GuestArena::GuestArenaMap_nid_postfix(mapped, len, object, 0, WinProtFromPosix(nativeProtection));
 #elif defined(__APPLE__)
-        if ((nativeProtection & PROT_EXEC) == 0) {
-            if (::mmap(mapped, len, nativeProtection, MAP_SHARED | MAP_FIXED, object, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
-        } else {
-            // macOS refuses PROT_EXEC on a shared file mapping (EPERM), but a read-write view of the
-            // same pages can be remapped in place and then made executable.
-            void* view = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_SHARED, object, 0);
-            if (view == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
-            auto target = static_cast<mach_vm_address_t>(reinterpret_cast<std::uintptr_t>(mapped));
-            vm_prot_t current = VM_PROT_NONE;
-            vm_prot_t maximum = VM_PROT_NONE;
-            const kern_return_t remapped = mach_vm_remap(mach_task_self(), &target, len, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
-                                                         static_cast<mach_vm_address_t>(reinterpret_cast<std::uintptr_t>(view)), FALSE, &current, &maximum, VM_INHERIT_SHARE);
-            ::munmap(view, len);
-            if (remapped != KERN_SUCCESS) throw std::system_error(ENOMEM, std::generic_category(), "remap shared memory");
-            if (::mprotect(mapped, len, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "protect shared memory");
-        }
+        if (::mmap(mapped, len, nativeProtection & ~PROT_EXEC, MAP_SHARED | MAP_FIXED, object, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
+        if ((nativeProtection & PROT_EXEC) != 0 && ::mprotect(mapped, len, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "make shared memory executable");
 #else
         if (::mmap(mapped, len, nativeProtection, MAP_SHARED | MAP_FIXED, object, 0) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map shared memory");
 #endif

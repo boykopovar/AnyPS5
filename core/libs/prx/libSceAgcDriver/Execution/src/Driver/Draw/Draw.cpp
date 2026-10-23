@@ -828,7 +828,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         return lastData[shapeKey % lastData.size()].exchange(data, std::memory_order_relaxed) == data;
     };
     const bool shapeNeedsEntry = shapeRefresh && registerKey && shapeKey != 0 && drawDataHits() && !drawParameters.indirect && dataEntry != nullptr && dataStagesCompiled != 0 && refreshSeenTwice();
-    cacheDrawStages(stageEntries, drawHit, drawParameters, indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey, shapeNeedsEntry);
+    cacheDrawStages(stageEntries, drawHit, drawParameters, indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, stageData, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey, shapeNeedsEntry);
     timing.Mark("shader_compile_and_link");
 
     for (const auto& reads : decodeReads) {

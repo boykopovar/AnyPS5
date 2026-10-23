@@ -5,13 +5,11 @@
 #include <iphlpapi.h>
 #else
 #include <ifaddrs.h>
-#ifndef __APPLE__
-#include <linux/if_link.h>
-#endif
 #include <net/if.h>
-#include <net/if_arp.h>
 #include <netinet/in.h>
-#ifndef __APPLE__
+#ifdef __linux__
+#include <linux/if_link.h>
+#include <net/if_arp.h>
 #include <netpacket/packet.h>
 #endif
 #include <sys/ioctl.h>
@@ -164,7 +162,7 @@ int HostEntries(std::vector<Entry>& entries) {
     return 0;
 }
 #else
-#ifndef __APPLE__
+#ifdef __linux__
 constexpr std::uint8_t guestLinkFamily = 18;
 constexpr std::size_t guestLinkNameArea = 8 + 16;
 constexpr std::size_t guestLinkMinimum = 54;
@@ -185,12 +183,12 @@ struct HostInterface {
     std::vector<Entry> addresses;
 };
 
+#ifdef __linux__
 template<typename TValue>
 void Store(std::vector<std::uint8_t>& bytes, std::size_t offset, TValue value) {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
 
-#ifndef __APPLE__
 std::vector<std::uint8_t> GuestLinkAddress(const std::string& name, std::uint16_t index, std::uint8_t type, const std::uint8_t* hardware, std::size_t hardwareLength) {
     std::size_t size = std::max(guestLinkMinimum, guestLinkNameArea + hardwareLength);
     size = Aligned(size);
@@ -296,7 +294,7 @@ int HostEntries(std::vector<Entry>& entries) {
     try {
         for (auto* item = host; item; item = item->ifa_next) {
             if (!item->ifa_addr) continue;
-#ifndef __APPLE__
+#ifdef __linux__
             if (item->ifa_addr->sa_family == AF_PACKET) {
                 const auto& link = *reinterpret_cast<const sockaddr_ll*>(item->ifa_addr);
                 HostInterface& owner = interfaceFor(CheckedName(item->ifa_name));
