@@ -1043,28 +1043,22 @@ ObjectLink* CloneObjectTree(ObjectLink* source, ObjectLink* parent, ObjectLink* 
     node->pair.key.text = nullptr;
     Construct(node->pair.value);
     node->color = source->color; node->nil = 0;
-    try {
-        String key{&node->key}; AssignText(key, {source->key.characters, source->key.length}, true);
-        Construct(node->pair.key, source->pair.key);
-        std::memcpy(&node->pair.reserved, &source->pair.reserved, sizeof(std::uint32_t));
-        CopyInto(node->pair.value, source->pair.value);
-        if (!source->left->nil) node->left = CloneObjectTree(source->left, node, head);
-        if (!source->right->nil) node->right = CloneObjectTree(source->right, node, head);
-    } catch (...) {
-        ReleaseObjectTree(node->left); ReleaseObjectTree(node->right); DestroyObjectLink(node); throw;
-    }
+    String key{&node->key}; AssignText(key, {source->key.characters, source->key.length}, true);
+    Construct(node->pair.key, source->pair.key);
+    std::memcpy(&node->pair.reserved, &source->pair.reserved, sizeof(std::uint32_t));
+    CopyInto(node->pair.value, source->pair.value);
+    if (!source->left->nil) node->left = CloneObjectTree(source->left, node, head);
+    if (!source->right->nil) node->right = CloneObjectTree(source->right, node, head);
     return node;
 }
 
 void CopyObjectStorage(ObjectStorage& destination, const ObjectStorage& source) {
     auto* replacement = NewObjectHead();
     ObjectStorage pending{replacement, 0, 0};
-    try {
-        if (replacement && source.head && !source.head->parent->nil) {
-            replacement->parent = CloneObjectTree(source.head->parent, replacement, replacement);
-            if (replacement->parent != replacement) { pending.count = source.count; pending.RefreshEndpoints(); }
-        }
-    } catch (...) { pending.clear(); Release(replacement); throw; }
+    if (replacement && source.head && !source.head->parent->nil) {
+        replacement->parent = CloneObjectTree(source.head->parent, replacement, replacement);
+        if (replacement->parent != replacement) { pending.count = source.count; pending.RefreshEndpoints(); }
+    }
     destination.clear(); Release(destination.head);
     destination.head = replacement;
     destination.count = pending.count;
@@ -1308,16 +1302,13 @@ void CopyArray(Array& destination, const Array& source) {
 }
 
 void CopyObject(Object& destination, const Object& source) {
-    Object pending{};
-    if (!source.items) { destination = pending; return; }
-    pending.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
-    if (!pending.items) { destination = pending; return; }
-    pending.items->count = 0;
-    pending.items->head = NewObjectHead();
-    pending.items->SetOwner(nullptr);
-    try { CopyObjectStorage(*pending.items, *source.items); }
-    catch (...) { Destroy(pending); throw; }
-    destination = pending;
+    if (!source.items) { destination = {}; return; }
+    destination.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
+    if (!destination.items) { destination = {}; return; }
+    destination.items->count = 0;
+    destination.items->head = NewObjectHead();
+    destination.items->SetOwner(nullptr);
+    CopyObjectStorage(*destination.items, *source.items);
 }
 
 void AssignReal(Node& n, double value);

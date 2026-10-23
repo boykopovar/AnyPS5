@@ -13,6 +13,7 @@
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
 struct Array { void* storage; };
+struct Object { void* storage; };
 struct String { void* storage; };
 struct Pair { String key; std::uint64_t reserved; Value value; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; };
@@ -20,6 +21,12 @@ using Handler = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Valu
 using ReadCallback = int (APS5_VABI*)(char&, void*);
 using NullHandler = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
 extern "C" {
+void APS5_VABI _ZN3sce4Json6ObjectC1ERKS1_(Object*, const Object*);
+void APS5_VABI _ZN3sce4Json6ObjectC2ERKS1_(Object*, const Object*);
+void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
+Object* APS5_VABI _ZN3sce4Json6ObjectaSERKS1_(Object*, const Object*);
+void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value*, const Object*);
+void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_6ObjectE(Value*, const Object*);
 void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value*, ReadCallback, void*);
 void APS5_VABI _ZN3sce4Json6StringC1EPKc(String*, const char*);
@@ -714,7 +721,85 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias, bool wrappe
     return 0;
 }
 
+static int CheckObjectHeapExceptions(unsigned budget, unsigned alias, bool wrapped) {
+    Require(budget <= 2 && alias < 2, "Object-copy schedules cover both child entries and constructor aliases");
+    LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator; Parameter parameter{&allocator, &trace, 16384};
+    std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0, "Initialize tree-copy exception resources");
+    Context context; _ZN3sce4Json5ValueC1Eb(&context.replacement, true); Value source{}, root{};
+    ParseLegacy(source); ParseLegacy(root, "{\"a\":9,\"b\":9}");
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Prepare source callback records");
+    auto* object = reinterpret_cast<Object*>(root.payload);
+    auto* sourceHeader = static_cast<LegacyTreeHeader*>(object->storage);
+    std::string ignored; std::vector<const Value*> values; CollectionTreeShape(sourceHeader->head->parent, &root, ignored, values);
+    std::map<const Value*, Context*> entries{{&source, &context}};
+    for (const auto* value : values) {
+        _ZN3sce4Json5ValueaSERKS1_(const_cast<Value*>(value), &source); entries.emplace(value, &context);
+    }
+    CheckMap(trace, entries);
+    const auto baseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
+    const Value sourceValue = source, rootValue = root;
+    std::vector<LegacySnapshot> snapshots;
+    for (const auto& [pointer, generation] : baseline) {
+        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*static_cast<void**>(pointer))) continue;
+        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
+    }
+    Object direct; std::memset(&direct, 0xa5, sizeof(direct)); Value value; std::memset(&value, 0xa5, sizeof(value));
+    const auto requests = trace.requests.size(); trace.heapBudget = static_cast<int>(budget); bool caught = false;
+    try {
+        if (wrapped) {
+            if (alias) _ZN3sce4Json5ValueC2ERKNS0_6ObjectE(&value, object);
+            else _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(&value, object);
+        } else if (alias) _ZN3sce4Json6ObjectC2ERKS1_(&direct, object);
+        else _ZN3sce4Json6ObjectC1ERKS1_(&direct, object);
+    } catch (const std::bad_alloc&) { caught = true; }
+    if (wrapped) Require(value.type == 7 && !value.parent && !value.auxiliary && trace.guest.contains(reinterpret_cast<void*>(value.payload)), "Value constructors must retain the published Object type and independent handle");
+    Object& copy = wrapped ? *reinterpret_cast<Object*>(value.payload) : direct;
+    std::vector<std::size_t> expected{24, 104, 104, 104, 2, 24, 2};
+    if (budget) expected.insert(expected.end(), {104, 2, 24, 2});
+    if (wrapped) expected.insert(expected.begin(), 8);
+    Require(caught == (budget < 2) && trace.guest.contains(copy.storage) && trace.guest.size() == baseline.size() + (budget == 0 ? 7u : budget == 1 ? 11u : 10u) + unsigned(wrapped) &&
+            trace.heap.size() == heapBaseline.size() + budget && !trace.notifications && std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
+            "Interrupted tree construction must retain the published empty destination and unfinished replacement tree without rollback");
+    auto* header = static_cast<LegacyTreeHeader*>(copy.storage);
+    Require(header->count == (caught ? 0u : 2u) && header->head && (!caught || header->head->parent == header->head), "Only complete tree copying may publish the replacement root");
+    std::map<void*, std::size_t> orphans;
+    if (caught) for (const auto& [pointer, generation] : trace.guestGenerations) {
+        if (!baseline.contains(pointer) && pointer != copy.storage && pointer != header->head && (!wrapped || pointer != reinterpret_cast<void*>(value.payload))) orphans.emplace(pointer, generation);
+    }
+    Require(orphans.size() == (caught ? budget == 0 ? 5u : 9u : 0u), "Unfinished trees retain their sentinel, nodes and independently allocated internal/public keys");
+    for (const auto& [pointer, generation] : trace.heapGenerations) if (!heapBaseline.contains(pointer)) {
+        const auto* node = static_cast<const LegacyNode*>(pointer);
+        Require(!node->nil && node->callback == RecoverLegacy && node->context == &context && node->key->type == 3 && node->key->payload == 9,
+                "Completed replacement-tree child records remain published after the next entry allocation fails");
+        entries.emplace(node->key, &context);
+    }
+    CheckMap(trace, entries); trace.heapBudget = -1;
+    Require(_ZN3sce4Json6ObjectaSERKS1_(&copy, object) == &copy, "Independent assignment retry must publish a complete tree");
+    Value view{nullptr, nullptr, reinterpret_cast<std::uintptr_t>(&copy), 0, 7}; std::string actual; std::vector<const Value*> copiedValues;
+    CollectionShape(view, nullptr, actual, copiedValues);
+    Require(actual == "7:0o2{k=a/q=a/3:0=9;k=b/q=b/3:0=9;};", "Retried trees must preserve both keys, scalar contents and parent links");
+    const auto* child = &static_cast<LegacyTreeHeader*>(copy.storage)->head->left->pair.value;
+    Require(_ZNK3sce4Json5Value10getBooleanEv(child) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == child && !context.parent,
+            "Retried tree entries must dispatch through their own callback records");
+    for (const auto& [pointer, generation] : orphans) Require(trace.guestGenerations.at(pointer) == generation, "Retry must not reclaim the orphaned replacement tree");
+    for (const auto& snapshot : snapshots) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0,
+            "Failed tree copies and retry must preserve every original allocation and source byte");
+    Require(std::memcmp(&source, &sourceValue, sizeof(source)) == 0 && std::memcmp(&root, &rootValue, sizeof(root)) == 0, "Both original Values must retain their metadata ownership");
+    if (wrapped) _ZN3sce4Json5ValueD1Ev(&value); else _ZN3sce4Json6ObjectD1Ev(&copy);
+    _ZN3sce4Json5ValueD1Ev(&root); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement);
+    Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.heap.empty() && trace.heapGenerations.empty() && trace.guestGenerations == orphans,
+            "Module teardown reclaims all callback records while leaving the orphaned caller tree intact");
+    for (const auto& [pointer, generation] : orphans) FreeLegacy(nullptr, pointer, &trace);
+    Require(trace.guest.empty() && _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0 && _ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && trace.guest.empty() && trace.heap.empty(),
+            "Separate orphan reclamation must preserve fresh module initialization and cleanup");
+    HeapTrace = nullptr;
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 5 && std::strcmp(argv[1], "object-heap") == 0) return CheckObjectHeapExceptions(static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[3], nullptr, 10)), std::strcmp(argv[4], "wrapped") == 0);
     if (argc == 4 && std::strcmp(argv[1], "value-array-heap") == 0) return CheckArrayHeapExceptions(static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[3], nullptr, 10)), true);
     if (argc == 4 && std::strcmp(argv[1], "array-heap") == 0) return CheckArrayHeapExceptions(static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[3], nullptr, 10)));
     if (argc == 3) return CheckCopyHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)));
