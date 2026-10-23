@@ -1396,10 +1396,14 @@ const Value& Defaults(ValueType type) {
     return defaults.values[type];
 }
 
-void ResetDefaults() {
+void ResetDefaults(bool releaseMissing = false) {
     auto& defaults = SharedDefaults();
     for (unsigned type = 0; type < 8; ++type) {
-        if (defaults.ready[type]) Destroy(defaults.values[type]);
+        if (defaults.ready[type]) {
+            const bool missing = type >= TypeString && !defaults.values[type].payload;
+            Destroy(defaults.values[type]);
+            if (releaseMissing && missing) Release(nullptr);
+        }
         defaults.values[type] = {};
         defaults.ready[type] = false;
     }
@@ -1420,15 +1424,20 @@ PthreadMutex* CreateKernelMutex() {
 
 void ReleaseInitialization() {
     auto& state = State();
+    if (!ModernValues() && !state.legacyHandlers) Release(nullptr);
     ReleaseLegacyHandlers();
-    if (state.fallback) { Destroy(*state.fallback); Release(state.fallback); state.fallback = nullptr; }
-    if (state.recoveryMutex && state.recoveryMutex != state.internalMutex) {
-        scePthreadMutexDestroy(state.recoveryMutex);
+    if (state.fallback) Destroy(*state.fallback);
+    Release(state.fallback);
+    state.fallback = nullptr;
+    if (ModernValues()) {
+        if (state.recoveryMutex) scePthreadMutexDestroy(state.recoveryMutex);
         Release(state.recoveryMutex);
     }
     state.recoveryMutex = nullptr;
-    if (state.internalMutex) { scePthreadMutexDestroy(state.internalMutex); Release(state.internalMutex); state.internalMutex = nullptr; }
-    ResetDefaults();
+    if (state.internalMutex) scePthreadMutexDestroy(state.internalMutex);
+    Release(state.internalMutex);
+    state.internalMutex = nullptr;
+    ResetDefaults(true);
     if (state.allocation) {
         auto* allocation = state.allocation;
         const auto context = *allocation;
