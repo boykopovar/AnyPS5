@@ -45,6 +45,9 @@ struct RecoveryAllocationTrace {
     unsigned notifications = 0;
     std::map<void*, std::size_t> ids;
     std::size_t nextId = 0;
+    void (*onNotify)(RecoveryAllocationTrace&) = nullptr;
+    void* notificationContext = nullptr;
+    bool notifying = false;
 };
 static void* APS5_VABI AllocateRecovery(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<RecoveryAllocationTrace*>(context); trace.requests.push_back(bytes);
@@ -64,6 +67,11 @@ static void APS5_VABI FreeRecovery(void*, void* memory, void* context) {
 static void APS5_VABI NotifyRecovery(void*, int error, std::size_t bytes, void* context) {
     auto& trace = *static_cast<RecoveryAllocationTrace*>(context);
     Require(static_cast<unsigned>(error) == 0x80848102 && trace.requests.back() == bytes, "Recovery notification must identify the failed allocation"); ++trace.notifications;
+    if (trace.onNotify && !trace.notifying) {
+        trace.notifying = true;
+        trace.onNotify(trace);
+        trace.notifying = false;
+    }
 }
 static void* const RecoveryVtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateRecovery), reinterpret_cast<void*>(FreeRecovery), reinterpret_cast<void*>(NotifyRecovery)};
 struct RecoveryAllocator { void* const* vtable = RecoveryVtable; };
@@ -98,6 +106,7 @@ struct ReadContext {
     String* output;
     unsigned reads = 0;
     unsigned nestedReads = 0;
+    unsigned hooks = 0;
 };
 static int APS5_VABI ReadTrue(char& character, void* data) {
     auto& position = *static_cast<unsigned*>(data);
@@ -123,6 +132,15 @@ static int APS5_VABI ReadNested(char& character, void* data) {
     character = "true"[context.reads - 1];
     return 0;
 }
+static void RunNotification(RecoveryAllocationTrace& allocations) {
+    auto& context = *static_cast<ReadContext*>(allocations.notificationContext);
+    ++context.hooks;
+    if (context.fail) { allocations.budget = 0; allocations.once = true; }
+    context.nestedStatus = _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(context.nested, ReadTrue, &context.nestedReads);
+    allocations.budget = -1; allocations.once = false;
+    _ZN3sce4Json5Value3setEd(context.assignment, std::numeric_limits<double>::infinity());
+    context.formatStatus = _ZN3sce4Json5Value9serializeERNS0_6StringE(context.format, context.output);
+}
 struct Expected {
     const char* document;
     bool fail;
@@ -131,6 +149,7 @@ struct Expected {
     const char* output;
     std::size_t requests;
     std::uint64_t order;
+    bool notification = false;
 };
 static const Expected Cases[]{
     {"\"recovery\"", 0, 5, "recovery", "p\"recovery\"", 22, UINT64_C(0x512fbd7009730792)},
@@ -139,6 +158,12 @@ static const Expected Cases[]{
     {"{\"k\":\"recovery\"}", 1, 7, "{\"k\":\"\"}", "p{\"k\":\"\"}", 137, UINT64_C(0x1c0f8b9f8e134cd2)},
     {"[[\"recovery\"],{\"k\":1}]", 0, 6, "[[\"recovery\"],{\"k\":1}]", "p[[\"recovery\"],{\"k\":1}]", 254, UINT64_C(0xd1da135cb823d2ad)},
     {"[[\"recovery\"],{\"k\":1}]", 1, 6, "[[],{}]", "p[[],{}]", 136, UINT64_C(0xe4d4124493072e0a)},
+    {"\"recovery\"", 0, 5, "recovery", "p\"recovery\"", 21, UINT64_C(0x1e6ba634008a1e40), true},
+    {"\"recovery\"", 1, 5, "recovery", "p\"recovery\"", 20, UINT64_C(0x4f5af7c5c1ffdcb2), true},
+    {"{\"k\":\"recovery\"}", 0, 7, "{\"k\":\"recovery\"}", "p{\"k\":\"recovery\"}", 142, UINT64_C(0x1b1dd3ba293b3ae5), true},
+    {"{\"k\":\"recovery\"}", 1, 7, "{\"k\":\"\"}", "p{\"k\":\"\"}", 136, UINT64_C(0x2c958fa5f20dbd84), true},
+    {"[[\"recovery\"],{\"k\":1}]", 0, 6, "[[\"recovery\"],{\"k\":1}]", "p[[\"recovery\"],{\"k\":1}]", 253, UINT64_C(0x1e7b03d5c679de77), true},
+    {"[[\"recovery\"],{\"k\":1}]", 1, 6, "[[],{}]", "p[[],{}]", 135, UINT64_C(0x2d2754b3359f2448), true},
 };
 int main() {
     RecoveryAllocationTrace allocations; RecoveryAllocator allocator;
@@ -163,17 +188,24 @@ int main() {
         String output{}; _ZN3sce4Json6StringC1EPKc(&output, "p");
         ReadContext context{&allocations, expected.fail, &assignment, &format, &nested, 0, 0, &output};
         const auto first = allocations.requests.size(); const auto notifications = allocations.notifications;
-        const int status = _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&outer, ReadNested, &context);
+        int status;
+        if (expected.notification) {
+            allocations.onNotify = RunNotification; allocations.notificationContext = &context;
+            allocations.budget = 0; allocations.once = true;
+            status = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&outer, "true", 4);
+            allocations.onNotify = nullptr; allocations.notificationContext = nullptr;
+            allocations.budget = -1; allocations.once = false;
+        } else status = _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(&outer, ReadNested, &context);
         const auto end = allocations.requests.size();
-        Require(status == (expected.fail ? static_cast<int>(0x80848102) : 0) && outer.type == 1 && (outer.payload & 0xff) == 1 && context.reads == 4,
+        Require(status == (expected.fail || expected.notification ? static_cast<int>(0x80848102) : 0) && outer.type == 1 && (outer.payload & 0xff) == 1 && context.reads == (expected.notification ? 0u : 4u) && context.hooks == (expected.notification ? 1u : 0u),
                 "A failure raised by the reader must preserve literal completion while reporting the outer operation failure");
-        Require(context.nestedStatus == status && nested.type == (expected.fail ? 4 : 1) && context.nestedReads == (expected.fail ? 0u : 4u), "A nested parse must observe the inherited failure without consuming the outer failure state");
-        Require(expected.fail ? nested.payload == std::bit_cast<std::uint64_t>(0.125) : (nested.payload & 0xff) == 1, "Refused nested parsing must preserve its original scalar bits");
+        Require(context.nestedStatus == (expected.fail ? static_cast<int>(0x80848102) : 0) && nested.type == (expected.fail && !expected.notification ? 4 : 1) && context.nestedReads == (expected.fail && !expected.notification ? 0u : 4u), "A nested parse must observe the inherited failure without consuming the outer failure state");
+        Require(expected.fail && !expected.notification ? nested.payload == std::bit_cast<std::uint64_t>(0.125) : (nested.payload & 0xff) == 1, "Refused nested parsing must preserve its original scalar bits");
         Require(assignment.type == expected.type && Contents(assignment) == expected.assignment && context.formatStatus == 0 &&
                 std::strcmp(_ZNK3sce4Json6String5c_strEv(&output), expected.output) == 0, "Inherited failures must preserve reference callback-return partial collections and serialization");
         std::uint64_t order = UINT64_C(14695981039346656037);
         for (auto i = first; i < end; ++i) { order ^= allocations.requests[i]; order *= UINT64_C(1099511628211); }
-        Require(end - first == expected.requests && order == expected.order && allocations.notifications - notifications == expected.fail, "Nested callback recovery must preserve exact allocation request order and notifications");
+        Require(end - first == expected.requests && order == expected.order && allocations.notifications - notifications == unsigned(expected.fail) + unsigned(expected.notification), "Nested callback recovery must preserve exact allocation request order and notifications");
         Require(assignCallback.calls == 1 && assignCallback.function == 1 && !assignCallback.errorPointer && formatCallback.calls == 1 && formatCallback.function == 0 && formatCallback.errorPointer, "Nested assignment and serialization must preserve their distinct callback ABIs");
         Require(assignment.auxiliary == assignmentAuxiliary && format.auxiliary == formatAuxiliary && allocations.ids.at(assignmentAuxiliary) == assignmentId && allocations.ids.at(formatAuxiliary) == formatId, "Inherited failures must preserve destination metadata identities and generations");
         Require(Contents(replacement) == (replacement.type == 5 ? "recovery" : expected.document), "Nested recovery must preserve its independent source template");
