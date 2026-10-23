@@ -44,6 +44,8 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value*);
 int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(Value*, Handler, void*);
 int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullHandler, void*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
+void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
+void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_5ArrayE(Value*, const Array*);
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array*, const Array*);
 void APS5_VABI _ZN3sce4Json5ArrayC2ERKS1_(Array*, const Array*);
@@ -637,7 +639,7 @@ static int CheckCopyHeapExceptions(unsigned shape, unsigned alias) {
     return 0;
 }
 
-static int CheckArrayHeapExceptions(unsigned budget, unsigned alias) {
+static int CheckArrayHeapExceptions(unsigned budget, unsigned alias, bool wrapped = false) {
     Require(budget <= 2 && alias < 2, "Array-copy schedules cover both child entries and constructor aliases");
     LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator; Parameter parameter{&allocator, &trace, 16384};
     std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
@@ -658,14 +660,21 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias) {
         const auto* bytes = static_cast<const unsigned char*>(pointer);
         snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
     }
-    Array copy; std::memset(&copy, 0xa5, sizeof(copy)); const auto requests = trace.requests.size(); trace.heapBudget = static_cast<int>(budget);
+    Array directCopy; std::memset(&directCopy, 0xa5, sizeof(directCopy)); Value wrappedCopy; std::memset(&wrappedCopy, 0xa5, sizeof(wrappedCopy));
+    const auto requests = trace.requests.size(); trace.heapBudget = static_cast<int>(budget);
     bool caught = false;
     try {
-        if (alias) _ZN3sce4Json5ArrayC2ERKS1_(&copy, &array);
-        else _ZN3sce4Json5ArrayC1ERKS1_(&copy, &array);
+        if (wrapped) {
+            if (alias) _ZN3sce4Json5ValueC2ERKNS0_5ArrayE(&wrappedCopy, &array);
+            else _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(&wrappedCopy, &array);
+        } else if (alias) _ZN3sce4Json5ArrayC2ERKS1_(&directCopy, &array);
+        else _ZN3sce4Json5ArrayC1ERKS1_(&directCopy, &array);
     } catch (const std::bad_alloc&) { caught = true; }
-    std::vector<std::size_t> expected{24, 48, 48, 48}; if (budget) expected.push_back(48);
-    Require(caught == (budget < 2) && trace.guest.contains(copy.storage) && trace.guest.size() == baseline.size() + (budget == 1 ? 5u : 4u) &&
+    if (wrapped) Require(wrappedCopy.type == 6 && !wrappedCopy.parent && !wrappedCopy.auxiliary && trace.guest.contains(reinterpret_cast<void*>(wrappedCopy.payload)),
+            "Value wrappers must publish their independent Array handle and type before callback entry failure");
+    Array& copy = wrapped ? *reinterpret_cast<Array*>(wrappedCopy.payload) : directCopy;
+    std::vector<std::size_t> expected{24, 48, 48, 48}; if (wrapped) expected.insert(expected.begin(), 8); if (budget) expected.push_back(48);
+    Require(caught == (budget < 2) && trace.guest.contains(copy.storage) && trace.guest.size() == baseline.size() + (budget == 1 ? 5u : 4u) + unsigned(wrapped) &&
             trace.heap.size() == heapBaseline.size() + budget && !trace.notifications && std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
             "Interrupted Array construction must publish empty destination storage and retain the temporary list without rollback");
     auto* copyHeader = static_cast<LegacyArrayHeader*>(copy.storage);
@@ -673,7 +682,7 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias) {
             "Only completed list copying may replace the initial empty destination");
     std::map<void*, std::size_t> orphans;
     if (caught) for (const auto& [pointer, generation] : trace.guestGenerations) {
-        if (!baseline.contains(pointer) && pointer != copy.storage && pointer != copyHeader->head) {
+        if (!baseline.contains(pointer) && pointer != copy.storage && pointer != copyHeader->head && (!wrapped || pointer != reinterpret_cast<void*>(wrappedCopy.payload))) {
             Require(trace.guest.at(pointer) == 48, "Only temporary list links become orphaned"); orphans.emplace(pointer, generation);
         }
     }
@@ -693,7 +702,9 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias) {
     const auto* child = _ZNK3sce4Json5Array5frontEv(&copy);
     Require(_ZNK3sce4Json5Value10getBooleanEv(child) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == child && !context.parent,
             "Retried children must dispatch through their own callback records");
-    _ZN3sce4Json5ArrayD1Ev(&copy); _ZN3sce4Json5ArrayD1Ev(&array); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement);
+    if (wrapped) _ZN3sce4Json5ValueD1Ev(&wrappedCopy);
+    else _ZN3sce4Json5ArrayD1Ev(&copy);
+    _ZN3sce4Json5ArrayD1Ev(&array); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement);
     Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.heap.empty() && trace.heapGenerations.empty() && trace.guestGenerations == orphans,
             "Module teardown reclaims callback records but cannot reclaim orphaned caller list nodes");
     for (const auto& [pointer, generation] : orphans) FreeLegacy(nullptr, pointer, &trace);
@@ -704,6 +715,7 @@ static int CheckArrayHeapExceptions(unsigned budget, unsigned alias) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::strcmp(argv[1], "value-array-heap") == 0) return CheckArrayHeapExceptions(static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[3], nullptr, 10)), true);
     if (argc == 4 && std::strcmp(argv[1], "array-heap") == 0) return CheckArrayHeapExceptions(static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[3], nullptr, 10)));
     if (argc == 3) return CheckCopyHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)));
     if (argc == 2) return CheckHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)));

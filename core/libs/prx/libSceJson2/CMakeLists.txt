@@ -378,8 +378,9 @@ if(BUILD_TESTING)
     foreach(position RANGE 0 2)
         foreach(alias RANGE 0 1)
             add_test(NAME guest_json_legacy_array_heap_exception_${position}_${alias} COMMAND guest_json_legacy_handlers_tests array-heap ${position} ${alias})
+            add_test(NAME guest_json_legacy_value_array_heap_exception_${position}_${alias} COMMAND guest_json_legacy_handlers_tests value-array-heap ${position} ${alias})
             if(WIN32)
-                set_tests_properties(guest_json_legacy_array_heap_exception_${position}_${alias} PROPERTIES ENVIRONMENT_MODIFICATION
+                set_tests_properties(guest_json_legacy_array_heap_exception_${position}_${alias} guest_json_legacy_value_array_heap_exception_${position}_${alias} PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
             endif()
         endforeach()
