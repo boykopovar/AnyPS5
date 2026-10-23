@@ -992,9 +992,9 @@ void ReleaseLegacyHandlers() {
     state.legacyHandlers = nullptr;
 }
 
-void Construct(Object& object) {
+void Construct(Object& object, bool releaseMissingHeader = false) {
     object.items = static_cast<ObjectStorage*>(Allocate(ModernValues() ? 32 : 24));
-    if (!object.items) return;
+    if (!object.items) { if (releaseMissingHeader) Release(nullptr); return; }
     object.items->count = 0;
     object.items->head = NewObjectHead();
     object.items->SetOwner(nullptr);
@@ -1848,7 +1848,7 @@ void AssignArray(Array& destination, const Array& source) {
     }
     Array pending{};
     Construct(pending);
-    if (!pending.items) return;
+    if (!pending.items) { Release(nullptr); return; }
     if (!pending.items->head) { Destroy(pending); return; }
     pending.items->SetOwner(destination.items->Owner());
     try {
@@ -1882,7 +1882,7 @@ void AssignObject(Object& destination, const Object& source) {
         return;
     }
     Object pending{};
-    Construct(pending);
+    Construct(pending, true);
     if (!pending.items) return;
     pending.items->SetOwner(destination.items->Owner());
     try {
@@ -3234,8 +3234,8 @@ void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
-    Destroy(self->key);
     Destroy(self->value);
+    Destroy(self->key);
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator* result, Object* self, const Pair* pair) {
