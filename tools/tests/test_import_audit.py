@@ -1302,15 +1302,27 @@ class ImportAuditTests(unittest.TestCase):
                      "int APS5_VABI sceEveryElif(int value) {\n#if defined(HOST_A)\n    Fail();\n#elif defined(HOST_B)\n"
                      "    NotImplemented_nid_no_patch(__func__);\n#else\n    Fail();\n#endif\n    return 0;\n}\n"
                      "int APS5_VABI sceNested(int value) {\n#if defined(HOST_A)\n#ifdef FEATURE\n    return value;\n#else\n    Fail();\n#endif\n"
-                     "#else\n    Fail();\n#endif\n    return 0;\n}\n")
+                     "#else\n    Fail();\n#endif\n    return 0;\n}\n"
+                     "void SoftFail(int value) { if (value == 0) return; NotImplemented_nid_no_patch(__func__); }\n"
+                     "void HardFail(int value) { if (value == 0) throw std::invalid_argument(\"zero\"); NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceGuardReturn(int value) { if (value == 0) return 0; NotImplemented_nid_no_patch(__func__); return 1; }\n"
+                     "int APS5_VABI sceGuardThrow(int value) { if (value == 0) throw std::invalid_argument(\"zero\"); "
+                     "NotImplemented_nid_no_patch(__func__); return 1; }\n"
+                     "int APS5_VABI sceGuardBlock(int value) { { if (value == 0) return 0; } Fail(); return 1; }\n"
+                     "int APS5_VABI sceGuardGoto(int value) { if (value == 0) goto done; Fail(); done: return 0; }\n"
+                     "int APS5_VABI sceGuardHost(int value) {\n#ifdef HOST_A\n    if (value == 0) return 0;\n#endif\n    Fail();\n    return 1;\n}\n"
+                     "int APS5_VABI sceSoftHelper(int value) { SoftFail(value); return 0; }\n"
+                     "int APS5_VABI sceHardHelper(int value) { HardFail(value); return 0; }\n")
         write_source(source, "libShared", '#include "prx/libGuard/Export.cpp"\n')
         stubs, partial = import_audit.source_stub_classes(source)
         names = ("sceDirect", "sceReturned", "sceWrapped", "sceIf", "sceBlock", "sceElse", "sceGuarded",
                  "sceLoop", "sceSwitch", "sceTernary", "sceShort", "sceLambda", "sceMember", "sceHost", "sceHostHelper",
-                 "sceOuter", "sceEveryHost", "sceEveryElif", "sceNested")
+                 "sceOuter", "sceEveryHost", "sceEveryElif", "sceNested", "sceGuardReturn", "sceGuardThrow",
+                 "sceGuardBlock", "sceGuardGoto", "sceGuardHost", "sceSoftHelper", "sceHardHelper")
         kinds = {name: "partial" if ("libGuard.prx", nid_names.compute_nid(name)) in partial else "stub" for name in names}
         self.assertEqual({name for name, kind in kinds.items() if kind == "stub"},
-                         {"sceDirect", "sceReturned", "sceWrapped", "sceOuter", "sceEveryHost", "sceEveryElif"})
+                         {"sceDirect", "sceReturned", "sceWrapped", "sceOuter", "sceEveryHost", "sceEveryElif",
+                          "sceGuardThrow", "sceHardHelper"})
         self.assertEqual(set(stubs), {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx") for name in names})
         self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
                                    for name, kind in kinds.items() if kind == "partial"})

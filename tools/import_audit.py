@@ -19,6 +19,7 @@ MODULE_SUFFIX = "#"
 CLASSES = ("implemented", "partial", "stub", "absent", "module")
 CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
 BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
+EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
@@ -541,12 +542,13 @@ def variant_calls(body):
 def unconditional_calls(body):
     names = set()
     for offset, statement in top_level_statements(body):
-        if CONDITIONAL.match(statement.strip()) or BRANCHING.search(statement):
-            continue
-        for call in progress.CALL.finditer(statement):
-            before = statement[:call.start()]
-            if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
-                names.add(call.group(1))
+        if not (CONDITIONAL.match(statement.strip()) or BRANCHING.search(statement)):
+            for call in progress.CALL.finditer(statement):
+                before = statement[:call.start()]
+                if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
+                    names.add(call.group(1))
+        if EXIT.search(statement):
+            break
     return names
 
 
