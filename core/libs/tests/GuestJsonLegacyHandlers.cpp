@@ -45,6 +45,9 @@ int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEP
 int APS5_VABI _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(Value*, NullHandler, void*);
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value*, const char*, std::size_t);
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array*);
+void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array*, const Array*);
+void APS5_VABI _ZN3sce4Json5ArrayC2ERKS1_(Array*, const Array*);
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array*, const Array*);
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array*);
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
 const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array*);
@@ -634,7 +637,74 @@ static int CheckCopyHeapExceptions(unsigned shape, unsigned alias) {
     return 0;
 }
 
+static int CheckArrayHeapExceptions(unsigned budget, unsigned alias) {
+    Require(budget <= 2 && alias < 2, "Array-copy schedules cover both child entries and constructor aliases");
+    LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator; Parameter parameter{&allocator, &trace, 16384};
+    std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0, "Initialize array-copy exception resources");
+    Context context; _ZN3sce4Json5ValueC1Eb(&context.replacement, true); Value source{}; ParseLegacy(source);
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Prepare copied child callbacks");
+    Array array{}; _ZN3sce4Json5ArrayC1Ev(&array);
+    _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &source); _ZN3sce4Json5Array9push_backERKNS0_5ValueE(&array, &source);
+    auto* sourceHeader = static_cast<LegacyArrayHeader*>(array.storage);
+    std::map<const Value*, Context*> entries{{&source, &context}};
+    for (auto* node = sourceHeader->head->next; node != sourceHeader->head; node = node->next) entries.emplace(&node->value, &context);
+    CheckMap(trace, entries);
+    const auto baseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
+    const Value sourceValue = source;
+    std::vector<LegacySnapshot> snapshots;
+    for (const auto& [pointer, generation] : baseline) {
+        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*static_cast<void**>(pointer))) continue;
+        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
+    }
+    Array copy; std::memset(&copy, 0xa5, sizeof(copy)); const auto requests = trace.requests.size(); trace.heapBudget = static_cast<int>(budget);
+    bool caught = false;
+    try {
+        if (alias) _ZN3sce4Json5ArrayC2ERKS1_(&copy, &array);
+        else _ZN3sce4Json5ArrayC1ERKS1_(&copy, &array);
+    } catch (const std::bad_alloc&) { caught = true; }
+    std::vector<std::size_t> expected{24, 48, 48, 48}; if (budget) expected.push_back(48);
+    Require(caught == (budget < 2) && trace.guest.contains(copy.storage) && trace.guest.size() == baseline.size() + (budget == 1 ? 5u : 4u) &&
+            trace.heap.size() == heapBaseline.size() + budget && !trace.notifications && std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
+            "Interrupted Array construction must publish empty destination storage and retain the temporary list without rollback");
+    auto* copyHeader = static_cast<LegacyArrayHeader*>(copy.storage);
+    Require(copyHeader->count == (caught ? 0u : 2u) && copyHeader->head && (caught ? copyHeader->head->next == copyHeader->head && copyHeader->head->previous == copyHeader->head : true),
+            "Only completed list copying may replace the initial empty destination");
+    std::map<void*, std::size_t> orphans;
+    if (caught) for (const auto& [pointer, generation] : trace.guestGenerations) {
+        if (!baseline.contains(pointer) && pointer != copy.storage && pointer != copyHeader->head) {
+            Require(trace.guest.at(pointer) == 48, "Only temporary list links become orphaned"); orphans.emplace(pointer, generation);
+        }
+    }
+    Require(orphans.size() == (caught ? budget + 2 : 0), "Failed copies retain the temporary sentinel and admitted child nodes");
+    for (const auto& [pointer, generation] : trace.heapGenerations) if (!heapBaseline.contains(pointer)) {
+        const auto* node = static_cast<const LegacyNode*>(pointer);
+        Require(!node->nil && node->callback == RecoverLegacy && node->context == &context && node->key->type == 3 && node->key->payload == 9,
+                "Completed child callback records must remain independently published even in the orphaned temporary list");
+        entries.emplace(node->key, &context);
+    }
+    CheckMap(trace, entries); trace.heapBudget = -1;
+    Require(_ZN3sce4Json5ArrayaSERKS1_(&copy, &array) == &copy && _ZNK3sce4Json5Array4sizeEv(&copy) == 2, "Assignment retry must replace the retained empty destination");
+    for (const auto& [pointer, generation] : orphans) Require(trace.guestGenerations.at(pointer) == generation, "Retry must not claim orphaned temporary-list ownership");
+    for (const auto& snapshot : snapshots) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0,
+            "Interrupted copy and retry must preserve source storage bytes and generations");
+    Require(std::memcmp(&source, &sourceValue, sizeof(source)) == 0, "Original callback source metadata must remain unchanged");
+    const auto* child = _ZNK3sce4Json5Array5frontEv(&copy);
+    Require(_ZNK3sce4Json5Value10getBooleanEv(child) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == child && !context.parent,
+            "Retried children must dispatch through their own callback records");
+    _ZN3sce4Json5ArrayD1Ev(&copy); _ZN3sce4Json5ArrayD1Ev(&array); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement);
+    Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.heap.empty() && trace.heapGenerations.empty() && trace.guestGenerations == orphans,
+            "Module teardown reclaims callback records but cannot reclaim orphaned caller list nodes");
+    for (const auto& [pointer, generation] : orphans) FreeLegacy(nullptr, pointer, &trace);
+    Require(trace.guest.empty() && _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0 &&
+            _ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && trace.guest.empty() && trace.heap.empty(), "Separate fixture reclamation must leave fresh module initialization usable");
+    HeapTrace = nullptr;
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 4 && std::strcmp(argv[1], "array-heap") == 0) return CheckArrayHeapExceptions(static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[3], nullptr, 10)));
     if (argc == 3) return CheckCopyHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)));
     if (argc == 2) return CheckHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)));
     LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator;

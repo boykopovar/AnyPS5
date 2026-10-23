@@ -1288,14 +1288,12 @@ void Construct(T*& destination, const TArgs&... arguments) {
 
 void CopyArrayStorage(ArrayStorage& destination, const ArrayStorage& source) {
     ArrayStorage pending{NewArrayHead(), 0, 0};
-    try {
-        if (pending.head) {
-            for (const auto& item : source) {
-                try { CopyInto(pending.emplace_back(), item); }
-                catch (const GuestOutOfMemory&) { break; }
-            }
+    if (pending.head) {
+        for (const auto& item : source) {
+            try { CopyInto(pending.emplace_back(), item); }
+            catch (const GuestOutOfMemory&) { break; }
         }
-    } catch (...) { pending.clear(); if (pending.head) Release(pending.head); throw; }
+    }
     destination.clear();
     if (destination.head) Release(destination.head);
     destination.head = pending.head;
@@ -1303,13 +1301,10 @@ void CopyArrayStorage(ArrayStorage& destination, const ArrayStorage& source) {
 }
 
 void CopyArray(Array& destination, const Array& source) {
-    Array pending{};
-    if (!source.items) { destination = pending; return; }
-    Construct(pending);
-    if (!pending.items) { destination = pending; return; }
-    try { CopyArrayStorage(*pending.items, *source.items); }
-    catch (...) { Destroy(pending); throw; }
-    destination = pending;
+    if (!source.items) { destination = {}; return; }
+    Construct(destination);
+    if (!destination.items) return;
+    CopyArrayStorage(*destination.items, *source.items);
 }
 
 void CopyObject(Object& destination, const Object& source) {
