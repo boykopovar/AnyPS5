@@ -381,6 +381,7 @@ int APS5_VABI sceAgcGetFusedShaderSize(SizeAlign* dst, const Shader* front, cons
     SizeAlign result{};
     const int status = sceAgcGetFusedShaderSize_0080(&result, front, back);
     if (status != 0) return status;
+    if (dst == nullptr) APS5_INVALID_ARG_EX;
     const auto align = static_cast<std::uint32_t>(result.m_align);
     dst->m_size = result.m_size;
     std::memcpy(&dst->m_align, &align, sizeof(align));

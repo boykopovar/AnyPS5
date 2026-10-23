@@ -262,10 +262,12 @@ void testRejections() {
     SizeAlign size{};
     Shader fused{};
     expectFailure([&] { sceAgcGetFusedShaderSize_0080(nullptr, &halves.front, &halves.back); });
+    expectFailure([&] { sceAgcGetFusedShaderSize(nullptr, &halves.front, &halves.back); });
     expectFailure([&] { sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, nullptr); });
     {
         Halves swapped;
         check(sceAgcGetFusedShaderSize_0080(&size, &swapped.back, &swapped.front) == InvalidShaderHalves, "swapped halves were accepted by the size query");
+        check(sceAgcGetFusedShaderSize(nullptr, &swapped.back, &swapped.front) == InvalidShaderHalves, "the unversioned size query checked its output before the halves");
         check(sceAgcFuseShaderHalves_0200(&fused, &swapped.back, &swapped.front, nullptr) == InvalidShaderHalves, "swapped halves were fused");
     }
     {
