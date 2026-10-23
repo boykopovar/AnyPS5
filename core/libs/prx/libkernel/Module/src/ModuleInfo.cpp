@@ -22,7 +22,13 @@
 #include <filesystem>
 #else
 #include <dlfcn.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#else
 #include <link.h>
+#endif
 #include <mutex>
 #include <unistd.h>
 #include <unordered_map>
@@ -71,7 +77,143 @@ std::uint64_t PageSpan(std::uint64_t address, std::uint64_t size) {
     return ((address + size + pageMask) & ~pageMask) - (address & ~pageMask);
 }
 
-#ifndef _WIN32
+#if defined(__APPLE__)
+struct MachImage {
+    const mach_header_64* header;
+    std::uintptr_t slide;
+    const char* path;
+};
+
+std::vector<MachImage> MachImages() {
+    std::vector<MachImage> images;
+    const auto count = _dyld_image_count();
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(index));
+        if (header == nullptr || header->magic != MH_MAGIC_64) continue;
+        const MachImage image{header, static_cast<std::uintptr_t>(_dyld_get_image_vmaddr_slide(index)), _dyld_get_image_name(index)};
+        if (header->filetype == MH_EXECUTE) images.insert(images.begin(), image);
+        else images.push_back(image);
+    }
+    return images;
+}
+
+template<typename TVisit>
+void ForEachSegment(const MachImage& image, TVisit&& visit) {
+    const auto* command = reinterpret_cast<const load_command*>(image.header + 1);
+    for (std::uint32_t i = 0; i < image.header->ncmds; ++i) {
+        if (command->cmd == LC_SEGMENT_64) visit(*reinterpret_cast<const segment_command_64*>(command));
+        command = reinterpret_cast<const load_command*>(reinterpret_cast<const std::uint8_t*>(command) + command->cmdsize);
+    }
+}
+
+bool GuestSegment(const segment_command_64& segment) {
+    return std::strncmp(segment.segname, "__ELF", 5) == 0;
+}
+
+bool Relinked(const MachImage& image) {
+    bool relinked = false;
+    ForEachSegment(image, [&](const segment_command_64& segment) { relinked = relinked || GuestSegment(segment); });
+    return relinked;
+}
+
+bool Reported(const segment_command_64& segment, bool relinked) {
+    if (segment.vmsize == 0 || (segment.initprot & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) == 0) return false;
+    return relinked ? GuestSegment(segment) : std::strncmp(segment.segname, SEG_LINKEDIT, sizeof(segment.segname)) != 0;
+}
+
+std::int32_t Protection(const segment_command_64& segment) {
+    return ((segment.initprot & VM_PROT_READ) ? ProtRead : 0) | ((segment.initprot & VM_PROT_WRITE) ? ProtWrite : 0) |
+        ((segment.initprot & VM_PROT_EXECUTE) ? ProtExecute : 0);
+}
+
+std::string_view ImagePath(const MachImage& image) {
+    return image.path ? image.path : "";
+}
+
+std::string ImageName(const MachImage& image) {
+    const std::string path(ImagePath(image));
+    return ModuleName(path.substr(path.find_last_of('/') + 1));
+}
+
+void* ImageHandle(const MachImage& image) {
+    void* handle = ::dlopen(image.header->filetype == MH_EXECUTE ? nullptr : image.path, RTLD_LAZY | RTLD_NOLOAD);
+    if (!handle) throw std::runtime_error("module info: cannot open a loaded image");
+    ::dlclose(handle);
+    return handle;
+}
+
+const MachImage* ImageContaining(const std::vector<MachImage>& images, std::uintptr_t address) {
+    for (const auto& image : images) {
+        bool found = false;
+        ForEachSegment(image, [&](const segment_command_64& segment) {
+            const auto start = image.slide + segment.vmaddr;
+            if (segment.vmsize != 0 && std::strncmp(segment.segname, SEG_PAGEZERO, sizeof(segment.segname)) != 0 &&
+                address >= start && address - start < segment.vmsize)
+                found = true;
+        });
+        if (found) return &image;
+    }
+    return nullptr;
+}
+
+template<typename TInfo>
+bool Fill(std::uintptr_t address, TInfo& info) {
+    const auto images = MachImages();
+    const auto* image = ImageContaining(images, address);
+    if (!image) return false;
+    SetName(info, ImageName(*image));
+    const bool relinked = Relinked(*image);
+    ForEachSegment(*image, [&](const segment_command_64& command) {
+        if (!Reported(command, relinked) || info.segment_count >= std::size(info.segments)) return;
+        auto& segment = info.segments[info.segment_count++];
+        segment.address = image->slide + command.vmaddr;
+        segment.size = ToU32(command.vmsize, "segment size");
+        segment.prot = Protection(command);
+    });
+    if constexpr (Extended<TInfo>) {
+        info.id = ModuleIdForImage_nid_no_patch(ImageHandle(*image));
+        info.ref_count = 1;
+        unsigned long size = 0;
+        if (const auto* frames = getsectiondata(image->header, SEG_TEXT, "__eh_frame", &size); frames && size != 0) {
+            info.eh_frame_addr = reinterpret_cast<std::uintptr_t>(frames);
+            info.eh_frame_size = ToU32(size, "eh_frame size");
+        }
+    }
+    return true;
+}
+
+std::vector<GuestImage> GuestImages() {
+    std::vector<GuestImage> images;
+    for (const auto& image : MachImages()) {
+        if (image.header->filetype != MH_EXECUTE && !ImagePath(image).ends_with(".prx")) continue;
+        images.push_back({ImageHandle(image), reinterpret_cast<std::uintptr_t>(image.header)});
+    }
+    return images;
+}
+
+std::uint64_t GuestSegmentBytes() {
+    constexpr auto allAccess = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE;
+    std::uint64_t bytes = 0;
+    for (const auto& image : MachImages()) {
+        if (image.header->filetype != MH_EXECUTE && !ImagePath(image).ends_with(GuestModuleSuffix)) continue;
+        const bool relinked = Relinked(image);
+        ForEachSegment(image, [&](const segment_command_64& segment) {
+            const bool header = std::strncmp(segment.segname, SEG_TEXT, sizeof(segment.segname)) == 0;
+            if (Reported(segment, relinked) && (relinked || !header) && (segment.initprot & allAccess) != allAccess)
+                bytes += PageSpan(segment.vmaddr, segment.vmsize);
+        });
+    }
+    return bytes;
+}
+
+bool SystemImage(const GuestImage& image) {
+    const auto* header = reinterpret_cast<const mach_header_64*>(image.address);
+    if (header->filetype == MH_EXECUTE) return false;
+    Dl_info symbol{};
+    if (!::dladdr(header, &symbol) || symbol.dli_fname == nullptr) return true;
+    return !std::string_view(symbol.dli_fname).ends_with(GuestModuleSuffix);
+}
+#elif !defined(_WIN32)
 template<typename TInfo>
 struct ImageSearch {
     std::uintptr_t address;
@@ -365,7 +507,7 @@ int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
         if (titleOnly && SystemImage(image)) return SCE_KERNEL_ERROR_EPERM;
         TInfo result{};
         result.st_size = sizeof(TInfo);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         if (!Fill(image.address, result)) return SCE_KERNEL_ERROR_ESRCH;
 #else
         ImageSearch<TInfo> search{image.address, &result, false};
@@ -398,7 +540,7 @@ int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, M
     if (flags != 2) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported flags " + std::to_string(flags));
     ModuleInfoEx result{};
     result.st_size = sizeof(ModuleInfoEx);
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (!Fill(static_cast<std::uintptr_t>(address), result)) return SCE_KERNEL_ERROR_ESRCH;
 #else
     Dl_info symbol{};
@@ -439,7 +581,7 @@ std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** addr
     const auto images = GuestImages();
     if (images.empty()) throw std::runtime_error("sceKernelGetLibkernelTextLocation: the main program is not loaded");
     ModuleInfo info{};
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     const bool found = Fill(images.front().address, info);
 #else
     ImageSearch<ModuleInfo> search{images.front().address, &info, false};
