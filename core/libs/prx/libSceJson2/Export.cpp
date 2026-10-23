@@ -168,21 +168,12 @@ Globals& State() {
 }
 
 thread_local std::uint32_t allocatorCallbackDepth = 0;
-thread_local std::uint32_t legacyCleanupDepth = 0;
 
 struct AllocatorCallbackScope {
     AllocatorCallbackScope() { ++allocatorCallbackDepth; }
     ~AllocatorCallbackScope() { --allocatorCallbackDepth; }
     AllocatorCallbackScope(const AllocatorCallbackScope&) = delete;
     AllocatorCallbackScope& operator=(const AllocatorCallbackScope&) = delete;
-};
-
-struct LegacyCleanupScope {
-    bool active;
-    explicit LegacyCleanupScope(bool legacy) : active(legacy) { if (active) ++legacyCleanupDepth; }
-    ~LegacyCleanupScope() { if (active) --legacyCleanupDepth; }
-    LegacyCleanupScope(const LegacyCleanupScope&) = delete;
-    LegacyCleanupScope& operator=(const LegacyCleanupScope&) = delete;
 };
 
 struct TerminationScope {
@@ -1000,6 +991,7 @@ int RegisterLegacyHandler(Value& value, TypeMismatchHandler callback, void* cont
 
 void EraseLegacyHandler(const Value& value) {
     auto& state = State();
+    if (!state.recoveryMutex) NotImplemented_nid_no_patch(__func__);
     KernelMutexLock lock(state.recoveryMutex);
     if (state.legacyHandlers) state.legacyHandlers->Erase(state.legacyHandlers->Find(&value));
 }
@@ -1195,10 +1187,8 @@ void Destroy(Value& v) {
         std::lock_guard lock(state.mutex);
         if (!state.recoveryMutex) return;
     }
-    const bool legacy = !ModernValues();
-    LegacyCleanupScope cleanup(legacy);
     ReleaseValueAuxiliary(v);
-    if (legacy) EraseLegacyHandler(v);
+    if (!ModernValues()) EraseLegacyHandler(v);
 }
 
 int EnsureAuxiliary(Node& n) {
@@ -2577,7 +2567,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
-    if (state.terminating || state.callbackActive || (allocatorCallbackDepth && (state.allocationDepth || legacyCleanupDepth))) NotImplemented_nid_no_patch(__func__);
+    if (state.terminating || state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
     TerminationScope termination(state.terminating);
     state.callback = nullptr;
     state.context = nullptr;
