@@ -106,7 +106,7 @@ void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
 void APS5_VABI _ZN3sce4Json5Value5clearEv(Value*);
 int APS5_VABI _ZN3sce4Json5Value3setEl(Value*, std::int64_t);
 int APS5_VABI _ZN3sce4Json5Value3setEm(Value*, std::uint64_t);
-int APS5_VABI _ZN3sce4Json5Value3setEPKc(Value*, const char*);
+void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value*, const char*);
 std::int32_t APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value*);
 const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value*);
 const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value*);
@@ -309,7 +309,7 @@ static void ObjectsAndArrays() {
     Require(!_ZNK3sce4Json6Object5emptyEv(&object));
     Require(_ZNK3sce4Json5Value7getTypeEv(first) == TypeNull);
     Require(_ZN3sce4Json5Value3setEl(first, 1) == 0);
-    Require(_ZN3sce4Json5Value3setEPKc(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta), "b") == 0);
+    _ZN3sce4Json5Value3setEPKc(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta), "b");
     Require(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha) == first);
 
     std::vector<std::string> keys;
@@ -384,7 +384,7 @@ static void ObjectPair() {
     _ZN3sce4Json6StringC1EPKc(&key, "answer");
     Value value{};
     _ZN3sce4Json5ValueC1Ev(&value);
-    Require(_ZN3sce4Json5Value3setEPKc(&value, "forty-two") == 0);
+    _ZN3sce4Json5Value3setEPKc(&value, "forty-two");
 
     Pair pair{};
     std::memset(&pair, 0x5a, sizeof(pair));
@@ -479,7 +479,7 @@ static void ObjectFind() {
 
     Require(_ZN3sce4Json5Value3setEl(_ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &alpha), 1) == 0);
     Value* second = _ZN3sce4Json6ObjectixERKNS0_6StringE(&object, &beta);
-    Require(_ZN3sce4Json5Value3setEPKc(second, "b") == 0);
+    _ZN3sce4Json5Value3setEPKc(second, "b");
     _ZNK3sce4Json6Object3endEv(&end, &object);
     _ZN3sce4Json6Object8iteratorD1Ev(&found);
     Iterator* returned = _ZNK3sce4Json6Object4findERKNS0_6StringE(&found, &object, &beta);
@@ -602,7 +602,7 @@ static void ObjectInsert() {
     _ZN3sce4Json6StringC1EPKc(&otherKey, "other");
     Value otherValue{};
     _ZN3sce4Json5ValueC1Ev(&otherValue);
-    Require(_ZN3sce4Json5Value3setEPKc(&otherValue, "str") == 0);
+    _ZN3sce4Json5Value3setEPKc(&otherValue, "str");
     Pair otherPair{};
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&otherPair, &otherKey, &otherValue);
     Iterator otherInserted{};
@@ -741,7 +741,7 @@ static void ValueSwap() {
     _ZN3sce4Json5ValueC1Ev(&v1);
     _ZN3sce4Json5ValueC1Ev(&v2);
     Require(_ZN3sce4Json5Value3setEl(&v1, 123) == 0);
-    Require(_ZN3sce4Json5Value3setEPKc(&v2, "hello") == 0);
+    _ZN3sce4Json5Value3setEPKc(&v2, "hello");
     _ZN3sce4Json5Value4swapERS1_(&v1, &v2);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&v2) == 123);
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&v1)), "hello") == 0);
@@ -1057,7 +1057,7 @@ static void ValueClear() {
     _ZN3sce4Json5Value5clearEv(&value);
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeNull);
 
-    Require(_ZN3sce4Json5Value3setEPKc(&value, "test string") == 0);
+    _ZN3sce4Json5Value3setEPKc(&value, "test string");
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeString);
     _ZN3sce4Json5Value5clearEv(&value);
     Require(_ZNK3sce4Json5Value7getTypeEv(&value) == TypeNull);
@@ -1236,7 +1236,7 @@ static void ValueTypeMismatchHandler() {
 
     Value other{};
     _ZN3sce4Json5ValueC1Ev(&other);
-    Require(_ZN3sce4Json5Value3setEPKc(&other, "other") == 0);
+    _ZN3sce4Json5Value3setEPKc(&other, "other");
     Require(_ZN3sce4Json5ValueaSERKS1_(&root, &other) == &root);
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
     RequireMismatch(7, TypeInteger, &root, &context);
@@ -1247,7 +1247,7 @@ static void ValueTypeMismatchHandler() {
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
     RequireMismatch(8, TypeInteger, &root, &context);
     _ZN3sce4Json5Value5clearEv(&root);
-    Require(_ZN3sce4Json5Value3setEPKc(&root, "cleared") == 0);
+    _ZN3sce4Json5Value3setEPKc(&root, "cleared");
     Require(*_ZNK3sce4Json5Value10getIntegerEv(&root) == 42);
     RequireMismatch(9, TypeInteger, &root, &context);
     Value copy{};
@@ -1358,7 +1358,7 @@ static void ValueOperatorBool() {
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (value != 0.0));
     }
     for (const char* text : {"", "0", "false", " "}) {
-        Require(_ZN3sce4Json5Value3setEPKc(&scalar, text) == 0);
+        _ZN3sce4Json5Value3setEPKc(&scalar, text);
         Require(_ZNK3sce4Json5ValuecvbEv(&scalar) == (*text != 0));
     }
     _ZN3sce4Json5ValueD1Ev(&scalar);

@@ -2966,12 +2966,12 @@ int APS5_VABI _ZN3sce4Json5Value3setEb(Value* self, bool value) { SetType(NodeOf
 int APS5_VABI _ZN3sce4Json5Value3setEl(Value* self, std::int64_t value) { SetType(NodeOf(*self), TypeInteger); self->integer = value; return 0; }
 int APS5_VABI _ZN3sce4Json5Value3setEm(Value* self, std::uint64_t value) { SetType(NodeOf(*self), TypeUInteger); self->uinteger = value; return 0; }
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value* self, double value) { AssignReal(NodeOf(*self), value); }
-int APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
+void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::Value::set: null text");
-    const std::string copy(text);
+    ScopedString temporary{std::string_view{text}};
+    if (!temporary.string.text) return;
     SetType(NodeOf(*self), TypeString);
-    if (self->type == TypeString) AssignText(*self->string, copy);
-    return 0;
+    if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
 int APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
     const std::string copy(View(*text));
