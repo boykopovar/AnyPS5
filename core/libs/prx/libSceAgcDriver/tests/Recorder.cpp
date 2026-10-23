@@ -1233,8 +1233,10 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     recorder.AfterCompletions(base, value, 3, 0, true);
     recorder.AfterCompletions(base + 8, value, 4, 0, true);
     Require(Recorder::PendingCompletionLabels() == registered, "a GPU-stored completion label counts before any write-back");
+    Require(Recorder::PendingCompletionStores() == registered, "a GPU-stored completion label counts as a completion store before any write-back");
     recorder.AfterCompletions(base + 0x40, value, 5, 0, false);
     Require(Recorder::PendingCompletionLabels() == registered + 1, "a label the GPU has no view of is not pending");
+    Require(Recorder::PendingCompletionStores() == registered + 1, "a label the GPU has no view of is not a pending completion store");
     // A late lookup (stamp <= afterStamp) of a label whose value reaches memory only through the
     // batch's completion action is refused as BehindCompletion (a poller reaps for it); a GPU-stored
     // one keeps the ordinary reason (unclosed group, or trust off) until a write-back overlaps it.
@@ -1250,16 +1252,20 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     Recorder::NoteWrittenBack(base + 2, 4);
     const std::uint64_t counted = countAll ? 3 : 2;
     Require(Recorder::PendingCompletionLabels() == counted, "a write-back over a GPU-stored label did not count it exactly once");
+    Require(Recorder::PendingCompletionStores() == counted, "a write-back over a GPU-stored label did not make it a completion store exactly once");
+    int delivered = 0;
+    Require(recorder.AfterRecordedWork([&] { ++delivered; }), "an action after recorded work was refused");
+    Require(Recorder::PendingCompletionLabels() == counted + 1 && Recorder::PendingCompletionStores() == counted, "an action after recorded work counted as a completion store");
     Require(!Recorder::LookupLabel(base, 4, 3, &refusal).has_value() && refusal == Refusal::BehindCompletion, "a written-back GPU-stored label is not refused as behind a completion");
     Require(!Recorder::LookupLabel(base + 8, 4, 4, &refusal).has_value() && refusal == (countAll ? Refusal::BehindCompletion : ordinary), "an untouched GPU-stored label became behind a completion");
     recorder.Submit();
     device.WaitQueue();
-    Require(Recorder::PendingCompletionLabels() == counted && Recorder::PendingWriteBackCompletions() == 1, "counts dropped before the batch finished");
+    Require(Recorder::PendingCompletionLabels() == counted + 1 && Recorder::PendingCompletionStores() == counted && Recorder::PendingWriteBackCompletions() == 1, "counts dropped before the batch finished");
     memory[0] = 7;
     memory[2] = 7;
     memory[16] = 7;
     recorder.Sync();
-    Require(ran == 1 && Recorder::PendingCompletionLabels() == 0 && Recorder::PendingWriteBackCompletions() == 0 && recorder.Idle(), "counts did not return to 0 at finish");
+    Require(ran == 1 && delivered == 1 && Recorder::PendingCompletionLabels() == 0 && Recorder::PendingCompletionStores() == 0 && Recorder::PendingWriteBackCompletions() == 0 && recorder.Idle(), "counts did not return to 0 at finish");
     const bool storeAlways = std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr;
     Require(memory[0] == 1 && memory[2] == (storeAlways ? 1u : 7u) && memory[16] == 1, "completion stores ran for the wrong labels (overlapped and not-imported ones store, the untouched GPU-stored one skips)");
 }

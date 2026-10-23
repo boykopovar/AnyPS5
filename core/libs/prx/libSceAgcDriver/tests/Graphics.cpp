@@ -4231,6 +4231,24 @@ void multisampleDccStateTests() {
         changed.context[0x3b0] |= 1u << 28u;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "multisampled color mips");
     }
+    for (const auto samples : {2u, 4u, 8u}) {
+        AgcDriver::Graphics::ColorTarget target{};
+        target.extent = {64, 64};
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+        target.samples = samples;
+        target.dccAddress = 0x200000u;
+        target.dccPipeAligned = true;
+        target.cmaskAddress = 0x300000u;
+        target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(64, 64);
+        const std::vector<std::byte> dcc(AgcDriver::Graphics::MultisampledDccBytes(target), std::byte{0x00});
+        std::vector<std::byte> cmask(target.cmaskBytes);
+        for (std::size_t index = 0; index < cmask.size(); ++index) cmask[index] = std::byte{static_cast<std::uint8_t>(index * 37u)};
+        const auto clear = AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask);
+        Require(clear.float32[0] == 0.0f && clear.float32[1] == 0.0f && clear.float32[2] == 0.0f && clear.float32[3] == 0.0f, "a uniform 0000 DCC clear of a multisampled target without CMASK fast clears did not import as 0000");
+        target.cmaskFastClear = true;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask)); }, "multisampled DCC CMASK compression or register clear");
+    }
 }
 
 void multisampledDepthTests() {
