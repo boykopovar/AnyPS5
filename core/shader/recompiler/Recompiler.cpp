@@ -1410,47 +1410,60 @@ ResultMemoRegistry& resultMemoRegistry() {
     return registry;
 }
 
+std::mutex& resultMemoTrimMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::function<void()>& resultMemoTrimHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
 void trimResultMemo(std::uint64_t budget) {
-    static std::mutex trimMutex;
-    std::unique_lock trim(trimMutex, std::try_to_lock);
-    if (!trim.owns_lock()) return;
+    std::lock_guard trim(resultMemoTrimMutex());
     auto& counters = resultMemoCounters();
-    const auto held = counters.heldBytes.load(std::memory_order_relaxed);
-    if (held <= budget) return;
-    std::vector<std::shared_ptr<SourceEntry>> sources;
-    {
-        auto& registry = resultMemoRegistry();
-        std::lock_guard lock(registry.mutex);
-        sources.reserve(registry.sources.size());
-        for (const auto& weak : registry.sources) {
-            if (auto source = weak.lock()) sources.push_back(std::move(source));
+    for (auto held = counters.heldBytes.load(std::memory_order_relaxed); held > budget; held = counters.heldBytes.load(std::memory_order_relaxed)) {
+        if (auto hook = std::exchange(resultMemoTrimHook(), nullptr)) hook();
+        std::vector<std::shared_ptr<SourceEntry>> sources;
+        {
+            auto& registry = resultMemoRegistry();
+            std::lock_guard lock(registry.mutex);
+            sources.reserve(registry.sources.size());
+            for (const auto& weak : registry.sources) {
+                if (auto source = weak.lock()) sources.push_back(std::move(source));
+            }
         }
-    }
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
-    for (const auto& source : sources) {
-        std::lock_guard lock(source->mutex);
-        for (const auto& entry : *source->memo) {
-            if (entry.result != nullptr) stamps.emplace_back(entry.used, entry.bytes);
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
+        for (const auto& source : sources) {
+            std::lock_guard lock(source->mutex);
+            for (const auto& entry : *source->memo) {
+                if (entry.result != nullptr) stamps.emplace_back(entry.used, entry.bytes);
+            }
         }
-    }
-    std::sort(stamps.begin(), stamps.end());
-    const auto excess = held - budget / 4u * 3u;
-    std::uint64_t freed = 0;
-    std::uint64_t threshold = 0;
-    for (const auto& [used, bytes] : stamps) {
-        threshold = used;
-        freed += bytes;
-        if (freed >= excess) break;
-    }
-    for (const auto& source : sources) {
-        std::lock_guard lock(source->mutex);
-        for (auto& entry : *source->memo) {
-            if (entry.result == nullptr || entry.used > threshold) continue;
-            counters.heldBytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
-            counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
-            counters.trimmed.fetch_add(1, std::memory_order_relaxed);
-            entry = {};
+        if (stamps.empty()) return;
+        std::sort(stamps.begin(), stamps.end());
+        const auto excess = held - budget / 4u * 3u;
+        std::uint64_t freed = 0;
+        std::uint64_t threshold = 0;
+        for (const auto& [used, bytes] : stamps) {
+            threshold = used;
+            freed += bytes;
+            if (freed >= excess) break;
         }
+        std::uint64_t dropped = 0;
+        for (const auto& source : sources) {
+            std::lock_guard lock(source->mutex);
+            for (auto& entry : *source->memo) {
+                if (entry.result == nullptr || entry.used > threshold) continue;
+                counters.heldBytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
+                counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+                counters.trimmed.fetch_add(1, std::memory_order_relaxed);
+                entry = {};
+                ++dropped;
+            }
+        }
+        if (dropped == 0) return;
     }
 }
 
@@ -1850,6 +1863,11 @@ std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request
 void SetResultMemoBudget(std::uint64_t bytes) {
     resultMemoBudgetBytes().store(bytes, std::memory_order_relaxed);
     if (bytes != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > bytes) trimResultMemo(bytes);
+}
+
+void SetResultMemoTrimHook(std::function<void()> hook) {
+    std::lock_guard lock(resultMemoTrimMutex());
+    resultMemoTrimHook() = std::move(hook);
 }
 
 std::uint64_t ResultMemoBytes() {

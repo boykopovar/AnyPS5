@@ -47,6 +47,7 @@
 #include <atomic>
 #include <functional>
 #include <new>
+#include <chrono>
 #include <thread>
 #include <string>
 #include <string_view>
@@ -406,11 +407,15 @@ void verifyFrontendPair() {
     }
 }
 
-void verifyResultMemoBudget() {
+const std::vector<std::uint32_t>& resultMemoPixelCode() {
+    static const std::vector<std::uint32_t> code{0xbf800000u, 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
+    return code;
+}
+
+bool compileResultMemoPixel(std::uint32_t value) {
     using namespace ShaderRecompiler;
-    const std::vector<std::uint32_t> pixelCode{0xbf800000u, 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
-    std::array<std::uint32_t, 1> color{};
-    auto request = FrontendRequest(pixelCode, color);
+    std::array<std::uint32_t, 1> color{value};
+    auto request = FrontendRequest(resultMemoPixelCode(), color);
     request.shader.stage = ShaderStage::Fragment;
     request.context.compute.reset();
     request.context.pixel = ShaderPixelStageInfo{};
@@ -418,17 +423,41 @@ void verifyResultMemoBudget() {
     request.context.pixel->targetOutputMode[0] = 9u;
     request.context.waveSize = 32u;
     request.useCache = true;
-    const auto compile = [&](std::uint32_t value) {
-        color[0] = value;
-        AgcDriver::ShaderMemory memory({});
-        const auto capture = memory.Capture(request);
-        const auto regions = memory.Regions();
-        auto compileRequest = request;
-        compileRequest.context.memory = regions;
-        bool hit = false;
-        static_cast<void>(Recompile(compileRequest, *capture, &hit));
-        return hit;
-    };
+    AgcDriver::ShaderMemory memory({});
+    const auto capture = memory.Capture(request);
+    const auto regions = memory.Regions();
+    request.context.memory = regions;
+    bool hit = false;
+    static_cast<void>(Recompile(request, *capture, &hit));
+    return hit;
+}
+
+void verifyResultMemoBudgetThreads() {
+    using namespace ShaderRecompiler;
+    require(!compileResultMemoPixel(1u) && compileResultMemoPixel(1u), "result memo budget threads: the memo did not keep a result");
+    const auto one = ResultMemoBytes();
+    const auto budget = 3u * one;
+    SetResultMemoBudget(budget);
+    static_cast<void>(compileResultMemoPixel(2u));
+    static_cast<void>(compileResultMemoPixel(3u));
+    require(ResultMemoBytes() == budget, "result memo budget threads: three results did not fill a budget of three");
+    std::vector<std::thread> late;
+    SetResultMemoTrimHook([&] {
+        const auto before = ResultMemoBytes();
+        for (const auto value : {5u, 6u}) late.emplace_back([value] { static_cast<void>(compileResultMemoPixel(value)); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (ResultMemoBytes() < before + 2u * one && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    });
+    static_cast<void>(compileResultMemoPixel(4u));
+    for (auto& thread : late) thread.join();
+    require(late.size() == 2u, "result memo budget threads: the fourth result did not start a trim");
+    require(ResultMemoBytes() <= budget, "result memo budget threads: results inserted during a trim left the memo over its budget");
+    SetResultMemoBudget(0u);
+}
+
+void verifyResultMemoBudget() {
+    using namespace ShaderRecompiler;
+    const auto compile = [](std::uint32_t value) { return compileResultMemoPixel(value); };
     require(ResultMemoBytes() == 0u, "result memo budget: the memo held results before the first compile");
     require(!compile(1u) && compile(1u), "result memo budget: the memo did not keep a result");
     const auto one = ResultMemoBytes();
@@ -8328,6 +8357,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget") {
             verifyResultMemoBudget();
             std::cout << "The result memo keeps its most recently used results within its byte budget\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-threads") {
+            verifyResultMemoBudgetThreads();
+            std::cout << "The result memo ends within its byte budget when results are inserted during a trim\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--layout-pair") {
