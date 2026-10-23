@@ -9,6 +9,7 @@
 #include <map>
 #include <new>
 #include <vector>
+#include <string>
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
 struct Array { void* storage; };
@@ -201,6 +202,189 @@ static void CheckPairCopies(LegacyTrace& trace, Context& context) {
         Require(trace.guestGenerations == guestBaseline && trace.heapGenerations == heapBaseline, "Legacy Pair copies must reclaim every new generation in both allocator domains");
     }
 }
+struct LegacyArrayLink { LegacyArrayLink* previous; LegacyArrayLink* next; Value value; };
+struct LegacyArrayHeader { LegacyArrayLink* head; std::size_t count; std::uint64_t reserved; };
+struct LegacyTreeLink { LegacyTreeLink* parent; LegacyTreeLink* left; LegacyTreeLink* right; unsigned char key[24]; Pair pair; unsigned char color; unsigned char nil; unsigned char reserved[6]; };
+struct LegacyTreeHeader { LegacyTreeLink* head; std::size_t count; std::uint64_t reserved; };
+static_assert(sizeof(LegacyArrayHeader) == 24 && sizeof(LegacyTreeHeader) == 24 && sizeof(LegacyTreeLink) == 104);
+static void CollectionShape(const Value& value, const Value* parent, std::string& output, std::vector<const Value*>& values);
+static void CollectionTreeShape(const LegacyTreeLink* node, const Value* parent, std::string& output, std::vector<const Value*>& values) {
+    if (node->nil) return;
+    CollectionTreeShape(node->left, parent, output, values);
+    output += "k=" + std::string(*reinterpret_cast<char* const*>(node->key)) + "/q=" + _ZNK3sce4Json6String5c_strEv(&node->pair.key) + "/";
+    CollectionShape(node->pair.value, parent, output, values);
+    CollectionTreeShape(node->right, parent, output, values);
+}
+static void CollectionShape(const Value& value, const Value* parent, std::string& output, std::vector<const Value*>& values) {
+    values.push_back(&value);
+    output += std::to_string(value.type) + ":" + std::to_string(value.parent ? value.parent == parent ? 1 : 2 : 0);
+    if (value.type > 0 && value.type < 5) output += "=" + std::to_string(value.payload);
+    if (value.type == 5) output += "s=" + std::string(value.payload ? _ZNK3sce4Json6String5c_strEv(reinterpret_cast<const String*>(value.payload)) : "<missing>");
+    if (value.type == 6) {
+        auto* header = value.payload ? *reinterpret_cast<LegacyArrayHeader* const*>(value.payload) : nullptr;
+        if (!header) { output += "x;"; return; }
+        output += "a" + std::to_string(header->count) + "[";
+        if (!header->head) output += "missing";
+        else for (auto* node = header->head->next; node != header->head; node = node->next) CollectionShape(node->value, &value, output, values);
+        output += "]";
+    }
+    if (value.type == 7) {
+        auto* header = value.payload ? *reinterpret_cast<LegacyTreeHeader* const*>(value.payload) : nullptr;
+        if (!header) { output += "x;"; return; }
+        output += "o" + std::to_string(header->count) + "{";
+        if (!header->head) output += "missing";
+        else CollectionTreeShape(header->head->parent, &value, output, values);
+        output += "}";
+    }
+    output += ";";
+}
+struct LegacyCollectionCase {
+    unsigned source;
+    bool once;
+    int budget;
+    unsigned notifications;
+    std::size_t requests;
+    std::uint64_t requestOrder;
+    const char* key;
+    const char* shape;
+};
+static const LegacyCollectionCase CollectionCases[]{
+    {0, 0, 0, 2, 2, UINT64_C(0x08842007b530c95d), "", "0:0;"},
+    {0, 0, 1, 2, 3, UINT64_C(0xa922fa18e1c37583), "", "0:0;"},
+    {0, 0, 2, 1, 3, UINT64_C(0xa922fa18e1c37583), "key", "0:0;"},
+    {0, 0, 3, 1, 4, UINT64_C(0x29e493479f20d661), "key", "0:0;"},
+    {0, 0, 4, 2, 6, UINT64_C(0x231a8cd446ee0ac9), "key", "6:0a0[missing];"},
+    {0, 0, 5, 1, 6, UINT64_C(0x231a8cd446ee0ac9), "key", "6:0a0[missing];"},
+    {0, 0, 6, 1, 7, UINT64_C(0x942845b4867ca51b), "key", "6:0a0[];"},
+    {0, 0, 7, 1, 8, UINT64_C(0x3d1384c085cc7f49), "key", "6:0a1[0:0;];"},
+    {0, 0, 8, 1, 9, UINT64_C(0x94a9e4235a7c56a3), "key", "6:0a1[0:0;];"},
+    {0, 0, 9, 1, 10, UINT64_C(0x19057312c1477af1), "key", "6:0a1[0:0;];"},
+    {0, 0, 10, 1, 11, UINT64_C(0xcbbd21de6c7551fb), "key", "6:0a1[7:0o0{missing};];"},
+    {0, 0, 11, 1, 12, UINT64_C(0xa7b21ff24b599cc9), "key", "6:0a1[7:0o0{};];"},
+    {0, 0, 12, 3, 15, UINT64_C(0x44ba72eae582feb9), "key", "6:0a1[7:0o1{k=/q=/0:0;};];"},
+    {0, 0, 13, 2, 15, UINT64_C(0x44ba72eae582feb9), "key", "6:0a1[7:0o1{k=s/q=/0:0;};];"},
+    {0, 0, 14, 2, 16, UINT64_C(0x4be45a23fda819b9), "key", "6:0a1[7:0o1{k=s/q=/0:0;};];"},
+    {0, 0, 15, 1, 16, UINT64_C(0x4be45a23fda819b9), "key", "6:0a1[7:0o1{k=s/q=s/0:0;};];"},
+    {0, 0, 16, 1, 17, UINT64_C(0x9d1ecc2804a38c93), "key", "6:0a1[7:0o1{k=s/q=s/0:0;};];"},
+    {0, 0, 17, 1, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=s/q=s/5:0s=;};];"},
+    {0, 0, 18, 0, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=s/q=s/5:0s=t;};];"},
+    {0, 1, 0, 1, 17, UINT64_C(0xd9fd6582200984bd), "", "6:0a1[7:0o1{k=s/q=s/5:0s=t;};];"},
+    {0, 1, 1, 1, 18, UINT64_C(0x9ee178ffe1e7da63), "", "6:0a1[7:0o1{k=s/q=s/5:0s=t;};];"},
+    {0, 1, 2, 1, 3, UINT64_C(0xa922fa18e1c37583), "key", "0:0;"},
+    {0, 1, 3, 1, 4, UINT64_C(0x29e493479f20d661), "key", "0:0;"},
+    {0, 1, 4, 1, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=s/q=s/5:0s=t;};];"},
+    {0, 1, 5, 1, 6, UINT64_C(0x231a8cd446ee0ac9), "key", "6:0a0[missing];"},
+    {0, 1, 6, 1, 7, UINT64_C(0x942845b4867ca51b), "key", "6:0a0[];"},
+    {0, 1, 7, 1, 8, UINT64_C(0x3d1384c085cc7f49), "key", "6:0a1[0:0;];"},
+    {0, 1, 8, 1, 9, UINT64_C(0x94a9e4235a7c56a3), "key", "6:0a1[0:0;];"},
+    {0, 1, 9, 1, 10, UINT64_C(0x19057312c1477af1), "key", "6:0a1[0:0;];"},
+    {0, 1, 10, 1, 11, UINT64_C(0xcbbd21de6c7551fb), "key", "6:0a1[7:0o0{missing};];"},
+    {0, 1, 11, 1, 12, UINT64_C(0xa7b21ff24b599cc9), "key", "6:0a1[7:0o0{};];"},
+    {0, 1, 12, 1, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=/q=s/5:0s=t;};];"},
+    {0, 1, 13, 1, 17, UINT64_C(0x68efa027e7058763), "key", "6:0a1[7:0o1{k=s/q=/5:0s=t;};];"},
+    {0, 1, 14, 1, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=s/q=/5:0s=t;};];"},
+    {0, 1, 15, 1, 16, UINT64_C(0x4be45a23fda819b9), "key", "6:0a1[7:0o1{k=s/q=s/0:0;};];"},
+    {0, 1, 16, 1, 17, UINT64_C(0x9d1ecc2804a38c93), "key", "6:0a1[7:0o1{k=s/q=s/0:0;};];"},
+    {0, 1, 17, 1, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=s/q=s/5:0s=;};];"},
+    {0, 1, 18, 0, 18, UINT64_C(0x9ee178ffe1e7da63), "key", "6:0a1[7:0o1{k=s/q=s/5:0s=t;};];"},
+    {1, 0, 0, 2, 2, UINT64_C(0x08842007b530c95d), "", "0:0;"},
+    {1, 0, 1, 2, 3, UINT64_C(0xa922fa18e1c37583), "", "0:0;"},
+    {1, 0, 2, 1, 3, UINT64_C(0xa922fa18e1c37583), "key", "0:0;"},
+    {1, 0, 3, 1, 4, UINT64_C(0x29e493479f20d661), "key", "0:0;"},
+    {1, 0, 4, 1, 5, UINT64_C(0x503c4bb364cbb14b), "key", "0:0;"},
+    {1, 0, 5, 1, 6, UINT64_C(0x2225c4d4461dfe79), "key", "7:0o0{missing};"},
+    {1, 0, 6, 1, 7, UINT64_C(0x242b85b324f6b6e3), "key", "7:0o0{};"},
+    {1, 0, 7, 3, 10, UINT64_C(0x154035d1032f5a9b), "key", "7:0o1{k=/q=/0:0;};"},
+    {1, 0, 8, 2, 10, UINT64_C(0x154035d1032f5a9b), "key", "7:0o1{k=a/q=/0:0;};"},
+    {1, 0, 9, 2, 11, UINT64_C(0x4b61a128696594d3), "key", "7:0o1{k=a/q=/0:0;};"},
+    {1, 0, 10, 1, 11, UINT64_C(0x4b61a128696594d3), "key", "7:0o1{k=a/q=a/0:0;};"},
+    {1, 0, 11, 1, 12, UINT64_C(0x7c79a2ab179bd4f1), "key", "7:0o1{k=a/q=a/0:0;};"},
+    {1, 0, 12, 2, 14, UINT64_C(0xa516a88d9f1de459), "key", "7:0o1{k=a/q=a/6:0a0[missing];};"},
+    {1, 0, 13, 1, 14, UINT64_C(0xa516a88d9f1de459), "key", "7:0o1{k=a/q=a/6:0a0[missing];};"},
+    {1, 0, 14, 1, 15, UINT64_C(0xa364d1a55fcb1e6b), "key", "7:0o1{k=a/q=a/6:0a0[];};"},
+    {1, 0, 15, 1, 16, UINT64_C(0x6f6e9f01c624a239), "key", "7:0o1{k=a/q=a/6:0a1[0:0;];};"},
+    {1, 0, 16, 1, 17, UINT64_C(0x7d9a5103b03f7e13), "key", "7:0o1{k=a/q=a/6:0a1[0:0;];};"},
+    {1, 0, 17, 1, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=a/q=a/6:0a1[5:0s=;];};"},
+    {1, 0, 18, 0, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=a/q=a/6:0a1[5:0s=t;];};"},
+    {1, 1, 0, 1, 17, UINT64_C(0xc5a67b07339990bd), "", "7:0o1{k=a/q=a/6:0a1[5:0s=t;];};"},
+    {1, 1, 1, 1, 18, UINT64_C(0xacb5ba447be336e3), "", "7:0o1{k=a/q=a/6:0a1[5:0s=t;];};"},
+    {1, 1, 2, 1, 3, UINT64_C(0xa922fa18e1c37583), "key", "0:0;"},
+    {1, 1, 3, 1, 4, UINT64_C(0x29e493479f20d661), "key", "0:0;"},
+    {1, 1, 4, 1, 5, UINT64_C(0x503c4bb364cbb14b), "key", "0:0;"},
+    {1, 1, 5, 1, 6, UINT64_C(0x2225c4d4461dfe79), "key", "7:0o0{missing};"},
+    {1, 1, 6, 1, 7, UINT64_C(0x242b85b324f6b6e3), "key", "7:0o0{};"},
+    {1, 1, 7, 1, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=/q=a/6:0a1[5:0s=t;];};"},
+    {1, 1, 8, 1, 17, UINT64_C(0xe052cbb56cadb10b), "key", "7:0o1{k=a/q=/6:0a1[5:0s=t;];};"},
+    {1, 1, 9, 1, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=a/q=/6:0a1[5:0s=t;];};"},
+    {1, 1, 10, 1, 11, UINT64_C(0x4b61a128696594d3), "key", "7:0o1{k=a/q=a/0:0;};"},
+    {1, 1, 11, 1, 12, UINT64_C(0x7c79a2ab179bd4f1), "key", "7:0o1{k=a/q=a/0:0;};"},
+    {1, 1, 12, 1, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=a/q=a/6:0a1[5:0s=t;];};"},
+    {1, 1, 13, 1, 14, UINT64_C(0xa516a88d9f1de459), "key", "7:0o1{k=a/q=a/6:0a0[missing];};"},
+    {1, 1, 14, 1, 15, UINT64_C(0xa364d1a55fcb1e6b), "key", "7:0o1{k=a/q=a/6:0a0[];};"},
+    {1, 1, 15, 1, 16, UINT64_C(0x6f6e9f01c624a239), "key", "7:0o1{k=a/q=a/6:0a1[0:0;];};"},
+    {1, 1, 16, 1, 17, UINT64_C(0x7d9a5103b03f7e13), "key", "7:0o1{k=a/q=a/6:0a1[0:0;];};"},
+    {1, 1, 17, 1, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=a/q=a/6:0a1[5:0s=;];};"},
+    {1, 1, 18, 0, 18, UINT64_C(0xacb5ba447be336e3), "key", "7:0o1{k=a/q=a/6:0a1[5:0s=t;];};"},
+};
+static void CheckCollectionCopies(LegacyTrace& trace, Context& context) {
+    const auto guestBaseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
+    for (const auto& test : CollectionCases) for (unsigned alias = 0; alias < 2; ++alias) {
+        Value source{}; ParseLegacy(source, test.source ? R"({"a":["t"]})" : R"([{"s":"t"}])");
+        Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Register nested legacy Pair source recovery");
+        std::vector<LegacySnapshot> sourceAllocations;
+        for (const auto& [pointer, generation] : trace.guestGenerations) {
+            if (guestBaseline.contains(pointer)) continue;
+            const auto* bytes = static_cast<const unsigned char*>(pointer);
+            sourceAllocations.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
+        }
+        const LegacyNode* sourceNode = nullptr;
+        for (const auto& [pointer, size] : trace.heap) {
+            const auto* node = static_cast<const LegacyNode*>(pointer);
+            if (!node->nil && node->key == &source) sourceNode = node;
+        }
+        Require(sourceNode != nullptr, "Nested Pair copies require the actual source callback record");
+        const auto sourceGeneration = trace.heapGenerations.at(const_cast<LegacyNode*>(sourceNode));
+        const Value sourceValue = source;
+        String key{}; _ZN3sce4Json6StringC1EPKc(&key, "key");
+        Pair pair; std::memset(&pair, 0xa5, sizeof(pair));
+        const auto requests = trace.requests.size(); const auto notices = trace.notifications;
+        trace.budget = test.budget; trace.once = test.once;
+        if (alias) _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &source);
+        else _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &source);
+        trace.budget = -1; trace.once = false;
+        std::uint64_t requestOrder = UINT64_C(14695981039346656037);
+        for (auto i = requests; i < trace.requests.size(); ++i) {
+            requestOrder ^= trace.requests[i]; requestOrder *= UINT64_C(1099511628211);
+        }
+        Require(trace.notifications == notices + test.notifications && trace.requests.size() == requests + test.requests && requestOrder == test.requestOrder,
+                "Nested legacy Pair failures must preserve every request, notification and allocation-order fingerprint");
+        Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && pair.value.reserved == UINT32_C(0xa5a5a5a5) && !pair.value.auxiliary && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), test.key) == 0,
+                "Nested legacy copies must preserve inactive bytes, independent metadata and partial key admission");
+        std::string shape; std::vector<const Value*> values;
+        CollectionShape(pair.value, nullptr, shape, values);
+        Require(shape == test.shape, "Nested legacy copies must preserve partial counts, missing sentinels, both object keys, scalar/string contents and child parent identities");
+        CheckMap(trace, {{&source, &context}, {&pair.value, &context}});
+        const auto calls = context.calls;
+        Require(_ZNK3sce4Json5Value10getBooleanEv(&pair.value) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.calls == calls + 1 && context.source == &pair.value && !context.parent,
+                "Even an incomplete nested Pair must retain its independently copied callback and borrowed result identity");
+        for (const auto* value : values) {
+            if (value == &pair.value) continue;
+            Require(!value->parent && !value->auxiliary && !*_ZNK3sce4Json5Value10getBooleanEv(value) && context.calls == calls + 1,
+                    "Unbound legacy descendants must use typed defaults without inheriting the copied root callback");
+        }
+        if (alias) _ZN3sce4Json6Object4PairD2Ev(&pair);
+        else _ZN3sce4Json6Object4PairD1Ev(&pair);
+        CheckMap(trace, {{&source, &context}});
+        Require(std::memcmp(&source, &sourceValue, sizeof(source)) == 0 && trace.heapGenerations.at(const_cast<LegacyNode*>(sourceNode)) == sourceGeneration && sourceNode->callback == RecoverLegacy && sourceNode->context == &context,
+                "Nested Pair teardown must preserve the source Value and callback-record generation");
+        for (const auto& snapshot : sourceAllocations) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0,
+                "Nested Pair failure and cleanup must preserve all source allocation generations and bytes");
+        Require(_ZNK3sce4Json5Value10getBooleanEv(&source) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == &source && !context.parent,
+                "Nested source recovery must remain usable after copied storage is destroyed");
+        _ZN3sce4Json6StringD1Ev(&key); _ZN3sce4Json5ValueD1Ev(&source); CheckMap(trace, {});
+        Require(trace.guestGenerations == guestBaseline && trace.heapGenerations == heapBaseline, "Nested legacy copies must restore every original generation in both allocation domains");
+    }
+}
 int main() {
     LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator;
     Parameter parameter{&allocator, &trace, 16384};
@@ -255,6 +439,7 @@ int main() {
     _ZN3sce4Json5ValueD1Ev(&null); _ZN3sce4Json5ValueD1Ev(&assigned); _ZN3sce4Json5ValueD1Ev(&copy); _ZN3sce4Json5ValueD1Ev(&source);
     CheckMap(trace, {});
     CheckPairCopies(trace, first);
+    CheckCollectionCopies(trace, first);
     std::array<Value, 32> roots{}; std::map<const Value*, Context*> entries;
     for (unsigned index = 0; index < roots.size(); ++index) {
         auto& root = roots[index * 13 % roots.size()]; ParseLegacy(root);
