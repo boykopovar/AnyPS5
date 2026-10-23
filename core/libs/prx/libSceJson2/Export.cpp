@@ -3224,17 +3224,13 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) {
-    Pair pair{};
-    pair.reserved = 0;
-    Construct(pair.key, *key);
+    Construct(self->key, *key);
     try {
-        CopyInto(pair.value, *value);
+        CopyInto(self->value, *value);
     } catch (...) {
-        Destroy(pair.key);
+        Destroy(self->key);
         throw;
     }
-    *self = pair;
-    BindChildren(self->value);
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
@@ -3317,17 +3313,13 @@ void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(ObjectIterator* self) {
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {
-    Pair pair{};
-    pair.reserved = 0;
-    Construct(pair.key, std::string());
+    Construct(self->key, std::string_view{});
     try {
-        Construct(pair.value);
+        Construct(self->value);
     } catch (...) {
-        Destroy(pair.key);
+        Destroy(self->key);
         throw;
     }
-    *self = pair;
-    BindChildren(self->value);
 }
 
 void APS5_VABI _ZN3sce4Json11InitializerC2Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }

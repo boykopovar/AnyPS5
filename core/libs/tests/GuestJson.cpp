@@ -389,7 +389,7 @@ static void ObjectPair() {
     Pair pair{};
     std::memset(&pair, 0x5a, sizeof(pair));
     _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &value);
-    Require(pair.reserved == 0);
+    Require(pair.reserved == UINT64_C(0x5a5a5a5a5a5a5a5a));
     Require(pair.key.text != key.text && _ZNK3sce4Json5Value9getStringEv(&pair.value) != _ZNK3sce4Json5Value9getStringEv(&value));
     Require(std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "answer") == 0);
     Require(_ZNK3sce4Json5Value7getTypeEv(&pair.value) == TypeString);
