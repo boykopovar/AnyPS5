@@ -12,7 +12,7 @@ namespace File {
 inline std::filesystem::path WindowsExtendedPath(const std::filesystem::path& path) {
 #ifdef _WIN32
     constexpr std::size_t maxPath = 260;
-    if (path.native().size() < maxPath) return path;
+    if (path.native().size() < maxPath && path.is_absolute()) return path;
     std::wstring text = path.native();
     std::replace(text.begin(), text.end(), L'/', L'\\');
     if (text.starts_with(L"\\\\?\\") || text.starts_with(L"\\\\.\\")) return path;
@@ -22,7 +22,7 @@ inline std::filesystem::path WindowsExtendedPath(const std::filesystem::path& pa
         return std::filesystem::path(L"\\\\?\\UNC" + tail);
     }
     std::error_code error;
-    auto absolute = std::filesystem::absolute(path, error);
+    const auto absolute = std::filesystem::absolute(path, error);
     if (error) return path;
     const auto normalized = absolute.lexically_normal().make_preferred();
     const auto& native = normalized.native();
