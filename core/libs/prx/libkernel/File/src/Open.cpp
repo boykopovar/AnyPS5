@@ -206,6 +206,12 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         return *archived;
     }
     File::RefuseMergedDirectory(native);
+    if (!native.has_filename() && (flags & SCE_KERNEL_O_CREAT) != 0) {
+        std::error_code error;
+        auto target = native;
+        while (!target.has_filename() && target.has_relative_path()) target = target.parent_path();
+        if (!std::filesystem::exists(target, error)) return SceErrorFromErrno(NotFoundError_nid_no_patch(target));
+    }
 #ifdef _WIN32
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;

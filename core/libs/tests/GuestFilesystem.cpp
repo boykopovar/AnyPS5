@@ -297,6 +297,11 @@ static void TestParentTraversal() {
     Require(rmdir_nid_postfix("/parent-test-mount/slash-open/") == -1 && *__error_nid_postfix() == 20);
     Require(sceKernelOpen("/parent-test-mount/slash-open/", 0x601, 0600) == static_cast<int>(0x80020014u));
     Require(unlink_nid_postfix((root.generic_string() + "/slash-kernel/").c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(open_nid_postfix("/parent-test-mount/slash-missing/", 0x200 | 0x001, 0644) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelOpen("/parent-test-mount/slash-missing/", 0x200 | 0x001, 0644) == static_cast<int>(0x80020002u));
+    Require(open_nid_postfix((root.generic_string() + "/slash-missing/").c_str(), 0x200 | 0x001, 0644) == -1 && *__error_nid_postfix() == 2);
+    Require(sceKernelOpen((root.generic_string() + "/slash-missing/").c_str(), 0x200 | 0x001, 0644) == static_cast<int>(0x80020002u));
+    Require(!std::filesystem::exists(root / "slash-missing"));
     for (const char* name : {"slash-unlink", "slash-remove", "slash-rename", "slash-open", "slash-kernel"}) Require(std::filesystem::is_regular_file(root / name));
     Require(!std::filesystem::exists(root / "slash-renamed"));
     Require(sceKernelStat("/parent-test-mount/Existing/", &status) == 0 && (status.st_mode & 0170000) == 0040000);
