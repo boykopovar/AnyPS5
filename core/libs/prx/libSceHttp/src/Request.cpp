@@ -13,6 +13,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
+#include "prx/libSceHttp/src/Resolver.hpp"
 #include "prx/libSceHttp/src/Request.hpp"
 #include <algorithm>
 #include <array>
@@ -498,7 +499,7 @@ int CreateSocketStream(const std::shared_ptr<RequestData>& request, const Url& u
     }
     sceNetSocketClose(socketProbe);
     addrinfo* addresses = nullptr;
-    if (getaddrinfo(url.host.c_str(), service.c_str(), &hints, &addresses) != 0) {
+    if (ResolveHttpHost(url.host.c_str(), service.c_str(), &hints, settings.resolveTimeOutUsec, &addresses) != 0) {
         request->lastError = static_cast<int>(0x804101e1u);
         return ERROR_NETWORK;
     }

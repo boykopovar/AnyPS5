@@ -12,6 +12,7 @@
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
+#include "prx/libSceHttp/src/Resolver.hpp"
 #include "SslCertificateFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -51,8 +52,10 @@ int APS5_VABI sceHttpCreateRequestWithURL(int, int, const char*, std::uint64_t);
 int APS5_VABI sceHttpDeleteRequest(int);
 int APS5_VABI sceHttpAddRequestHeader(int, const char*, const char*, std::uint32_t);
 int APS5_VABI sceHttpSetConnectTimeOut(int, std::uint32_t);
+int APS5_VABI sceHttpSetResolveTimeOut(int, std::uint32_t);
 int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
 int APS5_VABI sceHttpGetStatusCode(int, int*);
+int APS5_VABI sceHttpGetLastErrno(int, int*);
 int APS5_VABI sceHttpGetResponseContentLength(int, int*, std::uint64_t*);
 int APS5_VABI sceHttpGetAllResponseHeaders(int, char**, std::size_t*);
 int APS5_VABI sceHttpReadData(int, void*, std::size_t);
@@ -414,6 +417,21 @@ static void CheckConnectTimeout() {
     DeleteRequest(objects);
 }
 
+static void CheckResolveTimeout() {
+    const auto objects = CreateRequestWithUrl("http://127.0.0.1:9/", 0);
+    Require(sceHttpSetResolveTimeOut(objects.request, 50000) == 0);
+    GuestHttpTest::SetResolverDelayForTests(250000);
+    const auto start = std::chrono::steady_clock::now();
+    const int result = sceHttpSendRequest(objects.request, nullptr, 0);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    GuestHttpTest::SetResolverDelayForTests(0);
+    Require(result == static_cast<int>(0x80431063u));
+    Require(elapsed < std::chrono::seconds(2));
+    int lastError = 0;
+    Require(sceHttpGetLastErrno(objects.request, &lastError) == 0 && lastError == static_cast<int>(0x804101e1u));
+    DeleteRequest(objects);
+}
+
 static void CheckRedirect() {
     HttpServer server({"", "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndone"});
     const std::string redirect = "HTTP/1.1 302 Found\r\nLocation: http://localhost:" + std::to_string(server.Port()) +
@@ -459,6 +477,7 @@ int main() {
     CheckRedirect();
     CheckTlsTransport();
     CheckConnectTimeout();
+    CheckResolveTimeout();
 #ifdef _WIN32
     WSACleanup();
 #endif
