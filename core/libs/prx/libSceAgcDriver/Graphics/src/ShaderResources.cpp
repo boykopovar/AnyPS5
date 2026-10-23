@@ -7305,6 +7305,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
     if (selected.empty() && result->inPlace.empty() && !rebound) return {};
+    result->snapshotted.assign(selected.begin(), selected.end());
     writeDrawSets(*result, selected, faultRecord);
     recorder.Keep(result);
     for (const auto& snapshot : result->snapshots) {
@@ -7485,6 +7486,24 @@ void ShaderResources::WriteBack() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> ShaderResources::readsLeftInPlace(const DrawBindings& bindings) const {
+    auto reads = guestMemory.InPlaceReads();
+    std::erase_if(reads, [&](const std::pair<std::uint64_t, std::uint64_t>& read) {
+        bool snapshotted = false;
+        for (std::size_t index = 0; index < allocations.size(); ++index) {
+            const auto& item = allocations[index];
+            if (!item.guest || item.size == 0 || item.address == 0) continue;
+            const auto begin = item.address - item.adjustment;
+            const auto end = begin + GuestBufferMemory::ViewBytes(item.size, item.adjustment);
+            if (end <= read.first || read.second <= begin) continue;
+            if (std::find(bindings.snapshotted.begin(), bindings.snapshotted.end(), index) == bindings.snapshotted.end()) return false;
+            snapshotted = true;
+        }
+        return snapshotted;
+    });
+    return reads;
+}
+
 void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bindings) {
     if (bda != nullptr && recorder.Device() == context.device) bda->NoteUse(recorder.OpenSerial());
     // The ranges this use reads in place through their host imports (read-only and written elements
@@ -7499,6 +7518,8 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder, const DrawBindings* bind
     } else if (auto split = guestMemory.SplitInPlaceReads()) {
         recorder.NotePendingReadList(std::move(split->space), kind);
         recorder.NotePendingReads(split->own, kind);
+    } else if (bindings != nullptr && !bindings->snapshotted.empty() && !guestMemory.HoldsLease()) {
+        recorder.NotePendingReads(readsLeftInPlace(*bindings), kind);
     } else {
         recorder.NotePendingReads(guestMemory.InPlaceReads(), kind);
     }
