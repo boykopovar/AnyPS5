@@ -2383,13 +2383,15 @@ void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) { Constru
 void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Construct(*self); self->type = TypeUInteger; self->uinteger = value; }
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); AssignReal(*self, value); }
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
-    if (text == nullptr) throw std::invalid_argument("sce::Json::Value: null text");
     Construct(*self);
+    ScopedString temporary{std::string_view{text ? text : ""}};
+    if (!temporary.string.text) return;
     SetType(*self, TypeString);
-    if (self->type == TypeString) AssignText(*self->string, text);
+    if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6StringE(Value* self, const String* text) {
     Construct(*self);
+    if (!text->text) return;
     SetType(*self, TypeString);
     if (self->type == TypeString) AssignText(*self->string, View(*text), true);
 }
@@ -2849,4 +2851,39 @@ void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {
     *self = pair;
     BindChildren(self->value);
 }
+
+void APS5_VABI _ZN3sce4Json11InitializerC2Ev(void* self) { _ZN3sce4Json11InitializerC1Ev(self); }
+void APS5_VABI _ZN3sce4Json11InitializerD2Ev(void* self) { _ZN3sce4Json11InitializerD1Ev(self); }
+void APS5_VABI _ZN3sce4Json17InitParameterRttiC2EPNS0_14AllocParamRttiEPvm(InitParameterRtti* self, void* allocParam, void* userData, std::size_t fileBufferSize) { _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(self, allocParam, userData, fileBufferSize); }
+void APS5_VABI _ZN3sce4Json5Array8iteratorC2ERKS2_(ArrayIterator* self, const ArrayIterator* other) { _ZN3sce4Json5Array8iteratorC1ERKS2_(self, other); }
+void APS5_VABI _ZN3sce4Json5Array8iteratorC2Ev(ArrayIterator* self) { _ZN3sce4Json5Array8iteratorC1Ev(self); }
+void APS5_VABI _ZN3sce4Json5Array8iteratorD2Ev(ArrayIterator* self) { _ZN3sce4Json5Array8iteratorD1Ev(self); }
+void APS5_VABI _ZN3sce4Json5ArrayC2ERKS1_(Array* self, const Array* other) { _ZN3sce4Json5ArrayC1ERKS1_(self, other); }
+void APS5_VABI _ZN3sce4Json5ArrayC2Ev(Array* self) { _ZN3sce4Json5ArrayC1Ev(self); }
+void APS5_VABI _ZN3sce4Json5ArrayD2Ev(Array* self) { _ZN3sce4Json5ArrayD1Ev(self); }
+void APS5_VABI _ZN3sce4Json5ValueC2ENS0_9ValueTypeE(Value* self, ValueType type) { _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(self, type); }
+void APS5_VABI _ZN3sce4Json5ValueC2EPKc(Value* self, const char* text) { _ZN3sce4Json5ValueC1EPKc(self, text); }
+void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_5ArrayE(Value* self, const Array* array) { _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(self, array); }
+void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_6ObjectE(Value* self, const Object* object) { _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(self, object); }
+void APS5_VABI _ZN3sce4Json5ValueC2ERKNS0_6StringE(Value* self, const String* text) { _ZN3sce4Json5ValueC1ERKNS0_6StringE(self, text); }
+void APS5_VABI _ZN3sce4Json5ValueC2ERKS1_(Value* self, const Value* other) { _ZN3sce4Json5ValueC1ERKS1_(self, other); }
+void APS5_VABI _ZN3sce4Json5ValueC2Eb(Value* self, bool value) { _ZN3sce4Json5ValueC1Eb(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC2Ed(Value* self, double value) { _ZN3sce4Json5ValueC1Ed(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC2El(Value* self, std::int64_t value) { _ZN3sce4Json5ValueC1El(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC2Em(Value* self, std::uint64_t value) { _ZN3sce4Json5ValueC1Em(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC2Ev(Value* self) { _ZN3sce4Json5ValueC1Ev(self); }
+void APS5_VABI _ZN3sce4Json5ValueD2Ev(Value* self) { _ZN3sce4Json5ValueD1Ev(self); }
+void APS5_VABI _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) { _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(self, key, value); }
+void APS5_VABI _ZN3sce4Json6Object4PairC2Ev(Pair* self) { _ZN3sce4Json6Object4PairC1Ev(self); }
+void APS5_VABI _ZN3sce4Json6Object4PairD2Ev(Pair* self) { _ZN3sce4Json6Object4PairD1Ev(self); }
+void APS5_VABI _ZN3sce4Json6Object8iteratorC2ERKS2_(ObjectIterator* self, const ObjectIterator* other) { _ZN3sce4Json6Object8iteratorC1ERKS2_(self, other); }
+void APS5_VABI _ZN3sce4Json6Object8iteratorC2Ev(ObjectIterator* self) { _ZN3sce4Json6Object8iteratorC1Ev(self); }
+void APS5_VABI _ZN3sce4Json6Object8iteratorD2Ev(ObjectIterator* self) { _ZN3sce4Json6Object8iteratorD1Ev(self); }
+void APS5_VABI _ZN3sce4Json6ObjectC2ERKS1_(Object* self, const Object* other) { _ZN3sce4Json6ObjectC1ERKS1_(self, other); }
+void APS5_VABI _ZN3sce4Json6ObjectC2Ev(Object* self) { _ZN3sce4Json6ObjectC1Ev(self); }
+void APS5_VABI _ZN3sce4Json6ObjectD2Ev(Object* self) { _ZN3sce4Json6ObjectD1Ev(self); }
+void APS5_VABI _ZN3sce4Json6StringC2EPKc(String* self, const char* text) { _ZN3sce4Json6StringC1EPKc(self, text); }
+void APS5_VABI _ZN3sce4Json6StringC2ERKS1_(String* self, const String* other) { _ZN3sce4Json6StringC1ERKS1_(self, other); }
+void APS5_VABI _ZN3sce4Json6StringC2Ev(String* self) { _ZN3sce4Json6StringC1Ev(self); }
+void APS5_VABI _ZN3sce4Json6StringD2Ev(String* self) { _ZN3sce4Json6StringD1Ev(self); }
 }
