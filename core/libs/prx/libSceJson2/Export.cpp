@@ -1414,12 +1414,19 @@ PthreadMutex* CreateKernelMutex() {
     if (!mutex) return nullptr;
     *mutex = nullptr;
     PthreadMutexattr attribute = nullptr;
-    if (scePthreadMutexattrInit(&attribute)) { Release(mutex); NotImplemented_nid_no_patch(__func__); }
-    const auto typeStatus = scePthreadMutexattrSettype(&attribute, 2);
-    const auto status = typeStatus ? typeStatus : scePthreadMutexInit(mutex, &attribute, "SceJson_internal");
-    scePthreadMutexattrDestroy(&attribute);
-    if (status) { Release(mutex); NotImplemented_nid_no_patch(__func__); }
-    return mutex;
+    try {
+        if (scePthreadMutexattrInit(&attribute)) NotImplemented_nid_no_patch(__func__);
+        const auto typeStatus = scePthreadMutexattrSettype(&attribute, 2);
+        const auto status = typeStatus ? typeStatus : scePthreadMutexInit(mutex, &attribute, "SceJson_internal");
+        scePthreadMutexattrDestroy(&attribute);
+        if (status) NotImplemented_nid_no_patch(__func__);
+        return mutex;
+    } catch (...) {
+        if (attribute) scePthreadMutexattrDestroy(&attribute);
+        if (*mutex) scePthreadMutexDestroy(mutex);
+        Release(mutex);
+        throw;
+    }
 }
 
 void ReleaseInitialization() {
