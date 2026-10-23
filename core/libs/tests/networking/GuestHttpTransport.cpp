@@ -308,12 +308,15 @@ struct RequestObjects {
     int request;
 };
 
-static RequestObjects CreateRequestWithUrl(const std::string& url, const int method) {
+static RequestObjects CreateRequestWithUrl(const std::string& url, const int method,
+    const std::uint32_t resolveTimeOutUsec = 0, const std::uint32_t connectTimeOutUsec = 0) {
     RequestObjects objects{};
     objects.context = sceHttpInit_nid_postfix(0, 0, 0x10000);
     Require(objects.context > 0);
     objects.httpTemplate = sceHttpCreateTemplate(objects.context, "anyps5-http-test", 2, 0);
     Require(objects.httpTemplate > 0);
+    if (resolveTimeOutUsec) Require(sceHttpSetResolveTimeOut(objects.httpTemplate, resolveTimeOutUsec) == 0);
+    if (connectTimeOutUsec) Require(sceHttpSetConnectTimeOut(objects.httpTemplate, connectTimeOutUsec) == 0);
     objects.connection = sceHttpCreateConnectionWithURL(objects.httpTemplate, url.c_str(), 0);
     Require(objects.connection > 0);
     objects.request = sceHttpCreateRequestWithURL(objects.connection, method, url.c_str(), 0);
@@ -410,8 +413,7 @@ static void CheckTlsTransport() {
 }
 
 static void CheckConnectTimeout() {
-    const auto objects = CreateRequestWithUrl("http://192.0.2.1:9/", 0);
-    Require(sceHttpSetConnectTimeOut(objects.request, 100000) == 0);
+    const auto objects = CreateRequestWithUrl("http://192.0.2.1:9/", 0, 0, 100000);
     const auto start = std::chrono::steady_clock::now();
     const int result = sceHttpSendRequest(objects.request, nullptr, 0);
     const auto elapsed = std::chrono::steady_clock::now() - start;
@@ -421,8 +423,7 @@ static void CheckConnectTimeout() {
 }
 
 static void CheckResolveTimeout() {
-    const auto objects = CreateRequestWithUrl("http://127.0.0.1:9/", 0);
-    Require(sceHttpSetResolveTimeOut(objects.request, 50000) == 0);
+    const auto objects = CreateRequestWithUrl("http://127.0.0.1:9/", 0, 50000);
     GuestHttpTest::SetResolverDelayForTests(250000);
     const auto start = std::chrono::steady_clock::now();
     const int result = sceHttpSendRequest(objects.request, nullptr, 0);
