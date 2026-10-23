@@ -1581,6 +1581,20 @@ std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& reques
     return PrepareShader(request, nullptr);
 }
 
+std::shared_ptr<const CompiledVariant> CompileShaderUncached(const RecompileRequest& request, ShaderPreparationContext* preparation, OfflineCompileTimings* timings) {
+    return recompileReporting(request, [&] {
+        static_cast<void>(RequestInputInfo(request));
+        using Clock = std::chrono::steady_clock;
+        const auto start = timings ? Clock::now() : Clock::time_point{};
+        auto program = PrepareResourceProgram(request, preparation);
+        const auto middle = timings ? Clock::now() : Clock::time_point{};
+        if (timings) timings->frontendSeconds = std::chrono::duration<double>(middle - start).count();
+        auto variant = std::make_shared<const CompiledVariant>(compileVariant(request, std::move(program)));
+        if (timings) timings->backendSeconds = std::chrono::duration<double>(Clock::now() - middle).count();
+        return variant;
+    });
+}
+
 std::shared_ptr<const SourceHandle> PrepareShader(const RecompileRequest& request, ShaderPreparationContext* preparation) {
     return recompileReporting(request, [&]() -> std::shared_ptr<const SourceHandle> {
         static_cast<void>(RequestInputInfo(request));

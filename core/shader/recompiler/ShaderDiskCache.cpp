@@ -169,9 +169,12 @@ struct FileHeader {
     std::uint64_t payloadHash;
 };
 
+static_assert(sizeof(FileHeader) == ShaderDiskCache::EntryHeaderBytes);
+
+constexpr std::size_t EntryAlignment = 8;
+
 std::size_t PayloadOffset(std::size_t keyBytes) {
-    constexpr std::size_t alignment = 8;
-    return (sizeof(FileHeader) + keyBytes + alignment - 1) / alignment * alignment;
+    return (sizeof(FileHeader) + keyBytes + EntryAlignment - 1) / EntryAlignment * EntryAlignment;
 }
 
 class MappedFile {
@@ -1363,22 +1366,30 @@ std::vector<std::byte> wrapEntry(std::span<const std::byte> key, std::span<const
     return file;
 }
 
-LoadStatus unwrapEntry(std::span<const std::byte> file, std::span<const std::byte> key, std::span<const std::byte>& payload) {
-    if (file.size() < sizeof(FileHeader)) return LoadStatus::Rejected;
+bool parseEntryHeader(std::span<const std::byte> bytes, std::uint64_t fileBytes, FileHeader& header, std::size_t& payloadOffset) {
+    if (bytes.size() < sizeof(FileHeader) || fileBytes < sizeof(FileHeader)) return false;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion() || header.keyBytes == 0) return false;
+    if (header.keyBytes > fileBytes - sizeof(FileHeader) || header.keyBytes > std::numeric_limits<std::size_t>::max() - sizeof(FileHeader) - (EntryAlignment - 1)) return false;
+    payloadOffset = PayloadOffset(static_cast<std::size_t>(header.keyBytes));
+    return payloadOffset <= fileBytes && header.payloadBytes == fileBytes - payloadOffset;
+}
+
+bool validatedEntry(std::span<const std::byte> file, std::span<const std::byte>& storedKey, std::span<const std::byte>& payload) {
     FileHeader header;
-    std::memcpy(&header, file.data(), sizeof(header));
-    if (header.magic != FileMagic || header.format != FormatVersion || header.sourceVersion != SourceVersion()) return LoadStatus::Rejected;
-    const auto body = file.size() - sizeof(header);
-    if (header.keyBytes > body) return LoadStatus::Rejected;
-    const auto payloadOffset = PayloadOffset(static_cast<std::size_t>(header.keyBytes));
-    if (payloadOffset > file.size() || header.payloadBytes != file.size() - payloadOffset) return LoadStatus::Rejected;
-    const auto storedKey = file.subspan(sizeof(header), static_cast<std::size_t>(header.keyBytes));
+    std::size_t payloadOffset = 0;
+    if (!parseEntryHeader(file, file.size(), header, payloadOffset)) return false;
+    storedKey = file.subspan(sizeof(header), static_cast<std::size_t>(header.keyBytes));
     const auto padding = file.subspan(sizeof(header) + storedKey.size(), payloadOffset - sizeof(header) - storedKey.size());
-    if (std::ranges::any_of(padding, [](std::byte value) { return value != std::byte{0}; })) return LoadStatus::Rejected;
+    if (std::ranges::any_of(padding, [](std::byte value) { return value != std::byte{0}; })) return false;
     payload = file.subspan(payloadOffset);
-    if (HashBytes(storedKey) != header.keyHash) return LoadStatus::Rejected;
+    return HashBytes(storedKey) == header.keyHash && HashBytes(payload) == header.payloadHash;
+}
+
+LoadStatus unwrapEntry(std::span<const std::byte> file, std::span<const std::byte> key, std::span<const std::byte>& payload) {
+    std::span<const std::byte> storedKey;
+    if (!validatedEntry(file, storedKey, payload)) return LoadStatus::Rejected;
     if (storedKey.size() != key.size() || !std::equal(storedKey.begin(), storedKey.end(), key.begin())) return LoadStatus::KeyMismatch;
-    if (HashBytes(payload) != header.payloadHash) return LoadStatus::Rejected;
     return LoadStatus::Loaded;
 }
 
@@ -1852,6 +1863,17 @@ std::vector<std::byte> EncodeEntry(std::span<const std::byte> key, const Compile
     encodeInfo(writer, variant.info);
     encodeAllocation(writer, variant.bindings);
     return wrapEntry(key, payload);
+}
+
+std::span<const std::byte> EntryKey(std::span<const std::byte> file) {
+    std::span<const std::byte> storedKey, payload;
+    return validatedEntry(file, storedKey, payload) ? storedKey : std::span<const std::byte>{};
+}
+
+bool IsCurrentEntryHeader(std::span<const std::byte> bytes, std::uint64_t fileBytes) {
+    FileHeader header;
+    std::size_t payloadOffset = 0;
+    return parseEntryHeader(bytes, fileBytes, header, payloadOffset);
 }
 
 LoadStatus DecodeEntry(std::span<const std::byte> file, std::span<const std::byte> key, CompiledVariant& variant, std::shared_ptr<const void> owner) {
