@@ -246,9 +246,13 @@ static void ParseAndRoundTrip() {
     Require(Serialize(reparsed) == serialized);
     _ZN3sce4Json5ValueD1Ev(&reparsed);
 
-    for (const char* invalid : {"{\"a\":}", "[1,]", "\"open", "tru"}) {
-        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, invalid, std::strlen(invalid)) == JsonErrorParse);
-        Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
+    for (const auto& [invalid, expected] : std::vector<std::pair<const char*, const char*>>{
+             {"{\"a\":}", "{\"a\":null}"}, {"[1,]", "[1,null]"}, {"\"open", "\"open\""}, {"tru", "null"}}) {
+        Value partial{};
+        _ZN3sce4Json5ValueC1Ev(&partial);
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&partial, invalid, std::strlen(invalid)) == JsonErrorParse);
+        Require(Serialize(partial) == expected);
+        _ZN3sce4Json5ValueD1Ev(&partial);
     }
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, nullptr, 0) == JsonErrorParse);
     bool nullTextRejected = false;
@@ -261,14 +265,16 @@ static void ParseAndRoundTrip() {
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "", 0) == JsonErrorParse);
     Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
     for (const char* overflow : {"1e309", "[-1e309]", "{\"a\":[1,1e400]}"}) {
+        Value partial{};
+        _ZN3sce4Json5ValueC1Ev(&partial);
         bool unverified = false;
         try {
-            _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, overflow, std::strlen(overflow));
+            _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&partial, overflow, std::strlen(overflow));
         } catch (const std::runtime_error& error) {
             unverified = std::string(error.what()).find("unverified") != std::string::npos;
         }
         Require(unverified);
-        Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
+        _ZN3sce4Json5ValueD1Ev(&partial);
     }
     _ZN3sce4Json5ValueD1Ev(&root);
 }

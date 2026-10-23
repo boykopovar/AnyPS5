@@ -1831,7 +1831,8 @@ private:
         }
         return true;
     }
-    static void appendUtf8(std::string& out, std::uint32_t code) {
+    template<class Output>
+    static void appendUtf8(Output& out, std::uint32_t code) {
         if (!code) return;
         if (code < 0x80) out += static_cast<char>(code);
         else if (code < 0x800) { out += static_cast<char>(0xc0 | (code >> 6)); out += static_cast<char>(0x80 | (code & 0x3f)); }
@@ -1850,7 +1851,12 @@ private:
         }
         return true;
     }
-    bool string(std::string& out) {
+    struct ParsedText {
+        String& string;
+        void operator+=(char character) { AppendText(string, {&character, 1}); }
+    };
+    template<class Output>
+    bool string(Output& out) {
         if (peek() < 0 || peek() != '"') return false;
         take();
         while (peek() >= 0 && peek() != '"') {
@@ -1909,11 +1915,11 @@ private:
             errno = 0;
             if (text[0] == '-') {
                 const long long value = std::strtoll(text.c_str(), nullptr, 10);
-                if (errno == 0) { out.type = TypeInteger; out.integer = value; return true; }
+                if (errno == 0) { SetType(out, TypeInteger); out.integer = value; return true; }
             } else {
                 const unsigned long long value = std::strtoull(text.c_str(), nullptr, 10);
                 if (errno == 0) {
-                    out.type = TypeUInteger;
+                    SetType(out, TypeUInteger);
                     out.uinteger = value;
                     return true;
                 }
@@ -1929,7 +1935,7 @@ private:
             converted = !stream.fail() && stream.eof();
         }
         if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
-        out.type = TypeReal;
+        SetType(out, TypeReal);
         out.real = real;
         return true;
     }
@@ -1938,14 +1944,12 @@ private:
         switch (peek()) {
             case 'n': if (!literal("null")) return false; SetType(out, TypeNull); return true;
             case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; return true;
-            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); return true;
+            case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); out.boolean = false; return true;
             case '"': {
-                std::string text;
-                if (!string(text)) return false;
                 SetType(out, TypeString);
                 if (out.type != TypeString) throw GuestOutOfMemory{};
-                AssignText(*out.string, text);
-                return true;
+                ParsedText text{*out.string};
+                return string(text);
             }
             case '[': {
                 if (depth == MaxNestingDepth) return false;
@@ -1985,7 +1989,6 @@ private:
                     take();
                     skip();
                     Value& entry = ObjectEntry(*out.object, key);
-                    Clear(entry);
                     if (!value(entry)) return false;
                     skip();
                     if (peek() >= 0 && peek() == ',') { take(); continue; }
@@ -2004,24 +2007,15 @@ int ParseValue(Value* out, Parser& parser) {
         const auto status = EnsureAuxiliary(*out);
         if (status) return status;
     }
-    Node parsed{};
+    const auto failures = AllocationFailures();
     bool parsedOk = false;
     try {
-        parsedOk = parser.Parse(parsed);
+        parsedOk = parser.Parse(NodeOf(*out));
     } catch (const GuestOutOfMemory&) {
-        Clear(parsed);
         return JsonErrorOutOfMemory;
-    } catch (...) {
-        Clear(parsed);
-        throw;
     }
-    if (!parsedOk) {
-        Clear(parsed);
-        return parser.Error();
-    }
-    Clear(NodeOf(*out));
-    TransferPayload(*out, parsed);
-    return 0;
+    if (AllocationFailures() != failures) return JsonErrorOutOfMemory;
+    return parsedOk ? 0 : parser.Error();
 }
 
 [[noreturn]] void APS5_VABI JsonMemAllocatorPureVirtual() {
