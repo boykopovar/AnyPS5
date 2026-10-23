@@ -3,6 +3,7 @@
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "nid/Sha1.hpp"
 
 #include <cerrno>
 #include <algorithm>
@@ -22,8 +23,9 @@
 #include <sys/stat.h>
 #include <filesystem>
 #include <random>
+#include <windows.h>
+#include "prx/libc/include/WindowsDescriptor.hpp"
 #else
-#include "nid/Sha1.hpp"
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -47,6 +49,27 @@ bool IsHostSharedMemoryDescriptor(int descriptor) {
     objectPath[length] = '\0';
     return std::string_view(objectPath).starts_with("/dev/shm/anyps5-shm-") ||
         std::string_view(objectPath).starts_with("/memfd:anyps5 shm_open");
+#elif defined(_WIN32)
+    const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
+    if (handle == INVALID_HANDLE_VALUE || handle == nullptr) return false;
+    if (::GetFileType(handle) != FILE_TYPE_DISK) return false;
+    wchar_t path[MAX_PATH + 1];
+    DWORD len = ::GetFinalPathNameByHandleW(handle, path, MAX_PATH, FILE_NAME_NORMALIZED);
+    std::wstring largePath;
+    std::wstring_view fullPath;
+    if (len > MAX_PATH) {
+        largePath.resize(len);
+        len = ::GetFinalPathNameByHandleW(handle, largePath.data(), len, FILE_NAME_NORMALIZED);
+        if (len == 0) return false;
+        fullPath = std::wstring_view(largePath.data(), len);
+    } else if (len > 0) {
+        fullPath = std::wstring_view(path, len);
+    } else {
+        return false;
+    }
+    const auto lastSlash = fullPath.find_last_of(L"\\/");
+    const auto filename = (lastSlash == std::wstring_view::npos) ? fullPath : fullPath.substr(lastSlash + 1);
+    return filename.starts_with(L"anyps5-shm-");
 #else
     (void)descriptor;
     return false;
@@ -107,7 +130,6 @@ int GuestError(int error) {
     }
 }
 
-#ifndef _WIN32
 int NamedGuestError(int error) {
     switch (error) {
     case ENOENT:
@@ -149,6 +171,56 @@ std::string NamedHostPath(const char* path, int& error) {
     return hostName;
 }
 
+#ifdef _WIN32
+int OpenNamedFile(const char* path, int flags, int mode) {
+    int validationError = 0;
+    const auto hostName = NamedHostPath(path, validationError);
+    if (validationError != 0) return Fail(NamedGuestError(validationError) ? NamedGuestError(validationError) : GuestInvalid);
+    const auto directory = std::filesystem::temp_directory_path();
+    const auto filePath = directory / hostName.substr(1);
+    const bool writeAccess = (flags & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR;
+    const DWORD desiredAccess = writeAccess ? (GENERIC_READ | GENERIC_WRITE) : GENERIC_READ;
+    constexpr DWORD shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const auto permissions = (mode & 0777) & ~File::GetCreationMask_nid_no_patch();
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    bool created = false;
+    if (flags & SCE_KERNEL_O_CREAT) {
+        SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, FALSE};
+        handle = ::CreateFileW(filePath.c_str(), desiredAccess, shareMode, &security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) {
+            created = true;
+        } else {
+            const DWORD error = ::GetLastError();
+            if ((error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS) && !(flags & SCE_KERNEL_O_EXCL)) {
+                const DWORD disposition = ((flags & SCE_KERNEL_O_TRUNC) && writeAccess) ? TRUNCATE_EXISTING : OPEN_EXISTING;
+                handle = ::CreateFileW(filePath.c_str(), desiredAccess, shareMode, &security, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+            }
+        }
+    } else {
+        SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, FALSE};
+        const DWORD disposition = ((flags & SCE_KERNEL_O_TRUNC) && writeAccess) ? TRUNCATE_EXISTING : OPEN_EXISTING;
+        handle = ::CreateFileW(filePath.c_str(), desiredAccess, shareMode, &security, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
+    }
+    if (handle != INVALID_HANDLE_VALUE) {
+        if (created && !(permissions & 0222)) {
+            ::SetFileAttributesW(filePath.c_str(), FILE_ATTRIBUTE_READONLY);
+        }
+        int crtFlags = _O_BINARY;
+        if (!writeAccess) crtFlags |= _O_RDONLY;
+        const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), crtFlags);
+        if (descriptor >= 0) return descriptor;
+        const int error = errno;
+        ::CloseHandle(handle);
+        if (created) ::DeleteFileW(filePath.c_str());
+        if (const int guest = NamedGuestError(error)) return Fail(guest);
+        throw std::runtime_error("shm_open: creating descriptor failed, errno=" + std::to_string(error));
+    }
+    const DWORD lastError = ::GetLastError();
+    const int error = WindowsOpenError_nid_no_patch(lastError);
+    if (const int guest = NamedGuestError(error)) return Fail(guest);
+    throw std::runtime_error("shm_open: opening the host named object failed, win_error=" + std::to_string(lastError));
+}
+#else
 int OpenNamedFile(const char* path, int flags, int mode) {
     int validationError = 0;
     const auto hostName = NamedHostPath(path, validationError);
@@ -303,7 +375,10 @@ std::int64_t WriteSharedMemory_nid_no_patch(int descriptor, const void* buffer, 
     if (guard.Error() != 0) { errno = guard.Error(); return -1; }
     if (!guard.Refresh()) return -1;
     const auto fd = guard.Descriptor();
-#ifndef _WIN32
+#ifdef _WIN32
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(fd);
+    if (WindowsDescriptorAccess_nid_no_patch(handle, fd, "write") == 0) { errno = EBADF; return -1; }
+#else
     const int access = ::fcntl(fd, F_GETFL);
     if (access < 0) return -1;
     if ((access & O_ACCMODE) == O_RDONLY) { errno = EBADF; return -1; }
@@ -331,7 +406,10 @@ std::int64_t PwriteSharedMemory_nid_no_patch(int descriptor, const void* buffer,
     if (guard.Error() != 0) { errno = guard.Error(); return -1; }
     if (!guard.Refresh()) return -1;
     const auto fd = guard.Descriptor();
-#ifndef _WIN32
+#ifdef _WIN32
+    const auto handle = WindowsDescriptorHandle_nid_no_patch(fd);
+    if (WindowsDescriptorAccess_nid_no_patch(handle, fd, "pwrite") == 0) { errno = EBADF; return -1; }
+#else
     const int access = ::fcntl(fd, F_GETFL);
     if (access < 0) return -1;
     if ((access & O_ACCMODE) == O_RDONLY) { errno = EBADF; return -1; }
@@ -455,11 +533,7 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
     if (accessMode != SCE_KERNEL_O_RDONLY && accessMode != SCE_KERNEL_O_RDWR) return Fail(GuestInvalid);
     if ((flags & ~AcceptedFlags) != 0) return Fail(GuestInvalid);
     if (path != anonymousObject) {
-#ifdef _WIN32
-        NotImplemented_nid_no_patch("shm_open of a named object");
-#else
         return OpenNamedFile(path, flags, mode);
-#endif
     }
     if (accessMode == SCE_KERNEL_O_RDONLY) return Fail(GuestInvalid);
     const int descriptor = CreateAnonymousFile();
@@ -471,9 +545,29 @@ extern "C" int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int m
 
 extern "C" int APS5_VABI shm_unlink_nid_postfix(const char* path) {
 #ifdef _WIN32
-    (void)path;
-    NotImplemented_nid_no_patch("shm_unlink of a named object");
-    return 0;
+    int validationError = 0;
+    const auto hostName = NamedHostPath(path, validationError);
+    if (validationError != 0) return Fail(NamedGuestError(validationError) ? NamedGuestError(validationError) : GuestInvalid);
+    const auto directory = std::filesystem::temp_directory_path();
+    const auto filePath = directory / hostName.substr(1);
+    const DWORD attr = ::GetFileAttributesW(filePath.c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES) {
+        const int error = WindowsOpenError_nid_no_patch(::GetLastError());
+        if (const int guest = NamedGuestError(error)) return Fail(guest);
+        throw std::runtime_error("shm_unlink: reading object attributes failed, errno=" + std::to_string(error));
+    }
+    if (attr & FILE_ATTRIBUTE_READONLY) return Fail(13);
+    static std::atomic<unsigned> tombstoneSeq{0};
+    const auto seed = std::to_string(std::random_device{}());
+    const auto tombstonePath = directory / (hostName.substr(1) + ".del-" + seed + "-" + std::to_string(tombstoneSeq++));
+    if (::MoveFileExW(filePath.c_str(), tombstonePath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        ::DeleteFileW(tombstonePath.c_str());
+        return 0;
+    }
+    if (::DeleteFileW(filePath.c_str())) return 0;
+    const int error = WindowsOpenError_nid_no_patch(::GetLastError());
+    if (const int guest = NamedGuestError(error)) return Fail(guest);
+    throw std::runtime_error("shm_unlink: removing the host named object failed, errno=" + std::to_string(error));
 #else
     int validationError = 0;
     const auto hostName = NamedHostPath(path, validationError);

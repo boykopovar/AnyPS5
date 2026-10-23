@@ -210,18 +210,16 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
 #elif defined(_WIN32)
     const int mappingDescriptor = descriptor;
-    if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) {
-        const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
-        if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
-        if (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK) return failed(GuestNotSupported);
-        const int accessMode = DescriptorAccess(handle, mappingDescriptor);
-        if (accessMode < 0) return failed(GuestBadDescriptor);
-        if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
-        if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
-        if (kind == GuestPrivate) {
-            const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
-            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, offset, accessMode, failed);
-        }
+    const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
+    if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
+    if (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK) return failed(GuestNotSupported);
+    const int accessMode = DescriptorAccess(handle, mappingDescriptor);
+    if (accessMode < 0) return failed(GuestBadDescriptor);
+    if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
+    if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
+    if (kind == GuestPrivate) {
+        const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
+        return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, offset, accessMode, failed);
     }
 #else
     const int mappingDescriptor = descriptor;
