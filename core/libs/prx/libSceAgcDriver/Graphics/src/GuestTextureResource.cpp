@@ -6,6 +6,7 @@
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -290,6 +291,43 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> words)
         result.mipCount = lastLevel + 1u;
     }
     return result;
+}
+
+std::array<std::uint32_t, 8> EncodeTextureResource(const GuestTextureResource& resource) {
+    const bool multisampled = resource.dimension == TextureDimension::k2DMsaa;
+    Require((resource.dimension == TextureDimension::k2D && resource.samples == 1u) || (multisampled && resource.samples >= 2u && resource.samples <= 16u && std::has_single_bit(resource.samples)), "only 2D and multisampled 2D surfaces have a texture descriptor encoding");
+    Require(resource.mipCount == 1u && resource.allocatedMipCount <= 1u && resource.baseLevel == 0u && resource.lastLevel == 0u && resource.depthOrLastArray == 0u && resource.baseArray == 0u && resource.dccAddress == 0u && resource.minLod == 0u && !resource.iterate256 && resource.bcSwizzle == 0u, "only single-level, single-layer surfaces without metadata have a texture descriptor encoding");
+    Require(resource.width >= 1u && resource.width <= 0x4000u && resource.height >= 1u && resource.height <= 0x4000u && resource.format < 0x200u, "the surface's extent or format has no texture descriptor encoding");
+    const auto xorMask = resource.tileMode == TextureTileMode::kS4KBX || resource.tileMode == TextureTileMode::kD4KBX ? 0xfffull : 0xffffull;
+    Require(XorSwizzleMode(resource.tileMode) != 0 ? (resource.baseAddress & xorMask) == 0 && (resource.pipeBankXor & ~xorMask) == 0 : resource.pipeBankXor == 0, "the surface's pipe and bank XOR has no texture descriptor encoding");
+    const auto base = (resource.baseAddress | resource.pipeBankXor) >> 8u;
+    Require(base != 0 && (resource.baseAddress & 0xffu) == 0 && base <= 0xffffffffffull, "the surface's address has no texture descriptor encoding");
+    std::uint32_t tileMode = 0;
+    switch (resource.tileMode) {
+        case TextureTileMode::kLinear: tileMode = 0x00; break;
+        case TextureTileMode::kStandard256B: tileMode = 0x01; break;
+        case TextureTileMode::kD256B: tileMode = 0x02; break;
+        case TextureTileMode::kStandard4KB: tileMode = 0x05; break;
+        case TextureTileMode::kD4KB: tileMode = 0x06; break;
+        case TextureTileMode::kStandard64KB: tileMode = 0x09; break;
+        case TextureTileMode::kD64KB: tileMode = 0x0a; break;
+        case TextureTileMode::kS64KBT: tileMode = 0x11; break;
+        case TextureTileMode::kD64KBT: tileMode = 0x12; break;
+        case TextureTileMode::kS4KBX: tileMode = 0x15; break;
+        case TextureTileMode::kD4KBX: tileMode = 0x16; break;
+        case TextureTileMode::kZ64KBX: tileMode = 0x18; break;
+        case TextureTileMode::kS64KBX: tileMode = 0x19; break;
+        case TextureTileMode::kD64KBX: tileMode = 0x1a; break;
+        case TextureTileMode::kR64KBX: tileMode = 0x1b; break;
+    }
+    const auto sampleLevel = static_cast<std::uint32_t>(std::countr_zero(resource.samples));
+    std::array<std::uint32_t, 8> words{};
+    words[0] = static_cast<std::uint32_t>(base);
+    words[1] = static_cast<std::uint32_t>(base >> 32u) | (resource.format << 20u) | (((resource.width - 1u) & 3u) << 30u);
+    words[2] = ((resource.width - 1u) >> 2u) | ((resource.height - 1u) << 14u);
+    words[3] = resource.dstSelX | (resource.dstSelY << 3u) | (resource.dstSelZ << 6u) | (resource.dstSelW << 9u) | (sampleLevel << 16u) | (tileMode << 20u) | ((multisampled ? 14u : 9u) << 28u);
+    words[5] = sampleLevel << 4u;
+    return words;
 }
 
 float EffectiveMinLod(const GuestTextureResource& resource) {

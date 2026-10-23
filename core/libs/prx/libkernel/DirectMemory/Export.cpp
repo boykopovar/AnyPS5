@@ -320,7 +320,11 @@ int APS5_VABI sceKernelMmap(void* addr, size_t len, int prot, int flags, int fd,
 }
 
 int APS5_VABI sceKernelReleaseFlexibleMemory(void* addr, size_t len) {
- return sceKernelMunmap(reinterpret_cast<uint64_t>(addr), len);
+ const auto start = reinterpret_cast<uintptr_t>(addr);
+ if (start == 0 || (start & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || len > std::numeric_limits<uintptr_t>::max() - start)
+  return SCE_KERNEL_ERROR_EINVAL;
+ if (len != 0) _releaseFlexible(start, len);
+ return 0;
 }
 
 int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len) {

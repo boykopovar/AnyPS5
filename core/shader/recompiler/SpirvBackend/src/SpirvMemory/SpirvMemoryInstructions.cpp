@@ -916,7 +916,7 @@ std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const Me
             const auto old = EmitAtomicOperation(ctx, inst, pointer, scope);
             if (lds) {
                 const std::uint32_t semantics = spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);
-                if (!state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, scope), ConstantU32(state, semantics));
+                if (!state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, LdsMemoryBarrierScope(state)), ConstantU32(state, semantics));
             } else {
                 EmitDeviceAtomicMemoryBarrier(state);
             }
@@ -1037,10 +1037,7 @@ std::uint32_t SharedAtomicUpdate(SpirvValueEmitContext& ctx, const IrValue& inst
     return EmitAtomicAccess(ctx, inst, mem, [&](std::uint32_t pointer) {
         const auto next = [&](std::uint32_t current) { return replacement(state, current); };
         if (InFunctionStorage(state, mem.kind)) return UpdateFunctionElement(state, pointer, next);
-        const auto old = AtomicUpdate(state, pointer, mem.kind, next);
-        const std::uint32_t semantics = spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state);
-        if (!state.insideLdsLock) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, semantics));
-        return old;
+        return AtomicUpdate(state, pointer, mem.kind, next);
     });
 }
 

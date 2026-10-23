@@ -392,5 +392,33 @@ class MissingCommandTests(unittest.TestCase):
                                         "ambiguous": None, "existing": [helper], "stale": None})
 
 
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(select_tests.sys, "stdout", out), mock.patch.object(select_tests.sys, "stderr", err):
+            try:
+                select_tests.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
+
 if __name__ == "__main__":
     unittest.main()

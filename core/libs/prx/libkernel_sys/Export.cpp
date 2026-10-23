@@ -50,11 +50,12 @@ namespace {
 #ifdef _WIN32
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
 static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {}
-static int GuestFstat(int fd) {
+static int GuestFstat(int fd, bool* withoutVnode = nullptr) {
     const auto previous = _set_thread_local_invalid_parameter_handler(IgnoreInvalidParameter);
     struct _stat64 status{};
     const int result = ::_fstat64(fd, &status);
     _set_thread_local_invalid_parameter_handler(previous);
+    if (result == 0 && withoutVnode != nullptr) *withoutVnode = (status.st_mode & _S_IFMT) == _S_IFIFO;
     return result;
 }
 #endif
@@ -98,6 +99,7 @@ constexpr int PcRecXferAlign = 17;
 constexpr int PcSymlinkMax = 18;
 constexpr int PcMinHoleSize = 21;
 constexpr int PcAsyncIo = 53;
+constexpr std::int64_t PosixAsynchronousIo = 200112;
 constexpr int PcPrioIo = 54;
 constexpr int PcSyncIo = 55;
 constexpr int PcAclExtended = 59;
@@ -126,6 +128,37 @@ int GuestFileError(int error) {
 std::int64_t Fail(int error) {
     *__error_nid_postfix() = error;
     return -1;
+}
+
+std::int64_t PathConfigurationValue(int name, const char* function) {
+    switch (name) {
+    case PcLinkMax: return 32767;
+    case PcNameMax: return static_cast<std::int64_t>(GuestNameMax);
+    case PcPathMax: return static_cast<std::int64_t>(GuestPathMax);
+    case PcPipeBuf: return 512;
+    case PcChownRestricted: return 1;
+    case PcNoTrunc: return 1;
+    case PcFileSizeBits: return 64;
+    case PcRecMaxXferSize: return -1;
+    case PcSymlinkMax: return static_cast<std::int64_t>(GuestPathMax);
+    case PcPrioIo: return 0;
+    case PcSyncIo: return 0;
+    case PcMaxCanon:
+    case PcMaxInput:
+    case PcVdisable:
+    case PcAllocSizeMin:
+    case PcRecIncrXferSize:
+    case PcRecMinXferSize:
+    case PcRecXferAlign:
+    case PcMinHoleSize:
+    case PcAsyncIo:
+    case PcAclExtended:
+    case PcAclPathMax:
+    case PcMacPresent:
+    case PcAclNfs4:
+        throw std::runtime_error(std::string(function) + ": name " + std::to_string(name) + " depends on the console filesystem or kernel configuration");
+    default: return Fail(GuestEinval);
+    }
 }
 
 int GuestError(const std::error_code& error) {
@@ -335,34 +368,26 @@ std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
     const auto status = std::filesystem::status(native, error);
     if (error) return Fail(error == std::errc::no_such_file_or_directory && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestError(error));
     if (!std::filesystem::exists(status)) return Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent);
-    switch (name) {
-    case PcLinkMax: return 32767;
-    case PcNameMax: return static_cast<std::int64_t>(GuestNameMax);
-    case PcPathMax: return static_cast<std::int64_t>(GuestPathMax);
-    case PcPipeBuf: return 512;
-    case PcChownRestricted: return 1;
-    case PcNoTrunc: return 1;
-    case PcFileSizeBits: return 64;
-    case PcRecMaxXferSize: return -1;
-    case PcSymlinkMax: return static_cast<std::int64_t>(GuestPathMax);
-    case PcPrioIo: return 0;
-    case PcSyncIo: return 0;
-    case PcMaxCanon:
-    case PcMaxInput:
-    case PcVdisable:
-    case PcAllocSizeMin:
-    case PcRecIncrXferSize:
-    case PcRecMinXferSize:
-    case PcRecXferAlign:
-    case PcMinHoleSize:
-    case PcAsyncIo:
-    case PcAclExtended:
-    case PcAclPathMax:
-    case PcMacPresent:
-    case PcAclNfs4:
-        throw std::runtime_error("pathconf: name " + std::to_string(name) + " depends on the console filesystem or kernel configuration");
-    default: return Fail(GuestEinval);
-    }
+    return PathConfigurationValue(name, "pathconf");
+}
+
+std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
+    if (fd < 0) return Fail(GuestEbadf);
+    bool withoutVnode = false;
+#ifdef _WIN32
+    if (GuestFstat(fd, &withoutVnode) != 0) return Fail(GuestEbadf);
+#else
+    struct stat status{};
+    if (::fstat(fd, &status) != 0) return Fail(GuestEbadf);
+    withoutVnode = S_ISFIFO(status.st_mode) || S_ISSOCK(status.st_mode);
+#endif
+    if (name == PcAsyncIo) return PosixAsynchronousIo;
+    if (withoutVnode) return name == PcPipeBuf ? 512 : Fail(GuestEinval);
+    return PathConfigurationValue(name, "fpathconf");
+}
+
+std::int64_t APS5_VABI fpathconf_nid_postfix(int fd, int name) {
+    return _fpathconf_nid_postfix(fd, name);
 }
 
 #ifdef _WIN32

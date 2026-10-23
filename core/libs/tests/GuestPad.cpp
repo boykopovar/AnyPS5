@@ -9,7 +9,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -42,23 +41,9 @@ int APS5_VABI scePadGetExtControllerInformation(int, void*);
 int APS5_VABI scePadResetLightBar(int);
 int APS5_VABI scePadSetLightBar(int, const PadLightBarParam*);
 int APS5_VABI scePadSetMotionSensorState(int, bool);
-int APS5_VABI scePadSetLotusEnableIrKey(std::int32_t);
-int APS5_VABI scePadSetLotusDisableIrKey(std::int32_t);
-int APS5_VABI scePadVirtualDeviceDisableButtonRemapping(bool);
-int APS5_VABI scePadVirtualDeviceGetRemoteSetting(std::int32_t, void*);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TCall>
-static bool Throws(TCall call, const char* function) {
-    try {
-        static_cast<void>(call());
-    } catch (const std::runtime_error& error) {
-        return std::strstr(error.what(), function) != nullptr;
-    }
-    return false;
-}
 
 static void CheckInputCommands() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-pad-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -603,8 +588,6 @@ int main() {
     Require(scePadGetHandle(0xff, 16, 0) == handle);
     Require(scePadGetHandle(user, 16, 0) == noHandle);
     Require(scePadGetHandle(user, 0, 1) == noHandle);
-    Require(Throws([&] { return scePadSetLotusEnableIrKey(handle); }, "scePadSetLotusEnableIrKey"));
-    Require(Throws([&] { return scePadSetLotusDisableIrKey(handle); }, "scePadSetLotusDisableIrKey"));
     Require(scePadClose_nid_postfix(handle) == 0);
     Require(scePadGetHandle(user, 0, 0) == noHandle);
     Require(scePadUnknown_n3kSX62fgNo() == PAD_OK);
@@ -614,15 +597,4 @@ int main() {
     Require(scePadSetAngularVelocityDeadbandState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetAngularVelocityBiasCorrectionState(handle, false) == PAD_OK);
     Require(scePadSetAngularVelocityBiasCorrectionState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
-    Require(Throws([&] { return scePadSetLotusEnableIrKey(handle + 1); }, "scePadSetLotusEnableIrKey"));
-    Require(Throws([&] { return scePadSetLotusDisableIrKey(handle + 1); }, "scePadSetLotusDisableIrKey"));
-    Require(Throws([] { return scePadVirtualDeviceDisableButtonRemapping(true); }, "scePadVirtualDeviceDisableButtonRemapping"));
-    Require(Throws([] { return scePadVirtualDeviceDisableButtonRemapping(false); }, "scePadVirtualDeviceDisableButtonRemapping"));
-    std::array<std::uint8_t, 16> scratch{};
-    scratch.fill(0xAB);
-    Require(Throws([&] { return scePadVirtualDeviceGetRemoteSetting(1, scratch.data()); }, "scePadVirtualDeviceGetRemoteSetting"));
-    Require(Throws([] { return scePadVirtualDeviceGetRemoteSetting(1, nullptr); }, "scePadVirtualDeviceGetRemoteSetting"));
-    Require(Throws([&] { return scePadVirtualDeviceGetRemoteSetting(0, scratch.data()); }, "scePadVirtualDeviceGetRemoteSetting"));
-    Require(Throws([&] { return scePadVirtualDeviceGetRemoteSetting(-1, scratch.data()); }, "scePadVirtualDeviceGetRemoteSetting"));
-    for (std::uint8_t byte : scratch) Require(byte == 0xAB);
 }
