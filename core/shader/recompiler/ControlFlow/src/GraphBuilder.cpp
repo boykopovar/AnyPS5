@@ -1528,7 +1528,9 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
         if (!sameBlockWriter && !reachingWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize)) continue;
         const auto& table = program.instructions[descriptorLoad];
         const auto pointer = scalarIndex(table.source0);
-        if (table.op != RdnaOpcode::SLoadDwordx4 || !isScalar(table.destination, descriptor) || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
+        const auto loaded = scalarIndex(table.destination);
+        if ((table.op != RdnaOpcode::SLoadDwordx4 && table.op != RdnaOpcode::SLoadDwordx8 && table.op != RdnaOpcode::SLoadDwordx16) || loaded == NoScalarRegister || descriptor < loaded ||
+            (descriptor - loaded) % 4u != 0u || descriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
             table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u) continue;
         std::optional<std::uint64_t> constantPointer;
 #ifdef __APPLE__
@@ -1557,7 +1559,7 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset, load.memoryOffset + lowDword * 4u, stride, constantPointer});
+        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (descriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer});
 #ifdef __APPLE__
         calls.back().pointerLowWriter = lowWriterProgramCounter;
         calls.back().pointerHighWriter = highWriterProgramCounter;

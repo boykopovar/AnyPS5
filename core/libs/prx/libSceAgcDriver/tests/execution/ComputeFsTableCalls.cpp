@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceShaders.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef __APPLE__
@@ -26,9 +27,12 @@ constexpr std::uint32_t Marker = 0x55u;
 #ifdef __APPLE__
 // The caller below still builds the console address; the driver moves it with its block (DriverMemory.hpp).
 constexpr std::uint64_t FsTable = AgcDriver::DriverDetail::RetargetPs5DriverMemory(0xfe0040000ull);
+constexpr std::uint64_t DriverMemory = AgcDriver::DriverDetail::RetargetPs5DriverMemory(0xfe0000000ull);
 #else
 constexpr std::uint64_t FsTable = 0xfe0040000ull;
+constexpr std::uint64_t DriverMemory = 0xfe0000000ull;
 #endif
+constexpr std::size_t DriverMemoryBytes = 2u << 20u;
 
 alignas(256) constexpr std::array<std::uint32_t, 32> Caller{
     0x34040082u, 0x7e0202ffu, 0x00000055u, 0xbeea03ffu, 0xe0040000u, 0xbeeb038fu, 0xf4080235u, 0xfa000000u, 0xbf8cc07fu, 0xf4240384u,
@@ -92,6 +96,9 @@ void CheckTable() {
     Require(AgcDriver::GuestMemory::Accessible(reinterpret_cast<const void*>(table[2]), sizeof(routine)), "the FS routine is not readable");
     std::memcpy(routine.data(), reinterpret_cast<const void*>(table[2]), sizeof(routine));
     Require(routine[0] == 0xbe80200eu, "the FS routine does not start with s_setpc_b64 s[14:15]");
+#ifndef _WIN32
+    if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) Require(AgcDriver::GuestMemory::Watched(DriverMemory, DriverMemoryBytes), "the AGC driver memory at 0xfe0000000 is not write-watched, so a refused import copies it on every address-based build");
+#endif
 }
 
 }

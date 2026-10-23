@@ -1147,13 +1147,13 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         }
         if (opcode == IrOpcode::ImageAtomicFMin32 || opcode == IrOpcode::ImageAtomicFMax32) {
             return AtomicUpdate(state, pointer, ResourceKind::Image, [&](std::uint32_t current) {
-                return AtomicFloatMinMax(state, current, value, opcode == IrOpcode::ImageAtomicFMax32);
+                return AtomicFloatMinMax(state, current, value, opcode == IrOpcode::ImageAtomicFMax32, access.mem.flushDenormals);
             });
         }
         if (opcode == IrOpcode::ImageAtomicFCmpSwap32) {
             const auto comparator = ctx.Arg(access.inst, 3);
             return AtomicUpdate(state, pointer, ResourceKind::Image, [&](std::uint32_t current) {
-                return AtomicFloatCompareSwap(state, current, value, comparator);
+                return AtomicFloatCompareSwap(state, current, value, comparator, access.mem.flushDenormals);
             });
         }
         const auto old = state.module.AllocateId();

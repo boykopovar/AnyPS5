@@ -731,6 +731,17 @@ target_link_libraries(agc_shared_write_tests PRIVATE libSceAgcDriver libkernel l
 set_target_properties(agc_shared_write_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_shared_write_tests)
 
+if(BUILD_TESTING AND WIN32)
+    add_test_executable(agc_page_state_tests tests/PageStates.cpp)
+    target_include_directories(agc_page_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_page_state_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(agc_page_state_tests)
+    add_test(NAME agc_page_states COMMAND agc_page_state_tests)
+    add_test(NAME agc_page_state_metadata COMMAND agc_page_state_tests --metadata)
+    set_tests_properties(agc_page_states agc_page_state_metadata PROPERTIES
+        TIMEOUT 30 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+endif()
+
 add_test_executable(agc_locks_tests EXCLUDE_FROM_ALL tests/Locks.cpp)
 target_include_directories(agc_locks_tests PRIVATE
         ${LIBS_INCLUDE_DIR}
@@ -2806,6 +2817,15 @@ if(BUILD_TESTING)
         set_tests_properties(agc_sampled_cache_device_selection agc_driver_sampled_cache_device_selection PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    foreach(imageRecoveryMode IN ITEMS sampled storage srgb repack)
+        add_test(NAME agc_driver_recover_${imageRecoveryMode}_allocation COMMAND agc_driver_sampled_cache_budget_tests recover-${imageRecoveryMode})
+        set_tests_properties(agc_driver_recover_${imageRecoveryMode}_allocation PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+        if(WIN32)
+            set_tests_properties(agc_driver_recover_${imageRecoveryMode}_allocation PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    set_property(TEST agc_driver_recover_srgb_allocation APPEND PROPERTY ENVIRONMENT_MODIFICATION "APS5_SRGB_SHADER_DECODE=set:copy")
     add_test(NAME agc_driver_resource_cache_storage_admission COMMAND agc_driver_sampled_cache_budget_tests resource-admission)
     add_test(NAME agc_driver_resource_cache_oversized_storage_admission COMMAND agc_driver_sampled_cache_budget_tests resource-oversized)
     add_test(NAME agc_driver_resource_cache_storage_clear COMMAND agc_driver_sampled_cache_budget_tests resource-clear)

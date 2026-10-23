@@ -661,6 +661,7 @@ private:
 
 struct WordsIndexTag {};
 struct ElementIndexTag {};
+struct SamplerIndexTag {};
 struct PoisonIndexTag {};
 struct TableRecordsTag {};
 
@@ -1677,6 +1678,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         return Abi::PoisonCode(*index);
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
+    HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
     std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
@@ -1734,19 +1736,29 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
         } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
-        } else if (out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
         } else {
-            record[Abi::SamplerRecordElement] = static_cast<std::uint32_t>(out.samplers.size());
-            for (std::uint32_t variant = 0; variant < 2u; variant++) {
-                const bool compare = variant == 1u;
-                for (std::uint32_t point = 0; point < 2u; point++) {
-                    ImageTableSamplerElement element;
-                    std::copy_n(words.dwords.begin(), 4u, element.words.begin());
-                    element.compare = compare;
-                    element.point = point != 0u;
-                    out.samplers.push_back(element);
+            const auto hash = hashWords(std::span(words.dwords.data(), 4u), 0);
+            auto index = samplerIndex.Find(hash, [&](std::uint32_t known) {
+                return std::equal(words.dwords.begin(), words.dwords.begin() + 4u, out.samplers[known].words.begin());
+            });
+            if (!index.has_value() && out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
+                record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
+            } else {
+                if (!index.has_value()) {
+                    index = static_cast<std::uint32_t>(out.samplers.size());
+                    for (std::uint32_t variant = 0; variant < 2u; variant++) {
+                        const bool compare = variant == 1u;
+                        for (std::uint32_t point = 0; point < 2u; point++) {
+                            ImageTableSamplerElement element;
+                            std::copy_n(words.dwords.begin(), 4u, element.words.begin());
+                            element.compare = compare;
+                            element.point = point != 0u;
+                            out.samplers.push_back(element);
+                        }
+                    }
+                    samplerIndex.Insert(hash, *index);
                 }
+                record[Abi::SamplerRecordElement] = *index;
             }
         }
         const auto offset = static_cast<std::uint32_t>(out.map.size());

@@ -264,9 +264,17 @@ void Run(Context context, std::uint8_t* block) {
     layeredStencil.depthOrLastArray = 1;
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredStencil, 0)); }, "storage image access to depth/stencil surface", "a two-layer 2D array view of the stencil plane was accepted");
     layeredDepth.depthOrLastArray = 1;
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "with a layer pitch of", "a two-layer 2D array view of the depth plane with a layer pitch other than the depth slice size was accepted");
+    const auto layerPitch = static_cast<std::uint64_t>(DescribeSurface(layeredDepth).GuestLayerOffset(1));
+    const auto sliceBytes = DepthSliceBytes({Side, Side}, 4u);
+    Require(layerPitch != sliceBytes, "the test's layered depth view has the depth slice size as its layer pitch");
+    const auto layered = DepthSurfaceStorage(context, {}, layeredDepth, 0);
+    Require(layered != nullptr && layered->ImageLayers() == 2, "a two-layer 2D array view over the depth plane's guest layer pitch was not taken as a storage image");
+    submit(recorder);
+    readBack(*layered);
+    Require(CountFloats(block + layerPitch, 0.f) == Side * Side, "the two-layer 2D array view did not take the layer that only overlaps the depth slice from guest memory");
+    Require(CountFloats(block, 0.5f) == Side * Side, "the two-layer 2D array view did not receive the layer the depth surface holds");
     layeredDepth.baseArray = 1;
-    ExpectFailure([&] { static_cast<void>(DepthSurfaceStorage(context, {}, layeredDepth, 0)); }, "with a layer pitch of", "a 2D array view of layer 1 of the depth plane with a layer pitch other than the depth slice size was accepted");
+    Require(DepthSurfaceStorage(context, {}, layeredDepth, 0) != nullptr, "a 2D array view from layer 1 of the depth plane was not taken as a storage image");
     const auto own = StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float), 0);
     const std::array<std::uint32_t, 4> eighth{std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f), std::bit_cast<std::uint32_t>(0.125f)};
     Require(own->FillClear(eighth, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the storage image could not be filled");
@@ -277,6 +285,24 @@ void Run(Context context, std::uint8_t* block) {
     submit(recorder);
     readBack(*reread);
     Require(CountFloats(block, 0.125f) == Side * Side, "a storage image written over the depth plane did not reach the depth surface");
+    const float overlapping = 0.375f;
+    for (std::size_t i = 0; i < Side * Side; ++i) std::memcpy(block + layerPitch + i * sizeof(overlapping), &overlapping, sizeof(overlapping));
+    auto swizzled = PlaneResource(address, Format32Float);
+    swizzled.tileMode = TextureTileMode::kStandard64KB;
+    const auto tiled = DepthSurfaceStorage(context, {}, swizzled, 0);
+    Require(tiled != nullptr, "a 64 KiB depth plane has no storage image");
+    const std::array<std::uint32_t, 4> pendingFill{std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f), std::bit_cast<std::uint32_t>(0.75f)};
+    Require(tiled->FillClear(pendingFill, StorageTexture::WholeImage, refusal), refusal != nullptr ? refusal : "the 64 KiB depth plane's storage image could not be filled");
+    submit(recorder);
+    auto spanning = layeredDepth;
+    spanning.baseArray = 0;
+    spanning.depthOrLastArray = 3;
+    const auto spanningView = DepthSurfaceStorage(context, {}, spanning, 0);
+    Require(spanningView != nullptr && spanningView->ImageLayers() == 4, "a four-layer 2D array view over a 64 KiB depth plane was not taken as a storage image");
+    Require(CountFloats(block, 0.75f) == Side * Side, "the pending depth result was not stored into guest memory before the layered view was created");
+    submit(recorder);
+    readBack(*spanningView);
+    Require(CountFloats(block + layerPitch, overlapping) == Side * Side, "the layer that only overlaps the depth surface did not hold the guest bytes that were there");
     Require(!DepthSurfaceStoreBack(context, *StorageTexture::Create(context, *context.detiler, PlaneResource(address, Format32Float, Side / 2), 0)), "a storage image of another extent over the depth memory was stored into the depth surface");
 }
 
