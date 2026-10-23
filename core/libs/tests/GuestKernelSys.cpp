@@ -73,6 +73,7 @@ int APS5_VABI chown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
 int APS5_VABI lchown_nid_postfix(const char*, std::uint32_t, std::uint32_t);
 int APS5_VABI fchownat_nid_postfix(int, const char*, std::uint32_t, std::uint32_t, int);
 int APS5_VABI linkat_nid_postfix(int, const char*, int, const char*, int);
+int APS5_VABI kqueue_nid_postfix();
 int APS5_VABI fstatat_nid_postfix(int, const char*, FileStat*, int);
 std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
@@ -961,6 +962,10 @@ int main() {
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
     Require(fchown_nid_postfix(-1, 0, 0) == -1 && Error() == 9);
+    const int kqueueDescriptor = kqueue_nid_postfix();
+    Require(kqueueDescriptor >= 0);
+    Require(fchown_nid_postfix(kqueueDescriptor, 0, 0) == -1 && Error() == 22);
+    Require(close_nid_postfix(kqueueDescriptor) == 0);
     bool fchownThrew = false;
     try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);

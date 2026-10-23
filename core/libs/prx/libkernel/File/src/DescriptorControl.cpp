@@ -1,4 +1,5 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
@@ -539,6 +540,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         SetCloseOnExec(fd, command == CloseOnExecRequest);
         return 0;
     }
+    if (IsKqueueDescriptor(fd)) return Fail(GuestEnotty);
     if (command == NonblockingRequest) {
         const bool enable = *static_cast<const int*>(argument) != 0;
         return ChangeStatus(fd, *kind, Nonblocking, enable ? Nonblocking : 0, "ioctl");

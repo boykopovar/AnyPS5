@@ -26,6 +26,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -679,6 +680,7 @@ int APS5_VABI fchown_nid_postfix(int fd, std::uint32_t uid, std::uint32_t gid) {
     constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
     if (uid != 0 && uid != Unchanged) NotImplemented_nid_no_patch("fchown: an owner other than the guest user");
     if (gid != 0 && gid != Unchanged) NotImplemented_nid_no_patch("fchown: a group other than the guest group");
+    if (IsKqueueDescriptor(fd)) return static_cast<int>(Fail(GuestEinval));
 #ifdef _WIN32
     if (GuestFstat(fd) != 0) return static_cast<int>(Fail(GuestEbadf));
 #else

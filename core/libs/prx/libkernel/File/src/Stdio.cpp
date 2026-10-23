@@ -917,6 +917,11 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         if (fstat_nid_disambig1_nid_postfix(d, &ignored) != 0) return -1;
         return PosixFailure(GUEST_EFAULT);
     }
+    if (IsKqueueDescriptor(d)) {
+        std::memset(sb, 0, sizeof(*sb));
+        sb->st_mode = 0010000;
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         if (const int error = GuestSockets::Stat(d, sb)) return PosixFailure(error);
         return 0;
@@ -1093,6 +1098,11 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         FileStat ignored{};
         if (const int error = sceKernelFstat(d, &ignored)) return error;
         return SceErrorFromErrno(GUEST_EFAULT);
+    }
+    if (IsKqueueDescriptor(d)) {
+        std::memset(sb, 0, sizeof(*sb));
+        sb->st_mode = 0010000;
+        return 0;
     }
     if (GuestSockets::IsOpen(d)) {
         const int error = GuestSockets::Stat(d, sb);
