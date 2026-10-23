@@ -1,4 +1,5 @@
 #include "prx/libkernel/File/include/WindowsExtendedPath.hpp"
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <stdexcept>
@@ -9,22 +10,43 @@ static void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "ch
 
 static std::wstring Extend(const std::wstring& input) { return File::WindowsExtendedPath(std::filesystem::path(input)).native(); }
 
+class TemporaryDirectory {
+public:
+    TemporaryDirectory() : original(std::filesystem::current_path()) {
+        const auto base = std::filesystem::temp_directory_path();
+        for (int attempt = 0; attempt < 16 && root.empty(); ++attempt) {
+            const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+            const auto candidate = base / (L"aps5_extended_path_" + std::to_wstring(stamp) + L"_" + std::to_wstring(attempt));
+            if (std::filesystem::create_directory(candidate)) root = candidate;
+        }
+        if (root.empty()) throw std::runtime_error("Windows extended path test could not create a temporary directory");
+    }
+    ~TemporaryDirectory() {
+        std::error_code error;
+        std::filesystem::current_path(original, error);
+        std::filesystem::remove_all(root, error);
+    }
+    TemporaryDirectory(const TemporaryDirectory&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+    const std::filesystem::path& Path() const { return root; }
+
+private:
+    std::filesystem::path original;
+    std::filesystem::path root;
+};
+
 static void CheckRelativeUnderLongDirectory() {
-    const auto original = std::filesystem::current_path();
     const std::wstring file = L"file_" + std::wstring(30, L'x');
-    if (original.native().size() + file.size() + 1 < 260) Require(Extend(file) == file);
-    const auto root = std::filesystem::temp_directory_path() / L"aps5_extended_path_test";
+    if (std::filesystem::current_path().native().size() + file.size() + 1 < 260) Require(Extend(file) == file);
+    const TemporaryDirectory temporary;
     const std::size_t target = 240;
-    Require(root.native().size() + 1 < target);
-    const auto directory = root / std::wstring(target - root.native().size() - 1, L'd');
+    Require(temporary.Path().native().size() + 1 < target);
+    const auto directory = temporary.Path() / std::wstring(target - temporary.Path().native().size() - 1, L'd');
     std::filesystem::create_directories(directory);
     std::filesystem::current_path(directory);
     const std::wstring current = std::filesystem::current_path().native();
-    const std::wstring extended = Extend(file);
-    std::filesystem::current_path(original);
-    std::filesystem::remove_all(root);
     Require(current.size() + file.size() + 1 >= 260);
-    Require(extended == L"\\\\?\\" + current + L"\\" + file);
+    Require(Extend(file) == L"\\\\?\\" + current + L"\\" + file);
 }
 
 int main() {
