@@ -56,7 +56,7 @@ static void APS5_VABI NotifyTerminationTracked(void*, int, std::size_t, void*) {
 static void* const Table[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateTerminationTracked), reinterpret_cast<void*>(ReleaseTerminationTracked), reinterpret_cast<void*>(NotifyTerminationTracked)};
 struct TerminationAllocator { void* const* table = Table; };
 int main(int argc, char** argv) {
-    Require(argc == 3, "Every interrupted teardown requires an independent module process");
+    Require(argc == 3 || argc == 4, "Every interrupted teardown requires an independent module process");
     TerminationAllocator allocator; TerminationTrace trace; trace.allocator = &allocator;
     trace.target = static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)); trace.after = std::strcmp(argv[2], "after") == 0;
     Require(trace.target <= 12 && (trace.after || std::strcmp(argv[2], "before") == 0), "The schedule must identify a release boundary");
@@ -83,6 +83,32 @@ int main(int argc, char** argv) {
                 _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, &parameter) == static_cast<int>(0x80848111) &&
                 !other && trace.live == expected && trace.releases == releases,
                 "Both owners must reject initialization after incomplete teardown without further allocator effects");
+        if (argc == 4) {
+            Require(std::strcmp(argv[3], "retry") == 0, "The additional schedule must request a returning reference retry");
+            std::vector<unsigned> tail;
+            switch (trace.target) {
+                case 1: Require(!trace.after || Legacy, "Only the legacy null-free after-throw retry returns"); tail.assign(order.begin(), order.end()); break;
+                case 2: Require(Legacy && !trace.after, "Only the legacy fallback before-throw retry returns"); tail.assign(order.begin(), order.end()); break;
+                case 5: tail = {0, 0, 0, 2, 6, 5, 4, 9, 8, 7, 1}; break;
+                case 6: tail = {0, 0, 0, 0, 6, 5, 4, 9, 8, 7, 1}; break;
+                case 8: tail = {0, 0, 0, 0, 4, 9, 8, 7, 1}; break;
+                case 9: tail = {0, 0, 0, 0, 0, 9, 8, 7, 1}; break;
+                case 11: tail = {0, 0, 0, 0, 0, 7, 1}; break;
+                case 12: tail = {0, 0, 0, 0, 0, 0, 1}; break;
+                default: Require(false, "This retry has no returning reference contract");
+            }
+            Require(!trace.after || (Legacy && trace.target == 1), "Returning resource retries must precede the rejected release");
+            auto expectedRetry = releases; expectedRetry.insert(expectedRetry.end(), tail.begin(), tail.end());
+            trace.target = 0;
+            Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.live.empty() && trace.releases == expectedRetry,
+                    "Returning teardown retry must reclaim the retained resources in exact reference order including null frees");
+            Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == static_cast<int>(0x80848110) && trace.releases == expectedRetry,
+                    "Completed retry must not repeat any release");
+            Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, &parameter) == 0 && other,
+                    "Completed retry must permit a fresh owner generation");
+            Require(_ZN3sce4Json11Initializer9terminateEv(&other) == 0 && !other && trace.live.empty(), "Fresh ownership must retain complete cleanup after interrupted retry");
+            return 0;
+        }
         if (!Legacy && trace.target < 2) Require(scePthreadMutexDestroy(static_cast<PthreadMutex*>(trace.allocations[11])) == 0, "The fixture must separately reclaim the untouched recovery mutex");
         if (trace.target < 3) Require(scePthreadMutexDestroy(static_cast<PthreadMutex*>(trace.allocations[10])) == 0, "The fixture must separately reclaim the untouched internal mutex");
         for (const auto& [pointer, generation] : trace.live) std::free(pointer);

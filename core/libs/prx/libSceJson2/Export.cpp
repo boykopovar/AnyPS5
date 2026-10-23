@@ -1435,7 +1435,7 @@ void ResetDefaults(bool releaseMissing = false) {
             const bool missing = type >= TypeString && !defaults.values[type].payload;
             Destroy(defaults.values[type]);
             if (releaseMissing && missing) Release(nullptr);
-        }
+        } else if (releaseMissing && type >= TypeString) Release(nullptr);
         defaults.values[type] = {};
         defaults.ready[type] = false;
     }
