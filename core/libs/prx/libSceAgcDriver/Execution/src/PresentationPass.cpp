@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
@@ -408,7 +409,7 @@ void PresentationPass::releaseDumpTarget(Slot& slot) noexcept {
     if (slot.dumpFramebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, slot.dumpFramebuffer, nullptr);
     if (slot.dumpView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, slot.dumpView, nullptr);
     if (slot.dumpImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, slot.dumpImage, nullptr);
-    if (slot.dumpMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, slot.dumpMemory, nullptr);
+    if (slot.dumpMemory) Graphics::MemoryAccounting::Free(context, slot.dumpMemory);
     slot.dumpFramebuffer = VK_NULL_HANDLE;
     slot.dumpView = VK_NULL_HANDLE;
     slot.dumpImage = VK_NULL_HANDLE;
@@ -437,7 +438,7 @@ void PresentationPass::ensureDumpTarget(Slot& slot, VkExtent2D extent) {
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &slot.dumpMemory), "vkAllocateMemory presentation dump");
+        Graphics::Check(Graphics::MemoryAccounting::Allocate(context, allocation, "presentation dump", &slot.dumpMemory), "vkAllocateMemory presentation dump");
         Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, slot.dumpImage, slot.dumpMemory, 0), "vkBindImageMemory presentation dump");
         slot.dumpView = createView(slot.dumpImage, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         slot.dumpFramebuffer = createFramebuffer(target(VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL).renderPass, slot.dumpView, extent);

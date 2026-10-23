@@ -132,7 +132,7 @@ private:
     static VkDeviceSize deviceBudget(const Context& context);
     static bool DeviceTiered(VkMemoryPropertyFlags properties);
     static std::size_t NextCapacity(std::size_t capacity);
-    VkDeviceSize destroy(const BufferAllocation& allocation) noexcept;
+    VkDeviceSize destroy(const BufferAllocation& allocation, bool retained = false) noexcept;
     VkDeviceSize trim();
     // Moves the tier's least recently used slot (the oldest front of its lists) to `evicted`; the
     // caller destroys those after releasing the mutex, so builds taking buffers on other threads
