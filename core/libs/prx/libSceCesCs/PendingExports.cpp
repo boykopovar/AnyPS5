@@ -107,21 +107,6 @@ int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharUCode(void) {
     return 0;
 }
 
-int APS5_VABI sceCesRefersUcsProfileAscii(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileAsciiWithKatakana(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileBs4730(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesRefersUcsProfileCp1253(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -162,16 +147,6 @@ int APS5_VABI sceCesRefersUcsProfileCp874(void) {
     return 0;
 }
 
-int APS5_VABI sceCesRefersUcsProfileGbT1988(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileGbT1988Tilde0x7e(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesRefersUcsProfileIso8859_11(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -193,41 +168,6 @@ int APS5_VABI sceCesRefersUcsProfileIso8859_7(void) {
 }
 
 int APS5_VABI sceCesRefersUcsProfileIso8859_8(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileJisX0201(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileJisX0201Katakana(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileJisX0201Roman(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileJisX0201RomanTilde0x7e(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileJisX0201Tilde0x7e(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileKsX1003(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
