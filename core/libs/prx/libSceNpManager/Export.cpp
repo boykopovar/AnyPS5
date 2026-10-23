@@ -839,6 +839,11 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
     return NP_POLL_ASYNC_FINISHED;
 }
 
+int APS5_VABI sceNpWaitAsync(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
     (void)callback;
     (void)userdata;
