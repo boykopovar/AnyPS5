@@ -1180,12 +1180,46 @@ void Construct(Value& v) {
     v.type = TypeNull;
 }
 
+template<typename TLink, typename TNext, typename TValue>
+void TransferChildren(Value& destination, TLink* first, TLink* head, TNext next, TValue value) {
+    auto* begin = static_cast<TLink**>(Allocate(sizeof(TLink*)));
+    if (begin) *begin = first;
+    for (;;) {
+        auto* end = static_cast<TLink**>(Allocate(sizeof(TLink*)));
+        if (end) *end = head;
+        const bool more = begin && end && *begin != *end;
+        Release(end);
+        if (!more) break;
+        if (!*begin) { Release(begin); NotImplemented_nid_no_patch(__func__); }
+        value(*begin).parent = &destination;
+        *begin = next(*begin);
+    }
+    Release(begin);
+}
+
 void TransferPayload(Node& destination, Node& source) {
-    if (source.type == TypeBoolean) destination.boolean = source.boolean;
-    else if (source.type != TypeNull) std::memcpy(&destination.payload, &source.payload, sizeof(destination.payload));
+    if (destination.auxiliary || source.auxiliary) return;
+    Clear(destination);
+    if (source.type <= TypeReal) AssignNode(destination, source);
+    else if (source.type <= TypeObject) {
+        destination.payload = source.payload;
+        source.payload = 0;
+        if (source.type == TypeArray && destination.array) {
+            auto* items = destination.array->items;
+            auto* head = items ? items->head : nullptr;
+            TransferChildren(destination, head ? head->next : nullptr, head,
+                [](ArrayLink* link) { return link->next; }, [](ArrayLink* link) -> Value& { return link->value; });
+        } else if (source.type == TypeObject && destination.object) {
+            auto* items = destination.object->items;
+            auto* head = items ? items->head : nullptr;
+            TransferChildren(destination, head ? head->left : nullptr, head,
+                [](ObjectLink* link) { return NextObjectLink(link); }, [](ObjectLink* link) -> Value& { return link->pair.value; });
+        }
+    } else return;
+    destination.parent = source.parent;
+    source.parent = nullptr;
     destination.type = source.type;
-    source.type = TypeNull;
-    BindChildren(destination);
+    Clear(source);
 }
 
 bool HasStorage(const String& value) { return value.text != nullptr; }
@@ -1868,6 +1902,42 @@ void AppendArray(Array* self, const Value* value) {
     if (operation.Finish()) self->items->PopBack();
 }
 
+ArrayLink* InsertArrayLink(ArrayStorage& items, ArrayLink* position, const Value& value) {
+    auto* link = static_cast<ArrayLink*>(Allocate(sizeof(ArrayLink)));
+    if (!link) return items.head;
+    try { CopyInto(link->value, value); }
+    catch (...) { Release(link); throw; }
+    link->previous = position->previous;
+    link->next = position;
+    position->previous->next = link;
+    position->previous = link;
+    ++items.count;
+    return link;
+}
+
+void PrependArray(Array* self, const Value* value) {
+    if (!self->items) return;
+    AllocationOperation operation;
+    if (!ModernValues()) {
+        if (self->items->head) InsertArrayLink(*self->items, self->items->head->next, *value);
+    } else {
+        ScopedValue copy;
+        copy.value.parent = self->items->Owner();
+        AssignNode(copy.value, *value);
+        Value empty{};
+        if (self->items->head) InsertArrayLink(*self->items, self->items->head->next, empty);
+        if (self->items->count) TransferPayload(self->items->head->next->value, copy.value);
+    }
+    if (operation.Finish() && self->items->head && self->items->count) {
+        auto* link = self->items->head->next;
+        link->next->previous = self->items->head;
+        self->items->head->next = link->next;
+        Destroy(link->value);
+        Release(link);
+        --self->items->count;
+    }
+}
+
 using ParserReadCallback = int (APS5_VABI*)(char&, void*);
 
 class Parser {
@@ -2322,6 +2392,32 @@ void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
 Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) { AssignArray(*self, *other); return self; }
+void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array* self, const Value* value) { PrependArray(self, value); }
+
+ArrayIterator* APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE(ArrayIterator* result, Array* self, const ArrayIterator* position, const Value* value) {
+    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
+    if (result->state) result->state->position = nullptr;
+    if (!self->items) return result;
+    if (!position || !position->state || !position->state->position || !self->items->head) {
+        Release(result->state); result->state = nullptr;
+        NotImplemented_nid_no_patch(__func__);
+    }
+    ArrayLink* inserted;
+    if (!ModernValues()) inserted = InsertArrayLink(*self->items, position->state->position, *value);
+    else {
+        ScopedValue copy;
+        copy.value.parent = self->items->Owner();
+        AssignNode(copy.value, *value);
+        AllocationOperation operation;
+        Value empty{};
+        inserted = InsertArrayLink(*self->items, position->state->position, empty);
+        if (!operation.Finish()) TransferPayload(inserted->value, copy.value);
+    }
+    if (inserted) { if (result->state) result->state->position = inserted; }
+    else { Release(result->state); result->state = nullptr; }
+    return result;
+}
+
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) { AppendArray(self, value); }
 
 ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) {
