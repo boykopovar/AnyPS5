@@ -1181,6 +1181,11 @@ void ReleaseValueAuxiliary(Value& v) {
 
 void Destroy(Value& v) {
     Clear(v);
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (!state.recoveryMutex) return;
+    }
     ReleaseValueAuxiliary(v);
     if (!ModernValues()) EraseLegacyHandler(v);
 }
