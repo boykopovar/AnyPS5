@@ -6,13 +6,12 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
-#include <locale>
 #include <mutex>
 #include <new>
 #include <type_traits>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -2174,6 +2173,46 @@ int SerializeCallbackValue(Value* value, String* destination, SerializationCallb
 
 using ParserReadCallback = int (APS5_VABI*)(char&, void*);
 
+double ParseDecimal(std::string_view text) {
+    std::size_t cursor = 0;
+    while (cursor < text.size() && (text[cursor] == ' ' || (text[cursor] >= '\t' && text[cursor] <= '\r'))) ++cursor;
+    double sign = 1.0;
+    while (cursor < text.size() && (text[cursor] == '+' || text[cursor] == '-')) {
+        if (text[cursor++] == '-') sign = -sign;
+    }
+    auto digit = [&](std::size_t index) { return index < text.size() && text[index] >= '0' && text[index] <= '9'; };
+    double magnitude = 0;
+    bool admitted = false;
+    while (digit(cursor)) {
+        volatile double scaled = magnitude * 10.0;
+        magnitude = scaled + (text[cursor++] - '0');
+        admitted = true;
+    }
+    if (cursor < text.size() && text[cursor] == '.') {
+        ++cursor;
+        double divisor = 10.0;
+        while (digit(cursor)) {
+            magnitude += (text[cursor++] - '0') / divisor;
+            divisor *= 10.0;
+            admitted = true;
+        }
+    }
+    if (!admitted) return 0;
+    if (cursor < text.size() && (text[cursor] == 'e' || text[cursor] == 'E' || text[cursor] == 'd' || text[cursor] == 'D')) {
+        ++cursor;
+        bool divide = false;
+        if (cursor < text.size() && (text[cursor] == '+' || text[cursor] == '-')) divide = text[cursor++] == '-';
+        if (!digit(cursor)) return 0;
+        std::uint32_t exponent = 0;
+        while (digit(cursor)) exponent = exponent * 10 + static_cast<unsigned>(text[cursor++] - '0');
+        while (exponent-- && magnitude != 0 && !std::isinf(magnitude)) {
+            if (divide) magnitude /= 10.0;
+            else magnitude *= 10.0;
+        }
+    }
+    return magnitude * sign;
+}
+
 class Parser {
 public:
     Parser(const char* text, std::size_t size) : text(text), end(text + size) {}
@@ -2330,19 +2369,9 @@ private:
                 }
             }
         }
-        double real = 0;
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), real);
-        bool converted = parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
-        if (parsed.ec == std::errc::result_out_of_range) {
-            std::istringstream stream(std::string{text});
-            stream.imbue(std::locale::classic());
-            stream >> real;
-            converted = !stream.fail() && stream.eof();
-        }
-        if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + std::string{text} + " overflows a double; the console's behaviour is unverified");
-        SetType(out, TypeReal);
-        out.real = real;
+        const double real = ParseDecimal(text);
         Admit(out);
+        AssignReal(out, real);
         return true;
     }
     bool value(Node& out) {

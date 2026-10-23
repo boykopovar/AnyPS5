@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include <bit>
 #include <cstddef>
 #include <clocale>
 #include <cmath>
@@ -264,16 +265,12 @@ static void ParseAndRoundTrip() {
     Require(nullTextRejected);
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "", 0) == JsonErrorParse);
     Require(_ZNK3sce4Json5Value7getTypeEv(&root) == TypeObject && _ZNK3sce4Json5Value5countEv(&root) == 8);
-    for (const char* overflow : {"1e309", "[-1e309]", "{\"a\":[1,1e400]}"}) {
+    for (const auto& [overflow, expected] : std::vector<std::pair<const char*, const char*>>{
+             {"1e309", "inf"}, {"[-1e309]", "[-inf]"}, {"{\"a\":[1,1e400]}", "{\"a\":[1,inf]}"}}) {
         Value partial{};
         _ZN3sce4Json5ValueC1Ev(&partial);
-        bool unverified = false;
-        try {
-            _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&partial, overflow, std::strlen(overflow));
-        } catch (const std::runtime_error& error) {
-            unverified = std::string(error.what()).find("unverified") != std::string::npos;
-        }
-        Require(unverified);
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&partial, overflow, std::strlen(overflow)) == 0);
+        Require(Serialize(partial) == expected);
         _ZN3sce4Json5ValueD1Ev(&partial);
     }
     _ZN3sce4Json5ValueD1Ev(&root);
@@ -1416,8 +1413,12 @@ static int NumericLocale() {
             ++failures;
         }
     };
-    for (const auto number : {1.5, -0.125, 1.25e30, std::numeric_limits<double>::max(),
-                              std::numeric_limits<double>::min(), std::numeric_limits<double>::denorm_min()}) {
+    for (const auto [number, expected] : std::vector<std::pair<double, std::uint64_t>>{
+             {1.5, UINT64_C(0x3ff8000000000000)}, {-0.125, UINT64_C(0xbfc0000000000000)},
+             {1.25e30, UINT64_C(0x462f8def8808b023)},
+             {std::numeric_limits<double>::max(), UINT64_C(0x7feffffffffffff9)},
+             {std::numeric_limits<double>::min(), UINT64_C(0x0010000000000003)},
+             {std::numeric_limits<double>::denorm_min(), UINT64_C(1)}}) {
         Value value{};
         _ZN3sce4Json5ValueC1Ed(&value, number);
         const auto text = Serialize(value);
@@ -1425,21 +1426,21 @@ static int NumericLocale() {
         Value parsed{};
         _ZN3sce4Json5ValueC1Ev(&parsed);
         const int result = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&parsed, text.c_str(), text.size());
-        check(result == 0 && *_ZNK3sce4Json5Value7getRealEv(&parsed) == number, "Numeric round trip", text.c_str());
+        check(result == 0 && std::bit_cast<std::uint64_t>(*_ZNK3sce4Json5Value7getRealEv(&parsed)) == expected, "Reference decimal conversion", text.c_str());
         _ZN3sce4Json5ValueD1Ev(&parsed);
         _ZN3sce4Json5ValueD1Ev(&value);
     }
-    for (const auto [text, number] : {std::pair{"1.5", 1.5}, {"-1.25e2", -125.0},
-                                    {"4.9406564584124654e-324", std::numeric_limits<double>::denorm_min()},
-                                    {"2.4703282292062327e-324", 0.0},
-                                    {"2.4703282292062328e-324", std::numeric_limits<double>::denorm_min()},
-                                    {"18446744073709551616", 18446744073709551616.0},
-                                    {"1e-999", 0.0}, {"-1e-999", -0.0}}) {
+    for (const auto [text, expected] : std::vector<std::pair<const char*, std::uint64_t>>{
+             {"1.5", UINT64_C(0x3ff8000000000000)}, {"-1.25e2", UINT64_C(0xc05f400000000000)},
+             {"4.9406564584124654e-324", UINT64_C(1)}, {"2.4703282292062327e-324", UINT64_C(0)},
+             {"2.4703282292062328e-324", UINT64_C(0)},
+             {"18446744073709551616", UINT64_C(0x43f0000000000000)},
+             {"1e-999", UINT64_C(0)}, {"-1e-999", UINT64_C(0x8000000000000000)}}) {
         Value value{};
         _ZN3sce4Json5ValueC1Ev(&value);
         const int result = _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, text, std::strlen(text));
         const auto parsed = *_ZNK3sce4Json5Value7getRealEv(&value);
-        check(result == 0 && parsed == number && std::signbit(parsed) == std::signbit(number), "Decimal-point parsing", text);
+        check(result == 0 && std::bit_cast<std::uint64_t>(parsed) == expected, "Decimal-point parsing", text);
         _ZN3sce4Json5ValueD1Ev(&value);
     }
     Value root{};
@@ -1451,13 +1452,8 @@ static int NumericLocale() {
     check(serialized == document, "Nested numeric serialization", serialized.c_str());
     check(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1,5", 3) == 0 && _ZNK3sce4Json5Value7getTypeEv(&root) == TypeUInteger &&
           *_ZNK3sce4Json5Value11getUIntegerEv(&root) == 1, "Stop at a decimal comma", "1,5");
-    bool overflow = false;
-    try {
-        _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1e309", 5);
-    } catch (const std::runtime_error&) {
-        overflow = true;
-    }
-    check(overflow, "Retain overflow rejection", "1e309");
+    check(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, "1e309", 5) == 0 &&
+          std::isinf(*_ZNK3sce4Json5Value7getRealEv(&root)), "Reference overflow admission", "1e309");
     _ZN3sce4Json5ValueD1Ev(&root);
     check(std::strcmp(std::localeconv()->decimal_point, ",") == 0, "Preserve host locale", selected);
     std::setlocale(LC_NUMERIC, previous.c_str());
