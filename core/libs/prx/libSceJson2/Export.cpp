@@ -2200,8 +2200,18 @@ void APS5_VABI _ZN3sce4Json12MemAllocatorC2Ev(void* self) {
     *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
 }
 
-void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void* self) {
-    *static_cast<void* const**>(self) = &JsonMemAllocatorVtable[2];
+void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void*) {}
+
+void APS5_VABI _ZN3sce4Json12MemAllocatorD1Ev(void*) {}
+
+void* APS5_VABI _ZN3sce4Json6MallocEm(std::size_t size) { return Allocate(size); }
+
+void APS5_VABI _ZN3sce4Json4FreeEPv(void* memory) { Release(memory); }
+
+int APS5_VABI _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(void*, void (APS5_VABI*)(int, ValueType, void*), void*) {
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    return state.allocation ? 0 : JsonErrorNotInitialized;
 }
 
 std::size_t _ZN3sce4Json6String4nposE = static_cast<std::size_t>(-1);
