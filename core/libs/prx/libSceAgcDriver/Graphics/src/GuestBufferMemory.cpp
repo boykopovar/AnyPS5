@@ -307,7 +307,7 @@ HostImports& Imports() {
 
 #ifdef _WIN32
 void waitSettleBatch(const ImportSettle& settle, VkDevice device, const SettleBatch& batch) {
-    if (batch.busy && settle.waitForFences != nullptr) static_cast<void>(settle.waitForFences(device, 1, &batch.fence, VK_TRUE, 10'000'000'000ull));
+    if (batch.busy && settle.waitForFences != nullptr) Check(settle.waitForFences(device, 1, &batch.fence, VK_TRUE, 60'000'000'000ull), "vkWaitForFences (settle batch)");
 }
 
 bool settleBatchRunning(const ImportSettle& settle, VkDevice device, const SettleBatch& batch) {
@@ -1004,7 +1004,7 @@ const char* prepareSettleBatch(const Context& context, ImportSettle& settle, Set
     }
     if (batch.commands == VK_NULL_HANDLE) {
         VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocate.commandPool = context.settlePool;
+        allocate.commandPool = context.pool;
         allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocate.commandBufferCount = 1;
         if ((result = context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocate, &batch.commands)) != VK_SUCCESS) {
@@ -1054,9 +1054,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if ((result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(batch.commands, &begin)) != VK_SUCCESS) return fail("vkBeginCommandBuffer (settle batch)");
     const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
-    const bool otherFamily = context.settleFamily != context.queueFamily;
-    const auto createBuffer = otherFamily ? context.Function<PFN_vkCreateBuffer>("vkCreateBuffer") : nullptr;
-    const auto bindBufferMemory = otherFamily ? context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory") : nullptr;
+    RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
     std::size_t consumed = 0;
     for (; consumed < state.settleWanted.size() && batch.bases.size() < settleBatchCopies; ++consumed) {
         const auto base = state.settleWanted[consumed];
@@ -1067,38 +1065,19 @@ void submitSettleBatch(const Context& context, HostImports& state) {
             state.pendingSettles.erase(settle);
             continue;
         }
-        VkBuffer source = import->second.buffer;
-        if (otherFamily) {
-            VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
-            external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-            VkBufferCreateInfo aliasInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &external};
-            aliasInfo.size = std::min<VkDeviceSize>(import->second.bytes, 65536);
-            aliasInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-            VkBuffer alias = VK_NULL_HANDLE;
-            if (createBuffer(context.device, &aliasInfo, nullptr, &alias) != VK_SUCCESS) {
-                state.pendingSettles.erase(settle);
-                continue;
-            }
-            if (bindBufferMemory(context.device, alias, import->second.memory, 0) != VK_SUCCESS) {
-                destroyBuffer(context.device, alias, nullptr);
-                state.pendingSettles.erase(settle);
-                continue;
-            }
-            batch.aliases.push_back(alias);
-            source = alias;
-        }
         const VkBufferCopy region{0, (VkDeviceSize{index} * settleBatchCopies + batch.bases.size()) * 4u, 4};
-        copy(batch.commands, source, deviceSettle.batchTarget, 1, &region);
+        copy(batch.commands, import->second.buffer, deviceSettle.batchTarget, 1, &region);
         settle->second = PendingSettle{SettlePhase::Submitted, index, context.device};
         batch.bases.push_back(base);
     }
     state.settleWanted.erase(state.settleWanted.begin(), state.settleWanted.begin() + static_cast<std::ptrdiff_t>(consumed));
+    RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_WRITE_BIT);
     if ((result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(batch.commands)) != VK_SUCCESS) return fail("vkEndCommandBuffer (settle batch)");
     if (batch.bases.empty()) return;
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &batch.commands;
-    if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.settleQueue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
+    if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
     batch.busy = true;
     state.settlesSubmitted += batch.bases.size();
 }

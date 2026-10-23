@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -43,6 +45,62 @@ constexpr char kLayerVersion23[] =
 
 void Require(bool condition) {
     if (!condition) std::abort();
+}
+
+template <typename TRange>
+concept AssignableMemory = requires(ShaderRecompiler::GuestContext& context, TRange&& range) {
+    context.memory = std::forward<TRange>(range);
+};
+
+using Region = ShaderRecompiler::MemoryRegion;
+using Regions = std::vector<Region>;
+using RegionArray = std::array<Region, 1>;
+using RegionView = ShaderRecompiler::MemoryRegionView;
+
+static_assert(!AssignableMemory<Regions>);
+static_assert(!AssignableMemory<const Regions>);
+static_assert(!AssignableMemory<RegionArray>);
+static_assert(!AssignableMemory<std::initializer_list<Region>>);
+static_assert(AssignableMemory<Regions&> && AssignableMemory<const Regions&>);
+static_assert(AssignableMemory<RegionArray&> && AssignableMemory<const RegionArray&>);
+static_assert(AssignableMemory<std::span<const Region>> && AssignableMemory<RegionView>);
+static_assert(sizeof(RegionView) == sizeof(std::span<const Region>));
+static_assert(alignof(RegionView) == alignof(std::span<const Region>));
+static_assert(std::is_trivially_copyable_v<RegionView>);
+static_assert(std::is_nothrow_constructible_v<RegionView, std::span<const Region>>);
+static_assert([] {
+    const RegionArray owned{{{0x1000u, {}}}};
+    const RegionView view{std::span<const Region>(owned)};
+    return view.size() == 1u && view.front().guestAddress == 0x1000u;
+}());
+
+void VerifyMemoryView() {
+    const std::array<std::byte, 4> bytes{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    Regions owned{{0x1000u, bytes}};
+    const Regions frozen = owned;
+    Region array[]{{0x2000u, bytes}};
+    RegionArray standard{{{0x3000u, bytes}}};
+    ShaderRecompiler::RecompileRequest request{};
+    request.context.memory = owned;
+    Require(request.context.memory.data() == owned.data());
+    owned.front().guestAddress = 0x4000u;
+    Require(request.context.memory.front().guestAddress == 0x4000u);
+    request.context.memory = frozen;
+    Require(request.context.memory.data() == frozen.data());
+    request.context.memory = array;
+    Require(request.context.memory.data() == array);
+    request.context.memory = standard;
+    Require(request.context.memory.data() == standard.data());
+    request.context.memory = std::span<const Region>(owned).first(1);
+    const auto copy = request;
+    Require(copy.context.memory.data() == owned.data() && copy.context.memory.front().bytes.data() == bytes.data());
+    request.context.memory = {owned.data(), owned.size()};
+    const ShaderRecompiler::RequestSerializer serializer;
+    const auto replay = serializer.Deserialize(serializer.Serialize(request));
+    Require(replay.request.context.memory.size() == 1u && replay.request.context.memory.front().guestAddress == 0x4000u);
+    Require(std::ranges::equal(replay.request.context.memory.front().bytes, bytes));
+    request.context.memory = {};
+    Require(request.context.memory.empty());
 }
 
 void InsertMeshBarycentricFlag(std::vector<std::uint8_t>& bytes) {
@@ -99,6 +157,7 @@ std::string EncodeBase64(const std::vector<std::uint8_t>& bytes) {
 }
 
 int main() {
+    VerifyMemoryView();
     const ShaderRecompiler::RequestSerializer serializer;
 
     const auto historical = serializer.Deserialize(kHistoricalVersion21);

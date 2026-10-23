@@ -2,6 +2,8 @@
 
 ### Build
 
+- [GuestContext memory](../../../core/shader/recompiler/Recompiler.hpp) rejects direct construction from temporary owning ranges. The view does not own the region array or its referenced bytes. That storage must outlive the request and its consumers, including when supplied through named containers, existing spans or pointers.
+
 - winpthreads initializes a statically initialized rwlock on its first lock and fails a concurrent first lock with `EINVAL`, which `std::shared_mutex` and `std::shared_timed_mutex` ignore, so that lock does not exclude. The host `std::shared_mutex` objects in [Recompiler.cpp](../../../core/shader/recompiler/Recompiler.cpp) are locked once when created. A new host `std::shared_mutex` used on Windows needs the same.
 
 - The bundled [SPIRV-Tools build](../../../core/shader/recompiler/PatchSpirvTools.cmake) replaces the redundancy-elimination source with a build-directory copy. A depth-first traversal keeps one value map and removes each subtree's added values on return, avoiding growing map copies and preventing sibling values from leaking into one another. This extends the processed-map release fix in [SPIRV-Tools #6962](https://github.com/KhronosGroup/SPIRV-Tools/pull/6962). Remove the patch when the pinned dependency has equivalent copy-free traversal; #6962 alone still copies maps for sibling branches. System-dependency builds need an equivalent fix in their installed package. Optimization passes and validation remain unchanged; wider shader and game performance measurement is needed.

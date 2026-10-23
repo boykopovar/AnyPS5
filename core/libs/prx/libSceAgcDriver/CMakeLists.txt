@@ -1538,6 +1538,13 @@ if(BUILD_TESTING)
         set_tests_properties(agc_import_watch_other_family PROPERTIES SKIP_RETURN_CODE 77)
         add_test(NAME agc_import_settle_deferred COMMAND agc_driver_recorder_tests --deferred-settle-only)
         add_test(NAME agc_import_settle_deferred_other_family COMMAND agc_driver_recorder_tests --deferred-settle-other-family-only)
+        add_test(NAME agc_import_settle_write_order COMMAND agc_driver_recorder_tests --settle-write-order-only)
+        add_test(NAME agc_import_settle_write_order_other_family COMMAND agc_driver_recorder_tests --settle-write-order-other-family-only)
+        add_test(NAME agc_import_settle_wait_failure COMMAND agc_driver_recorder_tests --settle-wait-failure-only)
+        set_tests_properties(agc_import_settle_write_order agc_import_settle_write_order_other_family agc_import_settle_wait_failure PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 30
+            FAIL_REGULAR_EXPRESSION "SYNC-HAZARD-|VUID-"
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_test(NAME agc_import_settle_first_use COMMAND agc_driver_recorder_tests --settle-first-use-only)
         add_test(NAME agc_import_settle_earlier_import COMMAND agc_driver_recorder_tests --settle-earlier-import-only)
         add_test(NAME agc_import_settle_retire COMMAND agc_driver_recorder_tests --settle-retire-only)
@@ -2260,6 +2267,8 @@ target_include_directories(agc_driver_packed_float_color_target_tests PRIVATE $<
 target_link_libraries(agc_driver_job_manager_compute_tests PRIVATE libSceJobManager libSceAgc libkernel)
 
 target_include_directories(agc_driver_packed_unorm_color_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
+target_include_directories(agc_driver_packed_unorm4444_color_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_include_directories(agc_driver_color1555_target_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 

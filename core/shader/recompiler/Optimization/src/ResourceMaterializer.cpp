@@ -2334,7 +2334,7 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
     PrepareImageModes(plan.info);
     plan.uniformFill = source.uniformFill;
     for (auto& block : plan.controlFlow) {
-        if (block.condition != nullptr && !Detail::Evaluator::MayEvaluate(source, block.condition)) block.condition = nullptr;
+        if (block.condition != nullptr && !Detail::Evaluator::MayDecide(source, block.condition)) block.condition = nullptr;
     }
     ownPlanValues(plan);
     const auto addSource = [&plan](std::uint32_t index) {
