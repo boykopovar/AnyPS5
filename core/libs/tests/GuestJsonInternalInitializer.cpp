@@ -27,6 +27,7 @@ void APS5_VABI _ZN3sce4Json12MemAllocatorD1Ev(void*);
 void APS5_VABI _ZN3sce4Json12MemAllocatorD2Ev(void*);
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
+int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const void*);
 int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 }
 static void Require(bool valid, const char* message) {
@@ -44,15 +45,36 @@ struct EntryTrace {
     int notifiedState = 0;
     int firstRequestState = 0;
     int laterRequestState = 0;
+    void* owner = nullptr;
+    unsigned allocationReentries = 0;
+    unsigned notificationReentries = 0;
+    unsigned releaseReentries = 0;
 };
+static void CheckReentry(EntryTrace& trace) {
+    std::uint8_t other[]{0, 0x19, 0x28, 0x37};
+    const auto active = *static_cast<const std::uint8_t*>(trace.owner);
+    constexpr auto already = static_cast<int>(0x80848111);
+    constexpr auto missing = static_cast<int>(0x80848110);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(trace.owner, nullptr) == already &&
+            _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(trace.owner, nullptr) == already,
+            "Allocator callback reentry must reject both duplicate initialization forms before parameter validation");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(other, nullptr) == already &&
+            _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(other, nullptr) == already,
+            "An allocator callback must not publish a competing initializer while the module context is owned");
+    Require(_ZN3sce4Json11Initializer9terminateEv(other) == missing && other[0] == 0 && other[1] == 0x19 && other[2] == 0x28 && other[3] == 0x37,
+            "An inactive callback-local initializer must not terminate another initializer's resources");
+    Require(*static_cast<const std::uint8_t*>(trace.owner) == active, "Rejected callback lifecycle operations must preserve the owning initializer active byte");
+}
 static void APS5_VABI Info(int, std::int32_t, void*) { Require(false, "The reference allocator-info setter must not install or invoke the supplied callback"); }
 static int InfoState() { return _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9ValueTypeEPvES3_(nullptr, Info, nullptr); }
 static void* APS5_VABI EntryAllocate(void* self, std::size_t size, void* context) {
     auto& trace = *static_cast<EntryTrace*>(context);
     Require(self == trace.expectedAllocator, "Allocation dispatch must preserve the allocator receiver and user context");
-    if (trace.requests.empty()) trace.firstRequestState = InfoState();
-    else trace.laterRequestState = InfoState();
+    const int admission = InfoState();
+    if (trace.requests.empty()) trace.firstRequestState = admission;
+    else trace.laterRequestState = admission;
     trace.requests.push_back(size);
+    if (trace.owner && admission == 0) { CheckReentry(trace); ++trace.allocationReentries; }
     if (trace.reject || trace.budget == 0) return nullptr;
     if (trace.budget > 0) --trace.budget;
     void* pointer = std::malloc(size ? size : 1);
@@ -63,12 +85,14 @@ static void APS5_VABI EntryFree(void* self, void* memory, void* context) {
     auto& trace = *static_cast<EntryTrace*>(context);
     Require(self == trace.expectedAllocator, "Free dispatch must preserve the allocator receiver and user context");
     trace.frees.push_back(memory);
+    if (trace.owner) { CheckReentry(trace); ++trace.releaseReentries; }
     if (memory) { Require(trace.live.erase(memory) == 1, "Every allocation must be released exactly once through its allocator"); std::free(memory); }
 }
 static void APS5_VABI EntryNotify(void* self, int error, std::size_t size, void* context) {
     auto& trace = *static_cast<EntryTrace*>(context);
     Require(self == trace.expectedAllocator && static_cast<unsigned>(error) == 0x80848102, "Allocation failure must notify the owning allocator with the Json2 error");
     ++trace.notices; trace.failedSize = size; trace.notifiedState = InfoState();
+    if (trace.owner) { CheckReentry(trace); ++trace.notificationReentries; }
 }
 int main() {
     constexpr auto already = static_cast<int>(0x80848111);
@@ -77,6 +101,7 @@ int main() {
     constexpr auto noMemory = static_cast<int>(0x80848102);
     void* table[]{nullptr, nullptr, reinterpret_cast<void*>(&EntryAllocate), reinterpret_cast<void*>(&EntryFree), reinterpret_cast<void*>(&EntryNotify)};
     void** allocator = table;
+    unsigned allocationReentries = 0, notificationReentries = 0, releaseReentries = 0;
     for (std::int32_t option : {0, 1, 2, -1}) {
         for (int budget = 0; budget <= 12; ++budget) {
             EntryTrace trace; trace.expectedAllocator = &allocator; trace.budget = budget;
@@ -87,6 +112,7 @@ int main() {
             Require(object[0] == 0 && object[1] == 0x19 && object[2] == 0x28 && object[3] == 0x37, "Internal constructors must initialize only the active byte");
             Require(_ZN3sce4Json19InternalInitializer19terminate_staticlibEv(object) == missing, "Inactive internal termination must return not-initialized");
             Require(_ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13InitParameterENS1_10InitOptionE(object, nullptr, option) == invalid, "Internal initialization must reject a missing parameter");
+            trace.owner = object;
             Parameter empty{};
             Require(_ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13InitParameterENS1_10InitOptionE(object, &empty, option) == noMemory, "Legacy internal initialization must report a missing allocator as out-of-memory");
             const int result = _ZN3sce4Json19InternalInitializer20initialize_staticlibEPKNS0_13InitParameterENS1_10InitOptionE(object, &parameter, option);
@@ -120,7 +146,11 @@ int main() {
             _ZN3sce4Json19InternalInitializerD1Ev(object);
             _ZN3sce4Json19InternalInitializerD2Ev(object);
             Require(trace.frees.size() == frees && InfoState() == missing, "Repeated internal destruction must not dispatch stale frees");
+            allocationReentries += trace.allocationReentries;
+            notificationReentries += trace.notificationReentries;
+            releaseReentries += trace.releaseReentries;
         }
     }
+    Require(allocationReentries && notificationReentries && releaseReentries, "Lifecycle rejection must be exercised through actual allocate, notify and free callbacks");
     return 0;
 }
