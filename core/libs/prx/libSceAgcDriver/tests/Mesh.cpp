@@ -506,6 +506,8 @@ int main() {
         };
         drawIndirect(static_cast<std::uint32_t>(Indices.size()), 1, 0);
         CheckTriangles("indirect indexed triangle list");
+        drawIndirect(static_cast<std::uint32_t>(Indices.size()), 6, 0);
+        CheckTriangles("indirect indexed triangle list with six instances");
         drawIndirect(3u * 10u, 1, 3u * 5u);
         for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
             const auto offset = CellPixel(triangle);

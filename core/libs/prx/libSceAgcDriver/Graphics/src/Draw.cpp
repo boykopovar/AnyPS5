@@ -731,7 +731,7 @@ constexpr std::array<const char*, PhaseCount> DrawPhaseNames{"validate", "vertex
 enum SyncReason : std::size_t { SyncNone, SyncNotResident, SyncNoRecorder, SyncDisabled, SyncCopiedWrites, SyncLease, SyncCount };
 constexpr std::array<const char*, SyncCount> SyncReasonNames{"none", "non-resident target", "no recorder", "disabled", "copied writes", "lease"};
 constexpr std::size_t IndirectPathCount = static_cast<std::size_t>(IndirectDrawPath::Count);
-constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown"};
+constexpr std::array<const char*, IndirectPathCount> IndirectDrawPathNames{"gpu-side", "patched SGPR not folded", "fetch offset unknown", "non-vertex path", "GE_INDX_OFFSET", "draw index", "vertex range too large", "feature gap", "pending image results", "pending label or copied write", "not imported", "disabled", "index range not fully readable", "index limit unknown", "mesh program run as compute"};
 
 // What became of one draw, for the totals.
 struct DrawOutcome {
@@ -1318,7 +1318,7 @@ MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecom
     Require(mesh.primitivesPerGroup != 0, "mesh pipeline groups no primitive (zero primitives per group)");
     if (asCompute) {
         const auto indexGroups = indexCount >= inputSize ? (indexCount - inputSize) / step / mesh.primitivesPerGroup + 1u : 0u;
-        return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.limits.maxComputeWorkGroupCount[0], context.limits.maxComputeWorkGroupCount[1], indexGroups * MeshComputeIndirectInstances};
+        return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.limits.maxComputeWorkGroupCount[0], context.limits.maxComputeWorkGroupCount[1], std::numeric_limits<std::uint32_t>::max()};
     }
     return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.meshLimits.maxMeshWorkGroupCount[0], context.meshLimits.maxMeshWorkGroupCount[1], context.meshLimits.maxMeshWorkGroupTotalCount};
 }
@@ -2723,8 +2723,17 @@ std::shared_ptr<Buffer> recordMeshCompute(const Context& context, VkCommandBuffe
     const auto& program = *shaders.front().program;
     const auto recordBytes = static_cast<std::uint64_t>(ShaderRecompiler::MeshRecordBytes(static_cast<std::uint32_t>(program.parameterExports.size()), program.meshRecordLayout));
     const auto groupBytes = 4ull * mesh.outputPrimitiveSize * mesh.maxPrimitives + recordBytes * mesh.maxVertices;
-    const auto groups = indirect ? static_cast<std::uint64_t>(MeshArgumentRulesFor(context, mesh, draw.indexCount, true).maxTotal) : static_cast<std::uint64_t>(inputs.meshGroups) * draw.instanceCount;
-    auto output = std::make_shared<Buffer>(context, static_cast<std::size_t>(ShaderRecompiler::MeshOutputHeaderBytes + std::max<std::uint64_t>(groups, 1u) * groupBytes), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    MeshArguments resolved{};
+    if (indirect) std::memcpy(&resolved, arguments.Bytes().data(), sizeof(resolved));
+    const auto groups = indirect ? static_cast<std::uint64_t>(resolved.groups) * resolved.instances : static_cast<std::uint64_t>(inputs.meshGroups) * draw.instanceCount;
+    const auto outputBytes = ShaderRecompiler::MeshOutputHeaderBytes + std::max<std::uint64_t>(groups, 1u) * groupBytes;
+    const auto outputLimit = std::min<std::uint64_t>(MeshComputeOutputLimitBytes, context.limits.maxStorageBufferRange);
+    if (outputBytes > outputLimit) {
+        char text[256];
+        std::snprintf(text, sizeof(text), "a mesh-path draw run as compute writes %llu groups of %llu bytes, past the %llu-byte output limit of the compute pass", static_cast<unsigned long long>(groups), static_cast<unsigned long long>(groupBytes), static_cast<unsigned long long>(outputLimit));
+        throw std::runtime_error(text);
+    }
+    auto output = std::make_shared<Buffer>(context, static_cast<std::size_t>(outputBytes), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     const auto address = output->DeviceAddress();
     std::memcpy(arguments.Bytes().data() + ShaderRecompiler::MeshOutputAddressDword * 4u, &address, sizeof(address));
     context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, output->Handle(), 0, ShaderRecompiler::MeshOutputHeaderBytes, 0u);
@@ -3631,6 +3640,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         if (!gpuIndirectDraws) indirect.path = IndirectDrawPath::Disabled;
         else if (inputs.listRestartPrimitive != 0) indirect.path = IndirectDrawPath::FeatureGap;
         else indirect.path = decide(args->arguments, static_cast<std::size_t>(rangeBytes), indirect.argumentImport);
+        if (indirect.path == IndirectDrawPath::Gpu && MeshDrawRunsAsCompute(context, state)) indirect.path = IndirectDrawPath::MeshCompute;
         if (indirect.path == IndirectDrawPath::Gpu && args->countIndirect) {
             Require(context.drawIndirectCount, "indirect draw count without VK_KHR_draw_indirect_count must be resolved by the driver");
             indirect.path = decide(args->countAddress, 4, indirect.countImport);
