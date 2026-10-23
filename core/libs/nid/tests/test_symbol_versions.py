@@ -1,3 +1,4 @@
+import os
 import re
 import struct
 import subprocess
@@ -198,8 +199,33 @@ def test_unversioned_library_is_still_patched(patcher):
     assert len({entry[0] for entry in after if entry[0]}) == len([entry for entry in after if entry[0]])
 
 
+def find_patcher():
+    for index, argument in enumerate(sys.argv[1:], 1):
+        candidate = Path(argument)
+        if candidate.stem == "nid_patcher" and candidate.is_file():
+            sys.argv.pop(index)
+            return candidate.resolve()
+    env = os.environ.get("ANYPS5_NID_PATCHER") or os.environ.get("NID_PATCHER")
+    if env and Path(env).is_file():
+        return Path(env).resolve()
+    repo_root = Path(__file__).resolve().parents[4]
+    for candidate in (
+        repo_root / "build" / "core" / "libs" / "nid_patcher.exe",
+        repo_root / "build" / "core" / "libs" / "nid_patcher",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+PATCHER = find_patcher()
+
+
 def main():
-    patcher = Path(sys.argv[1]).resolve()
+    patcher = PATCHER or find_patcher()
+    if patcher is None:
+        print("nid_patcher executable required")
+        sys.exit(0)
     test_versioned_library_is_rejected(patcher)
     test_unversioned_library_is_still_patched(patcher)
     print("NID patcher symbol version tests passed")

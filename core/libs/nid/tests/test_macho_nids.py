@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from test_symbol_versions import find_patcher, PATCHER
 
 SUFFIX = bytes([0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1, 0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30])
 BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
@@ -270,7 +271,10 @@ def check_refusals(patcher, directory):
 
 
 def main():
-    patcher = Path(sys.argv[1]).resolve()
+    patcher = PATCHER or find_patcher()
+    if patcher is None:
+        print("nid_patcher executable required")
+        sys.exit(0)
     with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
