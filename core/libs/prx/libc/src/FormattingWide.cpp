@@ -82,6 +82,18 @@ template<class TValue> void AppendNumber(std::u16string& out, const std::string&
     out.append(text.begin(), text.begin() + size);
 }
 
+std::u16string WideNanText(const std::string& spec, bool negative, bool upper) {
+    char16_t sign = negative ? u'-' : u'\0';
+    for (std::size_t index = 1; !negative && index < spec.size() && std::strchr("-+ #0", spec[index]); ++index) {
+        if (spec[index] == '+') sign = u'+';
+        else if (spec[index] == ' ' && sign == u'\0') sign = u' ';
+    }
+    std::u16string text;
+    if (sign != u'\0') text.push_back(sign);
+    text += upper ? u"NAN" : u"nan";
+    return text;
+}
+
 void AppendPadded(std::u16string& out, const std::u16string& text, bool left, int width) {
     const std::size_t pad = width > 0 && static_cast<std::size_t>(width) > text.size() ? static_cast<std::size_t>(width) - text.size() : 0;
     if (!left) out.append(pad, u' ');
@@ -176,7 +188,9 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             const bool hexadecimal = narrow == 'a' || narrow == 'A';
             if (length == "L") {
                 const long double value = args.Next<long double>();
-                if (std::isfinite(value)) {
+                if (std::isnan(value)) {
+                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
+                } else if (std::isfinite(value)) {
                     const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
                     out.append(text.begin(), text.end());
                 } else {
@@ -185,7 +199,9 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
                 const double value = args.Next<double>();
-                if (std::isfinite(value)) {
+                if (std::isnan(value)) {
+                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
+                } else if (std::isfinite(value)) {
                     const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
                     out.append(text.begin(), text.end());
                 } else {

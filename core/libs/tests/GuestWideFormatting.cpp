@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -316,9 +317,18 @@ static void CheckAlternateOctalZero() {
     Require(snwprintf_s_nid_postfix(buffer, 1, u"%#.0o", 0u) == 1 && buffer[0] == 0 && buffer[1] == u'y', "octal zero bounded output");
 }
 
+static void CheckNanSign() {
+    char16_t buffer[64];
+    Require(swprintf_nid_postfix(buffer, 64, u"[%f][%+f][% F][%5.1e]", -NAN, -NAN, NAN, -NAN) == 25, "NaN sign length");
+    Require(buffer == std::u16string(u"[-nan][-nan][ NAN][ -nan]"), "NaN sign");
+    Require(swprintf_nid_postfix(buffer, 64, u"[%-6g][%06a][%LG][%+f][%+G]", NAN, -NAN, -static_cast<long double>(NAN), -INFINITY, NAN) == 34, "NaN flags length");
+    Require(buffer == std::u16string(u"[nan   ][  -nan][-NAN][-inf][+NAN]"), "NaN flags");
+}
+
 int main() {
     CheckAlternateOctalZero();
     CheckBounded();
+    CheckNanSign();
     CheckPositional();
     CheckPointer();
     CheckCount();
