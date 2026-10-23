@@ -2389,11 +2389,13 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
     // FlushPending of their own.
     if (Graphics::AnyShadowedOverlaps(address, bytes.size())) Graphics::PublishShadow(address, bytes.size(), Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
-    // The store on the GPU, into the open batch: everything recorded so far completes before it,
-    // and it is visible to the host after. The barriers belong to the recorder's store run: one
-    // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
+    // The store on the GPU, into the open batch: pending prior data stores (such as alias copies)
+    // are flushed before the label is queued, while subsequent back-to-back labels can still batch
+    // or flush based on label run configuration. The barriers belong to the recorder's store run:
+    // one pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
     // stores of a run against each other and against the work before and after, the queued DCC
     // key stores included).
+    recorder.FlushStores();
     const auto recordStore = [&] { recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address); };
     // Only a write-back that can land over these bytes (a listed copied writer of the range, as
     // FillBuffer tests) puts the label behind the completions; any other pending completion

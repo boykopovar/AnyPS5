@@ -272,6 +272,8 @@ public:
     // before; APS5_NO_LABEL_RUNS=1 gives every store barriers of its own.
     void RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const std::byte> bytes, std::uint64_t address);
     bool HasQueuedStores() const { return open != nullptr && !open->run.queued.empty(); }
+    bool HasOpenStoreRun() const { return open != nullptr && open->run.open; }
+    bool HasPendingStores() const { return open != nullptr && (open->run.open || !open->run.queued.empty()); }
     bool QueuedStoreOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether `overlaps(begin, end)` holds for a queued store's guest range.
     bool AnyQueuedStore(const std::function<bool(std::uint64_t, std::uint64_t)>& overlaps) const;

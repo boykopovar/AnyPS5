@@ -1817,7 +1817,7 @@ bool Recorder::AnyQueuedStore(const std::function<bool(std::uint64_t, std::uint6
 }
 
 void Recorder::FlushStores() {
-    if (open == nullptr || open->run.queued.empty()) return;
+    if (!HasPendingStores()) return;
     closeStoreRun(false);
 }
 
