@@ -79,4 +79,8 @@ int APS5_VABI UI_method_set_closer_nid_postfix(LibreSslUiMethod* method, UiSessi
     return 0;
 }
 
+UiSessionFunction APS5_VABI UI_method_get_closer_nid_postfix(const LibreSslUiMethod* method) {
+    return method ? method->closeSession : nullptr;
+}
+
 }
