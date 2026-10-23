@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <stdexcept>
 #include <vector>
 
 struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint32_t reserved; std::int32_t type; };
@@ -29,6 +30,22 @@ int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEP
 int APS5_VABI _ZN3sce4Json5Value22setSpecialFloatHandlerEPFKS1_NS0_12FunctionTypeEdPS2_PvPbES5_(Value*, FloatHandler, void*);
 int APS5_VABI _ZN3sce4Json5Value30setElementAccessFailureHandlerEPFviPKNS0_6StringEPKmPKS1_S8_PvES9_(Value*, ElementHandler, void*);
 }
+#if defined(JSON2_DESTRUCTION_LEGACY_SDK)
+extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
+    static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
+    return words;
+}
+static constexpr bool LegacySdk = true;
+static constexpr unsigned ModuleResources = 11;
+static constexpr unsigned AuxiliaryBytes = 24;
+static constexpr unsigned ShapeCount = 3;
+#else
+static constexpr bool LegacySdk = false;
+static constexpr unsigned ModuleResources = 12;
+static constexpr unsigned AuxiliaryBytes = 72;
+static constexpr unsigned ShapeCount = 4;
+#endif
+static constexpr unsigned ModuleFreeCalls = 12;
 static void Require(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
@@ -43,6 +60,9 @@ struct DestructionTrace {
     unsigned target = 0;
     unsigned calls = 0;
     unsigned terminations = 0;
+    unsigned refusals = 0;
+    unsigned nullCalls = 0;
+    bool rejectTermination = false;
     bool observing = false;
     std::vector<std::size_t> releases;
     std::vector<std::size_t> moduleReleases;
@@ -64,7 +84,7 @@ static void APS5_VABI FreeDestruction(void* receiver, void* memory, void* contex
     Require(receiver == trace.receiver, "Composite cleanup must preserve allocator receiver and context even through module termination");
     if (trace.observing) {
         ++trace.calls;
-        Require(memory != nullptr, "Successful composite and module teardown must release their measured nonnull resources");
+        if (!memory) { Require(LegacySdk, "Only the measured legacy module cleanup may forward a null free"); ++trace.nullCalls; return; }
         const auto identity = trace.live.at(memory);
         if (trace.module.contains(memory)) {
             Require(trace.module.at(memory) == identity, "Nested module termination must retain its original allocation generations");
@@ -74,11 +94,20 @@ static void APS5_VABI FreeDestruction(void* receiver, void* memory, void* contex
             trace.releases.push_back(identity - trace.sourceBase);
             if (trace.target && trace.releases.size() == trace.target) {
                 trace.target = 0;
-                auto expected = trace.live;
-                for (const auto& [pointer, generation] : trace.module) Require(expected.erase(pointer) == 1, "Callback termination must begin with every original module resource still live");
-                Require(_ZN3sce4Json11Initializer9terminateEv(trace.owner) == 0 && *trace.owner == 0 && trace.live == expected,
-                        "Composite free callbacks must retain reference-supported module termination while preserving all remaining source allocations including the current release");
-                ++trace.terminations;
+                if (trace.rejectTermination) {
+                    const auto before = trace.live;
+                    bool refused = false;
+                    try { _ZN3sce4Json11Initializer9terminateEv(trace.owner); }
+                    catch (const std::runtime_error& error) { Require(std::strstr(error.what(), "terminate"), "Unsafe legacy cleanup termination must use the explicit unsupported boundary"); refused = true; }
+                    Require(refused && *trace.owner == 1 && trace.live == before, "Legacy auxiliary cleanup must reject callback termination before changing module ownership");
+                    ++trace.refusals;
+                } else {
+                    auto expected = trace.live;
+                    for (const auto& [pointer, generation] : trace.module) Require(expected.erase(pointer) == 1, "Callback termination must begin with every original module resource still live");
+                    Require(_ZN3sce4Json11Initializer9terminateEv(trace.owner) == 0 && *trace.owner == 0 && trace.live == expected,
+                            "Composite free callbacks must retain reference-supported module termination while preserving all remaining source allocations including the current release");
+                    ++trace.terminations;
+                }
             }
         }
     }
@@ -101,7 +130,7 @@ static void Check(unsigned shape, unsigned target, unsigned alias) {
     DestructionTrace trace; DestructionAllocator allocator; trace.receiver = &allocator;
     Parameter parameter{&allocator, &trace, 8192, 2, {}};
     std::uint8_t initializer = 0; trace.owner = &initializer; _ZN3sce4Json11InitializerC1Ev(&initializer);
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12, "Initialize the actual composite-destruction resource epoch");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == ModuleResources, "Initialize the actual composite-destruction resource epoch");
     trace.module = trace.live; trace.sourceBase = trace.generation;
     Value value; std::memset(&value, 0xa5, sizeof(value));
     if (shape == 0 || shape == 3) {
@@ -120,10 +149,12 @@ static void Check(unsigned shape, unsigned target, unsigned alias) {
     Require(trace.source.size() == order.size(), "Each composite payload must own its complete measured source resource epoch");
     void* auxiliary = value.auxiliary;
     std::array<std::byte, 72> auxiliaryBytes{};
-    if (auxiliary) std::memcpy(auxiliaryBytes.data(), auxiliary, auxiliaryBytes.size());
+    if (auxiliary) std::memcpy(auxiliaryBytes.data(), auxiliary, AuxiliaryBytes);
+    trace.rejectTermination = LegacySdk && shape != 0 && target > 18;
+    const bool terminated = target && !trace.rejectTermination;
     trace.target = target; trace.observing = true;
     DestroyAlias(value, alias);
-    const unsigned released = target ? target : static_cast<unsigned>(order.size());
+    const unsigned released = terminated ? target : static_cast<unsigned>(order.size());
     Require(trace.releases == std::vector<std::size_t>(order.begin(), order.begin() + released), "Composite destruction must preserve the exact native release-generation prefix before callback termination");
     auto remaining = trace.source;
     for (unsigned index = 0; index < released; ++index) {
@@ -131,27 +162,27 @@ static void Check(unsigned shape, unsigned target, unsigned alias) {
         for (auto iterator = remaining.begin(); iterator != remaining.end(); ++iterator) if (iterator->second == trace.sourceBase + order[index]) { remaining.erase(iterator); found = true; break; }
         Require(found, "Every observed release must remove exactly its expected original payload generation");
     }
-    const bool retainedAuxiliary = target && ((shape == 1 || shape == 2) ? target <= 18 : shape == 3 && target <= 3);
+    const bool retainedAuxiliary = terminated && ((shape == 1 || shape == 2) ? target <= 18 : shape == 3 && target <= 3);
     Require(value.type == 0 && !value.parent && !value.payload && value.reserved == UINT32_C(0xa5a5a5a5) && value.auxiliary == (retainedAuxiliary ? auxiliary : nullptr),
             "Destruction must skip auxiliary cleanup after payload callbacks terminate the module, retaining its original pointer rather than falsely clearing ownership");
-    if (retainedAuxiliary) Require(std::memcmp(auxiliary, auxiliaryBytes.data(), auxiliaryBytes.size()) == 0, "Skipped auxiliary cleanup must preserve the complete original auxiliary bytes and callback/fallback identities");
-    Require(trace.terminations == unsigned(target != 0) && !trace.target && trace.calls == released + (target ? 12u : 0u) && trace.moduleReleases.size() == (target ? 12u : 0u) && initializer == unsigned(!target) && trace.live == (target ? remaining : trace.module),
+    if (retainedAuxiliary) Require(std::memcmp(auxiliary, auxiliaryBytes.data(), AuxiliaryBytes) == 0, "Skipped auxiliary cleanup must preserve the complete original auxiliary bytes and callback/fallback identities");
+    Require(trace.terminations == unsigned(terminated) && trace.refusals == unsigned(trace.rejectTermination) && !trace.target && trace.calls == released + (terminated ? ModuleFreeCalls : 0u) && trace.moduleReleases.size() == (terminated ? ModuleResources : 0u) && trace.nullCalls == (terminated ? ModuleFreeCalls - ModuleResources : 0u) && initializer == unsigned(!terminated) && trace.live == (terminated ? remaining : trace.module),
             "Callback termination must reclaim only the module epoch and released source prefix while preserving the reference's orphaned allocations");
     const auto beforeRepeat = trace.live; const auto calls = trace.calls;
     DestroyAlias(value, 1 - alias);
     Require(trace.live == beforeRepeat && trace.calls == calls && value.auxiliary == (retainedAuxiliary ? auxiliary : nullptr), "A repeated destructor must preserve inactive-module auxiliary state without attempting another release");
     trace.observing = false;
-    if (!target) Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Ordinary composite destruction must remain fully reclaimable");
+    if (!terminated) Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Ordinary composite destruction must remain fully reclaimable");
     else {
         Require(trace.live == remaining, "Fixture reclamation may begin only after the exact orphaned source epoch has been observed");
         for (const auto& [pointer, generation] : remaining) { Require(trace.live.at(pointer) == generation, "Caller-owned fixture cleanup must retain each orphan allocation generation"); ReleaseStorage(trace, pointer); }
     }
     const auto generation = trace.generation;
-    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == 12, "Initialization must admit a fresh module after every measured composite-destruction outcome");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0 && initializer == 1 && trace.live.size() == ModuleResources, "Initialization must admit a fresh module after every measured composite-destruction outcome");
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity > generation, "Composite lifecycle retry must retain no stale module or source resource generations");
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && initializer == 0 && trace.live.empty(), "Release the fresh composite lifecycle generation");
 }
 int main() {
-    for (unsigned shape = 0; shape < 4; ++shape) for (unsigned target = 0; target <= ReleaseOrders[shape].size(); ++target) for (unsigned alias = 0; alias < 2; ++alias) Check(shape, target, alias);
+    for (unsigned shape = 0; shape < ShapeCount; ++shape) for (unsigned target = 0; target <= ReleaseOrders[shape].size(); ++target) for (unsigned alias = 0; alias < 2; ++alias) Check(shape, target, alias);
     return 0;
 }
