@@ -565,7 +565,77 @@ static int CheckHeapExceptions(unsigned budget) {
     HeapTrace = nullptr;
     return 0;
 }
+static int CheckCopyHeapExceptions(unsigned shape, unsigned alias) {
+    Require(shape < 4 && alias < 3, "Heap-copy schedules cover scalar, string, nested collections and constructor aliases");
+    LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator; Parameter parameter{&allocator, &trace, 16384};
+    std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0, "Initialize copy exception resources");
+    Context context; _ZN3sce4Json5ValueC1Eb(&context.replacement, true);
+    Value source{}; ParseLegacy(source, shape == 0 ? "9" : shape == 1 ? "\"text\"" : shape == 2 ? "[{\"s\":\"text\"}]" : "{\"a\":[\"text\"]}");
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Prepare source callback ownership");
+    String key{}; _ZN3sce4Json6StringC1EPKc(&key, "key");
+    Pair pair; std::memset(&pair, 0xa5, sizeof(pair)); Value scalar{}; Value& copy = alias ? pair.value : scalar;
+    const Value sourceValue = source;
+    const auto baseline = trace.guestGenerations, heapBaseline = trace.heapGenerations;
+    std::vector<LegacySnapshot> snapshots;
+    for (const auto& [pointer, generation] : baseline) {
+        if (trace.guest.at(pointer) == 24 && trace.heap.contains(*static_cast<void**>(pointer))) continue;
+        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
+    }
+    const auto requests = trace.requests.size(); trace.heapBudget = 0;
+    bool caught = false;
+    try {
+        if (!alias) _ZN3sce4Json5ValueC1ERKS1_(&copy, &source);
+        else if (alias == 1) _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &source);
+        else _ZN3sce4Json6Object4PairC2ERKNS0_6StringERKNS0_5ValueE(&pair, &key, &source);
+    } catch (const std::bad_alloc&) { caught = true; }
+    std::vector<std::size_t> expected;
+    if (alias) expected = {24, 4};
+    const auto payload = shape == 0 ? std::vector<std::size_t>{} : shape == 1 ? std::vector<std::size_t>{8, 24, 5}
+        : shape == 2 ? std::vector<std::size_t>{8, 24, 48, 48, 48, 8, 24, 104, 104, 104, 2, 24, 2, 8, 24, 5}
+                     : std::vector<std::size_t>{8, 24, 104, 104, 104, 2, 24, 2, 8, 24, 48, 48, 48, 8, 24, 5};
+    expected.insert(expected.end(), payload.begin(), payload.end());
+    const unsigned retained = shape == 0 ? 0 : shape == 1 ? 3 : 14;
+    Require(caught && owner && !trace.notifications && trace.heapGenerations == heapBaseline && trace.guest.size() == baseline.size() + retained + unsigned(alias != 0) * 2 &&
+            std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected,
+            "Map-entry exceptions must preserve completed copy allocations without constructor rollback or guest OOM notices");
+    CheckMap(trace, {{&source, &context}});
+    const auto verifyPayload = [&] {
+        std::string actual; std::vector<const Value*> values; CollectionShape(copy, nullptr, actual, values);
+        const char* expectedShape = shape == 0 ? "3:0=9;" : shape == 1 ? "5:0s=text;" : shape == 2 ? "6:0a1[7:0o1{k=s/q=s/5:0s=text;};];" : "7:0o1{k=a/q=a/6:0a1[5:0s=text;];};";
+        Require(actual == expectedShape && !copy.auxiliary, "Heap exceptions must preserve complete payloads and independent callback metadata");
+        if (alias) Require(pair.key.storage != key.storage && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0 && pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5),
+                "Failed Pair constructors must retain their independent key and inactive padding");
+    };
+    verifyPayload();
+    const auto calls = context.calls;
+    Require(!*_ZNK3sce4Json5Value10getBooleanEv(&copy) && context.calls == calls, "An unpublished copy callback must use the typed default");
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&source) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.calls == calls + 1 && context.source == &source,
+            "Copy failure must preserve the source callback and borrowed result");
+    trace.heapBudget = -1;
+    Require(_ZN3sce4Json5ValueaSERKS1_(&copy, &source) == &copy, "Assignment retry must publish the copied callback");
+    CheckMap(trace, {{&source, &context}, {&copy, &context}}); verifyPayload();
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&copy) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.source == &copy && !context.parent,
+            "Retried copies must recover through their own callback identity");
+    Require(std::memcmp(&source, &sourceValue, sizeof(source)) == 0, "Copy failure and retry must preserve source Value bytes");
+    for (const auto& [pointer, generation] : baseline) Require(trace.guestGenerations.at(pointer) == generation, "Retry must preserve every preexisting allocation generation including shared map storage");
+    for (const auto& snapshot : snapshots) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation && std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0,
+            "Copy failure must preserve all preexisting allocation bytes and generations");
+    if (!alias) _ZN3sce4Json5ValueD1Ev(&copy);
+    else if (alias == 1) _ZN3sce4Json6Object4PairD1Ev(&pair);
+    else _ZN3sce4Json6Object4PairD2Ev(&pair);
+    _ZN3sce4Json6StringD1Ev(&key); _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement);
+    Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.guest.empty() && trace.heap.empty() && trace.guestGenerations.empty() && trace.heapGenerations.empty(),
+            "Failed construction, retry and explicit destruction must reclaim both allocator domains");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0 && _ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && trace.guest.empty() && trace.heap.empty(),
+            "Copy exceptions must permit a fresh module generation");
+    HeapTrace = nullptr;
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 3) return CheckCopyHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)), static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)));
     if (argc == 2) return CheckHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)));
     LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator;
     Parameter parameter{&allocator, &trace, 16384};

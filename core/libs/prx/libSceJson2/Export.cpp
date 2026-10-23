@@ -3288,12 +3288,7 @@ bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) {
     Construct(self->key, *key);
-    try {
-        CopyInto(self->value, *value);
-    } catch (...) {
-        Destroy(self->key);
-        throw;
-    }
+    CopyInto(self->value, *value);
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
