@@ -59,6 +59,7 @@ static constexpr std::uint64_t KERNEL_MNT_NOSUID = 0x8;
 
 #ifdef _WIN32
 #include <windows.h>
+#include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 #include <io.h>
 #include <cstdio>
 #include <fcntl.h>
@@ -959,6 +960,9 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
     if (NativeMkdir(native, mode) != 0) {
         const int nativeError = errno;
+#ifdef _WIN32
+        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return PosixFailure(GUEST_ELOOP);
+#endif
         const bool blockedByFile = (nativeError == ENOENT || nativeError == EINVAL) && HasNonDirectoryPrefix(native);
         return PosixResult(SceErrorFromErrno(blockedByFile ? GUEST_ENOTDIR : nativeError));
     }
@@ -1251,6 +1255,9 @@ int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
     if (std::filesystem::exists(native, error)) return SceErrorFromErrno(GUEST_EEXIST);
     if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::is_directory(WithoutTrailingSeparator(native).parent_path(), error)) {
+#ifdef _WIN32
+        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return SceKernelError(GUEST_ELOOP);
+#endif
         return SceErrorFromErrno(HasNonDirectoryPrefix(native) ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
     if (!std::filesystem::create_directory(native, error)) return SceErrorFromErrno(error.value() ? error.value() : GUEST_EIO);
@@ -1513,6 +1520,9 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GUEST_ENOTDIR);
     if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::is_directory(native, error)) {
+#ifdef _WIN32
+        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return SceKernelError(GUEST_ELOOP);
+#endif
         const bool blockedByFile = HasNonDirectoryPrefix(native) || std::filesystem::exists(WithoutTrailingSeparator(native), error);
         return SceErrorFromErrno(blockedByFile ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
@@ -1566,7 +1576,12 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
     if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::exists(status)) return SceErrorFromErrno(NotFoundError_nid_no_patch(native));
     if (std::filesystem::is_directory(status)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (const int failure = NativeTruncate(native, length)) return SceErrorFromErrno(failure);
+    if (const int failure = NativeTruncate(native, length)) {
+#ifdef _WIN32
+        if (File::WindowsSymbolicLinkLoop(native)) return SceKernelError(GUEST_ELOOP);
+#endif
+        return SceErrorFromErrno(failure);
+    }
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }

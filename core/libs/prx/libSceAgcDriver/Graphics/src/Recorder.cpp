@@ -1040,11 +1040,9 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
             recorder->SyncThrough(address, bytes, true);
         }
     }
-    // A reader takes every shadowed unit of the range; a store only the units it covers partly
-    // (its own stamp makes the others stale). Inside a completion action a store has no publish
-    // recorded: the batch is not waited for, and the copy would land over the store later.
     const auto site = GuestMemory::CurrentReadSite();
-    const auto scope = site != GuestMemory::ReadSite::Store ? PublishScope::Whole : completionDepth != 0 ? PublishScope::None : PublishScope::PartialUnits;
+    const auto scope = site != GuestMemory::ReadSite::Store ? PublishScope::Whole : PublishScope::PartialUnits;
+    const bool waited = completionDepth != 0;
     bool published = false;
     // The classification is made before the store (the store changes what it measures); profile only.
     StorageTexture::AccessClassification classification{};
@@ -1059,10 +1057,10 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     const bool kept = !HookFlushCpuBlocks() && StorageTexture::AccessKeptByCpu(address, bytes, &images, &evicted);
     if (kept || (images == 0 && !HookFlushCpuBlocks())) {
         stored = StorageTexture::WaitForFlushing(address, bytes);
-        published = StorageTexture::PublishShadowsOnly(address, bytes, scope);
+        published = StorageTexture::PublishShadowsOnly(address, bytes, scope, "memory access", waited);
         if (kept && HookSyncProfiled()) CountRecordedStoreSkip(RecordedStoreKey(), evicted);
     } else {
-        stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published);
+        stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
     }
     if (stored || published || (completionDepth == 0 && SnapshotOverlaps(address, bytes))) {
         // Stores into imported memory were only recorded; the CPU is about to read them. The wait

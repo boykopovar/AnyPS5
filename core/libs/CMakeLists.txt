@@ -728,6 +728,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 
+    add_test_executable(guest_kernel_sys_aio_tests tests/GuestKernelSysAio.cpp)
+    target_include_directories(guest_kernel_sys_aio_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_aio_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_aio_tests)
+    add_test(NAME guest_kernel_sys_aio COMMAND guest_kernel_sys_aio_tests)
+    set_tests_properties(guest_kernel_sys_aio PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_aio PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_posix_random_tests tests/GuestPosixRandom.cpp)
     target_include_directories(guest_posix_random_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_posix_random_tests PRIVATE libScePosixForWebKit)

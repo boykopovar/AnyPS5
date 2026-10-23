@@ -1086,6 +1086,16 @@ int main() {
         Require(checkRelativeLink(fileLink, 11));
         Require(checkRelativeLink(directoryLink, 16));
         Require(checkRelativeLink(danglingLink, 11));
+        const auto belowStatLoop = statLoop.string() + "\\inside";
+        Require(sceKernelUnlink(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
+        Require(unlink_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
+        Require(sceKernelMkdir(belowStatLoop.c_str(), 0700) == static_cast<int>(0x8002003eu));
+        Require(mkdir_nid_postfix(belowStatLoop.c_str(), 0700) == -1 && *__error_nid_postfix() == 62);
+        Require(sceKernelRmdir(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
+        Require(rmdir_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
+        Require(sceKernelRmdir(statLoop.string().c_str()) == static_cast<int>(0x80020014u));
+        Require(sceKernelTruncate_nid_postfix(statLoop.string().c_str(), 0) == static_cast<int>(0x8002003eu));
+        Require(truncate_nid_postfix(statLoop.string().c_str(), 0) == -1 && *__error_nid_postfix() == 62);
         FileStat followed{};
         Require(lstat_nid_postfix(fileLink.string().c_str(), &linkStatus) == 0);
         Require(stat_nid_postfix(fileLink.string().c_str(), &followed) == 0 && (followed.st_mode & 0170000) == 0100000);

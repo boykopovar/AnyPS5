@@ -212,7 +212,7 @@ public:
     // any unit was: a reader of the import must sync for a publish as for a store. Only images
     // with a pending unit inside the range are stored (APS5_NO_FLUSH_PRETEST=1 lists every
     // overlapping pending image, as before).
-    static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr);
+    static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false);
     static void FlushAllPending(const char* reason);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
@@ -277,7 +277,7 @@ public:
     // FlushPending's publish of the unit shadows over the range without the image stores (what it
     // does when it lists no image, and all an access AccessKeptByCpu approved needs): whether any
     // unit was published.
-    static bool PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason = "memory access");
+    static bool PublishShadowsOnly(std::uint64_t address, std::size_t bytes, PublishScope scope, const char* reason = "memory access", bool waited = false);
     // For the [hooksync] recorded-store line: images a FlushPending stored after a hook skip of
     // theirs (AccessKeptByCpu), of which by the hook for the same read site as the last skip; 10 s deltas.
     struct HookSkipCounts {

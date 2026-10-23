@@ -846,7 +846,7 @@ DrawParameters resolveIndirectDraw(std::span<const std::uint32_t> packet, const 
     indirect.drawIndexLocation = multi ? location(packet[4] & 0xffffu) : 0x280u;
     indirect.drawIndexEnabled = multi && (packet[4] >> 31u) != 0;
     indirect.indxOffset = 0;
-    require(indirect.count <= (std::numeric_limits<std::uint64_t>::max() - indirect.arguments - indirect.recordBytes) / indirect.stride, "indirect draw record range overflow");
+    require(indirect.RangeBytes() <= std::numeric_limits<std::uint64_t>::max() - indirect.arguments, "indirect draw record range overflow");
     // The counts are unknown here (the CP takes them from the record; NUM_INSTANCES is ignored).
     DrawParameters draw{0, 0, 0, 0, packet.back() & 0x20u, indexed, 0, 0};
     if (!indexed) {

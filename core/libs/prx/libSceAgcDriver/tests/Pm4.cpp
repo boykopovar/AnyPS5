@@ -322,6 +322,45 @@ void testIndexedDraw() {
     expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "guest");
 }
 
+void testIndirectDrawRange() {
+    AgcDriver::QueueState state;
+    alignas(4) std::array<std::uint32_t, 1> indices{};
+    state.indexBase = reinterpret_cast<std::uintptr_t>(indices.data());
+    state.indexBufferSize = 1;
+    state.indexType = 1;
+    state.userConfig[0x24a] = 0;
+    for (const auto opcode : {0x24u, 0x25u, 0x2cu, 0x38u}) {
+        const bool indexed = opcode == 0x25 || opcode == 0x38;
+        const bool multi = opcode == 0x2c || opcode == 0x38;
+        const std::uint32_t recordBytes = indexed ? 20u : 16u;
+        const std::uint32_t initiator = indexed ? 0u : 2u;
+        state.drawIndirectBase = std::numeric_limits<std::uint64_t>::max() - 3;
+        const auto wrapping = multi ? makePacket(opcode, {0, 0x280, 0x280, 0x280, 1, 0, 0, recordBytes, initiator})
+                                    : makePacket(opcode, {0, 0x280, 0x280, initiator});
+        expectFailure([&] { AgcDriver::Pm4::ResolveDraw(wrapping, state); }, "record range overflow");
+        for (const auto count : {1u, 3u, std::numeric_limits<std::uint32_t>::max()}) {
+            if (!multi && count != 1) continue;
+            for (const auto stride : {recordBytes, 64u, 0xfffffffcu}) {
+                if (!multi && stride != recordBytes) continue;
+                const auto packet = multi ? makePacket(opcode, {0, 0x280, 0x280, 0x280, count, 0, 0, stride, initiator})
+                                          : makePacket(opcode, {0, 0x280, 0x280, initiator});
+                const auto bytes = static_cast<std::uint64_t>(count - 1) * stride + recordBytes;
+                state.drawIndirectBase = (std::numeric_limits<std::uint64_t>::max() - bytes) & ~std::uint64_t{3};
+                const auto draw = AgcDriver::Pm4::ResolveDraw(packet, state);
+                check(draw.indirect.has_value() && draw.indirect->RangeBytes() == bytes, "indirect draw rejected or changed a fitting record range");
+                state.drawIndirectBase += 4;
+                expectFailure([&] { AgcDriver::Pm4::ResolveDraw(packet, state); }, "record range overflow");
+            }
+        }
+        state.drawIndirectBase = std::numeric_limits<std::uint64_t>::max() - 3;
+        if (multi) {
+            const auto empty = makePacket(opcode, {0, 0x280, 0x280, 0x280, 0, 0, 0, recordBytes, initiator});
+            const auto draw = AgcDriver::Pm4::ResolveDraw(empty, state);
+            check(draw.indirect.has_value() && draw.indirect->RangeBytes() == 0, "empty indirect draw consumed a record");
+        }
+    }
+}
+
 void testIndirectDraw() {
     check(AgcDriver::Pm4::AccessesMemory(0xc0032400u) && AgcDriver::Pm4::AccessesMemory(0xc0083800u), "indirect draws must synchronize guest memory");
     check(AgcDriver::Pm4::UnsupportedReason(0xc0032400u).empty() && AgcDriver::Pm4::UnsupportedReason(0xc0082c00u).empty(), "indirect draws are rejected");
@@ -1943,6 +1982,7 @@ int main(int argc, char** argv) {
         testContextAndBases();
         testIndexedDraw();
         testAutoDraw();
+        testIndirectDrawRange();
         testIndirectDraw();
         testIndexAttributesIndirect();
         testMemory();

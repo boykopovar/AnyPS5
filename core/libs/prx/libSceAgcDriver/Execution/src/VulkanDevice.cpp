@@ -305,6 +305,11 @@ struct VulkanDevice::State {
     bool individuallyFreeDescriptorSets = false;
     PFN_vkGetCalibratedTimestampsKHR calibratedTimestamps = nullptr;
     PFN_vkCmdSetCheckpointNV checkpointMarker = nullptr;
+    PFN_vkCmdWriteBufferMarkerAMD bufferMarker = nullptr;
+    VkBuffer markerBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory markerMemory = VK_NULL_HANDLE;
+    void* markerMapping = nullptr;
+    BufferMarkerLog markerLog;
     bool deviceLostHook = false;
     VkTimeDomainKHR hostTimeDomain = VK_TIME_DOMAIN_DEVICE_KHR;
     VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
@@ -577,6 +582,33 @@ struct VulkanDevice::State {
         return workgroupMemory;
     }
 
+    void CreateMarkerBuffer() {
+        bufferMarker = DeviceFunction<PFN_vkCmdWriteBufferMarkerAMD>("vkCmdWriteBufferMarkerAMD");
+        VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer.size = 2 * sizeof(std::uint32_t);
+        buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        check(DeviceFunction<PFN_vkCreateBuffer>("vkCreateBuffer")(device, &buffer, nullptr, &markerBuffer), "vkCreateBuffer buffer markers");
+        VkMemoryRequirements requirements{};
+        DeviceFunction<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(device, markerBuffer, &requirements);
+        std::uint32_t memoryType = memoryProperties.memoryTypeCount;
+        const auto flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (std::uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
+            if ((requirements.memoryTypeBits & (1u << i)) != 0 && (memoryProperties.memoryTypes[i].propertyFlags & flags) == flags) {
+                memoryType = i;
+                break;
+            }
+        }
+        require(memoryType < memoryProperties.memoryTypeCount, "coherent host memory for buffer markers is unavailable");
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = memoryType;
+        check(DeviceFunction<PFN_vkAllocateMemory>("vkAllocateMemory")(device, &allocation, nullptr, &markerMemory), "vkAllocateMemory buffer markers");
+        check(DeviceFunction<PFN_vkBindBufferMemory>("vkBindBufferMemory")(device, markerBuffer, markerMemory, 0), "vkBindBufferMemory buffer markers");
+        check(DeviceFunction<PFN_vkMapMemory>("vkMapMemory")(device, markerMemory, 0, buffer.size, 0, &markerMapping), "vkMapMemory buffer markers");
+        std::memset(markerMapping, 0, buffer.size);
+    }
+
     void Upload(std::span<const std::byte> pixels) {
         if (uploadSize < pixels.size()) {
             if (uploadMapping) DeviceFunction<PFN_vkUnmapMemory>("vkUnmapMemory")(device, uploadMemory);
@@ -837,6 +869,9 @@ struct VulkanDevice::State {
             if (uploadMapping) reinterpret_cast<PFN_vkUnmapMemory>(deviceProc(device, "vkUnmapMemory"))(device, uploadMemory);
             if (uploadBuffer) reinterpret_cast<PFN_vkDestroyBuffer>(deviceProc(device, "vkDestroyBuffer"))(device, uploadBuffer, nullptr);
             if (uploadMemory) reinterpret_cast<PFN_vkFreeMemory>(deviceProc(device, "vkFreeMemory"))(device, uploadMemory, nullptr);
+            if (markerMapping) reinterpret_cast<PFN_vkUnmapMemory>(deviceProc(device, "vkUnmapMemory"))(device, markerMemory);
+            if (markerBuffer) reinterpret_cast<PFN_vkDestroyBuffer>(deviceProc(device, "vkDestroyBuffer"))(device, markerBuffer, nullptr);
+            if (markerMemory) reinterpret_cast<PFN_vkFreeMemory>(deviceProc(device, "vkFreeMemory"))(device, markerMemory, nullptr);
             if (swapchain) reinterpret_cast<PFN_vkDestroySwapchainKHR>(deviceProc(device, "vkDestroySwapchainKHR"))(device, swapchain, nullptr);
             const auto destroyPool = reinterpret_cast<PFN_vkDestroyCommandPool>(deviceProc(device, "vkDestroyCommandPool"));
             const auto destroyDevice = reinterpret_cast<PFN_vkDestroyDevice>(deviceProc(device, "vkDestroyDevice"));
@@ -1950,9 +1985,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         faultFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &faultFeatures;
     }
-    const bool checkpoints = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr && hasExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
-    if (checkpoints) {
-        deviceExtensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    const bool checkpointsRequested = std::getenv("APS5_GPU_CHECKPOINTS") != nullptr;
+    const bool checkpoints = checkpointsRequested && hasExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    const bool bufferMarkers = checkpointsRequested && !checkpoints && hasExtension(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
+    if (checkpoints || bufferMarkers) {
+        deviceExtensions.push_back(checkpoints ? VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME : VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
         deviceInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
         deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     }
@@ -2006,10 +2043,16 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     if (state->sparseFamily != VK_QUEUE_FAMILY_IGNORED) state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, state->sparseFamily, 0, &state->sparseQueue);
     if (checkpoints) state->checkpointMarker = state->DeviceFunction<PFN_vkCmdSetCheckpointNV>("vkCmdSetCheckpointNV");
-    if (deviceFault || checkpoints) {
+    if (bufferMarkers) state->CreateMarkerBuffer();
+    if (deviceFault || checkpoints || bufferMarkers) {
         const auto faultInfo = deviceFault ? state->DeviceFunction<PFN_vkGetDeviceFaultInfoEXT>("vkGetDeviceFaultInfoEXT") : nullptr;
         const auto checkpointData = checkpoints ? state->DeviceFunction<PFN_vkGetQueueCheckpointDataNV>("vkGetQueueCheckpointDataNV") : nullptr;
-        Graphics::DeviceLostHook() = [device = state->device, queue = state->queue, faultInfo, checkpointData] {
+        Graphics::DeviceLostHook() = [device = state->device, queue = state->queue, faultInfo, checkpointData, owner = state.get()] {
+            if (owner->markerMapping != nullptr) {
+                std::uint32_t words[2];
+                std::memcpy(words, owner->markerMapping, sizeof(words));
+                for (const auto& line : owner->markerLog.Report(words[0], words[1])) std::fprintf(stderr, "%s\n", line.c_str());
+            }
             for (const auto& line : DeviceFaultReport(device, faultInfo, queue, checkpointData)) std::fprintf(stderr, "%s\n", line.c_str());
         };
         Graphics::DeviceLostOwner() = state.get();
@@ -4909,6 +4952,8 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     }
     const auto gpuTiming = recorder.BeginGpuTiming(record.programAddress != 0 ? record.programAddress : record.shader->program->variantId);
     if (state->checkpointMarker != nullptr) state->checkpointMarker(commands, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(record.programAddress)));
+    const auto marker = state->bufferMarker != nullptr ? state->markerLog.Next(record.programAddress) : 0u;
+    if (marker != 0) state->bufferMarker(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, state->markerBuffer, 0, marker);
     if (argumentImport != nullptr) {
         context.Resolved(&Graphics::DeviceFunctions::cmdDispatchIndirect, "vkCmdDispatchIndirect")(commands, indirectBuffer, indirectOffset);
     } else {
@@ -4941,6 +4986,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         }
     }
     recorder.EndGpuTiming(gpuTiming);
+    if (marker != 0) state->bufferMarker(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, state->markerBuffer, sizeof(std::uint32_t), marker);
     const auto trailingTiming = recorder.BeginGpuTiming(CommandClass::DispatchTrailing);
     constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
