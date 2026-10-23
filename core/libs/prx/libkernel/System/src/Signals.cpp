@@ -16,9 +16,17 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef __APPLE__
+#include <new>
+#include <typeinfo>
+#endif
 
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" int APS5_VABI getpid_nid_postfix(void);
+#ifdef __APPLE__
+extern "C" void* APS5_VABI __cxa_allocate_exception_nid_postfix(std::size_t size);
+extern "C" [[noreturn]] void APS5_VABI __cxa_throw_nid_postfix(void* object, std::type_info* type, void (*destructor)(void*));
+#endif
 extern "C" Pthread APS5_VABI scePthreadSelf(void);
 
 struct GuestSignalSet {
@@ -316,7 +324,14 @@ void ExpireAlarm(std::chrono::microseconds interval) {
         if (handler == 1) return;
     }
     if (handler == 0) TerminateBySigalrm("the alarm expired");
+#ifdef __APPLE__
+    const std::string message = "ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented";
+    void* object = __cxa_allocate_exception_nid_postfix(sizeof(std::runtime_error));
+    new (object) std::runtime_error(message);
+    __cxa_throw_nid_postfix(object, const_cast<std::type_info*>(&typeid(std::runtime_error)), [](void* thrown) { static_cast<std::runtime_error*>(thrown)->~runtime_error(); });
+#else
     throw std::runtime_error("ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented");
+#endif
 }
 
 void RunAlarms() {
