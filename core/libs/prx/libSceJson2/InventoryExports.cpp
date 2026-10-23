@@ -20,9 +20,4 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_() {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce4Json5ValueixERKNS0_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 }

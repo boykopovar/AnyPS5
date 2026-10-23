@@ -1548,6 +1548,45 @@ const Value& MissingElement(const Value* self, int error, const String* key, con
     return Defaults(TypeNull);
 }
 
+const Value* LookupKey(const Value* self, const String* key) {
+    if (!key) { NotImplemented_nid_no_patch(__func__); return nullptr; }
+    auto moduleFallback = [] {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        return state.fallback;
+    };
+    if (!key->text) return moduleFallback();
+    struct IteratorState {
+        ObjectIteratorState* state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+        IteratorState() { if (state) state->position = nullptr; }
+        ~IteratorState() { Release(state); }
+    };
+    if (self->type == TypeObject) {
+        IteratorState found;
+        if (!self->object) { NotImplemented_nid_no_patch(__func__); return nullptr; }
+        auto* items = self->object->items;
+        if (found.state) found.state->position = items ? items->Find(Characters(*key)) : nullptr;
+        if (items && !items->head) { Release(found.state); found.state = nullptr; }
+        bool present;
+        {
+            IteratorState end;
+            if (end.state) end.state->position = items ? items->head : nullptr;
+            if (items && !items->head) { Release(end.state); end.state = nullptr; }
+            present = found.state && end.state && found.state->position != end.state->position;
+        }
+        if (present) return &found.state->position->pair.value;
+        if (ModernValues()) {
+            const auto* result = &MissingElement(self, static_cast<int>(0x80848115), key, nullptr);
+            if (moduleFallback() || RootOf(*self).auxiliary) return result;
+        }
+    } else if (ModernValues()) {
+        const auto* result = &MissingElement(self, static_cast<int>(0x80848117), key, nullptr);
+        if (moduleFallback() || RootOf(*self).auxiliary) return result;
+    }
+    const auto* auxiliary = RootOf(*self).auxiliary;
+    return auxiliary && auxiliary->fallback ? auxiliary->fallback : moduleFallback();
+}
+
 template <typename TCallback>
 int SetHandler(Node& n, HandlerRecord<TCallback>* Auxiliary::* member, TCallback callback, void* context, bool modernOnly = false) {
     if (n.parent) return static_cast<int>(0x80848104);
@@ -2697,22 +2736,10 @@ std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value* self) {
     if (n.type == TypeObject) return n.object->items->size();
     return 0;
 }
+const Value* APS5_VABI _ZNK3sce4Json5ValueixERKNS0_6StringE(const Value* self, const String* key) { return LookupKey(self, key); }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* key) {
-    String text{};
-    Construct(text, key ? key : "");
-    const Value* result;
-    try {
-        if (self->type == TypeObject) {
-            const auto* node = self->object->items ? self->object->items->Find(Characters(text)) : nullptr;
-            if (node && !node->nil) { Destroy(text); return &node->pair.value; }
-        }
-        result = &MissingElement(self, static_cast<int>(self->type == TypeObject ? 0x80848115 : 0x80848117), &text, nullptr);
-    } catch (...) {
-        Destroy(text);
-        throw;
-    }
-    Destroy(text);
-    return result;
+    ScopedString text(key ? key : "");
+    return LookupKey(self, &text.string);
 }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t index) {
     if (self->type == TypeArray && index < self->array->items->size()) {
@@ -2733,14 +2760,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value* self, ValueType type)
     SetType(*self, type);
 }
 const Value* APS5_VABI _ZNK3sce4Json5Value8getValueEm(const Value* self, std::size_t index) { return _ZNK3sce4Json5ValueixEm(self, index); }
-const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) {
-    const Node& n = NodeOf(*self);
-    if (key && n.type == TypeObject && n.object->items) {
-        const auto* node = n.object->items->Find(Characters(*key));
-        if (node && !node->nil) return &node->pair.value;
-    }
-    return &MissingElement(self, static_cast<int>(n.type == TypeObject ? 0x80848115 : 0x80848117), key, nullptr);
-}
+const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* self, const String* key) { return LookupKey(self, key); }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
     if (self->type == TypeArray && index < self->array->items->size()) {
         auto it = self->array->items->begin();
