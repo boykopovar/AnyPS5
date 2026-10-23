@@ -523,6 +523,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     }
     writer.Values(std::span<const std::uint32_t>(result.stencilReferences));
     writer.Value(result.stencilReplaySafe);
+    writer.Value(result.bdaWrites);
     writer.Value(result.stencilReferenceDword);
 }
 
@@ -587,6 +588,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     }
     reader.Values(result.stencilReferences);
     reader.Value(result.stencilReplaySafe);
+    reader.Value(result.bdaWrites);
     reader.Value(result.stencilReferenceDword);
     result.variantId = 0;
 }

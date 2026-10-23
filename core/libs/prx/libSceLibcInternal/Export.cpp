@@ -109,6 +109,10 @@ const char* APS5_VABI getprogname_nid_postfix() {
     return __progname_nid_postfix;
 }
 
+const char* APS5_VABI _getprogname_nid_postfix() {
+    return getprogname_nid_postfix();
+}
+
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {
     CxaFinalize_nid_no_patch(dsoHandle);
 }

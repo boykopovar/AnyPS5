@@ -402,7 +402,13 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
     std::error_code error;
     const auto status = std::filesystem::status(source, error);
-    if (!std::filesystem::exists(status)) return static_cast<int>(Fail(HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent));
+    if (!std::filesystem::exists(status)) {
+#ifdef _WIN32
+        std::filesystem::path target;
+        if (const int followError = FollowLinkPath(source, target)) return static_cast<int>(Fail(followError));
+#endif
+        return static_cast<int>(Fail(HasNonDirectoryPrefix(source) ? GuestEnotdir : GuestEnoent));
+    }
     if (std::filesystem::is_directory(status)) return static_cast<int>(Fail(GuestEperm));
     if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return static_cast<int>(Fail(GuestEexist));
     if (!std::filesystem::is_directory(destination.parent_path(), error)) return static_cast<int>(Fail(HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent));

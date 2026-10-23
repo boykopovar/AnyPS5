@@ -36,6 +36,21 @@ OTHER = [
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_non_junit_xml_fails_in_every_cli_mode(self):
+        reports = ('<config/>', '<Site><Testing><Test Status="notrun"><Name>coverage</Name></Test></Testing></Site>')
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "ctest.xml"
+            for report in reports:
+                junit.write_text(report, encoding="utf-8")
+                for arguments in (("--job", "linux"), ("--job", "windows"), ("--list",)):
+                    with self.subTest(report=report, arguments=arguments):
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), *arguments],
+                                                capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertIn("expected a JUnit", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                        self.assertNotIn("all expected", result.stdout)
+
     def test_missing_high_refresh_display_is_expected_in_both_jobs(self):
         reason = "current display does not provide 120 Hz"
         reports = (
@@ -212,6 +227,18 @@ class SkipReportTests(unittest.TestCase):
             path = Path(directory) / "ctest.xml"
             path.write_text(content, encoding="utf-8")
             return list(check_skips.skips(path))
+
+    def test_non_junit_roots_are_rejected_even_with_testcases(self):
+        for content in ('<report/>', '<testcase name="passed"/>',
+                        '<report><testcase name="passed"/></report>',
+                        '<report><testcase name="gpu"><skipped message="no display"/></testcase></report>'):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "expected a JUnit"):
+                self.skipped(content)
+
+    def test_empty_junit_suites_remain_valid(self):
+        for content in ('<testsuite/>', '<testsuites/>', '<testsuites><testsuite/></testsuites>'):
+            with self.subTest(content=content):
+                self.assertEqual(self.skipped(content), [])
 
     def test_ctest_disabled_status_is_not_silently_ignored(self):
         with self.assertRaisesRegex(ValueError, "disabled.*not run"):

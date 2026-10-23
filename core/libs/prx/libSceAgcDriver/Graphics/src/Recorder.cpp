@@ -2281,6 +2281,20 @@ void Recorder::EndPassSamples() {
     if (open != nullptr && open->segmentActive) endSegment(*open);
 }
 
+void Recorder::RecordUncounted(const std::function<void(VkCommandBuffer)>& record) {
+    const auto commands = Commands();
+    if (open->segmentActive) endSegment(*open);
+    const bool counted = open->sampleActive;
+    if (counted) {
+        open->endedSamples.reserve(open->endedSamples.size() + 1);
+        endSamples(*open);
+        open->endedSamples.push_back(open->samples);
+        open->samples = VK_NULL_HANDLE;
+    }
+    record(commands);
+    if (counted) beginSamples(*open);
+}
+
 void Recorder::takeSegmentPool(Batch& batch) {
     auto cache = std::static_pointer_cast<SamplePoolCache>(segmentPools);
     if (cache == nullptr) {
@@ -2571,9 +2585,15 @@ void Recorder::beginSamples(Batch& batch) {
 void Recorder::readSamples(Batch& batch) {
     if (sampleCounterState > 0) return;
     if (batch.samples == VK_NULL_HANDLE || !batch.submitted) return;
+    std::uint64_t total = 0;
+    for (const auto pool : batch.endedSamples) {
+        std::uint64_t samples = 0;
+        Check(context.Function<PFN_vkGetQueryPoolResults>("vkGetQueryPoolResults")(context.device, pool, 0, 1, sizeof(samples), &samples, sizeof(samples), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT), "vkGetQueryPoolResults occlusion");
+        total += samples;
+    }
     std::uint64_t samples = 0;
     Check(context.Function<PFN_vkGetQueryPoolResults>("vkGetQueryPoolResults")(context.device, batch.samples, 0, 1, sizeof(samples), &samples, sizeof(samples), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT), "vkGetQueryPoolResults occlusion");
-    samplesPassed.fetch_add(samples, std::memory_order_acq_rel);
+    samplesPassed.fetch_add(total + samples, std::memory_order_acq_rel);
 }
 
 void Recorder::readGpuTiming(Batch& batch) {
@@ -4183,6 +4203,8 @@ void Recorder::release(Batch& batch) noexcept {
     if (batch.samples != VK_NULL_HANDLE && batch.samplePool == nullptr) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, batch.samples, nullptr);
     batch.samples = VK_NULL_HANDLE;
     batch.samplePool.reset();
+    for (const auto pool : batch.endedSamples) context.Function<PFN_vkDestroyQueryPool>("vkDestroyQueryPool")(context.device, pool, nullptr);
+    batch.endedSamples.clear();
     batch.segments = VK_NULL_HANDLE;
     batch.segmentPool.reset();
     // A completed (or never submitted) batch's objects are kept for reuse: the fence is signaled or

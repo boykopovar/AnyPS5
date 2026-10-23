@@ -911,8 +911,10 @@ void importMappedFailureGenerationTests(const Context& context) {
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         Require(ImportMappedRanges(range.importing, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "the replacement owner map import was deferred");
-        Require(probe.calls.size() == 2u, "a replacement owner did not retry its predecessor's failed import");
+        Require(probe.calls.size() == 1u, "a replacement owner was imported again at map instead of on first use");
     }
+    HostImportFor(range.importing, range.First(), range.bytes);
+    Require(probe.calls.size() == 2u, "a replacement owner did not retry its predecessor's failed import on first use");
     ClearHostImports(context.device);
 }
 
@@ -1021,6 +1023,34 @@ void importRefusedWholeRangeTests(const Context& context) {
     Require(kept != nullptr && kept->buffer == buffer, "the range's window was imported again after a refused whole-range import");
 }
 
+void importPiecesOverAllocationLimitTests(const Context& context) {
+    WindowedRange range(context, 2 * WindowedRange::piece, 5);
+    const auto first = range.First();
+    const auto limit = 3 * range.window;
+    SetHostImportMaxBytes(limit);
+    {
+        GuestBufferMemory leased(range.importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        std::uint64_t covered = first;
+        for (const auto& entry : leased.AddressRanges()) {
+            if (entry.end <= first || entry.begin >= first + range.bytes) continue;
+            Require(entry.begin == covered, "the pieces of a range over the allocation limit leave a gap or overlap in the BDA table");
+            Require(entry.end - entry.begin <= limit, "a BDA table entry of a range over the allocation limit is larger than the limit");
+            const auto* piece = ExistingHostImportFor(range.importing, entry.begin, static_cast<std::size_t>(entry.end - entry.begin));
+            Require(piece != nullptr && piece->bytes <= limit && entry.deviceAddress == piece->address + (entry.begin - piece->base), "a BDA table entry of a range over the allocation limit is not served in place by an import within the limit");
+            covered = entry.end;
+        }
+        Require(covered == first + range.bytes, "the pieces of a range over the allocation limit do not cover it");
+        for (std::uint64_t at = first; at < first + range.bytes; at += range.window) {
+            const auto* piece = ExistingHostImportFor(range.importing, at, 16);
+            Require(piece != nullptr && piece->bytes <= limit, "a range over the allocation limit has an import larger than the limit");
+        }
+        leased.WriteBack();
+    }
+    SetHostImportMaxBytes(0);
+}
+
 // Two uses across neighbouring cell edges of one range, each in a build of its own, share one import: the second grows
 // the first's window to their union, and later rounds of both keep it. Before, each replaced the other's window at
 // every use.
@@ -1050,6 +1080,7 @@ void importNeighbouringEdgesTests(const Context& context) {
 // A range mapped while the imports are at the budget is refused at map time without retiring an import: the map
 // observer holds no GPU lock, so it must not evict (before, it evicted the least recently used import to fit).
 void importAtMapOverBudgetTests(const Context& context) {
+    ClearHostImports(context.device);
     constexpr std::size_t bytes = 65536;
     auto importing = context;
     importing.hostImportAlignment = bytes;
@@ -1094,6 +1125,7 @@ void importAtMapOverBudgetTests(const Context& context) {
 }
 
 void importRequesterTests(const Context& context, const BdaTestAccess& access) {
+    ClearHostImports(context.device);
     constexpr std::size_t piece = 65536;
     constexpr std::size_t pieces = 8;
     auto* block = static_cast<std::uint8_t*>(::operator new(pieces * piece, std::align_val_t{piece}));
@@ -3641,6 +3673,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importMappedFailureGenerationTests(context);
     importStaleProbeTests(context, access);
     importRefusedWholeRangeTests(context);
+    importPiecesOverAllocationLimitTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
     importRequesterTests(context, access);

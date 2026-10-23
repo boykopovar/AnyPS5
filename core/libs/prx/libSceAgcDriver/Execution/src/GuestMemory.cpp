@@ -22,6 +22,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -372,18 +373,38 @@ struct PageSpan {
     std::size_t size = 0;
     // Per page: access flags, zero while unknown.
     std::uint8_t* pages = nullptr;
+    static constexpr std::size_t ChunkEntries = 65536;
+    struct alignas(8) Chunk { std::array<std::uint8_t, ChunkEntries> entries{}; };
+    std::atomic<Chunk*>* chunks = nullptr;
 
-    // Reserves and commits the table; untouched table pages cost nothing until a guest page is recorded.
+    std::uint8_t* chunkData(std::size_t index, bool create) const {
+        auto* chunk = chunks[index].load(std::memory_order_acquire);
+        if (chunk == nullptr && create) {
+            auto fresh = std::unique_ptr<Chunk>(new (std::nothrow) Chunk{});
+            if (fresh != nullptr && chunks[index].compare_exchange_strong(chunk, fresh.get(), std::memory_order_acq_rel, std::memory_order_acquire)) chunk = fresh.release();
+        }
+        return chunk == nullptr ? nullptr : chunk->entries.data();
+    }
+
+    std::uint8_t* entry(std::size_t index, bool create) const {
+        if (chunks == nullptr) return pages + index;
+        auto* data = chunkData(index / ChunkEntries, create);
+        return data == nullptr ? nullptr : data + index % ChunkEntries;
+    }
+
     bool allocate() {
         if (size == 0) return false;
         const auto count = (size / PageBytes + 8) & ~static_cast<std::size_t>(7);
 #ifdef _WIN32
-        pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, count, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        const auto chunkCount = (count + ChunkEntries - 1) / ChunkEntries;
+        chunks = new (std::nothrow) std::atomic<Chunk*>[chunkCount]{};
+        if (chunks == nullptr) size = 0;
+        return chunks != nullptr;
 #else
         pages = static_cast<std::uint8_t*>(std::calloc(count, 1));
-#endif
         if (pages == nullptr) size = 0;
         return pages != nullptr;
+#endif
     }
 
     bool covers(std::uintptr_t address) const {
@@ -391,11 +412,23 @@ struct PageSpan {
     }
 
     std::uint8_t load(std::uintptr_t address) const {
-        return std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[(address - base) / PageBytes])).load(std::memory_order_relaxed);
+        auto* value = entry((address - base) / PageBytes, false);
+        return value == nullptr ? 0 : std::atomic_ref<std::uint8_t>(*value).load(std::memory_order_relaxed);
     }
 
     void store(std::uintptr_t address, std::uint8_t value) {
-        std::atomic_ref<std::uint8_t>(pages[(address - base) / PageBytes]).store(value, std::memory_order_relaxed);
+        if (auto* at = entry((address - base) / PageBytes, value != 0 && value != PageInaccessible)) std::atomic_ref<std::uint8_t>(*at).store(value, std::memory_order_relaxed);
+    }
+
+    void store(std::uintptr_t first, std::uintptr_t last, std::uint8_t value) {
+        auto index = (first - base) / PageBytes;
+        const auto stop = (last - 1 - base) / PageBytes + 1;
+        while (index < stop) {
+            const auto next = std::min(stop, (index / ChunkEntries + 1) * ChunkEntries);
+            if (auto* at = entry(index, value != 0 && value != PageInaccessible)) {
+                for (; index < next; ++index, ++at) std::atomic_ref<std::uint8_t>(*at).store(value, std::memory_order_relaxed);
+            } else index = next;
+        }
     }
 
     // End of the run of pages equal to `value` that starts at `address`, at most `limit`.
@@ -404,11 +437,17 @@ struct PageSpan {
         const auto stop = std::min<std::uintptr_t>((std::min(limit, base + size) - base + PageBytes - 1) / PageBytes, size / PageBytes);
         const std::uint64_t wide = 0x0101010101010101ull * value;
         while (index < stop) {
-            if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(const_cast<std::uint8_t*>(pages + index))).load(std::memory_order_relaxed) == wide) {
+            auto* at = entry(index, false);
+            if (at == nullptr) {
+                if (value != 0) break;
+                index = std::min(stop, (index / ChunkEntries + 1) * ChunkEntries);
+                continue;
+            }
+            if (index % 8 == 0 && index + 8 <= stop && std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(at)).load(std::memory_order_relaxed) == wide) {
                 index += 8;
                 continue;
             }
-            if (std::atomic_ref<std::uint8_t>(const_cast<std::uint8_t&>(pages[index])).load(std::memory_order_relaxed) != value) break;
+            if (std::atomic_ref<std::uint8_t>(*at).load(std::memory_order_relaxed) != value) break;
             ++index;
         }
         return std::min(limit, base + index * PageBytes);
@@ -418,7 +457,7 @@ struct PageSpan {
         if (size == 0 || bytes == 0 || address >= base + size || address + bytes <= base) return;
         const auto first = (std::max(address, base) - base) / PageBytes;
         const auto last = (std::min(address + bytes, base + size) - 1 - base) / PageBytes;
-        for (auto page = first; page <= last; ++page) std::atomic_ref<std::uint8_t>(pages[page]).store(0, std::memory_order_relaxed);
+        store(base + first * PageBytes, base + (last + 1) * PageBytes, 0);
     }
 };
 
@@ -449,7 +488,7 @@ struct PageStates {
             const std::uint8_t value = readable ? static_cast<std::uint8_t>(PageReadable | (writable ? PageWritable : 0u)) : PageInaccessible;
             const auto first = std::max(base, span->base);
             const auto last = std::min(regionEnd, span->base + span->size);
-            for (auto at = first; at < last; at += PageBytes) span->store(at, value);
+            span->store(first, last, value);
             if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != generation || accessSerial.load(std::memory_order_acquire) != access) span->forget(first, static_cast<std::size_t>(last - first));
         }
     }
@@ -878,6 +917,7 @@ struct WriteTracker {
     // bumps, or an image refreshed after a stamp would keep failing UnchangedSince until the next
     // walk of its range and re-upload at every use of the epoch.
     std::atomic<std::uint32_t> generation{1};
+    std::atomic<std::uint32_t> stable{1};
     std::vector<void*> pages;
     // Collect memo: page-rounded ranges walked during the current epoch (see BumpCollectEpoch). A
     // collect fully inside one skips GetWriteWatch, whose cost is proportional to the range's pages,
@@ -1229,16 +1269,51 @@ WriteTracker& Tracker() {
 
 // Takes the tracker mutex; under APS5_PROFILE_DRAW an acquisition that found it held is counted
 // ('tracker waits N / M' in [guestmem]), which says whether walking outside the lock would pay.
-std::unique_lock<AgcDriver::Mutex> lockTracker(WriteTracker& tracker) {
-    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!profile) return std::unique_lock(tracker.mutex);
-    std::unique_lock lock(tracker.mutex, std::try_to_lock);
-    if (!lock.owns_lock()) {
-        trackerWaits.fetch_add(1, std::memory_order_relaxed);
+class TrackerLock {
+public:
+    explicit TrackerLock(WriteTracker& tracker) : tracker(tracker), lock(tracker.mutex, std::defer_lock) {
+        static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+        if (!profile) {
+            lock.lock();
+            return;
+        }
+        if (!lock.try_lock()) {
+            trackerWaits.fetch_add(1, std::memory_order_relaxed);
+            lock.lock();
+        }
+        trackerAcquisitions.fetch_add(1, std::memory_order_relaxed);
+    }
+    ~TrackerLock() {
+        if (lock.owns_lock()) publish();
+    }
+    TrackerLock(const TrackerLock&) = delete;
+    TrackerLock& operator=(const TrackerLock&) = delete;
+
+    void Unlock() {
+        publish();
+        lock.unlock();
+    }
+
+    void Suspend() {
+        lock.unlock();
+    }
+
+    void Resume() {
         lock.lock();
     }
-    trackerAcquisitions.fetch_add(1, std::memory_order_relaxed);
-    return lock;
+
+private:
+    void publish() {
+        const auto current = tracker.generation.load(std::memory_order_relaxed);
+        if (tracker.stable.load(std::memory_order_relaxed) != current) tracker.stable.store(current, std::memory_order_release);
+    }
+
+    WriteTracker& tracker;
+    std::unique_lock<AgcDriver::Mutex> lock;
+};
+
+TrackerLock lockTracker(WriteTracker& tracker) {
+    return TrackerLock(tracker);
 }
 
 #ifdef _WIN32
@@ -1411,7 +1486,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
             const auto& map = epochCollectMap(epoch);
             if (const auto found = map.ranges.find(first); found != map.ranges.end() && found->second.unwatched == unwatched && found->second.mapping == mapping && stop <= found->second.end) {
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
-                return tracker.generation.load(std::memory_order_relaxed);
+                return tracker.stable.load(std::memory_order_acquire);
             }
         }
         for (const auto& entry : threadCollectMemo().entries) {
@@ -1420,7 +1495,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
                 // overlapping collect) were written before this caller reads, and an older value would
                 // make every later UnchangedSince fail until the epoch ends.
                 collectMemoHits.fetch_add(1, std::memory_order_relaxed);
-                return tracker.generation.load(std::memory_order_relaxed);
+                return tracker.stable.load(std::memory_order_acquire);
             }
         }
     }
@@ -1609,7 +1684,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched) {
-        lock.unlock();
+        lock.Unlock();
         return import();
     }
     constexpr std::uint64_t page = 4096;
@@ -1789,9 +1864,9 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
         const bool collected = GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix(static_cast<std::uintptr_t>(blockFirst), static_cast<std::size_t>(blockStop - blockFirst), &stampWrittenRun, &runs);
 #endif
         if (!collected) {
-            lock.unlock();
+            lock.Suspend();
             beforeUnwatch(blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
-            lock.lock();
+            lock.Resume();
             unwatchLocked(tracker, blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
             tracker.noteUnstampedStore(address, address + bytes);
             return 0;

@@ -221,6 +221,7 @@ public:
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
+    void RecordUncounted(const std::function<void(VkCommandBuffer)>& record);
     struct SampleDumpStatistics {
         std::uint64_t queued;
         std::uint64_t queuedInPass;
@@ -579,6 +580,7 @@ private:
         VkQueryPool queries = VK_NULL_HANDLE;
         VkQueryPool samples = VK_NULL_HANDLE;
         std::shared_ptr<void> samplePool;
+        std::vector<VkQueryPool> endedSamples;
         bool sampleActive = false;
         bool samplesDrawn = false;
         VkQueryPool segments = VK_NULL_HANDLE;

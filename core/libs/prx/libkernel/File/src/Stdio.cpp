@@ -726,7 +726,7 @@ int APS5_VABI nmount_nid_postfix(const KernelIovec* iov, unsigned int niov, int 
 }
 
 int APS5_VABI close_nid_postfix(int d) {
-    if (File::IsHostStream(d)) return PosixFailure(GUEST_EBADF);
+    if (File::IsHostStream(d)) return PosixFailure(GUEST_EPERM);
     int socketError = 0;
     if (KernelCloseSocket_nid_no_patch(d, &socketError)) {
         if (socketError == 0) return 0;

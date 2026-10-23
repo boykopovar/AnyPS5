@@ -769,6 +769,62 @@ static void TestCustomGain() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+template <typename TException>
+static bool ModuleInfoThrows(uintptr_t rack, std::uint32_t moduleIndex, std::size_t infoSize) {
+    Ngs2CustomModuleInfo info;
+    std::memset(&info, 0xa5, sizeof(info));
+    bool threw = false;
+    try {
+        sceNgs2CustomRackGetModuleInfo(rack, moduleIndex, &info, infoSize);
+    } catch (const TException&) {
+        threw = true;
+    }
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&info);
+    for (std::size_t i = 0; i < sizeof(info); i++) Require(bytes[i] == 0xa5);
+    return threw;
+}
+
+static void TestCustomModuleInfo() {
+    const auto system = CreateSystem();
+    const Ngs2CustomUserFx2ModuleOption userFx2{{sizeof(Ngs2CustomUserFx2ModuleOption)}, nullptr, nullptr, nullptr, Gain, sizeof(float), sizeof(float), 8, 0x77};
+    const Ngs2CustomUserFx2ModuleOption modules[2] = {userFx2, userFx2};
+    auto option = RackOption(modules, 2);
+    auto& first = option.custom_rack_option.module[0];
+    first.state_offset = 0x40;
+    first.reserved = 0x11;
+    first.reserved2 = 0x22;
+    auto& filter = option.custom_rack_option.module[1];
+    filter.option = nullptr;
+    filter.module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
+    filter.state_size = 0;
+    const auto rack = CustomRack(system, option);
+
+    Ngs2CustomModuleInfo info;
+    std::memset(&info, 0xa5, sizeof(info));
+    Require(sceNgs2CustomRackGetModuleInfo(rack, 0, &info, sizeof(info)) == SCE_NGS2_OK);
+    Require(info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_USER_FX2 && info.source_buffer_id == 0 && info.extra_buffer_id == 0 && info.dest_buffer_id == 0);
+    Require(info.state_offset == 0x40 && info.state_size == 16 && info.reserved == 0 && info.reserved2 == 0);
+    std::memset(&info, 0xa5, sizeof(info));
+    Require(sceNgs2CustomRackGetModuleInfo(rack, 1, &info, sizeof(info)) == SCE_NGS2_OK);
+    Require(info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_FILTER && info.state_offset == 0 && info.state_size == 0 && info.reserved == 0 && info.reserved2 == 0);
+
+    Require(sceNgs2CustomRackGetModuleInfo(rack, 0, nullptr, sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(sceNgs2CustomRackGetModuleInfo(0x1234, 0, nullptr, sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    std::memset(&info, 0xa5, sizeof(info));
+    Require(sceNgs2CustomRackGetModuleInfo(0x1234, 0, &info, sizeof(info)) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    Require(sceNgs2CustomRackGetModuleInfo(system, 0, &info, sizeof(info)) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&info);
+    for (std::size_t i = 0; i < sizeof(info); i++) Require(bytes[i] == 0xa5);
+    Require(ModuleInfoThrows<std::invalid_argument>(rack, 2, sizeof(Ngs2CustomModuleInfo)));
+    Require(ModuleInfoThrows<std::invalid_argument>(rack, 0, sizeof(Ngs2CustomModuleInfo) - 1));
+    Require(ModuleInfoThrows<std::runtime_error>(rack, 0, sizeof(Ngs2CustomModuleInfo) + 8));
+    Require(ModuleInfoThrows<std::invalid_argument>(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER), 0, sizeof(Ngs2CustomModuleInfo)));
+
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2CustomRackGetModuleInfo(rack, 0, &info, sizeof(info)) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
     for (const auto count : {1u, 2u, 24u}) {
         for (const auto delay : {DelayOption{}, DelayOption{20, 1, 1, 1.0f, 0}, DelayOption{20, 1, 8, 20000.0f, 0}}) {
@@ -782,5 +838,6 @@ int main() {
     TestCustomFilter();
     for (const auto moduleIndex : {0u, 1u, 23u}) TestCustomLegacyUserFx(moduleIndex);
     TestCustomGain();
+    TestCustomModuleInfo();
     return 0;
 }

@@ -148,7 +148,10 @@ static void Require(bool condition) {
     if (!condition) std::abort();
 }
 
-static bool FailResolverLookup(const char*, int, std::vector<std::array<std::uint8_t, 16>>&) {
+static bool FailResolverLookup(const char* hostname, int family, std::vector<std::array<std::uint8_t, 16>>&) {
+    Require(hostname != nullptr && (std::strcmp(hostname, "guest-sce-net.invalid.") == 0 ||
+        std::strcmp(hostname, "guest-sce-net.invalid") == 0));
+    Require(family == AF_INET || family == AF_INET6);
     return false;
 }
 
@@ -1907,10 +1910,7 @@ int main() {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     Require(sceNetResolverStartNtoa6(resolver, nullptr, resolved6.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
     const auto resolved6BeforeFailure = resolved6;
-    {
-        ScopedResolverLookupOverride lookupOverride(FailResolverLookup);
-        Require(sceNetResolverStartNtoa6(resolver, "127.0.0.1", resolved6.data(), 5000000, 1, 0) == static_cast<int>(0x804101E1));
-    }
+    Require(sceNetResolverStartNtoa6(resolver, "127.0.0.1", resolved6.data(), 5000000, 1, 0) == static_cast<int>(0x804101E1));
     Require(resolved6 == resolved6BeforeFailure);
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == static_cast<int>(0x804101E1));
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);

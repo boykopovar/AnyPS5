@@ -171,8 +171,8 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
         const char* candidate = text;
         const char* match = needle;
         while (*candidate != '\0' && *match != '\0' &&
-               std::tolower(static_cast<unsigned char>(*candidate)) ==
-               std::tolower(static_cast<unsigned char>(*match))) {
+               FoldCase(static_cast<unsigned char>(*candidate), FnmCasefold) ==
+               FoldCase(static_cast<unsigned char>(*match), FnmCasefold)) {
             ++candidate;
             ++match;
         }

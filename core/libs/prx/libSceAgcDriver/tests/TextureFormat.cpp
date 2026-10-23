@@ -223,6 +223,22 @@ void packedFloatDccClearTests() {
     Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1111, "packed float texture discarded its white fast-clear keys");
 }
 
+void fillContractTests() {
+    std::array<std::uint32_t, 4> texels;
+    texels.fill(0xdeadbeefu);
+    auto span = std::as_writable_bytes(std::span(texels));
+    Require(!FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, DccKeys::ClearRegister, false, span), "a register clear encoded a texel");
+    for (const auto texel : texels) Require(texel == 0u, "a declined clear left its span untouched");
+    texels.fill(0xdeadbeefu);
+    Require(!FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, DccKeys::Uncompressed, false, span), "an uncompressed code encoded a texel");
+    for (const auto texel : texels) Require(texel == 0u, "a declined clear left its span untouched");
+    std::array<std::byte, 10> partial;
+    partial.fill(std::byte{0x5a});
+    Require(FillDccClear(VK_FORMAT_B10G11R11_UFLOAT_PACK32, DccKeys::Clear1111, false, partial), "packed float fast clear was not encoded");
+    const std::array<std::byte, 4> white{std::byte{0xc0}, std::byte{0x03}, std::byte{0x1e}, std::byte{0x78}};
+    for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
+}
+
 }
 
 void RunTextureFormatTests() {
@@ -287,5 +303,6 @@ void RunTextureFormatTests() {
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();
+    fillContractTests();
     gcnBufferFormatTests();
 }

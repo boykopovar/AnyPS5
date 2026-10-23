@@ -128,6 +128,10 @@ std::uint32_t imageCoordinates(RdnaImageDimension dimension) {
     }
 }
 
+bool multisamplePlaneRead(const ImageResource& image) {
+    return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
+}
+
 bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
     const auto type = rawImageType(descriptor);
     const auto format = rawImageFormat(descriptor);
@@ -214,6 +218,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     decoded.cube = descriptorIsCube(descriptor);
     const auto format = rawImageFormat(descriptor);
+    if (decoded.dimension == RdnaImageDimension::Dim2DMsaa && rawImageType(descriptor) == ImageType::Color2DMsaa && multisamplePlaneRead(base) && !IsFmaskTextureFormat(format) && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) decoded.dimension = RdnaImageDimension::Dim2D;
     if (base.atomic64 && format != IrBufferFormat::Format32_32UInt && format != IrBufferFormat::Format32_32SInt && format != IrBufferFormat::Format32_32Float) {
         return rejectImage(PoisonReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
@@ -656,6 +661,7 @@ private:
 
 struct WordsIndexTag {};
 struct ElementIndexTag {};
+struct SamplerIndexTag {};
 struct PoisonIndexTag {};
 struct TableRecordsTag {};
 
@@ -1672,6 +1678,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         return Abi::PoisonCode(*index);
     };
     HashScratchIndex elementIndex{threadScratch<HashSlot, ElementIndexTag>()};
+    HashScratchIndex samplerIndex{threadScratch<HashSlot, SamplerIndexTag>()};
     std::vector<std::uint32_t> directSamplers(info.images.size(), 0u);
     for (const auto& pair : info.sampledPairs) {
         if (info.samplers.at(pair.sampler).table == NoTable) directSamplers.at(pair.image) |= 1u << pair.sampler;
@@ -1729,19 +1736,29 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Unnormalized, &words);
         } else if (((words.dwords[0] >> 29u) & 3u) != 0u) {
             record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Reduction, &words);
-        } else if (out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
-            record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
         } else {
-            record[Abi::SamplerRecordElement] = static_cast<std::uint32_t>(out.samplers.size());
-            for (std::uint32_t variant = 0; variant < 2u; variant++) {
-                const bool compare = variant == 1u;
-                for (std::uint32_t point = 0; point < 2u; point++) {
-                    ImageTableSamplerElement element;
-                    std::copy_n(words.dwords.begin(), 4u, element.words.begin());
-                    element.compare = compare;
-                    element.point = point != 0u;
-                    out.samplers.push_back(element);
+            const auto hash = hashWords(std::span(words.dwords.data(), 4u), 0);
+            auto index = samplerIndex.Find(hash, [&](std::uint32_t known) {
+                return std::equal(words.dwords.begin(), words.dwords.begin() + 4u, out.samplers[known].words.begin());
+            });
+            if (!index.has_value() && out.samplers.size() + Abi::SamplerEntryElements > Abi::SamplerElementBudget) {
+                record[Abi::SamplerRecordFlags] = poison(resource, PoisonReason::Budget, &words);
+            } else {
+                if (!index.has_value()) {
+                    index = static_cast<std::uint32_t>(out.samplers.size());
+                    for (std::uint32_t variant = 0; variant < 2u; variant++) {
+                        const bool compare = variant == 1u;
+                        for (std::uint32_t point = 0; point < 2u; point++) {
+                            ImageTableSamplerElement element;
+                            std::copy_n(words.dwords.begin(), 4u, element.words.begin());
+                            element.compare = compare;
+                            element.point = point != 0u;
+                            out.samplers.push_back(element);
+                        }
+                    }
+                    samplerIndex.Insert(hash, *index);
                 }
+                record[Abi::SamplerRecordElement] = *index;
             }
         }
         const auto offset = static_cast<std::uint32_t>(out.map.size());

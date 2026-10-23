@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <iterator>
 #include <utility>
 #include <vector>
 #include "SceTypes.hpp"
@@ -255,6 +256,12 @@ void jisToSjis(int row, int cell, uint8_t& lead, uint8_t& trail) {
         lead = static_cast<uint8_t>(row < 63 ? 0x81 + (row - 2) / 2 : 0xE0 + (row - 64) / 2);
         trail = static_cast<uint8_t>(cell + 0x9E);
     }
+}
+
+constexpr uint8_t JIS_X0213_PLANE2_ROWS[26] = {1, 8, 3, 4, 5, 12, 13, 14, 15, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94};
+
+bool isSjisSingle(uint8_t byte) {
+    return byte < 0x80 || (byte >= 0xA1 && byte <= 0xDF);
 }
 
 const void* contextProfile(const void* context) {
@@ -941,6 +948,13 @@ int APS5_VABI sceCesMbcsUcsContextInit(void* context, const void* profile) {
     return 0;
 }
 
+int APS5_VABI sceCesMbcsUcsContextInitCopy(void* context, const void* source) {
+    if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(source);
+    std::memcpy(context, &profile, sizeof(profile));
+    return 0;
+}
+
 void* APS5_VABI sceCesUcsProfileInitEucJpCp51932(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, EUC_JP_TAG, sizeof(EUC_JP_TAG));
@@ -1207,6 +1221,100 @@ int APS5_VABI sceCesJisX0208ToSJisCode(uint8_t ku, uint8_t ten, uint16_t* sjisCo
     jisToSjis(ku, ten, lead, trail);
     *sjisCode = static_cast<uint16_t>(lead << 8 | trail);
     return 0;
+}
+
+int APS5_VABI sceCesSJisCodeToJisX0213(uint16_t sjisCode, uint8_t* men, uint8_t* ku, uint8_t* ten) {
+    if (!men || !ku || !ten) return CES_ERROR_INVALID_DST_BUFFER;
+    int row = 0;
+    int cell = 0;
+    if (!sjisToJis(static_cast<uint8_t>(sjisCode >> 8), static_cast<uint8_t>(sjisCode), row, cell)) return CES_ERROR_INVALID_ENCODE;
+    *men = row <= 94 ? 1 : 2;
+    *ku = row <= 94 ? static_cast<uint8_t>(row) : JIS_X0213_PLANE2_ROWS[row - 95];
+    *ten = static_cast<uint8_t>(cell);
+    return 0;
+}
+
+int APS5_VABI sceCesJisX0213ToSJisCode(uint8_t men, uint8_t ku, uint8_t ten, uint16_t* sjisCode) {
+    if (!sjisCode) return CES_ERROR_INVALID_DST_BUFFER;
+    if (men < 1 || men > 2 || ku < 1 || ku > 94 || ten < 1 || ten > 94) return CES_ERROR_INVALID_ENCODE;
+    int row = ku;
+    if (men == 2) {
+        const auto* found = std::find(std::begin(JIS_X0213_PLANE2_ROWS), std::end(JIS_X0213_PLANE2_ROWS), ku);
+        if (found == std::end(JIS_X0213_PLANE2_ROWS)) return CES_ERROR_INVALID_ENCODE;
+        row = 95 + static_cast<int>(found - std::begin(JIS_X0213_PLANE2_ROWS));
+    }
+    uint8_t lead = 0;
+    uint8_t trail = 0;
+    jisToSjis(row, ten, lead, trail);
+    *sjisCode = static_cast<uint16_t>(lead << 8 | trail);
+    return 0;
+}
+
+int APS5_VABI sceCesSJisGetCode(const uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize, uint16_t* sjisCode) {
+    if (!sjisBuffer) return CES_ERROR_INVALID_SRC_BUFFER;
+    if (sjisMax == 0) return CES_ERROR_SRC_BUFFER_END;
+    if (!sjisCode) return CES_ERROR_INVALID_DST_BUFFER;
+    const uint8_t lead = sjisBuffer[0];
+    if (isSjisSingle(lead)) {
+        *sjisCode = lead;
+        if (sjisSize) *sjisSize = 1;
+        return 0;
+    }
+    if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
+    if (sjisMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    int row = 0;
+    int cell = 0;
+    if (!sjisToJis(lead, sjisBuffer[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+    *sjisCode = static_cast<uint16_t>(lead << 8 | sjisBuffer[1]);
+    if (sjisSize) *sjisSize = 2;
+    return 0;
+}
+
+int APS5_VABI sceCesSJisPutCode(uint16_t sjisCode, uint8_t* sjisBuffer, uint32_t sjisMax, uint32_t* sjisSize) {
+    if (!sjisBuffer) return CES_ERROR_INVALID_DST_BUFFER;
+    const uint8_t lead = static_cast<uint8_t>(sjisCode >> 8);
+    const uint8_t trail = static_cast<uint8_t>(sjisCode);
+    int row = 0;
+    int cell = 0;
+    const uint32_t size = lead == 0 ? 1 : 2;
+    if (size == 1 ? !isSjisSingle(trail) : !sjisToJis(lead, trail, row, cell)) return CES_ERROR_INVALID_ENCODE;
+    if (sjisMax < size) return CES_ERROR_DST_BUFFER_END;
+    if (size == 2) sjisBuffer[0] = lead;
+    sjisBuffer[size - 1] = trail;
+    if (sjisSize) *sjisSize = size;
+    return 0;
+}
+
+int APS5_VABI sceCesMbcToUcs2(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint16_t* ucs2) {
+    return profiledToUcs2(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, ucs2);
+}
+
+int APS5_VABI sceCesMbcToUtf8(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint8_t* utf8Buffer, uint32_t utf8Max, uint32_t* utf8Len) {
+    return profiledToUtf8(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf8Buffer, utf8Max, utf8Len);
+}
+
+int APS5_VABI sceCesMbcToUtf16(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len) {
+    return profiledToUtf16<NATIVE_BIG_ENDIAN>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf16Buffer, utf16Max, utf16Len);
+}
+
+int APS5_VABI sceCesMbcToUtf16be(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len) {
+    return profiledToUtf16<true>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf16Buffer, utf16Max, utf16Len);
+}
+
+int APS5_VABI sceCesMbcToUtf16le(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint16_t* utf16Buffer, uint32_t utf16Max, uint32_t* utf16Len) {
+    return profiledToUtf16<false>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf16Buffer, utf16Max, utf16Len);
+}
+
+int APS5_VABI sceCesMbcToUtf32(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint32_t* utf32) {
+    return profiledToUtf32<NATIVE_BIG_ENDIAN>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf32);
+}
+
+int APS5_VABI sceCesMbcToUtf32be(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint32_t* utf32) {
+    return profiledToUtf32<true>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf32);
+}
+
+int APS5_VABI sceCesMbcToUtf32le(const void* profile, const uint8_t* mbcBuffer, uint32_t mbcMax, uint32_t* mbcLen, uint32_t* utf32) {
+    return profiledToUtf32<false>(isMbcs, profile, mbcBuffer, mbcMax, mbcLen, utf32);
 }
 
 int APS5_VABI sceCesSbcToUcs2(const uint8_t* profile, uint8_t sbc, uint16_t* ucs2) {

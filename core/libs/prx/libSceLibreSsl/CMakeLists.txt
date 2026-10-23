@@ -4,6 +4,17 @@ target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_libressl_x509_errors_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509Errors.cpp)
+    target_include_directories(guest_libressl_x509_errors_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_x509_errors_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_x509_errors_tests)
+    add_test(NAME guest_libressl_x509_errors COMMAND guest_libressl_x509_errors_tests)
+    set_tests_properties(guest_libressl_x509_errors PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_x509_errors PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_digest_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslDigest.cpp)
     target_include_directories(guest_libressl_digest_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_digest_tests PRIVATE libSceLibreSsl libc)

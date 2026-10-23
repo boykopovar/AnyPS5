@@ -162,57 +162,7 @@ int APS5_VABI sceCesJisGetLevel(void) {
     return 0;
 }
 
-int APS5_VABI sceCesJisX0213ToSJisCode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesJiscsToUcs(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUcs2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf16(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf16be(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf16le(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf32(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf32be(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf32le(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcToUtf8(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesMbcsUcsContextInitCopy(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -348,21 +298,6 @@ int APS5_VABI sceCesRefersUcsProfileKsX1003(void) {
 }
 
 int APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesSJisCodeToJisX0213(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesSJisGetCode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesSJisPutCode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
