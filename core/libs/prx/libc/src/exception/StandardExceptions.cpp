@@ -92,8 +92,6 @@ const char* PlainWhat(const ExceptionObject* object) {
     if (std::strcmp(name, "St20bad_array_new_length") == 0) return "std::bad_array_new_length";
     if (std::strcmp(name, "St17bad_function_call") == 0) return "std::bad_function_call";
     if (std::strcmp(name, "St12bad_weak_ptr") == 0) return "bad_weak_ptr";
-    if (std::strcmp(name, "St18bad_variant_access") == 0) return "bad_variant_access";
-    if (std::strcmp(name, "St19bad_optional_access") == 0) return "bad_optional_access";
     return name;
 }
 const char* MessageWhat(const ExceptionObject* object) { return object->message ? object->message : ""; }
@@ -129,7 +127,11 @@ ExceptionObject* Assign(ExceptionObject* object, const ExceptionObject* source) 
 }
 
 struct CategoryObject { const void* vtable; };
-struct ErrorCode { int value; const CategoryObject* category; };
+struct ErrorCode {
+    std::int32_t value;
+    std::int32_t value_high;
+    const CategoryObject* category;
+};
 struct SystemErrorObject { ExceptionObject base; ErrorCode code; };
 static_assert(sizeof(ErrorCode) == 16 && sizeof(SystemErrorObject) == 32 && offsetof(SystemErrorObject, code) == 16);
 struct CppError { int value; const char* message; };
@@ -235,12 +237,16 @@ static GuestLocale::String* APS5_VABI GenericCategoryMessage_nid_no_patch(GuestL
     result->capacity = capacity;
     return result;
 }
-static ErrorCode APS5_VABI GenericCategoryCondition_nid_no_patch(const CategoryObject* self, int value) { return {value, self}; }
+static ErrorCode APS5_VABI GenericCategoryCondition_nid_no_patch(const CategoryObject* self, int value) {
+    return {value, value, self};
+}
 static bool APS5_VABI GenericCategoryEquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const ErrorCode* condition) {
-    return condition->category == self && condition->value == value;
+    if (!condition) return false;
+    return condition->category == self && (condition->value == value || condition->value_high == value);
 }
 static bool APS5_VABI GenericCategoryEquivalentCode_nid_no_patch(const CategoryObject* self, const ErrorCode* code, int value) {
-    return code->category == self && code->value == value;
+    if (!code) return false;
+    return code->category == self && (code->value == value || code->value_high == value);
 }
 const void* const GenericCategoryVtable[] {
     nullptr, &GenericCategoryType,
@@ -251,6 +257,85 @@ const void* const GenericCategoryVtable[] {
     reinterpret_cast<const void*>(GenericCategoryEquivalentCode_nid_no_patch)
 };
 const CategoryObject GenericCategory {GenericCategoryVtable + 2};
+
+const TypeRecord SystemCategoryType {SingleTypeVtable + 2, "St22_System_error_category", &ErrorCategoryType};
+static void APS5_VABI SystemCategoryDestroy_nid_no_patch(CategoryObject*) {}
+static void APS5_VABI SystemCategoryDelete_nid_no_patch(CategoryObject*) {
+    throw std::invalid_argument("std::_System_error_category: the system category object is not heap allocated");
+}
+static const char* APS5_VABI SystemCategoryName_nid_no_patch(const CategoryObject*) { return "system"; }
+static GuestLocale::String* APS5_VABI SystemCategoryMessage_nid_no_patch(GuestLocale::String* result, const CategoryObject* self, int value) {
+    return GenericCategoryMessage_nid_no_patch(result, self, value);
+}
+static ErrorCode APS5_VABI SystemCategoryCondition_nid_no_patch(const CategoryObject* self, int value) {
+    if (GenericErrorMessage(value) != nullptr) {
+        return {value, value, &GenericCategory};
+    }
+    return {value, value, self};
+}
+static bool APS5_VABI SystemCategoryEquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const ErrorCode* condition) {
+    if (!condition) return false;
+    const CategoryObject* expected_cat = (GenericErrorMessage(value) != nullptr) ? &GenericCategory : self;
+    return (condition->category == expected_cat || condition->category == self) &&
+           (condition->value == value || condition->value_high == value);
+}
+static bool APS5_VABI SystemCategoryEquivalentCode_nid_no_patch(const CategoryObject* self, const ErrorCode* code, int value) {
+    if (!code) return false;
+    return code->category == self && (code->value == value || code->value_high == value);
+}
+const void* const SystemCategoryVtable[] {
+    nullptr, &SystemCategoryType,
+    reinterpret_cast<const void*>(SystemCategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(SystemCategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(SystemCategoryName_nid_no_patch), reinterpret_cast<const void*>(SystemCategoryMessage_nid_no_patch),
+    reinterpret_cast<const void*>(SystemCategoryCondition_nid_no_patch),
+    reinterpret_cast<const void*>(SystemCategoryEquivalentCondition_nid_no_patch),
+    reinterpret_cast<const void*>(SystemCategoryEquivalentCode_nid_no_patch)
+};
+const CategoryObject SystemCategory {SystemCategoryVtable + 2};
+
+const TypeRecord FutureCategoryType {SingleTypeVtable + 2, "St22_Future_error_category", &ErrorCategoryType};
+static void APS5_VABI FutureCategoryDestroy_nid_no_patch(CategoryObject*) {}
+static void APS5_VABI FutureCategoryDelete_nid_no_patch(CategoryObject*) {
+    throw std::invalid_argument("std::_Future_error_category: the future category object is not heap allocated");
+}
+static const char* APS5_VABI FutureCategoryName_nid_no_patch(const CategoryObject*) { return "future"; }
+static GuestLocale::String* APS5_VABI FutureCategoryMessage_nid_no_patch(GuestLocale::String* result, const CategoryObject*, int value) {
+    if (!result) throw std::invalid_argument("std::_Future_error_category::message: null result");
+    const char* message = "future error";
+    if (value == 1) message = "broken promise";
+    else if (value == 2) message = "future already retrieved";
+    else if (value == 3) message = "promise already satisfied";
+    else if (value == 4) message = "no state";
+    const auto length = std::strlen(message);
+    const auto capacity = length | std::size_t{15};
+    char* storage = length <= 15 ? result->buffer : static_cast<char*>(_Znwm_nid_postfix(capacity + 1));
+    std::memcpy(storage, message, length + 1);
+    result->reserved = 0;
+    if (length > 15) result->pointer = storage;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+static ErrorCode APS5_VABI FutureCategoryCondition_nid_no_patch(const CategoryObject* self, int value) {
+    return {value, value, self};
+}
+static bool APS5_VABI FutureCategoryEquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const ErrorCode* condition) {
+    if (!condition) return false;
+    return condition->category == self && (condition->value == value || condition->value_high == value);
+}
+static bool APS5_VABI FutureCategoryEquivalentCode_nid_no_patch(const CategoryObject* self, const ErrorCode* code, int value) {
+    if (!code) return false;
+    return code->category == self && (code->value == value || code->value_high == value);
+}
+const void* const FutureCategoryVtable[] {
+    nullptr, &FutureCategoryType,
+    reinterpret_cast<const void*>(FutureCategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(FutureCategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(FutureCategoryName_nid_no_patch), reinterpret_cast<const void*>(FutureCategoryMessage_nid_no_patch),
+    reinterpret_cast<const void*>(FutureCategoryCondition_nid_no_patch),
+    reinterpret_cast<const void*>(FutureCategoryEquivalentCondition_nid_no_patch),
+    reinterpret_cast<const void*>(FutureCategoryEquivalentCode_nid_no_patch)
+};
+const CategoryObject FutureCategory {FutureCategoryVtable + 2};
 }
 
 extern "C" {
@@ -260,9 +345,45 @@ const char* APS5_VABI _ZSt13_Syserror_mapi_nid_postfix(int value) {
 const LibcException::CategoryObject* APS5_VABI _ZSt16generic_categoryv_nid_postfix() {
     return &LibcException::GenericCategory;
 }
+const LibcException::CategoryObject* APS5_VABI _ZSt15system_categoryv_nid_postfix() {
+    return &LibcException::SystemCategory;
+}
+const LibcException::CategoryObject* APS5_VABI _ZSt15future_categoryv_nid_postfix() {
+    return &LibcException::FutureCategory;
+}
+void APS5_VABI _ZNSt14error_categoryD2Ev_nid_postfix(LibcException::CategoryObject*) {}
+void APS5_VABI _ZNSt14error_categoryD1Ev_nid_postfix(LibcException::CategoryObject*) {}
+void APS5_VABI _ZNSt14error_categoryD0Ev_nid_postfix(LibcException::CategoryObject*) {}
+LibcException::ErrorCode APS5_VABI _ZNKSt14error_category23default_error_conditionEi_nid_postfix(
+    const LibcException::CategoryObject* self, int value) {
+    return {value, value, self};
+}
+bool APS5_VABI _ZNKSt14error_category10equivalentEiRKSt15error_condition_nid_postfix(
+    const LibcException::CategoryObject* self, int value, const LibcException::ErrorCode* condition) {
+    if (!self || !condition) return false;
+    auto cond = reinterpret_cast<LibcException::ErrorCode (APS5_VABI *)(const LibcException::CategoryObject*, int)>(
+        reinterpret_cast<const void* const*>(self->vtable)[4])(self, value);
+    return cond.category == condition->category && (cond.value == condition->value || cond.value_high == condition->value_high);
+}
+bool APS5_VABI _ZNKSt14error_category10equivalentERKSt10error_codei_nid_postfix(
+    const LibcException::CategoryObject* self, const LibcException::ErrorCode* code, int value) {
+    if (!code) return false;
+    return code->category == self && (code->value == value || code->value_high == value);
+}
 GuestLocale::String* APS5_VABI _ZNKSt23_Generic_error_category7messageEi_nid_postfix(
     GuestLocale::String* result, const LibcException::CategoryObject* self, int value) {
     return LibcException::GenericCategoryMessage_nid_no_patch(result, self, value);
+}
+GuestLocale::String* APS5_VABI _ZNKSt22_System_error_category7messageEi_nid_postfix(
+    GuestLocale::String* result, const LibcException::CategoryObject* self, int value) {
+    return LibcException::SystemCategoryMessage_nid_no_patch(result, self, value);
+}
+const char* APS5_VABI _ZNKSt22_System_error_category4nameEv_nid_postfix(const LibcException::CategoryObject* self) {
+    return LibcException::SystemCategoryName_nid_no_patch(self);
+}
+LibcException::ErrorCode APS5_VABI _ZNKSt22_System_error_category23default_error_conditionEi_nid_postfix(
+    const LibcException::CategoryObject* self, int value) {
+    return LibcException::SystemCategoryCondition_nid_no_patch(self, value);
 }
 LibcException::TypeRecord _ZTISt8ios_base_nid_postfix {LibcException::ClassTypeVtable + 2, "St8ios_base", nullptr};
 LibcException::TypeRecord _ZTISt9exception_nid_postfix {LibcException::ClassTypeVtable + 2, "St9exception", nullptr};
@@ -334,18 +455,6 @@ void APS5_VABI _ZNSt12bad_weak_ptrD1Ev_nid_postfix(LibcException::ExceptionObjec
 void APS5_VABI _ZNSt12bad_weak_ptrD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
 void APS5_VABI _ZNSt12bad_weak_ptrD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
 const char* APS5_VABI _ZNKSt12bad_weak_ptr4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
-
-LibcException::TypeRecord _ZTISt18bad_variant_access_nid_postfix {LibcException::SingleTypeVtable + 2, "St18bad_variant_access", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt18bad_variant_access_nid_postfix {0, &_ZTISt18bad_variant_access_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
-
-LibcException::TypeRecord _ZTISt19bad_optional_access_nid_postfix {LibcException::SingleTypeVtable + 2, "St19bad_optional_access", &_ZTISt9exception_nid_postfix};
-LibcException::ExceptionVtable _ZTVSt19bad_optional_access_nid_postfix {0, &_ZTISt19bad_optional_access_nid_postfix, LibcException::GuestDestroyPlain_nid_no_patch, LibcException::GuestDeletePlain_nid_no_patch, LibcException::GuestPlainWhat_nid_no_patch};
-void APS5_VABI _ZNSt19bad_optional_accessD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
-void APS5_VABI _ZNSt19bad_optional_accessD2Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyPlain(self); }
-void APS5_VABI _ZNSt19bad_optional_accessD0Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DeletePlain(self); }
-const char* APS5_VABI _ZNKSt19bad_optional_access4whatEv_nid_postfix(const LibcException::ExceptionObject* self) { return LibcException::PlainWhat(self); }
-void APS5_VABI _ZNSt19bad_optional_accessC1Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt19bad_optional_access_nid_postfix.destroy; }
-void APS5_VABI _ZNSt19bad_optional_accessC2Ev_nid_postfix(LibcException::ExceptionObject* self) { self->vtable = &_ZTVSt19bad_optional_access_nid_postfix.destroy; }
 
 LibcException::TypeRecord _ZTISt11logic_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St11logic_error", &_ZTISt9exception_nid_postfix};
 LibcException::ExceptionVtable _ZTVSt11logic_error_nid_postfix {0, &_ZTISt11logic_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
@@ -482,8 +591,6 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
 [[noreturn]] void APS5_VABI _ZSt19_Xbad_function_callv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt17bad_function_call_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt17bad_function_call_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt19_Throw_bad_weak_ptrv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt12bad_weak_ptr_nid_postfix); }
-[[noreturn]] void APS5_VABI _ZSt26__throw_bad_variant_accessv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt18bad_variant_access_nid_postfix); }
-[[noreturn]] void APS5_VABI _ZSt26_Throw_bad_optional_accessv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt19bad_optional_access_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt13_Xregex_errorNSt15regex_constants10error_typeE_nid_postfix(std::regex_constants::error_type code) {
     struct RegexObject { LibcException::ExceptionObject base; std::regex_constants::error_type code; };
     auto* object = static_cast<RegexObject*>(__cxa_allocate_exception_nid_postfix(sizeof(RegexObject)));
@@ -509,7 +616,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
     std::snprintf(message, sizeof(message), "%s: %s", error.message, LibcException::GenericErrorMessage(error.value));
     auto* object = static_cast<LibcException::SystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(LibcException::SystemErrorObject)));
     LibcException::Construct(&object->base, _ZTVSt12system_error_nid_postfix, message);
-    object->code = {error.value, &LibcException::GenericCategory};
+    object->code = {error.value, error.value, &LibcException::GenericCategory};
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(&_ZTISt12system_error_nid_postfix),
         reinterpret_cast<decltype(LibcException::Header::destructor)>(LibcException::DestroyGuestMessage_nid_no_patch));
 }
