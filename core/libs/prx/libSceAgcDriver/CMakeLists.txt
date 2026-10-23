@@ -738,7 +738,8 @@ if(BUILD_TESTING AND WIN32)
     configure_windows_unwind(agc_page_state_tests)
     add_test(NAME agc_page_states COMMAND agc_page_state_tests)
     add_test(NAME agc_page_state_metadata COMMAND agc_page_state_tests --metadata)
-    set_tests_properties(agc_page_states agc_page_state_metadata PROPERTIES
+    add_test(NAME agc_page_state_runs COMMAND agc_page_state_tests --runs)
+    set_tests_properties(agc_page_states agc_page_state_metadata agc_page_state_runs PROPERTIES
         TIMEOUT 30 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
 endif()
 
