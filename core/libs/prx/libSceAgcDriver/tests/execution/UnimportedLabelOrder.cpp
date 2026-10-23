@@ -155,6 +155,7 @@ int StoreLabel(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint
         if (reason != 1 && reason != 7) device.WaitIdle();
         AgcDriver::GuestMemory::Write(address, bytes, 4);
     }
+    if (reason == 7) device.SubmitAfterEarlyLabel();
     return reason;
 }
 
@@ -211,6 +212,26 @@ int main() {
             const auto notImported = labelFallbacks[3].load();
             countLabelOutcome(7);
             Require(syncedUnimportedLabels.load() == synced + 1 && labelFallbacks[1].load() == idle && labelFallbacks[3].load() == notImported, "an unimported label after a recorder sync was not counted on its own");
+        }
+        {
+            auto* recorder = AgcDriver::Graphics::Recorder::Active();
+            Require(recorder != nullptr, "the early label case has no recorder");
+            device->WaitIdle();
+            recorder->Keep(std::make_shared<int>(0));
+            const auto submissions = recorder->Submissions();
+            const std::uint32_t early = 0xea51u;
+            const auto bytes = std::as_bytes(std::span(&early, 1));
+            Require(device->WriteLabelOnGpu(temporary.Address() + 256, bytes, 93, 0) == 7, "a label after work that leaves guest memory alone did not take the unimported path");
+            Require(recorder->Recording() && recorder->Submissions() == submissions, "a label after work that leaves guest memory alone waited for it or submitted before its store");
+            AgcDriver::GuestMemory::Write(temporary.Address() + 256, bytes, 4);
+            Require(device->SubmitAfterEarlyLabel() && !device->SubmitAfterEarlyLabel(), "the batch left open by the early label was not submitted once after the store");
+            Require(recorder->Submissions() == submissions + 1 && !recorder->Idle(), "the early label's batch is not in flight");
+            Require(temporary.Words()[64] == early, "the early unimported label did not land");
+            recorder->Keep(std::make_shared<int>(0));
+            recorder->NotePendingRead(temporary.Address() + 512, 64, AgcDriver::Graphics::Recorder::ReadKind::DispatchElement);
+            const std::uint32_t late = 0x1a7eu;
+            Require(StoreLabel(*device, temporary.Address() + 260, late, 94) == 7 && recorder->Idle(), "a label after work reading guest memory in place did not wait for it");
+            Require(temporary.Words()[65] == late, "the waiting unimported label did not land");
         }
         {
             Require(device->FillBuffer(labels.Address() + 4096, 4096, pattern), "cannot record work before the compute-queue label");
