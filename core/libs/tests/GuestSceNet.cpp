@@ -69,6 +69,7 @@ extern const std::uint32_t sce_net_in6addr_any[4];
 extern const std::uint8_t sce_net_in6addr_linklocal_allnodes[16];
 int APS5_VABI sceNetResolverCreate(const char*, int, int);
 int APS5_VABI sceNetResolverStartNtoa(int, const char*, void*, int, int, int);
+int APS5_VABI sceNetGetMacAddress(NetEtherAddr*, int);
 int APS5_VABI sceNetResolverStartNtoa6(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverStartNtoaMultipleRecordsEx(int, const char*, void*, int, int, int);
 int APS5_VABI sceNetResolverStartNtoaMultipleRecords(int, const char*, void*, int, int, int);
@@ -555,6 +556,40 @@ static void CheckEmptyEpoll() {
         waiter.get();
         if (abort) Require(sceNetEpollDestroy(waiting_epoll) == 0);
     }
+}
+
+static void CheckRejectedArguments() {
+    Require(Failed(sceNetEpollCreate(nullptr, 0), 22));
+    for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetEpollCreate("rejected-epoll", flags), 22));
+
+    std::array<std::uint8_t, 6> untouched{};
+    untouched.fill(0xA5);
+    NetEtherAddr mac{};
+    std::memcpy(mac.data, untouched.data(), untouched.size());
+    for (const int flags : {1, 0x10000, -1}) {
+        Require(Failed(sceNetGetMacAddress(&mac, flags), 22));
+        Require(std::memcmp(mac.data, untouched.data(), untouched.size()) == 0);
+    }
+    Require(Failed(sceNetGetMacAddress(nullptr, 1), 22));
+
+    for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetResolverCreate("rejected-resolver", 0, flags), 22));
+
+    std::array<std::uint8_t, 4> ipv4{};
+    const int resolver = sceNetResolverCreate("rejected-ntoa", 0, 0);
+    Require(resolver >= 0);
+    Require(sceNetResolverAbort(resolver, 1) == 0);
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 1, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, -1, 0), 22));
+    for (const int flags : {2, 0x20000, 0x10003, static_cast<int>(0x80000000u), -1})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, flags), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0), 4));
+    Require(sceNetResolverDestroy(resolver) == 0);
+
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 0, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, -1, 0), 22));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, 2), 22));
+    for (const int flags : {0, 1, 0x10000, 0x10001})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, flags), 9));
 }
 
 static void CheckDontWait() {
@@ -1677,6 +1712,7 @@ int main() {
     CheckNetMemory();
     CheckNetstat();
     CheckEmptyEpoll();
+    CheckRejectedArguments();
     CheckDontWait();
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
