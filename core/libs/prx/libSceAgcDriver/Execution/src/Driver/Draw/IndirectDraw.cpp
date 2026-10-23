@@ -2,7 +2,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include <algorithm>
 #include <cstdlib>
+#include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
 
@@ -22,7 +24,7 @@ void Driver::FoldDrawOffsets(const ShaderRecompiler::RecompileResult& result, co
     if (result.instanceOffsetSgpr >= 0) parameters.firstInstance = drawUserWord(program, result.instanceOffsetSgpr);
 }
 
-std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect) {
+std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const ShaderRecompiler::RecompileResult& result, const Graphics::State& graphics, const DrawProgram& frontProgram, const std::shared_ptr<VulkanDevice>& localDevice, Pm4::DrawParameters& drawParameters, bool traceIndirect, std::int32_t instanceInputSgpr) {
     std::optional<Graphics::IndirectDrawPath> indirectCpu;
     auto& indirect = *drawParameters.indirect;
     using Rule = Pm4::DrawParameters::IndirectDraw::Rule;
@@ -51,7 +53,16 @@ std::optional<Graphics::IndirectDrawPath> Driver::ClassifyIndirectDraw(const Sha
         else rule = Rule::InPlace;
     };
     dimension(result.vertexOffsetSgpr, indirect.baseVertexSgpr, result.vertexOffsetShared, result.vertexOffsetConflict, drawParameters.indexed ? 0u : indirect.indxOffset, indirect.vertexRule, indirect.vertexConstant);
-    dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
+    if (instanceInputSgpr >= 0) {
+        if (instanceInputSgpr != indirect.startInstanceSgpr || instanceInputSgpr == indirect.baseVertexSgpr || result.instanceOffsetSgpr >= 0 ||
+            graphics.stages.path != Graphics::ShaderPath::Vertex || graphics.rectList || graphics.stages.mesh || graphics.stages.tessellation ||
+            std::ranges::any_of(result.vertexAttributes, [](const auto& attribute) { return attribute.fetchIndex != 0u; })) fail(Path::NotFolded);
+        const auto target = localDevice->Target();
+        if (std::ranges::find(target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityDrawParameters)) == target.supportedCapabilities.end()) fail(Path::FeatureGap);
+        indirect.instanceRule = Rule::InPlace;
+    } else {
+        dimension(result.instanceOffsetSgpr, indirect.startInstanceSgpr, result.instanceOffsetShared, result.instanceOffsetConflict, 0u, indirect.instanceRule, indirect.instanceConstant);
+    }
     if (!support.firstInstance && (indirect.instanceRule == Rule::InPlace || indirect.instanceConstant != 0)) fail(Path::FeatureGap);
     if ((indirect.vertexRule == Rule::Constant || indirect.instanceRule == Rule::Constant) && indirect.count > 256) fail(Path::FeatureGap);
 
