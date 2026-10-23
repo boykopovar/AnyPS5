@@ -11539,6 +11539,14 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         GraphicsPipelineRecipe meshPointDecoded;
         Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(meshPointState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), meshPointDecoded), "the mesh point recipe does not decode");
         Require(!meshPointDecoded.state.vertexPoints && meshPointDecoded.state.stages.mesh && meshPointDecoded.state.stages.mesh->outputPrimitiveSize == 1u && meshPointDecoded.state.pointSize == 4.0f && meshPointDecoded.state.pointSizeMin == 0.5f && meshPointDecoded.state.pointSizeMax == 8.0f, "the recipe dropped mesh points or their sizes without the vertex point flag");
+        auto hullState = state;
+        hullState.stages.hullWaveSize = 32u;
+        hullState.stages.tessellation->mergedHull = true;
+        hullState.stages.tessellationGeometry = ShaderRecompiler::MeshConfiguration{4, 10, 30, 30, 60, 192, 512, 0, 4, 3};
+        hullState.rasterizerDiscard = true;
+        GraphicsPipelineRecipe hullDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(hullState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), hullDecoded), "the tessellation geometry recipe does not decode");
+        Require(hullDecoded.state.stages.hullWaveSize == 32u && hullDecoded.state.stages.tessellation && hullDecoded.state.stages.tessellation->mergedHull && hullDecoded.state.stages.tessellationGeometry && hullDecoded.state.stages.tessellationGeometry->threadsPerGroup == 192u && hullDecoded.state.rasterizerDiscard, "the recipe dropped the hull wave size, the merged hull, the geometry stage after tessellation or rasterizer discard");
         auto fourSampleState = state;
         fourSampleState.samples = 4;
         auto maskState = fourSampleState;
