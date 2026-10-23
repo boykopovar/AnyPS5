@@ -22,6 +22,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceFreeType PRIVATE src/List.cpp)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(libSceFreeType PRIVATE LINKER:--exclude-libs,ALL)
 endif()
@@ -84,6 +85,19 @@ if(BUILD_TESTING)
         set_tests_properties(guest_freetype_outline_mutations PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
         set_tests_properties(guest_freetype_face_info PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_list_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeList.cpp)
+    target_include_directories(guest_freetype_list_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_list_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_list_tests)
+    add_test(NAME guest_freetype_list COMMAND guest_freetype_list_tests)
+    set_tests_properties(guest_freetype_list PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_list PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
 endif()

@@ -74,6 +74,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SignalSets.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Notification.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/UserContext.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Time/Ktimer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/SleepWake.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/Time.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Time/TimedWait.cpp
@@ -1920,6 +1921,21 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_timed_join_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimedJoin.cpp)
+    target_include_directories(guest_timed_join_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_timed_join_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_timed_join_tests)
+    foreach(joinMode IN ITEMS normal coarse)
+        add_test(NAME guest_timed_join_${joinMode} COMMAND guest_timed_join_tests $<TARGET_FILE:libkernel>)
+        set_tests_properties(guest_timed_join_${joinMode} PROPERTIES TIMEOUT 15)
+        if(joinMode STREQUAL coarse)
+            set_tests_properties(guest_timed_join_${joinMode} PROPERTIES ENVIRONMENT "APS5_COARSE_TIMED_WAITS=1")
+        endif()
+        if(WIN32)
+            set_tests_properties(guest_timed_join_${joinMode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
     add_test_executable(guest_sleep_cancel_tests ${LIBS_INCLUDE_DIR}/tests/GuestSleepCancel.cpp)
     target_include_directories(guest_sleep_cancel_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_sleep_cancel_tests PRIVATE libkernel libc)

@@ -20,7 +20,11 @@ static void Require(bool value, const char* message) {
 
 int main() {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5-heap-report-" + std::to_string(std::rand()) + ".txt");
-    Require(std::freopen(path.string().c_str(), "w", stderr) != nullptr, "stderr redirection failed");
+#ifdef _WIN32
+    Require(_wfreopen(path.wstring().c_str(), L"w", stderr) != nullptr, "stderr redirection failed");
+#else
+    Require(std::freopen(path.c_str(), "w", stderr) != nullptr, "stderr redirection failed");
+#endif
 
     char heapName[] = "SceLibcHeap";
     sceLibcInternalBacktraceForGame_nid_postfix(heapName);

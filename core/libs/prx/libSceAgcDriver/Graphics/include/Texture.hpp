@@ -580,6 +580,7 @@ private:
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
     mutable DccKeyProof keyProof;
     mutable DccRangeProof targetKeyProof;
+    DccSingleProof singleProof;
     struct RefreshProof {
         std::uint64_t generation = 0;
         std::uint64_t pendingSerial = 0;
