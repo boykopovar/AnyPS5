@@ -444,13 +444,13 @@ void testMultiAcbs() {
     std::array<std::uint32_t*, 1> addresses{write.data()};
     std::array<std::uint32_t, 1> sizes{static_cast<std::uint32_t>(write.size())};
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x1f, addresses.data(), sizes.data(), 1); });
-    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x59, addresses.data(), sizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x58, addresses.data(), sizes.data(), 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0, addresses.data(), sizes.data(), 1); });
     check(sceAgcDriverSubmitMultiAcbs(0, nullptr, nullptr, 0) == 0, "empty multi-ACB submit checked its queue");
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullptr, sizes.data(), 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, addresses.data(), nullptr, 1); });
     check(value == 0, "a rejected multi-ACB submit ran a command buffer");
-    for (std::uint32_t queue : {0x20u, 0x57u, 0x58u}) {
+    for (std::uint32_t queue : {0x20u, 0x57u}) {
         value = 0;
         done = 0;
         auto first = writeData(&value, 1);
