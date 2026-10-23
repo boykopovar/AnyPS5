@@ -1993,6 +1993,9 @@ struct SerializationIterator {
     }
 };
 
+template<typename TLink>
+struct SerializationPosition { TLink* first; TLink* head; bool invalid; };
+
 class CallbackSerializer {
 public:
     CallbackSerializer(String& buffer, String* destination, SerializationCallback callback, void* context, bool collect)
@@ -2022,17 +2025,25 @@ public:
         }
         if (value.type == TypeArray) {
             if (!value.array) { NotImplemented_nid_no_patch(__func__); return 0; }
-            auto* items = value.array->items;
-            auto* head = items ? items->head : nullptr;
-            return Collection(head ? head->next : nullptr, head, items && !head, '[', ']',
+            auto position = [&value] {
+                if (value.type != TypeArray || !value.array) NotImplemented_nid_no_patch(__func__);
+                auto* items = value.array->items;
+                auto* head = items ? items->head : nullptr;
+                return SerializationPosition<ArrayLink>{head ? head->next : nullptr, head, items && !head};
+            };
+            return Collection(position, '[', ']',
                 [](ArrayLink* link) { return link->next; },
                 [this](ArrayLink* link) { return SerializeValue(link->value); });
         }
         if (value.type == TypeObject) {
             if (!value.object) { NotImplemented_nid_no_patch(__func__); return 0; }
-            auto* items = value.object->items;
-            auto* head = items ? items->head : nullptr;
-            return Collection(head ? head->left : nullptr, head, items && !head, '{', '}',
+            auto position = [&value] {
+                if (value.type != TypeObject || !value.object) NotImplemented_nid_no_patch(__func__);
+                auto* items = value.object->items;
+                auto* head = items ? items->head : nullptr;
+                return SerializationPosition<ObjectLink>{head ? head->left : nullptr, head, items && !head};
+            };
+            return Collection(position, '{', '}',
                 [](ObjectLink* link) { return NextObjectLink(link); },
                 [this](ObjectLink* link) { Escape(link->pair.key); Character(':'); return SerializeValue(link->pair.value); });
         }
@@ -2076,21 +2087,25 @@ private:
         }
         Character('"');
     }
-    template<typename TLink, typename TNext, typename TSerialize>
-    int Collection(TLink* first, TLink* head, bool invalid, char opening, char closing, TNext next, TSerialize serialize) {
+    template<typename TPosition, typename TNext, typename TSerialize>
+    int Collection(TPosition position, char opening, char closing, TNext next, TSerialize serialize) {
         Character(opening);
         int status = Emit();
         if (status < 0) return status;
         {
-            SerializationIterator iterator(first, invalid);
-            if (iterator.Different(head, invalid)) {
+            auto current = position();
+            SerializationIterator iterator(current.first, current.invalid);
+            current = position();
+            if (iterator.Different(current.head, current.invalid)) {
                 do {
-                    if (iterator.Different(first, invalid)) Character(',');
+                    current = position();
+                    if (iterator.Different(current.first, current.invalid)) Character(',');
                     if (!*iterator.state) { NotImplemented_nid_no_patch(__func__); return 0; }
                     status = serialize(*iterator.state);
                     if (status < 0) break;
                     *iterator.state = next(*iterator.state);
-                } while (iterator.Different(head, invalid));
+                    current = position();
+                } while (iterator.Different(current.head, current.invalid));
             }
         }
         if (status < 0) return status;
@@ -2098,6 +2113,8 @@ private:
         return Emit();
     }
 };
+
+int APS5_VABI SerializationSucceeded(String&, void*) { return 0; }
 
 int SerializeCallbackValue(Value* value, String* destination, SerializationCallback callback, void* context, bool collect) {
     {
@@ -2935,6 +2952,12 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(Value* self
     return SerializeCallbackValue(self, output, callback, context, true);
 }
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* out) {
+    {
+        auto& state = State();
+        std::lock_guard lock(state.mutex);
+        if (!state.allocation) return JsonErrorNotInitialized;
+    }
+    if (ModernValues()) return SerializeCallbackValue(self, out, SerializationSucceeded, nullptr, true);
     std::string text;
     const int result = Serialize(text, *self);
     AppendText(*out, text);

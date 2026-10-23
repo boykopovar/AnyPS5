@@ -19,6 +19,9 @@ struct Pair { String key; std::uint64_t reserved; Value value; };
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 using SerializationCallback = int (APS5_VABI*)(String&, void*);
 extern "C" {
+void APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(Array*, const Value*);
+const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value*);
+int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value*, String*);
 int APS5_VABI _ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_(Value*, SerializationCallback, void*);
 int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_(Value*, String*, SerializationCallback, void*);
 String* APS5_VABI _ZN3sce4Json6String6appendEPKc(String*, const char*);
@@ -116,18 +119,46 @@ static int APS5_VABI Observe(String& chunk, void* context) {
     if (trace.mutate) _ZN3sce4Json6String6appendEPKc(&chunk, "!");
     return static_cast<int>(trace.chunks.size()) == trace.stopAt ? -77 : trace.result;
 }
+struct CollectionChange {
+    const Array* array;
+    int mode;
+    std::vector<std::string> chunks;
+};
+static int APS5_VABI PrependAtOpening(String& chunk, void* context) {
+    auto& change = *static_cast<CollectionChange*>(context);
+    change.chunks.emplace_back(_ZNK3sce4Json6String5c_strEv(&chunk));
+    if (change.chunks.size() == 1) {
+        Value value{}; _ZN3sce4Json5ValueC1El(&value, 0);
+        if (change.mode == 0) _ZN3sce4Json5Array10push_frontERKNS0_5ValueE(const_cast<Array*>(change.array), &value);
+        else if (change.mode == 1) _ZN3sce4Json5Array5clearEv(const_cast<Array*>(change.array));
+        else _ZN3sce4Json5Array9push_backERKNS0_5ValueE(const_cast<Array*>(change.array), &value);
+        _ZN3sce4Json5ValueD1Ev(&value);
+    }
+    return 0;
+}
 int main() {
     ArrayTrace allocation; ArrayAllocator allocator;
     Parameter parameter{&allocator, &allocation, 8192, 2, {}};
     Value root{}; _ZN3sce4Json5ValueC1Ev(&root);
     SerializationTrace before;
     Require(static_cast<unsigned>(_ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_(&root, Observe, &before)) == 0x80848110 && before.chunks.empty(), "Callback serialization before initialization must refuse without invoking the callback");
+    String beforeOutput{};
+    Require(static_cast<unsigned>(_ZN3sce4Json5Value9serializeERNS0_6StringE(&root, &beforeOutput)) == 0x80848110 && !beforeOutput.storage, "Ordinary serialization before initialization must refuse without constructing output storage");
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
     Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&initializer, &parameter) == 0, "Initialize serialization callbacks");
     const char json[] = R"({"a":[1,true,"x\n/\u007f"],"b":{}})";
     Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&root, json, sizeof(json) - 1) == 0, "Parse nested callback serialization input");
     const std::vector<std::string> chunks{"{", "\"a\":[", "1", ",true", ",\"x\\n\\/\\u007f\"", "]", ",\"b\":{", "}", "}"};
     const auto baseline = allocation.live.size();
+    String ordinary{};
+    _ZN3sce4Json6StringC1EPKc(&ordinary, "prefix");
+    Require(_ZN3sce4Json5Value9serializeERNS0_6StringE(&root, &ordinary) == 0, "Ordinary serialization must use the collecting protocol with a successful internal sink");
+    std::string expectedOrdinary = "prefix";
+    for (const auto& chunk : chunks) expectedOrdinary += chunk;
+    Require(std::string(_ZNK3sce4Json6String5c_strEv(&ordinary)) == expectedOrdinary, "Ordinary serialization must preserve the same slash and DEL escaping as callback serialization");
+    _ZN3sce4Json6StringD1Ev(&ordinary);
+    Require(allocation.live.size() == baseline, "Ordinary serialization must release its temporary buffer and collection iterators");
+
     for (bool collect : {false, true}) for (bool mutate : {false, true}) for (int stop : {-1, 1, 3, 9}) {
         String output{}; _ZN3sce4Json6StringC1EPKc(&output, "prefix");
         SerializationTrace trace; trace.stopAt = stop; trace.mutate = mutate;
@@ -145,6 +176,16 @@ int main() {
         Require(std::string(_ZNK3sce4Json6String5c_strEv(&output)) == (collect ? cumulative : "prefix"), "Callback mutations must persist only in the supplied cumulative output, while streaming chunks are cleared after delivery");
         _ZN3sce4Json6StringD1Ev(&output);
         Require(allocation.live.size() == baseline, "Successful and interrupted traversals must release all temporary buffers and iterator states");
+    }
+    for (int mode : {0, 1, 2}) {
+        Value changing{}; _ZN3sce4Json5ValueC1Ev(&changing);
+        const char arrayJson[] = "[1,2]";
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&changing, arrayJson, sizeof(arrayJson) - 1) == 0, "Parse collection mutation input");
+        CollectionChange change{_ZNK3sce4Json5Value8getArrayEv(&changing), mode, {}};
+        const auto expected = mode == 0 ? std::vector<std::string>({"[", "0", ",1", ",2", "]"}) : mode == 1 ? std::vector<std::string>({"[", "]"}) : std::vector<std::string>({"[", "1", ",2", ",0", "]"});
+        Require(_ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_(&changing, PrependAtOpening, &change) == 0 && change.chunks == expected, "Serialization must obtain the live collection after the opening callback prepends, clears or appends entries");
+        _ZN3sce4Json5ValueD1Ev(&changing);
+        Require(allocation.live.size() == baseline, "Collection mutation during serialization must leave no temporary or transferred allocations");
     }
     Value scalar{}; _ZN3sce4Json5ValueC1El(&scalar, 1234);
     for (bool collect : {false, true}) for (bool once : {false, true}) for (int budget : {0, 1, 2, 3}) {
@@ -164,6 +205,20 @@ int main() {
         Require(allocation.notifications == notices + (complete ? 0 : 1), "Each scalar serialization rejection must notify exactly once");
         _ZN3sce4Json6StringD1Ev(&output);
         Require(allocation.live.size() == baseline, "Rejected serialization allocations must not leak admitted storage");
+    }
+    for (bool once : {false, true}) for (int budget : {0, 1, 2, 3}) {
+        String output{}; _ZN3sce4Json6StringC1EPKc(&output, "p");
+        const auto requests = allocation.requests.size(); const auto notices = allocation.notifications;
+        allocation.budget = budget; allocation.once = once;
+        const int status = _ZN3sce4Json5Value9serializeERNS0_6StringE(&scalar, &output);
+        allocation.budget = -1; allocation.once = false;
+        Require(status == 0 && std::string(_ZNK3sce4Json6String5c_strEv(&output)) == (budget >= 3 ? "p1234" : "p"), "Ordinary serialization must preserve the native partial-output and return contracts under allocation failure");
+        std::vector<std::size_t> expected{24};
+        if (budget >= 1) expected.push_back(21);
+        if (budget >= 2) expected.push_back(22);
+        Require(std::vector<std::size_t>(allocation.requests.begin() + requests, allocation.requests.end()) == expected && allocation.notifications == notices + (budget < 3 ? 1 : 0), "Ordinary serialization must use the same allocator requests and failure notifications as the collecting callback path");
+        _ZN3sce4Json6StringD1Ev(&output);
+        Require(allocation.live.size() == baseline, "Ordinary serialization failures must not leak storage");
     }
     _ZN3sce4Json5ValueD1Ev(&scalar); _ZN3sce4Json5ValueD1Ev(&root);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && allocation.live.empty(), "Terminate callback serialization allocation context");
