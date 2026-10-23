@@ -3,6 +3,7 @@
 
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
+#include "SDL_hidapi.h"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
@@ -36,6 +37,7 @@ private:
         LightBarPacer lightBar;
         TriggerEffectCache triggerEffect;
         std::uint32_t heldThroughCapture = 0;
+        SDL_hid_device* statusHid = nullptr;
     };
 
     explicit PadInput(Pad::InputConfiguration configuration);
@@ -49,6 +51,9 @@ private:
     PadInputState handOff(int slot, PadInputState state);
     void applyOutput();
     void enableSensors(int slot);
+    void openStatus(int slot);
+    void pollStatus(int slot);
+    void closeStatus(int slot);
 
     Pad::KeyboardMouse keyboardMouse;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};

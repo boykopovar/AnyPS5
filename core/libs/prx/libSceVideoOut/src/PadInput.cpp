@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,8 @@
 
 #include "SDL.h"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
+#include "prx/libSceVideoOut/include/DualSenseStatus.hpp"
+#include "prx/libScePad/include/PadTriggerEffect.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
@@ -76,6 +79,7 @@ void PadInput::openController(int deviceIndex) {
     slots[slot].nextRumbleRefresh = {};
     slots[slot].lightBar.Reset();
     slots[slot].triggerEffect.Reset();
+    openStatus(slot);
     const char* name = SDL_GameControllerName(gc);
     APS5_LOG_OUT("Pad: connected game controller (slot %d): %s (type %d, sensors accel=%d gyro=%d, touchpads=%d, led=%d, trigger rumble=%d)",
         slot, name != nullptr ? name : "unknown", static_cast<int>(SDL_GameControllerGetType(gc)),
@@ -95,8 +99,47 @@ void PadInput::enableSensors(int slot) {
     if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO) == SDL_TRUE) SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, wanted);
 }
 
+void PadInput::openStatus(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
+    PadClearTriggerStatus_nid_postfix(slot);
+    SDL_GameController* controller = slots[slot].controller;
+    if (controller == nullptr || SDL_GameControllerGetType(controller) != SDL_CONTROLLER_TYPE_PS5) return;
+    const char* path = SDL_GameControllerPath(controller);
+    if (path == nullptr) return;
+    slots[slot].statusHid = SDL_hid_open_path(path, 0);
+    if (slots[slot].statusHid == nullptr) {
+        APS5_LOG_ERR("Pad: could not open the DualSense trigger state report (slot %d): %s", slot, SDL_GetError());
+    }
+}
+
+void PadInput::pollStatus(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_CONTROLLERS || slots[slot].statusHid == nullptr) return;
+    std::array<std::uint8_t, 78> report{};
+    while (true) {
+        const int read = SDL_hid_read_timeout(slots[slot].statusHid, report.data(), report.size(), 0);
+        if (read == 0) return;
+        if (read < 0) {
+            APS5_LOG_ERR("Pad: could not read the DualSense trigger state report (slot %d): %s", slot, SDL_GetError());
+            closeStatus(slot);
+            return;
+        }
+        DualSenseStatus::TriggerStatus status;
+        if (!DualSenseStatus::Parse(report.data(), static_cast<std::size_t>(read), status)) continue;
+        PadPublishTriggerStatus_nid_postfix(slot, status.leftEffect, status.leftStatus, status.rightEffect, status.rightStatus);
+    }
+}
+
+void PadInput::closeStatus(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
+    PadClearTriggerStatus_nid_postfix(slot);
+    if (slots[slot].statusHid == nullptr) return;
+    SDL_hid_close(slots[slot].statusHid);
+    slots[slot].statusHid = nullptr;
+}
+
 void PadInput::closeController(int slot) {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
+    closeStatus(slot);
     if (slots[slot].controller == nullptr) return;
     SDL_GameControllerClose(slots[slot].controller);
     slots[slot].controller = nullptr;
@@ -127,6 +170,10 @@ void PadInput::applyOutput() {
         const auto small = std::max(slots[slot].outputState.vibrationSmall, slots[slot].outputState.audioVibrationSmall);
         const bool rumbling = large != 0 || small != 0;
         const bool triggerRumble = slots[slot].outputState.trigger[0].fallback != 0 || slots[slot].outputState.trigger[1].fallback != 0;
+        const bool triggerTouched = slots[slot].outputState.triggerTouched[0] || slots[slot].outputState.triggerTouched[1];
+        TriggerEffectCache::Effect effect{};
+        if (isPs5 && triggerTouched) effect = PadTriggerEffect::Build(slots[slot].outputState);
+        const bool effectPending = isPs5 && triggerTouched && slots[slot].triggerEffect.NeedsSend(effect);
         if (SDL_GameControllerHasLED(controller) == SDL_TRUE) {
             struct PlayerLedColor { Uint8 r, g, b; };
             static constexpr PlayerLedColor defaultColors[4] = {
@@ -142,19 +189,15 @@ void PadInput::applyOutput() {
             if (slots[slot].lightBar.Due(color, now)) slots[slot].lightBar.Result(color, now, SDL_GameControllerSetLED(controller, color[0], color[1], color[2]) == 0);
         }
         if (!slots[slot].outputPending) {
-            if ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh) slots[slot].outputPending = true;
+            if (effectPending || ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh)) slots[slot].outputPending = true;
             else continue;
         }
         slots[slot].outputPending = false;
         slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
         constexpr Uint32 rumbleMs = 2000;
         SDL_GameControllerRumble(controller, static_cast<Uint16>(large * 257), static_cast<Uint16>(small * 257), rumbling ? rumbleMs : 0);
-        if (slots[slot].outputState.triggerTouched) {
+        if (triggerTouched) {
             if (isPs5) {
-                TriggerEffectCache::Effect effect{};
-                effect[0] = 0x04 | 0x08;
-                std::memcpy(effect.data() + 10, slots[slot].outputState.trigger[1].effect, 11);
-                std::memcpy(effect.data() + 21, slots[slot].outputState.trigger[0].effect, 11);
                 if (slots[slot].triggerEffect.NeedsSend(effect)) {
                     slots[slot].triggerEffect.Result(effect, SDL_GameControllerSendEffect(controller, effect.data(), static_cast<int>(effect.size())) == 0);
                 }
@@ -307,6 +350,9 @@ void PadInput::Update(const DisplayWindow& window) {
         }
     }
     if (anyController) SDL_GameControllerUpdate();
+    for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
+        if (slots[slot].controller != nullptr) pollStatus(slot);
+    }
     applyOutput();
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) {
