@@ -1344,18 +1344,9 @@ bool AsyncRegistrationPrepare() {
 
 std::uint64_t RegistrationPrepareCommitBudgetBytes() {
     static const std::uint64_t budget = [] {
-        constexpr double GiB = 1024.0 * 1024.0 * 1024.0;
-        if (const auto* text = std::getenv("APS5_REGISTRATION_PREPARE_COMMIT_GB")) {
-            char* end = nullptr;
-            errno = 0;
-            const auto value = std::strtod(text, &end);
-            if (errno != 0 || end == text || *end != '\0' || !std::isfinite(value) || value < 0 || value >= static_cast<double>(std::numeric_limits<std::uint64_t>::max()) / GiB) {
-                throw std::runtime_error("APS5_REGISTRATION_PREPARE_COMMIT_GB must be a non-negative number of GiB");
-            }
-            return static_cast<std::uint64_t>(value * GiB);
-        }
-        if (const auto physical = ReadPhysicalMemoryBytes()) return *physical / 2;
-        return std::numeric_limits<std::uint64_t>::max();
+        const auto physicalBytes = ReadPhysicalMemoryBytes();
+        const auto defaultBudget = physicalBytes ? *physicalBytes / 2 : std::numeric_limits<std::uint64_t>::max();
+        return RegistrationPreparationCommitBudgetBytes(std::getenv("APS5_REGISTRATION_PREPARE_COMMIT_GB"), defaultBudget);
     }();
     return budget;
 }
