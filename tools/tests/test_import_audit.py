@@ -1339,7 +1339,7 @@ class ImportAuditTests(unittest.TestCase):
         summary = import_audit.summarize(records, 3, {})
         self.assertEqual(summary["references_by_class"], {"implemented": 0, "partial": 2, "stub": 1, "absent": 0, "module": 0})
         text = import_audit.render(summary, records, {}, [])
-        self.assertIn("Stub: exported but throws on every call (1)", text)
+        self.assertIn("Stub: exported but throws when called (1)", text)
         self.assertIn("Partial: exported, throws only for inputs whose behaviour is unknown (1)", text)
 
     def test_shared_source_cycle_fails(self):
