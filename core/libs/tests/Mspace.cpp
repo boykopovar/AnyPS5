@@ -9,6 +9,10 @@
 #include <stdexcept>
 #include <thread>
 
+extern "C" {
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void*);
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void*);
+}
 static void Require(bool value) {
     if (!value) { std::fputs("Mspace check failed\n", stderr); std::abort(); }
 }
@@ -127,11 +131,27 @@ static void CheckMovedBlockKeepsUsableBytes() {
     Require(realigned != nullptr && realigned != other && kept(realigned, otherUsable));
     Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
 }
+static void CheckHeapEmpty() {
+    alignas(32) static std::array<unsigned char, 4096> storage{};
+    void* arena = sceLibcMspaceCreate_nid_postfix("empty", storage.data(), storage.size(), 0);
+    Require(arena != nullptr && sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(nullptr) == 1);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{1})) == 1);
+    void* first = sceLibcMspaceMalloc_nid_postfix(arena, 16);
+    void* second = sceLibcMspaceCalloc_nid_postfix(arena, 4, 8);
+    Require(first != nullptr && second != nullptr && sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 0);
+    sceLibcMspaceFree_nid_postfix(arena, first);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 0);
+    Require(sceLibcMspaceRealloc_nid_postfix(arena, second, 0) == nullptr);
+    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1);
+    Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
+}
 int main() {
     CheckPaf();
     CheckAlignment();
     CheckAdjacentBlocks();
     CheckMovedBlockKeepsUsableBytes();
+    CheckHeapEmpty();
     alignas(16) std::array<unsigned char, 65536> storage{};
     void* arena = sceLibcMspaceCreate_nid_postfix("test", storage.data(), storage.size(), 0);
     Require(arena != nullptr);
