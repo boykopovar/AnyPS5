@@ -2945,7 +2945,7 @@ void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value* self, const Object* ob
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value* self, const Value* other) { CopyInto(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value* self) { Destroy(*self); }
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value* self, const Value* other) {
-    if (self != other) AssignNode(NodeOf(*self), NodeOf(*other));
+    AssignNode(NodeOf(*self), NodeOf(*other));
     return self;
 }
 void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
@@ -2989,7 +2989,7 @@ void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* 
     if (self->object) AssignObject(*self->object, *object);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
-    if (self != other) AssignNode(NodeOf(*self), NodeOf(*other));
+    AssignNode(NodeOf(*self), NodeOf(*other));
 }
 
 ValueType APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value* self) { return NodeOf(*self).type; }

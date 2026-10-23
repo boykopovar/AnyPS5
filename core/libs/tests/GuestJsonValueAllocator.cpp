@@ -34,6 +34,8 @@ void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array*, const Value*);
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value*, const char*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKS1_(Value*, const Value*);
 Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value*, const Value*);
+void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value*, const Value*);
+Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object*, const String*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_5ArrayE(Value*, const Array*);
 void APS5_VABI _ZN3sce4Json5ValueC1ERKNS0_6ObjectE(Value*, const Object*);
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value*, const Array*);
@@ -482,6 +484,85 @@ static void CheckStringSetterAliases(ValueAllocationTrace& trace) {
 
 }
 
+static void CheckValueSelfSetting(ValueAllocationTrace& trace) {
+    const auto baseline = trace.live;
+    for (int type = 0; type <= 7; ++type) for (bool setter : {false, true}) for (unsigned budget = 0; budget <= 2; ++budget) {
+        Value value; std::memset(&value, 0xa5, sizeof(value));
+        if (type == 5) _ZN3sce4Json5ValueC1EPKc(&value, "self");
+        else _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&value, type);
+        Require(Register(value, 0, &trace, true) == 0, "Prepare callback ownership for Value self-setting");
+        const Value before = value; const auto live = trace.live;
+        std::map<void*, std::vector<unsigned char>> snapshots;
+        for (const auto& [pointer, size] : live) {
+            const auto* bytes = static_cast<const unsigned char*>(pointer); snapshots.emplace(pointer, std::vector<unsigned char>{bytes, bytes + size});
+        }
+        void* header = type >= 6 ? *reinterpret_cast<void**>(value.payload) : nullptr;
+        void* sentinel = header ? *static_cast<void**>(header) : nullptr;
+        const auto requests = trace.requests.size(); const auto frees = trace.frees.size(); const auto notices = trace.notifications; const auto nullFrees = trace.nullFrees;
+        trace.budget = static_cast<int>(budget);
+        if (setter) _ZN3sce4Json5Value3setERKS1_(&value, &value);
+        else Require(_ZN3sce4Json5ValueaSERKS1_(&value, &value) == &value, "Self-assignment must return its original receiver");
+        trace.budget = -1;
+        Require(std::memcmp(&value, &before, sizeof(value)) == 0, "Every self-operation must preserve the inline Value, handle, callbacks and inactive bytes");
+        const bool rebuild = type >= 6;
+        if (!rebuild) {
+            Require(trace.live == live && trace.requests.size() == requests && trace.frees.size() == frees && trace.notifications == notices && trace.nullFrees == nullFrees,
+                    "Scalar and String self-operations must preserve allocation ownership without effects");
+        } else {
+            std::vector<std::size_t> expected{32}; if (budget) expected.push_back(type == 6 ? 48 : 104);
+            Require(std::vector<std::size_t>(trace.requests.begin() + requests, trace.requests.end()) == expected && trace.notifications == notices + unsigned(budget < 2) &&
+                    trace.nullFrees == nullFrees + unsigned(!budget) && trace.frees.size() == frees + budget && trace.live.size() == live.size(),
+                    "Collection self-setting must attempt replacement storage with exact requests, null frees and rollback effects");
+            auto* replacement = *reinterpret_cast<void**>(value.payload);
+            Require((replacement == header) == (budget < 2) && static_cast<const std::uintptr_t*>(replacement)[1] == 0 &&
+                    static_cast<const std::uintptr_t*>(replacement)[3] == reinterpret_cast<std::uintptr_t>(&value),
+                    "Self-setting must preserve failed replacement storage or publish a fresh empty collection bound to its original owner");
+            if (budget == 2) Require(trace.frees[frees] == sentinel && trace.frees[frees + 1] == header, "Completed self-setting must reclaim the original sentinel before its header");
+        }
+        for (const auto& [pointer, bytes] : snapshots) {
+            if (rebuild && budget == 2 && (pointer == header || pointer == sentinel || pointer == reinterpret_cast<void*>(value.payload))) continue;
+            Require(trace.live.contains(pointer) && std::memcmp(pointer, bytes.data(), bytes.size()) == 0,
+                    "Self-setting must preserve every unaffected allocation, callback record and fallback byte");
+        }
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live == baseline, "Self-operations must preserve complete destruction of original or replacement resources");
+    }
+    for (bool array : {false, true}) for (bool setter : {false, true}) {
+        Value value; std::memset(&value, 0xa5, sizeof(value));
+        if (array) PrepareNestedSource(value);
+        else {
+            _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(&value, 7);
+            Value key{}, scalar{}; _ZN3sce4Json5ValueC1EPKc(&key, "key"); _ZN3sce4Json5ValueC1El(&scalar, 9);
+            auto* member = _ZN3sce4Json6ObjectixERKNS0_6StringE(reinterpret_cast<Object*>(value.payload), reinterpret_cast<const String*>(key.payload));
+            _ZN3sce4Json5ValueaSERKS1_(member, &scalar);
+            _ZN3sce4Json5ValueD1Ev(&scalar); _ZN3sce4Json5ValueD1Ev(&key);
+        }
+        Require(Register(value, 0, &trace, true) == 0, "Prepare metadata for nonempty collection self-use");
+        const Value before = value; const auto* header = *reinterpret_cast<void* const*>(value.payload);
+        const auto state = array ? NestedState(value) : std::string{};
+        const auto requests = trace.requests.size();
+        if (setter) _ZN3sce4Json5Value3setERKS1_(&value, &value);
+        else Require(_ZN3sce4Json5ValueaSERKS1_(&value, &value) == &value, "Nonempty assignment must return its original receiver");
+        Require(std::memcmp(&value, &before, sizeof(value)) == 0 && *reinterpret_cast<void* const*>(value.payload) != header && trace.requests.size() > requests,
+                "Nonempty collection self-use must rebuild storage while retaining the Value handle and callback metadata");
+        if (array) Require(state == "6po3[5p:abc;2p42;6p!1[5p:def;];]" && NestedState(value) == "6po3[5p:abc;2p42;6po1[5p:def;];]", "Nested self-use must preserve contents and parent links while rebinding the copied nested header owner");
+        else {
+            auto* replacement = *reinterpret_cast<void* const*>(value.payload);
+            auto* head = *static_cast<void* const*>(replacement);
+            auto* node = *static_cast<void* const*>(head);
+            const auto* bytes = static_cast<const unsigned char*>(node);
+            const auto* child = reinterpret_cast<const Value*>(bytes + 64);
+            const auto* keyHeader = *reinterpret_cast<void* const*>(bytes + 48);
+            Require(static_cast<const std::uintptr_t*>(replacement)[1] == 1 && child->type == 2 && child->payload == 9 && child->parent == &value &&
+                    std::strcmp(*reinterpret_cast<const char* const*>(bytes + 24), "key") == 0 && std::strcmp(*static_cast<const char* const*>(keyHeader), "key") == 0,
+                    "Object self-use must preserve ordered internal/public keys, child contents and owner binding");
+        }
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live == baseline, "Nonempty self-use must reclaim both replaced and final collection storage");
+    }
+
+}
+
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
@@ -548,6 +629,7 @@ int main() {
         Require(trace.live.size() == baseline, "Float conversion must release temporary and destination allocations");
     }
     CheckStringSetterAliases(trace);
+    CheckValueSelfSetting(trace);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Terminate value allocation contract");
     return 0;
 }
