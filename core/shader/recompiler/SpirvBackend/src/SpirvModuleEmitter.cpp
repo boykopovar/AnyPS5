@@ -1987,12 +1987,15 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 state.module.AddFunction(spv::OpBitcast, TypeF32(state), f32, raw);
                 state.module.AddFunction(spv::OpStore, state.depthVariable, f32);
             }
-            if ((exp.en & 2u) != 0u && state.stencilRefVariable != 0u) {
+            if ((exp.en & 2u) != 0u && (state.stencilRefVariable != 0u || state.stencilAttachmentVariable != 0u)) {
                 auto raw = ExportRawComponent(ctx, data, 1);
                 if (state.inputInfo.pixel != nullptr && state.inputInfo.pixel->psStencilOperationValueExport) raw = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, raw, ConstantU32(state, 8u)), ConstantU32(state, 0xffu));
-                const auto value = state.module.AllocateId();
-                state.module.AddFunction(spv::OpBitcast, TypeI32(state), value, raw);
-                state.module.AddFunction(spv::OpStore, state.stencilRefVariable, value);
+                if (state.stencilAttachmentVariable != 0u) state.module.AddFunction(spv::OpStore, state.stencilAttachmentVariable, raw);
+                else {
+                    const auto value = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpBitcast, TypeI32(state), value, raw);
+                    state.module.AddFunction(spv::OpStore, state.stencilRefVariable, value);
+                }
             }
             if ((exp.en & 4u) != 0u && state.sampleMaskVariable != 0u) {
                 const auto raw = ExportRawComponent(ctx, data, 2);
