@@ -2397,10 +2397,37 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // stores of a run against each other and against the work before and after, the queued DCC
     // key stores included).
     const auto recordStore = [&] { recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address); };
-    // Only a write-back that can land over these bytes (a listed copied writer of the range, as
-    // FillBuffer tests) puts the label behind the completions; any other pending completion
-    // stores elsewhere. Debug aid: APS5_LABEL_GATE_ALL=1 gates on any completion, as before (a
-    // completion label there registered its own completion, so every later label followed).
+    // On the console every store a queue made before a label is in memory once the label is
+    // visible. A listed copied writer (a dispatch or draw whose written buffer the device holds as a
+    // CPU copy) is written back by the CPU when its batch is reaped, after the GPU already ran any
+    // store recorded here, so a title polling the label could rewrite the written region and have
+    // the late write-back land over its bytes (a title that rebuilds its command buffer there sees
+    // a stale packet). While one is listed, a label of 8 bytes or less (every RELEASE_MEM, the fence
+    // WRITE_DATAs) is therefore not recorded on the GPU at all: a completion action of the open (or
+    // newest in-flight) batch stores it when that batch is reaped. Completions run in push order and
+    // batches finish front-first, so it lands after every earlier write-back, whatever range that
+    // one wrote. The GPU store plus completion re-store below would not do: its GPU store is
+    // visible before the write-back, and its re-store runs only over a write-back that overlapped
+    // the label. While such a completion store is pending (PendingCompletionStores: no end-of-pipe
+    // delivery and no write-back counts there), later small labels follow it even after every
+    // writer was written back, or a GPU store would become visible before the earlier completion
+    // store lands (#1458), or land under it at the reap when both are at one address. Larger stores
+    // (DUMP_CONST_RAM, COPY_DATA and DMA_DATA payloads that later GPU work reads through the import)
+    // stay on the GPU and follow only a pending completion store over their own range. Readers of a
+    // range stored this way sync through its batch first (the label is a pending write of its batch
+    // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
+    // (reason 2) instead and stores the label on the CPU.
+    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+    if (drain) {
+        if (listed) return 2;
+    } else if (const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0; bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
+        recorder.AfterCompletions(address, bytes, stamp, queue, false);
+        return 5;
+    }
+    // A larger store over a listed copied writer's range (as FillBuffer tests it) goes behind the
+    // completions too, below; any other one stores on the GPU. Debug aid: APS5_LABEL_GATE_ALL=1
+    // gates on any completion, as before (a completion label there registered its own completion,
+    // so every later label followed).
     static const bool gateAll = std::getenv("APS5_LABEL_GATE_ALL") != nullptr;
     if (gateAll ? recorder.HasCompletions() : state->CopiedWriterOverlaps(address, bytes.size())) {
         // A copied buffer's write-back is still to run: the store must land after it. It is stored
@@ -4501,6 +4528,24 @@ struct RecordedDispatch {
     std::array<std::uint32_t, 3> threadLimit{};
 };
 
+struct DispatchCompletion {
+    const Graphics::Context& context;
+    const std::array<Graphics::CompiledShader, 1>& shaders;
+    VkShaderStageFlags pushStages;
+    const std::array<std::byte, Graphics::PipelinePushConstantBytes>& pushBytes;
+    const std::shared_ptr<ComputePipelineObjects>& objects;
+    const std::shared_ptr<Graphics::ShaderResources>& resources;
+    const ResourceCache::Key& contentKey;
+    bool cacheable;
+    bool fromCache;
+    double revalidateMs;
+    const std::shared_ptr<Graphics::ShaderResources::DrawBindings>& overlay;
+    std::uint64_t lookupsBefore;
+    DispatchTimer& timer;
+    PerformanceTimer& timing;
+    char* groupsText;
+};
+
 VkDevice VulkanDevice::Device() const {
     return state->device;
 }
@@ -5419,6 +5464,27 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         timing.Mark("pipeline_create");
         timer.phase(PhasePipeline);
     }
+    DispatchCompletion completion{context, shaders, pushStages, pushBytes, objects, resources, contentKey, cacheable, fromCache, revalidateMs, overlay, lookupsBefore, timer, timing, groupsText};
+    return recordCompletedDispatch(shader, x, y, z, arguments, programAddress, recipeOut, threadGroup, htileClear, completion);
+}
+
+VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, std::shared_ptr<const Recipe>* recipeOut, const std::array<std::uint32_t, 3>& threadGroup, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, DispatchCompletion& completion) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto& context = completion.context;
+    const auto& shaders = completion.shaders;
+    const auto pushStages = completion.pushStages;
+    const auto& pushBytes = completion.pushBytes;
+    const auto& objects = completion.objects;
+    const auto& resources = completion.resources;
+    const auto& contentKey = completion.contentKey;
+    const bool cacheable = completion.cacheable;
+    const bool fromCache = completion.fromCache;
+    const double revalidateMs = completion.revalidateMs;
+    const auto& overlay = completion.overlay;
+    const auto lookupsBefore = completion.lookupsBefore;
+    auto& timer = completion.timer;
+    auto& timing = completion.timing;
+    auto* groupsText = completion.groupsText;
     // Recorded into the device's open batch: the CPU moves on to the next command while the GPU
     // works; the batch is waited for where the guest expects results (labels, flips, CPU reads).
     auto& recorder = *state->recorder;

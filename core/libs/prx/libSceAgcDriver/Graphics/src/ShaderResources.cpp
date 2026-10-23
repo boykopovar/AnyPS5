@@ -424,6 +424,8 @@ TextureCounters& TextureCounts() {
     return counters;
 }
 
+thread_local std::uint64_t sampledLookupKeyScans = 0;
+
 void reportTextureCounters() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
@@ -758,11 +760,14 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     static const bool disabled = std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     const bool profile = LookupOutcomes::Profiled();
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    std::optional<DccKeys> scanned;
     const auto scanKeys = [&] {
+        if (scanned.has_value()) return *scanned;
         const auto scanStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        const auto keys = TextureClearKeys(resource, guestBytes);
+        scanned = TextureClearKeys(resource, guestBytes);
+        if (resource.dccAddress != 0) ++sampledLookupKeyScans;
         if (profile && resource.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
-        return keys;
+        return *scanned;
     };
     auto& counters = TextureCounts();
     const auto address = resource.baseAddress;
@@ -818,6 +823,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             auto candidate = sampledStorageSource(context, resource, guestBytes);
             if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) source = std::move(candidate);
         }
+        scanned.reset();
         // The lookup's Refresh may have flushed another image's results over the memory (which
         // marks the keys uncompressed): a surface that stays a snapshot re-reads them behind that
         // flush, as it does behind its own. APS5_NO_KEYS_RESCAN=1 keeps the keys scanned above.
@@ -833,15 +839,19 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     if (source != nullptr && !GuestMemory::UnchangedSince(address, bytes, source->GenerationFor(address, bytes))) {
         // The CPU wrote the memory while results were pending: Refresh merges them the usual way.
         refreshForView(*source, resource);
+        scanned.reset();
     }
     // Results stored to guest memory just now are stamped newer than `generation`; a snapshot read
     // after them is current at the generation of a second (memoized) collect. The store marks the
     // surface's DCC keys uncompressed, so the keys are read after it.
     const auto flushStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const auto observedKeys = keys.has_value() ? *keys : scanKeys();
-    const bool stagedClear = source != nullptr && resource.dccAddress != 0 && (IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle);
+    const bool stagedClear = source != nullptr && resource.dccAddress != 0 && [&] {
+        const auto observedKeys = keys.has_value() ? *keys : scanKeys();
+        return IsDccClear(observedKeys) || observedKeys == DccKeys::ClearSingle;
+    }();
     bool stagedFlushed = false;
-    if ((source == nullptr || stagedClear) && !clearThroughKeys && StorageTexture::FlushPending(address, bytes, nullptr, "sampled texture")) {
+    const bool flushAsked = (source == nullptr || stagedClear) && !clearThroughKeys;
+    if (flushAsked && StorageTexture::FlushPending(address, bytes, nullptr, "sampled texture")) {
         if (profile) LookupOutcomes::Add(LookupOutcomes::PendingFlush, flushStart);
         generation = GuestMemory::CollectWrites(address, bytes);
         if (stagedClear) {
@@ -852,6 +862,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         }
         if (stagedFlushed) source.reset();
     }
+    if (flushAsked) scanned.reset();
     if (!keys.has_value()) keys = scanKeys();
     if (disabled) {
         if (source != nullptr && depthCompare) {
@@ -5257,6 +5268,10 @@ void ShaderResources::resolveImageTables() {
         }
     }
     reportTextureCounters();
+}
+
+std::uint64_t SampledLookupKeyScans() {
+    return sampledLookupKeyScans;
 }
 
 ImageTableReuseCounts ImageTableReuses() {

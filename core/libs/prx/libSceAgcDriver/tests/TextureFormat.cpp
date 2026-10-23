@@ -63,6 +63,7 @@ void srgbTwinTests() {
     Require(SrgbTwinFormat(context, VK_FORMAT_R8_UNORM) == VK_FORMAT_UNDEFINED, "a device that decodes 8_SRGB in the shader must not give R8 an sRGB twin");
     Require(SrgbTwinFormat(context, VK_FORMAT_R8G8B8A8_UNORM) == VK_FORMAT_R8G8B8A8_SRGB && SrgbTwinFormat(context, VK_FORMAT_BC7_UNORM_BLOCK) == VK_FORMAT_BC7_SRGB_BLOCK, "formats without a shader decode must keep their sRGB twins");
     Require(SrgbTwinFormat(context, VK_FORMAT_R32_SFLOAT) == VK_FORMAT_UNDEFINED, "formats without an sRGB counterpart have no twin");
+    Require(SrgbTwinFormat(context, VK_FORMAT_R8G8B8A8_SNORM) == VK_FORMAT_R8G8B8A8_SRGB, "8_8_8_8 SNORM must read its bytes through the sRGB twin");
 }
 
 template<typename TAction>

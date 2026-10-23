@@ -152,6 +152,7 @@ struct ImageTableReuseCounts {
     std::uint64_t writesMade = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+std::uint64_t SampledLookupKeyScans();
 
 struct PresyncSurface {
     std::uint64_t address;
