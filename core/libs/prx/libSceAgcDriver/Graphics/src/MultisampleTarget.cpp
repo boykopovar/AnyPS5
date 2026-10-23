@@ -93,6 +93,8 @@ std::uint32_t storedFragments(const ColorTarget& target) {
     return target.eqaaFragments != 0 ? target.eqaaFragments : target.samples;
 }
 
+constexpr char fmaskPlane[] = "the FMASK of EQAA color target";
+
 std::uint64_t fmaskBytes(const ColorTarget& target) {
     const auto bitsPerSample = std::bit_ceil(static_cast<std::uint32_t>(std::bit_width(target.eqaaFragments)));
     return ColorTargetLayout(target.extent.width, target.extent.height, ColorTileMode::Z64KBX, std::max(1u, target.samples * bitsPerSample / 8u)).Bytes();
@@ -763,7 +765,7 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
     }
     std::unique_lock lock(guardedMutex());
     guarded().push_back({context.device, target.address, bytes, target.samples, active});
-    if (target.eqaaFragments != 0) guarded().push_back({context.device, target.fmaskAddress, fmaskBytes(target), target.samples, active, nullptr, "the FMASK of EQAA color target"});
+    if (target.eqaaFragments != 0) guarded().push_back({context.device, target.fmaskAddress, fmaskBytes(target), target.samples, active, nullptr, fmaskPlane});
     if (target.dccAddress != 0) {
         guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid});
         if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid});
@@ -804,6 +806,12 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
             guard(context, use, target->active, target->metadataValid);
             target->ApplyFastClear(use);
             return *target;
+        }
+        if (use.eqaaFragments != 0 && use.fmaskAddress != target->target.fmaskAddress) {
+            std::unique_lock lock(guardedMutex());
+            std::erase_if(guarded(), [&](const auto& range) { return range.active == target->active && range.plane == fmaskPlane; });
+            guarded().push_back({context.device, use.fmaskAddress, fmaskBytes(use), use.samples, target->active, nullptr, fmaskPlane});
+            target->target.fmaskAddress = use.fmaskAddress;
         }
         if (target->fromTexture && use.cmaskAddress != 0) {
             target->fromTexture = false;

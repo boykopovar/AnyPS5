@@ -280,7 +280,15 @@ int main() {
         Require(quarter > 0, "no edge pixel of the EQAA resolve holds a quarter or three-quarter coverage value, so its 4 coverage samples were not kept");
         const auto covered = std::count(eqaaTexels.begin(), eqaaTexels.end(), std::uint8_t{255});
         Require(covered > 0 && covered < static_cast<std::ptrdiff_t>(eqaaTexels.size()), "the EQAA resolve holds no fully covered or no uncovered texels");
-        std::printf("EQAA color target tests passed: 4-sample 2-fragment draws resolve like 4x MSAA (%zu bytes), %td quarter-coverage channels, FMASK guarded\n", eqaaTexels.size(), quarter);
+
+        Block movedFmask(BlockBytes);
+        const auto moved = DecodeTarget(eqaaColor, &movedFmask, CompressedUnorm8x4Info, EqaaAttrib);
+        Draw(*device, moved, Lower, red);
+        device->WaitIdle();
+        const auto movedRefusal = GuardRefusal(movedFmask.Address(), 256u);
+        Require(movedRefusal.find("the FMASK of EQAA color target") != std::string::npos, "a read of the FMASK base the EQAA target was last drawn with was not refused by name: " + movedRefusal);
+        Require(GuardRefusal(eqaaFmask.Address(), 256u).empty(), "the FMASK base the EQAA target was drawn with before is still guarded");
+        std::printf("EQAA color target tests passed: 4-sample 2-fragment draws resolve like 4x MSAA (%zu bytes), %td quarter-coverage channels, FMASK guarded at the base of the last draw\n", eqaaTexels.size(), quarter);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
