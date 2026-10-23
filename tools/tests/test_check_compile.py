@@ -216,6 +216,15 @@ class CheckCompileTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(json.loads(seen.read_text(encoding="utf-8")), ["-fsyntax-only", str(source)])
 
+    def test_compile_commands_accepts_utf8_bom(self):
+        source = self.source("unit.cpp")
+        script = self.compiler("import sys\nsys.exit(0)\n")
+        entry = self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"')
+        (self.build / "compile_commands.json").write_text("\ufeff" + json.dumps([entry]), encoding="utf-8")
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("1 translation units compile", result.stdout)
+
     def test_every_configuration_is_checked_and_each_source_is_counted_once(self):
         source = self.source("unit.cpp")
         script = self.compiler(

@@ -1066,6 +1066,14 @@ int main() {
         return StencilReplaySafe(b.program);
     });
 
+    passed &= run("read-only BDA reads can be replayed and BDA writes cannot", [] {
+        Builder b;
+        b.program.Info().usesDma = true;
+        if (!StencilReplaySafe(b.program)) return false;
+        b.program.Info().bdaWrites = true;
+        return !StencilReplaySafe(b.program);
+    });
+
     passed &= run("only guarded read-only SRT diagnostics can be replayed", [] {
         Builder b;
         b.program.Info().usesFaultBuffer = true;

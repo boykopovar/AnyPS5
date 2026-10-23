@@ -177,6 +177,21 @@ void UnreadUserWordsKeepTheStage(bool verify) {
     Require(counters.dataHits == moved.dataHits + 1, "a draw that pointed the pixel stage at another buffer descriptor was not a data-only hit: " + Counts(counters));
     Require(counters.dataStagesCompiled - moved.dataStagesCompiled >= 1, "a draw that pointed the pixel stage at another buffer descriptor reused the pixel stage: " + Counts(counters));
     if (!verify) Require(counters.dataStagesReused - moved.dataStagesReused == 1, "a draw that changed only the pixel stage's descriptor pointer did not reuse the vertex stage: " + Counts(counters));
+
+    const bool refresh = std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+    for (const std::uint32_t unread : {0x33u, 0x44u}) {
+        commands.clear();
+        PixelUserData(commands, second, unread);
+        Append(commands, 0x2d, {3, 2});
+        const auto last = counters;
+        counters = Submit(std::move(commands));
+        Require(counters.dataHits == last.dataHits + 1 && counters.inserts == last.inserts, "a draw at the moved pointer with a new unread word: " + Counts(counters));
+        if (verify) continue;
+        const auto compiled = counters.dataStagesCompiled - last.dataStagesCompiled;
+        const bool expectReuse = refresh && unread == 0x44u;
+        Require(compiled == (expectReuse ? 0u : 1u), std::string(expectReuse ? "after a refresh, the draw at the moved pointer compiled its pixel stage again: " : "the draw at the moved pointer did not compile its pixel stage: ") + Counts(counters));
+        Require(counters.shapeUpdates - last.shapeUpdates == (refresh && unread == 0x33u ? 1u : 0u), "shape refreshes: " + std::to_string(counters.shapeUpdates - last.shapeUpdates) + " (" + Counts(counters) + ")");
+    }
 }
 
 unsigned BrightestColorByte() {

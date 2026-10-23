@@ -472,29 +472,42 @@ int APS5_VABI sceAudio3dReportUnregisterHandler(void) {
     return 0;
 }
 
-int APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, uint8_t is_3d, uint8_t is_ambisonics);
+int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params);
+int APS5_VABI sceAudioOut2SpeakerArrayDestroy(AudioOut2SpeakerArrayHandle handle);
+int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius);
+
+struct Audio3dSpeakerArrayParameters {
+    const AudioOut2Position* positions;
+    std::uint32_t numSpeakers;
+    std::uint8_t is3d;
+    void* memory;
+    std::size_t memorySize;
+};
+
+static_assert(sizeof(Audio3dSpeakerArrayParameters) == 0x20);
+
+size_t APS5_VABI sceAudio3dGetSpeakerArrayMemorySize(uint32_t num_speakers, uint8_t is_3d) {
+    return sceAudioOut2GetSpeakerArrayMemorySize(num_speakers, is_3d, 0);
 }
 
-int APS5_VABI sceAudio3dCreateSpeakerArray(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudio3dCreateSpeakerArray(AudioOut2SpeakerArrayHandle* handle, const Audio3dSpeakerArrayParameters* parameters) {
+    if (!handle || !parameters) return AUDIO3D_ERROR_INVALID_PARAMETER;
+    unsigned char extended[0x28] = {};
+    std::memcpy(extended, parameters, sizeof(*parameters));
+    return sceAudioOut2SpeakerArrayCreate(handle, extended, nullptr);
 }
 
-int APS5_VABI sceAudio3dDeleteSpeakerArray(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudio3dDeleteSpeakerArray(AudioOut2SpeakerArrayHandle handle) {
+    return sceAudioOut2SpeakerArrayDestroy(handle);
 }
 
-int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients) {
+    return sceAudioOut2GetSpeakerArrayCoefficients(handle, pos, spread, coefficients, num_coefficients, 0, 0.1f);
 }
 
-int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAudio3dGetSpeakerArrayMixCoefficients2(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius) {
+    return sceAudioOut2GetSpeakerArrayCoefficients(handle, pos, spread, coefficients, num_coefficients, height_aware, downmix_spread_radius);
 }
 
 }

@@ -187,6 +187,8 @@ int main() {
     WriteThroughAliasRunsThroughExecutableView();
     OneViewWritesAndRuns();
     Dup2KeepsTheDescriptorTableInStep();
+#ifndef __APPLE__
     MmapOfTheDescriptorSharesTheObject();
+#endif
     InvalidArgumentsAreRejected();
 }

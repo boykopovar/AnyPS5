@@ -1,4 +1,4 @@
-add_library(libSceJson2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceJson2 SHARED EXCLUDE_FROM_ALL Export.cpp InventoryExports.cpp)
 target_include_directories(libSceJson2 PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceJson2)
 

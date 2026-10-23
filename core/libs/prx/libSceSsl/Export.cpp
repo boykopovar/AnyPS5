@@ -1337,8 +1337,7 @@ int APS5_VABI sceSslLoadRootCACert() {
 }
 
 int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceSslRead(sslConnectionId, buf, fulllen, 0);
 }
 
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
@@ -1347,8 +1346,7 @@ int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
 }
 
 int APS5_VABI sceSslSend(int sslConnectionId, void* msg, std::size_t fulllen) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceSslWrite(sslConnectionId, msg, fulllen, 0);
 }
 
 int APS5_VABI sceSslSetSslVersion() {

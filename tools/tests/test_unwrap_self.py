@@ -106,6 +106,16 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(source.read_bytes(), container)
                 self.assertEqual(alias.read_bytes(), container)
 
+    def test_main_with_explicit_argv(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = unwrap_self.main([str(source), str(output)])
+        self.assertEqual(code, 0)
+        self.assertTrue(output.exists())
+
     def convert(self, container, name="input.self"):
         directory = Path(self.directory)
         source = directory / name
@@ -121,6 +131,27 @@ class UnwrapTest(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_program_table_overlapping_elf_header_preserves_output(self):
+        for offset in (0, 8, 32, 63):
+            for previous in (None, b"previous output"):
+                with self.subTest(offset=offset, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    struct.pack_into("<Q", container, ELF_HEADER_OFFSET + 0x20, offset)
+                    output = Path(self.directory) / "output.elf"
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    else:
+                        output.unlink(missing_ok=True)
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("ELF program header table overlaps the ELF header", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
 
     def test_record_table_places_the_segments_and_keeps_the_alignment(self):
         container = build_container(default_segments(), default_records(), default_payloads())
@@ -473,7 +504,7 @@ class UnwrapTest(unittest.TestCase):
 
         def allocate(value):
             if isinstance(value, int):
-                self.assertLessEqual(value, len(container) + unwrap_self.MAX_EMPTY_LOAD_PADDING)
+                self.assertLessEqual(value, len(container) + unwrap_self.MAX_ALIGNMENT_PADDING)
             return bytearray(value)
 
         for previous in (None, b"previous output"):
@@ -486,7 +517,7 @@ class UnwrapTest(unittest.TestCase):
                         contextlib.redirect_stderr(io.StringIO()) as stderr:
                     self.assertEqual(unwrap_self.main(), 2)
                 self.assertEqual(stdout.getvalue(), "")
-                self.assertIn("empty load alignment requires more than", stderr.getvalue())
+                self.assertIn("segment alignment requires more than", stderr.getvalue())
                 self.assertNotIn("Traceback", stderr.getvalue())
                 if previous is not None:
                     self.assertEqual(output.read_bytes(), previous)
@@ -494,20 +525,104 @@ class UnwrapTest(unittest.TestCase):
                     self.assertFalse(output.exists())
                 self.assertEqual(source.read_bytes(), container)
 
+    def test_excessive_file_backed_padding_is_refused_before_allocation(self):
+        cases = [
+            ([(PT_LOAD, 5, 0x1234, (1 << 40) - 1, 0x100, 1 << 40)],
+             [(0x2804, 0x800, 0x100)], {0x800: b"x" * 0x100}),
+            ([(PT_LOAD, 5, 0x1234, 0, 0x100, PAGE),
+              (SCE_COMMENT, 0, 0xB00, 0, 0x20, 1 << 40)],
+             [(0x2804, 0x800, 0x100)], {0x800: b"x" * 0x100, 0xB00: pattern(9, 0x20)}),
+        ]
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        for segments, records, payloads in cases:
+            container = build_container(segments, records, payloads)
+            source.write_bytes(container)
+
+            def allocate(value):
+                if isinstance(value, int):
+                    self.assertLessEqual(value, len(container) + 64 * 1024 * 1024)
+                return bytearray(value)
+
+            for previous in (None, b"previous output"):
+                with self.subTest(segments=segments, previous=previous):
+                    output.unlink(missing_ok=True)
+                    if previous is not None:
+                        output.write_bytes(previous)
+                    with mock.patch.object(unwrap_self, "bytearray", side_effect=allocate, create=True), \
+                            mock.patch.object(sys, "argv", ["unwrap_self.py", str(source), str(output)]), \
+                            contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                            contextlib.redirect_stderr(io.StringIO()) as stderr:
+                        self.assertEqual(unwrap_self.main(), 2)
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertIn("alignment requires more than", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertEqual(source.read_bytes(), container)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
+    def test_alignment_padding_limit_is_cumulative(self):
+        for empty in (False, True):
+            with self.subTest(empty=empty):
+                segments = [(PT_LOAD, 5, 0x1234, 0x80, 0x20, 0x100),
+                            (PT_LOAD, 6, 0x5678, 0x580, 0 if empty else 0x10, 0x1000)]
+                records = [(0x800, 0x800, 0x20)]
+                payloads = {0x800: pattern(1, 0x20)}
+                if not empty:
+                    records.append((0x100800, 0xA00, 0x10))
+                    payloads[0xA00] = pattern(9, 0x10)
+                source = Path(self.directory) / "input.self"
+                output = Path(self.directory) / "output.elf"
+                container = build_container(segments, records, payloads)
+                source.write_bytes(container)
+                output.write_bytes(b"previous output")
+                with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x15F):
+                    with self.assertRaisesRegex(unwrap_self.Refused, "alignment requires more than"):
+                        unwrap_self.unwrap(source, output)
+                self.assertEqual(output.read_bytes(), b"previous output")
+                self.assertEqual(source.read_bytes(), container)
+                with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x160):
+                    unwrap_self.unwrap(source, output)
+                data, headers = read_program_headers(output)
+                for header in headers:
+                    self.assertEqual(header[2] % header[7], header[3] % header[7])
+                self.assertEqual(data[headers[0][2]:headers[0][2] + 0x20], payloads[0x800])
+                if not empty:
+                    self.assertEqual(data[headers[1][2]:headers[1][2] + 0x10], payloads[0xA00])
+
+    def test_large_alignment_with_small_padding_remains_supported(self):
+        payload = b"x" * 0x100
+        segments = [(PT_LOAD, 5, 0x1234, FIRST_REGION + 0x10, len(payload), 1 << 40)]
+        container = build_container(segments, [(0x2804, 0x800, len(payload))], {0x800: payload})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x10):
+            unwrap_self.unwrap(source, output)
+        data, headers = read_program_headers(output)
+        load = headers[0]
+        self.assertEqual(load[2] % load[7], load[3] % load[7])
+        self.assertEqual(load[2], FIRST_REGION + 0x10)
+        self.assertEqual(data[load[2]:load[2] + load[5]], payload)
+        self.assertEqual(source.read_bytes(), container)
+
     def test_empty_load_padding_limit_counts_only_added_bytes(self):
-        baseline, output = self.convert(build_container(default_segments(), default_records(), default_payloads()))
+        backed = [(*segment[:5], 1) for segment in default_segments()]
+        baseline, output = self.convert(build_container(backed, default_records(), default_payloads()))
         self.assertEqual(baseline.returncode, 0, baseline.stderr)
         baseline_size = output.stat().st_size
         limit = 0x100
         for extra in (-1, limit, limit + 1):
             with self.subTest(extra=extra):
                 address = 0x10000 + baseline_size + extra
-                segments = default_segments() + [(PT_LOAD, 6, 0, address, 0, 0x10000)]
+                segments = backed + [(PT_LOAD, 6, 0, address, 0, 0x10000)]
                 container = build_container(segments, default_records(), default_payloads())
                 source = Path(self.directory) / "input.self"
                 source.write_bytes(container)
                 previous = output.read_bytes()
-                with mock.patch.object(unwrap_self, "MAX_EMPTY_LOAD_PADDING", limit):
+                with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", limit):
                     if extra <= limit:
                         unwrap_self.unwrap(source, output)
                         data, headers = read_program_headers(output)
@@ -515,7 +630,7 @@ class UnwrapTest(unittest.TestCase):
                         self.assertEqual(headers[3][2], baseline_size + extra)
                         self.assertEqual(headers[3][2] % headers[3][7], address % headers[3][7])
                     else:
-                        with self.assertRaisesRegex(unwrap_self.Refused, "empty load alignment requires more than"):
+                        with self.assertRaisesRegex(unwrap_self.Refused, "segment alignment requires more than"):
                             unwrap_self.unwrap(source, output)
                         self.assertEqual(output.read_bytes(), previous)
 

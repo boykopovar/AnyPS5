@@ -283,8 +283,8 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     if (image.HasInit) mapped(image.Init, 1, 1);
     if (image.Fini != 0) mapped(image.Fini, 1, 1);
     const auto readLifecycleArray = [&](std::uint64_t addressTag, std::uint64_t sizeTag, std::vector<std::uint64_t>& entries) {
-        if (!tags.contains(addressTag) && !tags.contains(sizeTag)) return;
-        if (!tags.contains(sizeTag) || (tags.at(sizeTag) != 0 && !tags.contains(addressTag))) fail("Incomplete guest lifecycle array");
+        if (!tags.contains(sizeTag)) return;
+        if (tags.at(sizeTag) != 0 && !tags.contains(addressTag)) fail("Incomplete guest lifecycle array");
         const auto size = tags.at(sizeTag);
         if (size == 0) return;
         if (size % 8 != 0) fail("Unaligned guest lifecycle array size");

@@ -60,6 +60,8 @@ Iterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(Iterator*, const Array*);
 Iterator* APS5_VABI _ZNK3sce4Json5Array3endEv(Iterator*, const Array*);
 std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array*);
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array*);
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array*);
+bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array*);
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(Iterator*);
 Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(Iterator*);
 Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const Iterator*);
@@ -360,6 +362,18 @@ static void ObjectsAndArrays() {
     Require(_ZNK3sce4Json5Array4sizeEv(&copy) == 2);
     Require(*_ZNK3sce4Json5Value10getBooleanEv(_ZNK3sce4Json5Array5frontEv(&copy)));
     Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array4backEv(&copy)) == 2.5);
+    _ZN3sce4Json5Array9pop_frontEv(&copy);
+    Require(_ZNK3sce4Json5Array4sizeEv(&copy) == 1);
+    Require(*_ZNK3sce4Json5Value7getRealEv(_ZNK3sce4Json5Array5frontEv(&copy)) == 2.5);
+    _ZN3sce4Json5Array9pop_frontEv(&copy);
+    Require(_ZNK3sce4Json5Array5emptyEv(&copy));
+    threw = false;
+    try {
+        _ZN3sce4Json5Array9pop_frontEv(&copy);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    Require(threw && _ZNK3sce4Json5Array5emptyEv(&copy));
     _ZN3sce4Json5ArrayD1Ev(&copy);
     _ZN3sce4Json5ArrayD1Ev(&array);
 }

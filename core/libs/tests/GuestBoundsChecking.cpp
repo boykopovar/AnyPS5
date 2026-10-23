@@ -130,7 +130,14 @@ void CheckWideToMultibyte() {
     int status = 7;
     char bytes[4] = {'x', 'x', 'x', 'x'};
     Require(wctomb_s_nid_postfix(&status, bytes, sizeof(bytes), 'A') == 0 && status == 1 && bytes[0] == 'A', "wctomb_s did not convert");
-    Require(wctomb_s_nid_postfix(&status, bytes, sizeof(bytes), 0x263a) == 86 && status == -1, "wctomb_s converted an unrepresentable character");
+    Require(wctomb_s_nid_postfix(&status, bytes, sizeof(bytes), 0x263a) == 0 && status == 3 && std::memcmp(bytes, "\xE2\x98\xBA", 3) == 0,
+        "wctomb_s did not convert U+263A to UTF-8");
+    std::memset(bytes, 'x', sizeof(bytes));
+    status = 7;
+    int smallBefore = constraintCalls;
+    Require(wctomb_s_nid_postfix(&status, bytes, 2, 0x263a) == 34 && status == 7 && std::memcmp(bytes, "xxxx", 4) == 0,
+        "wctomb_s wrote past a two-byte buffer");
+    RequireViolation(smallBefore, "wctomb_s: buffer too small", 34);
     Require(wctomb_s_nid_postfix(&status, nullptr, 0, 'A') == 0 && status == 0, "wctomb_s reported state dependence");
     status = 7;
     int before = constraintCalls;
@@ -144,7 +151,13 @@ void CheckWideToMultibyte() {
     std::size_t result = 7;
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', state) == 0 && result == 1 && bytes[0] == 'B', "wcrtomb_s did not convert");
     Require(wcrtomb_s_nid_postfix(&result, nullptr, 0, 'B', state) == 0 && result == 1, "wcrtomb_s did not measure the reset sequence");
-    Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 0x263a, state) == 86 && result == failed, "wcrtomb_s converted an unrepresentable character");
+    Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 0x263a, state) == 0 && result == 3 && std::memcmp(bytes, "\xE2\x98\xBA", 3) == 0,
+        "wcrtomb_s did not convert U+263A to UTF-8");
+    std::memset(bytes, 'x', sizeof(bytes));
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(&result, bytes, 2, 0x263a, state) == 34 && result == failed && bytes[0] == 0 && std::memcmp(bytes + 1, "xxx", 3) == 0,
+        "wcrtomb_s wrote past a two-byte buffer");
+    RequireViolation(before, "wcrtomb_s: buffer too small", 34);
     before = constraintCalls;
     bytes[0] = 'x';
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', nullptr) == 22 && result == failed && bytes[0] == 0, "wcrtomb_s accepted a null state");

@@ -7,10 +7,15 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 extern "C" {
 int APS5_VABI sceAudioPropagationPathGetNumPoints();
 int APS5_VABI sceAudioPropagationSystemLock();
-int APS5_VABI sceAudioPropagationMaterialInit();
 }
 
 namespace {
@@ -32,6 +37,16 @@ void RequireThrows(TCall call, const char* message) {
         Require(false, message);
     }
     Require(false, message);
+}
+
+void* Resolve(const char* name) {
+#ifdef _WIN32
+    const HMODULE module = GetModuleHandleA("libSceAudioPropagation.prx");
+    Require(module != nullptr, "library module");
+    return reinterpret_cast<void*>(GetProcAddress(module, name));
+#else
+    return dlsym(RTLD_DEFAULT, name);
+#endif
 }
 
 AudioPropagationSystemMemory Memory() {
@@ -294,7 +309,11 @@ int main() {
 
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationPathGetNumPoints(); }, "path get num points throw");
     RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(); }, "system lock throw");
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationMaterialInit(); }, "material init throw");
+
+    Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
+    for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {
+        Require(Resolve(name) == nullptr, name);
+    }
 
     std::puts("AudioPropagation tests passed");
     return 0;

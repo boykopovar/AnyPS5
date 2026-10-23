@@ -1,0 +1,16 @@
+add_library(libSceNpUtility SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpUtility PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpUtility)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_utility_offline_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpUtilityOffline.cpp)
+    target_include_directories(guest_np_utility_offline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_utility_offline_tests PRIVATE libSceNpUtility)
+    configure_windows_unwind(guest_np_utility_offline_tests)
+    add_test(NAME guest_np_utility_offline COMMAND guest_np_utility_offline_tests)
+    set_tests_properties(guest_np_utility_offline PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_utility_offline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpUtility>")
+    endif()
+endif()

@@ -141,6 +141,11 @@ static void RequireError(int resource, ResourceLimit* limit, int error) {
     Require(*__error_nid_postfix() == error);
 }
 
+static void RequireInvalidOutputPointer(int resource) {
+    auto* const invalid = reinterpret_cast<ResourceLimit*>(static_cast<std::uintptr_t>(1));
+    RequireError(resource, invalid, GUEST_EFAULT);
+}
+
 #ifndef _WIN32
 static std::int64_t Guest(rlim_t value) {
     return value == RLIM_INFINITY ? GUEST_RLIM_INFINITY : static_cast<std::int64_t>(value);
@@ -196,6 +201,8 @@ int main() {
     RequireError(GUEST_RLIM_NLIMITS, nullptr, GUEST_EINVAL);
     RequireError(-1, nullptr, GUEST_EINVAL);
     RequireError(GUEST_RLIMIT_DATA, nullptr, GUEST_EFAULT);
+    RequireInvalidOutputPointer(GUEST_RLIMIT_DATA);
+    RequireInvalidOutputPointer(GUEST_RLIMIT_NOFILE);
     const ResourceLimit stack = GuestLimit(GUEST_RLIMIT_STACK);
     Require(stack.rlim_cur == 0x200000 && stack.rlim_max == 0x200000);
     RequireError(GUEST_RLIMIT_STACK, nullptr, GUEST_EFAULT);

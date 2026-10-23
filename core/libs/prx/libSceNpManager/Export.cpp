@@ -20,6 +20,7 @@ static constexpr int SCE_NP_ERROR_CALLBACK_MAX = static_cast<int>(0x8055001D);
 static constexpr uint32_t NP_STATE_SIGNED_OUT = 1;
 static constexpr int NP_POLL_ASYNC_FINISHED = 0;
 static constexpr uint32_t NP_REACHABILITY_STATE_UNAVAILABLE = 0;
+static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
@@ -35,6 +36,12 @@ int AddRequest() {
     std::lock_guard lock(requestMutex);
     liveRequests.insert(reqId);
     return reqId;
+}
+
+int SignedOutRequest(int reqId) {
+    if (reqId == 0) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    return liveRequests.count(reqId) ? SCE_NP_ERROR_SIGNED_OUT : SCE_NP_ERROR_REQUEST_NOT_FOUND;
 }
 
 using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
@@ -253,29 +260,31 @@ int APS5_VABI sceNpAsmTerminate(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpCheckNpAvailabilityA(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpCheckNpAvailabilityA(int reqId, int userId) {
+    if (userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
+}
+int APS5_VABI sceNpGetAccountDateOfBirthA(int userId, void* dateOfBirth) {
+    if (!dateOfBirth || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_ERROR_SIGNED_OUT;
+}
+int APS5_VABI sceNpGetAccountLanguageA(int reqId, int userId, void* language) {
+    if (!language || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
+}
+int APS5_VABI sceNpGetGamePresenceStatus(const NpOnlineId* onlineId, uint32_t* status) {
+    if (!onlineId || !status) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *status = NP_GAME_PRESENCE_STATUS_OFFLINE;
     return 0;
 }
-int APS5_VABI sceNpGetAccountDateOfBirthA(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpGetGamePresenceStatusA(int userId, uint32_t* status) {
+    if (!status || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    *status = NP_GAME_PRESENCE_STATUS_OFFLINE;
     return 0;
 }
-int APS5_VABI sceNpGetAccountLanguageA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpGetGamePresenceStatus(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpGetGamePresenceStatusA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpGetParentalControlInfoA(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpGetParentalControlInfoA(int reqId, int userId, int8_t* age, void* info) {
+    if (!age || !info || userId == USER_SERVICE_USER_ID_INVALID) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    return SignedOutRequest(reqId);
 }
 int APS5_VABI sceNpIdMapperAbortRequest(void) {
     NotImplemented_nid_no_patch(__func__);

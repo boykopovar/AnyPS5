@@ -45,7 +45,7 @@ def entries(build):
         raise ValueError(f"{build} is not a directory; configure the build first")
     manifest = build / "compile_commands.json"
     if manifest.is_file():
-        return json.loads(manifest.read_text(encoding="utf-8"))
+        return json.loads(manifest.read_text(encoding="utf-8-sig"))
     ninja = shutil.which("ninja")
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")

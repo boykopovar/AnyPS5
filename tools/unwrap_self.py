@@ -43,7 +43,7 @@ RECORD_SIZE = 0x20
 RECORD_HAS_SEGMENT = 0x800
 RECORD_SEGMENT_SHIFT = 20
 FIRST_REGION = 0x400
-MAX_EMPTY_LOAD_PADDING = 64 * 1024 * 1024
+MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
 PT_LOAD = 1
 PT_NOTE = 4
 ENTROPY_LIMIT = 7.5
@@ -109,6 +109,8 @@ def parse_elf(data):
     count = struct.unpack_from("<H", header, 0x38)[0]
     if entry_size != 56 or count == 0:
         raise Refused("program header table is %d entries of %d bytes" % (count, entry_size))
+    if program_offset < len(header):
+        raise Refused("ELF program header table overlaps the ELF header")
     if inner + program_offset + count * entry_size > len(data):
         raise Refused("ELF program header table does not fit the file")
     headers = []
@@ -273,9 +275,11 @@ def unwrap(path, output, verbose=False):
     regions.sort(key=lambda region: region["old"])
     program_offset = struct.unpack_from("<Q", elf_header, 0x20)[0]
     cursor = max(FIRST_REGION, program_offset + len(headers) * 56)
+    padding = 0
     for region in regions:
         alignment = region["align"] if region["align"] and (region["align"] & (region["align"] - 1)) == 0 else 1
         placed = cursor + (region["vaddr"] - cursor) % alignment
+        padding += placed - cursor
         region["new"] = placed
         cursor = placed + region["size"]
 
@@ -283,8 +287,9 @@ def unwrap(path, output, verbose=False):
     for header in headers:
         if header["type"] == PT_LOAD and header["size"] == 0:
             empty_end = max(empty_end, header["vaddr"] % max(header["align"], 1))
-    if empty_end - cursor > MAX_EMPTY_LOAD_PADDING:
-        raise Refused("empty load alignment requires more than %d bytes of output padding" % MAX_EMPTY_LOAD_PADDING)
+    padding += empty_end - cursor
+    if padding > MAX_ALIGNMENT_PADDING:
+        raise Refused("segment alignment requires more than %d bytes of output padding" % MAX_ALIGNMENT_PADDING)
     cursor = empty_end
 
     result = bytearray(cursor)
@@ -328,12 +333,15 @@ def unwrap(path, output, verbose=False):
     return len(result)
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="unwrap a decrypted SELF or fSELF container into a clean ELF")
     parser.add_argument("input", help="SELF container to read")
     parser.add_argument("output", help="ELF executable to write")
     parser.add_argument("--verbose", action="store_true", help="print the program header mapping")
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     try:
         size = unwrap(arguments.input, arguments.output, arguments.verbose)
     except Refused as error:
@@ -347,6 +355,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
     sys.exit(main())

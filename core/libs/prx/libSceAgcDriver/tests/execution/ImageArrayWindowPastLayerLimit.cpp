@@ -120,7 +120,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t baseArray = BaseArray) {
     device.WaitIdle();
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const float u = std::bit_cast<float>(Input[tid * 4u + 0u]);
-        const float layer = std::clamp(std::nearbyint(std::bit_cast<float>(Input[tid * 4u + 1u])), 0.0f, static_cast<float>(Layers - 1u));
+        const float layer = std::clamp(std::nearbyint(std::bit_cast<float>(Input[tid * 4u + 1u])), 0.0f, static_cast<float>(LastArray - baseArray));
         const auto x = static_cast<std::uint32_t>(std::clamp(static_cast<int>(std::floor(u * static_cast<float>(Width))), 0, static_cast<int>(Width) - 1));
         Expect(tid, "image_sample_lz on a window of a 1D array past maxImageArrayLayers", &Output[tid * 8u], Texel(x, baseArray + static_cast<std::uint32_t>(layer)));
         Expect(tid, "image_load on a window of a 1D array past maxImageArrayLayers", &Output[tid * 8u + 4u], Texel(Input[tid * 4u + 2u], baseArray + Input[tid * 4u + 3u]));

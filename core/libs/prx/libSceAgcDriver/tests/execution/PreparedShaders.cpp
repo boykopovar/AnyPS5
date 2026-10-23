@@ -958,11 +958,13 @@ void AbiDeferredCompute() {
     caller.shader.specials = &caller.specials;
     caller.specials.dispatch_modifier = 0x8000u;
     AgcDriverRegisterShader_nid_postfix(&caller.shader);
+    const bool lazy = std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr;
     const auto before = ShaderRecompiler::FrontEndBuilds();
     AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
     const auto attempted = ShaderRecompiler::FrontEndBuilds();
     AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
-    Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI deferred to its dispatch was prepared again for the same state");
+    if (lazy) Require(attempted == before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI resolved under lazy preparation built its front end before its dispatch");
+    else Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI deferred to its dispatch was prepared again for the same state");
     const auto first = reinterpret_cast<std::uintptr_t>(AddFiveCallee.data());
     const auto second = reinterpret_cast<std::uintptr_t>(AddSixtyFourCallee.data());
     const auto output = reinterpret_cast<std::uintptr_t>(CallerOutput.data());
@@ -978,6 +980,88 @@ void AbiDeferredCompute() {
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(output, sizeof(CallerOutput));
     Require(std::ranges::all_of(CallerOutput, [](std::uint32_t lane) { return lane == 3u * (5u + 64u); }), "a compute shader its static ABI deferred did not run its user-data callees at its dispatch");
+    AgcDriverShutdown_nid_postfix();
+}
+
+void AbiDeferredConcurrent() {
+    using namespace NarrowConstantStoreFixture;
+    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
+    struct Header {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{};
+        ShaderSpecialRegs specials{};
+    };
+    static Header header;
+    const auto address = reinterpret_cast<std::uintptr_t>(Code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18;
+    header.shader.header_size = sizeof(header);
+    header.shader.shader_size = sizeof(Code);
+    header.shader.code = Code.data();
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    header.shader.specials = &header.specials;
+    header.specials.dispatch_modifier = 0x8000;
+    header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Threads}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 4}}};
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    AgcDriverResolveShaderAbi_nid_postfix(&header.shader, {}, {});
+    constexpr std::size_t Queues = 4;
+    constexpr std::size_t OutputBytes = 65536;
+#ifdef _WIN32
+    auto* allocation = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, Queues * OutputBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    auto* allocation = static_cast<std::uint8_t*>(std::aligned_alloc(OutputBytes, Queues * OutputBytes));
+#endif
+    Require(allocation != nullptr, "cannot allocate the concurrent first use outputs");
+    const auto release = [](std::uint8_t* block) {
+        GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        std::free(block);
+#endif
+    };
+    const std::unique_ptr<std::uint8_t, decltype(release)> ownedOutputs(allocation, release);
+    GuestAllocations::Mutation().Add(allocation, Queues * OutputBytes, true, true, true);
+    std::fill_n(allocation, Queues * OutputBytes, Fill);
+    std::vector<std::vector<std::uint32_t>> commands(Queues);
+    std::vector<Packet> packets;
+    for (std::size_t queue = 0; queue < Queues; ++queue) {
+        const auto output = reinterpret_cast<std::uintptr_t>(allocation + queue * OutputBytes);
+        for (const auto reg : header.registers) commands[queue].insert(commands[queue].end(), {0xc0017600u, reg.offset, reg.value});
+        commands[queue].insert(commands[queue].end(), {0xc0027600u, 0x240, static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u), 0xc0031500u, 1, 1, 1, 0x8041});
+        packets.push_back({commands[queue].data(), static_cast<std::uint32_t>(commands[queue].size()), 0, {}});
+    }
+    const auto builds = ShaderRecompiler::FrontEndBuilds();
+    const auto uses = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
+    std::barrier start(static_cast<std::ptrdiff_t>(Queues));
+    std::vector<std::thread> threads;
+    for (std::size_t queue = 0; queue < Queues; ++queue) {
+        threads.emplace_back([&, queue] {
+            start.arrive_and_wait();
+            sceAgcDriverSubmitAcb(0x20u + static_cast<std::uint32_t>(queue), &packets[queue]);
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    AgcDriverWaitIdle_nid_postfix();
+    AgcDriverSuspendPoint_nid_postfix();
+    AgcDriverWaitIdle_nid_postfix();
+    for (std::size_t queue = 0; queue < Queues; ++queue) {
+        const auto* output = allocation + queue * OutputBytes;
+        for (std::size_t offset = 0; offset < OutputBytes; ++offset) {
+            const auto expected = offset < Threads * LaneBytes ? ExpectedLane[offset % LaneBytes] : Fill;
+            if (output[offset] != expected) throw std::runtime_error("concurrent first use: queue " + std::to_string(queue) + " byte " + std::to_string(offset) + " is " + std::to_string(output[offset]) + ", expected " + std::to_string(expected));
+        }
+    }
+    const auto after = AgcDriver::DriverDetail::Driver::DeferredAbiUses();
+    const auto built = ShaderRecompiler::FrontEndBuilds() - builds;
+    const auto entries = AgcDriver::DriverDetail::Driver::Get().PreparedEntries(&header.shader);
+    const auto matched = (after.entries - after.unmatchedEntries) - (uses.entries - uses.unmatchedEntries);
+    const auto counts = std::to_string(built) + " front-end builds, " + std::to_string(entries) + " prepared entries, " + std::to_string(after.firstUses - uses.firstUses) + " first uses, " + std::to_string(after.found - uses.found) + " found, " + std::to_string(after.own - uses.own) + " own, " + std::to_string(matched) + " entries used";
+    std::cout << "concurrent first use of a deferred ABI: " << counts << '\n';
+    Require(after.firstUses == uses.firstUses + 1 && after.found == uses.found + 1 && after.own == uses.own, ("four queues making the first use of one deferred ABI at once did not prepare it once (" + counts + ")").c_str());
+    Require(built == after.entries - uses.entries && entries == built, ("four queues making the first use of one deferred ABI at once prepared an artifact besides its preparation (" + counts + ")").c_str());
+    Require(matched == 1, ("four queues making the first use of one deferred ABI at once did not all use the same entry of its preparation (" + counts + ")").c_str());
     AgcDriverShutdown_nid_postfix();
 }
 
@@ -1266,11 +1350,12 @@ void RelocatedHeaders() {
 int main(int argc, char** argv) {
     try {
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
-        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
+        const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
         Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");
         if (abiDeferred) {
             if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
             if (abiMode == "--abi-deferred-compute") AbiDeferredCompute();
+            else if (abiMode == "--abi-deferred-concurrent") AbiDeferredConcurrent();
             else if (abiMode == "--abi-deferred-pixel") AbiDeferredPixel();
             else if (abiMode == "--abi-deferred-stages") AbiDeferredStages();
             else if (abiMode == "--abi-deferred-undecodable-state") AbiDeferredUndecodableState();

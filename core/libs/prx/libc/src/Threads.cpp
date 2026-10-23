@@ -379,6 +379,10 @@ int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
     }
 }
 
+int APS5_VABI _Thrd_yield_nid_postfix() {
+    std::this_thread::yield();
+    return threadSuccess;
+}
 
 int APS5_VABI _Cnd_signal_nid_postfix(void** handle) {
     return SignalCondition_nid_no_patch(handle);

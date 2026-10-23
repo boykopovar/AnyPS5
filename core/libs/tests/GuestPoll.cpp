@@ -178,7 +178,7 @@ static void PollsUrgentData() {
     const int client = socket_nid_postfix(2, 1, 0);
     Require(client >= 0 && fcntl_nid_postfix(client, 4, 4) == 0);
     if (connect_nid_postfix(client, address.data(), address.size()) != 0)
-        Require(*__error_nid_postfix() == 35 || *__error_nid_postfix() == 36);
+        Require(*__error_nid_postfix() == 36);
     PollDescriptor connecting{client, Priority | Out, -1};
     Require(poll_nid_postfix(&connecting, 1, 1000) == 1 && connecting.revents == Out);
     const int server = accept_nid_postfix(listener, nullptr, nullptr);

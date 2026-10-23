@@ -183,6 +183,7 @@ std::recursive_mutex& zoneMutex() {
 }
 
 char** HostZoneNames();
+char* GuestZoneName(int index);
 
 void applyGuestZone() {
     static bool initialized = false;
@@ -205,9 +206,8 @@ void applyGuestZone() {
 #else
     ::tzset();
 #endif
-    char** names = HostZoneNames();
-    tzname_nid_postfix[0] = names[0];
-    tzname_nid_postfix[1] = names[1];
+    tzname_nid_postfix[0] = GuestZoneName(0);
+    tzname_nid_postfix[1] = GuestZoneName(1);
 }
 
 int& zoneDepth() {
@@ -515,11 +515,22 @@ char** HostZoneNames() {
     return ::tzname;
 #endif
 }
+
+char* GuestZoneName(int index) {
+    static char unnamed[] = "   ";
+    char** names = HostZoneNames();
+#ifdef _WIN32
+    const bool daylightSaving = _daylight != 0;
+#else
+    const bool daylightSaving = ::daylight != 0;
+#endif
+    return index == 1 && !daylightSaving ? unnamed : names[index];
+}
 }
 
 extern "C" {
 
-char* tzname_nid_postfix[2] = {HostZoneNames()[0], HostZoneNames()[1]};
+char* tzname_nid_postfix[2] = {GuestZoneName(0), GuestZoneName(1)};
 int64_t timezone_nid_postfix = 0;
 int daylight_nid_postfix = 0;
 
@@ -529,13 +540,12 @@ int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0);
 std::size_t APS5_VABI wcsrtombs_nid_postfix(char* destination, const std::uint16_t** source, std::size_t capacity, void* state);
 std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state);
-int APS5_VABI ___mb_cur_max_nid_postfix();
+int APS5_VABI _Getmbcurmax_nid_postfix();
 
 void APS5_VABI tzset_nid_postfix(void) {
     const ZoneScope zone;
-    char** names = HostZoneNames();
-    tzname_nid_postfix[0] = names[0];
-    tzname_nid_postfix[1] = names[1];
+    tzname_nid_postfix[0] = GuestZoneName(0);
+    tzname_nid_postfix[1] = GuestZoneName(1);
     const int64_t now = libc_time_nid_postfix(nullptr);
     GuestTm universal{};
     GuestTm local{};
@@ -725,6 +735,7 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
     constexpr auto Failed = static_cast<std::size_t>(-1);
     if (format == nullptr) throw std::invalid_argument("wcsftime: null format");
     if (timeptr == nullptr) throw std::invalid_argument("wcsftime: null time");
+    if (str == nullptr) return 0;
     const std::uint16_t* formatCursor = format;
     const std::size_t formatLength = wcsrtombs_nid_postfix(nullptr, &formatCursor, 0, nullptr);
     if (formatLength == Failed) return 0;
@@ -734,7 +745,7 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
         return 0;
     }
     wcsrtombs_nid_postfix(narrowFormat.get(), &formatCursor, formatLength + 1, nullptr);
-    const auto maxCharacterBytes = static_cast<std::size_t>(___mb_cur_max_nid_postfix());
+    const auto maxCharacterBytes = static_cast<std::size_t>(_Getmbcurmax_nid_postfix());
     if (std::numeric_limits<std::size_t>::max() / maxCharacterBytes <= count) {
         errno = GuestEinval;
         return 0;
@@ -745,13 +756,14 @@ size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const st
         return 0;
     }
     const int callerError = errno;
-    if (strftime_nid_postfix(narrow.get(), count, narrowFormat.get(), timeptr) == 0) {
+    if (strftime_nid_postfix(narrow.get(), count * maxCharacterBytes, narrowFormat.get(), timeptr) == 0) {
         errno = callerError;
         return 0;
     }
     const char* narrowCursor = narrow.get();
-    const std::size_t length = mbsrtowcs_nid_postfix(str, &narrowCursor, count, nullptr);
-    if (length == static_cast<std::size_t>(-2) || length == Failed || narrowCursor != nullptr) return 0;
+    const std::size_t length = mbsrtowcs_nid_postfix(nullptr, &narrowCursor, 0, nullptr);
+    if (length == Failed || length >= count) return 0;
+    mbsrtowcs_nid_postfix(str, &narrowCursor, count, nullptr);
     return length;
 }
 

@@ -119,12 +119,60 @@ class SelectTests(unittest.TestCase):
         self.assertEqual(self.select("alpha/alpha.h", graph=older)[1], {"alpha", "alpha_data", "beta", "beta_setup", "script"})
 
     def test_selected_target_skips_unselected_executables(self):
-        self.select("alpha/main.c")
         subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+        self.select("alpha/main.c")
         subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
         built = {p.stem for p in self.build.rglob("*_tests*") if p.is_file() and os.access(p, os.X_OK)}
         subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
         self.assertEqual(built, {"alpha_tests"})
+
+    def test_fresh_build_keeps_a_shared_selected_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory) / "fresh"
+            compiler = shutil.which("gcc") or shutil.which("cc")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(build), "-G", "Ninja", f"-DCMAKE_C_COMPILER={compiler}"],
+                           check=True, capture_output=True)
+            changed = build / "changed.txt"
+            changed.write_text("data/input.txt\n", encoding="utf-8")
+            self.tool("select", build, self.graph, changed)
+            subprocess.run(["ninja", "-C", str(build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            built = {path.stem for path in build.rglob("*_tests*") if path.is_file() and os.access(path, os.X_OK)}
+            self.assertEqual(built, {"alpha_tests"})
+            output = self.tool("ctest", build, "--output-on-failure")
+            self.assertEqual(set(re.findall(r"Test +#\d+: (\S+)", output)), {"alpha_data", "script"})
+
+    def test_empty_selection_does_not_build_unselected_executables(self):
+        cmake = self.source / "CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            cmake.write_text(original.replace('add_test(NAME script COMMAND ${CMAKE_COMMAND} -E true)\n', ''), encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            self.assertEqual(self.select("README.md")[1], set())
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            self.assertFalse(any(path.is_file() and os.access(path, os.X_OK) for path in self.build.rglob("*_tests*")))
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
+    def test_retargeted_test_does_not_prune_its_previous_executable(self):
+        cmake = self.source / "alpha/CMakeLists.txt"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            cmake.write_text(original.replace("add_executable(alpha_tests main.c)",
+                                             "add_executable(alpha_tests main.c)\nadd_executable(replacement_tests main.c)")
+                             .replace("COMMAND alpha_tests", "COMMAND replacement_tests"), encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            self.select("beta/main.c")
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            built = {path.stem for path in self.build.rglob("*_tests*") if path.is_file() and os.access(path, os.X_OK)}
+            self.assertEqual(built, {"alpha_tests", "beta_tests", "setup_tests"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
     def test_explain_reports_input_and_fixture_reasons_without_a_build_cache(self):
         changed = self.build / "explain-changed.txt"
@@ -182,8 +230,8 @@ class FixtureBuildTests(unittest.TestCase):
         marker.unlink(missing_ok=True)
         listed = self.build / "changed.txt"
         listed.write_text(changed + "\n", encoding="utf-8")
-        SelectTests.tool("select", self.build, graph, listed)
         subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+        SelectTests.tool("select", self.build, graph, listed)
         subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
         result = subprocess.run([sys.executable, str(TOOL), "ctest", str(self.build), "--output-on-failure"],
                                 capture_output=True, text=True)
@@ -230,6 +278,40 @@ class BuildErrorTests(unittest.TestCase):
         self.assertIn("CMAKE_CACHEFILE_DIR", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_cache_with_utf8_bom_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("\ufeffCMAKE_CACHEFILE_DIR:INTERNAL=C:/work/build\nCMAKE_HOME_DIRECTORY:INTERNAL=C:/work/source\n", encoding="utf-8")
+            with mock.patch.object(select_tests.Build, "run", return_value="Build file encoding: UTF-8"):
+                build = select_tests.Build(directory)
+                self.assertEqual(build.path, os.path.normpath("C:/work/build"))
+                self.assertEqual(build.source, os.path.normpath("C:/work/source"))
+
+    def test_explain_accepts_utf8_bom_in_graph_and_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            graph_path = root / "graph.json"
+            graph = {
+                "tests": {
+                    "unit": {
+                        "target": "tests/unit",
+                        "arguments": [],
+                        "registered": [],
+                        "sets": [],
+                        "requires": [],
+                        "depends": [],
+                    }
+                },
+                "closures": {"tests/unit": ["src/main.c"]},
+            }
+            graph_path.write_text("\ufeff" + json.dumps(graph), encoding="utf-8")
+            changed_path = root / "changed.txt"
+            changed_path.write_text("\ufeffsrc/main.c\n", encoding="utf-8")
+            result = self.run_tool("explain", graph_path, changed_path)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads(result.stdout)
+            self.assertEqual(data["tests"], ["unit"])
+
 
 class CaseInsensitivePathTests(unittest.TestCase):
     def build(self):
@@ -258,6 +340,15 @@ class CaseInsensitivePathTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
+    def test_unresolved_selected_command_keeps_unselected_build_targets(self):
+        build = mock.Mock()
+        listed = [{"name": "selected"}, {"name": "other", "command": ["/build/tests/shared_tests"]}]
+        build.tests.side_effect = [({}, listed), ({}, [listed[0]])]
+        build.leaves.return_value = ["tests/shared_tests", "helper"]
+        build.target.side_effect = lambda test: "tests/shared_tests" if test.get("command") else None
+        graph = {"tests": {"selected": {}, "other": {}}}
+        self.assertEqual(select_tests.plan(build, graph, {"selected"}), ([1], ["tests/shared_tests", "helper"], 2))
+
     def test_plan_empty_run_avoids_invoking_ctest(self):
         build = mock.Mock()
         build.tests.return_value = ({}, [{"name": "alpha", "command": ["/build/alpha_tests"]}])
@@ -269,6 +360,64 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(leaves, [])
         self.assertEqual(count, 1)
         build.tests.assert_called_once_with()
+
+
+class MissingCommandTests(unittest.TestCase):
+    def test_only_unambiguous_absolute_commands_in_reachable_files_are_recovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            active, stale = root / "active tests", root / "stale"
+            active.mkdir()
+            stale.mkdir()
+            executable = (root / "tests/unit_tests").as_posix()
+            helper = (root / "tests/helper_tests").as_posix()
+            (root / "CTestTestfile.cmake").write_text('subdirs("active tests")\n', encoding="utf-8")
+            (active / "CTestTestfile.cmake").write_text(
+                f'add_test([=[absolute]=] "{executable}" "{helper}")\n'
+                'add_test(relative tests/relative_tests)\n'
+                'add_test(path unit_tests)\n'
+                f'if(CONFIG)\nadd_test(ambiguous "{executable}")\nelse()\nadd_test(ambiguous "{helper}")\nendif()\n'
+                f'add_test(existing "{executable}")\n'
+                'subdirs("..")\n', encoding="utf-8")
+            (stale / "CTestTestfile.cmake").write_text(f'add_test(stale "{executable}")\n', encoding="utf-8")
+            names = ("absolute", "relative", "path", "ambiguous", "existing", "stale")
+            listed = [{"name": name} for name in names]
+            listed[4]["command"] = [helper]
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            with mock.patch.object(select_tests.subprocess, "run", return_value=mock.Mock(stdout=json.dumps({"tests": listed}))):
+                _, recovered = build.tests()
+            commands = {test["name"]: test.get("command") for test in recovered}
+            self.assertEqual(commands, {"absolute": [executable, helper], "relative": None, "path": None,
+                                        "ambiguous": None, "existing": [helper], "stale": None})
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(select_tests.sys, "stdout", out), mock.patch.object(select_tests.sys, "stderr", err):
+            try:
+                select_tests.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

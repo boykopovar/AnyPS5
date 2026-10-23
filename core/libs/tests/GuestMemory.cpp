@@ -1441,7 +1441,13 @@ static void CheckFixedMappingsReachTheApplicationAreaEnd() {
         0;
 #endif
     constexpr std::uintptr_t applicationAreaEnd = 0xFC00000000ull + expectedOffset;
-    Require(base == 0x200000000ull + expectedOffset && base + size == applicationAreaEnd);
+    constexpr std::uintptr_t expectedBase =
+#ifdef __APPLE__
+        0x200000000ull + expectedOffset;
+#else
+        expectedOffset == 0 ? 0x10000ull : 0x200000000ull + expectedOffset;
+#endif
+    Require(base == expectedBase && base + size == applicationAreaEnd);
     std::int64_t phys = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
     void* const requested = reinterpret_cast<void*>(applicationAreaEnd - page * 2);
