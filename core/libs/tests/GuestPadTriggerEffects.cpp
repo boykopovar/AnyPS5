@@ -186,11 +186,27 @@ void State() {
     Require(state.state[0] == 0 && state.state[1] == 0, "an inactive effect has no state");
 }
 
+void TriggerStateClears() {
+    PadTriggerEffectStateInformation state{};
+    PadPublishTriggerStatus_nid_postfix(0, 1, 0, 2, 1);
+    Require(scePadGetTriggerEffectState(handle, &state) == 0, "the stale trigger state is read");
+    Require(state.state[0] == 1 && state.state[1] == 4, "the stale trigger state is mapped");
+    PadClearTriggerStatus_nid_postfix(0);
+    Require(scePadGetTriggerEffectState(handle, &state) == 0, "the cleared trigger state is read");
+    Require(state.state[0] == 0 && state.state[1] == 0, "clearing reports zero for both triggers");
+    PadPublishTriggerStatus_nid_postfix(0, 3, 0, 0, 0);
+    Require(scePadGetTriggerEffectState(handle, &state) == 0, "the new trigger state is read");
+    Require(state.state[0] == 6 && state.state[1] == 0, "a new status report replaces the cleared state");
+    Require(scePadInit_nid_postfix() == 0, "scePadInit is called again");
+    Require(scePadGetTriggerEffectState(handle, &state) == 0, "the reinitialized trigger state is read");
+    Require(state.state[0] == 0 && state.state[1] == 0, "reinitializing clears the trigger state");
+}
+
 }
 
 int main() {
     Require(scePadInit_nid_postfix() == 0, "scePadInit succeeded");
-    handle = scePadOpen_nid_postfix(1, 0, 0, nullptr);
+    handle = scePadOpen_nid_postfix(0x10000000, 0, 0, nullptr);
     Require(handle > 0, "scePadOpen succeeded");
     LocalBuild();
     Feedback();
@@ -202,6 +218,7 @@ int main() {
     Off();
     Disable();
     State();
+    TriggerStateClears();
     std::puts("guest pad trigger effects tests passed");
     return 0;
 }
