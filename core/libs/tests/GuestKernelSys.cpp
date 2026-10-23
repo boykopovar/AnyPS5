@@ -59,6 +59,8 @@ std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
 int APS5_VABI dup_nid_postfix(int);
 int APS5_VABI dup2_nid_postfix(int, int);
 int APS5_VABI setsid_nid_postfix(void);
+int APS5_VABI is_in_sandbox_nid_postfix(void);
+int APS5_VABI sceKernelIsInSandbox(void);
 int APS5_VABI link_nid_postfix(const char*, const char*);
 int APS5_VABI symlink_nid_postfix(const char*, const char*);
 int APS5_VABI openat_nid_postfix(int, const char*, int, ...);
@@ -448,6 +450,8 @@ int main() {
 #endif
     CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
+    Require(is_in_sandbox_nid_postfix() == 1);
+    Require(sceKernelIsInSandbox() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
