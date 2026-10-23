@@ -836,7 +836,16 @@ double APS5_VABI log1p_nid_postfix(double x) {
     }
     return k * ln2_hi - ((hfsq - (s * (hfsq + R) + (k * ln2_lo + c))) - f);
 }
-float APS5_VABI log1pf_nid_postfix(float x) { return std::log1p(x); }
+float APS5_VABI log1pf_nid_postfix(float x) {
+    if (!std::isfinite(x) || x <= -1.0f) return std::log1p(x);
+    const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    if (magnitude < 0x33800000u) {
+        volatile float huge = 1.0e30f;
+        if (huge + x > 1.0f) return x;
+    }
+    if (x > 0.0f) return AtanhfLog1p(x);
+    return -AtanhfLog1p(-x / (1.0f + x));
+}
 static double Expm1(double x) {
     const double tiny = 1.0e-300;
     const double o_threshold = 7.09782712893383973096e+02;
