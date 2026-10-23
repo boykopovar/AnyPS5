@@ -12574,7 +12574,6 @@ void meshLimitTests() {
     expectFailure([&] { AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96); }, "mesh LDS 12288 bytes exceeds the device shared memory limit 12284");
     mesh.ldsSizeDwords = 3071;
     AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96);
-=======
     using AgcDriver::Graphics::MeshDrawRunsAsCompute;
     AgcDriver::Graphics::State layered{};
     Require(!MeshDrawRunsAsCompute(false, 0, layered), "a draw without a mesh stage ran as a mesh compute pass");
