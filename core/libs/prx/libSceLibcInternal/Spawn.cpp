@@ -26,6 +26,7 @@
 #include <unistd.h>
 #elif defined(__APPLE__)
 #include <crt_externs.h>
+#include <mach-o/dyld.h>
 #include <unistd.h>
 #endif
 
