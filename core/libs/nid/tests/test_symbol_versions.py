@@ -1,4 +1,6 @@
+import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -198,10 +200,37 @@ def test_unversioned_library_is_still_patched(patcher):
     assert len({entry[0] for entry in after if entry[0]}) == len([entry for entry in after if entry[0]])
 
 
+def find_patcher():
+    explicit = len(sys.argv) >= 2 and not sys.argv[1].startswith("-") and not sys.argv[1].endswith(".py") and Path(sys.argv[1]).is_file()
+    if explicit:
+        return Path(sys.argv.pop(1)).resolve()
+    env = os.environ.get("NID_PATCHER")
+    if env and Path(env).is_file():
+        return Path(env).resolve()
+    direct = shutil.which("nid_patcher")
+    if direct:
+        return Path(direct).resolve()
+    root = Path(__file__).resolve().parents[4]
+    for candidate in (
+        root / "build/core/libs/nid_patcher",
+        root / "build/core/libs/nid_patcher.exe",
+        root / "build/core/libs/Release/nid_patcher.exe",
+        root / "build-test/core/libs/nid_patcher",
+        root / "build-test/core/libs/nid_patcher.exe",
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+PATCHER = find_patcher()
+
+
 def main():
-    patcher = Path(sys.argv[1]).resolve()
-    test_versioned_library_is_rejected(patcher)
-    test_unversioned_library_is_still_patched(patcher)
+    if not PATCHER or not PATCHER.is_file():
+        sys.exit("nid_patcher executable not found")
+    test_versioned_library_is_rejected(PATCHER)
+    test_unversioned_library_is_still_patched(PATCHER)
     print("NID patcher symbol version tests passed")
 
 

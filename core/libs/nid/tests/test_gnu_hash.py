@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, symbols, patch, HASH_OFFSET, SHOFF, read_dynsym, gnu_hash, sections
+from test_symbol_versions import build_image, symbols, patch, HASH_OFFSET, SHOFF, read_dynsym, gnu_hash, sections, PATCHER
 
 
 def sysv_hash(name):
@@ -31,6 +31,7 @@ def sysv_lookup(image, name):
     return None
 
 
+@unittest.skipUnless(PATCHER and PATCHER.is_file(), "nid_patcher executable required")
 class GnuHashTests(unittest.TestCase):
     def image(self, buckets=4, bloom=1, shift=6, symoffset=3):
         image = build_image(symbols(False), False)
@@ -95,6 +96,7 @@ class GnuHashTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", after, HASH_OFFSET)[0], 0)
 
 
+@unittest.skipUnless(PATCHER and PATCHER.is_file(), "nid_patcher executable required")
 class SysvHashTests(unittest.TestCase):
     def image(self, both, buckets):
         entries = symbols(False)
@@ -153,5 +155,4 @@ class SysvHashTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()

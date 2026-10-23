@@ -8,6 +8,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from test_symbol_versions import PATCHER
+
 SUFFIX = bytes([0x51, 0x8D, 0x64, 0xA6, 0x35, 0xDE, 0xD8, 0xC1, 0xE6, 0xB0, 0x39, 0xB1, 0xC3, 0xE5, 0x52, 0x30])
 BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
 
@@ -270,13 +272,14 @@ def check_refusals(patcher, directory):
 
 
 def main():
-    patcher = Path(sys.argv[1]).resolve()
+    if not PATCHER or not PATCHER.is_file():
+        sys.exit("nid_patcher executable not found")
     with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
-        check_shrinking(patcher, directory)
-        check_growing(patcher, directory)
-        check_preserved(patcher, directory)
-        check_export_list(patcher, directory)
-        check_refusals(patcher, directory)
+        check_shrinking(PATCHER, directory)
+        check_growing(PATCHER, directory)
+        check_preserved(PATCHER, directory)
+        check_export_list(PATCHER, directory)
+        check_refusals(PATCHER, directory)
     print("NID patcher Mach-O tests passed")
 
 

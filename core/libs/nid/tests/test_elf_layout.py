@@ -3,9 +3,10 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, symbols, patch, SHOFF
+from test_symbol_versions import build_image, symbols, patch, SHOFF, PATCHER
 
 
+@unittest.skipUnless(PATCHER and PATCHER.is_file(), "nid_patcher executable required")
 class ElfLayoutTests(unittest.TestCase):
     def test_declared_layout_must_match_supported_tables(self):
         changes = ((5, "B", 2), (0x3a, "H", 32),
@@ -44,5 +45,4 @@ class ElfLayoutTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()

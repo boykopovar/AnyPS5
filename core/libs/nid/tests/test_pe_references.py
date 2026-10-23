@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from test_macho_nids import build_dylib, exports_of, nid
+from test_symbol_versions import PATCHER
 
 
 def reference(*, headers=False, address=0x2000, ordinal=0):
@@ -100,6 +101,7 @@ def forwarding_exports(image, bits):
     return string(table[4]), names, targets, addresses, (export_rva, export_size)
 
 
+@unittest.skipUnless(PATCHER and PATCHER.is_file(), "nid_patcher executable required")
 class ReferenceTests(unittest.TestCase):
     def patch_with_reference(self, data):
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,6 +137,7 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(image, original)
 
 
+@unittest.skipUnless(PATCHER and PATCHER.is_file(), "nid_patcher executable required")
 class ForwardingExportTests(unittest.TestCase):
     def patch(self, image):
         with tempfile.TemporaryDirectory() as temporary:
@@ -242,5 +245,4 @@ class ForwardingExportTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()

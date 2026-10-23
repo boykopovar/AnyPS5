@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from test_symbol_versions import build_image, symbols, patch, SHOFF, DYNSTR_OFFSET, sections
+from test_symbol_versions import build_image, symbols, patch, SHOFF, DYNSTR_OFFSET, sections, PATCHER
 
 VERNEED = 0x580
 
@@ -22,6 +22,7 @@ def image(*, auxiliary=16, count=1, size=32, version=1, auxnext=0, nextrecord=0)
     return data
 
 
+@unittest.skipUnless(PATCHER and PATCHER.is_file(), "nid_patcher executable required")
 class VersionRequirementsTests(unittest.TestCase):
     def test_auxiliary_record_cannot_leave_declared_section(self):
         self.reject(image(auxiliary=32))
@@ -72,5 +73,4 @@ class VersionRequirementsTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    PATCHER = Path(sys.argv.pop(1)).resolve()
     unittest.main()
