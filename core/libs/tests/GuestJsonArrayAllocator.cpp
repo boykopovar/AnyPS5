@@ -42,6 +42,8 @@ Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(Iterator*);
 Iterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(Iterator*, int);
 void APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(Iterator*, std::size_t);
 const Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const Iterator*);
+const Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const Iterator*);
+const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value*, const char*);
 bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const Iterator*, const Iterator*);
 void APS5_VABI _ZN3sce4Json6ObjectC1Ev(Object*);
 void APS5_VABI _ZN3sce4Json6ObjectD1Ev(Object*);
@@ -189,6 +191,20 @@ int main() {
     Require(*_ZNK3sce4Json5Value10getIntegerEv(_ZNK3sce4Json5Array8iteratordeEv(&begin)) == 30, "Advance must preserve circular traversal");
     trace.budget = 0; Iterator failed{}; _ZNK3sce4Json5Array5beginEv(&failed, &array);
     Require(!failed.state, "Iterator allocation failure must leave an empty outer handle");
+    const auto fallbackRequests = trace.requests.size(); const auto fallbackNotices = trace.notifications;
+    const auto* fallback = _ZNK3sce4Json5Array8iteratordeEv(&failed);
+    Require(fallback && trace.live.contains(const_cast<Value*>(fallback)) && trace.live.at(const_cast<Value*>(fallback)) == 32 &&
+            fallback->type == 0 && !fallback->parent && !fallback->auxiliary,
+            "Missing iterator state must return the allocator-owned initialized module fallback");
+    const Value fallbackValue = *fallback;
+    Iterator missing{}; Value lookup{}; _ZN3sce4Json5ValueC1El(&lookup, 17);
+    Require(_ZNK3sce4Json5Array8iteratordeEv(&missing) == fallback && _ZNK3sce4Json5Array8iteratorptEv(&failed) == fallback &&
+            _ZNK3sce4Json5Array8iteratorptEv(&missing) == fallback &&
+            trace.requests.size() == fallbackRequests && trace.notifications == fallbackNotices && std::memcmp(fallback, &fallbackValue, sizeof(fallbackValue)) == 0,
+            "Independent missing iterators must share the exact fallback without allocations, notices or mutation");
+    Require(_ZNK3sce4Json5ValueixEPKc(&lookup, "missing") == fallback && std::memcmp(fallback, &fallbackValue, sizeof(fallbackValue)) == 0,
+            "Failed keyed lookup must return the same module fallback without mutating its bytes");
+    _ZN3sce4Json5ValueD1Ev(&lookup);
     trace.budget = -1;
     _ZN3sce4Json5Array8iteratorD1Ev(&copy); _ZN3sce4Json5Array8iteratorD1Ev(&begin); _ZN3sce4Json5Array8iteratorD1Ev(&end);
     const auto beforeCopies = trace.live.size();
