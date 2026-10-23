@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <stdexcept>
 
 using SessionFunction = int (APS5_VABI*)(void*);
 using StringFunction = int (APS5_VABI*)(void*, void*);
@@ -20,6 +21,7 @@ struct TestUiMethod {
 
 extern "C" {
 TestUiMethod* APS5_VABI UI_create_method_nid_postfix(char*);
+void APS5_VABI UI_destroy_method_nid_postfix(TestUiMethod*);
 void APS5_VABI free_nid_postfix(void*);
 }
 
@@ -27,6 +29,11 @@ static void Require(bool condition, std::source_location location = std::source_
     if (condition) return;
     std::fprintf(stderr, "LibreSSL UI method check failed at line %u\n", location.line());
     std::abort();
+}
+
+template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::exception&) { return; }
+    Require(false, location);
 }
 
 static void InitializeHeap() {
@@ -54,8 +61,16 @@ static void TestCreate() {
     free_nid_postfix(method);
 }
 
+static void TestDestroy() {
+    char name[] = "prompt";
+    UI_destroy_method_nid_postfix(UI_create_method_nid_postfix(name));
+    UI_destroy_method_nid_postfix(UI_create_method_nid_postfix(nullptr));
+    RequireThrows([] { UI_destroy_method_nid_postfix(nullptr); });
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
+    TestDestroy();
     std::puts("libSceLibreSsl UI method tests passed");
 }

@@ -1,5 +1,7 @@
 #include <cstddef>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include "prx/libc/include/General.hpp"
 
 using UiSessionFunction = int (APS5_VABI*)(void*);
@@ -20,6 +22,7 @@ static_assert(sizeof(LibreSslUiMethod) == 56);
 
 extern "C" {
 void* APS5_VABI malloc_nid_postfix(std::size_t size);
+void APS5_VABI free_nid_postfix(void* pointer);
 
 LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name) {
     auto* method = static_cast<LibreSslUiMethod*>(malloc_nid_postfix(sizeof(LibreSslUiMethod)));
@@ -31,6 +34,13 @@ LibreSslUiMethod* APS5_VABI UI_create_method_nid_postfix(char* name) {
         if (method->name) std::memcpy(method->name, name, size);
     }
     return method;
+}
+
+void APS5_VABI UI_destroy_method_nid_postfix(LibreSslUiMethod* method) {
+    if (!method) throw std::invalid_argument(std::string(__func__) + ": null method");
+    free_nid_postfix(method->name);
+    method->name = nullptr;
+    free_nid_postfix(method);
 }
 
 }
