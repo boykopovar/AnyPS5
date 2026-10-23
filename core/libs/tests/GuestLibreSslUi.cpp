@@ -28,10 +28,12 @@ int APS5_VABI UI_method_set_writer_nid_postfix(TestUiMethod*, StringFunction);
 StringFunction APS5_VABI UI_method_get_writer_nid_postfix(TestUiMethod*);
 int APS5_VABI UI_method_set_reader_nid_postfix(TestUiMethod*, StringFunction);
 StringFunction APS5_VABI UI_method_get_reader_nid_postfix(TestUiMethod*);
+int APS5_VABI UI_method_set_closer_nid_postfix(TestUiMethod*, SessionFunction);
 void APS5_VABI free_nid_postfix(void*);
 }
 
 static int APS5_VABI Open(void*) { return 1; }
+static int APS5_VABI Close(void*) { return 2; }
 static int APS5_VABI Write(void*, void*) { return 3; }
 static int APS5_VABI Read(void*, void*) { return 4; }
 
@@ -135,6 +137,15 @@ static void TestGetReader() {
     UI_destroy_method_nid_postfix(method);
 }
 
+static void TestSetCloser() {
+    TestUiMethod* method = UI_create_method_nid_postfix(nullptr);
+    Require(UI_method_set_closer_nid_postfix(method, Close) == 0 && method->closeSession == Close);
+    Require(!method->openSession && !method->writeString && !method->readString && !method->flush && !method->constructPrompt);
+    Require(UI_method_set_closer_nid_postfix(method, nullptr) == 0 && method->closeSession == nullptr);
+    Require(UI_method_set_closer_nid_postfix(nullptr, Close) == -1);
+    UI_destroy_method_nid_postfix(method);
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
@@ -145,5 +156,6 @@ int main() {
     TestGetWriter();
     TestSetReader();
     TestGetReader();
+    TestSetCloser();
     std::puts("libSceLibreSsl UI method tests passed");
 }
