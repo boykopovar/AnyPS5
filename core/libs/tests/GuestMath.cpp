@@ -1073,6 +1073,26 @@ static void CheckAtanhf() {
     *__error_nid_postfix() = 0;
 }
 
+static void CheckLog1pf() {
+    const struct { std::uint32_t input; double expected; } cases[] = {
+        {0x00000000u, 0.0}, {0x80000000u, -0.0}, {0x00000001u, 0x1p-149},
+        {0x33800000u, 0x1p-24}, {0xb3800000u, -0x1p-24},
+        {0x3e4ccccdu, 0.1823215567939546}, {0x3f000000u, 0.4054651081081644},
+        {0x3f800000u, 0.6931471805599453}, {0x41200000u, 2.3978952727983707},
+        {0xbf7fffffu, -16.63553227383404},
+    };
+    for (const auto& test : cases) {
+        const float input = std::bit_cast<float>(test.input);
+        const float result = log1pf_nid_postfix(input);
+        Require(std::abs(static_cast<double>(result) - test.expected) <= std::max(1e-45, std::abs(test.expected) * 2e-7));
+        if (input == 0.0f) Require(std::signbit(result) == std::signbit(input));
+    }
+    Require(std::isinf(log1pf_nid_postfix(-1.0f)) && log1pf_nid_postfix(-1.0f) < 0.0f);
+    Require(std::isnan(log1pf_nid_postfix(-2.0f)));
+    Require(log1pf_nid_postfix(std::numeric_limits<float>::infinity()) == std::numeric_limits<float>::infinity());
+    Require(std::isnan(log1pf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
+}
+
 static void CheckFloatClassification() {
     Require(_FInf_nid_postfix.bits[0] == 0x7f800000u && _FNan_nid_postfix.bits[0] == 0x7fc00000u);
     for (int word = 1; word < 4; ++word) Require(_FInf_nid_postfix.bits[word] == 0 && _FNan_nid_postfix.bits[word] == 0);
@@ -1637,6 +1657,7 @@ int main() {
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();
+    CheckLog1pf();
     CheckHypotSpecialValue();
     CheckFloatUnderflowErrno();
     CheckFmodErrno();

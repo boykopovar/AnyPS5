@@ -462,7 +462,16 @@ double APS5_VABI tan_nid_postfix(double x) { return std::tan(x); }
 double APS5_VABI log2_nid_postfix(double x) { return std::log2(x); }
 double APS5_VABI log_nid_postfix(double x) { return std::log(x); }
 double APS5_VABI log1p_nid_postfix(double x) { return std::log1p(x); }
-float APS5_VABI log1pf_nid_postfix(float x) { return std::log1p(x); }
+float APS5_VABI log1pf_nid_postfix(float x) {
+    if (!std::isfinite(x) || x <= -1.0f) return std::log1p(x);
+    const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    if (magnitude < 0x33800000u) {
+        volatile float huge = 1.0e30f;
+        if (huge + x > 1.0f) return x;
+    }
+    if (x > 0.0f) return AtanhfLog1p(x);
+    return -AtanhfLog1p(-x / (1.0f + x));
+}
 double APS5_VABI expm1_nid_postfix(double x) { return std::expm1(x); }
 float APS5_VABI expm1f_nid_postfix(float x) { return std::expm1(x); }
 float APS5_VABI erff_nid_postfix(float x) { return std::erf(x); }
