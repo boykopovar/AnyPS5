@@ -1996,11 +1996,54 @@ struct SerializationIterator {
 template<typename TLink>
 struct SerializationPosition { TLink* first; TLink* head; bool invalid; };
 
+void PrepareLegacySerialization(Value& value, const Value* parent) {
+    value.parent = const_cast<Value*>(parent);
+    if (parent) {
+        if (value.auxiliary) {
+            if (value.auxiliary->fallback) { Destroy(*value.auxiliary->fallback); Release(value.auxiliary->fallback); }
+            Release(value.auxiliary);
+            value.auxiliary = nullptr;
+        }
+    } else {
+        EnsureAuxiliary(value);
+        if (value.auxiliary) { value.auxiliary->nullAccess = nullptr; value.auxiliary->nullAccessContext = nullptr; }
+    }
+}
+
+void AppendLegacyReal(String& output, double value) {
+    float magnitude = static_cast<float>(value);
+    const bool negative = magnitude < 0;
+    if (negative) magnitude = -magnitude;
+    const bool unordered = std::isnan(magnitude);
+    const std::uint64_t integer = unordered ? UINT64_C(0x8000000000000000) :
+        magnitude <= 2147483648.0f ? static_cast<std::uint64_t>(magnitude) : UINT64_C(2147483647);
+    float fraction = unordered || magnitude > 2147483648.0f ? 0.0f : magnitude - static_cast<float>(integer);
+    char digits[6];
+    bool nonzero = false;
+    for (char& digit : digits) {
+        fraction *= 10.0f;
+        const auto number = static_cast<std::uint32_t>(fraction) % 10;
+        digit = static_cast<char>('0' + number);
+        nonzero = nonzero || number != 0;
+    }
+    char text[32];
+    char* cursor = text;
+    if (negative) *cursor++ = '-';
+    char whole[20];
+    unsigned length = 0;
+    auto remaining = integer;
+    do { whole[length++] = static_cast<char>('0' + remaining % 10); remaining /= 10; } while (remaining);
+    while (length) *cursor++ = whole[--length];
+    if (nonzero) { *cursor++ = '.'; std::memcpy(cursor, digits, sizeof(digits)); cursor += sizeof(digits); }
+    AppendText(output, std::string_view(text, cursor - text));
+}
+
 class CallbackSerializer {
 public:
     CallbackSerializer(String& buffer, String* destination, SerializationCallback callback, void* context, bool collect)
         : buffer(buffer), destination(destination), callback(callback), context(context), collect(collect) {}
-    int SerializeValue(const Value& value) {
+    int SerializeValue(const Value& value, const Value* parent = nullptr) {
+        if (!ModernValues()) PrepareLegacySerialization(const_cast<Value&>(value), parent);
         if (value.type == TypeReal && !std::isfinite(value.real) && FloatConfiguration().enabled) {
             CallbackScope scope;
             const auto handlers = HandlersOf(value);
@@ -2008,9 +2051,10 @@ public:
                 ScopedValue replacement;
                 bool error = false;
                 RecoverSpecial(value, handlers, 0, value.real, replacement.value, &error);
-                return error ? JsonErrorSpecialFloat : SerializeValue(replacement.value);
+                return error ? JsonErrorSpecialFloat : SerializeValue(replacement.value, parent);
             }
         }
+        if (value.type == TypeReal && !FloatConfiguration().enabled) { AppendLegacyReal(buffer, value.real); return Emit(); }
         if (value.type >= TypeNull && value.type <= TypeReal) {
             std::string scalar;
             const int status = Serialize(scalar, value);
@@ -2033,7 +2077,7 @@ public:
             };
             return Collection(position, '[', ']',
                 [](ArrayLink* link) { return link->next; },
-                [this](ArrayLink* link) { return SerializeValue(link->value); });
+                [this, &value](ArrayLink* link) { return SerializeValue(link->value, &value); });
         }
         if (value.type == TypeObject) {
             if (!value.object) { NotImplemented_nid_no_patch(__func__); return 0; }
@@ -2045,7 +2089,7 @@ public:
             };
             return Collection(position, '{', '}',
                 [](ObjectLink* link) { return NextObjectLink(link); },
-                [this](ObjectLink* link) { Escape(link->pair.key); Character(':'); return SerializeValue(link->pair.value); });
+                [this, &value](ObjectLink* link) { Escape(link->pair.key); Character(':'); return SerializeValue(link->pair.value, &value); });
         }
         return 0;
     }
@@ -2123,7 +2167,6 @@ int SerializeCallbackValue(Value* value, String* destination, SerializationCallb
         if (!state.allocation) return JsonErrorNotInitialized;
     }
     if (!callback || (collect && !destination)) { NotImplemented_nid_no_patch(__func__); return 0; }
-    if (!ModernValues()) { NotImplemented_nid_no_patch(__func__); return 0; }
     ScopedString buffer(std::string_view{});
     CallbackSerializer serializer(buffer.string, destination, callback, context, collect);
     return serializer.SerializeValue(*value);
@@ -2957,11 +3000,7 @@ int APS5_VABI _ZN3sce4Json5Value9serializeERNS0_6StringE(Value* self, String* ou
         std::lock_guard lock(state.mutex);
         if (!state.allocation) return JsonErrorNotInitialized;
     }
-    if (ModernValues()) return SerializeCallbackValue(self, out, SerializationSucceeded, nullptr, true);
-    std::string text;
-    const int result = Serialize(text, *self);
-    AppendText(*out, text);
-    return result;
+    return SerializeCallbackValue(self, out, SerializationSucceeded, nullptr, true);
 }
 void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, String* out) {
     std::string text;
@@ -2969,7 +3008,10 @@ void APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Str
     else {
         if (self->type == TypeArray) text = "array";
         else if (self->type == TypeObject) text = "object";
-        else if (self->type == TypeReal) AppendReal(text, self->real);
+        else if (self->type == TypeReal) {
+            if (!FloatConfiguration().enabled) { AppendLegacyReal(*out, self->real); return; }
+            AppendReal(text, self->real);
+        }
         else Serialize(text, *self);
         AppendText(*out, text);
     }
