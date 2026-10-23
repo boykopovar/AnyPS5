@@ -124,8 +124,8 @@ void testRegisters() {
         check(registers.at(0x10) == 43 && registers.at(0x11) == 42, "indirect register order or bank lost");
         pairs[0] = 0x12;
         pairs[4] = 0xffffffffu;
-        expectFailure([&] { execute(state, packet); }, "sentinel");
-        check(!registers.contains(0x12), "invalid indirect packet partially changed state");
+        execute(state, packet);
+        check(registers.at(0x12) == 41 && registers.at(0x11) == 42, "the 0xffffffff register sentinel entry was not skipped");
         std::array<std::uint32_t, 2> values{0x11223344, 0x55667788};
         execute(state, makePacket(opcode, {low(values.data()), high(values.data()), 0x0a, 2}));
         check(registers.at(0x0a) == 0x11223344 && registers.at(0x0b) == 0x55667788, "consecutive indirect registers lost");
@@ -139,6 +139,8 @@ void testRegisters() {
     }
     execute(state, makePacket(0x69, {0x11, 50, 51}));
     check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "direct registers not sequential");
+    execute(state, makePacket(0x69, {0xffffffffu, 52, 53}));
+    check(state.context.at(0x11) == 50 && state.context.at(0x12) == 51, "a direct register packet with the 0xffffffff sentinel wrote a register");
     execute(state, makePacket(0x7a, {0x10, 60}));
     check(state.userConfig.at(0x10) == 60, "uconfig index zero failed");
     execute(state, makePacket(0x7a, {0x20000243, 0x441}));
@@ -190,6 +192,7 @@ void testRegisterFile() {
 void testContextAndBases() {
     AgcDriver::QueueState state;
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
+    check(state.context.at(0x8e) == 0xffffffffu && state.context.at(0x8f) == 0xffffffffu, "the initial color masks are not the reset values");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
@@ -1521,6 +1524,7 @@ void testInvalidStallWatchdog() {
 
 void testSubmissionRingFailureReport() {
     submitWrites(0, 0x5a000001u, 3);
+    AgcDriver::DriverDetail::RecordShaderUse(0, 3, 5, 0x1234, 0x2a85bc100, 0x2a85bc180);
     std::vector<std::string> lines;
     {
         CapturedStderr capture;
@@ -1529,6 +1533,17 @@ void testSubmissionRingFailureReport() {
     }
     check(!lines.empty() && lines.front() == "[pm4 ring] failure report: 1 queue(s), up to 2 submissions each, oldest first", "the failure report does not dump the rings");
     check(recordedWrites(lines) == std::vector<std::string>{"0x0 #2 5a000002", "0x0 #3 5a000003"}, "the failure report does not hold the last submissions in order");
+    check(std::find(lines.begin(), lines.end(), "[pm4 ring] queue 0x0: 1 shader uses recorded, last 1 shown") != lines.end(), "the failure report does not count the shader uses");
+    check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
+        return line.starts_with("[pm4 ring]   shader serial=3 ") && line.ends_with("stage=fragment target=0x1234 code=0x2a85bc100 entry=0x2a85bc180");
+    }), "the failure report does not name the last shader use");
+    {
+        CapturedStderr capture;
+        AgcDriver::DriverDetail::DumpSubmissionRingsAfterFailure();
+        lines = capture.RingLines();
+    }
+    check(!lines.empty() && lines.front() == "[pm4 ring] failure report: 1 queue(s), up to 2 submissions each, oldest first", "the device-loss dump does not dump the rings");
+    check(recordedWrites(lines) == std::vector<std::string>{"0x0 #2 5a000002", "0x0 #3 5a000003"}, "the device-loss dump does not hold the last submissions in order");
 }
 
 #ifdef _WIN32

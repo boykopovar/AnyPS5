@@ -49,20 +49,31 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
         }
     }
     if (faultInfo == nullptr || device == VK_NULL_HANDLE) return lines;
-    VkDeviceFaultCountsEXT counts{VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
-    if (faultInfo(device, &counts, nullptr) != VK_SUCCESS) {
-        lines.emplace_back("[device-fault] vkGetDeviceFaultInfoEXT reported nothing");
-        return lines;
-    }
-    std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
-    std::vector<VkDeviceFaultVendorInfoEXT> vendors(counts.vendorInfoCount);
-    counts.vendorBinarySize = 0;
+    std::vector<VkDeviceFaultAddressInfoEXT> addresses;
+    std::vector<VkDeviceFaultVendorInfoEXT> vendors;
     VkDeviceFaultInfoEXT info{VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT};
-    info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
-    info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
-    const auto result = faultInfo(device, &counts, &info);
-    addresses.resize(std::min<std::size_t>(addresses.size(), counts.addressInfoCount));
-    vendors.resize(std::min<std::size_t>(vendors.size(), counts.vendorInfoCount));
+    VkResult result = VK_INCOMPLETE;
+    std::uint32_t addressCount = 0;
+    std::uint32_t vendorCount = 0;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        VkDeviceFaultCountsEXT counts{VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT};
+        if (faultInfo(device, &counts, nullptr) != VK_SUCCESS) {
+            lines.emplace_back("[device-fault] vkGetDeviceFaultInfoEXT reported nothing");
+            return lines;
+        }
+        addresses.assign(counts.addressInfoCount, VkDeviceFaultAddressInfoEXT{});
+        vendors.assign(counts.vendorInfoCount, VkDeviceFaultVendorInfoEXT{});
+        counts.vendorBinarySize = 0;
+        info = {VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT};
+        info.pAddressInfos = addresses.empty() ? nullptr : addresses.data();
+        info.pVendorInfos = vendors.empty() ? nullptr : vendors.data();
+        result = faultInfo(device, &counts, &info);
+        addressCount = counts.addressInfoCount;
+        vendorCount = counts.vendorInfoCount;
+        if (result != VK_INCOMPLETE) break;
+    }
+    addresses.resize(std::min<std::size_t>(addresses.size(), addressCount));
+    vendors.resize(std::min<std::size_t>(vendors.size(), vendorCount));
     std::snprintf(line, sizeof(line), "[device-fault] result %d: %s", static_cast<int>(result), DeviceFaultText(info.description).c_str());
     lines.emplace_back(line);
     for (const auto& address : addresses) {

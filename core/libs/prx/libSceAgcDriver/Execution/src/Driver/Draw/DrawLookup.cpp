@@ -32,6 +32,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(tess.mergedHull);
             }
             mix(graphics.rectList);
+            mix(graphics.rasterizerDiscard);
             mix(programs.size());
             for (std::size_t i = 0; i < programs.size(); ++i) {
                 const auto& program = programs[i];

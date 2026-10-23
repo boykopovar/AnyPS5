@@ -120,6 +120,7 @@ struct State {
     bool rectList = false;
     bool quadList = false;
     bool dualSourceBlend = false;
+    bool rasterizerDiscard = false;
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
     std::uint32_t renderLayers = 1;

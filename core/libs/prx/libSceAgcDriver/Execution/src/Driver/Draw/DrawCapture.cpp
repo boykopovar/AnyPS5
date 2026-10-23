@@ -5,7 +5,9 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "SceShaders.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <span>
@@ -19,6 +21,17 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     using Stage = ShaderRecompiler::ShaderStage;
     phaseTiming.Phase(DrawRowVectors);
     const auto& program = programs[i];
+    static const bool traceDrawState = std::getenv("APS5_TRACE_DRAW_STATE") != nullptr;
+    if (traceDrawState && program.binary.stage == Stage::Fragment) {
+        const auto cx = [&](std::uint32_t offset) { const auto it = queue.context.find(offset); return it == queue.context.end() ? 0xdeadbeefu : it->second; };
+        std::uint32_t headerInputs = 0xdeadbeefu;
+        if (program.snapshot->header.size() >= sizeof(Shader)) {
+            Shader shader{};
+            std::memcpy(&shader, program.snapshot->header.data(), sizeof(Shader));
+            headerInputs = shader.num_input_semantics;
+        }
+        std::fprintf(stderr, "[discard-trace] fragment 0x%llx discard=%u interpolators=%u inc=0x%08x ena=0x%08x addr=0x%08x cntl=%08x,%08x,%08x,%08x,%08x color=%u rect=%u code=%zu hdr=%u colctl=%08x tgt=%08x sh=%08x cb0=%08x fmt=%08x posfmt=%08x dst=0x%llx ext=%ux%u vkfmt=%u bytes=%zu vp=%.0f,%.0f %.0fx%.0f sc=%d,%d %ux%u\n", static_cast<unsigned long long>(program.binary.codeAddress), graphics.rasterizerDiscard ? 1u : 0u, pixel.interpolatorCount, cx(0x1b6), cx(0x1b3), cx(0x1b4), cx(0x191), cx(0x192), cx(0x193), cx(0x194), cx(0x195), graphics.hasColorTarget ? 1u : 0u, graphics.rectList ? 1u : 0u, program.binary.code.size(), headerInputs, cx(0x202), cx(0x8e), cx(0x8f), cx(0x318), cx(0x1c5), cx(0x1c3), graphics.colors.empty() ? 0ull : static_cast<unsigned long long>(graphics.colors.front().address), graphics.colors.empty() ? 0u : graphics.colors.front().extent.width, graphics.colors.empty() ? 0u : graphics.colors.front().extent.height, graphics.colors.empty() ? 0u : static_cast<unsigned>(graphics.colors.front().format), graphics.colors.empty() ? 0u : graphics.colors.front().bytes, static_cast<double>(graphics.viewport.x), static_cast<double>(graphics.viewport.y), static_cast<double>(graphics.viewport.width), static_cast<double>(graphics.viewport.height), graphics.scissor.offset.x, graphics.scissor.offset.y, graphics.scissor.extent.width, graphics.scissor.extent.height);
+    }
     const auto waveSize = program.binary.stage == Stage::Fragment ? graphics.stages.fragmentWaveSize : graphics.stages.vertexWaveSize;
     ShaderRecompiler::RecompileRequest request{
         program.binary,

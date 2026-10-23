@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferCopy.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -435,6 +436,10 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
     const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : std::uint64_t{groups[0]} * groups[1] * groups[2] * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    RecordShaderUse(submission.queue, submission.serial, static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute), 0, address, address, groups);
+    if (std::getenv("APS5_TRACE_QUEUE") != nullptr) {
+        std::fprintf(stderr, "[dispatch] program 0x%llx groups %ux%ux%u threads %ux%ux%u lds %u\n", static_cast<unsigned long long>(address), groups[0], groups[1], groups[2], compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], compute.ldsSizeDwords);
+    }
     static const bool traceIo = std::getenv("APS5_TRACE_DISPATCH_IO") != nullptr;
     if (traceIo) {
 

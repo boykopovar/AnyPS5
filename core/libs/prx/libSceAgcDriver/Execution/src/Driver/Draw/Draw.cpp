@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
@@ -429,12 +430,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     else if (graphics.stages.mesh) setMeshIndexBuffer(Pm4::DrawParameters{drawParameters.indexAddress, std::max(drawParameters.indexCount, 1u), drawParameters.indexSize, 1, 0, drawParameters.indexed});
     const std::vector<Role>& roles = decode->roles;
     static const bool tracePrograms = std::getenv("APS5_TRACE_DRAW_PROGRAMS") != nullptr;
+    std::vector<DrawProgramTraceEntry> identities;
+    identities.reserve(programs.size());
+    for (std::size_t i = 0; i < programs.size(); ++i) {
+        identities.push_back({programs[i].binary.stage, roles[i], programs[i].snapshot->codeAddress, programs[i].binary.codeAddress});
+    }
+    for (const auto& identity : identities) {
+        RecordShaderUse(submission.queue, submission.serial, static_cast<std::uint32_t>(identity.stage), graphics.color.address, identity.codeAddress, identity.entryAddress);
+    }
     if (tracePrograms) {
-        std::vector<DrawProgramTraceEntry> identities;
-        identities.reserve(programs.size());
-        for (std::size_t i = 0; i < programs.size(); ++i) {
-            identities.push_back({programs[i].binary.stage, roles[i], programs[i].snapshot->codeAddress, programs[i].binary.codeAddress});
-        }
         const auto line = FormatDrawProgramTrace(submission.serial, submission.queue, identities);
         std::fprintf(stderr, "%s\n", line.c_str());
     }

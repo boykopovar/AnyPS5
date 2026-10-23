@@ -280,7 +280,7 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
 
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) return false;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || state.rasterizerDiscard || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) return false;
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
@@ -577,6 +577,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(state.polygonMode == VK_POLYGON_MODE_FILL || context.fillModeNonSolid, "a point or line polygon mode needs the fillModeNonSolid feature");
         Require(state.polygonMode != VK_POLYGON_MODE_POINT || context.maintenance5, "a point polygon mode needs VK_KHR_maintenance5 for its one-pixel point size");
         raster.polygonMode = state.polygonMode;
+        raster.rasterizerDiscardEnable = state.rasterizerDiscard ? VK_TRUE : VK_FALSE;
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
         Require(!state.depthBiasPerFace || (depthBias && state.cullMode == VK_CULL_MODE_NONE), "per-face depth bias needs both faces rasterized");
         raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
@@ -971,6 +972,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     for (const auto word : resources.fragmentKey) append(key, word);
     append(key, state.hasColorTarget);
     append(key, state.rectList);
+    append(key, state.rasterizerDiscard);
     append(key, state.topology);
     append(key, state.primitiveRestart);
     append(key, state.cullMode);

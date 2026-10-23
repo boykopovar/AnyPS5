@@ -8,12 +8,14 @@
 #include "Optimization/RequestMemoryView.hpp"
 #include "Recompiler.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "SceShaders.hpp"
 
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "spirv-tools/libspirv.hpp"
 #endif
 
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <fstream>
 #include <sstream>
@@ -60,9 +62,34 @@ bool Replay(const char* path) {
         std::printf("  compute: threads %ux%ux%u, lds %u dwords, group ids %d%d%d, tg size %d, thread id components %u\n", compute.numThreads[0], compute.numThreads[1], compute.numThreads[2], compute.ldsSizeDwords, compute.groupIdEnable[0], compute.groupIdEnable[1], compute.groupIdEnable[2], compute.tgSizeEnable, compute.threadIdComponentCount);
         if (compute.PartialGroups()) std::printf("  partial groups: dispatch of %ux%ux%u threads\n", compute.partialThreads[0], compute.partialThreads[1], compute.partialThreads[2]);
     }
+    if (request.request.context.pixel.has_value()) {
+        const auto& pixel = *request.request.context.pixel;
+        std::printf("  pixel: inputs %u addr 0x%x wave32 %d center %d centroid %d pos %d%d%d%d front %d ancillary %d kill %d depth %d noPersp %d linearCentroid %d\n", pixel.interpolatorCount, pixel.inputAddr, pixel.wave32 ? 1 : 0, pixel.hasPerspectiveCenterVgpr ? 1 : 0, pixel.perspectiveCentroid ? 1 : 0, pixel.posX ? 1 : 0, pixel.posY ? 1 : 0, pixel.posZ ? 1 : 0, pixel.posW ? 1 : 0, pixel.frontFace ? 1 : 0, pixel.ancillary ? 1 : 0, pixel.pixelKillEnable ? 1 : 0, pixel.depthExportEnable ? 1 : 0, pixel.noPerspective ? 1 : 0, pixel.linearCentroid ? 1 : 0);
+        for (std::uint32_t i = 0; i < pixel.interpolatorCount; ++i) std::printf("    setting[%u] = 0x%08x\n", i, pixel.interpolatorSettings[i]);
+    }
+    if (request.request.shader.header.size() >= sizeof(Shader)) {
+        Shader shader{};
+        std::memcpy(&shader, request.request.shader.header.data(), sizeof(Shader));
+        std::printf("  header: type %u file 0x%x version 0x%x inputs %u outputs %u shader_size %u header_size %u\n", shader.type, shader.file_header, shader.version, shader.num_input_semantics, shader.num_output_semantics, shader.shader_size, shader.header_size);
+        const auto headerBase = request.request.shader.headerAddress;
+        const auto cxAddress = reinterpret_cast<std::uint64_t>(shader.cx_registers);
+        if (shader.num_cx_registers != 0 && cxAddress >= headerBase && cxAddress - headerBase + shader.num_cx_registers * sizeof(ShaderRegister) <= request.request.shader.header.size()) {
+            const auto* registers = reinterpret_cast<const ShaderRegister*>(request.request.shader.header.data() + (cxAddress - headerBase));
+            for (std::uint32_t i = 0; i < shader.num_cx_registers; ++i) std::printf("    cx[0x%x] = 0x%08x\n", registers[i].offset, registers[i].value);
+        }
+        const auto semanticsAddress = reinterpret_cast<std::uint64_t>(shader.input_semantics);
+        if (semanticsAddress >= headerBase && semanticsAddress - headerBase + shader.num_input_semantics * sizeof(ShaderSemantic) <= request.request.shader.header.size()) {
+            const auto* semantics = reinterpret_cast<const ShaderSemantic*>(request.request.shader.header.data() + (semanticsAddress - headerBase));
+            for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
+                const auto& semantic = semantics[i];
+                std::printf("    input[%u]: semantic %u mapping %u size %u f16 %u flat %u linear %u custom %u default %u\n", i, semantic.semantic, semantic.hardware_mapping, semantic.size_in_elements, semantic.is_f16, semantic.is_flat_shaded, semantic.is_linear, semantic.is_custom, semantic.default_value);
+            }
+        }
+    }
     if (request.request.graphics.has_value()) {
         const auto& graphics = *request.request.graphics;
         std::printf("  graphics: %zu linked programs, draw %u indices of %u bytes at 0x%llx, %u instances\n", graphics.linkedPrograms.size(), graphics.draw.indexCount, graphics.draw.indexElementBytes, static_cast<unsigned long long>(graphics.draw.indexAddress), graphics.draw.instanceCount);
+        for (const auto& program : graphics.linkedPrograms) std::printf("    linked: role %u stage %u address 0x%llx words %zu\n", static_cast<std::uint32_t>(program.role), static_cast<std::uint32_t>(program.binary.stage), static_cast<unsigned long long>(program.binary.codeAddress), program.binary.code.size());
         if (graphics.mesh.has_value()) {
             const auto& mesh = *graphics.mesh;
             std::printf("  mesh: input primitive %u, %u primitives / %u vertices per group, max %u vertices / %u primitives, %u threads, lds %u dwords, provoking %u, ESGS item %u\n", mesh.inputPrimitive, mesh.primitivesPerGroup, mesh.verticesPerGroup, mesh.maxVertices, mesh.maxPrimitives, mesh.threadsPerGroup, mesh.ldsSizeDwords, mesh.provokingVertex, mesh.esgsItemSize);

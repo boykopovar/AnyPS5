@@ -63,8 +63,18 @@ inline const void*& DeviceLostOwner() {
     return owner;
 }
 
+inline std::atomic<bool>& DeviceLostFlag() {
+    static std::atomic<bool> lost{false};
+    return lost;
+}
+
+inline bool DeviceLost() {
+    return DeviceLostFlag().load(std::memory_order_acquire);
+}
+
 inline void ReportDeviceLost() {
     static std::atomic<bool> reported{false};
+    DeviceLostFlag().store(true, std::memory_order_release);
     if (DeviceLostHook() && !reported.exchange(true)) DeviceLostHook()();
 }
 

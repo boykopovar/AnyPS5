@@ -1273,7 +1273,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     } else if (stage == Stage::Fragment) {
         const auto count = RegisterValue(state.context, 0x1b6) & 0x3fu;
         if (registration && count != 0) return nullptr;
-        pixel = Graphics::DecodePixelStageInfo(state.context, {});
+        pixel = Graphics::DecodePixelStageInfo(state.context, {}, false, snapshot.header);
         const auto& capabilities = device.Target().supportedCapabilities;
         if (pixel->stencilRefExportEnable && std::ranges::find(capabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == capabilities.end()) return nullptr;
         wave = pixel->wave32 ? 32u : 64u;
