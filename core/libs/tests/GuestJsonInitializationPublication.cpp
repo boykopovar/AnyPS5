@@ -8,7 +8,13 @@
 #include <vector>
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
+using RttiAllocate = void* (APS5_VABI*)(std::size_t, void*);
+using RttiFree = void (APS5_VABI*)(void*, void*);
+using RttiNotify = void (APS5_VABI*)(int, std::size_t, void*);
+struct RttiCallbacks { RttiAllocate allocate; RttiFree free; RttiNotify notify; };
 extern "C" {
+void APS5_VABI _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(Parameter*, const RttiCallbacks*, void*, std::size_t);
+void APS5_VABI _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(Parameter*, const RttiCallbacks*, void*);
 void APS5_VABI _ZN3sce4Json11InitializerC1Ev(void*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(void*, const Parameter*);
 int APS5_VABI _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(void*, const Parameter*);
@@ -40,6 +46,13 @@ struct PublicationTrace {
     const Parameter* nestedParameter = nullptr;
     PublicationTrace* nestedTrace = nullptr;
     void* expectedAllocator = nullptr;
+    std::size_t rttiAllocations[2]{};
+    std::size_t rttiReleases[2]{};
+    bool deferredConfiguration = false;
+    Parameter* pendingParameter = nullptr;
+    const RttiCallbacks* pendingCallbacks = nullptr;
+    void* pendingContext = nullptr;
+    void* adapter = nullptr;
 };
 struct ContextRecord { void* allocator; void* userData; std::size_t bufferSize; };
 static void CheckContext(const PublicationTrace& trace, std::size_t generation, const Parameter& parameter) {
@@ -54,11 +67,14 @@ static void CheckContext(const PublicationTrace& trace, std::size_t generation, 
     }
     Require(found == 1, "The published allocation context must retain its exact allocation generation");
 }
-static void* APS5_VABI AllocatePublication(void* self, std::size_t size, void* context) {
-    auto& trace = *static_cast<PublicationTrace*>(context);
-    Require(self == trace.expectedAllocator, "Publication allocation must preserve its exact allocator receiver and user context");
+static void ConfigureRtti(bool legacy, Parameter& parameter, const RttiCallbacks& callbacks, void* context);
+static void* AllocateStorage(PublicationTrace& trace, std::size_t size) {
     if (trace.armed) {
         trace.armed = false;
+        if (trace.deferredConfiguration) {
+            ConfigureRtti(trace.nestedLegacy, *trace.pendingParameter, *trace.pendingCallbacks, trace.pendingContext);
+            Require(trace.pendingParameter->allocator == trace.adapter, "Reentrant RTTI configuration must update the shared adapter before context publication");
+        }
         Require(Initialize(trace.nestedLegacy, trace.nestedOwner, trace.nestedParameter) == 0 && *trace.nestedOwner == 1 && trace.nestedTrace->live.size() == 12,
                 "Nested initialization in the unpublished-context callback must publish its actual complete resource generation");
         CheckContext(*trace.nestedTrace, trace.nestedTrace->generation - 11, *trace.nestedParameter);
@@ -73,13 +89,42 @@ static void* APS5_VABI AllocatePublication(void* self, std::size_t size, void* c
     Require(trace.live.emplace(memory, AllocationIdentity{size, ++trace.generation}).second, "Publication resources must have independently owned live generations");
     return memory;
 }
-static void APS5_VABI FreePublication(void* self, void* memory, void* context) {
-    auto& trace = *static_cast<PublicationTrace*>(context);
-    Require(self == trace.expectedAllocator, "Publication release must preserve its exact allocator receiver and user context");
+static void FreeStorage(PublicationTrace& trace, void* memory) {
     if (!memory) return;
     trace.releases.push_back(trace.live.at(memory).generation);
     Require(trace.live.erase(memory) == 1, "Publication cleanup must release each allocation through its owning allocator exactly once");
     std::free(memory);
+}
+static void* APS5_VABI AllocatePublication(void* self, std::size_t size, void* context) {
+    auto& trace = *static_cast<PublicationTrace*>(context);
+    Require(self == trace.expectedAllocator, "Publication allocation must preserve its exact allocator receiver and user context");
+    return AllocateStorage(trace, size);
+}
+static void APS5_VABI FreePublication(void* self, void* memory, void* context) {
+    auto& trace = *static_cast<PublicationTrace*>(context);
+    Require(self == trace.expectedAllocator, "Publication release must preserve its exact allocator receiver and user context");
+    FreeStorage(trace, memory);
+}
+static void* APS5_VABI AllocateRttiFirst(std::size_t size, void* context) {
+    auto& trace = *static_cast<PublicationTrace*>(context); ++trace.rttiAllocations[0];
+    return AllocateStorage(trace, size);
+}
+static void* APS5_VABI AllocateRttiSecond(std::size_t size, void* context) {
+    auto& trace = *static_cast<PublicationTrace*>(context); ++trace.rttiAllocations[1];
+    return AllocateStorage(trace, size);
+}
+static void APS5_VABI FreeRttiFirst(void* memory, void* context) {
+    auto& trace = *static_cast<PublicationTrace*>(context); ++trace.rttiReleases[0];
+    FreeStorage(trace, memory);
+}
+static void APS5_VABI FreeRttiSecond(void* memory, void* context) {
+    auto& trace = *static_cast<PublicationTrace*>(context); ++trace.rttiReleases[1];
+    FreeStorage(trace, memory);
+}
+static void APS5_VABI NotifyRtti(int, std::size_t, void*) { Require(false, "Failure of the unpublished RTTI context allocation must omit notification"); }
+static void ConfigureRtti(bool legacy, Parameter& parameter, const RttiCallbacks& callbacks, void* context) {
+    if (legacy) _ZN3sce4Json17InitParameterRttiC1EPNS0_14AllocParamRttiEPvm(&parameter, &callbacks, context, parameter.bufferSize);
+    else _ZN3sce4Json18InitParameterRtti216setAllocatorRttiEPNS0_14AllocParamRttiEPv(&parameter, &callbacks, context);
 }
 static void APS5_VABI NotifyPublication(void*, int, std::size_t, void*) { Require(false, "Failure of the unpublished context allocation must omit allocator notification"); }
 static void* const PublicationVtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocatePublication), reinterpret_cast<void*>(FreePublication), reinterpret_cast<void*>(NotifyPublication)};
@@ -97,11 +142,11 @@ static void ReclaimOrphanedFixtureEpoch(PublicationTrace& trace, const std::map<
     Require(mutexes == 2, "The SDK 6 orphaned epoch must retain its two actual mutex handles");
     for (const auto& [pointer, identity] : nested) {
         Require(trace.live.at(pointer) == identity, "Fixture reclamation must retain the observed orphan allocation generation");
-        FreePublication(trace.expectedAllocator, pointer, &trace);
+        FreeStorage(trace, pointer);
     }
     Require(trace.live.empty(), "Caller-owned allocator fixture cleanup must reclaim the measured orphaned epoch");
 }
-static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool nestedLegacy, unsigned domain) {
+static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool nestedLegacy, unsigned domain, bool rtti, bool deferredConfiguration) {
     PublicationTrace trace, separateTrace;
     PublicationAllocator allocator, separateAllocator;
     const bool separate = domain != 0;
@@ -109,6 +154,16 @@ static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool n
     separateTrace.expectedAllocator = domain == 2 ? &separateAllocator : &allocator;
     Parameter parameter{&allocator, &trace, 8192, 2, {}};
     Parameter separateParameter{separateTrace.expectedAllocator, &separateTrace, 16384, 2, {}};
+    const RttiCallbacks first{AllocateRttiFirst, FreeRttiFirst, NotifyRtti}, second{AllocateRttiSecond, FreeRttiSecond, NotifyRtti};
+    if (rtti) {
+        ConfigureRtti(outerLegacy, parameter, first, &trace);
+        if (!deferredConfiguration) ConfigureRtti(nestedLegacy, separateParameter, second, &separateTrace);
+        Require(parameter.allocator && (deferredConfiguration || parameter.allocator == separateParameter.allocator) && parameter.context == &trace && separateParameter.context == &separateTrace,
+                "Both RTTI parameter families must share the adapter while retaining independent user contexts");
+        trace.expectedAllocator = parameter.allocator; separateTrace.expectedAllocator = parameter.allocator;
+        trace.deferredConfiguration = deferredConfiguration;
+        trace.pendingParameter = &separateParameter; trace.pendingCallbacks = &second; trace.pendingContext = &separateTrace; trace.adapter = parameter.allocator;
+    }
     std::uint8_t outer = 0, nested = 0;
     _ZN3sce4Json11InitializerC1Ev(&outer); _ZN3sce4Json11InitializerC1Ev(&nested);
     trace.action = action; trace.armed = true; trace.nestedLegacy = nestedLegacy;
@@ -151,10 +206,17 @@ static void Check(Publication action, bool sharedOwner, bool outerLegacy, bool n
     for (const auto& [pointer, identity] : trace.live) Require(pointer && identity.generation > generation, "Publication retry must retain no old fixture allocation generations");
     Require(_ZN3sce4Json11Initializer9terminateEv(&retry) == 0 && retry == 0 && trace.live.empty() && separateTrace.live.empty() && separateTrace.generation == separateGeneration && separateTrace.releases == separateReleases,
             "A fresh outer generation must not call into a stale nested allocator domain");
+    if (rtti) {
+        Require(trace.rttiAllocations[0] == unsigned(deferredConfiguration) && !trace.rttiReleases[0] && !separateTrace.rttiAllocations[0] && !separateTrace.rttiReleases[0] && trace.rttiAllocations[1] && trace.rttiReleases[1],
+                "RTTI module allocation and release must use the most recently configured callback table even through an older parameter object");
+        Require(!separate || (separateTrace.rttiAllocations[1] == 12 && separateTrace.rttiReleases[1] == (action == Publication::Overwrite ? 0u : 12u)), "RTTI callbacks must preserve the nested user context and leave an orphaned epoch unreleased by the library");
+    }
 }
 int main() {
     for (auto action : {Publication::Handoff, Publication::CompleteNested, Publication::Overwrite})
         for (bool sharedOwner : {false, true}) for (bool outerLegacy : {false, true}) for (bool nestedLegacy : {false, true})
-            for (unsigned domain = 0; domain < 3; ++domain) Check(action, sharedOwner, outerLegacy, nestedLegacy, domain);
+            for (bool rtti : {false, true}) for (unsigned domain = 0; domain < (rtti ? 2u : 3u); ++domain)
+                for (unsigned deferred = 0; deferred < (rtti ? 2u : 1u); ++deferred)
+                    Check(action, sharedOwner, outerLegacy, nestedLegacy, domain, rtti, deferred != 0);
     return 0;
 }
