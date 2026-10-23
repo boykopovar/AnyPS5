@@ -137,8 +137,14 @@ static void CheckHeapEmpty() {
     void* arena = sceLibcMspaceCreate_nid_postfix("empty", storage.data(), storage.size(), 0);
     Require(arena != nullptr && sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 1);
     Require(sceLibcPafMspaceIsHeapEmpty_nid_postfix(arena) == 1);
-    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(nullptr) == 1);
-    Require(sceLibcMspaceIsHeapEmpty_nid_postfix(reinterpret_cast<void*>(std::uintptr_t{1})) == 1);
+    const std::array<void*, 2> invalidHandles{nullptr, reinterpret_cast<void*>(std::uintptr_t{1})};
+    for (void* invalid : invalidHandles) {
+        *__error_nid_postfix() = 0;
+        bool rejected = false;
+        try { sceLibcMspaceIsHeapEmpty_nid_postfix(invalid); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Require(rejected && *__error_nid_postfix() == 22);
+    }
     void* first = sceLibcMspaceMalloc_nid_postfix(arena, 16);
     void* second = sceLibcMspaceCalloc_nid_postfix(arena, 4, 8);
     Require(first != nullptr && second != nullptr && sceLibcMspaceIsHeapEmpty_nid_postfix(arena) == 0);
