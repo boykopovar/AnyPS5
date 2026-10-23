@@ -9832,8 +9832,9 @@ void uploadScratchReuseTests(const Device& device, Recorder& recorder) {
     struct Upload {
         std::uint32_t size;
         std::uint8_t value;
+        bool grows;
     };
-    const std::array<Upload, 3> uploads{{{64, 0x20}, {32, 0x90}, {64, 0xe0}}};
+    const std::array<Upload, 5> uploads{{{64, 0x20, false}, {32, 0x90, false}, {64, 0xe0, false}, {128, 0x50, true}, {128, 0xb0, false}}};
     std::vector<std::vector<std::byte>> snapshots;
     std::vector<std::unique_ptr<Texture>> textures;
     recorder.Sync();
@@ -9855,7 +9856,8 @@ void uploadScratchReuseTests(const Device& device, Recorder& recorder) {
         snapshots.emplace_back(static_cast<std::size_t>(geometry.guestBytes), std::byte{uploads[index].value});
         textures.push_back(std::make_unique<Texture>(context, detiler, resource, identity, snapshots.back()));
         Require(recorder.Recording(), "a texture upload was not recorded into the open batch");
-        if (index != 0) Require(recorder.OpenKeptBytes() == kept + geometry.guestBytes, "a texture upload no larger than an earlier one of its batch allocated scratch of its own");
+        if (uploads[index].grows) Require(recorder.OpenKeptBytes() > kept + geometry.guestBytes, "a texture upload larger than its batch's scratch did not keep a grown scratch");
+        else if (index != 0) Require(recorder.OpenKeptBytes() == kept + geometry.guestBytes, "a texture upload no larger than an earlier one of its batch allocated scratch of its own");
         kept = recorder.OpenKeptBytes();
     }
     for (std::size_t index = 0; index < uploads.size(); ++index) {
