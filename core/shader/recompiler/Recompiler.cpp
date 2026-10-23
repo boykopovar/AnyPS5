@@ -1416,18 +1416,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mix(snapshot.uniformFill.value);
     const auto& tables = snapshot.tables;
     mix(tables.shader);
-    mix(tables.tables.size());
-    for (const auto& table : tables.tables) {
+    const auto mixTable = [&](const ImageTableColumnSnapshot& table) {
         mix(table.base);
         mix(table.size);
         mix(table.records);
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
+        mix(table.nested ? 1u : 0u);
+        mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
         mix(table.readRanges.Hash());
-    }
+    };
+    mix(tables.tables.size());
+    for (const auto& table : tables.tables) mixTable(table);
+    mix(tables.nested.size());
+    for (const auto& table : tables.nested) mixTable(table);
     mix(tables.ranges.size());
     for (const auto& [base, size] : tables.ranges) {
         mix(base);
