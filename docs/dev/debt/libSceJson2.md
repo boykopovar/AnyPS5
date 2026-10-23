@@ -54,11 +54,11 @@
 
 - [_ZN3sce4Json12MemAllocatorD0Ev](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `ypazoTrKYhE`; the deleting base allocator destructor traps in the reference. This invalid destruction path remains explicitly unsupported.
 - [_ZN3sce4Json5Array10push_frontERKNS0_5ValueE](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `MQxDxBzWz40` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
-- [_ZN3sce4Json5Array5eraseERKNS1_8iteratorE](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `2mbVAtshWRI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 - [_ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `ixJAz92H1uE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
-- [_ZN3sce4Json5Array8pop_backEv](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `woec1toi4Xw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 - [_ZN3sce4Json5Value9serializeEPFiRNS0_6StringEPvES4_](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `PyMbL9F2oBY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 - [_ZN3sce4Json5Value9serializeERNS0_6StringEPFiS3_PvES4_](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `l1URiQJlSoU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 - [_ZNK3sce4Json5ValueixERKNS0_6StringE](../../../core/libs/prx/libSceJson2/InventoryExports.cpp) (libSceJson2) - NID `clF7J7N9xXE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
 
 - [Counted string searches](../../../core/libs/prx/libSceJson2/Export.cpp) with an admitted positive count and a null needle remain explicitly unsupported; the reference dereferences the invalid pointer. Oversized and zero counts retain their verified results.
+
+- [sce::Json::Array::erase](../../../core/libs/prx/libSceJson2/Export.cpp) - invalid, missing or sentinel positions in an allocated array remain explicitly unsupported. Reference invalid-iterator paths can corrupt storage or fault; valid erasure retains its mutation when returned-iterator allocation fails.

@@ -2358,6 +2358,33 @@ const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
     if (!self->items->head) return reinterpret_cast<const Value*>(16);
     return &self->items->back();
 }
+void APS5_VABI _ZN3sce4Json5Array8pop_backEv(Array* self) { if (self->items) self->items->PopBack(); }
+
+ArrayIterator* APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE(ArrayIterator* result, Array* self, const ArrayIterator* position) {
+    result->state = static_cast<ArrayIteratorState*>(Allocate(sizeof(ArrayIteratorState)));
+    if (result->state) result->state->position = nullptr;
+    if (!self->items) return result;
+    if (!position || !position->state || !position->state->position || position->state->position == self->items->head) {
+        Release(result->state);
+        result->state = nullptr;
+        NotImplemented_nid_no_patch(__func__);
+    }
+    auto* link = position->state->position;
+    auto* next = link->next;
+    next->previous = link->previous;
+    link->previous->next = next;
+    Destroy(link->value);
+    Release(link);
+    --self->items->count;
+    if (next) {
+        if (result->state) result->state->position = next;
+    } else {
+        Release(result->state);
+        result->state = nullptr;
+    }
+    return result;
+}
+
 void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
     if (!self->items || !self->items->head) NotImplemented_nid_no_patch(__func__);
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");

@@ -15,17 +15,7 @@ int APS5_VABI _ZN3sce4Json5Array10push_frontERKNS0_5ValueE() {
     return 0;
 }
 
-int APS5_VABI _ZN3sce4Json5Array5eraseERKNS1_8iteratorE() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce4Json5Array6insertERKNS1_8iteratorERKNS0_5ValueE() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce4Json5Array8pop_backEv() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
