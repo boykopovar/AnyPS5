@@ -16,7 +16,9 @@ struct Native : Side, Source {};
 struct PrivateNative : private Source { virtual ~PrivateNative() = default; };
 struct VirtualNative : virtual Source { virtual ~VirtualNative() = default; };
 struct BaseRecord { const TypeRecord* type; std::ptrdiff_t flags; };
-struct MultipleRecord { const void* vtable; const char* name; unsigned flags; unsigned count; BaseRecord bases[1]; };
+struct MultipleRecord { const void* vtable; const char* name; unsigned flags; unsigned count; BaseRecord bases[2]; };
+struct UpcastResult { const void* destination; int path; int sourceDetails; const TypeRecord* baseType; };
+struct DynamicCastResult { const void* destination; int wholeToDestination; int wholeToSource; int destinationToSource; int wholeDetails; };
 
 extern "C" {
 extern const unsigned char _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix[];
@@ -33,6 +35,10 @@ void Destroy(void*) {}
 const TypeRecord BaseType{_ZTVN10__cxxabiv117__class_type_infoE_nid_postfix + 16, "4Base", nullptr};
 const TypeRecord DerivedType{_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix + 16, "7Derived", &BaseType};
 const TypeRecord OtherType{_ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix + 16, "5Other", &BaseType};
+const MultipleRecord AmbiguousType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "10Ambiguous", 1, 2,
+                                   {{&BaseType, (8 << 8) | 2}, {&BaseType, (16 << 8) | 2}}};
+const MultipleRecord CrossType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "5Cross", 1, 2,
+                               {{&BaseType, (8 << 8) | 2}, {&OtherType, (16 << 8) | 2}}};
 const Vtable BaseVtable{0, &BaseType, nullptr};
 const Vtable DerivedVtable{0, &DerivedType, nullptr};
 const MultipleRecord MultipleType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "8Multiple", 0, 1,
@@ -49,6 +55,24 @@ int FindPublic(const TypeRecord* type, std::ptrdiff_t hint, const void* object, 
     Function function;
     std::memcpy(&function, table + 8 * sizeof(void*), sizeof(function));
     return function(type, hint, object, sourceType, source);
+}
+
+template<class Result>
+bool CallUpcast(const TypeRecord* type, const TypeRecord* destination, const void* object, Result& result) {
+    using Function = bool (APS5_VABI *)(const TypeRecord*, const TypeRecord*, const void*, Result&);
+    Function function;
+    std::memcpy(&function, static_cast<const unsigned char*>(type->vtable) + 6 * sizeof(void*), sizeof(function));
+    return function(type, destination, object, result);
+}
+
+template<class Result>
+bool CallDynamicCast(const TypeRecord* type, const TypeRecord* destination, const void* object,
+                     const TypeRecord* source, const void* sourceObject, Result& result) {
+    using Function = bool (APS5_VABI *)(const TypeRecord*, std::ptrdiff_t, int, const TypeRecord*, const void*,
+                                        const TypeRecord*, const void*, Result&);
+    Function function;
+    std::memcpy(&function, static_cast<const unsigned char*>(type->vtable) + 7 * sizeof(void*), sizeof(function));
+    return function(type, 0, 6, destination, object, source, sourceObject, result);
 }
 
 } // namespace
@@ -78,6 +102,36 @@ int main() {
                        multipleObject.data() + 16) == 6);
     Require(FindPublic(reinterpret_cast<const TypeRecord*>(&VirtualType), -3, virtualObject.data(), &BaseType,
                        virtualObject.data() + 16) == 1);
+    alignas(std::intptr_t) unsigned char instance[32]{};
+    UpcastResult upcast{};
+    Require(CallUpcast(reinterpret_cast<const TypeRecord*>(&MultipleType), &BaseType, instance, upcast));
+    Require(upcast.destination == instance + 16 && upcast.path == 6 &&
+            reinterpret_cast<std::uintptr_t>(upcast.baseType) == 1);
+    Require(CallUpcast(reinterpret_cast<const TypeRecord*>(&PrivateType), &BaseType, instance, upcast));
+    Require(upcast.destination == instance + 16 && upcast.path == 4 &&
+            reinterpret_cast<std::uintptr_t>(upcast.baseType) == 1);
+    Require(CallUpcast(reinterpret_cast<const TypeRecord*>(&AmbiguousType), &BaseType, instance, upcast));
+    Require(upcast.destination == nullptr && upcast.path == 2 && upcast.baseType == nullptr);
+    std::intptr_t instanceTable[4]{};
+    instanceTable[0] = 16;
+    *reinterpret_cast<const std::intptr_t**>(instance) = instanceTable + 3;
+    Require(CallUpcast(reinterpret_cast<const TypeRecord*>(&VirtualType), &BaseType, instance, upcast));
+    Require(upcast.destination == instance + 16 && upcast.path == 7 && upcast.baseType == &BaseType);
+    DynamicCastResult dynamic{};
+    dynamic.wholeDetails = 0x10;
+    Require(!CallDynamicCast(reinterpret_cast<const TypeRecord*>(&DerivedType), &DerivedType, instance, &BaseType,
+                             instance, dynamic));
+    Require(dynamic.destination == instance && dynamic.destinationToSource == 6);
+    dynamic = {nullptr, 0, 0, 0, 0x10};
+    Require(!CallDynamicCast(reinterpret_cast<const TypeRecord*>(&CrossType), &OtherType, instance, &BaseType,
+                             instance + 8, dynamic));
+    Require(dynamic.destination == instance + 16 && dynamic.destinationToSource == 1);
+    dynamic = {nullptr, 0, 0, 0, 0x10};
+    Require(!CallDynamicCast(reinterpret_cast<const TypeRecord*>(&PrivateType),
+                             reinterpret_cast<const TypeRecord*>(&PrivateType), instance, &BaseType,
+                             instance + 16, dynamic));
+    Require(dynamic.destination == nullptr);
+
     void* object = __cxa_allocate_exception_nid_postfix(16);
     auto* type = reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(&DerivedType));
     LibcException::Header* header = __cxa_init_primary_exception_nid_postfix(object, type, Destroy);
