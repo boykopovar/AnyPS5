@@ -57,6 +57,7 @@ struct LegacyTrace {
     std::map<void*, std::size_t> guest;
     std::map<void*, std::size_t> heap;
     int budget = -1;
+    int heapBudget = -1;
     bool once = false;
     std::vector<std::size_t> requests;
     std::map<void*, std::size_t> guestGenerations;
@@ -72,6 +73,9 @@ extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     return parameters;
 }
 extern "C" void* APS5_VABI _Znwm_nid_postfix(std::size_t bytes) {
+    Require(HeapTrace != nullptr, "Heap allocation requires its owning trace");
+    if (HeapTrace->heapBudget == 0) throw std::bad_alloc();
+    if (HeapTrace->heapBudget > 0) --HeapTrace->heapBudget;
     void* memory = std::malloc(bytes);
     if (!memory) throw std::bad_alloc();
     std::memset(memory, 0xa5, bytes);
@@ -505,7 +509,64 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
                 "Inherited map updates and retries must reclaim every temporary generation in both allocator domains");
     }
 }
-int main() {
+static int CheckHeapExceptions(unsigned budget) {
+    Require(budget <= 2, "Heap exceptions must cover sentinel, entry and complete admission");
+    LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator;
+    Parameter parameter{&allocator, &trace, 16384};
+    std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0, "Initialize legacy heap exception resources");
+    Context context; _ZN3sce4Json5ValueC1Eb(&context.replacement, true);
+    Value source{}; ParseLegacy(source);
+    const Value sourceValue = source;
+    const auto baseline = trace.guestGenerations;
+    std::vector<LegacySnapshot> snapshots;
+    for (const auto& [pointer, generation] : baseline) {
+        const auto* bytes = static_cast<const unsigned char*>(pointer);
+        snapshots.push_back({pointer, generation, {bytes, bytes + trace.guest.at(pointer)}});
+    }
+    trace.heapBudget = static_cast<int>(budget);
+    const auto requests = trace.requests.size();
+    bool caught = false;
+    try { Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0, "Complete registration must succeed"); }
+    catch (const std::bad_alloc&) { caught = true; }
+    Require(caught == (budget < 2) && owner && trace.heap.size() == budget && trace.guest.size() == baseline.size() + 1 &&
+            trace.requests.size() == requests + 1 && trace.requests.back() == 24 && !trace.notifications,
+            "Libc exceptions must propagate without guest OOM notifications or reclaiming the admitted map header");
+    void* header = nullptr;
+    for (const auto& [pointer, generation] : trace.guestGenerations) if (!baseline.contains(pointer)) { Require(!header, "Admission creates only one guest map header"); header = pointer; }
+    Require(header && trace.guest.at(header) == 24, "The unpublished header must remain owned in its guest allocator domain");
+    const auto headerGeneration = trace.guestGenerations.at(header);
+    if (!budget) {
+        std::array<unsigned char, 24> expected; expected.fill(0xa5); std::memset(expected.data() + 8, 0, 8);
+        Require(std::memcmp(header, expected.data(), expected.size()) == 0 && trace.heap.empty(), "Sentinel failure must leave only the count initialized in the unpublished header");
+    } else CheckMap(trace, budget == 1 ? std::map<const Value*, Context*>{} : std::map<const Value*, Context*>{{&source, &context}});
+    trace.heapBudget = -1;
+    const auto retryRequests = trace.requests.size();
+    Require(_ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEPS2_S5_PvES6_(&source, RecoverLegacy, &context) == 0 &&
+            trace.requests.size() == retryRequests + unsigned(!budget) && trace.heap.size() == 2 && trace.guestGenerations.at(header) == headerGeneration,
+            "Retry must replace only an unpublished map and reuse an already published sentinel");
+    CheckMap(trace, {{&source, &context}});
+    const auto calls = context.calls;
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&source) == reinterpret_cast<const bool*>(&context.replacement.payload) && context.calls == calls + 1 && context.source == &source && !context.parent,
+            "Retried callback metadata must dispatch the original context and borrowed result");
+    Require(std::memcmp(&source, &sourceValue, sizeof(source)) == 0, "Heap failure and retry must preserve source metadata ownership");
+    for (const auto& snapshot : snapshots) Require(trace.guestGenerations.at(snapshot.pointer) == snapshot.generation &&
+            std::memcmp(snapshot.pointer, snapshot.bytes.data(), snapshot.bytes.size()) == 0, "Heap failure must preserve preexisting allocation bytes and generations");
+    _ZN3sce4Json5ValueD1Ev(&source); _ZN3sce4Json5ValueD1Ev(&context.replacement);
+    Require(_ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.heap.empty() && trace.heapGenerations.empty() && trace.guest.size() == unsigned(!budget),
+            "Termination must reclaim published map storage while preserving the orphaned unpublished header");
+    if (!budget) {
+        Require(trace.guestGenerations.at(header) == headerGeneration, "Library cleanup must not falsely claim orphan reclamation");
+        FreeLegacy(nullptr, header, &trace);
+    }
+    Require(trace.guest.empty() && trace.guestGenerations.empty(), "The fixture separately reclaims any orphaned allocation");
+    Require(_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(&owner, &parameter) == 0 &&
+            _ZN3sce4Json11Initializer9terminateEv(&owner) == 0 && !owner && trace.guest.empty() && trace.heap.empty(), "Heap exception cleanup must permit a fresh module generation");
+    HeapTrace = nullptr;
+    return 0;
+}
+int main(int argc, char** argv) {
+    if (argc == 2) return CheckHeapExceptions(static_cast<unsigned>(std::strtoul(argv[1], nullptr, 10)));
     LegacyTrace trace; HeapTrace = &trace; LegacyAllocator allocator;
     Parameter parameter{&allocator, &trace, 16384};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);

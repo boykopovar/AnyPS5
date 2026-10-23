@@ -979,8 +979,7 @@ int RegisterLegacyHandler(Value& value, TypeMismatchHandler callback, void* cont
         auto* map = static_cast<LegacyHandlerMap*>(Allocate(sizeof(LegacyHandlerMap)));
         if (!map) return JsonErrorOutOfMemory;
         map->count = 0;
-        try { map->head = static_cast<LegacyHandlerNode*>(_Znwm_nid_postfix(sizeof(LegacyHandlerNode))); }
-        catch (const std::bad_alloc&) { Release(map); NotImplemented_nid_no_patch(__func__); }
+        map->head = static_cast<LegacyHandlerNode*>(_Znwm_nid_postfix(sizeof(LegacyHandlerNode)));
         map->head->parent = map->head; map->head->left = map->head; map->head->right = map->head;
         map->head->color = 0; map->head->nil = 1;
         state.legacyHandlers = map;

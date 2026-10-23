@@ -375,6 +375,13 @@ if(BUILD_TESTING)
     target_link_libraries(guest_json_legacy_handlers_tests PRIVATE libkernel libc)
     configure_windows_unwind(guest_json_legacy_handlers_tests)
     add_test(NAME guest_json_legacy_handlers COMMAND guest_json_legacy_handlers_tests)
+    foreach(position RANGE 0 2)
+        add_test(NAME guest_json_legacy_heap_exception_${position} COMMAND guest_json_legacy_handlers_tests ${position})
+        if(WIN32)
+            set_tests_properties(guest_json_legacy_heap_exception_${position} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
     if(WIN32)
         set_tests_properties(guest_json_legacy_handlers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
