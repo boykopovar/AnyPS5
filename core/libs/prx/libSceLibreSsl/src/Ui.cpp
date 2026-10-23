@@ -69,4 +69,8 @@ int APS5_VABI UI_method_set_reader_nid_postfix(LibreSslUiMethod* method, UiStrin
     return 0;
 }
 
+UiStringFunction APS5_VABI UI_method_get_reader_nid_postfix(const LibreSslUiMethod* method) {
+    return method ? method->readString : nullptr;
+}
+
 }
