@@ -40,6 +40,8 @@ int APS5_VABI socket_nid_postfix(int, int, int);
 std::int64_t APS5_VABI readlink_nid_postfix(const char*, char*, std::size_t);
 int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
 std::int64_t APS5_VABI pathconf_nid_postfix(const char*, int);
+std::int64_t APS5_VABI fpathconf_nid_postfix(int, int);
+std::int64_t APS5_VABI _fpathconf_nid_postfix(int, int);
 int APS5_VABI fchdir_nid_postfix(int);
 int APS5_VABI chdir_nid_postfix(const char*);
 int APS5_VABI chroot_nid_postfix(const char*);
@@ -312,6 +314,52 @@ static void CheckProcessQueries() {
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
 }
 
+template <typename F>
+bool DescriptorPathconfThrows(F fn, int descriptor, int name) {
+    try {
+        fn(descriptor, name);
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename F>
+void CheckDescriptorPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 1) == 32767);
+    Require(fn(descriptor, 4) == 255);
+    Require(fn(descriptor, 5) == 1024);
+    Require(fn(descriptor, 6) == 512);
+    Require(fn(descriptor, 7) == 1);
+    Require(fn(descriptor, 8) == 1);
+    Require(fn(descriptor, 12) == 64);
+    *__error_nid_postfix() = 0;
+    Require(fn(descriptor, 15) == -1 && Error() == 0);
+    Require(fn(descriptor, 18) == 1024);
+    Require(fn(descriptor, 54) == 0);
+    Require(fn(descriptor, 55) == 0);
+    for (const int name : {0, 11, 61, 62, 65, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 22);
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 59, 60, 63, 64})
+        Require(DescriptorPathconfThrows(fn, descriptor, name));
+    Require(fn(-1, 4) == -1 && Error() == 9);
+    Require(fn(descriptor + 1000, 4) == -1 && Error() == 9);
+}
+
+template <typename F>
+void CheckPipePathconf(F fn) {
+    int ends[2]{-1, -1};
+    Require(pipe_nid_postfix(ends) == 0);
+    for (const int end : ends) {
+        Require(fn(end, 6) == 512);
+        Require(fn(end, 53) == 200112);
+        for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
+            Require(fn(end, name) == -1 && Error() == 22);
+    }
+    Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -344,10 +392,21 @@ int main() {
     Require(fstat_nid_postfix(descriptor, &viaFstat) == 0 && _fstat_nid_postfix(descriptor, &viaUnderscore) == 0);
     Require(std::memcmp(&viaFstat, &viaUnderscore, sizeof(FileStat)) == 0 && viaFstat.st_size == 1);
     Require(fstat_nid_postfix(descriptor, nullptr) == -1 && Error() == 14);
+    CheckDescriptorPathconf(fpathconf_nid_postfix, descriptor);
+    CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
+    CheckPipePathconf(fpathconf_nid_postfix);
+    CheckPipePathconf(_fpathconf_nid_postfix);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, viaPublic) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);
     Require(fstat_nid_postfix(-1, &viaFstat) == -1 && Error() == 9);
+    Require(fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
+    Require(_fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
+    const int dirDescriptor = open_nid_postfix(root.generic_string().c_str(), 0, 0);
+    Require(dirDescriptor >= 0);
+    CheckDescriptorPathconf(fpathconf_nid_postfix, dirDescriptor);
+    CheckDescriptorPathconf(_fpathconf_nid_postfix, dirDescriptor);
+    Require(close_nid_postfix(dirDescriptor) == 0);
     char buffer[64];
     for (const auto& component : {std::string("missing"), std::string("file.txt")}) {
         const auto prefix = root.generic_string() + "/" + component + "/../";
