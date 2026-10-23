@@ -252,6 +252,7 @@ struct LibreSslX509StoreContext {
 
 struct EcGroup;
 struct EcKey;
+struct EcPoint;
 
 extern "C" {
 
@@ -308,29 +309,29 @@ int APS5_VABI DES_set_key_nid_postfix(const unsigned char* key, unsigned char* s
 void APS5_VABI DES_set_odd_parity_nid_postfix(unsigned char* key);
 int APS5_VABI DTLSv1_client_method_nid_postfix(void);
 int APS5_VABI DTLSv1_server_method_nid_postfix(void);
-int APS5_VABI ECDH_compute_key_nid_postfix(void);
-int APS5_VABI ECDSA_sign_nid_postfix(void);
+int APS5_VABI ECDH_compute_key_nid_postfix(void* out, std::size_t outLength, const EcPoint* publicKey, EcKey* key, void* (APS5_VABI* kdf)(const void* in, std::size_t inLength, void* out, std::size_t* outLength));
+int APS5_VABI ECDSA_sign_nid_postfix(int type, const unsigned char* digest, int digestLength, unsigned char* signature, unsigned int* signatureLength, EcKey* key);
 int APS5_VABI ECDSA_size_nid_postfix(const EcKey* key);
-int APS5_VABI ECDSA_verify_nid_postfix(void);
+int APS5_VABI ECDSA_verify_nid_postfix(int type, const unsigned char* digest, int digestLength, const unsigned char* signature, int signatureLength, EcKey* key);
 void APS5_VABI EC_GROUP_free_nid_postfix(EcGroup* group);
 int APS5_VABI EC_GROUP_get_degree_nid_postfix(const EcGroup* group);
 EcGroup* APS5_VABI EC_GROUP_new_by_curve_name_nid_postfix(int nid);
-int APS5_VABI EC_KEY_check_key_nid_postfix(void);
+int APS5_VABI EC_KEY_check_key_nid_postfix(const EcKey* key);
 void APS5_VABI EC_KEY_free_nid_postfix(EcKey* key);
-int APS5_VABI EC_KEY_generate_key_nid_postfix(void);
+int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key);
 const EcGroup* APS5_VABI EC_KEY_get0_group_nid_postfix(const EcKey* key);
 int APS5_VABI EC_KEY_get0_private_key_nid_postfix(void);
-int APS5_VABI EC_KEY_get0_public_key_nid_postfix(void);
+const EcPoint* APS5_VABI EC_KEY_get0_public_key_nid_postfix(const EcKey* key);
 EcKey* APS5_VABI EC_KEY_new_nid_postfix(void);
 EcKey* APS5_VABI EC_KEY_new_by_curve_name_nid_postfix(int nid);
 int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group);
 int APS5_VABI EC_KEY_set_private_key_nid_postfix(void);
-int APS5_VABI EC_KEY_set_public_key_nid_postfix(void);
-int APS5_VABI EC_POINT_free_nid_postfix(void);
+int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point);
+void APS5_VABI EC_POINT_free_nid_postfix(EcPoint* point);
 int APS5_VABI EC_POINT_mul_nid_postfix(void);
-int APS5_VABI EC_POINT_new_nid_postfix(void);
-int APS5_VABI EC_POINT_oct2point_nid_postfix(void);
-int APS5_VABI EC_POINT_point2oct_nid_postfix(void);
+EcPoint* APS5_VABI EC_POINT_new_nid_postfix(const EcGroup* group);
+int APS5_VABI EC_POINT_oct2point_nid_postfix(const EcGroup* group, EcPoint* point, const unsigned char* buffer, std::size_t length, void* context);
+std::size_t APS5_VABI EC_POINT_point2oct_nid_postfix(const EcGroup* group, const EcPoint* point, int form, unsigned char* buffer, std::size_t length, void* context);
 int APS5_VABI ENGINE_by_id_nid_postfix(void);
 int APS5_VABI ENGINE_cleanup_nid_postfix(void);
 int APS5_VABI ENGINE_ctrl_nid_postfix(void);
