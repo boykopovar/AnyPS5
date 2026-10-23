@@ -156,6 +156,8 @@ struct Globals {
     LegacyHandlerMap* legacyHandlers = nullptr;
     PthreadMutex* internalMutex = nullptr;
     PthreadMutex* recoveryMutex = nullptr;
+    bool internalMutexRetired = false;
+    bool recoveryMutexRetired = false;
     std::recursive_mutex callbackMutex;
     bool callbackActive = false;
     std::uint32_t allocationDepth = 0;
@@ -1472,13 +1474,21 @@ void ReleaseInitialization() {
     Release(state.fallback);
     state.fallback = nullptr;
     if (ModernValues()) {
-        if (state.recoveryMutex) scePthreadMutexDestroy(state.recoveryMutex);
+        if (state.recoveryMutex) {
+            scePthreadMutexDestroy(state.recoveryMutex);
+            state.recoveryMutexRetired = true;
+        }
         Release(state.recoveryMutex);
     }
     state.recoveryMutex = nullptr;
-    if (state.internalMutex) scePthreadMutexDestroy(state.internalMutex);
+    state.recoveryMutexRetired = false;
+    if (state.internalMutex) {
+        scePthreadMutexDestroy(state.internalMutex);
+        state.internalMutexRetired = true;
+    }
     Release(state.internalMutex);
     state.internalMutex = nullptr;
+    state.internalMutexRetired = false;
     ResetDefaults(true);
     if (state.allocation) {
         auto* allocation = state.allocation;
@@ -2568,6 +2578,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void* self) {
     std::lock_guard callbackLock(state.callbackMutex);
     std::lock_guard lock(state.mutex);
     if (!state.initialized || !*static_cast<const std::uint8_t*>(self)) return JsonErrorNotInitialized;
+    if (state.internalMutexRetired || state.recoveryMutexRetired) NotImplemented_nid_no_patch(__func__);
     if (state.terminating || state.callbackActive || (allocatorCallbackDepth && state.allocationDepth)) NotImplemented_nid_no_patch(__func__);
     TerminationScope termination(state.terminating);
     state.callback = nullptr;
