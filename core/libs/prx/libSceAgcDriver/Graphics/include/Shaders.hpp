@@ -63,6 +63,7 @@ inline VkPipelineStageFlags PipelineStages(std::span<const CompiledShader> shade
             case VK_SHADER_STAGE_GEOMETRY_BIT: result |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT; break;
             case VK_SHADER_STAGE_MESH_BIT_EXT: result |= VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT; break;
             case VK_SHADER_STAGE_FRAGMENT_BIT: result |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; break;
+            case VK_SHADER_STAGE_COMPUTE_BIT: result |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT; break;
             default: throw std::runtime_error("AGC graphics: invalid graphics pipeline stage");
         }
     }

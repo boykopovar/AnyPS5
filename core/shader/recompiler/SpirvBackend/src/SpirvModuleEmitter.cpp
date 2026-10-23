@@ -980,6 +980,21 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
         throw std::runtime_error("vertex input info is missing for mesh output definition");
     }
     const auto& mesh = state.inputInfo.vertex->mesh;
+    if (state.meshAsCompute) {
+        for (auto& output : state.outputs) {
+            if (output.kind != StageOutputKind::Position && output.kind != StageOutputKind::Parameter && output.kind != StageOutputKind::Layer && !IsMeshDistance(output.kind)) {
+                throw std::runtime_error("unsupported mesh output kind");
+            }
+            const bool shared = output.kind == StageOutputKind::Layer;
+            output.meshDataVariable = MeshArray(state, shared ? spv::StorageClassWorkgroup : spv::StorageClassPrivate, MeshOutputType(state, output.kind), shared ? mesh.maxVertices : state.laneCount);
+        }
+        if (std::ranges::count_if(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::Position; }) > 1) {
+            throw std::runtime_error("a mesh program run as compute exports more than one position");
+        }
+        state.meshAllocation = MeshArray(state, spv::StorageClassWorkgroup, TypeU32(state), 2u);
+        state.meshPrimitiveData = MeshArray(state, spv::StorageClassPrivate, TypeU32(state), state.laneCount);
+        return;
+    }
     std::uint32_t clipDistanceCount = 0u;
     std::uint32_t cullDistanceCount = 0u;
     for (const auto& output : state.outputs) {
@@ -1106,6 +1121,12 @@ void EmitPixelEntryPoint(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunctionEnd);
 }
 
+namespace {
+
+void EmitMeshBufferOutputs(SpirvEmitterState& state, std::uint32_t vertices, std::uint32_t primitives);
+
+}
+
 void EmitMeshEntryPoint(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.mainFunc, spv::FunctionControlMaskNone, TypeFunction(state));
     EmitLabel(state, state.module.AllocateId());
@@ -1147,6 +1168,13 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
     const auto vertices = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelect, TypeU32(state), vertices, noGroups, ConstantU32(state, 0u), allocatedVertices);
     const auto primitives = clamp(MeshLoad(state, state.meshAllocation, spv::StorageClassWorkgroup, TypeU32(state), ConstantU32(state, 1u)), mesh.maxPrimitives);
+    if (state.meshAsCompute) {
+        EmitMeshBufferOutputs(state, vertices, primitives);
+        state.laneHalf = 0;
+        state.module.AddFunction(spv::OpReturn);
+        state.module.AddFunction(spv::OpFunctionEnd);
+        return;
+    }
     state.module.AddFunction(spv::OpSetMeshOutputsEXT, vertices, primitives);
     const auto anyVertex = state.module.AllocateId();
     state.module.AddFunction(spv::OpExtInst, TypeU32(state), anyVertex, GlslStd450(state), GLSLstd450UMax, vertices, ConstantU32(state, 1u));
@@ -1758,6 +1786,99 @@ std::uint32_t LoadMeshArgumentWord(SpirvEmitterState& state, std::uint32_t addre
     const auto loaded = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, pointer, spv::MemoryAccessAlignedMask, 4u);
     return loaded;
+}
+
+void EmitMeshBufferOutputs(SpirvEmitterState& state, std::uint32_t vertices, std::uint32_t primitives) {
+    const auto& mesh = state.inputInfo.vertex->mesh;
+    const auto u64 = [&](std::uint32_t value) { return Unary(state, spv::OpUConvert, TypeScalarU64(state), value); };
+    const auto add64 = [&](std::uint32_t address, std::uint32_t offset) { return Binary(state, spv::OpIAdd, TypeScalarU64(state), address, offset); };
+    const auto mul64 = [&](std::uint32_t value, std::uint64_t factor) { return Binary(state, spv::OpIMul, TypeScalarU64(state), u64(value), BdaConstant(state, factor)); };
+    const auto store = [&](std::uint32_t address, std::uint32_t type, std::uint32_t value) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, type), pointer, address);
+        state.module.AddFunction(spv::OpStore, pointer, value, spv::MemoryAccessAlignedMask, 4u);
+    };
+    const auto groupCount = [&](std::uint32_t component) {
+        const auto pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeU32(state)), pointer, state.numWorkgroupsVariable, ConstantU32(state, component));
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+        return value;
+    };
+    const auto countX = groupCount(0u);
+    const auto countY = groupCount(1u);
+    const auto countXY = EmitBinaryU32(state, spv::OpIMul, countX, countY);
+    const auto total = EmitBinaryU32(state, spv::OpIMul, countXY, groupCount(2u));
+    const auto rowAndLayer = EmitBinaryU32(state, spv::OpIAdd, EmitBinaryU32(state, spv::OpIMul, EmitInputComponentU32(state, StageInputKind::WorkgroupId, 1u), countX),
+                                           EmitBinaryU32(state, spv::OpIMul, EmitInputComponentU32(state, StageInputKind::WorkgroupId, 2u), countXY));
+    const auto group = EmitBinaryU32(state, spv::OpIAdd, EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u), rowAndLayer);
+    const auto arguments = MeshArgumentAddress(state);
+    const auto output = Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), u64(LoadMeshArgumentWord(state, arguments, ConstantU32(state, MeshOutputAddressDword))),
+                               Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), u64(LoadMeshArgumentWord(state, arguments, ConstantU32(state, MeshOutputAddressDword + 1u))), ConstantU32(state, 32u)));
+    const auto triangles = add64(output, BdaConstant(state, MeshOutputHeaderBytes));
+    const auto corners = mesh.outputPrimitiveSize;
+    const auto records = add64(triangles, mul64(total, 4ull * corners * mesh.maxPrimitives));
+    std::vector<const SpirvOutputBinding*> layout{nullptr};
+    std::uint32_t clipDistances = 0;
+    std::uint32_t cullDistances = 0;
+    const SpirvOutputBinding* layer = nullptr;
+    for (const auto& binding : state.outputs) {
+        if (binding.kind == StageOutputKind::Position) layout.front() = &binding;
+        else if (binding.kind == StageOutputKind::Parameter) layout.push_back(&binding);
+        else if (binding.kind == StageOutputKind::ClipDistance) clipDistances = std::max(clipDistances, binding.index + 1u);
+        else if (binding.kind == StageOutputKind::CullDistance) cullDistances = std::max(cullDistances, binding.index + 1u);
+        else if (binding.kind == StageOutputKind::Layer) layer = &binding;
+    }
+    const auto parameters = static_cast<std::uint32_t>(layout.size() - 1u);
+    const auto recordLayout = MeshRecordLayout(clipDistances, cullDistances, layer != nullptr, mesh.provokingVertex, corners);
+    const auto recordBytes = static_cast<std::uint64_t>(MeshRecordBytes(parameters, recordLayout));
+    state.laneHalf = 0;
+    const auto first = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLogicalAnd, TypeBool(state), first, Binary(state, spv::OpIEqual, TypeBool(state), group, ConstantU32(state, 0u)), Binary(state, spv::OpIEqual, TypeBool(state), EmitLocalInvocationIndex(state), ConstantU32(state, 0u)));
+    EmitIfCondition(state, first, [&]() {
+        const std::array<std::uint32_t, 4> header{EmitBinaryU32(state, spv::OpIMul, total, ConstantU32(state, corners * mesh.maxPrimitives)), ConstantU32(state, 1u), ConstantU32(state, 0u), ConstantU32(state, 0u)};
+        for (std::uint32_t word = 0; word < header.size(); word++) store(add64(output, BdaConstant(state, 4ull * word)), TypeU32(state), header.at(word));
+    });
+    const auto anyVertex = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), anyVertex, GlslStd450(state), GLSLstd450UMax, vertices, ConstantU32(state, 1u));
+    const auto lastVertex = EmitBinaryU32(state, spv::OpISub, anyVertex, ConstantU32(state, 1u));
+    const auto firstVertex = EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, mesh.maxVertices));
+    for (std::uint32_t half = 0; half < state.laneCount; half++) {
+        state.laneHalf = half;
+        const auto index = EmitLocalInvocationIndex(state);
+        EmitIfCondition(state, Binary(state, spv::OpULessThan, TypeBool(state), index, vertices), [&]() {
+            const auto record = add64(records, mul64(EmitBinaryU32(state, spv::OpIAdd, firstVertex, index), recordBytes));
+            for (std::uint32_t slot = 0; slot < layout.size(); slot++) {
+                const auto value = layout.at(slot) != nullptr ? MeshLoad(state, layout.at(slot)->meshDataVariable, spv::StorageClassPrivate, TypeF32Vector(state, 4u), ConstantU32(state, half)) : state.module.Constant(spv::OpConstantComposite, TypeF32Vector(state, 4u), ConstantF32(state, 0u), ConstantF32(state, 0u), ConstantF32(state, 0u), ConstantF32(state, 0u));
+                store(add64(record, BdaConstant(state, 16ull * slot)), TypeF32Vector(state, 4u), value);
+            }
+            const auto extras = MeshRecordExtraOffset(parameters);
+            for (const auto& binding : state.outputs) {
+                if (!IsMeshDistance(binding.kind)) continue;
+                const auto slot = binding.kind == StageOutputKind::ClipDistance ? binding.index : clipDistances + binding.index;
+                const auto value = MeshLoad(state, binding.meshDataVariable, spv::StorageClassPrivate, TypeF32(state), ConstantU32(state, half));
+                store(add64(record, BdaConstant(state, extras + 4ull * slot)), TypeF32(state), value);
+            }
+            if (layer != nullptr) {
+                const auto value = MeshLoad(state, layer->meshDataVariable, spv::StorageClassWorkgroup, TypeU32(state), index);
+                store(add64(record, BdaConstant(state, extras + 4ull * (clipDistances + cullDistances))), TypeU32(state), value);
+            }
+        });
+        EmitIfCondition(state, Binary(state, spv::OpULessThan, TypeBool(state), index, ConstantU32(state, mesh.maxPrimitives)), [&]() {
+            const auto packed = MeshLoad(state, state.meshPrimitiveData, spv::StorageClassPrivate, TypeU32(state), ConstantU32(state, half));
+            const auto nullBit = Binary(state, spv::OpINotEqual, TypeBool(state), EmitBinaryU32(state, spv::OpBitwiseAnd, packed, ConstantU32(state, 0x80000000u)), ConstantU32(state, 0u));
+            const auto culled = Binary(state, spv::OpLogicalOr, TypeBool(state), nullBit, Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), index, primitives));
+            const auto triangle = add64(triangles, mul64(EmitBinaryU32(state, spv::OpIAdd, EmitBinaryU32(state, spv::OpIMul, group, ConstantU32(state, mesh.maxPrimitives)), index), 4ull * corners));
+            for (std::uint32_t component = 0; component < corners; component++) {
+                const auto field = state.module.AllocateId();
+                state.module.AddFunction(spv::OpBitFieldUExtract, TypeU32(state), field, packed, ConstantU32(state, component * 10u), ConstantU32(state, 9u));
+                const auto vertex = state.module.AllocateId();
+                state.module.AddFunction(spv::OpExtInst, TypeU32(state), vertex, GlslStd450(state), GLSLstd450UMin, field, lastVertex);
+                const auto absolute = EmitBinaryU32(state, spv::OpIAdd, firstVertex, Select(state, TypeU32(state), culled, ConstantU32(state, 0u), vertex));
+                store(add64(triangle, BdaConstant(state, 4ull * component)), TypeU32(state), absolute);
+            }
+        });
+    }
 }
 
 }

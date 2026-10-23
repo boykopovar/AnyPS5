@@ -40,6 +40,12 @@ InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std:
 
 std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters& draw);
 
+inline constexpr std::uint64_t MeshComputeOutputLimitBytes = 256ull << 20u;
+std::uint32_t MeshDrawLayers(const State& state);
+bool MeshDrawRunsAsCompute(bool meshShader, std::uint32_t maxMeshOutputLayers, const State& state);
+bool MeshDrawRunsAsCompute(const Context& context, const State& state);
+std::vector<CompiledShader> MeshComputeStages(const Context& context, const State& state, std::span<const CompiledShader> shaders);
+
 struct MeshArguments {
     std::uint32_t groups;
     std::uint32_t instances;
@@ -58,6 +64,7 @@ struct MeshArgumentRules {
     std::uint32_t maxTotal;
 };
 MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount);
+MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t indexCount, bool asCompute);
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules);
 
 // Why DrawWithRecipe did not record from the recipe (the caller then runs Draw): the draw is not
@@ -91,7 +98,7 @@ bool DrawRecipes();
 // draw index, the vertex ranges, the device features, APS5_NO_GPU_INDIRECT_DRAW) or under the device
 // lock in Draw (the memory state of the records). `readMs` is the CPU read's time (its sync);
 // `rewritten` counts a GPU-side draw whose records were copied and patched with a constant.
-enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, IndexRange, Count };
+enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, IndexRange, MeshCompute, Count };
 void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten = false);
 std::array<std::uint64_t, static_cast<std::size_t>(IndirectDrawPath::Count)> IndirectDrawCounts();
 void CountEmptyIndirectDraw(double readMs);

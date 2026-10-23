@@ -57,6 +57,9 @@ public:
     bool Optimized() const { return optimized != nullptr && optimized->handle.load() != VK_NULL_HANDLE; }
     void ContinueBackFaces(VkCommandBuffer commands, const State& state) const;
     bool SplitsSecondChannel() const { return secondChannel != VK_NULL_HANDLE; }
+    VkPipeline MeshCompute() const { return meshCompute; }
+    VkPipelineLayout MeshComputeLayout() const { return meshComputeLayout; }
+    void PushMeshCompute(VkCommandBuffer commands, std::span<const std::byte, PipelinePushConstantBytes> bytes) const;
     void ContinueSecondChannel(VkCommandBuffer commands) const;
     const SampleOrder& HostSampleOrder() const { return sampleOrder; }
     bool ReordersSamples() const { return Graphics::ReordersSamples(sampleOrder); }
@@ -85,6 +88,8 @@ private:
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline backFaces = VK_NULL_HANDLE;
     VkPipeline secondChannel = VK_NULL_HANDLE;
+    VkPipeline meshCompute = VK_NULL_HANDLE;
+    VkPipelineLayout meshComputeLayout = VK_NULL_HANDLE;
     std::size_t attachments = 0;
     std::size_t colorAttachments = 0;
     bool depthBounds = false;

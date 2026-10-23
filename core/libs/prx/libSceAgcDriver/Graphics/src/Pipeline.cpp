@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -283,7 +284,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
-        if (shader.stage == Stage::Geometry || identity.Empty()) return false;
+        if (shader.stage == Stage::Geometry || shader.stage == Stage::Compute || identity.Empty()) return false;
         auto& key = shader.stage == Stage::Fragment ? keys.fragmentShader : keys.preRasterization;
         appendKey(key, shader.stage);
         appendKey(key, identity.low);
@@ -426,14 +427,18 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(context.tessellationShader, "device does not support tessellation shaders");
         Require(state.stages.tessellation->inputControlPoints <= context.limits.maxTessellationPatchSize && state.stages.tessellation->outputControlPoints <= context.limits.maxTessellationPatchSize, "tessellation patch exceeds device limits");
     }
-    if (state.stages.mesh) {
-        Require(context.meshShader, "device does not support VK_EXT_mesh_shader");
+    const bool meshCompute = MeshDrawRunsAsCompute(context, state);
+    if (meshCompute) {
+        const auto& mesh = *state.stages.mesh;
+        const auto invocations = state.stages.vertexWaveSize == 64u && context.subgroup.subgroupSize == 32u ? mesh.threadsPerGroup / 2u : mesh.threadsPerGroup;
+        Require(invocations <= context.limits.maxComputeWorkGroupInvocations && invocations <= context.limits.maxComputeWorkGroupSize[0] && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.limits.maxComputeSharedMemorySize, "mesh workgroup run as compute exceeds device limits");
+    } else if (state.stages.mesh) {
         const auto& mesh = *state.stages.mesh;
         const auto invocations = state.stages.vertexWaveSize == 64u && context.subgroup.subgroupSize == 32u ? mesh.threadsPerGroup / 2u : mesh.threadsPerGroup;
         Require(invocations <= context.meshLimits.maxMeshWorkGroupInvocations && invocations <= context.meshLimits.maxMeshWorkGroupSize[0], "mesh workgroup exceeds device limits");
         Require(mesh.maxVertices <= context.meshLimits.maxMeshOutputVertices && mesh.maxPrimitives <= context.meshLimits.maxMeshOutputPrimitives && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.meshLimits.maxMeshSharedMemorySize, "mesh output or LDS exceeds device limits");
     }
-    const auto pushStages = PushConstantStages(shaders);
+    const auto pushStages = PushConstantStages(shaders) | (meshCompute ? VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT : 0u);
     Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PushBlockBytes(dynamicRendering), "graphics push constant range exceeds device limit");
     if (dynamicRendering) {
         for (const auto& shader : shaders) Require(shader.program->pushConstants.empty() || (shader.pushConstantOffset >= PipelinePushSlotBytes) == (shader.stage == ShaderRecompiler::ShaderStage::Fragment), "a stage's push constants lie outside its push constant slot");
@@ -454,6 +459,17 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             if (shaders[i].stage == ShaderRecompiler::ShaderStage::Mesh && context.meshWave32 && shader.hostSubgroupSize == 32u) stages[i].pNext = &meshSubgroup;
             specializations.emplace_back(shader);
             stages[i].pSpecializationInfo = specializations.back().Info();
+        }
+        std::optional<VkPipelineShaderStageCreateInfo> computeStage;
+        VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT computeSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT};
+        if (const auto compute = std::ranges::find(shaders, ShaderRecompiler::ShaderStage::Compute, &CompiledShader::stage); compute != shaders.end()) {
+            Require(meshCompute, "a compute stage in a graphics pipeline runs only a mesh program");
+            const auto index = compute - shaders.begin();
+            computeStage = stages[index];
+            stages.erase(stages.begin() + index);
+            const auto subgroupSize = shaders[index].program->hostSubgroupSize;
+            if (context.computeWave32 && (subgroupSize == 32u || subgroupSize > context.maxComputeSubgroupSize)) computeSubgroup.requiredSubgroupSize = std::min(subgroupSize, context.maxComputeSubgroupSize);
+            if (computeSubgroup.requiredSubgroupSize != 0u) computeStage->pNext = &computeSubgroup;
         }
         if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && !shader.program->stencilReferences.empty(); })) {
             for (std::size_t i = 0; i < shaders.size(); ++i) {
@@ -542,6 +558,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         assembly.topology = BarycentricPatches(state, shaders) ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         assembly.primitiveRestartEnable = state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
+        if (meshCompute) {
+            assembly.topology = state.stages.mesh->outputPrimitiveSize == 2u ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            assembly.primitiveRestartEnable = VK_FALSE;
+        }
         // Viewport and scissor are set per draw (Begin), so they do not multiply pipelines; the depth
         // clip control stays baked in.
         VkPipelineViewportStateCreateInfo viewports{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
@@ -638,8 +658,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             tessellation.patchControlPoints = state.stages.tessellation ? state.stages.tessellation->inputControlPoints : 3u;
             pipelineInfo.pTessellationState = &tessellation;
         }
-        pipelineInfo.pVertexInputState = state.stages.mesh ? nullptr : &input;
-        pipelineInfo.pInputAssemblyState = state.stages.mesh ? nullptr : &assembly;
+        pipelineInfo.pVertexInputState = state.stages.mesh && !meshCompute ? nullptr : &input;
+        pipelineInfo.pInputAssemblyState = state.stages.mesh && !meshCompute ? nullptr : &assembly;
         pipelineInfo.pViewportState = &viewports;
         pipelineInfo.pRasterizationState = &raster;
         pipelineInfo.pMultisampleState = &samples;
@@ -677,6 +697,20 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &backFaces), "vkCreateGraphicsPipelines");
         }
+        if (computeStage) {
+            VkComputePipelineCreateInfo computeInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            computeInfo.stage = *computeStage;
+            const VkPushConstantRange computePush{VK_SHADER_STAGE_COMPUTE_BIT, 0, PipelinePushSlotBytes};
+            VkPipelineLayoutCreateInfo computeLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            computeLayoutInfo.setLayoutCount = layoutInfo.setLayoutCount;
+            computeLayoutInfo.pSetLayouts = layoutInfo.pSetLayouts;
+            computeLayoutInfo.pushConstantRangeCount = 1;
+            computeLayoutInfo.pPushConstantRanges = &computePush;
+            Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &computeLayoutInfo, nullptr, &meshComputeLayout), "vkCreatePipelineLayout mesh compute");
+            computeInfo.layout = meshComputeLayout;
+            auto pipelineCacheLock = context.LockPipelineCacheForUse();
+            Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, context.pipelineCache, 1, &computeInfo, nullptr, &this->meshCompute), "vkCreateComputePipelines mesh");
+        }
         for (const auto module : _modules) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
         _modules.clear();
         timing.Mark("create");
@@ -709,6 +743,8 @@ void Pipeline::release() noexcept {
     if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
     if (backFaces) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, backFaces, nullptr);
     if (secondChannel) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, secondChannel, nullptr);
+    if (meshCompute) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, meshCompute, nullptr);
+    if (meshComputeLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, meshComputeLayout, nullptr);
     if (renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, renderPass, nullptr);
     if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
     for (auto module : _modules) {
@@ -717,6 +753,8 @@ void Pipeline::release() noexcept {
     pipeline = VK_NULL_HANDLE;
     backFaces = VK_NULL_HANDLE;
     secondChannel = VK_NULL_HANDLE;
+    meshCompute = VK_NULL_HANDLE;
+    meshComputeLayout = VK_NULL_HANDLE;
     renderPass = VK_NULL_HANDLE;
     layout = VK_NULL_HANDLE;
     _modules.clear();
@@ -730,6 +768,8 @@ void Pipeline::Abandon() noexcept {
     pipeline = VK_NULL_HANDLE;
     backFaces = VK_NULL_HANDLE;
     secondChannel = VK_NULL_HANDLE;
+    meshCompute = VK_NULL_HANDLE;
+    meshComputeLayout = VK_NULL_HANDLE;
     renderPass = VK_NULL_HANDLE;
     layout = VK_NULL_HANDLE;
     _modules.clear();
@@ -889,6 +929,10 @@ void Pipeline::ContinueBackFaces(VkCommandBuffer commands, const State& state) c
     context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &state.scissor);
     context.Resolved(&DeviceFunctions::cmdSetDepthBias, "vkCmdSetDepthBias")(commands, HostDepthBiasConstant(context, state.depth->format, state.backDepthBiasConstant), state.depthBiasClamp, state.backDepthBiasSlope);
     if (depthBounds) context.Resolved(&DeviceFunctions::cmdSetDepthBounds, "vkCmdSetDepthBounds")(commands, state.minDepthBounds, state.maxDepthBounds);
+}
+
+void Pipeline::PushMeshCompute(VkCommandBuffer commands, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, meshComputeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PipelinePushSlotBytes, bytes.data());
 }
 
 void Pipeline::PushConstants(VkCommandBuffer commands, VkShaderStageFlags stages, std::span<const std::byte, PipelinePushConstantBytes> bytes) const {

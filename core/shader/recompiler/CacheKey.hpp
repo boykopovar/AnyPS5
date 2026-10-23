@@ -298,6 +298,7 @@ private:
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
         append(key, value.fusedExactArithmetic);
+        append(key, value.meshAsCompute);
     }
 };
 

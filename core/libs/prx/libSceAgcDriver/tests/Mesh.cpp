@@ -344,7 +344,7 @@ int main() {
         if (!testDevice) return VulkanTestSkipped;
         auto& device = *testDevice;
         const auto target = device.Target();
-        if (!target.mesh.has_value()) {
+        if (!target.mesh.has_value() && !target.meshAsCompute) {
             std::puts("skipped, the device has no VK_EXT_mesh_shader");
             return VulkanTestSkipped;
         }
@@ -403,56 +403,58 @@ int main() {
         ClearPixels();
         auto pointSubgroup = SmallSubgroup;
         pointSubgroup.outputPrimitiveSize = 1u;
-        for (const auto pointWave : {32u, 64u}) {
-            ClearPixels();
-            DrawMesh(device, {pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, pointWave});
-            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
-                const auto& position = Ordered[3u * triangle].position;
-                const auto x = static_cast<std::uint32_t>((position[0] + 1.0f) * 0.5f * Width);
-                const auto y = static_cast<std::uint32_t>((1.0f - position[1]) * 0.5f * Height);
-                const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
-                Require(PixelIs(offset, TriangleColor(triangle)), "mesh point missing at first exported index for primitive " + std::to_string(triangle));
-                Require(PixelIs(CellPixel(triangle), Background), "mesh point output filled the interior of its packed triangle");
-            }
-        }
-
-        for (const auto pointWave : {32u, 64u}) {
-            for (const auto size : {3.0f, 4.0f}) {
+        if (!target.meshAsCompute) {
+            for (const auto pointWave : {32u, 64u}) {
                 ClearPixels();
-                MeshDraw points{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
-                points.waveSize = pointWave;
-                points.vertex.pointSize = size;
-                DrawMesh(device, points);
-                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
-                    std::uint32_t covered = 0;
-                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
-                    Require(covered == static_cast<std::uint32_t>(size * size), "mesh point did not cover its register-sized square");
+                DrawMesh(device, {pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, pointWave});
+                for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+                    const auto& position = Ordered[3u * triangle].position;
+                    const auto x = static_cast<std::uint32_t>((position[0] + 1.0f) * 0.5f * Width);
+                    const auto y = static_cast<std::uint32_t>((1.0f - position[1]) * 0.5f * Height);
+                    const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
+                    Require(PixelIs(offset, TriangleColor(triangle)), "mesh point missing at first exported index for primitive " + std::to_string(triangle));
+                    Require(PixelIs(CellPixel(triangle), Background), "mesh point output filled the interior of its packed triangle");
                 }
             }
-            for (const auto exportedSize : {6.0f, -3.0f}) {
-                ClearPixels();
-                const auto& baseCode = pointWave == 32u ? Wave32GeometryCode : GeometryCode;
-                std::array<std::uint32_t, GeometryCode.size() + 4u> sizedCode{};
-                std::copy_n(baseCode.begin(), 101u, sizedCode.begin());
-                sizedCode[92] = 0xbf88000eu;
-                sizedCode[99] = 0xf80000cfu;
-                sizedCode[101] = 0x7e6802ffu;
-                sizedCode[102] = std::bit_cast<std::uint32_t>(exportedSize);
-                sizedCode[103] = 0xf80008d1u;
-                sizedCode[104] = 0x00000034u;
-                std::copy(baseCode.begin() + 101u, baseCode.end(), sizedCode.begin() + 105u);
-                MeshDraw exported{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
-                exported.waveSize = pointWave;
-                exported.code = sizedCode;
-                exported.vertex.paClVsOutCntl = (1u << 16u) | (1u << 21u);
-                exported.vertex.pointSizeMin = 3.0f;
-                exported.vertex.pointSizeMax = 4.0f;
-                DrawMesh(device, exported);
-                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
-                    std::uint32_t covered = 0;
-                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
-                    const auto side = exportedSize < 3.0f ? 3u : 4u;
-                    Require(covered == side * side, "mesh point ignored its exported size or clamp");
+
+            for (const auto pointWave : {32u, 64u}) {
+                for (const auto size : {3.0f, 4.0f}) {
+                    ClearPixels();
+                    MeshDraw points{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                    points.waveSize = pointWave;
+                    points.vertex.pointSize = size;
+                    DrawMesh(device, points);
+                    for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                        std::uint32_t covered = 0;
+                        for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                        Require(covered == static_cast<std::uint32_t>(size * size), "mesh point did not cover its register-sized square");
+                    }
+                }
+                for (const auto exportedSize : {6.0f, -3.0f}) {
+                    ClearPixels();
+                    const auto& baseCode = pointWave == 32u ? Wave32GeometryCode : GeometryCode;
+                    std::array<std::uint32_t, GeometryCode.size() + 4u> sizedCode{};
+                    std::copy_n(baseCode.begin(), 101u, sizedCode.begin());
+                    sizedCode[92] = 0xbf88000eu;
+                    sizedCode[99] = 0xf80000cfu;
+                    sizedCode[101] = 0x7e6802ffu;
+                    sizedCode[102] = std::bit_cast<std::uint32_t>(exportedSize);
+                    sizedCode[103] = 0xf80008d1u;
+                    sizedCode[104] = 0x00000034u;
+                    std::copy(baseCode.begin() + 101u, baseCode.end(), sizedCode.begin() + 105u);
+                    MeshDraw exported{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                    exported.waveSize = pointWave;
+                    exported.code = sizedCode;
+                    exported.vertex.paClVsOutCntl = (1u << 16u) | (1u << 21u);
+                    exported.vertex.pointSizeMin = 3.0f;
+                    exported.vertex.pointSizeMax = 4.0f;
+                    DrawMesh(device, exported);
+                    for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                        std::uint32_t covered = 0;
+                        for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                        const auto side = exportedSize < 3.0f ? 3u : 4u;
+                        Require(covered == side * side, "mesh point ignored its exported size or clamp");
+                    }
                 }
             }
         }
@@ -491,6 +493,8 @@ int main() {
         };
         drawIndirect(static_cast<std::uint32_t>(Indices.size()), 1, 0);
         CheckTriangles("indirect indexed triangle list");
+        drawIndirect(static_cast<std::uint32_t>(Indices.size()), 6, 0);
+        CheckTriangles("indirect indexed triangle list with six instances");
         drawIndirect(3u * 10u, 1, 3u * 5u);
         for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
             const auto offset = CellPixel(triangle);
