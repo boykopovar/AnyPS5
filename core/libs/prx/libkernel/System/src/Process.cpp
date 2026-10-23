@@ -15,6 +15,9 @@
 #include <mach/mach_vm.h>
 #endif
 #endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #if defined(__linux__) && defined(__x86_64__)
 #include <asm/prctl.h>
 #include <sys/syscall.h>
@@ -74,9 +77,7 @@ constexpr int errnoBadAddress = 14;
 constexpr int errnoInvalidArgument = 22;
 constexpr int errnoTooBig = 7;
 constexpr int errnoNoEnt = 2;
-constexpr int errnoNoExec = 8;
 constexpr int errnoAccess = 13;
-constexpr int errnoNotDirectory = 20;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
@@ -328,27 +329,44 @@ extern "C" Pthread APS5_VABI scePthreadSelf();
 
 namespace {
 
-bool ExecGuestPathExists(const std::string& path) {
-    std::filesystem::path native;
-    if (ResolvePathError_nid_no_patch(path.c_str(), native) != 0) return false;
-    std::error_code error;
-    return std::filesystem::exists(native, error);
-}
-
-bool ExecProgramFound(std::string_view name, bool search, std::string& found) {
-    if (name.empty()) return false;
-    if (!search || name.find('/') != std::string_view::npos) {
-        found = std::string(name);
-        return ExecGuestPathExists(found);
+bool ExecProgramFound(std::string_view name, bool search, int& error, std::string& found) {
+    const auto executable = [&error, &found](const std::string& candidate) {
+        found = candidate;
+        std::filesystem::path native;
+        std::error_code probe;
+        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) != 0 || !std::filesystem::exists(native, probe)) {
+            error = errnoNoEnt;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(native, probe)) {
+            error = errnoAccess;
+            return false;
+        }
+        return true;
+    };
+    if (name.empty()) {
+        error = errnoNoEnt;
+        return false;
     }
+    if (!search || name.find('/') != std::string_view::npos) return executable(std::string(name));
+    bool inaccessible = false;
     const char* variable = getenv_nid_postfix("PATH");
     std::string_view directories = variable != nullptr ? std::string_view(variable) : ExecDefaultSearchPath;
     while (true) {
         const auto separator = directories.find(':');
         const auto directory = directories.substr(0, separator);
-        found = (directory.empty() ? std::string(".") : std::string(directory)) + '/' + std::string(name);
-        if (ExecGuestPathExists(found)) return true;
-        if (separator == std::string_view::npos) return false;
+        const std::string candidate = (directory.empty() ? std::string(".") : std::string(directory)) + '/' + std::string(name);
+        found = candidate;
+        std::filesystem::path native;
+        std::error_code probe;
+        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0 && std::filesystem::exists(native, probe)) {
+            if (std::filesystem::is_regular_file(native, probe)) return true;
+            inaccessible = true;
+        }
+        if (separator == std::string_view::npos) {
+            error = inaccessible ? errnoAccess : errnoNoEnt;
+            return false;
+        }
         directories.remove_prefix(separator + 1);
     }
 }
@@ -371,13 +389,20 @@ std::string ExecFlattenedName(const std::string& guest) {
 }
 
 std::filesystem::path ExecOwnExecutable() {
-#ifdef _WIN32
+#if defined(_WIN32)
     std::wstring own(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
     if (length == 0 || length >= own.size())
         throw std::system_error(GetLastError(), std::system_category(), "exec: GetModuleFileNameW");
     own.resize(length);
     return std::filesystem::path(own);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::error_code error;
+    if (_NSGetExecutablePath(executable.data(), &size) == 0) return std::filesystem::canonical(executable.data(), error);
+    throw std::runtime_error("exec: cannot locate the executable");
 #else
     std::error_code error;
     const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
@@ -402,7 +427,7 @@ std::filesystem::path ExecConvertedTarget(const std::string& guest) {
 std::size_t ExecEntriesBytes(char* const* entries) {
     std::size_t bytes = 0;
     for (std::size_t index = 0; entries[index] != nullptr; ++index)
-        bytes += std::strlen(entries[index]) + 1 + sizeof(char*);
+        bytes += std::strlen(entries[index]) + 1;
     return bytes;
 }
 
@@ -763,35 +788,34 @@ int APS5_VABI wait_nid_postfix(int* status) {
 
 int ExecProgram(const char* file, char* const* arguments, char* const* environment, bool search, bool implicitEnvironment) {
     const auto fail = [](int error) { *__error_nid_postfix() = error; return -1; };
-    if (file == nullptr || arguments == nullptr || arguments[0] == nullptr) return fail(errnoBadAddress);
+    if (file == nullptr || arguments == nullptr) return fail(errnoBadAddress);
     if (file[0] == '\0') return fail(errnoNoEnt);
-    std::size_t bytes = ExecEntriesBytes(arguments) + ExecEntriesBytes(environ);
-    if (bytes > ExecArgumentBytesLimit) return fail(errnoTooBig);
-    if (!implicitEnvironment) {
-        for (std::size_t index = 0; environment[index] != nullptr; ++index)
-            if (std::strchr(environment[index], '=') == nullptr) return fail(errnoBadAddress);
-    }
+    static char* const noEnvironment[] = {nullptr};
+    char* const* entries = implicitEnvironment ? static_cast<char* const*>(environ) : (environment != nullptr ? environment : noEnvironment);
+    if (ExecEntriesBytes(arguments) + ExecEntriesBytes(entries) > ExecArgumentBytesLimit) return fail(errnoTooBig);
+    int error = errnoNoEnt;
     std::string program;
-    if (!ExecProgramFound(file, search, program)) return fail(errnoNoEnt);
+    if (!ExecProgramFound(file, search, error, program)) return fail(error);
     const auto target = ExecConvertedTarget(program);
 #ifdef _WIN32
-    ExecReplaceWindows(target, ExecArgumentVector(arguments), implicitEnvironment, environment);
-#else
+    ExecReplaceWindows(target, ExecArgumentVector(arguments), implicitEnvironment, entries);
+#elif defined(__linux__)
     const int descriptor = ::open(target.c_str(), O_RDONLY | O_CLOEXEC);
-    if (descriptor < 0) return fail(errno);
+    if (descriptor < 0) throw std::system_error(errno, std::generic_category(), "exec: opening the converted executable");
     std::array<unsigned char, 20> header{};
     if (::pread(descriptor, header.data(), header.size(), 0) != static_cast<ssize_t>(header.size()) || header[0] != 0x7f ||
         header[1] != 'E' || header[2] != 'L' || header[3] != 'F' || header[4] != 2 || header[5] != 1 ||
         (header[7] != 0 && header[7] != 3) || header[17] != 0 || (header[16] != 2 && header[16] != 3) || header[18] != 62 ||
-        header[19] != 0 || ::access(target.c_str(), X_OK) != 0) {
-        const int error = ::access(target.c_str(), X_OK) != 0 ? errnoAccess : errnoNoExec;
-        ::close(descriptor);
-        return fail(error);
-    }
-    fexecve(descriptor, arguments, implicitEnvironment ? static_cast<char* const*>(environ) : environment);
-    const int error = errno;
+        header[19] != 0 || ::access(target.c_str(), X_OK) != 0)
+        throw std::runtime_error("exec: target is not an executable x86-64 Linux ELF");
+    fexecve(descriptor, arguments, entries);
+    const int replaced = errno;
     ::close(descriptor);
-    throw std::system_error(error, std::generic_category(), "exec: replacing the executable");
+    throw std::system_error(replaced, std::generic_category(), "exec: replacing the executable");
+#else
+    static_cast<void>(target);
+    NotImplemented_nid_no_patch("exec: process replacement on this host");
+    return -1;
 #endif
 }
 
@@ -804,7 +828,6 @@ int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
 }
 
 int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
-    if (environment == nullptr) { *__error_nid_postfix() = errnoBadAddress; return -1; }
     return ExecProgram(path, arguments, environment, false, false);
 }
 

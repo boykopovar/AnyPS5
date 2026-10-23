@@ -120,20 +120,26 @@ extern "C" void APS5_VABI ExecFirst_nid_no_patch(const std::uintptr_t* block) {
     char* const present[] = {const_cast<char*>("/app0/picker/second.bin"), nullptr};
     char* const empty[] = {nullptr};
     char* const unpaired[] = {const_cast<char*>("EXEC_SECOND"), nullptr};
+    const char* const absent = "/app0/picker/absent.bin";
     Require(execv_nid_postfix(nullptr, present) == -1 && *__error_nid_postfix() == 14, "null path rejected with EFAULT");
     Require(execv_nid_postfix("/app0/picker/second.bin", nullptr) == -1 && *__error_nid_postfix() == 14,
             "null arguments rejected with EFAULT");
-    Require(execv_nid_postfix("/app0/picker/second.bin", empty) == -1 && *__error_nid_postfix() == 14,
-            "empty argument list rejected with EFAULT");
-    Require(execve_nid_postfix("/app0/picker/second.bin", present, nullptr) == -1 && *__error_nid_postfix() == 14,
-            "null environment rejected with EFAULT");
-    Require(execve_nid_postfix("/app0/picker/second.bin", present, unpaired) == -1 && *__error_nid_postfix() == 14,
-            "unpaired environment entry rejected with EFAULT");
+    Require(execv_nid_postfix(absent, empty) == -1 && *__error_nid_postfix() == 2,
+            "an empty argument list is accepted and an absent path rejected with ENOENT");
+    Require(execve_nid_postfix(absent, present, nullptr) == -1 && *__error_nid_postfix() == 2,
+            "a null environment is accepted and an absent path rejected with ENOENT");
+    Require(execve_nid_postfix(absent, present, unpaired) == -1 && *__error_nid_postfix() == 2,
+            "an unpaired environment entry is copied and an absent path rejected with ENOENT");
     Require(execvp_nid_postfix("absent-bin", present) == -1 && *__error_nid_postfix() == 2, "PATH search ends with ENOENT");
     static std::string huge(300000, 'X');
     char* const oversized[] = {const_cast<char*>("/app0/picker/second.bin"), &huge[0], nullptr};
     Require(execv_nid_postfix("/app0/picker/second.bin", oversized) == -1 && *__error_nid_postfix() == 7,
             "oversized arguments rejected with E2BIG");
+    static std::string largeVector(262201, 'K');
+    static std::string largeEntry = "EXEC_LARGE_SECOND=" + largeVector;
+    char* const largeEnvironment[] = {&largeEntry[0], nullptr};
+    Require(execve_nid_postfix(absent, present, largeEnvironment) == -1 && *__error_nid_postfix() == 7,
+            "an environment vector beyond the limit rejected with E2BIG");
 #ifdef _WIN32
     const auto second = Root() / L"picker.second.bin.exe";
 #else
