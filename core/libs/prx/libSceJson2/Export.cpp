@@ -1441,6 +1441,8 @@ void ResetDefaults(bool releaseMissing = false) {
     }
 }
 
+void ReleaseInitialization();
+
 PthreadMutex* CreateKernelMutex() {
     auto* mutex = static_cast<PthreadMutex*>(Allocate(sizeof(PthreadMutex)));
     if (!mutex) return nullptr;
@@ -1457,6 +1459,7 @@ PthreadMutex* CreateKernelMutex() {
         if (attribute) scePthreadMutexattrDestroy(&attribute);
         if (*mutex) scePthreadMutexDestroy(mutex);
         Release(mutex);
+        ReleaseInitialization();
         throw;
     }
 }
@@ -1518,19 +1521,17 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     state.allocation = allocation;
     state.floatFormat = format;
     state.floatFormatEnabled = modern;
-    try {
-        CreateDefault<String>(TypeString);
-        CreateDefault<Array>(TypeArray);
-        CreateDefault<Object>(TypeObject);
-        state.fallback = static_cast<Value*>(Allocate(sizeof(Value)));
-        if (state.fallback) Construct(*state.fallback);
-        state.internalMutex = CreateKernelMutex();
-        const auto& defaults = SharedDefaults();
-        const bool admitted = defaults.values[TypeString].string && defaults.values[TypeArray].array &&
-            defaults.values[TypeObject].object && state.fallback && state.internalMutex;
-        if (admitted) state.recoveryMutex = ModernValues() ? CreateKernelMutex() : state.internalMutex;
-        if (!admitted || !state.recoveryMutex) { ReleaseInitialization(); return JsonErrorOutOfMemory; }
-    } catch (...) { ReleaseInitialization(); throw; }
+    CreateDefault<String>(TypeString);
+    CreateDefault<Array>(TypeArray);
+    CreateDefault<Object>(TypeObject);
+    state.fallback = static_cast<Value*>(Allocate(sizeof(Value)));
+    if (state.fallback) Construct(*state.fallback);
+    state.internalMutex = CreateKernelMutex();
+    const auto& defaults = SharedDefaults();
+    const bool admitted = defaults.values[TypeString].string && defaults.values[TypeArray].array &&
+        defaults.values[TypeObject].object && state.fallback && state.internalMutex;
+    if (admitted) state.recoveryMutex = ModernValues() ? CreateKernelMutex() : state.internalMutex;
+    if (!admitted || !state.recoveryMutex) { ReleaseInitialization(); return JsonErrorOutOfMemory; }
     state.paddedStringGrowth = CompiledSdk() > 0x044fffff;
     state.initialized = true;
     *static_cast<std::uint8_t*>(self) = 1;
