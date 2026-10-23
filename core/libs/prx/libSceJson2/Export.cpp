@@ -2974,9 +2974,9 @@ void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
     if (self->type == TypeString) AssignText(*self->string, View(temporary.string), true);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
-    const std::string copy(View(*text));
+    if (!text->text) return;
     SetType(NodeOf(*self), TypeString);
-    if (self->type == TypeString) AssignText(*self->string, copy, true);
+    if (self->type == TypeString) AssignText(*self->string, View(*text), true);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
     if (!array->items) return;

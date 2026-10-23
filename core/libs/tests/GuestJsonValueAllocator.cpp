@@ -14,6 +14,7 @@ struct Value { Value* parent; void* auxiliary; std::uint64_t payload; std::uint3
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 struct Array { void* storage; };
 struct Object { void* storage; };
+struct String { void* storage; };
 using NullCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, void*);
 using MismatchCallback = const Value& (APS5_VABI*)(std::int32_t, const Value*, const Value*, void*);
 using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
@@ -25,6 +26,7 @@ int APS5_VABI _ZN3sce4Json11Initializer9terminateEv(void*);
 void APS5_VABI _ZN3sce4Json5ValueC1ENS0_9ValueTypeE(Value*, std::int32_t);
 void APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value*, std::int32_t);
 void APS5_VABI _ZN3sce4Json5ValueD1Ev(Value*);
+void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value*, const String*);
 void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value*, double);
 void APS5_VABI _ZN3sce4Json5Value3setEd(Value*, double);
 void APS5_VABI _ZN3sce4Json5ValueC1El(Value*, std::int64_t);
@@ -427,6 +429,59 @@ static void CheckNestedCopies(ValueAllocationTrace& trace) {
         Require(trace.live.size() == baseline, "Nested partial-state teardown must release all admitted ownership");
     }
 }
+static void CheckStringSetterAliases(ValueAllocationTrace& trace) {
+    const auto baseline = trace.live;
+    for (unsigned kind = 0; kind < 4; ++kind) for (bool registered : {false, true}) for (bool fail : {false, true}) {
+        Value value; std::memset(&value, 0xa5, sizeof(value));
+        if (!kind) _ZN3sce4Json5ValueC1El(&value, 9);
+        else _ZN3sce4Json5ValueC1EPKc(&value, "original");
+        if (registered) Require(Register(value, 0, &trace) == 0, "Prepare callback metadata before String setter alias testing");
+        String missing{}, shared{};
+        if (kind >= 2) shared.storage = *reinterpret_cast<void**>(value.payload);
+        const String* source = kind < 2 ? &missing : kind == 2 ? reinterpret_cast<const String*>(value.payload) : &shared;
+        const Value before = value; const auto live = trace.live;
+        std::map<void*, std::vector<unsigned char>> snapshots;
+        for (const auto& [pointer, size] : live) {
+            const auto* bytes = static_cast<const unsigned char*>(pointer); snapshots.emplace(pointer, std::vector<unsigned char>{bytes, bytes + size});
+        }
+        const auto requests = trace.requests.size(); const auto frees = trace.frees.size(); const auto notices = trace.notifications; const auto nullFrees = trace.nullFrees;
+        trace.budget = fail ? 0 : -1;
+        _ZN3sce4Json5Value3setERKNS0_6StringE(&value, source);
+        trace.budget = -1;
+        Require(std::memcmp(&value, &before, sizeof(value)) == 0 && trace.live == live && trace.requests.size() == requests && trace.frees.size() == frees && trace.notifications == notices && trace.nullFrees == nullFrees,
+                "Missing String headers and shared-header self-setting must preserve metadata, payload and allocation effects");
+        for (const auto& [pointer, bytes] : snapshots) Require(std::memcmp(pointer, bytes.data(), bytes.size()) == 0, "Ignored or aliased String setting must preserve all original allocation bytes");
+        _ZN3sce4Json5ValueD1Ev(&value);
+        Require(trace.live == baseline, "String setter alias cases must reclaim their actual payload and callback resources");
+    }
+    for (unsigned budget = 0; budget <= 1; ++budget) {
+        Value sourceValue, destination; std::memset(&sourceValue, 0xa5, sizeof(sourceValue)); std::memset(&destination, 0xa5, sizeof(destination));
+        _ZN3sce4Json5ValueC1EPKc(&sourceValue, "replacement"); _ZN3sce4Json5ValueC1EPKc(&destination, "old");
+        const Value originalSource = sourceValue;
+        const auto* source = reinterpret_cast<const String*>(sourceValue.payload);
+        const auto* sourceHeader = source->storage; const auto* sourceCharacters = *static_cast<const char* const*>(sourceHeader);
+        const auto handle = destination.payload; const auto* header = *reinterpret_cast<void* const*>(handle); void* oldCharacters = *static_cast<void* const*>(header);
+        const auto requests = trace.requests.size(); const auto frees = trace.frees.size(); const auto notices = trace.notifications;
+        trace.budget = static_cast<int>(budget);
+        _ZN3sce4Json5Value3setERKNS0_6StringE(&destination, source);
+        trace.budget = -1;
+        Require(destination.type == 5 && destination.payload == handle && *reinterpret_cast<void* const*>(handle) == header &&
+                std::strcmp(*static_cast<const char* const*>(header), budget ? "replacement" : "") == 0 &&
+                trace.requests.size() == requests + 1 && trace.requests.back() == 12 && trace.notifications == notices + unsigned(!budget) &&
+                trace.frees.size() == frees + 1 && trace.frees.back() == oldCharacters,
+                "Independent String sources must copy through the existing handle/header and retain empty text after character allocation failure");
+        Require(std::memcmp(&sourceValue, &originalSource, sizeof(sourceValue)) == 0 && source->storage == sourceHeader && *static_cast<const char* const*>(sourceHeader) == sourceCharacters &&
+                std::strcmp(sourceCharacters, "replacement") == 0, "Distinct-source assignment must preserve all source ownership and text bytes");
+        const auto retryRequests = trace.requests.size();
+        _ZN3sce4Json5Value3setERKNS0_6StringE(&destination, source);
+        Require(trace.requests.size() == retryRequests + 1 && trace.requests.back() == 12 && destination.payload == handle &&
+                std::strcmp(*static_cast<const char* const*>(header), "replacement") == 0, "Independent retry must complete the copy using the retained destination header");
+        _ZN3sce4Json5ValueD1Ev(&destination); _ZN3sce4Json5ValueD1Ev(&sourceValue);
+        Require(trace.live == baseline, "Distinct String source cases must reclaim both real payloads");
+    }
+
+}
+
 int main() {
     ValueAllocationTrace trace; ValueAllocationAllocator allocator; Parameter parameter{&allocator, &trace, 16384, 0, {}};
     std::uint8_t initializer = 0; _ZN3sce4Json11InitializerC1Ev(&initializer);
@@ -492,6 +547,7 @@ int main() {
         _ZN3sce4Json5ValueD1Ev(&value);
         Require(trace.live.size() == baseline, "Float conversion must release temporary and destination allocations");
     }
+    CheckStringSetterAliases(trace);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0 && trace.live.empty(), "Terminate value allocation contract");
     return 0;
 }
