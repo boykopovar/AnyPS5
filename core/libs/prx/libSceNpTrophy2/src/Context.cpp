@@ -83,9 +83,10 @@ int APS5_VABI sceNpTrophy2GetRewardIcon(int context, int handle, int reward_id, 
     (void)handle;
     (void)reward_id;
     (void)buffer;
-    (void)size;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (size != nullptr) {
+        *size = NP_TROPHY2_ICON_SIZE_NONE;
+    }
+    return SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND;
 }
 
 int APS5_VABI sceNpTrophy2ShowTrophyList(int context) {

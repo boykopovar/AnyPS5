@@ -124,13 +124,13 @@ int main() {
     char received = 0;
     Require(Get(server, SocketLevel, NonBlockingOption) == 0);
     Require((fcntl_nid_postfix(server, GetStatusFlags) & NonBlockingFlag) == 0);
-    Require(Set(server, SocketLevel, NonBlockingOption, 5) && Get(server, SocketLevel, NonBlockingOption) == 1);
+    Require(Set(server, SocketLevel, NonBlockingOption, 5) && Get(server, SocketLevel, NonBlockingOption) == 0x100);
     Require((fcntl_nid_postfix(server, GetStatusFlags) & NonBlockingFlag) != 0);
     Require(Fails(recv_nid_postfix(server, &received, sizeof(received), 0), Again));
     Require(Set(server, SocketLevel, NonBlockingOption, 0) && Get(server, SocketLevel, NonBlockingOption) == 0);
     Require((fcntl_nid_postfix(server, GetStatusFlags) & NonBlockingFlag) == 0);
     Require(Fails(setsockopt_nid_postfix(server, SocketLevel, NonBlockingOption, &one, sizeof(one) - 1), Invalid));
-    Require(Set(datagram, SocketLevel, NonBlockingOption, 1) && Get(datagram, SocketLevel, NonBlockingOption) == 1);
+    Require(Set(datagram, SocketLevel, NonBlockingOption, 1) && Get(datagram, SocketLevel, NonBlockingOption) == 0x100);
     Require(Fails(recv_nid_postfix(datagram, &received, sizeof(received), 0), Again));
 
 #ifndef _WIN32

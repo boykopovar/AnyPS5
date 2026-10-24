@@ -97,26 +97,6 @@ int APS5_VABI sceAudioOutGetInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioOutMasteringInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringSetParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringGetState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAudioOutMasteringTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceAudioOutSetPadSpkVolume(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

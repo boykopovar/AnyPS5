@@ -363,6 +363,26 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         result = decisive ? 0u : 1u;
         return true;
     }
+    if (node.op == Op::ULessThan32 || node.op == Op::UGreaterThan32) {
+        const bool greater = node.op == Op::UGreaterThan32;
+        std::uint64_t first = 0;
+        std::uint64_t second = 0;
+        const bool firstEvaluated = evaluate(frame, node.arguments[0], first);
+        if (firstEvaluated && static_cast<std::uint32_t>(first) == (greater ? 0u : 0xffffffffu)) {
+            result = 0u;
+            return true;
+        }
+        const bool secondEvaluated = evaluate(frame, node.arguments[1], second);
+        if (secondEvaluated && static_cast<std::uint32_t>(second) == (greater ? 0xffffffffu : 0u)) {
+            result = 0u;
+            return true;
+        }
+        if (!firstEvaluated || !secondEvaluated) return false;
+        const auto lhs = static_cast<std::uint32_t>(greater ? second : first);
+        const auto rhs = static_cast<std::uint32_t>(greater ? first : second);
+        result = lhs < rhs ? 1u : 0u;
+        return true;
+    }
     std::array<std::uint64_t, 5> operand{};
     std::int32_t origin = -1;
     for (std::uint8_t index = 0; index < node.argumentCount; ++index) {
@@ -505,8 +525,8 @@ bool SrtTape::compute(Frame& frame, const Node& node, std::uint64_t& result) con
         case Op::IEqual32: result = static_cast<std::uint32_t>(a) == static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
         case Op::INotEqual32: result = static_cast<std::uint32_t>(a) != static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
         case Op::SLessThan32: result = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(a)) < std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(b)) ? 1u : 0u; return true;
-        case Op::ULessThan32: result = static_cast<std::uint32_t>(a) < static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
-        case Op::UGreaterThan32: result = static_cast<std::uint32_t>(a) > static_cast<std::uint32_t>(b) ? 1u : 0u; return true;
+        case Op::ULessThan32:
+        case Op::UGreaterThan32: return false;
         case Op::LogicalAnd:
         case Op::LogicalOr: return false;
         case Op::LogicalXor: result = (a != 0u) != (b != 0u) ? 1u : 0u; return true;

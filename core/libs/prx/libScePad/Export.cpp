@@ -642,8 +642,11 @@ int APS5_VABI scePadGetVersionInfo(std::int32_t handle, PadVersionInfo* info) {
 }
 
 int APS5_VABI scePadGetControllerType(std::int32_t handle, std::int32_t* type) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (type == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (handle != PAD_HANDLE) return PAD_ERROR_INVALID_HANDLE;
+    *type = PAD_CONTROLLER_TYPE_DUAL_SENSE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadDisableDataConversion(std::int32_t handle, bool disabled) {

@@ -33,6 +33,8 @@ extern "C" {
 int APS5_VABI sceNpCreateRequest(void);
 int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter* param);
 int APS5_VABI sceNpDeleteRequest(int reqId);
+int APS5_VABI sceNpAbortRequest(int reqId);
+int APS5_VABI sceNpPollAsync(int reqId, int* result);
 int APS5_VABI sceNpSetTimeout(int reqId, std::int32_t resolveRetry, std::uint32_t resolveTimeout,
     std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout);
 }
@@ -238,6 +240,33 @@ void CheckRequestTimeouts() {
     Require(sceNpSetTimeout(asyncId, 2, 0, 0, 0, 0) == RequestNotFound, "deleted async request");
 }
 
+void CheckAsyncRequestLifecycle() {
+    NpCreateAsyncRequestParameter param{};
+    const int unusedAsyncResult = sceNpCreateAsyncRequest(&param);
+    Require(unusedAsyncResult > 0, "sceNpCreateAsyncRequest must return a positive request id");
+    const int deletedId = sceNpCreateAsyncRequest(&param);
+    Require(sceNpDeleteRequest(deletedId) == 0, "initial delete");
+
+    constexpr int resultSentinel = 0x5a5a5a5a;
+    const int unknownIds[] = {0, -1, 0x7fffffff, deletedId};
+    for (const int id : unknownIds) {
+        int result = resultSentinel;
+        Require(sceNpPollAsync(id, &result) == RequestNotFound, "poll must reject an absent or deleted id");
+        Require(result == resultSentinel, "poll must not touch the result for an absent or deleted id");
+        Require(sceNpPollAsync(id, nullptr) == InvalidArgument,
+            "poll must reject a null result before the id");
+        Require(sceNpAbortRequest(id) == RequestNotFound, "abort must reject an absent or deleted id");
+        Require(sceNpDeleteRequest(id) == RequestNotFound, "delete must reject an absent or deleted id");
+    }
+
+    int result = resultSentinel;
+    Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
+    Require(result == SignedOut, "poll must report the signed-out result on a live async request");
+    Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
+    Require(sceNpDeleteRequest(unusedAsyncResult) == 0, "delete after abort");
+    Require(sceNpDeleteRequest(unusedAsyncResult) == RequestNotFound, "second delete");
+}
+
 void CheckOnlineIdQueries() {
     NpOnlineId onlineId{};
     std::memcpy(onlineId.data, "player", 6);
@@ -394,6 +423,7 @@ int main() {
     CheckStateCallbacksA();
     CheckLegacyStateCallback();
     CheckRequestTimeouts();
+    CheckAsyncRequestLifecycle();
     CheckPlusAndContentRestriction();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));

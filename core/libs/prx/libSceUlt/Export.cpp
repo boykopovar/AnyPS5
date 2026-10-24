@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -818,7 +819,8 @@ int APS5_VABI sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthread
         std::memset(ulthread, 0, 512);
         gUlthreads[ulthread] = state;
     }
-    const int result = scePthreadCreate(&state->_thread, nullptr, ulthreadRunner, state.get(), name != nullptr ? name : "");
+    const std::string threadName = name != nullptr ? std::string(name).substr(0, 31) : std::string();
+    const int result = scePthreadCreate(&state->_thread, nullptr, ulthreadRunner, state.get(), threadName.c_str());
     if (result != 0) {
         std::lock_guard<std::mutex> lock(gMutex);
         gUlthreads.erase(ulthread);

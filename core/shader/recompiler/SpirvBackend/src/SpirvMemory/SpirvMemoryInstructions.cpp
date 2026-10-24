@@ -1441,31 +1441,31 @@ std::uint32_t SharedAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst, TR
         const auto low = EmitMemoryElementIndex(state, resource, rawIndex);
         const auto high = EmitMemoryElementIndex(state, resource, Binary(state, spv::OpIAdd, TypeU32(state), rawIndex, ConstantU32(state, 1u)));
         return EmitValueOrDefaultIfCondition(state, EmitMemoryElementInBounds(state, resource, high), TypeU64(state), ConstantU64(state, 0u), [&]() {
-            if (state.requirements.ldsBufferInt64Atomics) {
-                const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), low, ConstantU32(state, 1u)), ConstantU32(state, 0u));
-                EmitIfCondition(state, unaligned, [&] { RecordBdaFaultWords(state, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), rawIndex, ConstantU32(state, 2u)), ConstantU32(state, 0u), ConstantU32(state, 8u), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::Unaligned); });
-                const auto aligned = Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned);
-                return EmitValueOrDefaultIfCondition(state, aligned, TypeU64(state), ConstantU64(state, 0u), [&]() { return LdsBufferAtomic64(state, low, [&](std::uint32_t old) { return replacement(state, old); }); });
-            }
-            const auto update = [&]() {
-                const auto lowPointer = EmitMemoryElementPointer(state, resource, low);
-                const auto highPointer = EmitMemoryElementPointer(state, resource, high);
-                const auto lowValue = state.module.AllocateId();
-                const auto highValue = state.module.AllocateId();
-                state.module.AddFunction(spv::OpLoad, TypeU32(state), lowValue, lowPointer);
-                state.module.AddFunction(spv::OpLoad, TypeU32(state), highValue, highPointer);
-                const auto old = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeU64(state), old, lowValue, highValue);
-                const auto next = Unary(state, spv::OpBitcast, TypeU64(state), replacement(state, Unary(state, spv::OpBitcast, TypeScalarU64(state), old)));
-                const auto nextLow = state.module.AllocateId();
-                const auto nextHigh = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextLow, next, 0u);
-                state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextHigh, next, 1u);
-                state.module.AddFunction(spv::OpStore, lowPointer, nextLow);
-                state.module.AddFunction(spv::OpStore, highPointer, nextHigh);
-                return old;
-            };
-            return state.requirements.ldsLock ? LockedLdsUpdate(state, TypeU64(state), ConstantU64(state, 0u), update) : update();
+            const auto unaligned = Binary(state, spv::OpINotEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), rawIndex, ConstantU32(state, 1u)), ConstantU32(state, 0u));
+            EmitIfCondition(state, unaligned, [&] { RecordBdaFaultWords(state, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), rawIndex, ConstantU32(state, 2u)), ConstantU32(state, 0u), ConstantU32(state, 8u), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::Unaligned); });
+            const auto aligned = Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned);
+            return EmitValueOrDefaultIfCondition(state, aligned, TypeU64(state), ConstantU64(state, 0u), [&]() {
+                if (state.requirements.ldsBufferInt64Atomics) return LdsBufferAtomic64(state, low, [&](std::uint32_t old) { return replacement(state, old); });
+                const auto update = [&]() {
+                    const auto lowPointer = EmitMemoryElementPointer(state, resource, low);
+                    const auto highPointer = EmitMemoryElementPointer(state, resource, high);
+                    const auto lowValue = state.module.AllocateId();
+                    const auto highValue = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpLoad, TypeU32(state), lowValue, lowPointer);
+                    state.module.AddFunction(spv::OpLoad, TypeU32(state), highValue, highPointer);
+                    const auto old = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpCompositeConstruct, TypeU64(state), old, lowValue, highValue);
+                    const auto next = Unary(state, spv::OpBitcast, TypeU64(state), replacement(state, Unary(state, spv::OpBitcast, TypeScalarU64(state), old)));
+                    const auto nextLow = state.module.AllocateId();
+                    const auto nextHigh = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextLow, next, 0u);
+                    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), nextHigh, next, 1u);
+                    state.module.AddFunction(spv::OpStore, lowPointer, nextLow);
+                    state.module.AddFunction(spv::OpStore, highPointer, nextHigh);
+                    return old;
+                };
+                return state.requirements.ldsLock ? LockedLdsUpdate(state, TypeU64(state), ConstantU64(state, 0u), update) : update();
+            });
         });
     });
 }

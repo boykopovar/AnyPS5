@@ -380,7 +380,10 @@ static void CheckZoneRace() {
     std::atomic<bool> stop{false};
     std::atomic<int> torn{0};
     std::thread flipper([&] {
-        for (bool west = false; !stop.load(); west = !west) setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC+3", 1);
+        for (bool west = false; !stop.load(); west = !west) {
+            setenv_nid_postfix("TZ", west ? "UTC-5" : "UTC+3", 1);
+            std::this_thread::yield();
+        }
     });
     std::array<std::thread, 6> readers;
     for (auto& reader : readers) {

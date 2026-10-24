@@ -142,7 +142,7 @@ bool IsRelinkedImage(std::uint64_t address) {
 void FillGuestUnwindInfo(std::uint64_t address, ModuleInfoForUnwind* info) {
   ModuleInfoEx module{};
   module.st_size = sizeof(ModuleInfoEx);
-  if (sceKernelGetModuleInfoFromAddr(address, 2, &module) != 0)
+  if (sceKernelGetModuleInfoFromAddr(address, 1, &module) != 0)
     throw std::runtime_error("sceKernelGetModuleInfoForUnwind: failed to query guest module information");
   info->eh_frame_hdr_addr = module.eh_frame_hdr_addr;
   info->eh_frame_addr = module.eh_frame_addr;

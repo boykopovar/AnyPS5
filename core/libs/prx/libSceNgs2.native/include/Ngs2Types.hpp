@@ -43,6 +43,7 @@ static constexpr std::uint32_t SCE_NGS2_RACK_ID_REVERB = 0x2001;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_MASTERING = 0x3000;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SAMPLER = 0x4001;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER = 0x4002;
+static constexpr std::uint32_t SCE_NGS2_RACK_ID_CUSTOM_MASTERING = 0x4003;
 
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I16L = 0x12;
 static constexpr std::uint32_t SCE_NGS2_WAVEFORM_TYPE_PCM_I16B = 0x13;
@@ -87,6 +88,9 @@ static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_EXIT_LOOP = 0x40010004;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SAMPLER_VOICE_PARAM_PITCH = 0x40010005;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP = 0x40020000;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP = 0x40030000;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN = 0x40030004;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT = 0x40030005;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_FILTER = 0x40001300;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN = 0x40001500;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX = 0x40001900;
@@ -359,6 +363,8 @@ struct Ngs2CustomSubmixerRackOption {
     std::uint32_t max_inputs;
 };
 static_assert(sizeof(Ngs2CustomSubmixerRackOption) == 1288);
+
+using Ngs2CustomMasteringRackOption = Ngs2CustomSubmixerRackOption;
 
 struct Ngs2RackInfo {
     char name[64];

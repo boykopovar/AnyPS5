@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <thread>
 
@@ -31,6 +32,7 @@ int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
 int APS5_VABI sceHttpTerm_nid_postfix(int);
 int APS5_VABI sceHttpAuthCacheFlush(int);
 int APS5_VABI sceHttpCookieFlush(int);
+int APS5_VABI sceHttpGetMemoryPoolStats(int, void*);
 int APS5_VABI sceHttpReadData(int, void*, std::size_t);
 int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t);
 int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
@@ -53,6 +55,41 @@ alignas(16) static std::array<std::byte, 0x40> processParameters{};
 static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
+
+struct HttpPoolStats {
+    std::size_t poolSize;
+    std::size_t maxInuseSize;
+    std::size_t currentInuseSize;
+};
+static_assert(sizeof(HttpPoolStats) == 24);
+
+template <typename TCall>
+static bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+static void CheckPoolStatsRejected(int id, int expected) {
+    unsigned char buffer[sizeof(HttpPoolStats) + 16];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(sceHttpGetMemoryPoolStats(id, buffer) == expected);
+    for (unsigned char byte : buffer) Require(byte == 0x5a);
+}
+
+static void CheckPoolStats(int id, std::size_t poolSize) {
+    unsigned char buffer[sizeof(HttpPoolStats) + 16];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(sceHttpGetMemoryPoolStats(id, buffer) == 0);
+    HttpPoolStats stats;
+    std::memcpy(&stats, buffer, sizeof(stats));
+    Require(stats.poolSize == poolSize);
+    Require(stats.maxInuseSize == 0 && stats.currentInuseSize == 0);
+    for (std::size_t i = sizeof(stats); i < sizeof(buffer); ++i) Require(buffer[i] == 0x5a);
+}
 
 static void CheckUriParseCharacters() {
     char pool[256];
@@ -679,6 +716,10 @@ int main() {
     flushCaches(0, beforeInit);
     flushCaches(-1, beforeInit);
     flushCaches(request, beforeInit);
+    CheckPoolStatsRejected(0, beforeInit);
+    CheckPoolStatsRejected(-1, beforeInit);
+    CheckPoolStatsRejected(request, beforeInit);
+    Require(Throws([] { sceHttpGetMemoryPoolStats(0, nullptr); }));
     HttpEpollHandle epoll = nullptr;
     HttpNBEvent events[2]{};
     Require(sceHttpCreateEpoll(1, &epoll) == beforeInit);
@@ -692,6 +733,14 @@ int main() {
     flushCaches(-1, invalidId);
     flushCaches(INT32_MAX, invalidId);
     flushCaches(request, invalidId);
+    CheckPoolStats(context, 0x10000);
+    CheckPoolStats(context, 0x10000);
+    CheckPoolStatsRejected(0, invalidId);
+    CheckPoolStatsRejected(-1, invalidId);
+    CheckPoolStatsRejected(INT32_MAX, invalidId);
+    CheckPoolStatsRejected(request, invalidId);
+    Require(Throws([context] { sceHttpGetMemoryPoolStats(context, nullptr); }));
+    Require(Throws([] { sceHttpGetMemoryPoolStats(INT32_MAX, nullptr); }));
     Require(sceHttpCreateEpoll(-1, &epoll) == invalidId);
     Require(sceHttpCreateEpoll(context, nullptr) == invalidValue);
     Require(sceHttpCreateEpoll(context, &epoll) == 0 && epoll != nullptr);
@@ -733,11 +782,15 @@ int main() {
     Require(waitWokenBy([&] { Require(sceHttpDestroyEpoll(context, epoll) == 0); }) == 0);
 
     Require(sceHttpCreateEpoll(context, &epoll) == 0);
-    const int otherContext = sceHttpInit_nid_postfix(0, 0, 0x10000);
+    const int otherContext = sceHttpInit_nid_postfix(0, 0, 0x23000);
     Require(otherContext > 0 && otherContext != context);
     flushCaches(otherContext, 0);
+    CheckPoolStats(otherContext, 0x23000);
+    CheckPoolStats(context, 0x10000);
     Require(sceHttpTerm_nid_postfix(otherContext) == 0);
     flushCaches(otherContext, invalidId);
+    CheckPoolStatsRejected(otherContext, invalidId);
+    CheckPoolStats(context, 0x10000);
     flushCaches(context, 0);
     Require(sceHttpTerm_nid_postfix(otherContext) == invalidId);
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == 0);
@@ -745,13 +798,23 @@ int main() {
     Require(sceHttpWaitRequest(epoll, events, 2, 0) == beforeInit);
     Require(sceHttpTerm_nid_postfix(context) == beforeInit);
     flushCaches(context, beforeInit);
-    const int newContext = sceHttpInit_nid_postfix(0, 0, 0x10000);
+    CheckPoolStatsRejected(context, beforeInit);
+    const int newContext = sceHttpInit_nid_postfix(0, 0, 0x123456000ull);
     Require(newContext > 0 && newContext != context && newContext != otherContext);
     flushCaches(context, invalidId);
     flushCaches(otherContext, invalidId);
     flushCaches(newContext, 0);
+    CheckPoolStatsRejected(context, invalidId);
+    CheckPoolStatsRejected(otherContext, invalidId);
+    CheckPoolStats(newContext, 0x123456000ull);
     Require(sceHttpTerm_nid_postfix(newContext) == 0);
     flushCaches(newContext, beforeInit);
+    CheckPoolStatsRejected(newContext, beforeInit);
+    const int emptyPoolContext = sceHttpInit_nid_postfix(0, 0, 0);
+    Require(emptyPoolContext > 0);
+    CheckPoolStats(emptyPoolContext, 0);
+    CheckPoolStatsRejected(newContext, invalidId);
+    Require(sceHttpTerm_nid_postfix(emptyPoolContext) == 0);
 
     char data[16];
     Require(sceHttpReadData(1, data, sizeof(data)) == network);

@@ -228,7 +228,7 @@ public:
             viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
             viewUsage.usage = imageUsage & ~VK_IMAGE_USAGE_STORAGE_BIT;
-            if (orderFormat != VK_FORMAT_UNDEFINED) viewInfo.pNext = &viewUsage;
+            if ((imageUsage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) viewInfo.pNext = &viewUsage;
             Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created.view), "vkCreateImageView multisampled target");
         } catch (...) {
             destroy(created);
@@ -1152,6 +1152,12 @@ VkComponentMapping swapRedBlue(VkComponentMapping components) {
     return {swapped(components.r, VK_COMPONENT_SWIZZLE_R), swapped(components.g, VK_COMPONENT_SWIZZLE_G), swapped(components.b, VK_COMPONENT_SWIZZLE_B), swapped(components.a, VK_COMPONENT_SWIZZLE_A)};
 }
 
+bool sameStorageForm(const Context& context, VkFormat rendered, VkFormat requested) {
+    if (rendered == requested) return true;
+    const auto storage = HostStorageFormat(context, rendered);
+    return storage != VK_FORMAT_UNDEFINED && storage == HostStorageFormat(context, requested);
+}
+
 }
 
 std::shared_ptr<Texture> MultisampleTargetTexture(const Context& context, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType viewType) {
@@ -1214,7 +1220,7 @@ VkImageView MultisampleTargetStorageView(const Context& context, const GuestText
         if (!target->active->load(std::memory_order_acquire)) continue;
         if (target->context.device != context.device || target->target.surfaceAddress != resource.baseAddress) continue;
         const auto& rendered = target->target;
-        if (rendered.format == format && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) return target->Storage(StorageFormatForGuest(context, resource.format));
+        if (sameStorageForm(context, rendered.format, format) && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) return target->Storage(StorageFormatForGuest(context, resource.format));
         other = target.get();
     }
     if (other == nullptr) {

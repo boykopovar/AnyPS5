@@ -404,7 +404,6 @@ static void NestedWaitKeepsOuterWake() {
     Require(sceKernelDeleteSema(sem) == 0);
 }
 
-#ifdef _WIN32
 static constexpr int AddressRounds = 50;
 static std::uint32_t addressWord = 0;
 static std::uint32_t otherAddressWord = 0;
@@ -483,7 +482,36 @@ static void HandlerLeavesAddressLock(PthreadEntry entry, const char* name) {
     worker.stop.store(true);
     Require(scePthreadJoin(thread, nullptr) == 0);
 }
-#endif
+
+static std::uint32_t idleWord = 0;
+
+static void* APS5_VABI AddressIdle(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    worker.started.store(true);
+    worker.waitResult = sceKernelSyncOnAddressWait(&idleWord, 0, nullptr, "address idle");
+    return nullptr;
+}
+
+static void HandlerRunsInUnboundedAddressWait() {
+    Worker worker;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, AddressIdle, &worker, "address idle") == 0);
+    while (!worker.started.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    holdingEntered.store(false);
+    holdingLeft.store(false);
+    holdingRelease.store(false);
+    Require(sceKernelRaiseException(thread, SIGUSR1) == 0);
+    RequireInRound(AwaitWithin(holdingEntered, std::chrono::seconds(5)), "address idle", 0, "the handler did not run while the thread waited without a timeout");
+    RequireInRound(holdingThread.load() == worker.id, "address idle", 0, "the handler ran on another thread");
+    holdingRelease.store(true);
+    RequireInRound(AwaitWithin(holdingLeft, std::chrono::seconds(5)), "address idle", 0, "the handler did not return within 5 s of its release");
+    std::atomic_ref<std::uint32_t>(idleWord).store(1);
+    Require(sceKernelSyncOnAddressWake(&idleWord, 1) >= 0);
+    Require(scePthreadJoin(thread, nullptr) == 0);
+    Require(worker.waitResult == 0);
+}
 
 static void ExpectDelivery(int before, std::thread::id thread) {
     for (int attempt = 0; attempt < 5000 && calls.load() == before; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -745,10 +773,9 @@ int main() {
     NestedWaitKeepsOuterWake();
     Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
 
-#ifdef _WIN32
     Require(sceKernelInstallExceptionHandler(SIGUSR1, reinterpret_cast<void*>(&HoldingHandler)) == 0);
     HandlerLeavesAddressLock(AddressWaking, "address waking");
     HandlerLeavesAddressLock(AddressWaiting, "address waiting");
+    HandlerRunsInUnboundedAddressWait();
     Require(sceKernelRemoveExceptionHandler(SIGUSR1) == 0);
-#endif
 }

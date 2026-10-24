@@ -24,6 +24,7 @@ int APS5_VABI sceNpLwMutexInit(PthreadMutex* mutex, const char* name, std::uint6
 int APS5_VABI sceNpLwMutexTryLock(PthreadMutex* mutex);
 int APS5_VABI sceNpLwMutexUnlock(PthreadMutex* mutex);
 int APS5_VABI sceNpLwMutexDestroy(PthreadMutex* mutex);
+int APS5_VABI sceNpLwMutexLock(PthreadMutex* mutex);
 int APS5_VABI sceNpCondInit(PthreadCond* cond, const char* name, std::uint64_t flags);
 int APS5_VABI sceNpCondDestroy(PthreadCond* cond);
 int APS5_VABI sceNpCondSignal(PthreadCond* cond);
@@ -127,6 +128,8 @@ static int testSync() {
     ok &= expect(sceNpMutexUnlock(&plain) == 0, "the plain mutex did not unlock");
     ok &= expect(sceNpLwMutexTryLock(&recursive) == 0 && sceNpLwMutexTryLock(&recursive) == 0, "flag 1 did not make the mutex recursive");
     ok &= expect(sceNpLwMutexUnlock(&recursive) == 0 && sceNpLwMutexUnlock(&recursive) == 0, "the recursive mutex did not unlock twice");
+    ok &= expect(sceNpLwMutexLock(&recursive) == 0, "the recursive mutex did not lock via sceNpLwMutexLock");
+    ok &= expect(sceNpLwMutexUnlock(&recursive) == 0, "the recursive mutex did not unlock");
     ok &= expect(sceNpLwMutexDestroy(&recursive) == 0, "the recursive mutex was not destroyed");
 
     PthreadCond cond = nullptr;

@@ -199,6 +199,7 @@ static void SocketsKeepTheirPath() {
 }
 
 static void FileFlagsRoundTrip() {
+    std::remove("kernel_fcntl_probe.bin");
     const int file = sceKernelOpen("kernel_fcntl_probe.bin", CreateReadWrite, 0644);
     Require(file >= 0);
     Require(sceKernelFcntl(file, GetFlags) == ReadWrite);
@@ -275,12 +276,26 @@ static void FileFlagsRoundTrip() {
     Require(fcntl_nid_postfix(appending, GetFlags) == (WriteOnly | Append));
     Require(fcntl_nid_postfix(appending, SetFlags, Append | NonBlocking) == 0);
     Require(fcntl_nid_postfix(appending, GetFlags) == (WriteOnly | Append | NonBlocking));
-#ifdef _WIN32
-    Require(ThrowsWith([appending] { fcntl_nid_postfix(appending, SetFlags, 0); }, "fcntl: changing O_APPEND on a file is not implemented"));
-#else
+    Require(write_nid_postfix(appending, "ab", 2) == 2);
     Require(fcntl_nid_postfix(appending, SetFlags, 0) == 0);
     Require(fcntl_nid_postfix(appending, GetFlags) == WriteOnly);
-#endif
+    Require(sceKernelLseek(appending, 0, FromStart) == 0);
+    Require(write_nid_postfix(appending, "X", 1) == 1);
+    const int sharing = fcntl_nid_postfix(appending, DuplicateCommand, 0);
+    Require(sharing >= 0);
+    Require(fcntl_nid_postfix(sharing, SetFlags, Append) == 0);
+    Require(fcntl_nid_postfix(appending, GetFlags) == (WriteOnly | Append));
+    Require(sceKernelLseek(appending, 0, FromStart) == 0);
+    Require(write_nid_postfix(appending, "c", 1) == 1);
+    Require(fcntl_nid_postfix(sharing, SetFlags, 0) == 0);
+    Require(sceKernelLseek(appending, 0, FromStart) == 0);
+    Require(write_nid_postfix(appending, "Y", 1) == 1);
+    Require(close_nid_postfix(sharing) == 0);
+    const int reading = sceKernelOpen("kernel_fcntl_probe.bin", ReadOnly, 0);
+    Require(reading >= 0);
+    char written[16]{};
+    Require(sceKernelRead(reading, written, sizeof(written)) == 8 && std::memcmp(written, "Ybcdeabc", 8) == 0);
+    Require(sceKernelClose(reading) == 0);
     Require(ThrowsWith([appending] { fcntl_nid_postfix(appending, SetFlags, Append | 0x80); }, "fcntl: changing O_FSYNC on a file is not implemented"));
     Require(sceKernelClose(appending) == 0);
     std::remove("kernel_fcntl_probe.bin");

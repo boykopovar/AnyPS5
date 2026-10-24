@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <vector>
 #include <algorithm>
 #include <array>
@@ -527,7 +528,8 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
     if (host.fpregs != nullptr) std::memcpy(host.fpregs, m.fpstate, FxsaveRegisterBytes);
 }
 
-void Deliver(int, siginfo_t*, void* context) {
+void Deliver(int signum, siginfo_t*, void* context) {
+    if (TimedWait::DeferDelivery(signum)) return;
     const auto handler = Handler(RaisedSignal);
     if (handler == nullptr) {
         static constexpr char message[] = "sceKernelRaiseException: the handler was removed before the signal was delivered\n";

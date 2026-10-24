@@ -373,4 +373,73 @@ int APS5_VABI sceBgftServiceIntUploadUnregisterTaskAll(void) {
     return 0;
 }
 
+int APS5_VABI sceBgftServiceIntDebugPlayGoClearSetFreeZone() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDebugPlayGoIsSetFreeZone() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadCheckPatchUpdateState() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadClearStats() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadGetApplicationDataSize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadGetPatchGoProgress() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadHideTask() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadSetResumeState() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntDownloadSetStartState() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntPlayGoCheckDiscIniChunksInstall() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntPlayGoStartDataDiscInstall() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntSetTaskVisible() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntUploadGetAvailableTaskCount() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntUploadGetTaskInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntUploadHideTask() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntUploadSetStartState() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+int APS5_VABI sceBgftServiceIntUploadSetUploadError() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

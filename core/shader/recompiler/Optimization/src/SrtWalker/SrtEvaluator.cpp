@@ -459,6 +459,8 @@ bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* va
         case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
         case IrOpcode::LogicalAnd:
         case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+        case IrOpcode::ULessThan32:
+        case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
         default: return false;
     }
 }
@@ -819,17 +821,24 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             }
             return false;
         case IrOpcode::ULessThan32:
-            if (binary()) {
-                result = static_cast<std::uint32_t>(a) < static_cast<std::uint32_t>(b) ? 1u : 0u;
+        case IrOpcode::UGreaterThan32: {
+            const bool greater = inst.Opcode() == IrOpcode::UGreaterThan32;
+            const bool first = Arg(inst, 0, a);
+            if (first && static_cast<std::uint32_t>(a) == (greater ? 0u : 0xffffffffu)) {
+                result = 0u;
                 return true;
             }
-            return false;
-        case IrOpcode::UGreaterThan32:
-            if (binary()) {
-                result = static_cast<std::uint32_t>(a) > static_cast<std::uint32_t>(b) ? 1u : 0u;
+            const bool second = Arg(inst, 1, b);
+            if (second && static_cast<std::uint32_t>(b) == (greater ? 0xffffffffu : 0u)) {
+                result = 0u;
                 return true;
             }
-            return false;
+            if (!first || !second) return false;
+            const auto lhs = static_cast<std::uint32_t>(greater ? b : a);
+            const auto rhs = static_cast<std::uint32_t>(greater ? a : b);
+            result = lhs < rhs ? 1u : 0u;
+            return true;
+        }
         case IrOpcode::LogicalAnd:
         case IrOpcode::LogicalOr: {
             const bool decisive = inst.Opcode() == IrOpcode::LogicalOr;

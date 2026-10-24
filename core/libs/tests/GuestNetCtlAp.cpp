@@ -108,7 +108,7 @@ int main() {
         cids[i] = -1;
         Require(sceNetCtlApRegisterCallback(Callback, &cids[i], &cids[i]) == 0 && cids[i] == i);
     }
-    int extra = -1;
+    int extra = 0x5a5a;
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &extra) == kErrCallbackMax && extra == -1);
     Require(sceNetCtlApRegisterCallback(nullptr, nullptr, &extra) == kErrInvalidAddr);
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, nullptr) == kErrInvalidAddr);

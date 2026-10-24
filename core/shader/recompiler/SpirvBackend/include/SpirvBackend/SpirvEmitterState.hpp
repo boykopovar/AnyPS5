@@ -168,6 +168,8 @@ struct SpirvEmitterState {
     bool nativeF16ModesEmitted = false;
     bool f16DenormPreserveEmitted = false;
     std::uint32_t dot2F32F16Function = 0;
+    std::uint32_t reciprocalCorrectionFunction = 0;
+    std::array<std::uint32_t, 3> reciprocalTables {};
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> interpolateFunctions;
     bool integerInterpolation = false;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};

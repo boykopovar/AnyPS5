@@ -86,14 +86,18 @@ def elf_program_dynamic_symbols(path, data):
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
     dynamic = {}
     needed_offsets = []
+    terminated = False
     for position in range(0, dynamic_size, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
+            terminated = True
             break
         if tag == 1:
             needed_offsets.append(value)
         else:
             dynamic[tag] = value
+    if not terminated:
+        raise AuditError(f"{path}: dynamic segment is not terminated by DT_NULL")
     string_address = dynamic.get(5)
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
@@ -210,12 +214,16 @@ def elf_imports(path, data):
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
+            terminated = False
             for position in range(0, size, 16):
                 tag, value = unpack("<qQ", data, offset + position, path, "dynamic entry")
                 if tag == 0:
+                    terminated = True
                     break
                 if tag == 1:
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
+            if not terminated:
+                raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
     return symbols, needed
 
 
@@ -607,9 +615,11 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if not library:
             providers = sorted(set(providers) | set((module_exports or {}).get(nid, [])))
         resolved_nid = nid
+        record["symbol_mismatch"] = False
         if not providers:
             resolved_nid = nid_names.compute_nid(nid)
             providers = exports.get(resolved_nid, [])
+            record["symbol_mismatch"] = bool(library) and library not in modules and bool(providers) and resolved_nid != nid
             if not library:
                 providers = sorted(set(providers) | set((module_exports or {}).get(resolved_nid, [])))
         kind = classify(resolved_nid, library, providers, stubs, modules)
@@ -641,7 +651,7 @@ def current_stop(imports, records):
         if weak:
             continue
         record = classes.get((nid, library))
-        if record is not None and record["class"] == "absent":
+        if record is not None and (record["class"] == "absent" or record["symbol_mismatch"]):
             return record
     return None
 
@@ -700,6 +710,7 @@ def summarize(records, references, missing, missing_hosts=()):
         "missing_libraries": missing,
         "missing_host_dependencies": [{"importer": entry["importer"], "chain": list(entry["chain"])} for entry in missing_hosts],
         "library_mismatch": sum(1 for record in records if record["library_mismatch"]),
+        "symbol_mismatch": sum(1 for record in records if record["symbol_mismatch"]),
     }
 
 
@@ -747,6 +758,10 @@ def render(summary, records, missing, stops, missing_hosts=(), located=None):
                     current = record["library"]
                     lines.append(f"  [{current or 'library not named'}]")
                 lines.append(f"    {label(record)}")
+    mismatched = [record for record in records if record["symbol_mismatch"]]
+    if mismatched:
+        lines.extend(["", f"Qualified import names exported only as their NID ({len(mismatched)}): the loader cannot resolve these names"])
+        lines.extend(f"  {label(record)} -> {nid_names.compute_nid(record['nid'])}" for record in mismatched)
     if stops:
         lines.append("")
         lines.append("Current stop (first unresolved import, in registry order)")
@@ -791,6 +806,7 @@ def main(argv=None):
             inputs += [file for directory in args.libs for file in directory_files(directory, "*.prx")]
             inputs += [file for directory in args.modules for file in directory_files(directory, "*")]
             inputs += list(Path(args.source).rglob("*.cpp"))
+            inputs += [file for file in Path(args.source).glob("*/CMakeLists.txt") if file.is_file()]
             output = args.json.resolve()
             if any(output == path.resolve() or (args.json.exists() and args.json.samefile(path)) for path in inputs):
                 raise AuditError(f"{args.json}: JSON output would overwrite an input file")
@@ -825,7 +841,7 @@ def main(argv=None):
         return 2
     located = locate_missing(missing, {path.resolve().parent for path in args.registries}) if missing else None
     print(render(summary, records, missing, stops, missing_hosts, located))
-    return 1 if summary["unique_by_class"]["absent"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
+    return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
 
 
 if __name__ == "__main__":

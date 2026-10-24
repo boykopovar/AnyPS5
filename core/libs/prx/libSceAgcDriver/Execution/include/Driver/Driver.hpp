@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_DRIVER_DRIVER_HPP
 
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/DeviceAccess.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketHistory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/DispatchCache.hpp"
@@ -64,6 +65,12 @@ public:
     void SubmitFlip(const FlipInfo& info);
     void SuspendPoint();
     std::uint32_t ReserveEopFlip(const FlipInfo& info);
+    std::uint32_t ReserveEopFlipAt(const FlipInfo& info, std::uint32_t token);
+    std::vector<std::uint32_t> PendingEopFlipTokens();
+    std::pair<std::uint64_t, std::uint64_t> SerialProgress();
+    std::uint64_t FlipSubmissions() const;
+    std::vector<AwaitedWait> AwaitedWaits();
+    bool WaitIdleFor(std::chrono::milliseconds timeout);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
@@ -109,6 +116,7 @@ private:
     Driver();
     void rethrowFailure() const;
     void checkStopping() const;
+    std::uint32_t reserveEopFlip(const FlipInfo& info, std::uint32_t token);
     static bool& onWorkerThread();
     static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
     static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget);
@@ -126,9 +134,9 @@ private:
     static void forgetUnfinishedWrites(QueueWorker& worker, std::span<const std::uint64_t> labelWrites);
     static bool& completionDeferred();
     void deferCompletion(const Submission& submission);
-    void submitOpenWork();
+    void submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress = {});
     void wakeQueueZeroForCompletions();
-    void completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites);
+    void completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress);
     static bool waitFree(const Submission& submission);
     bool queue0Before(std::uint64_t received) const;
     bool orderReleased(std::uint32_t queue, std::uint64_t received) const;
@@ -367,6 +375,14 @@ private:
     std::shared_ptr<FrameTiming> pendingFrameTiming;
 
     std::atomic<std::uint64_t> flipsCounted{0};
+    struct AwaitedSlot {
+        std::atomic<std::uint64_t> address{0};
+        std::atomic<std::uint64_t> reference{0};
+        std::atomic<std::uint64_t> mask{0};
+        std::atomic<std::uint64_t> shape{0};
+    };
+    std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
+    void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
     std::atomic<std::uint64_t> flipSerial{0};
     std::atomic<std::uint64_t> flipBatchesUnsignaled{0};
 

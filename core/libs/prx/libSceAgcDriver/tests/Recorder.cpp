@@ -2561,7 +2561,7 @@ void remappedImportTests(const Device& device) {
 
 void hostImportRetirementTests(const Device& device) {
     const auto& context = device.GetContext();
-    constexpr std::size_t UnitBytes = 65536;
+    constexpr std::size_t UnitBytes = 2 * 65536;
     constexpr std::size_t AllocationBytes = 4 * UnitBytes;
     constexpr std::size_t CopyBytes = 256;
 #ifdef _WIN32
@@ -5295,6 +5295,11 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     }
     const auto decided = PrepareImportWatch(base);
 #ifndef _WIN32
+    const auto probe = ProbeImportWriteProtection(base);
+    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
+        std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+        return false;
+    }
     SetImportWatch(base, ImportWatch::Watch);
 #endif
     struct Restore {
@@ -5430,6 +5435,11 @@ bool completionStoreShadowTests(const Device& device, Recorder& recorder) {
     }
     const auto decided = PrepareImportWatch(base);
 #ifndef _WIN32
+    const auto probe = ProbeImportWriteProtection(base);
+    if (probe.failure != nullptr || probe.writtenAtImport != 0 || probe.writtenAfterSubmit != 0) {
+        std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
+        return false;
+    }
     SetImportWatch(base, ImportWatch::Watch);
 #endif
     struct Restore {

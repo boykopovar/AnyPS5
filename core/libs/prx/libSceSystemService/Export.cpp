@@ -26,6 +26,7 @@
 #include "LoadExec.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
@@ -243,6 +244,21 @@ HostLaunch PrepareLaunch(const char*, const char* const*) {
 void StartHostExecutable(HostLaunch&) {}
 #endif
 
+constexpr std::size_t TitleIdBufferSize = 10;
+
+std::string RunningTitleId() {
+    const AppTitleId titleId = GetAppTitleId_nid_postfix();
+    return std::string(titleId.value);
+}
+
+void CopyRunningTitleId(const std::string& caller, bool running, char* destination) {
+    if (!running) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
+    if (destination == nullptr) NotImplemented_nid_no_patch((caller + ": null title ID buffer").c_str());
+    const std::string titleId = RunningTitleId();
+    if (titleId.size() >= TitleIdBufferSize) NotImplemented_nid_no_patch((caller + ": title ID that does not fit 10 bytes").c_str());
+    std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
+}
+
 }
 
 extern "C" {
@@ -443,6 +459,26 @@ int APS5_VABI sceSystemServiceShowControllerSettings(void) {
 
 int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
  return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
+ if (titleId == nullptr) {
+  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: null title ID");
+ }
+ if (RunningTitleId() != titleId) {
+  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: title other than the running title");
+ }
+ return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
+ CopyRunningTitleId("sceSystemServiceGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
+ CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {

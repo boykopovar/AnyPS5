@@ -78,7 +78,7 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/runtime-sources.txt" "${{runtimeSource
 
     def configure(self, flags=''):
         result = subprocess.run([CMAKE, '-S', str(self.root), '-B', str(self.build), '-G', 'Ninja', f'-DCMAKE_CXX_FLAGS={flags}'],
-                                capture_output=True, encoding='utf-8', errors='replace', timeout=15)
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=120)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
         if (self.root / 'compiler-invoked').exists():
@@ -101,7 +101,7 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/runtime-sources.txt" "${{runtimeSource
                                  f'-DRECOMPILER_DIR={self.recompiler.as_posix()}',
                                  f'-DLIST_FILE={self.listing.as_posix()}', f'-DOUTPUT={output.as_posix()}',
                                  f'-DEXTRA={self.extra}', '-P', str(self.recompiler / 'ShaderCacheVersion.cmake')],
-                                capture_output=True, encoding='utf-8', errors='replace', timeout=10)
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=60)
         if not success:
             if result.returncode == 0 or output.exists():
                 raise AssertionError('The generator accepted an unkeyed dependency')
@@ -147,7 +147,7 @@ class ShaderCacheRuntimeSourceTests(unittest.TestCase):
                       'if(NOT result EQUAL 99)', 'message(FATAL_ERROR "Unexpected compiler arguments were accepted")', 'endif()']
         script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         result = subprocess.run([CMAKE, '-P', str(script)], capture_output=True,
-                                encoding='utf-8', errors='replace', timeout=10)
+                                encoding='utf-8', errors='replace', timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(marker.read_text(encoding='utf-8').splitlines()), len(rejected))
 

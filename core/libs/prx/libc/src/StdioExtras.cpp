@@ -130,6 +130,10 @@ void APS5_VABI _ZdlPv_nid_postfix(void* pointer) {
     if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
 }
 
+void APS5_VABI _ZdlPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
+    _ZdlPv_nid_postfix(pointer);
+}
+
 void APS5_VABI _ZdaPv_nid_postfix(void* pointer) {
     if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
 }

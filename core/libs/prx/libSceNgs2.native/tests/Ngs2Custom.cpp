@@ -103,6 +103,21 @@ static bool CreateSamplerThrows(const Ngs2CustomSamplerRackOption& option) {
     return false;
 }
 
+static Ngs2CustomMasteringRackOption MasteringRackOption(std::uint32_t channels, std::uint32_t inputs) {
+    Ngs2CustomMasteringRackOption option{};
+    auto& common = option.custom_rack_option.rack_option;
+    common.size = sizeof(option);
+    common.max_grain_samples = 512;
+    common.max_voices = 2;
+    common.max_matrices = 1;
+    common.max_ports = 1;
+    option.custom_rack_option.num_buffers = 1;
+    option.custom_rack_option.num_modules = 0;
+    option.max_channels = channels;
+    option.max_inputs = inputs;
+    return option;
+}
+
 template <typename TException, typename TParam>
 static bool ControlThrows(uintptr_t voice, std::uint32_t id, TParam param) {
     param.header = {static_cast<std::uint16_t>(sizeof(TParam)), 0, id};
@@ -825,6 +840,52 @@ static void TestCustomModuleInfo() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestCustomMastering() {
+    const auto system = CreateSystem();
+    const auto good = MasteringRackOption(2, 1);
+
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &good.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
+    const auto info = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &good.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
+    const auto voice = Voice(rack);
+
+    Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0});
+    Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 1.0f, 1.0f});
+    Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT, Ngs2MasteringVoiceOutputParam{{}, 0, 0});
+    Event(voice, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    Ngs2VoiceState state{};
+    Require(sceNgs2VoiceGetState(voice, &state, sizeof(state)) == SCE_NGS2_OK);
+    Require((state.state_flags & SCE_NGS2_VOICE_STATE_FLAG_INUSE) != 0);
+    Require(sceNgs2VoiceGetState(voice, &state, sizeof(state) - 1) == SCE_NGS2_ERROR_INVALID_OUT_SIZE);
+
+    std::vector<std::int16_t> pcm(Grain * 2 * 8, 16384);
+    const auto sampler = Sampler(system, pcm);
+    Patch(sampler, voice);
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    auto out = Render(system);
+    Require(out.size() == Grain * 2);
+    Require(out[0] != 0.0f);
+
+    Require(sceNgs2VoiceGetState(voice, &state, sizeof(state)) == SCE_NGS2_OK);
+    Require((state.state_flags & SCE_NGS2_VOICE_STATE_FLAG_PLAYING) != 0);
+
+    auto createMastering = [&](const Ngs2CustomMasteringRackOption& opt) {
+        uintptr_t r = 0;
+        return sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &opt.custom_rack_option.rack_option, &info, &r);
+    };
+
+    auto invalidChannels = good;
+    invalidChannels.max_channels = SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS + 1;
+    Require(createMastering(invalidChannels) == SCE_NGS2_ERROR_INVALID_NUM_CHANNELS);
+
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 int main() {
     for (const auto count : {1u, 2u, 24u}) {
         for (const auto delay : {DelayOption{}, DelayOption{20, 1, 1, 1.0f, 0}, DelayOption{20, 1, 8, 20000.0f, 0}}) {
@@ -839,5 +900,6 @@ int main() {
     for (const auto moduleIndex : {0u, 1u, 23u}) TestCustomLegacyUserFx(moduleIndex);
     TestCustomGain();
     TestCustomModuleInfo();
+    TestCustomMastering();
     return 0;
 }
