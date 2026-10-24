@@ -910,6 +910,19 @@ bool SetSocketOptionForKernel(int descriptor, int level, int option, const void*
 
 const bool g_socketOptionSetterRegistered = (KernelSetSocketOptionSetter_nid_no_patch(&SetSocketOptionForKernel), true);
 
+extern "C" int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint32_t* optlen);
+
+bool GetSocketOptionForKernel(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error) {
+    {
+        std::lock_guard lk(g_mutex);
+        if (g_socks.count(descriptor) == 0) return false;
+    }
+    *error = sceNetGetsockopt(descriptor, level, option, value, length) == 0 ? 0 : *errno_slot();
+    return true;
+}
+
+const bool g_socketOptionGetterRegistered = (KernelSetSocketOptionGetter_nid_no_patch(&GetSocketOptionForKernel), true);
+
 constexpr int GuestFcntlGetStatus = 3;
 constexpr int GuestFcntlSetStatus = 4;
 constexpr int GuestReadWrite = 2;
@@ -1583,6 +1596,15 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         case NET_SO_RCVTIMEO: value = socket.native->receiveTimeout; break;
         case NET_SO_SNDTIMEO: value = socket.native->sendTimeout; break;
         case NET_SO_ONESBCAST: value = socket.onesbcast; break;
+        case NET_SO_REUSEADDR:
+        case NET_SO_BROADCAST: {
+            int enabled = 0;
+            NativeLength size = sizeof(enabled);
+            if (::getsockopt(socket.native->value, SOL_SOCKET, optname == NET_SO_REUSEADDR ? SO_REUSEADDR : SO_BROADCAST, reinterpret_cast<char*>(&enabled), &size) != 0)
+                return fail(native_error());
+            value = enabled != 0 ? optname : 0;
+            break;
+        }
         case NET_SO_ERROR: {
             int pending = 0;
             NativeLength size = sizeof(pending);
