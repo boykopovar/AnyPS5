@@ -286,6 +286,16 @@ int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void* handle, MallocManag
     return FillStats(handle, stats);
 }
 
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    std::lock_guard lock(arenaMutex);
+    const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
+    if (found == arenas.end()) {
+        Error(22);
+        throw std::runtime_error("sceLibcMspaceIsHeapEmpty: unknown handle behavior");
+    }
+    return found->second->inUse == 0;
+}
+
 std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* pointer) {
     if (!pointer) return 0;
     std::lock_guard lock(arenaMutex);
@@ -350,5 +360,9 @@ int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManage
 
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
     return sceLibcMspaceMallocStatsFast_nid_postfix(handle, stats);
+}
+
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle) {
+    return sceLibcMspaceIsHeapEmpty_nid_postfix(handle);
 }
 }
