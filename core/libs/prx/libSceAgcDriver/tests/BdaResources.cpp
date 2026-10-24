@@ -237,6 +237,77 @@ void importSpanTests(const Context& context) {
     ::operator delete(block, std::align_val_t{piece});
 }
 
+void importRunGrowthTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    void* block = ::operator new(2 * piece, std::align_val_t{piece});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    std::memset(block, 0x3c, 2 * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    const auto change = [&](void* range, std::size_t bytes, bool add) {
+        GuestAllocations::Mutation mutation;
+        if (add) mutation.Add(range, bytes, true, false, true);
+        else mutation.Remove(range);
+    };
+    const auto build = [&](std::size_t pieces, const std::string& step) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(first + 64, 16);
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        leased.WriteBack();
+        Require(std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= first && first + pieces * piece <= range.end; }), "the import of a run does not cover its " + std::to_string(pieces) + " registered pieces " + step);
+    };
+    change(guest, piece, true);
+    build(1, "before its neighbour was registered");
+    change(guest + piece, piece, true);
+    build(2, "after its neighbour was registered");
+    change(guest, 0, false);
+    change(guest + piece, 0, false);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
+void importRunReplacedTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    void* block = ::operator new(3 * piece, std::align_val_t{piece});
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    std::memset(block, 0x3c, 3 * piece);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    const auto add = [&](void* range, bool writable) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(range, piece, true, writable, true);
+    };
+    const auto remove = [&](void* range) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(range);
+    };
+    const auto build = [&](std::size_t pieces, const std::string& step) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.AddReadable(first + 64, 16);
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        leased.WriteBack();
+        Require(std::any_of(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin <= first && first + pieces * piece <= range.end; }), "the import of a run does not cover its " + std::to_string(pieces) + " registered pieces " + step);
+    };
+    add(guest, true);
+    add(guest + piece, false);
+    add(guest + 2 * piece, true);
+    build(1, "while the read-only middle piece ends it");
+    for (int round = 0; round < 4; ++round) {
+        remove(guest + piece);
+        add(guest + piece, round % 2 == 0);
+        build(round % 2 == 0 ? 3 : 1, "after the middle piece was replaced by one that " + std::string(round % 2 == 0 ? "continues" : "ends") + " the run, with as many ranges registered as before");
+    }
+    remove(guest);
+    remove(guest + piece);
+    remove(guest + 2 * piece);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void spaceWritableWritesTests(const Context& context) {
     if (!AddressSpaceCounters().enabled) return;
     constexpr std::size_t piece = 65536;
@@ -809,7 +880,7 @@ private:
 
 void importMappedFailureGenerationTests(const Context& context) {
     ClearHostImports(context.device);
-    WindowedRange range(context, WindowedRange::piece, 1);
+    WindowedRange range(context, 2 * WindowedRange::piece, 1);
     ImportAllocationProbe probe(range.importing);
     probe.failure = VK_ERROR_INVALID_EXTERNAL_HANDLE;
     GuestAllocations::Mapped mapped;
@@ -840,8 +911,10 @@ void importMappedFailureGenerationTests(const Context& context) {
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         Require(ImportMappedRanges(range.importing, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "the replacement owner map import was deferred");
-        Require(probe.calls.size() == 2u, "a replacement owner did not retry its predecessor's failed import");
+        Require(probe.calls.size() == 1u, "a replacement owner was imported again at map instead of on first use");
     }
+    HostImportFor(range.importing, range.First(), range.bytes);
+    Require(probe.calls.size() == 2u, "a replacement owner did not retry its predecessor's failed import on first use");
     ClearHostImports(context.device);
 }
 
@@ -950,6 +1023,34 @@ void importRefusedWholeRangeTests(const Context& context) {
     Require(kept != nullptr && kept->buffer == buffer, "the range's window was imported again after a refused whole-range import");
 }
 
+void importPiecesOverAllocationLimitTests(const Context& context) {
+    WindowedRange range(context, 2 * WindowedRange::piece, 5);
+    const auto first = range.First();
+    const auto limit = 3 * range.window;
+    SetHostImportMaxBytes(limit);
+    {
+        GuestBufferMemory leased(range.importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        std::uint64_t covered = first;
+        for (const auto& entry : leased.AddressRanges()) {
+            if (entry.end <= first || entry.begin >= first + range.bytes) continue;
+            Require(entry.begin == covered, "the pieces of a range over the allocation limit leave a gap or overlap in the BDA table");
+            Require(entry.end - entry.begin <= limit, "a BDA table entry of a range over the allocation limit is larger than the limit");
+            const auto* piece = ExistingHostImportFor(range.importing, entry.begin, static_cast<std::size_t>(entry.end - entry.begin));
+            Require(piece != nullptr && piece->bytes <= limit && entry.deviceAddress == piece->address + (entry.begin - piece->base), "a BDA table entry of a range over the allocation limit is not served in place by an import within the limit");
+            covered = entry.end;
+        }
+        Require(covered == first + range.bytes, "the pieces of a range over the allocation limit do not cover it");
+        for (std::uint64_t at = first; at < first + range.bytes; at += range.window) {
+            const auto* piece = ExistingHostImportFor(range.importing, at, 16);
+            Require(piece != nullptr && piece->bytes <= limit, "a range over the allocation limit has an import larger than the limit");
+        }
+        leased.WriteBack();
+    }
+    SetHostImportMaxBytes(0);
+}
+
 // Two uses across neighbouring cell edges of one range, each in a build of its own, share one import: the second grows
 // the first's window to their union, and later rounds of both keep it. Before, each replaced the other's window at
 // every use.
@@ -979,7 +1080,8 @@ void importNeighbouringEdgesTests(const Context& context) {
 // A range mapped while the imports are at the budget is refused at map time without retiring an import: the map
 // observer holds no GPU lock, so it must not evict (before, it evicted the least recently used import to fit).
 void importAtMapOverBudgetTests(const Context& context) {
-    constexpr std::size_t bytes = 65536;
+    ClearHostImports(context.device);
+    constexpr std::size_t bytes = 2 * 65536;
     auto importing = context;
     importing.hostImportAlignment = bytes;
     void* kept = ::operator new(bytes, std::align_val_t{bytes});
@@ -1023,6 +1125,7 @@ void importAtMapOverBudgetTests(const Context& context) {
 }
 
 void importRequesterTests(const Context& context, const BdaTestAccess& access) {
+    ClearHostImports(context.device);
     constexpr std::size_t piece = 65536;
     constexpr std::size_t pieces = 8;
     auto* block = static_cast<std::uint8_t*>(::operator new(pieces * piece, std::align_val_t{piece}));
@@ -1039,17 +1142,32 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
     const auto made = [&](ImportRequester requester) { return counted(requester).made; };
     Require(std::string(ImportRequesterName(ImportRequester::Map)) == "map" && std::string(ImportRequesterName(ImportRequester::Build)) == "build" && std::string(ImportRequesterName(ImportRequester::Access)) == "access" && std::string(ImportRequesterName(ImportRequester::Join)) == "join" && std::string(ImportRequesterName(ImportRequester::Segment)) == "segment", "an import requester has the wrong name");
-    change(0, true);
-    {
+    const auto mappedRange = [&](std::size_t index) {
         GuestAllocations::Mapped ranges;
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         for (const auto& range : lease) {
-            if (range->address == address(0)) ranges.push_back(range);
+            if (range->address == address(index)) ranges.push_back(range);
         }
         Require(ranges.size() == 1, "the requester test's mapped range is not registered");
+        return ranges;
+    };
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block + 6 * piece, 2 * piece, true, true, true);
+    }
+    {
         const auto before = made(ImportRequester::Map);
-        static_cast<void>(ImportMappedRanges(importing, ranges, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
-        Require(made(ImportRequester::Map) == before + 1 && HostImportCovers(importing, address(0), piece), "a range imported at map time was not counted for the map requester");
+        static_cast<void>(ImportMappedRanges(importing, mappedRange(6), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+        Require(made(ImportRequester::Map) == before + 1 && HostImportCovers(importing, address(6), 2 * piece), "a range imported at map time was not counted for the map requester");
+    }
+    change(0, true);
+    {
+        const auto map = made(ImportRequester::Map);
+        const auto access = made(ImportRequester::Access);
+        static_cast<void>(ImportMappedRanges(importing, mappedRange(0), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true));
+        Require(made(ImportRequester::Map) == map && !HostImportCovers(importing, address(0), 16), "a range of 64 KiB was imported at map time");
+        Require(HostImportFor(importing, address(0), 16) != nullptr && HostImportCovers(importing, address(0), piece) && made(ImportRequester::Access) == access + 1 && made(ImportRequester::Map) == map,
+            "a range of 64 KiB left to its first GPU use was not imported there, or not counted for that use's requester");
     }
     change(1, true);
     {
@@ -1127,6 +1245,10 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     const auto counts = HostImportCounters();
     Require(counts.live >= 4 && counts.liveBytes == HostImportLiveBytes(), "the live import counts disagree with the live bytes");
     for (std::size_t index = 0; index < 6; ++index) change(index, false);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block + 6 * piece);
+    }
     ClearHostImports(importing.device);
     ::operator delete(block, std::align_val_t{piece});
 }
@@ -1148,7 +1270,7 @@ public:
     static constexpr std::size_t Window = std::size_t{8} << 20u;
 
     explicit PieceWindow(const Context& context, bool views = false) : importing(context) {
-#ifndef _WIN32
+#ifdef __linux__
         if (views) {
             reserved = mmap(nullptr, 2 * Window, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             Require(reserved != MAP_FAILED, "cannot reserve the block of 16 KiB views");
@@ -1329,6 +1451,18 @@ void importBlockFailureTests(const Context& context, const BdaTestAccess& access
     window.Add(remapped, PieceWindow::Piece);
     window.Build();
     Require(window.Imports(0, PieceWindow::Window) == 1 && window.Block(0, PieceWindow::Window), "a block that failed was not tried again after one of its ranges was mapped again: " + blockText(window, 0, PieceWindow::Window));
+}
+
+void importRunFailureShrinkTests(const Context& context, const BdaTestAccess& access) {
+    PieceWindow window(context);
+    constexpr auto half = PieceWindow::Window / 2;
+    window.AddPieces(0, PieceWindow::Window);
+    Require(HostImportFor(window.importing, window.Address(0), 16) != nullptr && window.Block(0, PieceWindow::Window), "a window of registered pieces was not imported as one 8 MiB block: " + blockText(window, 0, PieceWindow::Window));
+    ClearHostImports(window.importing.device);
+    access.limitImports(half);
+    Require(HostImportFor(window.importing, window.Address(0), 16) != nullptr && window.Block(0, half), "a lookup on an unchanged registry whose 8 MiB block failed after an earlier lookup did not shrink to the 4 MiB block: " + blockText(window, 0, PieceWindow::Window));
+    access.limitImports(std::nullopt);
+    Require(HostImportFor(window.importing, window.Address(half), 16) != nullptr && window.Block(0, half) && window.Block(half, half), "a lookup on an unchanged registry after its 8 MiB block failed imported the failed block again: " + blockText(window, 0, PieceWindow::Window));
 }
 
 void importBlockBudgetTests(const Context& context) {
@@ -2227,6 +2361,95 @@ void importWatchTests() {
 #endif
 }
 
+void sparseImportedHeapTests(const Context& context, const BdaTestAccess& access) {
+#ifndef _WIN32
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: sparse imported heaps not tested\n";
+        return;
+    }
+    constexpr std::size_t bytes = 65536;
+    void* raw = mmap(nullptr, 4 * bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "cannot reserve the sparse imported heap fixture");
+    const auto base = (reinterpret_cast<std::uintptr_t>(raw) + bytes - 1) & ~(bytes - 1);
+    auto* guest = reinterpret_cast<std::uint8_t*>(base);
+    Require(mprotect(guest, bytes, PROT_READ | PROT_WRITE) == 0, "cannot commit the sparse imported heap prefix");
+    std::memset(guest, 0x57, bytes);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, bytes);
+    auto importing = context;
+    importing.hostImportAlignment = bytes;
+    auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+    GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, bytes, true, true, true);
+    GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    const auto* imported = HostImportFor(importing, base, bytes);
+    Require(imported != nullptr, "the sparse heap prefix was not imported");
+    const auto before = MirrorCounters();
+    for (unsigned index = 0; index < 3; ++index) {
+        {
+            GuestBufferMemory described(importing);
+            described.AddReadable(base, 2 * bytes);
+            described.Upload(false);
+            std::uint32_t adjustment = 0;
+            const auto view = described.Descriptor(base, 2 * bytes, adjustment);
+            Require(view.buffer == imported->buffer && view.range == bytes && adjustment == 0, "the sparse descriptor did not bind its imported prefix");
+            Require(described.CopiedBytes() == 0 && MirrorCounters().rebuilds == before.rebuilds, "the sparse imported descriptor rebuilt or copied its heap mirror");
+            reject([&] { static_cast<void>(described.Descriptor(base + bytes + 16, 4, adjustment)); }, "starts past its copy");
+            described.WriteBack();
+        }
+        {
+            GuestBufferMemory addressed(importing);
+            addressed.AcquireRegistered();
+            addressed.Upload(true);
+            Require(MirrorCounters().rebuilds == before.rebuilds && MirrorCounters().heapMirrors == before.heapMirrors, "alternating descriptor and address builds rebuilt the imported heap mirror");
+            addressed.WriteBack();
+        }
+    }
+    {
+        auto misaligned = importing;
+        misaligned.limits.minStorageBufferOffsetAlignment = 256;
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(misaligned);
+        recorder.Activate();
+        GuestBufferMemory memory(misaligned);
+        memory.AddReadable(base + 16, 2 * bytes - 16);
+        memory.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(base + 16, 2 * bytes - 16, adjustment);
+        Require(view.buffer != imported->buffer, "a misaligned sparse descriptor bound its import in place");
+        Require(view.range != 0 && view.range <= bytes && memory.CopiedBytes() <= bytes && access.bytes(view.buffer)[view.offset + adjustment] == std::byte{0x57}, "a misaligned sparse descriptor does not serve its committed prefix alone");
+        memory.WriteBack();
+    }
+    {
+        GuestBufferMemory written(importing);
+        written.AddWritable(base, 2 * bytes);
+        written.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = written.Descriptor(base, 2 * bytes, adjustment);
+        Require(view.buffer != imported->buffer && view.range == bytes && MirrorCounters().rebuilds == before.rebuilds + 1, "a sparse writable descriptor bound a shortened import");
+        access.bytes(view.buffer)[view.offset] = std::byte{0x68};
+        guest[8] = 0x79;
+        written.WriteBack();
+        Require(guest[0] == 0x68 && guest[8] == 0x79, "the sparse writable fallback lost a GPU store or rolled back a CPU store");
+    }
+    mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+    GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+    GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    Require(HostImportFor(importing, base, bytes) == nullptr, "the sparse heap import outlived its range");
+    {
+        GuestBufferMemory sweep(importing);
+        sweep.AcquireRegistered();
+        sweep.Upload(true);
+        sweep.WriteBack();
+    }
+    Require(MirrorCounters().heapMirrors == before.heapMirrors, "the sparse imported heap fixture leaked its mirror");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, bytes);
+    munmap(raw, 4 * bytes);
+    std::cout << "Sparse imported heap tests passed\n";
+#else
+    static_cast<void>(context);
+    static_cast<void>(access);
+#endif
+}
+
 void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
         std::cout << "guest arena unavailable or not write-watched: heap mirrors not tested\n";
@@ -2724,7 +2947,7 @@ bool RunSparseBufferHoleTests(const Context& context, const BdaTestAccess& acces
                 std::memset(reservation.data + 2 * unit, 0x72, unit);
                 VkBuffer seeded = VK_NULL_HANDLE;
                 {
-                    Buffer seed(context, copied, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                    Buffer seed(context, copied, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                     std::fill(seed.Bytes().begin(), seed.Bytes().end(), std::byte{0xa5});
                     seeded = seed.Handle();
                 }
@@ -2957,6 +3180,63 @@ void RunSparseHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess
     releaseSparse(guest, reserved);
 #endif
     std::cout << "an address-based build keeps and refreshes a sparse heap's mirror once its range has left the write watch\n";
+}
+
+void RunSparseHeapMirrorBudgetTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t reserved = 128 * block;
+    constexpr std::size_t committed = 80 * block;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: sparse heaps past the heap mirror budget not tested\n";
+        return;
+    }
+    auto* guest = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(reserved, block));
+    Require(guest != nullptr, "cannot allocate the sparse heap in the guest arena");
+    GuestArena::GuestArenaCommit_nid_postfix(guest, committed, PAGE_READWRITE, block);
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: sparse heaps past the heap mirror budget not tested\n";
+        return;
+    }
+    auto* guest = reserveSparse(reserved, committed);
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(guest, reserved);
+#endif
+    std::memset(guest, 0x5a, committed);
+    const auto base = reinterpret_cast<std::uintptr_t>(guest);
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest, reserved, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    const auto before = MirrorCounters();
+    {
+        GuestBufferMemory memory(context);
+        memory.AddWritable(base, reserved);
+        memory.Upload(false);
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(base, reserved, adjustment);
+        const auto bytes = access.bytes(view.buffer);
+        Require(adjustment == 0 && view.range >= committed && bytes[view.offset + committed - 1] == std::byte{0x5a}, "a sparse heap past the heap mirror budget was not copied up to its last committed byte");
+        bytes[view.offset + 8] = std::byte{0x77};
+        memory.WriteBack();
+    }
+    Require(guest[8] == std::byte{0x77}, "a store to a sparse heap copied past the heap mirror budget was not written back");
+    const auto after = MirrorCounters();
+    Require(after.sparseBinds == before.sparseBinds && after.heapMirrors == before.heapMirrors && after.heapBytes == before.heapBytes, "a sparse heap past the heap mirror budget was mirrored or left heap mirror bytes held");
+    registry(false);
+    ClearImageMirrors(context.device);
+    ClearSnapshotCopies(context.device);
+#ifdef _WIN32
+    GuestArena::GuestArenaReset_nid_postfix(guest, reserved);
+    GuestArena::GuestArenaRelease_nid_postfix(guest, reserved);
+#else
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(guest, reserved);
+    releaseSparse(guest, reserved);
+#endif
+    std::cout << "a sparse heap whose mirror would pass the heap mirror budget is copied\n";
 }
 
 void RunHeapMirrorRunUnwatchTests(const Context& context, const BdaTestAccess& access) {
@@ -3393,6 +3673,8 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     addressTableKeyTests();
     snapshotTableTests(context, access);
     importSpanTests(context);
+    importRunGrowthTests(context);
+    importRunReplacedTests(context);
     failedImportRemapTests(context, access);
     spaceImportRunTests(context);
     spaceWritableWritesTests(context);
@@ -3410,12 +3692,13 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importMappedFailureGenerationTests(context);
     importStaleProbeTests(context, access);
     importRefusedWholeRangeTests(context);
+    importPiecesOverAllocationLimitTests(context);
     importNeighbouringEdgesTests(context);
     importAtMapOverBudgetTests(context);
     importRequesterTests(context, access);
     hostImportReportTests();
     importBlockMapTests(context, false);
-#ifndef _WIN32
+#ifdef __linux__
     importBlockMapTests(context, true);
 #endif
     importBlockBuildTests(context);
@@ -3424,6 +3707,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importBlockFlagTests(context);
     importBlockRemapTests(context);
     importBlockFailureTests(context, access);
+    importRunFailureShrinkTests(context, access);
     importBlockBudgetTests(context);
     importRefusalMemoryTests(context);
     evictingRefusalMemoryTests(context);
@@ -3439,6 +3723,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importReportFloorTests(context, access, true);
     importReportFloorTests(context, access, false);
     importReportRefusalMemoryTests(context, access);
+    sparseImportedHeapTests(context, access);
     heapMirrorTests(context, access);
     importedHeapMirrorTests(context, access);
     importWatchTests();

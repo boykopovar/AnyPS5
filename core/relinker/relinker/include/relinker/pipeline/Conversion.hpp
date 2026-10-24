@@ -46,6 +46,7 @@ struct ConversionOutput {
     RelinkResult Analysis;
     std::string WindowsDiagnostics;
     std::vector<GamePatch::AppliedPatch> AppliedPatches;
+    std::optional<std::uint64_t> LinuxBase;
 };
 
 class Conversion {

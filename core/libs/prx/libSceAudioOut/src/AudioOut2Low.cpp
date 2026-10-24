@@ -22,6 +22,10 @@ int APS5_VABI sceAudioOut2LoInit(void) {
     return sceAudioOut2Initialize();
 }
 
+int APS5_VABI sceAudioOut2LoTerminate(void) {
+    return 0;
+}
+
 int APS5_VABI sceAudioOut2LoContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) {
     return sceAudioOut2ContextQueryMemory(params, memory_size);
 }

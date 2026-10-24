@@ -110,5 +110,23 @@ int main() {
     Require(surround6_panned_out.size() == 2 && surround6_panned_out[0] == 0 && surround6_panned_out[1] == 7657,
             "6 channel downmix is panned after folding");
 
+    Audio3dInternal::Source hard_left{panned, 1, 2, false, 1.0f, -1.0f};
+    std::vector<std::int16_t> left_out;
+    Audio3dInternal::MixFrame(&hard_left, 1, 1, left_out);
+    Require(left_out.size() == 2 && left_out[0] == 10000 && left_out[1] == 0,
+            "hard left pan keeps only the left channel");
+
+    Audio3dInternal::Source zero_gain{panned, 1, 2, false, 0.0f, 0.0f};
+    std::vector<std::int16_t> zero_gain_out;
+    Audio3dInternal::MixFrame(&zero_gain, 1, 1, zero_gain_out);
+    Require(zero_gain_out.size() == 2 && zero_gain_out[0] == 0 && zero_gain_out[1] == 0,
+            "zero gain produces silence");
+
+    Audio3dInternal::Source half_gain{panned, 1, 2, false, 0.5f, 0.0f};
+    std::vector<std::int16_t> half_gain_out;
+    Audio3dInternal::MixFrame(&half_gain, 1, 1, half_gain_out);
+    Require(half_gain_out.size() == 2 && half_gain_out[0] == 5000 && half_gain_out[1] == 10000,
+            "half gain scales stereo samples by half");
+
     return 0;
 }

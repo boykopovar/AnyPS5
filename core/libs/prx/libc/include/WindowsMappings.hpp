@@ -5,6 +5,9 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#ifdef APS5_COUNT_MAPPING_QUERIES
+#include <atomic>
+#endif
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
@@ -28,18 +31,48 @@ public:
         return *mappings;
     }
 
+#ifdef APS5_COUNT_MAPPING_QUERIES
+    static std::uint64_t MemoryQueries() {
+        return queries.load(std::memory_order_relaxed);
+    }
+#endif
+
     void* Reserve(void* address, std::size_t bytes) {
         return allocate(GetCurrentProcess(), address, bytes, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
     }
 
     std::vector<std::pair<std::uintptr_t, std::size_t>> Commit(void* address, std::size_t bytes, DWORD protection, std::size_t granule, bool watched) {
+        if (granule == 0) throw std::invalid_argument("guest memory commit granule is zero");
         std::vector<std::pair<std::uintptr_t, std::size_t>> created;
         std::lock_guard lock(mutex);
         collectableRanges.clear();
+        const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
+        const auto cut = [](std::uintptr_t at, std::size_t size, const char* operation) {
+            if (!VirtualFree(reinterpret_cast<void*>(at), size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER)) fail(operation);
+        };
+        const auto replace = [&](std::uintptr_t at, std::size_t size) {
+            if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(at), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+            if (!created.empty() && created.back().first + created.back().second == at) created.back().second += size;
+            else created.emplace_back(at, size);
+        };
         const auto end = reinterpret_cast<std::uintptr_t>(address) + bytes;
         for (auto cursor = reinterpret_cast<std::uintptr_t>(address); cursor < end;) {
             const auto memory = query(cursor);
-            const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            const auto regionEnd = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+            const auto stop = std::min(end, regionEnd);
+            if (memory.State == MEM_RESERVE && std::min(end, cursor + granule) <= regionEnd) {
+                forgetClean(cursor, stop);
+                const auto holder = reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
+                if (holder != cursor) cut(holder, cursor - holder, "split guest placeholder prefix");
+                if (stop != regionEnd) cut(cursor, stop - cursor, "split guest placeholder suffix");
+                while (cursor < stop && std::min(end, cursor + granule) <= stop) {
+                    const auto size = std::min(end, cursor + granule) - cursor;
+                    if (cursor + size != stop) cut(cursor, size, "split guest placeholder suffix");
+                    replace(cursor, size);
+                    cursor += size;
+                }
+                continue;
+            }
             if (memory.State == MEM_RESERVE) {
                 const auto limit = std::min(end, cursor + granule);
                 auto placeholderEnd = stop;
@@ -50,10 +83,7 @@ public:
                 }
                 const auto size = std::min(limit, placeholderEnd) - cursor;
                 reset(cursor, size);
-                const DWORD flags = MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER | (watched ? MEM_WRITE_WATCH : 0);
-                if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(cursor), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
-                if (!created.empty() && created.back().first + created.back().second == cursor) created.back().second += size;
-                else created.emplace_back(cursor, size);
+                replace(cursor, size);
                 cursor += size;
             } else {
                 if (memory.State != MEM_COMMIT) throw std::runtime_error("guest memory is not committed");
@@ -224,10 +254,14 @@ public:
         return true;
     }
 
-    void ForgetSection(HANDLE section) {
+    bool ForgetSection(HANDLE section) {
         std::lock_guard lock(mutex);
         const auto key = reinterpret_cast<std::uintptr_t>(section);
-        physical.erase(physical.lower_bound(std::make_pair(key, std::uint64_t{0})), physical.lower_bound(std::make_pair(key + 1, std::uint64_t{0})));
+        const auto first = physical.lower_bound(std::make_pair(key, std::uint64_t{0}));
+        const auto last = physical.lower_bound(std::make_pair(key + 1, std::uint64_t{0}));
+        const bool blank = std::none_of(first, last, [](const auto& entry) { return entry.second->stored || !entry.second->page.expired(); });
+        physical.erase(first, last);
+        return blank;
     }
 
     bool BeginHostWrite(std::uintptr_t address, std::size_t bytes, bool store = true) {
@@ -886,6 +920,9 @@ private:
 
     static MEMORY_BASIC_INFORMATION query(std::uintptr_t address) {
         MEMORY_BASIC_INFORMATION memory{};
+#ifdef APS5_COUNT_MAPPING_QUERIES
+        queries.fetch_add(1, std::memory_order_relaxed);
+#endif
         if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory)) fail("query guest memory");
         return memory;
     }
@@ -1019,6 +1056,9 @@ private:
     std::map<std::uintptr_t, std::size_t> splitAliases;
     std::size_t granularity = 0x10000;
     bool watchResident = false;
+#ifdef APS5_COUNT_MAPPING_QUERIES
+    static inline std::atomic<std::uint64_t> queries{0};
+#endif
     std::mutex mutex;
     AllocateFunction allocate = nullptr;
     MapFunction map = nullptr;

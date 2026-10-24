@@ -7,7 +7,7 @@ extern "C" {
 int APS5_VABI sceHttp2Init(int, int, std::size_t, int);
 int APS5_VABI sceHttp2CreateTemplate(int, const char*, int, int);
 int APS5_VABI sceHttp2CreateRequestWithURL(int, const char*, const char*, std::uint64_t);
-int APS5_VABI sceHttp2CreateCookieBox(int);
+int APS5_VABI sceHttp2CreateCookieBox(std::size_t);
 int APS5_VABI sceHttp2DeleteCookieBox(int);
 int APS5_VABI sceHttp2SetCookieBox(int, int);
 int APS5_VABI sceHttp2CookieFlush(int);
@@ -40,7 +40,7 @@ struct Http2MemoryPoolStats {
 extern "C" {
 int APS5_VABI sceHttp2GetMemoryPoolStats(int, Http2MemoryPoolStats*);
 int APS5_VABI sceHttp2SetResolveRetry(int, std::int32_t);
-int APS5_VABI sceHttp2WebSocketSetPingInterval();
+int APS5_VABI sceHttp2WebSocketSetPingInterval(std::int32_t, std::uint32_t);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -64,15 +64,20 @@ static bool Throws(TCall call) {
 }
 
 int main() {
+    Require(sceHttp2CreateCookieBox(0) == static_cast<int>(0x817b121du));
+    Require(sceHttp2CreateCookieBox(0xffff) == static_cast<int>(0x817b121du));
+    const int independentBox = sceHttp2CreateCookieBox(0x10000);
+    Require(independentBox > 0);
+    Require(sceHttp2DeleteCookieBox(independentBox) == 0);
     const int context = sceHttp2Init(1, 1, 0x10000, 4);
     Require(context > 0);
     Http2MemoryPoolStats stats{1, 1, 1, 1};
     Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
     Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
-    const int box = sceHttp2CreateCookieBox(context);
-    const int other = sceHttp2CreateCookieBox(context);
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    const int other = sceHttp2CreateCookieBox(0x10000);
     Require(box > 0 && other > 0 && box != other && box != context);
-    const int discarded = sceHttp2CreateCookieBox(context);
+    const int discarded = sceHttp2CreateCookieBox(0x10000);
     Require(discarded > 0 && discarded != box && discarded != other);
     Require(sceHttp2DeleteCookieBox(discarded) == 0);
     Require(sceHttp2DeleteCookieBox(discarded) == InvalidId);
@@ -86,7 +91,7 @@ int main() {
     Require(request > 0);
     Require(sceHttp2SetCookieBox(request, other) == 0);
     Require(sceHttp2SetRequestNoContentLength(request) == 0);
-    Require(Throws([] { sceHttp2WebSocketSetPingInterval(); }));
+    Require(Throws([] { sceHttp2WebSocketSetPingInterval(0, 1000000); }));
     Require(sceHttp2CookieFlush(context) == 0);
     Require(sceHttp2SendRequest(request, nullptr, 0) == static_cast<int>(0x80436063));
 
@@ -116,7 +121,7 @@ int main() {
 
     const int doomedContext = sceHttp2Init(1, 1, 0x2000, 4);
     Require(doomedContext > 0);
-    const int doomedContextBox = sceHttp2CreateCookieBox(doomedContext);
+    const int doomedContextBox = sceHttp2CreateCookieBox(0x10001);
     const int doomedContextTemplate = sceHttp2CreateTemplate(doomedContext, "agent", 2, 0);
     Require(doomedContextBox > 0 && doomedContextTemplate > 0);
     const int doomedContextRequest = sceHttp2CreateRequestWithURL(doomedContextTemplate, "GET", "https://example.com/descendant", 0);
@@ -124,7 +129,8 @@ int main() {
     RequireSslSetters(doomedContext, 0);
     Require(sceHttp2Term(doomedContext) == 0);
     RequireSslSetters(doomedContext, InvalidId);
-    RequireSslSetters(doomedContextBox, InvalidId);
+    RequireSslSetters(doomedContextBox, 0);
+    Require(sceHttp2DeleteCookieBox(doomedContextBox) == 0);
     Require(sceHttp2DeleteCookieBox(doomedContextBox) == InvalidId);
     RequireSslSetters(doomedContextTemplate, InvalidId);
     RequireSslSetters(doomedContextRequest, InvalidId);

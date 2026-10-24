@@ -318,7 +318,9 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         if (number)
             msg << ": syscall number " << std::dec << *number;
 
-        throw RelinkerException(msg.str(), match.Offset);
+        RelinkerException error(msg.str(), match.Offset);
+        error.InputPath = source;
+        throw error;
     });
     if (skipped != 0) {
         std::ostringstream message;

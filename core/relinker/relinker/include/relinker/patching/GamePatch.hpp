@@ -40,6 +40,7 @@ struct PatchEntry {
 struct PatchFile {
     std::vector<PatchEntry> Entries;
     std::optional<std::string> MainTarget;
+    std::optional<std::uint64_t> LinuxBase;
 };
 
 struct PatchedRange {
@@ -114,7 +115,7 @@ void MatchTargets(const std::vector<PatchEntry>& entries, const std::vector<std:
 
 std::vector<AppliedPatch> AggregateManifest(const std::vector<std::vector<AppliedPatch>>& records);
 
-std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath);
+std::string WriteManifest(const std::vector<AppliedPatch>& patches, const std::string& mainTarget, const std::string& configPath, std::optional<std::uint64_t> linuxBase = std::nullopt);
 
 std::vector<VerifyResult> VerifyPatches(const PatchFile& file, const std::vector<VerifyTarget>& executables, const std::vector<VerifyTarget>& modules, bool outputMode);
 

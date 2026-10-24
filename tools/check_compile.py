@@ -40,19 +40,53 @@ def repository():
     return Path(result.stdout.strip())
 
 
+def validate_arguments(arguments):
+    if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
+        raise ValueError("arguments must be a nonempty list of strings with an executable")
+
+
+def compilation_database(text, source, skip_empty_commands=False):
+    database = json.loads(text)
+    if not isinstance(database, list):
+        raise ValueError(f"{source}: expected an array of command objects")
+    commands = []
+    for index, entry in enumerate(database):
+        context = f"{source}: entry {index}"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{context}: expected a command object")
+        for field in ("directory", "file"):
+            if field not in entry:
+                raise ValueError(f"{context}: missing {field}")
+            if not isinstance(entry[field], str) or not entry[field]:
+                raise ValueError(f"{context}: {field} must be a nonempty string")
+        if skip_empty_commands and "arguments" not in entry and entry.get("command") == "":
+            continue
+        if "arguments" in entry:
+            try:
+                validate_arguments(entry["arguments"])
+            except ValueError as error:
+                raise ValueError(f"{context}: {error}") from error
+        elif "command" not in entry:
+            raise ValueError(f"{context}: expected arguments or command")
+        elif not isinstance(entry["command"], str) or not entry["command"].strip():
+            raise ValueError(f"{context}: command must be a nonempty string")
+        commands.append(entry)
+    return commands
+
+
 def entries(build):
     if not build.is_dir():
         raise ValueError(f"{build} is not a directory; configure the build first")
     manifest = build / "compile_commands.json"
     if manifest.is_file():
-        return json.loads(manifest.read_text(encoding="utf-8"))
+        return compilation_database(manifest.read_text(encoding="utf-8-sig"), manifest)
     ninja = shutil.which("ninja")
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")
     result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"], encoding=ninja_encoding(ninja))
     if result.returncode != 0:
         raise ValueError(f"ninja -t compdb: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    return compilation_database(result.stdout, "ninja -t compdb", skip_empty_commands=True)
 
 
 def entry_key(entry, root):
@@ -116,8 +150,7 @@ def syntax_only(entry, source):
 
 
 def syntax_arguments(arguments, directory, source):
-    if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
-        raise ValueError("arguments must be a nonempty list of strings with an executable")
+    validate_arguments(arguments)
     for argument in arguments[1:]:
         if argument.startswith("@"):
             raise ValueError(f"unexpanded response file {argument[1:]}; provide expanded compile arguments before checking syntax")

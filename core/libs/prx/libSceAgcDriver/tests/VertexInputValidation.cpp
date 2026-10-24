@@ -71,7 +71,7 @@ int main() {
         std::uint32_t provokingVertex;
         bool accepted;
     };
-    constexpr std::array meshExpectations{MeshExpectation{0u, 0u, false}, MeshExpectation{1u, 0u, false}, MeshExpectation{2u, 0u, true}, MeshExpectation{2u, 1u, true}, MeshExpectation{2u, 2u, false}, MeshExpectation{3u, 2u, true}, MeshExpectation{3u, 3u, false}, MeshExpectation{4u, 0u, false}, MeshExpectation{4u, 3u, false}};
+    constexpr std::array meshExpectations{MeshExpectation{0u, 0u, false}, MeshExpectation{1u, 0u, true}, MeshExpectation{1u, 1u, false}, MeshExpectation{2u, 0u, true}, MeshExpectation{2u, 1u, true}, MeshExpectation{2u, 2u, false}, MeshExpectation{3u, 2u, true}, MeshExpectation{3u, 3u, false}, MeshExpectation{4u, 0u, false}, MeshExpectation{4u, 3u, false}};
     const auto meshWith = [&](const MeshExpectation& expectation) {
         auto varied = mesh;
         varied.outputPrimitiveSize = expectation.outputPrimitiveSize;

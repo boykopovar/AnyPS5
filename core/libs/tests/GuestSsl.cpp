@@ -1,8 +1,12 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "ProcessParametersFixture.hpp"
+#include <array>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <string>
 
 extern "C" {
 int APS5_VABI sceSslInit_nid_postfix(std::size_t);
@@ -61,6 +65,13 @@ struct SslCaList {
 };
 
 int main() {
+    static std::array<std::byte, 64> parameters{};
+    const std::uint64_t processSize = parameters.size();
+    const std::uint32_t processMagic = 0x4942524f;
+    std::memcpy(parameters.data(), &processSize, sizeof(processSize));
+    std::memcpy(parameters.data() + 8, &processMagic, sizeof(processMagic));
+    Require(ProcessParametersFixture::Install(parameters.data(), parameters.size()));
+    constexpr int invalidValue = static_cast<int>(0x8095F007);
     constexpr int notFound = static_cast<int>(0x8095F004);
     constexpr int invalidArg = static_cast<int>(0x8095177A);
     int marker = 0;
@@ -69,7 +80,7 @@ int main() {
     SslMemoryPoolStats stats{1, 1, 1, 1};
     Require(sceSslGetMemoryPoolStats(context, &stats) == 0);
     Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
-    Require(sceSslGetCaCerts(context, nullptr) == invalidArg);
+    Require(sceSslGetCaCerts(context, nullptr) == invalidValue);
     Require(sceSslFreeCaCerts(context, nullptr) == invalidArg);
 
     SslCaCerts certs{&marker, 3, &marker};
@@ -80,7 +91,7 @@ int main() {
     Require(sceSslFreeCaCerts(context, &certs) == 0);
     Require(certs.certs == nullptr && certs.num == 0 && certs.pool == nullptr);
 
-    Require(sceSslGetCaList(context, nullptr) == invalidArg);
+    Require(sceSslGetCaList(context, nullptr) == invalidValue);
     Require(sceSslFreeCaList(context, nullptr) == invalidArg);
 
     void* handle = &marker;
@@ -102,7 +113,6 @@ int main() {
     Require(list.certs == nullptr && list.num == 0);
 
     constexpr int invalidId = static_cast<int>(0x8095F006);
-    constexpr int invalidValue = static_cast<int>(0x8095F007);
     constexpr int badLength = static_cast<int>(0x80951773);
     constexpr int badDescriptor = static_cast<int>(0x80410109);
     Require(sceSslInit_nid_postfix(0) == static_cast<int>(0x80020016));
@@ -129,7 +139,14 @@ int main() {
     Require(sceSslGetAlpnSelected(connection) == nullptr);
     Require(sceSslSetAlpn(connection, "http/1.1") == 0);
     Require(sceSslSetAlpn(connection, "") == badLength);
-    Require(Throws([&] { sceSslSetAlpn(connection, nullptr); }));
+    Require(sceSslSetAlpn(connection, ",h2") == badLength);
+    Require(sceSslSetAlpn(connection, "h2,") == badLength);
+    Require(sceSslSetAlpn(connection, "h2,,http/1.1") == badLength);
+    Require(sceSslSetAlpn(connection, std::string(255, 'a').c_str()) == 0);
+    Require(sceSslSetAlpn(connection, std::string(256, 'a').c_str()) == badLength);
+    Require(sceSslSetAlpn(connection, std::string(65535, 'a').c_str()) == badLength);
+    Require(sceSslSetAlpn(0, nullptr) == invalidId);
+    Require(sceSslSetAlpn(connection, nullptr) == 0);
     Require(sceSslGetAlpnSelected(connection) == nullptr);
     char buffer[4]{};
     Require(sceSslConnect(connection) == badDescriptor);
@@ -144,7 +161,7 @@ int main() {
     Require(sceSslDisableVerifyOption(unknown, serverVerify) == invalidId);
     Require(sceSslSetMinSslVersion(unknown, 5) == invalidId);
     Require(sceSslSetAlpn(unknown, "http/1.1") == invalidId);
-    Require(Throws([&] { sceSslGetAlpnSelected(unknown); }));
+    Require(sceSslGetAlpnSelected(unknown) == nullptr);
     Require(sceSslConnect(unknown) == invalidId);
     Require(sceSslRead(unknown, buffer, sizeof(buffer), 0) == invalidId);
     Require(sceSslWrite(unknown, buffer, sizeof(buffer), 0) == invalidId);
@@ -158,16 +175,25 @@ int main() {
     Require(sceSslDisableVerifyOption(connection, serverVerify) == invalidId);
     Require(sceSslSetMinSslVersion(connection, 5) == invalidId);
     Require(sceSslSetAlpn(connection, "http/1.1") == invalidId);
-    Require(Throws([&] { sceSslGetAlpnSelected(connection); }));
+    Require(sceSslGetAlpnSelected(connection) == nullptr);
     Require(sceSslConnect(connection) == invalidId);
     Require(sceSslClose(connection) == invalidId);
     Require(sceSslCreateConnection(context, 0, "example.com") == invalidId);
     Require(sceSslDeleteConnection(connection) == invalidId);
 
-    Require(sceSslGetCaList(context, nullptr) == invalidArg);
+    Require(sceSslGetCaList(context, nullptr) == invalidValue);
     Require(sceSslFreeCaList(context, nullptr) == invalidArg);
     list = {&handle, 3};
-    Require(Throws([&] { sceSslGetCaList(context, &list); }));
+    Require(sceSslGetCaList(context, &list) == invalidId);
+    Require(list.certs == &handle && list.num == 3);
+    Require(sceSslGetCaCerts(context, nullptr) == invalidId);
+    certs = {&marker, 3, &marker};
+    Require(sceSslGetCaCerts(context, &certs) == invalidId);
+    Require(certs.certs == &marker && certs.num == 3 && certs.pool == &marker);
     Require(Throws([&] { sceSslFreeCaList(context, &list); }));
-    Require(Throws([&] { sceSslUnloadCert(context); }));
+    for (const std::uint32_t sdkVersion : {0u, 0x074fffffu, 0x07500000u, 0x09000000u}) {
+        std::memcpy(parameters.data() + 16, &sdkVersion, sizeof(sdkVersion));
+        Require(sceSslUnloadCert(context) == (sdkVersion < 0x07500000 ? 0 : invalidId));
+        Require(sceSslUnloadCert(0) == (sdkVersion < 0x07500000 ? 0 : invalidId));
+    }
 }

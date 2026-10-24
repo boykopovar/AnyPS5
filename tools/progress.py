@@ -456,6 +456,31 @@ def write_site(output, libraries, shaders):
     (output / "progress.html").write_text(summary(libraries, shaders), encoding="utf-8")
 
 
+def validate_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        raise ValueError("snapshot must be an object")
+    for section in ("libraries", "shaders"):
+        data = snapshot.get(section)
+        if not isinstance(data, dict):
+            raise ValueError(f"{section} must be an object")
+        groups = data.get("groups")
+        if not isinstance(groups, list):
+            raise ValueError(f"{section}.groups must be a list")
+        percent = data.get("percent")
+        if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
+            raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        for index, group in enumerate(groups):
+            location = f"{section}.groups[{index}]"
+            if not isinstance(group, dict) or not isinstance(group.get("name"), str):
+                raise ValueError(f"{location} must be an object with a string name")
+            if "shared_sources" in group and not isinstance(group["shared_sources"], str):
+                raise ValueError(f"{location}.shared_sources must be a string")
+            for field in ("done_names", "todo_names", "inert_names"):
+                values = group.get(field, [])
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError(f"{location}.{field} must be a list of strings")
+
+
 def main(argv=None):
     global PRX, OPCODES
     previous = PRX, OPCODES
@@ -479,6 +504,11 @@ def main(argv=None):
                     snapshots.append(json.loads(path.read_text(encoding="utf-8")))
                 except (OSError, ValueError) as error:
                     parser.error(f"{path}: {error}")
+            for path, snapshot in zip(args.compare, snapshots):
+                try:
+                    validate_snapshot(snapshot)
+                except ValueError as error:
+                    parser.error(f"{path}: {error}")
             base, head = snapshots
             print(report(base, head), end="")
             return 0
@@ -487,13 +517,19 @@ def main(argv=None):
         if args.root:
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
-        libraries, shaders = collect_libraries(), collect_shaders()
+        try:
+            libraries, shaders = collect_libraries(), collect_shaders()
+        except FileNotFoundError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
         try:
             libraries = select_libraries(libraries, args.module or [])
         except ValueError as error:
             parser.error(str(error))
         if args.output:
-            write_site(args.output, libraries, shaders)
+            try:
+                write_site(args.output, libraries, shaders)
+            except OSError as error:
+                parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:
             print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
         else:

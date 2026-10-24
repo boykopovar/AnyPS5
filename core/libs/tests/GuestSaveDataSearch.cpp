@@ -27,6 +27,16 @@ static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 
+template <typename TFunction>
+static bool ThrowsRuntimeError(TFunction function) {
+    try {
+        function();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
 static std::vector<std::string> Search(std::uint32_t key, std::uint32_t order, std::uint32_t capacity, std::uint32_t* hits) {
     SceSaveDataDirName pattern{};
     std::snprintf(pattern.data, sizeof(pattern.data), "SORT_%%");
@@ -277,6 +287,18 @@ static void SaveSize() {
     Require(info.blocks == 96 && info.free_blocks == 95, "mount info must report the save's blocks and free blocks");
 }
 
+static void CheckNullArguments() {
+    SaveDataDirNameSearchCond cond{};
+    cond.user_id = 1;
+    SaveDataDirNameSearchResult result{};
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch");
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch");
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch2");
+    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch2");
+    cond.order = 2;
+    Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+}
+
 static void BlockSize() {
     CreateSized("BLOCK_A", 48, 70000);
     auto info = MountInfo("BLOCK_A");
@@ -300,6 +322,7 @@ int main() {
         TrailingWildcards();
         SaveSize();
         BlockSize();
+        CheckNullArguments();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         status = 1;

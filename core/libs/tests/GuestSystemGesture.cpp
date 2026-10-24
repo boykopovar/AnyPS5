@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 extern "C" {
+int APS5_VABI sceSystemGestureClose(std::int32_t);
 std::int32_t APS5_VABI sceSystemGestureOpen(std::int32_t, const void*);
 int APS5_VABI sceSystemGestureGetPrimitiveTouchEvents(std::int32_t, void*, std::uint32_t, std::uint32_t*);
 int APS5_VABI sceSystemGestureGetPrimitiveTouchEventsCount(std::int32_t);
@@ -26,10 +27,11 @@ int APS5_VABI sceSystemGestureUpdateTouchRecognizer(std::int32_t, void*);
 int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(std::int32_t, void*, const void*);
 int APS5_VABI sceSystemGestureResetPrimitiveTouchRecognizer(std::int32_t);
 int APS5_VABI sceSystemGestureUpdateAllTouchRecognizer(std::int32_t);
-int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(std::int32_t, const void*);
-int APS5_VABI sceSystemGestureInitializePrimitiveTouchRecognizer(const void*);
+int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(std::int32_t, const SystemGestureTouchPadData*);
+int APS5_VABI sceSystemGestureInitializePrimitiveTouchRecognizer();
 int APS5_VABI sceSystemGestureFinalizePrimitiveTouchRecognizer(void);
 int APS5_VABI sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(std::int32_t, std::uint16_t, void*);
+int APS5_VABI sceSystemGestureDebugGetVersion(void);
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -118,7 +120,7 @@ static SystemGesturePrimitiveTouchEvent SingleEvent(std::int32_t handle) {
 }
 
 static void TestPrimitiveTouchEvents(std::int32_t handle, int invalidArgument, int invalidHandle, int indexOutOfArray) {
-    Require(sceSystemGestureInitializePrimitiveTouchRecognizer(nullptr) == 0);
+    Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
 
     const PadData pressed = TouchReport(1000, {{7, 480, 471}});
     Require(UpdateWithReports(handle, &pressed, 1) == 0);
@@ -174,12 +176,14 @@ static void TestPrimitiveTouchEvents(std::int32_t handle, int invalidArgument, i
     Require(byId.current_position.x == 300.0f && byId.current_position.y == 400.0f);
     Require(sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(handle, 4, nullptr) == invalidArgument);
     Require(sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(handle + 1, 4, &byId) == invalidHandle);
-    Require(Throws([&] { sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(handle, 9, &byId); }));
+    Require(sceSystemGestureGetPrimitiveTouchEventByPrimitiveID(handle, 9, &byId) == static_cast<int>(0x80890005));
+    Require(sceSystemGestureGetPrimitiveTouchEventByIndex(handle + 1, 0, nullptr) == invalidArgument);
 
     std::array<SystemGesturePrimitiveTouchEvent, 2> events{};
     std::uint32_t reported = 7;
     Require(sceSystemGestureGetPrimitiveTouchEvents(handle, events.data(), 1, &reported) == 0);
     Require(reported == 1);
+    Require(sceSystemGestureGetPrimitiveTouchEvents(handle, events.data(), 0, &reported) == invalidArgument);
     Require(events[0].primitive_id == 3);
     reported = 7;
     Require(sceSystemGestureGetPrimitiveTouchEvents(handle, events.data(), 2, &reported) == 0);
@@ -188,11 +192,14 @@ static void TestPrimitiveTouchEvents(std::int32_t handle, int invalidArgument, i
     Require(sceSystemGestureGetPrimitiveTouchEventByIndex(handle, 2, &event) == indexOutOfArray);
 
     Require(UpdateWithReports(handle + 1, &pair, 1) == invalidHandle);
-    Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle, nullptr) == 0);
+    Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle, nullptr) == invalidArgument);
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 2);
 
     const std::array<PadData, 2> sequence{TouchReport(7000, {{3, 110, 200}}), TouchReport(8000, {{3, 130, 210}})};
-    Require(UpdateWithReports(handle, sequence.data(), 2) == 0);
+    Require(UpdateWithReports(handle, sequence.data(), 2) == invalidArgument);
+    Require(UpdateWithReports(handle, sequence.data(), -1) == invalidArgument);
+    Require(UpdateWithReports(handle, sequence.data(), 1) == 0);
+    Require(UpdateWithReports(handle, sequence.data() + 1, 1) == 0);
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 1);
     event = SingleEvent(handle);
     Require(event.primitive_id == 3);
@@ -205,12 +212,17 @@ static void TestPrimitiveTouchEvents(std::int32_t handle, int invalidArgument, i
     Require(UpdateWithReports(handle, &pressed, 1) == 0);
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 1);
     Require(sceSystemGestureFinalizePrimitiveTouchRecognizer() == 0);
-    Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 0);
+    Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
+    Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 1);
 }
 
 int main() {
-    constexpr int invalidArgument = static_cast<int>(0x80D10002);
-    constexpr int invalidHandle = static_cast<int>(0x80D10003);
+    constexpr int invalidArgument = static_cast<int>(0x80890001);
+    constexpr int invalidHandle = static_cast<int>(0x80890006);
+    Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureInitializePrimitiveTouchRecognizer() == 0);
+    Require(sceSystemGestureOpen(1, nullptr) == invalidArgument);
     const std::int32_t handle = sceSystemGestureOpen(0, nullptr);
 
     std::array<unsigned char, 64> buffer;
@@ -229,7 +241,7 @@ int main() {
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 0);
     Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle + 1) == invalidHandle);
 
-    constexpr int indexOutOfArray = static_cast<int>(0x80D10005);
+    constexpr int indexOutOfArray = static_cast<int>(0x80890004);
     SystemGestureTouchRecognizer recognizer{};
     SystemGestureRectangle rectangle{};
     count = 7;
@@ -253,7 +265,7 @@ int main() {
     Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, &recognizer, &rectangle) == 0);
     Require(sceSystemGestureResetPrimitiveTouchRecognizer(handle) == 0);
     Require(sceSystemGestureUpdateAllTouchRecognizer(handle) == 0);
-    Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle, nullptr) == 0);
+    Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle, nullptr) == invalidArgument);
     Require(sceSystemGestureAppendTouchRecognizer(handle, nullptr) == invalidArgument);
     Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle, &recognizer, nullptr) == invalidArgument);
     Require(sceSystemGestureAppendTouchRecognizer(handle + 1, &recognizer) == invalidHandle);
@@ -267,9 +279,27 @@ int main() {
     Require(sceSystemGestureUpdateTouchRecognizerRectangle(handle + 1, &recognizer, &rectangle) == invalidHandle);
     Require(sceSystemGestureResetPrimitiveTouchRecognizer(handle + 1) == invalidHandle);
     Require(sceSystemGestureUpdateAllTouchRecognizer(handle + 1) == invalidHandle);
-    Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle + 1, nullptr) == invalidHandle);
+    Require(sceSystemGestureUpdatePrimitiveTouchRecognizer(handle + 1, nullptr) == invalidArgument);
 
+    Require(sceSystemGestureDebugGetVersion() == 0x6a00);
     TestTouchRecognizerInformation(handle, invalidArgument, invalidHandle);
     TestPrimitiveTouchEvents(handle, invalidArgument, invalidHandle, indexOutOfArray);
+    std::array<std::int32_t, 7> otherHandles{};
+    for (auto& otherHandle : otherHandles) {
+        otherHandle = sceSystemGestureOpen(0, nullptr);
+        Require(otherHandle > 0 && otherHandle != handle);
+        Require(sceSystemGestureGetPrimitiveTouchEventsCount(otherHandle) == 0);
+    }
+    Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x8089000A));
+    Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == 1);
+    Require(sceSystemGestureClose(otherHandles[0]) == 0);
+    Require(sceSystemGestureClose(otherHandles[0]) == invalidHandle);
+    const auto replacement = sceSystemGestureOpen(0, nullptr);
+    Require(replacement > 0 && replacement != otherHandles[0]);
+    Require(sceSystemGestureGetPrimitiveTouchEventsCount(otherHandles[0]) == invalidHandle);
+    Require(sceSystemGestureClose(replacement) == 0);
+    for (std::size_t index = 1; index < otherHandles.size(); ++index) Require(sceSystemGestureClose(otherHandles[index]) == 0);
+    Require(sceSystemGestureClose(handle) == 0);
+    Require(sceSystemGestureFinalizePrimitiveTouchRecognizer() == 0);
     return 0;
 }

@@ -7,6 +7,7 @@ import tempfile
 
 from test_guest_host_libc import importing
 from test_guest_intel_trampolines import main_fixture
+from test_guest_module_dir import pe_export_names
 from test_guest_module_directories import module_with_symbol, needed_libraries
 from test_guest_needed_modules import executable_with_needed
 
@@ -96,8 +97,9 @@ def main():
             (case / "Media" / "Modules" / "needed.prx").write_bytes(module_with_symbol(True))
             result, output = convert(case, windows, ["--module-dir", "Media/Modules", "--executable", "picker/picker.bin"], executable_with_needed())
             if windows:
-                assert result.returncode == 2 and "Guest modules convert differently for picker/picker.bin" in result.stderr, result.stderr
-                assert not output.exists()
+                assert result.returncode == 0, (result.stdout, result.stderr)
+                assert (output.parent / "picker.picker.bin.exe").exists()
+                assert "__aps5_guest_initialize" in pe_export_names((output.parent / "app0" / "Media" / "Modules" / "needed.prx.guest.prx").read_bytes())
             else:
                 assert result.returncode == 0, (result.stdout, result.stderr)
                 secondary = output.parent / "picker.picker.bin.elf"

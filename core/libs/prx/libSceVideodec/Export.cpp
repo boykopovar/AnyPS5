@@ -168,6 +168,10 @@ struct Decoder2Crop {
 };
 
 static_assert(sizeof(ConfigInfo) == 40 && sizeof(ResourceInfo) == 56 && sizeof(Ctrl) == 24);
+static_assert(offsetof(ConfigInfo, maxFrameWidth) == 20 && offsetof(ConfigInfo, videodecFlags) == 32);
+static_assert(offsetof(ResourceInfo, cpuGpuMemorySize) == 24 && offsetof(ResourceInfo, maxFrameBufferSize) == 40);
+static_assert(offsetof(ResourceInfo, frameBufferAlignment) == 48);
+static_assert(sizeof(Decoder2ConfigInfo) == 40 && sizeof(Decoder2MemoryInfo) == 72);
 static_assert(sizeof(FrameBuffer) == 24 && sizeof(InputData) == 48 && sizeof(PictureInfo) == 112);
 static_assert(sizeof(CodecInfo) == 64 && offsetof(PictureInfo, codec) == 48);
 
@@ -211,6 +215,20 @@ struct Geometry {
     std::uint32_t pitch = 0;
     Decoder2Crop crop{};
 };
+
+Decoder2ConfigInfo MapConfig(const ConfigInfo& config) {
+    Decoder2ConfigInfo decoderConfig{};
+    decoderConfig.thisSize = sizeof(Decoder2ConfigInfo);
+    decoderConfig.resourceType = 1;
+    decoderConfig.codecType = CodecAvc;
+    decoderConfig.profile = config.profile;
+    decoderConfig.maxLevel = config.maxLevel;
+    decoderConfig.maxFrameWidth = config.maxFrameWidth;
+    decoderConfig.maxFrameHeight = config.maxFrameHeight;
+    decoderConfig.maxDpbFrameCount = config.maxDpbFrameCount;
+    decoderConfig.decodePipelineDepth = 1;
+    return decoderConfig;
+}
 
 Geometry Measure(const Decoder2OutputInfo& output, const Decoder2Crop& crop) {
     Geometry geometry;
@@ -266,16 +284,7 @@ extern "C" {
 int APS5_VABI sceVideodecCreateDecoder(const ConfigInfo* config, const ResourceInfo* resource, Ctrl* ctrl) {
     if (config == nullptr || resource == nullptr || ctrl == nullptr) return VideodecErrorArgumentPointer;
     if (config->thisSize < sizeof(ConfigInfo) || resource->thisSize < sizeof(ResourceInfo)) return VideodecErrorStructSize;
-    Decoder2ConfigInfo decoderConfig{};
-    decoderConfig.thisSize = sizeof(Decoder2ConfigInfo);
-    decoderConfig.resourceType = 1;
-    decoderConfig.codecType = CodecAvc;
-    decoderConfig.profile = config->profile;
-    decoderConfig.maxLevel = config->maxLevel;
-    decoderConfig.maxFrameWidth = config->maxFrameWidth;
-    decoderConfig.maxFrameHeight = config->maxFrameHeight;
-    decoderConfig.maxDpbFrameCount = config->maxDpbFrameCount;
-    decoderConfig.decodePipelineDepth = 1;
+    const auto decoderConfig = MapConfig(*config);
     Decoder2MemoryInfo decoderMemory{};
     decoderMemory.thisSize = sizeof(Decoder2MemoryInfo);
     decoderMemory.cpuMemorySize = resource->cpuMemorySize;
@@ -400,6 +409,28 @@ int APS5_VABI sceVideodecReset(Ctrl* ctrl) {
     } catch (const std::exception&) {
         return VideodecErrorApiFail;
     }
+    return 0;
+}
+int APS5_VABI sceVideodecMapMemory(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceVideodecQueryResourceInfo(const ConfigInfo* config, ResourceInfo* resource) {
+    if (config == nullptr || resource == nullptr) return VideodecErrorArgumentPointer;
+    if (config->thisSize < sizeof(ConfigInfo) || resource->thisSize < sizeof(ResourceInfo)) return VideodecErrorStructSize;
+    const auto decoderConfig = MapConfig(*config);
+    Decoder2MemoryInfo decoderMemory{};
+    decoderMemory.thisSize = sizeof(Decoder2MemoryInfo);
+    try {
+        sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&decoderConfig, &decoderMemory);
+    } catch (const std::exception&) {
+        return VideodecErrorConfigInfo;
+    }
+    resource->cpuMemorySize = decoderMemory.cpuMemorySize;
+    resource->cpuGpuMemorySize = decoderMemory.cpuGpuMemorySize;
+    resource->maxFrameBufferSize = decoderMemory.maxFrameBufferSize;
+    resource->frameBufferAlignment = decoderMemory.frameBufferAlignment;
     return 0;
 }
 

@@ -14,7 +14,7 @@ SAMPLE = "core/libs/prx/libSceExample/Sample.cpp"
 DOC_TEXT = "| `APS5_DOCUMENTED` | presence |\n| `APS5_GONE` | presence |\n"
 
 
-def repository(root, base, head):
+def repository(root, base, head, target=None):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
                         "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
@@ -34,16 +34,23 @@ def repository(root, base, head):
     git("add", ".")
     git("commit", "-qm", "docs: add base")
     git("tag", "base")
+    if target is not None:
+        git("branch", "pull")
+        apply(target)
+        git("add", "-A")
+        git("commit", "-qm", "docs: advance the target")
+        git("tag", "target")
+        git("checkout", "-q", "pull")
     apply(head)
     git("add", "-A")
     git("commit", "-qm", "feat: read a new name")
 
 
-def findings_of(root, base, head):
+def findings_of(root, base, head, ref="base", directory="."):
     previous = os.getcwd()
-    os.chdir(root)
+    os.chdir(root / directory)
     try:
-        check = Check("base", "HEAD")
+        check = Check(ref, "HEAD")
         check.env_reference()
         return check.findings
     finally:
@@ -51,12 +58,53 @@ def findings_of(root, base, head):
 
 
 class EnvReferenceDiffTests(unittest.TestCase):
-    def run_case(self, base, head):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
-        repository(root, base, head)
-        return findings_of(root, base, head)
+    def run_case(self, base, head, target=None, directory="."):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        repository(root, base, head, target)
+        return findings_of(root, base, head, "base" if target is None else "target", directory)
+
+    def test_a_check_from_a_subdirectory_reports_the_same_findings(self):
+        other = "core/libs/prx/libSceExample/Other.cpp"
+        base = {
+            DOC: DOC_TEXT,
+            SAMPLE: 'static bool a = std::getenv("APS5_DOCUMENTED") != nullptr;\n',
+            other: 'static bool b = std::getenv("APS5_DOCUMENTED") != nullptr;\n',
+        }
+        target = {DOC: DOC_TEXT + "| `APS5_TARGET_ROW` | presence |\n"}
+        head = {
+            DOC: "| `APS5_DOCUMENTED` | presence |\n",
+            SAMPLE: base[SAMPLE] + 'static bool c = std::getenv("APS5_NEW_READ") != nullptr;\n'
+                    'static bool d = std::getenv("APS5_TARGET_ROW") != nullptr;\n',
+            other: None,
+        }
+        expected = [("env-reference", SAMPLE, 2, f"APS5_NEW_READ is read here but has no row in {DOC}")]
+        self.assertEqual(self.run_case(base, head, target), expected)
+        for directory in ("core", "core/libs/prx/libSceExample", "docs/dev"):
+            with self.subTest(directory=directory):
+                self.assertEqual(self.run_case(base, head, target, directory), expected)
+
+    def test_a_new_spaced_read_is_reported_at_its_line(self):
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        head = {SAMPLE: base[SAMPLE] + 'auto value = !std::getenv \t("APS5_NEW_READ");\n'}
+        self.assertEqual(self.run_case(base, head), [("env-reference", SAMPLE, 2,
+                                                    f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
+    def test_removing_a_compact_read_keeps_a_row_still_used_by_a_spaced_read(self):
+        other = "core/libs/prx/libSceExample/Other.cpp"
+        base = {
+            DOC: DOC_TEXT,
+            SAMPLE: 'auto a = std::getenv("APS5_DOCUMENTED");\n',
+            other: 'auto b = _wgetenv \t(L"APS5_DOCUMENTED");\n',
+        }
+        self.assertEqual(self.run_case(base, {SAMPLE: "int unrelated;\n"}), [])
+
+    def test_a_removed_row_is_reported_when_a_spaced_read_remains(self):
+        base = {DOC: DOC_TEXT, SAMPLE: 'auto value = std::getenv \t("APS5_DOCUMENTED");\n'}
+        head = {DOC: "| `APS5_GONE` | presence |\n"}
+        self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
+                                                    "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
 
     def test_only_a_name_the_pull_request_adds_is_reported_at_its_line(self):
         base = {
@@ -142,6 +190,29 @@ class EnvReferenceDiffTests(unittest.TestCase):
         head = {SAMPLE: "int unrelated;\n"}
         self.assertEqual(self.run_case(base, head), [("env-reference", DOC, 0,
                                                       "APS5_GONE has a row but the code no longer reads it")])
+
+    def test_a_row_the_target_added_after_the_branch_point_documents_the_read(self):
+        base = {SAMPLE: "int unrelated;\n"}
+        target = {DOC: "| `APS5_NEW_READ` | presence |\n"}
+        head = {SAMPLE: 'static bool a = std::getenv("APS5_NEW_READ") != nullptr;\n'}
+        self.assertEqual(self.run_case(base, head, target), [])
+
+    def test_a_read_the_target_does_not_document_is_still_reported(self):
+        base = {SAMPLE: "int unrelated;\n"}
+        target = {DOC: DOC_TEXT}
+        head = {SAMPLE: 'static bool a = std::getenv("APS5_NEW_READ") != nullptr;\n'}
+        self.assertEqual(self.run_case(base, head, target), [("env-reference", SAMPLE, 1,
+                                                              f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
+    def test_a_row_the_pull_request_removes_is_reported_although_the_target_keeps_it(self):
+        base = {
+            DOC: DOC_TEXT,
+            SAMPLE: 'static bool a = std::getenv("APS5_DOCUMENTED") != nullptr;\n',
+        }
+        target = {"core/libs/prx/libSceExample/Other.cpp": "int other;\n"}
+        head = {DOC: "| `APS5_GONE` | presence |\n"}
+        self.assertEqual(self.run_case(base, head, target), [("env-reference", DOC, 0,
+                                                              "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
 
 
 if __name__ == "__main__":

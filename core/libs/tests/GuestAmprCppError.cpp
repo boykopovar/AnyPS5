@@ -12,7 +12,7 @@
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
 struct Category { const void* const* vtable; };
-struct ErrorCode { int value; const Category* category; };
+struct ErrorCode { int reserved; int value; const Category* category; };
 struct SystemError { const void* const* vtable; const char* message; ErrorCode code; };
 static_assert(sizeof(SystemError) == 32 && offsetof(SystemError, code) == 16);
 
@@ -80,8 +80,8 @@ static void CheckCategory(const SystemError& error) {
     Require(std::strcmp(Slot<CategoryName>(category->vtable, 2)(category), "generic") == 0, 23);
     const ErrorCode condition = Slot<CategoryCondition>(category->vtable, 4)(category, error.code.value);
     Require(condition.value == error.code.value && condition.category == category, 24);
-    const ErrorCode other {error.code.value + 1, category};
-    const ErrorCode foreign {error.code.value, nullptr};
+    const ErrorCode other {0, error.code.value + 1, category};
+    const ErrorCode foreign {0, error.code.value, nullptr};
     auto equivalentCondition = Slot<CategoryEquivalentCondition>(category->vtable, 5);
     Require(equivalentCondition(category, error.code.value, &condition), 25);
     Require(!equivalentCondition(category, error.code.value, &other), 26);
@@ -111,7 +111,7 @@ static void CheckCopies(const SystemError& error) {
     Require(copy.code.value == error.code.value && copy.code.category == error.code.category, 41);
     SystemError assigned {};
     _ZNSt12system_errorC1ERKS__nid_postfix(&assigned, &error);
-    assigned.code = {0, nullptr};
+    assigned.code = {0, 0, nullptr};
     Require(_ZNSt12system_erroraSERKS__nid_postfix(&assigned, &error) == &assigned, 42);
     Require(assigned.code.value == error.code.value && assigned.code.category == error.code.category, 43);
     _ZNSt12system_errorD1Ev_nid_postfix(&assigned);

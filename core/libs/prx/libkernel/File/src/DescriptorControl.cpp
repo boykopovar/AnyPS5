@@ -3,6 +3,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FileLock.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -21,8 +22,10 @@
 #include <string>
 
 #ifdef _WIN32
+#include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #else
 #include <fcntl.h>
@@ -114,6 +117,7 @@ enum class Kind { File, Directory, Pipe, Socket, Device, RandomDevice, ArchivedF
 struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
+    bool pipe = false;
 };
 
 std::mutex g_mutex;
@@ -178,8 +182,33 @@ Entry InitialEntry(int fd) {
     return {false, std::make_shared<int>(status)};
 }
 
+void SetHostAppend(int fd, bool append, const char* function) {
+    const int translation = ::_setmode(fd, _O_BINARY);
+    if (translation == -1 || ::_setmode(fd, translation) == -1)
+        throw std::runtime_error(std::string(function) + ": cannot read the translation mode of descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
+    HANDLE copy = nullptr;
+    if (!::DuplicateHandle(::GetCurrentProcess(), WindowsDescriptorHandle_nid_no_patch(fd), ::GetCurrentProcess(), &copy, 0, TRUE, DUPLICATE_SAME_ACCESS))
+        throw std::runtime_error(std::string(function) + ": cannot duplicate the handle of descriptor " + std::to_string(fd) + ", error=" + std::to_string(::GetLastError()));
+    const int replacement = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(copy), (append ? _O_APPEND : 0) | translation);
+    if (replacement < 0) {
+        ::CloseHandle(copy);
+        throw std::runtime_error(std::string(function) + ": cannot open a replacement for descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
+    }
+    auto* const standard = HostStandardHandle_nid_no_patch(fd);
+    const int moved = ::_dup2(replacement, fd);
+    const int error = errno;
+    ::_close(replacement);
+    KeepStandardHandle_nid_no_patch(fd, standard);
+    if (moved != 0)
+        throw std::runtime_error(std::string(function) + ": cannot replace descriptor " + std::to_string(fd) + ", errno=" + std::to_string(error));
+}
+
 void ApplyHostStatus(int fd, Kind kind, int changed, int next, const char* function) {
-    if ((changed & Append) && kind == Kind::File) Unsupported(function, "changing O_APPEND", kind, fd);
+    if ((changed & Append) && kind == Kind::File) {
+        const auto status = g_entries.at(fd).status;
+        for (const auto& [descriptor, entry] : g_entries)
+            if (entry.status == status && DescriptorIsOpen_nid_no_patch(descriptor)) SetHostAppend(descriptor, (next & Append) != 0, function);
+    }
     if ((changed & Nonblocking) && kind == Kind::Device) Unsupported(function, "changing O_NONBLOCK", kind, fd);
     if ((changed & Nonblocking) && kind == Kind::Pipe) SetPipeNonblocking(fd, (next & Nonblocking) != 0, function);
 }
@@ -361,6 +390,12 @@ int CurrentStatus(int fd) {
     return *Materialize(fd).status;
 }
 
+bool CreatedByPipe(int fd) {
+    std::lock_guard lock(g_mutex);
+    const auto found = g_entries.find(fd);
+    return found != g_entries.end() && found->second.pipe;
+}
+
 void SetCloseOnExec(int fd, bool value) {
     std::lock_guard lock(g_mutex);
     Materialize(fd).closeOnExec = value;
@@ -481,7 +516,7 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
             return 0;
         case GetStatusFlags: {
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int access = AccessMode(fd, "fcntl");
+            const int access = CreatedByPipe(fd) ? ReadWrite : AccessMode(fd, "fcntl");
             return access | CurrentStatus(fd);
         }
         case SetStatusFlags: {
@@ -560,11 +595,17 @@ void RememberDescriptor(int fd, int openFlags) {
 #endif
 }
 
+void RememberPipe(int fd) {
+    RememberDescriptor(fd, 0);
+    std::lock_guard lock(g_mutex);
+    g_entries[fd].pipe = true;
+}
+
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    auto status = Materialize(from).status;
-    g_entries[to] = Entry{false, std::move(status)};
+    const auto& source = Materialize(from);
+    g_entries[to] = Entry{false, source.status, source.pipe};
 #ifdef _WIN32
     File::SharePositionedTransfer(from, to);
     GuestFileLockShare_nid_no_patch(from, to);
@@ -583,6 +624,16 @@ bool Appends(int fd) {
     return found != g_entries.end() && found->second.status && (*found->second.status & Append) != 0;
 }
 
+bool IsCharacterDevice(int fd) {
+    if (fd < 0) return false;
+#ifdef _WIN32
+    return DescriptorIsOpen_nid_no_patch(fd) && !GuestSockets::IsOpen(fd) && !File::DirectoryDescriptorPath(fd) && ::GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_CHAR;
+#else
+    struct stat status{};
+    return ::fstat(fd, &status) == 0 && S_ISCHR(status.st_mode);
+#endif
+}
+
 bool IsVnode(int fd) {
     if (fd < 0 || File::IsRandomDevice(fd)) return false;
     if (File::IsArchivedFile(fd)) return true;
@@ -595,4 +646,8 @@ bool IsVnode(int fd) {
 #endif
 }
 
+}
+
+extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
+    return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
 }

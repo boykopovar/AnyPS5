@@ -6,4 +6,4 @@
 
 ### Functional
 
-- [sceMouseResetAbsolutePosition](../../../core/libs/prx/libSceMouse/Export.cpp) (libSceMouse) - signature taken from a call site (a handle, then x and y as 16-bit values: PPSA30601 passes the centre of its display size); behaviour not measured on hardware. Validates initialization and the handle like `sceMouseRead` and returns `MOUSE_OK`; the position is not stored because the library reports relative motion only
+- [sceMouseResetAbsolutePosition](../../../core/libs/prx/libSceMouse/Export.cpp) (libSceMouse) - the position is not stored because the host reports relative motion only. Native input widths and validation are confirmed, including the default 1920 by 1080 bounds; other native coordinate modes and absolute reports remain unimplemented

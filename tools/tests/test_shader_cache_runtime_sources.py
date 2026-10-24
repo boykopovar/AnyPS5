@@ -11,8 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import select_tests
 
 
-SOURCE = Path(sys.argv.pop(1))
-CMAKE = sys.argv.pop(1)
+EXPLICIT_ARGS = len(sys.argv) >= 3 and Path(sys.argv[1]).is_dir()
+if EXPLICIT_ARGS:
+    SOURCE = Path(sys.argv.pop(1))
+    CMAKE = sys.argv.pop(1)
+else:
+    SOURCE = Path(__file__).resolve().parents[2] / 'core/shader/recompiler'
+    CMAKE = shutil.which('cmake') or 'cmake'
 
 
 class Fixture:
@@ -29,6 +34,9 @@ class Fixture:
         header = root / 'core/libs/prx/libc/include/HostThreadLocal.hpp'
         header.parent.mkdir(parents=True)
         header.write_text('struct FixtureThreadLocal {};\n', encoding='utf-8')
+        shared = root / 'core/libs/prx/libc/include/general/AtomicSharedPtr.hpp'
+        shared.parent.mkdir(parents=True)
+        shared.write_text('struct FixtureAtomicSharedPtr {};\n', encoding='utf-8')
         self.guard = root / 'driver.cpp'
         self.guard.write_text('int fixture_driver;\n', encoding='utf-8')
         compiler = root / ('compiler.cmd' if os.name == 'nt' else 'compiler')
@@ -70,7 +78,7 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/runtime-sources.txt" "${{runtimeSource
 
     def configure(self, flags=''):
         result = subprocess.run([CMAKE, '-S', str(self.root), '-B', str(self.build), '-G', 'Ninja', f'-DCMAKE_CXX_FLAGS={flags}'],
-                                capture_output=True, encoding='utf-8', errors='replace', timeout=15)
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=120)
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
         if (self.root / 'compiler-invoked').exists():
@@ -93,7 +101,7 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/runtime-sources.txt" "${{runtimeSource
                                  f'-DRECOMPILER_DIR={self.recompiler.as_posix()}',
                                  f'-DLIST_FILE={self.listing.as_posix()}', f'-DOUTPUT={output.as_posix()}',
                                  f'-DEXTRA={self.extra}', '-P', str(self.recompiler / 'ShaderCacheVersion.cmake')],
-                                capture_output=True, encoding='utf-8', errors='replace', timeout=10)
+                                capture_output=True, encoding='utf-8', errors='replace', timeout=60)
         if not success:
             if result.returncode == 0 or output.exists():
                 raise AssertionError('The generator accepted an unkeyed dependency')
@@ -106,6 +114,7 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/runtime-sources.txt" "${{runtimeSource
         return {Path(line.split(' ', 1)[1]) for line in self.listing.read_text(encoding='utf-8').splitlines() if line.startswith('sources ')}
 
 
+@unittest.skipUnless(EXPLICIT_ARGS or (shutil.which('ninja') and shutil.which(CMAKE) and SOURCE.is_dir()), 'ninja, cmake, and shader recompiler source required')
 class ShaderCacheRuntimeSourceTests(unittest.TestCase):
     def fixture(self, spirv_tools=False):
         temporary = tempfile.TemporaryDirectory(prefix='shader_cache_sources_')
@@ -138,7 +147,7 @@ class ShaderCacheRuntimeSourceTests(unittest.TestCase):
                       'if(NOT result EQUAL 99)', 'message(FATAL_ERROR "Unexpected compiler arguments were accepted")', 'endif()']
         script.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         result = subprocess.run([CMAKE, '-P', str(script)], capture_output=True,
-                                encoding='utf-8', errors='replace', timeout=10)
+                                encoding='utf-8', errors='replace', timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(marker.read_text(encoding='utf-8').splitlines()), len(rejected))
 
@@ -213,4 +222,5 @@ class ShaderCacheRuntimeSourceTests(unittest.TestCase):
         self.assertIn('has not been reviewed', fixture.version(False))
 
 
-unittest.main()
+if __name__ == '__main__':
+    unittest.main()

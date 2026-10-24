@@ -84,7 +84,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_cursor PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    set(ANYPS5_VIDEO_OUT_TEST_DRIVER "offscreen" CACHE STRING
+    if(WIN32)
+        set(videoOutTestDriver "windows")
+    else()
+        set(videoOutTestDriver "offscreen")
+    endif()
+    set(ANYPS5_VIDEO_OUT_TEST_DRIVER "${videoOutTestDriver}" CACHE STRING
         "SDL video driver for VideoOut flip tests")
 
     foreach(flipMode IN ITEMS labels labels_main)
@@ -133,6 +138,9 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME video_out_frame_dump_queue COMMAND video_out_frame_dump_queue_tests)
     set_tests_properties(video_out_frame_dump_queue PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
         ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_DUMP_FRAMES=4;APS5_DUMP_SCALE=4")
+    add_test(NAME video_out_frame_dump_wait COMMAND video_out_frame_dump_queue_tests wait)
+    set_tests_properties(video_out_frame_dump_wait PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
+        ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_DUMP_FRAMES=4;APS5_DUMP_SCALE=1")
 endif()
 
 if(BUILD_TESTING)

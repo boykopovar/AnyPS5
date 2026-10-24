@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 
 extern "C" {
@@ -15,7 +16,7 @@ int APS5_VABI sceNetCtlApGetResult(int eventType, int* errorCode);
 int APS5_VABI sceNetCtlApGetInfo(void* info);
 int APS5_VABI sceNetCtlApGetState(int* state);
 int APS5_VABI sceNetCtlApStop(void);
-int APS5_VABI sceNetCtlApGetConnectInfo(std::uint8_t* optStr, void* connectInfo);
+int APS5_VABI sceNetCtlApGetConnectInfo(const char* optStr, void* connectInfo);
 }
 
 namespace {
@@ -74,9 +75,13 @@ int main() {
     std::memset(connect, 0x5a, sizeof(connect));
     const std::uint64_t connectSize = sizeof(connect);
     std::memcpy(connect, &connectSize, sizeof(connectSize));
-    std::uint8_t option[] = "opt";
+    const char option[] = "opt";
     Require(sceNetCtlApGetConnectInfo(option, connect) == kErrNotStarted);
     Require(sceNetCtlApGetConnectInfo(nullptr, connect) == kErrNotStarted);
+    Require(sceNetCtlApGetConnectInfo("", connect) == kErrNotStarted);
+    Require(sceNetCtlApGetConnectInfo("12345678", connect) == kErrNotStarted);
+    Require(sceNetCtlApGetConnectInfo("123456789", nullptr) == static_cast<int>(0x80412901u));
+    Require(sceNetCtlApGetConnectInfo("123456789", connect) == static_cast<int>(0x80412901u));
     for (std::size_t i = sizeof(connectSize); i < sizeof(connect); ++i) Require(connect[i] == 0x5a);
     Require(sceNetCtlApGetConnectInfo(option, nullptr) == kErrInvalidAddr);
     const std::uint64_t wrongConnectSize = sizeof(info);
@@ -95,6 +100,7 @@ int main() {
         int code = 0x5a5a;
         Require(sceNetCtlApClearEvent(type) == kErrInvalidType);
         Require(sceNetCtlApGetResult(type, &code) == kErrInvalidType && code == 0x5a5a);
+        Require(sceNetCtlApGetResult(type, nullptr) == kErrInvalidAddr);
     }
 
     int cids[8];

@@ -137,9 +137,14 @@ private:
 class Clock {
 public:
     double Now() const {
+        if (overrideTime >= 0.0) return overrideTime;
         if (!running || paused) return base;
         const std::chrono::duration<double, std::milli> elapsed = std::chrono::steady_clock::now() - wall;
         return std::max(0.0, base + elapsed.count() * speed / NormalSpeed);
+    }
+
+    void SetOverrideForTest(double milliseconds) {
+        overrideTime = milliseconds;
     }
 
     void Rebase(double milliseconds) {
@@ -176,6 +181,7 @@ private:
     std::int32_t speed = NormalSpeed;
     bool running = false;
     bool paused = false;
+    double overrideTime = -1.0;
 };
 
 enum class PacketKind { Data, Flush, Drain, End, Reopen };
@@ -321,7 +327,8 @@ public:
         return true;
     }
 
-    int Start() override {
+    int Start(std::uint64_t startTime) override {
+        if (duration != 0 && startTime > duration) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         if (video.stream < 0 && audio.stream < 0) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
         for (auto* decoder : {&video, &audio}) {
             if (decoder->stream < 0) continue;
@@ -332,7 +339,7 @@ public:
             }
         }
         addVideoDecodeAheadBuffers();
-        const auto start = startOffset;
+        const auto start = startTime != 0 ? startTime : startOffset;
         startOffset = 0;
         seek(start);
         {
@@ -432,6 +439,11 @@ public:
         condition.notify_all();
     }
 
+    void SetClockTimeForTest(double milliseconds) override {
+        std::lock_guard lock(mutex);
+        presentationClock.SetOverrideForTest(milliseconds);
+    }
+
     bool GetVideoData(AvPlayerFrameInfoEx& info) override {
         bool taken = false;
         {
@@ -516,7 +528,8 @@ private:
         }
         if (synced || audioDriving) {
             const auto now = presentationClock.Now();
-            if (synced && static_cast<double>(front.info.timestamp) > now) return false;
+            const double syncTolerance = static_cast<double>(frameDuration()) * 0.75;
+            if (synced && static_cast<double>(front.info.timestamp) > now + syncTolerance) return false;
             while (frames.size() > 1 && frames[1].epoch == frames.front().epoch && static_cast<double>(frames[1].info.timestamp) <= now) recycleFront(video);
         }
         present(video, info);

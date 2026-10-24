@@ -1,14 +1,20 @@
 #include <algorithm>
+#include <bit>
 #include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <list>
+#include <locale>
 #include <mutex>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -25,7 +31,7 @@ enum ValueType : std::int32_t {
     TypeObject = 7,
 };
 
-constexpr int JsonErrorParse = static_cast<int>(0x80920101);
+constexpr int JsonErrorParse = static_cast<int>(0x80848101);
 
 struct Node;
 struct Value { Node* node; };
@@ -33,8 +39,16 @@ struct String { std::string* text; };
 struct Array { std::list<Value>* items; };
 struct Pair;
 struct Object { std::list<Pair>* items; };
-struct ArrayIterator { std::list<Value>::iterator it; };
-struct ObjectIterator { std::list<Pair>::iterator it; };
+struct ArrayIteratorState {
+    std::list<Value>::iterator position;
+    std::list<Value>::iterator end;
+};
+struct ArrayIterator { ArrayIteratorState* state; };
+struct ObjectIteratorState {
+    std::list<Pair>* owner = nullptr;
+    std::list<Pair>::iterator position{};
+};
+struct ObjectIterator { ObjectIteratorState* state; };
 struct Pair {
     String key;
     std::uint64_t reserved;
@@ -289,8 +303,9 @@ void AppendEscaped(std::string& out, const std::string& text) {
 std::string RealText(double value) {
     if (!std::isfinite(value)) throw std::runtime_error("sce::Json: cannot serialize a non-finite number");
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%.17g", value);
-    return buffer;
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general, 17);
+    if (result.ec != std::errc{}) throw std::runtime_error("sce::Json: real number formatting failed");
+    return std::string(buffer, result.ptr);
 }
 
 void Serialize(std::string& out, const Node& n) {
@@ -333,30 +348,84 @@ void Serialize(std::string& out, const Node& n) {
     throw std::runtime_error("sce::Json: invalid value type");
 }
 
+int CompareText(const char* left, const char* right) {
+    while (*left != '\0' && *left == *right) {
+        ++left;
+        ++right;
+    }
+    return static_cast<unsigned char>(*left) - static_cast<unsigned char>(*right);
+}
+
+std::list<Pair>::iterator ObjectPosition(const Object& object, const std::string& key) {
+    return std::find_if(object.items->begin(), object.items->end(), [&](const Pair& pair) { return std::strcmp(pair.key.text->c_str(), key.c_str()) >= 0; });
+}
+
+Value& ObjectEntry(Object& object, const std::string& key) {
+    auto position = ObjectPosition(object, key);
+    if (position != object.items->end() && std::strcmp(position->key.text->c_str(), key.c_str()) == 0) return position->value;
+    Pair pair{};
+    Construct(pair.key, key);
+    try {
+        Construct(pair.value);
+        return object.items->insert(position, pair)->value;
+    } catch (...) {
+        Destroy(pair.value);
+        Destroy(pair.key);
+        throw;
+    }
+}
+
+using ParserReadCallback = int (APS5_VABI*)(char&, void*);
+
 class Parser {
 public:
-    Parser(const char* text, std::size_t size, const Handlers& handlers) : _text(text), _end(text + size), _handlers(handlers) {}
+    Parser(const char* text, std::size_t size, const Handlers& handlers) : text(text), end(text + size), handlers(handlers) {}
+    Parser(ParserReadCallback read, void* context, const Handlers& handlers) : read(read), context(context), handlers(handlers) {}
 
     bool Parse(Node& out) {
         skip();
-        if (!value(out)) return false;
-        skip();
-        return _text == _end || *_text == '\0';
+        return value(out);
     }
+
+    int Error() const { return readError < 0 ? readError : JsonErrorParse; }
 
 private:
     static constexpr std::size_t MaxNestingDepth = 512;
 
-    const char* _text;
-    const char* _end;
-    Handlers _handlers;
-    std::size_t _depth = 0;
+    const char* text = nullptr;
+    const char* end = nullptr;
+    ParserReadCallback read = nullptr;
+    void* context = nullptr;
+    Handlers handlers;
+    std::size_t depth = 0;
+    int current = -2;
+    int readError = 0;
 
-    void skip() { while (_text < _end && (*_text == ' ' || *_text == '\t' || *_text == '\n' || *_text == '\r')) ++_text; }
+    int peek() {
+        if (current != -2) return current;
+        if (read != nullptr) {
+            char character = 0;
+            readError = read(character, context);
+            current = readError < 0 ? -1 : static_cast<unsigned char>(character);
+        } else if (text == end) {
+            readError = JsonErrorParse;
+            current = -1;
+        } else {
+            current = static_cast<unsigned char>(*text++);
+        }
+        return current;
+    }
+    int take() {
+        const int character = peek();
+        if (character >= 0) current = -2;
+        return character;
+    }
+    void skip() { while (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') take(); }
     bool literal(const char* word) {
-        const auto length = std::strlen(word);
-        if (static_cast<std::size_t>(_end - _text) < length || std::memcmp(_text, word, length) != 0) return false;
-        _text += length;
+        for (; *word != '\0'; ++word) {
+            if (peek() != static_cast<unsigned char>(*word)) return false;
+            take();
+        }
         return true;
     }
     static void appendUtf8(std::string& out, std::uint32_t code) {
@@ -366,10 +435,9 @@ private:
         else { out += static_cast<char>(0xf0 | (code >> 18)); out += static_cast<char>(0x80 | ((code >> 12) & 0x3f)); out += static_cast<char>(0x80 | ((code >> 6) & 0x3f)); out += static_cast<char>(0x80 | (code & 0x3f)); }
     }
     bool hex4(std::uint32_t& code) {
-        if (_end - _text < 4) return false;
         code = 0;
         for (int i = 0; i < 4; ++i) {
-            const char c = *_text++;
+            const int c = take();
             code <<= 4;
             if (c >= '0' && c <= '9') code |= static_cast<std::uint32_t>(c - '0');
             else if (c >= 'a' && c <= 'f') code |= static_cast<std::uint32_t>(c - 'a' + 10);
@@ -379,14 +447,14 @@ private:
         return true;
     }
     bool string(std::string& out) {
-        if (_text >= _end || *_text != '"') return false;
-        ++_text;
-        while (_text < _end && *_text != '"') {
-            const char c = *_text++;
+        if (peek() < 0 || peek() != '"') return false;
+        take();
+        while (peek() >= 0 && peek() != '"') {
+            const int c = take();
             if (static_cast<unsigned char>(c) < 0x20) return false;
             if (c != '\\') { out += c; continue; }
-            if (_text >= _end) return false;
-            switch (*_text++) {
+            if (peek() < 0) return false;
+            switch (take()) {
                 case '"': out += '"'; break;
                 case '\\': out += '\\'; break;
                 case '/': out += '/'; break;
@@ -409,31 +477,30 @@ private:
                 default: return false;
             }
         }
-        if (_text >= _end) return false;
-        ++_text;
+        if (peek() < 0) return false;
+        take();
         return true;
     }
     bool number(Node& out) {
-        const char* start = _text;
-        if (_text < _end && *_text == '-') ++_text;
-        if (_text >= _end || *_text < '0' || *_text > '9') return false;
-        if (*_text == '0') ++_text;
-        else while (_text < _end && *_text >= '0' && *_text <= '9') ++_text;
+        std::string token;
+        if (peek() >= 0 && peek() == '-') token.push_back(static_cast<char>(take()));
+        if (peek() < 0 || peek() < '0' || peek() > '9') return false;
+        while (peek() >= '0' && peek() <= '9') token.push_back(static_cast<char>(take()));
         bool integral = true;
-        if (_text < _end && *_text == '.') {
+        if (peek() >= 0 && peek() == '.') {
             integral = false;
-            ++_text;
-            if (_text >= _end || *_text < '0' || *_text > '9') return false;
-            while (_text < _end && *_text >= '0' && *_text <= '9') ++_text;
+            token.push_back(static_cast<char>(take()));
+            if (peek() < 0 || peek() < '0' || peek() > '9') return false;
+            while (peek() >= 0 && peek() >= '0' && peek() <= '9') token.push_back(static_cast<char>(take()));
         }
-        if (_text < _end && (*_text == 'e' || *_text == 'E')) {
+        if (peek() >= 0 && (peek() == 'e' || peek() == 'E')) {
             integral = false;
-            ++_text;
-            if (_text < _end && (*_text == '+' || *_text == '-')) ++_text;
-            if (_text >= _end || *_text < '0' || *_text > '9') return false;
-            while (_text < _end && *_text >= '0' && *_text <= '9') ++_text;
+            token.push_back(static_cast<char>(take()));
+            if (peek() >= 0 && (peek() == '+' || peek() == '-')) token.push_back(static_cast<char>(take()));
+            if (peek() < 0 || peek() < '0' || peek() > '9') return false;
+            while (peek() >= 0 && peek() >= '0' && peek() <= '9') token.push_back(static_cast<char>(take()));
         }
-        const std::string text(start, _text);
+        const std::string& text = token;
         if (integral) {
             errno = 0;
             if (text[0] == '-') {
@@ -442,21 +509,29 @@ private:
             } else {
                 const unsigned long long value = std::strtoull(text.c_str(), nullptr, 10);
                 if (errno == 0) {
-                    if (value <= static_cast<unsigned long long>(INT64_MAX)) { out.type = TypeInteger; out.integer = static_cast<std::int64_t>(value); }
-                    else { out.type = TypeUInteger; out.uinteger = value; }
+                    out.type = TypeUInteger;
+                    out.uinteger = value;
                     return true;
                 }
             }
         }
-        const double real = std::strtod(text.c_str(), nullptr);
-        if (!std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
+        double real = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), real);
+        bool converted = parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+        if (parsed.ec == std::errc::result_out_of_range) {
+            std::istringstream stream(text);
+            stream.imbue(std::locale::classic());
+            stream >> real;
+            converted = !stream.fail() && stream.eof();
+        }
+        if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
         out.type = TypeReal;
         out.real = real;
         return true;
     }
     bool value(Node& out) {
-        if (_text >= _end) return false;
-        switch (*_text) {
+        if (peek() < 0) return false;
+        switch (peek()) {
             case 'n': if (!literal("null")) return false; SetType(out, TypeNull); return true;
             case 't': if (!literal("true")) return false; SetType(out, TypeBoolean); out.boolean = true; return true;
             case 'f': if (!literal("false")) return false; SetType(out, TypeBoolean); return true;
@@ -468,49 +543,47 @@ private:
                 return true;
             }
             case '[': {
-                if (_depth == MaxNestingDepth) return false;
-                ++_text;
-                ++_depth;
+                if (depth == MaxNestingDepth) return false;
+                take();
+                ++depth;
                 SetType(out, TypeArray);
                 skip();
-                if (_text < _end && *_text == ']') { ++_text; --_depth; return true; }
+                if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
                 for (;;) {
                     Value item{};
                     Construct(item);
-                    item.node->handlers = _handlers;
+                    item.node->handlers = handlers;
                     out.array.items->push_back(item);
                     skip();
                     if (!value(*item.node)) return false;
                     skip();
-                    if (_text < _end && *_text == ',') { ++_text; continue; }
-                    if (_text < _end && *_text == ']') { ++_text; --_depth; return true; }
+                    if (peek() >= 0 && peek() == ',') { take(); continue; }
+                    if (peek() >= 0 && peek() == ']') { take(); --depth; return true; }
                     return false;
                 }
             }
             case '{': {
-                if (_depth == MaxNestingDepth) return false;
-                ++_text;
-                ++_depth;
+                if (depth == MaxNestingDepth) return false;
+                take();
+                ++depth;
                 SetType(out, TypeObject);
                 skip();
-                if (_text < _end && *_text == '}') { ++_text; --_depth; return true; }
+                if (peek() >= 0 && peek() == '}') { take(); --depth; return true; }
                 for (;;) {
                     skip();
                     std::string key;
                     if (!string(key)) return false;
                     skip();
-                    if (_text >= _end || *_text != ':') return false;
-                    ++_text;
+                    if (peek() < 0 || peek() != ':') return false;
+                    take();
                     skip();
-                    Pair pair{};
-                    Construct(pair.key, key);
-                    Construct(pair.value);
-                    pair.value.node->handlers = _handlers;
-                    out.object.items->push_back(pair);
-                    if (!value(*pair.value.node)) return false;
+                    Value& entry = ObjectEntry(out.object, key);
+                    Clear(*entry.node);
+                    entry.node->handlers = handlers;
+                    if (!value(*entry.node)) return false;
                     skip();
-                    if (_text < _end && *_text == ',') { ++_text; continue; }
-                    if (_text < _end && *_text == '}') { ++_text; --_depth; return true; }
+                    if (peek() >= 0 && peek() == ',') { take(); continue; }
+                    if (peek() >= 0 && peek() == '}') { take(); --depth; return true; }
                     return false;
                 }
             }
@@ -519,6 +592,25 @@ private:
         }
     }
 };
+
+int ParseValue(Value* out, Parser& parser) {
+    Node parsed{};
+    parsed.handlers = NodeOf(*out).handlers;
+    bool parsedOk = false;
+    try {
+        parsedOk = parser.Parse(parsed);
+    } catch (...) {
+        Clear(parsed);
+        throw;
+    }
+    if (!parsedOk) {
+        Clear(parsed);
+        return parser.Error();
+    }
+    Clear(NodeOf(*out));
+    *out->node = parsed;
+    return 0;
+}
 
 [[noreturn]] void APS5_VABI JsonMemAllocatorPureVirtual() {
     throw std::runtime_error("sce::Json::MemAllocator: pure virtual function called");
@@ -531,15 +623,6 @@ void* const JsonMemAllocatorVtable[] = {
     reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual), reinterpret_cast<void*>(&JsonMemAllocatorPureVirtual),
 };
 
-Value& ObjectEntry(Object& object, const std::string& key) {
-    for (auto& pair : *object.items)
-        if (*pair.key.text == key) return pair.value;
-    Pair pair{};
-    Construct(pair.key, key);
-    Construct(pair.value);
-    object.items->push_back(pair);
-    return object.items->back().value;
-}
 
 }
 
@@ -609,8 +692,8 @@ bool APS5_VABI _ZNK3sce4Json6String5emptyEv(const String* self) { return self->t
 std::size_t APS5_VABI _ZNK3sce4Json6String6lengthEv(const String* self) { return self->text->size(); }
 std::size_t APS5_VABI _ZNK3sce4Json6String4sizeEv(const String* self) { return self->text->size(); }
 std::size_t APS5_VABI _ZNK3sce4Json6String8capacityEv(const String* self) { return self->text->capacity(); }
-bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) { return text != nullptr && *self->text == text; }
-bool APS5_VABI _ZNK3sce4Json6StringeqERKS1_(const String* self, const String* other) { return other != nullptr && other->text != nullptr && *self->text == *other->text; }
+bool APS5_VABI _ZNK3sce4Json6StringeqEPKc(const String* self, const char* text) { return text != nullptr && CompareText(self->text->c_str(), text) == 0; }
+bool APS5_VABI _ZNK3sce4Json6StringeqERKS1_(const String* self, const String* other) { return other != nullptr && other->text != nullptr && CompareText(self->text->c_str(), other->text->c_str()) == 0; }
 void APS5_VABI _ZN3sce4Json6String5clearEv(String* self) { self->text->clear(); }
 void APS5_VABI _ZN3sce4Json6String6resizeEm(String* self, std::size_t count) { self->text->resize(count); }
 void APS5_VABI _ZN3sce4Json6String7reserveEm(String* self, std::size_t capacity) { self->text->reserve(capacity); }
@@ -643,18 +726,54 @@ String* APS5_VABI _ZNK3sce4Json6String6substrEmm(String* result, const String* s
 }
 std::size_t APS5_VABI _ZNK3sce4Json6String4findEcm(const String* self, char character, std::size_t position) { return self->text->find(character, position); }
 std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEcm(const String* self, char character, std::size_t position) { return self->text->rfind(character, position); }
+char APS5_VABI _ZNK3sce4Json6String2atEm(const String* self, std::size_t position) {
+    if (position >= self->text->size()) throw std::out_of_range("sce::Json::String::at: position past the end");
+    return (*self->text)[position];
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcm(const String* self, const char* text, std::size_t position) {
+    if (text == nullptr) throw std::invalid_argument("sce::Json::String::find: null text");
+    return self->text->find(text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findEPKcmm(const String* self, const char* text, std::size_t position, std::size_t length) {
+    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::find: null text");
+    return self->text->find(std::string_view(text == nullptr ? "" : text, length), position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String4findERKS1_m(const String* self, const String* other, std::size_t position) {
+    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::find: null other");
+    return self->text->find(*other->text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcm(const String* self, const char* text, std::size_t position) {
+    if (text == nullptr) throw std::invalid_argument("sce::Json::String::rfind: null text");
+    return self->text->rfind(text, position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindEPKcmm(const String* self, const char* text, std::size_t position, std::size_t length) {
+    if (text == nullptr && length > 0) throw std::invalid_argument("sce::Json::String::rfind: null text");
+    return self->text->rfind(std::string_view(text == nullptr ? "" : text, length), position);
+}
+std::size_t APS5_VABI _ZNK3sce4Json6String5rfindERKS1_m(const String* self, const String* other, std::size_t position) {
+    if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::rfind: null other");
+    return self->text->rfind(*other->text, position);
+}
 int APS5_VABI _ZNK3sce4Json6String7compareEPKc(const String* self, const char* text) {
     if (text == nullptr) throw std::invalid_argument("sce::Json::String::compare: null text");
-    return self->text->compare(text);
+    return CompareText(self->text->c_str(), text);
 }
 int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const String* other) {
     if (other == nullptr || other->text == nullptr) throw std::invalid_argument("sce::Json::String::compare: null other");
-    return self->text->compare(*other->text);
+    return CompareText(self->text->c_str(), other->text->c_str());
 }
 
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
+    if (self == other) return self;
+    Array copy{};
+    CopyArray(copy, *other);
+    Destroy(*self);
+    *self = copy;
+    return self;
+}
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);
@@ -665,8 +784,8 @@ void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Val
         throw;
     }
 }
-ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) { result->it = self->items->begin(); return result; }
-ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) { result->it = self->items->end(); return result; }
+ArrayIterator* APS5_VABI _ZNK3sce4Json5Array5beginEv(ArrayIterator* result, const Array* self) { result->state = new ArrayIteratorState{self->items->begin(), self->items->end()}; return result; }
+ArrayIterator* APS5_VABI _ZNK3sce4Json5Array3endEv(ArrayIterator* result, const Array* self) { result->state = new ArrayIteratorState{self->items->end(), self->items->end()}; return result; }
 bool APS5_VABI _ZNK3sce4Json5Array5emptyEv(const Array* self) { return self->items->empty(); }
 std::size_t APS5_VABI _ZNK3sce4Json5Array4sizeEv(const Array* self) { return self->items->size(); }
 void APS5_VABI _ZN3sce4Json5Array5clearEv(Array* self) {
@@ -681,14 +800,37 @@ const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::back: empty array");
     return &self->items->back();
 }
-void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { (void)self; }
-ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) { ++self->it; return self; }
-Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const ArrayIterator* self) { return &*self->it; }
-Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const ArrayIterator* self) { return &*self->it; }
-bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const ArrayIterator* self, const ArrayIterator* other) { return self->it != other->it; }
-void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(ArrayIterator* self, const ArrayIterator* other) { self->it = other->it; }
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
+    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
+    Destroy(self->items->front());
+    self->items->pop_front();
+}
+void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { delete self->state; self->state = nullptr; }
+ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {
+    if (self->state && self->state->position != self->state->end) ++self->state->position;
+    return self;
+}
+Value* APS5_VABI _ZNK3sce4Json5Array8iteratordeEv(const ArrayIterator* self) {
+    if (!self->state || self->state->position == self->state->end) throw std::out_of_range("sce::Json::Array::iterator: no current element");
+    return &*self->state->position;
+}
+Value* APS5_VABI _ZNK3sce4Json5Array8iteratorptEv(const ArrayIterator* self) { return _ZNK3sce4Json5Array8iteratordeEv(self); }
+bool APS5_VABI _ZNK3sce4Json5Array8iteratorneERKS2_(const ArrayIterator* self, const ArrayIterator* other) {
+    if (!self->state || !other->state) return false;
+    const Value* left = self->state && self->state->position != self->state->end ? &*self->state->position : nullptr;
+    const Value* right = other->state && other->state->position != other->state->end ? &*other->state->position : nullptr;
+    return left != right;
+}
+void APS5_VABI _ZN3sce4Json5Array8iteratorC1ERKS2_(ArrayIterator* self, const ArrayIterator* other) {
+    self->state = other->state ? new ArrayIteratorState(*other->state) : nullptr;
+}
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iterator7advanceEm(ArrayIterator* self, std::size_t count) {
-    std::advance(self->it, count);
+    if (self->state) {
+        while (count && self->state->position != self->state->end) {
+            ++self->state->position;
+            --count;
+        }
+    }
     return self;
 }
 
@@ -711,33 +853,55 @@ void APS5_VABI _ZN3sce4Json6Object5clearEv(Object* self) {
     self->items->clear();
 }
 Value* APS5_VABI _ZN3sce4Json6ObjectixERKNS0_6StringE(Object* self, const String* key) { return &ObjectEntry(*self, *key->text); }
-ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) { result->it = self->items->begin(); return result; }
-ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) { result->it = self->items->end(); return result; }
-void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { (void)self; }
-ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) { ++self->it; return self; }
-Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) { return &*self->it; }
-Pair* APS5_VABI _ZNK3sce4Json6Object8iteratorptEv(const ObjectIterator* self) { return &*self->it; }
+ObjectIterator* APS5_VABI _ZNK3sce4Json6Object5beginEv(ObjectIterator* result, const Object* self) { result->state = new ObjectIteratorState{self->items, self->items->begin()}; return result; }
+ObjectIterator* APS5_VABI _ZNK3sce4Json6Object3endEv(ObjectIterator* result, const Object* self) { result->state = new ObjectIteratorState{self->items, self->items->end()}; return result; }
+void APS5_VABI _ZN3sce4Json6Object8iteratorD1Ev(ObjectIterator* self) { delete self->state; self->state = nullptr; }
+ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEv(ObjectIterator* self) {
+    if (self->state && self->state->owner) {
+        if (self->state->position == self->state->owner->end()) throw std::out_of_range("sce::Json::Object::iterator: advance past the end");
+        ++self->state->position;
+    }
+    return self;
+}
+Pair* APS5_VABI _ZNK3sce4Json6Object8iteratordeEv(const ObjectIterator* self) {
+    if (!self->state || !self->state->owner || self->state->position == self->state->owner->end()) throw std::out_of_range("sce::Json::Object::iterator: no current element");
+    return &*self->state->position;
+}
+Pair* APS5_VABI _ZNK3sce4Json6Object8iteratorptEv(const ObjectIterator* self) { return _ZNK3sce4Json6Object8iteratordeEv(self); }
 ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterator* result, const Object* self, const String* key) {
-    result->it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return *pair.key.text == *key->text; });
+    const auto position = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0; });
+    result->state = new ObjectIteratorState{self->items, position};
     return result;
 }
-bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) { return self->it != other->it; }
-bool APS5_VABI _ZNK3sce4Json6Object8iteratoreqERKS2_(const ObjectIterator* self, const ObjectIterator* other) { return self->it == other->it; }
-void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const ObjectIterator* other) { self->it = other->it; }
+bool APS5_VABI _ZNK3sce4Json6Object8iteratoreqERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
+    if (!self->state || !other->state) return false;
+    return self->state->owner == other->state->owner && self->state->position == other->state->position;
+}
+bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
+    if (!self->state || !other->state) return false;
+    return !_ZNK3sce4Json6Object8iteratoreqERKS2_(self, other);
+}
+void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const ObjectIterator* other) {
+    self->state = other->state ? new ObjectIteratorState(*other->state) : nullptr;
+}
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std::size_t count) {
-    std::advance(self->it, count);
+    if (self->state && self->state->owner) {
+        while (count) {
+            _ZN3sce4Json6Object8iteratorppEv(self);
+            --count;
+        }
+    }
     return self;
 }
 bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return self->items->empty(); }
 std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items->size(); }
-std::size_t APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
+void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
     if (key == nullptr || key->text == nullptr) throw std::invalid_argument("sce::Json::Object::erase: null key");
-    auto it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return *pair.key.text == *key->text; });
-    if (it == self->items->end()) return 0;
+    auto it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& pair) { return std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0; });
+    if (it == self->items->end()) return;
     Destroy(it->key);
     Destroy(it->value);
     self->items->erase(it);
-    return 1;
 }
 
 void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
@@ -777,7 +941,16 @@ Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value* self, const Value* other) {
     return self;
 }
 void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
-    std::swap(self->node, other->node);
+    Node temporary{};
+    try {
+        AssignNode(temporary, NodeOf(*self));
+        AssignNode(NodeOf(*self), NodeOf(*other));
+        AssignNode(NodeOf(*other), temporary);
+    } catch (...) {
+        Clear(temporary);
+        throw;
+    }
+    Clear(temporary);
 }
 
 int APS5_VABI _ZN3sce4Json5Value3setENS0_9ValueTypeE(Value* self, ValueType type) { SetType(NodeOf(*self), type); return 0; }
@@ -823,15 +996,15 @@ ValueType APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value* self) { return No
 const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value* self) { return &Typed(self, TypeBoolean).boolean; }
 const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value* self) {
     Node& n = const_cast<Node&>(NodeOf(*self));
-    if (n.type == TypeUInteger && n.uinteger <= static_cast<std::uint64_t>(INT64_MAX)) {
-        n.integer = static_cast<std::int64_t>(n.uinteger);
+    if (n.type == TypeUInteger) {
+        n.integer = std::bit_cast<std::int64_t>(n.uinteger);
         return &n.integer;
     }
     return &Typed(self, TypeInteger).integer;
 }
 const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv(const Value* self) {
     Node& n = const_cast<Node&>(NodeOf(*self));
-    if (n.type == TypeInteger && n.integer >= 0) {
+    if (n.type == TypeInteger) {
         n.uinteger = static_cast<std::uint64_t>(n.integer);
         return &n.uinteger;
     }
@@ -858,7 +1031,7 @@ const Value* APS5_VABI _ZNK3sce4Json5ValueixEPKc(const Value* self, const char* 
     const Node& n = NodeOf(*self);
     if (key != nullptr && n.type == TypeObject)
         for (const auto& pair : *n.object.items)
-            if (*pair.key.text == key) return &pair.value;
+            if (std::strcmp(pair.key.text->c_str(), key) == 0) return &pair.value;
     return &MissingElement(self);
 }
 const Value* APS5_VABI _ZNK3sce4Json5ValueixEm(const Value* self, std::size_t index) {
@@ -878,7 +1051,7 @@ const Value* APS5_VABI _ZNK3sce4Json5Value8getValueERKNS0_6StringE(const Value* 
     const Node& n = NodeOf(*self);
     if (key != nullptr && n.type == TypeObject)
         for (const auto& pair : *n.object.items)
-            if (*pair.key.text == *key->text) return &pair.value;
+            if (std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0) return &pair.value;
     return &MissingElement(self);
 }
 Value* APS5_VABI _ZN3sce4Json5Value10referValueEm(Value* self, std::size_t index) {
@@ -892,7 +1065,7 @@ Value* APS5_VABI _ZN3sce4Json5Value10referValueERKNS0_6StringE(Value* self, cons
     Node& n = NodeOf(*self);
     if (key == nullptr || n.type != TypeObject) return nullptr;
     for (auto& pair : *n.object.items)
-        if (*pair.key.text == *key->text) return &pair.value;
+        if (std::strcmp(pair.key.text->c_str(), key->text->c_str()) == 0) return &pair.value;
     return nullptr;
 }
 Array* APS5_VABI _ZN3sce4Json5Value10referArrayEv(Value* self) {
@@ -925,37 +1098,18 @@ int APS5_VABI _ZNK3sce4Json5Value8toStringERNS0_6StringE(const Value* self, Stri
     return 0;
 }
 
-using ParserReadCallback = int (APS5_VABI*)(char&, void*);
-
-int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char* text, std::size_t size);
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPFiRcPvES5_(Value* out, ParserReadCallback read, void* context) {
     if (read == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null read callback");
-    std::string text;
-    char ch = 0;
-    while (read(ch, context) == 0 && ch != '\0') text.push_back(ch);
-    return _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(out, text.data(), text.size());
+    Parser parser(read, context, NodeOf(*out).handlers);
+    return ParseValue(out, parser);
 }
 
 int APS5_VABI _ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(Value* out, const char* text, std::size_t size) {
-    if (text == nullptr || size == 0) return JsonErrorParse;
-    Node parsed{};
-    parsed.handlers = NodeOf(*out).handlers;
-    Parser parser(text, size, parsed.handlers);
-    bool parsedOk = false;
-    try {
-        parsedOk = parser.Parse(parsed);
-    } catch (...) {
-        Clear(parsed);
-        throw;
-    }
-    if (!parsedOk) {
-        Clear(parsed);
-        return JsonErrorParse;
-    }
-    Clear(NodeOf(*out));
-    *out->node = parsed;
-    return 0;
+    if (size == 0) return JsonErrorParse;
+    if (text == nullptr) throw std::invalid_argument("sce::Json::Parser::parse: null text");
+    Parser parser(text, size, NodeOf(*out).handlers);
+    return ParseValue(out, parser);
 }
 
 
@@ -982,6 +1136,7 @@ static_assert(sizeof(InitParameter2) == 0x28 && offsetof(InitParameter2, special
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C1Ev(InitParameter2* self) {
     *self = {};
+    self->specialFloatFormatType = 2;
 }
 
 void APS5_VABI _ZN3sce4Json14InitParameter2C2Ev(InitParameter2* self) {
@@ -1057,9 +1212,17 @@ int APS5_VABI _ZN3sce4Json5Value22setTypeMismatchHandlerEPFRKS1_NS0_9ValueTypeEP
 
 bool APS5_VABI _ZNK3sce4Json5ValuecvbEv(const Value* self) {
     const Node& n = NodeOf(*self);
-    if (n.type == TypeNull) return false;
-    if (n.type == TypeBoolean) return n.boolean;
-    return true;
+    switch (n.type) {
+        case TypeNull: return false;
+        case TypeBoolean: return n.boolean;
+        case TypeInteger: return n.integer != 0;
+        case TypeUInteger: return n.uinteger != 0;
+        case TypeReal: return n.real != 0.0;
+        case TypeString: return n.string.text && !n.string.text->empty();
+        case TypeArray:
+        case TypeObject: return true;
+        default: throw std::runtime_error("sce::Json::Value: invalid value type");
+    }
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1ERKNS0_6StringERKNS0_5ValueE(Pair* self, const String* key, const Value* value) {
@@ -1081,10 +1244,10 @@ void APS5_VABI _ZN3sce4Json6Object4PairD1Ev(Pair* self) {
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator* result, Object* self, const Pair* pair) {
-    auto it = std::find_if(self->items->begin(), self->items->end(), [&](const Pair& p) { return *p.key.text == *pair->key.text; });
-    if (it != self->items->end()) {
-        AssignNode(NodeOf(it->value), NodeOf(pair->value));
-        result->it = it;
+    auto it = ObjectPosition(*self, *pair->key.text);
+    auto state = std::make_unique<ObjectIteratorState>(ObjectIteratorState{self->items, it});
+    if (it != self->items->end() && std::strcmp(it->key.text->c_str(), pair->key.text->c_str()) == 0) {
+        result->state = state.release();
         return result;
     }
     Pair copy{};
@@ -1092,7 +1255,8 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
     Construct(copy.key, *pair->key.text);
     try {
         CopyInto(copy.value, pair->value);
-        result->it = self->items->insert(self->items->end(), copy);
+        state->position = self->items->insert(it, copy);
+        result->state = state.release();
         return result;
     } catch (...) {
         Destroy(copy.value);
@@ -1102,33 +1266,48 @@ ObjectIterator* APS5_VABI _ZN3sce4Json6Object6insertERKNS1_4PairE(ObjectIterator
 }
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEi(ArrayIterator* result, ArrayIterator* self, int) {
-    result->it = self->it;
-    ++self->it;
+    _ZN3sce4Json5Array8iteratorC1ERKS2_(result, self);
+    _ZN3sce4Json5Array8iteratorppEv(self);
     return result;
 }
 
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratoraSERKS2_(ArrayIterator* self, const ArrayIterator* other) {
-    self->it = other->it;
+    if (self->state) {
+        if (other->state && other->state->position != other->state->end) {
+            *self->state = *other->state;
+        } else {
+            delete self->state;
+            self->state = nullptr;
+        }
+    }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json5Array8iteratorC1Ev(ArrayIterator* self) {
-    self->it = {};
+    self->state = new ArrayIteratorState{};
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratorppEi(ObjectIterator* result, ObjectIterator* self, int) {
-    result->it = self->it;
-    ++self->it;
+    auto state = self->state ? std::make_unique<ObjectIteratorState>(*self->state) : nullptr;
+    _ZN3sce4Json6Object8iteratorppEv(self);
+    result->state = state.release();
     return result;
 }
 
 ObjectIterator* APS5_VABI _ZN3sce4Json6Object8iteratoraSERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    self->it = other->it;
+    if (self->state) {
+        if (other->state && other->state->owner) {
+            *self->state = *other->state;
+        } else {
+            delete self->state;
+            self->state = nullptr;
+        }
+    }
     return self;
 }
 
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1Ev(ObjectIterator* self) {
-    self->it = {};
+    self->state = new ObjectIteratorState{};
 }
 
 void APS5_VABI _ZN3sce4Json6Object4PairC1Ev(Pair* self) {

@@ -13,11 +13,11 @@ extern "C" {
 
 int APS5_VABI sceOpusCeltDecInitialize(std::uint32_t* context) { return library.Initialize(context); }
 
-int APS5_VABI sceOpusCeltDecTerminate(std::uint32_t* context) { return library.Terminate(context); }
+int APS5_VABI sceOpusCeltDecTerminate(const std::uint32_t* context) { return library.Terminate(context); }
 
 int APS5_VABI sceOpusCeltDecGetSize(int channels) { return library.GetSize(channels); }
 
-int APS5_VABI sceOpusCeltDecCreateEx(std::uint32_t* context, void* state, int sampleRate, int channels) {
+int APS5_VABI sceOpusCeltDecCreateEx(const std::uint32_t* context, void* state, int sampleRate, int channels) {
     return library.CreateEx(context, state, sampleRate, channels);
 }
 

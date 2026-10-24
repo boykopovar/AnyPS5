@@ -10,6 +10,102 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import progress
 
 
+class ProgressSnapshotTests(unittest.TestCase):
+    def snapshot(self):
+        return {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
+
+    def assert_rejected(self, snapshot, message):
+        for position in (0, 1):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "base snapshot.json", Path(directory) / "head snapshot.json"]
+                snapshots = [self.snapshot(), self.snapshot()]
+                snapshots[position] = snapshot
+                for path, data in zip(paths, snapshots):
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", *map(str, paths)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn(str(paths[position]), stderr.getvalue())
+                self.assertIn(message, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_non_object_snapshots_are_usage_errors(self):
+        for snapshot in (None, [], "progress", 7, True):
+            with self.subTest(snapshot=snapshot):
+                self.assert_rejected(snapshot, "snapshot must be an object")
+
+    def test_sections_must_be_present_objects(self):
+        for section in ("libraries", "shaders"):
+            for value in (None, [], "progress", 7):
+                with self.subTest(section=section, value=value):
+                    snapshot = self.snapshot()
+                    snapshot[section] = value
+                    self.assert_rejected(snapshot, section + " must be an object")
+            snapshot = self.snapshot()
+            del snapshot[section]
+            self.assert_rejected(snapshot, section + " must be an object")
+
+    def test_groups_must_be_lists_of_named_objects(self):
+        for section in ("libraries", "shaders"):
+            for groups in (None, {}, "groups", [None], ["group"], [{}], [{"name": []}]):
+                with self.subTest(section=section, groups=groups):
+                    snapshot = self.snapshot()
+                    snapshot[section]["groups"] = groups
+                    self.assert_rejected(snapshot, section + ".groups")
+            snapshot = self.snapshot()
+            del snapshot[section]["groups"]
+            self.assert_rejected(snapshot, section + ".groups")
+
+    def test_symbol_lists_cannot_be_strings_or_unhashable_values(self):
+        for field in ("done_names", "todo_names", "inert_names"):
+            for value in ("Ready", None, {}, [7], [["Ready"]]):
+                with self.subTest(field=field, value=value):
+                    snapshot = self.snapshot()
+                    snapshot["libraries"]["groups"] = [{"name": "libSceExample", field: value}]
+                    self.assert_rejected(snapshot, "." + field + " must be a list of strings")
+
+    def test_shared_source_owners_must_be_strings(self):
+        for value in (None, [], {}, 7, True):
+            with self.subTest(value=value):
+                snapshot = self.snapshot()
+                snapshot["libraries"]["groups"] = [{"name": "libSceExample.native", "shared_sources": value}]
+                self.assert_rejected(snapshot, ".shared_sources must be a string")
+
+    def test_percentages_must_be_finite_numbers_in_range(self):
+        for section in ("libraries", "shaders"):
+            for value in (None, "0", True, [], {}, -1, 101, float("nan"), float("inf"), -float("inf")):
+                with self.subTest(section=section, value=value):
+                    snapshot = self.snapshot()
+                    snapshot[section]["percent"] = value
+                    self.assert_rejected(snapshot, section + ".percent")
+            snapshot = self.snapshot()
+            del snapshot[section]["percent"]
+            self.assert_rejected(snapshot, section + ".percent")
+
+    def test_valid_snapshots_keep_reports_and_optional_fields_compatible(self):
+        base, head = self.snapshot(), self.snapshot()
+        base["libraries"]["groups"] = [{"name": "libSceExample", "todo_names": ["Ready"]}, {"name": "libEmpty"}]
+        head["libraries"]["groups"] = [{"name": "libSceExample", "done_names": ["Ready"], "future_field": True},
+                                       {"name": "libEmpty"}, {"name": "libSceExample.native", "shared_sources": "libSceExample"}]
+        head["libraries"]["percent"] = 100
+        expected = progress.report(base, head)
+        self.assertIn("Ready", expected)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / "base.json", Path(directory) / "head.json"]
+            for path, snapshot in zip(paths, (base, head)):
+                path.write_text(json.dumps(snapshot), encoding="utf-8")
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                self.assertEqual(progress.main(["--compare", *map(str, paths)]), 0)
+            self.assertEqual(stdout.getvalue(), expected)
+            with patch("sys.stdout", stdout):
+                self.assertEqual(progress.main(["--compare", str(paths[0]), str(paths[0])]), 0)
+            self.assertEqual(stdout.getvalue(), expected)
+
+
 class ProgressTests(unittest.TestCase):
     def test_raw_string_example_does_not_declare_an_export(self):
         source = 'const char* example = R"help(\nint APS5_VABI Fake() { return 0; }\n)help";\n'
@@ -399,6 +495,32 @@ class ProgressTests(unittest.TestCase):
                     with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
                         progress.main(["--compare", str(good), str(path)])
                     self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(str(path), stderr.getvalue())
+
+    def test_output_directory_that_cannot_be_written_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory) / "blocked output"
+            blocked.write_text("a file, not a directory", encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                progress.main([str(blocked)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(blocked), stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_root_must_be_a_source_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty tree"
+            empty.mkdir()
+            half = Path(directory) / "half tree"
+            (half / "core" / "libs" / "prx").mkdir(parents=True)
+            for name, path in (("missing", Path(directory) / "missing tree"), ("empty", empty), ("no opcodes", half)):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--json", "--root", str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("is not a source tree", stderr.getvalue())
                     self.assertIn(str(path), stderr.getvalue())
 
 if __name__ == "__main__":

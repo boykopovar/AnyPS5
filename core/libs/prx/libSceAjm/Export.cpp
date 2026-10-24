@@ -5,6 +5,19 @@
 
 extern "C" {
 
-APS5_DUMMY_FUN
+int APS5_VABI sceAjmBatchJobControlBufferRa() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAjmBatchJobRunSplitBufferRa() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAjmBatchStartBuffer() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
 
 }

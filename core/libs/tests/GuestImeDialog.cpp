@@ -14,6 +14,9 @@ int APS5_VABI sceImeDialogGetResult(Result*);
 int APS5_VABI sceImeDialogAbort(void);
 int APS5_VABI sceImeDialogTerm(void);
 int APS5_VABI sceImeDialogForceClose(void);
+int APS5_VABI sceImeDialogGetCurrentStarState(std::int64_t);
+int APS5_VABI sceImeDialogInitInternal(const Param*, const ExtendedParam*);
+int APS5_VABI sceImeDialogSetPanelPosition(std::int32_t, std::int32_t);
 }
 
 namespace {
@@ -25,6 +28,7 @@ constexpr std::uint32_t EndStatusOk = 0;
 constexpr std::uint32_t EndStatusUserCanceled = 1;
 constexpr std::uint32_t EndStatusAborted = 2;
 constexpr int ErrorBusy = static_cast<int>(0x80bc0001u);
+constexpr int ErrorSuspending = static_cast<int>(0x80bc0009u);
 constexpr int ErrorNotOpened = static_cast<int>(0x80bc0002u);
 constexpr int ErrorNotInUse = static_cast<int>(0x80bc0107u);
 constexpr int ErrorInvalidMaxTextLength = static_cast<int>(0x80bc0016u);
@@ -186,4 +190,21 @@ int main() {
     Require(sceImeDialogInit(&noBuffer, nullptr) == ErrorInvalidInputTextBuffer);
     Require(sceImeDialogGetStatus() == StatusNone);
     Require(!ImeCapturesKeyboard_nid_postfix());
+
+    std::uint32_t star = 0xa5a5a5a5u;
+    const auto starAddress = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&star));
+    Require(sceImeDialogGetCurrentStarState(starAddress) == ErrorNotInUse && star == 0xa5a5a5a5u);
+    Require(sceImeDialogSetPanelPosition(640, 360) == ErrorNotInUse);
+    Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
+    Require(sceImeDialogInitInternal(&empty, nullptr) == ErrorInvalidMaxTextLength);
+    Require(sceImeDialogGetStatus() == StatusNone);
+    Require(sceImeDialogInitInternal(&param, nullptr) == 0);
+    Require(sceImeDialogGetStatus() == StatusRunning && ImeCapturesKeyboard_nid_postfix());
+    Require(sceImeDialogInitInternal(&param, nullptr) == ErrorBusy);
+    Require(sceImeDialogGetCurrentStarState(0) == ErrorInvalidAddress);
+    Require(sceImeDialogGetCurrentStarState(starAddress) == 0 && star == 0);
+    Require(sceImeDialogSetPanelPosition(640, 360) == ErrorSuspending);
+    Require(sceImeDialogAbort() == 0);
+    Require(sceImeDialogSetPanelPosition(0, 0) == ErrorSuspending);
+    Close();
 }

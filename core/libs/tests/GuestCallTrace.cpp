@@ -106,8 +106,8 @@ int main(int argc, char** argv) {
         while (!locked.load()) std::this_thread::yield();
         if (std::strcmp(argv[1], "abort-race") == 0) {
             for (int call = 0; call < 100; ++call) Require(first(1, 2, 3, 4, 5, 6, 7, 8) == 204);
-            std::atomic<bool> go{false};
-            std::thread([&go] {
+            static std::atomic<bool> go{false};
+            std::thread([] {
                 while (!go.load()) {
                 }
                 std::abort();

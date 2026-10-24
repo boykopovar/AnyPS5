@@ -25,7 +25,16 @@ diff --git a/core/libs/prx/libkernel/File/src/Stdio.cpp b/core/libs/prx/libkerne
 
 class ExportTests(unittest.TestCase):
     def test_added_definitions_are_exports(self):
-        self.assertEqual(pr_overlap.exports(DIFF), {"mlock_nid_postfix", "sceKernelRead", "getpid_nid_postfix", "sceNpUniversalDataSystemCreateEvent"})
+        self.assertEqual(pr_overlap.exports(DIFF), {"mlock", "sceKernelRead", "getpid", "sceNpUniversalDataSystemCreateEvent"})
+
+    def test_nid_postfix_aliases_match_plain_export_names(self):
+        suffixed = "+int APS5_VABI sceExample_nid_postfix() { return 0; }\n"
+        plain = "+int APS5_VABI sceExample() { return 0; }\n"
+        self.assertEqual(pr_overlap.exports(suffixed), pr_overlap.exports(plain))
+
+    def test_nid_disambiguation_suffix_is_normalized(self):
+        diff = "+int APS5_VABI sceExample_nid_disambig12_nid_postfix() { return 0; }\n"
+        self.assertEqual(pr_overlap.exports(diff), {"sceExample"})
 
     def test_cut_helpers_are_not_export_overlaps(self):
         diff = DIFF + '+void APS5_VABI Helper_nid_no_patch_cut() {\n'
@@ -42,6 +51,24 @@ class ExportTests(unittest.TestCase):
         self.assertNotIn("removed_nid_postfix", found)
         self.assertNotIn("context_nid_postfix", found)
         self.assertNotIn("Helper_nid_no_patch", found)
+
+
+    def test_explicit_export_aliases_are_collected(self):
+        diff = ('+int APS5_VABI placeholder_nid_no_patch() {\n'
+                '+    NotImplemented_nid_no_patch(__func__);\n'
+                '+}\n'
+                '+APS5_EXPORT("Pz262plj20w", placeholder_nid_no_patch);\n'
+                '-APS5_EXPORT("sKneJjUXWkQ", removed_nid_no_patch);\n')
+        self.assertEqual(pr_overlap.exports(diff), set())
+        self.assertEqual(pr_overlap.aliases(diff), {"Pz262plj20w"})
+        self.assertEqual(pr_overlap.aliases(diff.replace('+APS5_EXPORT("Pz262plj20w", placeholder_nid_no_patch);\n', "")), set())
+
+    def test_explicit_alias_overlaps_named_export_with_the_same_nid(self):
+        named = {"author": "a", "exports": {"FT_Outline_GetInsideBorder"}, "aliases": set()}
+        explicit = {"author": "b", "exports": set(), "aliases": {"Pz262plj20w"}}
+        self.assertEqual(pr_overlap.same_exports(named, explicit, []), {"FT_Outline_GetInsideBorder"})
+        self.assertEqual(pr_overlap.same_exports(explicit, dict(explicit, author="c"), []), {"Pz262plj20w"})
+        self.assertEqual(pr_overlap.same_exports(named, explicit, [explicit]), set())
 
 
 if __name__ == "__main__":

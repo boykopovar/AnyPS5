@@ -5,6 +5,34 @@
 
 extern "C" {
 
-APS5_DUMMY_FUN
+int APS5_VABI scePadTrackerCalibrate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadTrackerGetWorkingMemorySize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadTrackerInit() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadTrackerReadState() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadTrackerTerm() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI scePadTrackerUpdate() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
 
 }

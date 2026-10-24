@@ -113,11 +113,32 @@ static void CheckReleaseFlexibleMemory() {
     Require(sceKernelMapFlexibleMemory(&mapped, length, 3, 0) == 0 && mapped != nullptr);
     static_cast<volatile unsigned char*>(mapped)[length - 1] = 1;
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - length);
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    Require(sceKernelMprotect(mapped, 0x4000, 1) == 0);
     Require(sceKernelReleaseFlexibleMemory(mapped, length) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapped, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    Require(sceKernelVirtualQuery(static_cast<unsigned char*>(mapped) + length - 1, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(bytes[length - 1] == 1);
+    bytes[length - 2] = 2;
+    Require(sceKernelReleaseFlexibleMemory(mapped, length) == 0);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 0) == 0);
+    Require(sceKernelReleaseFlexibleMemory(reinterpret_cast<void*>(std::uintptr_t{0x7ff000000000}), length) == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    Require(sceKernelReleaseFlexibleMemory(nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(static_cast<unsigned char*>(mapped) + 1, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(static_cast<unsigned char*>(mapped) + 0x1000, 0x4000) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 0x6000) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(reinterpret_cast<void*>(~std::uintptr_t{0x3fff}), 0x8000) == SCE_KERNEL_ERROR_EINVAL);
     void* again = mapped;
-    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == 0 && again == mapped);
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == SCE_KERNEL_ERROR_ENOMEM);
+    Require(bytes[length - 1] == 1 && bytes[length - 2] == 2);
+    again = mapped;
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x10) == 0 && again == mapped);
     Require(static_cast<volatile unsigned char*>(again)[length - 1] == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - length);
     Require(sceKernelMunmap(again, length) == 0);
 }
 
@@ -157,8 +178,14 @@ static void CheckPageTableStats() {
 
 static void CheckInternalMemoryAvailableSize() {
     std::size_t available = 1;
-    Require(sceKernelInternalMemoryGetAvailableSize(&available) == 0 && available == 0);
-    Require(sceKernelInternalMemoryGetAvailableSize(nullptr) == static_cast<int>(0x80020016u));
+    bool threw = false;
+    try {
+        sceKernelInternalMemoryGetAvailableSize(&available);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    Require(threw && available == 1);
+    Require(sceKernelInternalMemoryGetAvailableSize(nullptr) == -1);
 }
 
 static void CheckNamedAndHintedMappings() {
@@ -285,6 +312,17 @@ static void CheckStrictMemoryProtectionBits() {
     }
     Require(sceKernelMunmap(mapping, length) == 0);
     Require(sceKernelReleaseDirectMemory(physical, length) == 0);
+}
+
+static void CheckPosixMprotectIgnoresUndefinedBits() {
+    constexpr std::size_t length = 0x4000;
+    auto* mapping = static_cast<volatile unsigned char*>(mmap_nid_postfix(nullptr, length, 3, 0x1002, -1, 0));
+    Require(mapping != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(mprotect_nid_postfix(const_cast<unsigned char*>(mapping), length, static_cast<int>(0xfffffff2u)) == 0);
+    mapping[length - 1] = 5;
+    Require(mapping[length - 1] == 5);
+    Require(mprotect_nid_postfix(const_cast<unsigned char*>(mapping), length, 0x8 | 0x3) == 0);
+    Require(munmap_nid_postfix(const_cast<unsigned char*>(mapping), length) == 0);
 }
 
 static void CheckInternalNamedFlexibleMapping() {
@@ -596,6 +634,75 @@ static void CheckSavedDirectMemorySurvivesCachePressure() {
         Require(sceKernelReleaseDirectMemory(retained[index], bytes) == 0);
     }
     temporary();
+#endif
+}
+
+static void CheckReusedDirectMemorySections() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t bytes = page * 4;
+    const bool pooled = std::getenv("APS5_NO_DIRECT_MEMORY_SECTION_POOL") == nullptr;
+    const auto allocate = [] {
+        std::int64_t physical = 0;
+        Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &physical) == 0);
+        return physical;
+    };
+    const auto map = [](std::int64_t physical) {
+        void* mapped = nullptr;
+        Require(sceKernelMapDirectMemory(&mapped, bytes, 3, 0, physical, 0) == 0);
+        return static_cast<unsigned char*>(mapped);
+    };
+    const auto blank = [](const unsigned char* data) { return std::all_of(data, data + bytes, [](unsigned char value) { return value == 0; }); };
+    const auto handles = [] {
+        DWORD count = 0;
+        Require(GetProcessHandleCount(GetCurrentProcess(), &count) != 0);
+        return count;
+    };
+    auto physical = allocate();
+    auto* data = map(physical);
+    std::memset(data, 0x5a, bytes);
+    Require(sceKernelMunmap(data, bytes) == 0);
+    auto before = handles();
+    Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
+    const auto released = handles();
+    Require(released == (pooled ? before : before - 1));
+    physical = allocate();
+    Require(handles() == (pooled ? released : released + 1));
+    data = map(physical);
+    Require(blank(data));
+    data[5] = 17;
+    data[bytes - 1] = 29;
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, bytes, 3, 0, physical, 0) == 0);
+    auto* alias = static_cast<unsigned char*>(second);
+    Require(alias != data && alias[5] == 17 && alias[6] == 0 && alias[bytes - 1] == 29);
+    alias[page + 3] = 41;
+    Require(data[page + 3] == 41);
+    data[page * 2] = 53;
+    Require(alias[page * 2] == 53);
+    Require(sceKernelMunmap(alias, bytes) == 0);
+    Require(data[5] == 17 && data[page + 3] == 41 && data[page * 2] == 53);
+    Require(sceKernelMunmap(data, bytes) == 0);
+    data = map(physical);
+    Require(data[5] == 17 && data[page + 3] == 41 && data[page * 2] == 53 && data[bytes - 1] == 29);
+    Require(sceKernelMunmap(data, bytes) == 0);
+    before = handles();
+    Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
+    Require(handles() == before - 1);
+    for (unsigned char round = 1; round <= 8; ++round) {
+        physical = allocate();
+        data = map(physical);
+        Require(blank(data));
+        std::memset(data, round, bytes);
+        if (round % 2 == 0) {
+            second = nullptr;
+            Require(sceKernelMapDirectMemory(&second, page, 3, 0, physical + static_cast<std::int64_t>(page), 0) == 0);
+            Require(static_cast<unsigned char*>(second)[page - 1] == round);
+            Require(sceKernelMunmap(second, page) == 0);
+        }
+        Require(sceKernelMunmap(data, bytes) == 0);
+        Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
+    }
 #endif
 }
 
@@ -1355,7 +1462,13 @@ static void CheckFixedMappingsReachTheApplicationAreaEnd() {
         0;
 #endif
     constexpr std::uintptr_t applicationAreaEnd = 0xFC00000000ull + expectedOffset;
-    Require(base == 0x200000000ull + expectedOffset && base + size == applicationAreaEnd);
+    constexpr std::uintptr_t expectedBase =
+#ifdef __APPLE__
+        0x200000000ull + expectedOffset;
+#else
+        expectedOffset == 0 ? 0x10000ull : 0x200000000ull + expectedOffset;
+#endif
+    Require(base == expectedBase && base + size == applicationAreaEnd);
     std::int64_t phys = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
     void* const requested = reinterpret_cast<void*>(applicationAreaEnd - page * 2);
@@ -3220,9 +3333,11 @@ int main(int argc, char** argv) {
     CheckAudioCoprocessorProtection();
     CheckMprotectIgnoresUndefinedBits();
     CheckStrictMemoryProtectionBits();
+    CheckPosixMprotectIgnoresUndefinedBits();
     CheckDirectMemoryFollowsPhysicalPages();
     CheckSparseDirectMemoryBacking();
     CheckSavedDirectMemorySurvivesCachePressure();
+    CheckReusedDirectMemorySections();
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
     CheckFixedMappingReplacesPartialOverlap();
@@ -3311,6 +3426,14 @@ int main(int argc, char** argv) {
     reject(page, 3, 0x1012, -1, 0, 22);
     reject(page, 3, 0x2, 0, 0, 45);    // file-backed
     reject(page, 3, 0x22, -1, 0, 45);  // Linux MAP_ANON is not guest MAP_ANON
+    reject(page, 3, 0x1003, -1, 0, 22);
+    reject(page, 3, 0x3, 0, 0, 22);
+    auto* anonymousOnly = static_cast<volatile unsigned char*>(mmap_nid_postfix(nullptr, page, 3, 0x1000, -1, 0));
+    Require(anonymousOnly != failed && (reinterpret_cast<std::uintptr_t>(anonymousOnly) & (page - 1)) == 0);
+    anonymousOnly[page - 1] = 7;
+    Require(anonymousOnly[page - 1] == 7 && anonymousOnly[0] == 0);
+    Require(munmap_nid_postfix(const_cast<unsigned char*>(anonymousOnly), page) == 0);
+    reject(page, 3, 0x1000, 0, 0, 22);
 
     auto* memory = static_cast<unsigned char*>(mmap_nid_postfix(nullptr, page * 3 - 1, 3, 0x1002, -1, 0));
     Require(memory != failed && (reinterpret_cast<std::uintptr_t>(memory) & (page - 1)) == 0);
