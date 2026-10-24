@@ -18,9 +18,8 @@ static void Require(bool value, const char* message) {
 int main() {
     const std::uint16_t text[] = {'a', 'b', 'c', 0};
     const std::uint16_t empty[] = {0};
-    const std::uint16_t invalid[] = {'a', 0x100, 'b', 0};
+    const std::uint16_t twoBytes[] = {'a', 0x100, 'b', 0};
     const std::uint16_t bytes[] = {0x7f, 0x80, 0xe9, 0xff, 0};
-    constexpr auto Failed = static_cast<std::size_t>(-1);
     std::uint64_t state[2]{};
     char out[8];
     const auto* source = text;
@@ -46,8 +45,8 @@ int main() {
     Require(wcsrtombs_nid_postfix(out, &source, 1, state) == 0, "empty string length");
     Require(source == nullptr && out[0] == 0 && out[1] == 'x', "empty string terminator");
     source = bytes;
-    Require(wcsrtombs_nid_postfix(out, &source, sizeof(out), state) == 4, "guest single-byte conversion length");
-    Require(source == nullptr && std::memcmp(out, "\x7f\x80\xe9\xff\0", 5) == 0, "guest high bytes");
+    Require(wcsrtombs_nid_postfix(out, &source, sizeof(out), state) == 7, "UTF-8 conversion length");
+    Require(source == nullptr && std::memcmp(out, "\x7f\xc2\x80\xc3\xa9\xc3\xbf\0", 8) == 0, "high characters become two UTF-8 bytes");
 
     source = text;
     Require(wcsrtombs_nid_postfix(nullptr, &source, 0, state) == 3 && source == text, "length query ignores capacity and preserves source");
@@ -55,21 +54,16 @@ int main() {
     source = empty;
     Require(wcsrtombs_nid_postfix(nullptr, &source, 0, state) == 0 && source == empty, "empty length query");
 
-    source = invalid;
+    source = twoBytes;
     std::memset(out, 'x', sizeof(out));
-    *__error_nid_postfix() = 0;
-    Require(wcsrtombs_nid_postfix(out, &source, sizeof(out), state) == Failed, "invalid character fails conversion");
-    Require(*__error_nid_postfix() == 86, "invalid character uses guest EILSEQ");
-    Require(source == invalid + 1 && std::memcmp(out, "axxxxxxx", 8) == 0, "error preserves prefix and identifies invalid character");
     *__error_nid_postfix() = 7;
-    Require(wcsrtombs_nid_postfix(out, &source, 0, state) == 0 && source == invalid + 1, "zero capacity does not convert invalid character");
-    Require(*__error_nid_postfix() == 7, "zero capacity preserves errno");
-
-    source = invalid;
-    Require(wcsrtombs_nid_postfix(nullptr, &source, 0, state) == Failed, "length query rejects invalid character");
-    Require(*__error_nid_postfix() == 86 && source == invalid, "failed length query preserves source and reports guest EILSEQ");
-    source = invalid;
-    *__error_nid_postfix() = 7;
-    Require(wcsrtombs_nid_postfix(out, &source, 1, state) == 1 && source == invalid + 1, "capacity stops before invalid character");
-    Require(*__error_nid_postfix() == 7, "unconverted invalid character does not set errno");
+    Require(wcsrtombs_nid_postfix(out, &source, sizeof(out), state) == 4, "a character above 0xff converts");
+    Require(source == nullptr && std::memcmp(out, "a\xc4\x80" "b\0", 5) == 0, "U+0100 becomes C4 80");
+    Require(*__error_nid_postfix() == 7, "conversion preserves errno");
+    source = twoBytes;
+    Require(wcsrtombs_nid_postfix(nullptr, &source, 0, state) == 4 && source == twoBytes, "length query counts UTF-8 bytes");
+    source = twoBytes;
+    std::memset(out, 'x', sizeof(out));
+    Require(wcsrtombs_nid_postfix(out, &source, 2, state) == 1 && source == twoBytes + 1, "a character that does not fit stops the conversion");
+    Require(std::memcmp(out, "axxxxxxx", 8) == 0, "no partial character is written");
 }

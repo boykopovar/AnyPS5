@@ -10,6 +10,8 @@ int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address);
 std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
 char* APS5_VABI inet_ntoa_nid_postfix(std::uint32_t address);
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
+char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
+int* APS5_VABI __error_nid_postfix();
 }
 
 namespace {
@@ -64,5 +66,14 @@ int main() {
     Require(inet_ntoa_r_nid_postfix(Network(1, 2, 3, 4), buffer, sizeof(buffer)) == buffer && std::string(buffer) == "1.2.3.4", "inet_ntoa_r");
     char tiny[4] = {'k', 'e', 'e', 'p'};
     Require(inet_ntoa_r_nid_postfix(Network(1, 2, 3, 4), tiny, sizeof(tiny)) == tiny, "inet_ntoa_r small buffer returns it");
+
+    char exact[14];
+    std::memset(exact, 'z', sizeof(exact));
+    Require(__inet_ntoa_r_nid_postfix(Network(192, 168, 0, 255), exact, sizeof(exact)) == exact && std::string(exact) == "192.168.0.255", "__inet_ntoa_r");
+    char oneShort[13];
+    std::memset(oneShort, 'z', sizeof(oneShort));
+    *__error_nid_postfix() = 0;
+    Require(__inet_ntoa_r_nid_postfix(Network(192, 168, 0, 255), oneShort, sizeof(oneShort)) == oneShort && *__error_nid_postfix() == 28, "__inet_ntoa_r small buffer");
+    Require(std::string(oneShort, sizeof(oneShort)) == std::string(sizeof(oneShort), 'z') && std::string(text) == "255.255.255.255", "__inet_ntoa_r leaves the buffers");
     return 0;
 }

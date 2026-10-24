@@ -154,6 +154,7 @@ inline bool CopyDataImmediate(std::uint32_t source) { return source >= 10 && sou
 inline bool CopyDataToRegister(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) == 0; }
 inline std::size_t CopyDataBytes(std::span<const std::uint32_t> packet) { return (packet[1] & 0x10000u) != 0 ? 8 : 4; }
 inline constexpr std::uint32_t RewindValid = 0x80000000u;
+inline constexpr std::uint32_t RewindOffloadEnable = 0x01000000u;
 struct WaitFields {
     std::uint32_t function;
     std::uint64_t address;

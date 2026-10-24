@@ -29,11 +29,13 @@ extern "C" void __cxa_rethrow_primary_exception_nid_postfix(void*);
 extern "C" [[noreturn]] void _ZSt14_Xout_of_rangePKc_nid_postfix(const char*);
 extern "C" [[noreturn]] void _ZSt13_Xrange_errorPKc_nid_postfix(const char*);
 extern "C" [[noreturn]] void _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix();
+extern "C" [[noreturn]] void _ZSt19_Xbad_function_callv_nid_postfix();
 extern "C" [[noreturn]] void __cxa_bad_cast_nid_postfix();
 extern "C" [[noreturn]] void _ZSt19_Throw_bad_weak_ptrv_nid_postfix();
 extern "C" [[noreturn]] void _ZSt26__throw_bad_variant_accessv_nid_postfix();
 extern "C" [[noreturn]] void _ZSt26_Throw_bad_optional_accessv_nid_postfix();
 extern "C" [[noreturn]] void _ZNKSt9exception6_RaiseEv_nid_postfix(const void*);
+extern "C" [[noreturn]] void _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(const void*);
 extern "C" void* __cxa_vec_new3_nid_postfix(std::size_t, std::size_t, std::size_t, void(*)(void*), void(*)(void*), void*(*)(std::size_t), void(*)(void*, std::size_t));
 extern "C" void __cxa_vec_delete3_nid_postfix(void*, std::size_t, std::size_t, void(*)(void*), void(*)(void*, std::size_t));
 extern "C" _Unwind_Reason_Code _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*);
@@ -248,8 +250,17 @@ int main() {
     catch (const std::range_error&) {}
     bool badFunctionCall = false;
     try { _ZNSt8__sce_v219_Xbad_function_callEv_nid_postfix(); }
-    catch (const std::bad_function_call&) { badFunctionCall = true; }
+    catch (const std::bad_function_call&) { std::abort(); }
+    catch (const std::exception& value) {
+        if (std::strcmp(typeid(value).name(), "NSt8__sce_v217bad_function_callE") != 0) std::abort();
+        if (std::strcmp(value.what(), "bad function call") != 0) std::abort();
+        badFunctionCall = true;
+    }
     if (!badFunctionCall) std::abort();
+    bool plainBadFunctionCall = false;
+    try { _ZSt19_Xbad_function_callv_nid_postfix(); }
+    catch (const std::bad_function_call&) { plainBadFunctionCall = true; }
+    if (!plainBadFunctionCall) std::abort();
     try { __cxa_bad_cast_nid_postfix(); }
     catch (const std::exception& value) { assert(value.what() != nullptr); }
     try { _ZSt19_Throw_bad_weak_ptrv_nid_postfix(); std::abort(); }
@@ -262,6 +273,10 @@ int main() {
     catch (const std::invalid_argument&) {}
     try { _ZNKSt9exception6_RaiseEv_nid_postfix(&object); assert(false); }
     catch (const std::exception& value) { assert(std::strcmp(value.what(), "std::exception") == 0); }
+    try { _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(nullptr); assert(false); }
+    catch (const std::invalid_argument&) {}
+    try { _ZNKSt8bad_cast8_DoraiseEv_nid_postfix(&object); assert(false); }
+    catch (const std::bad_cast&) {}
     CheckRtti();
     CheckForeign();
     CheckStaticInitialization();

@@ -170,8 +170,7 @@ int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param) {
 }
 
 int APS5_VABI sceNpCommerceDialogInitializeInternal() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNpCommerceDialogInitialize();
 }
 
 }

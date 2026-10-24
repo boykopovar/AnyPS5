@@ -3,9 +3,15 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #endif
 #include <stdexcept>
@@ -36,6 +42,28 @@ static bool ThrowsRuntimeError(TFunction function) {
         return true;
     }
     return false;
+}
+static bool FailsAsUnrelinked(const std::filesystem::path& module) {
+    void* handle = dlopen_nid_postfix(module.string().c_str(), 2);
+    const char* error = dlerror_nid_postfix();
+    return handle == nullptr && error != nullptr && std::strstr(error, module.filename().string().c_str()) != nullptr &&
+        std::strstr(error, "--module-dir") != nullptr;
+}
+static void CheckUnrelinkedModule(const std::filesystem::path& module) {
+#ifdef _WIN32
+    const UINT processMode = SetErrorMode(0);
+    DWORD threadMode = 0;
+    const bool threadModeSet = SetThreadErrorMode(SEM_NOGPFAULTERRORBOX, &threadMode) != 0;
+#endif
+    const bool first = FailsAsUnrelinked(module);
+    const bool again = FailsAsUnrelinked(module);
+#ifdef _WIN32
+    const DWORD threadModeAfter = GetThreadErrorMode();
+    SetThreadErrorMode(threadMode, nullptr);
+    SetErrorMode(processMode);
+    Require(threadModeSet && threadModeAfter == SEM_NOGPFAULTERRORBOX);
+#endif
+    Require(first && again);
 }
 #ifdef _WIN32
 static void CheckGlobalLookupOrder(const char* path) {
@@ -108,7 +136,8 @@ int main(int argc, char** argv) {
     Require(dlerror_nid_postfix() != nullptr);
     Require(dlerror_nid_postfix() == nullptr);
     Require(dlopen_nid_postfix("anyps5-missing-module-for-test.prx", 2) == nullptr);
-    Require(dlerror_nid_postfix() != nullptr);
+    const char* missing = dlerror_nid_postfix();
+    Require(missing != nullptr && std::strstr(missing, "--module-dir") == nullptr);
     void* mainSymbol = nullptr;
     const int mainResult = sceKernelDlsym(0, "GuestDefaultScopeOnly", &mainSymbol);
     std::fprintf(stderr, "sceKernelDlsym(0, GuestDefaultScopeOnly): result=0x%08x, symbol=%p\n", static_cast<unsigned>(mainResult), mainSymbol);
@@ -155,10 +184,12 @@ int main(int argc, char** argv) {
     const std::filesystem::path guest = "anyps5-relinked-module-for-test.prx";
     auto relinked = guest;
     relinked += ".guest.prx";
+    std::filesystem::remove(relinked);
     {
         std::ofstream elf(guest, std::ios::binary);
         elf.write("\x7f" "ELF", 4);
     }
+    CheckUnrelinkedModule(guest);
     std::filesystem::copy_file(argv[1], relinked, std::filesystem::copy_options::overwrite_existing);
     void* redirected = dlopen_nid_postfix(guest.string().c_str(), 2);
     Require(redirected != nullptr);

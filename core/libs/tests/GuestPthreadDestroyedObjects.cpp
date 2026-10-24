@@ -19,6 +19,7 @@ int APS5_VABI pthread_cond_destroy_nid_postfix(PthreadCond* cond);
 }
 
 static constexpr int SCE_OK = 0;
+static constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001u);
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 static constexpr int POSIX_EINVAL = 22;
 
@@ -33,6 +34,21 @@ int main() {
     Require(scePthreadMutexUnlock(&mutex) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == POSIX_EINVAL);
     Require(mutex == reinterpret_cast<PthreadMutex>(std::uintptr_t{2}));
+
+    PthreadMutex uninitialized = nullptr;
+    Require(scePthreadMutexUnlock(&uninitialized) == SCE_KERNEL_ERROR_EPERM);
+    Require(uninitialized == nullptr);
+    Require(scePthreadMutexLock(&uninitialized) == SCE_OK);
+    Require(scePthreadMutexUnlock(&uninitialized) == SCE_OK);
+    Require(scePthreadMutexUnlock(&uninitialized) == SCE_KERNEL_ERROR_EPERM);
+    Require(scePthreadMutexDestroy(&uninitialized) == SCE_OK);
+
+    PthreadMutex adaptive = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
+    Require(scePthreadMutexUnlock(&adaptive) == SCE_KERNEL_ERROR_EPERM);
+    Require(adaptive == reinterpret_cast<PthreadMutex>(std::uintptr_t{1}));
+    Require(scePthreadMutexLock(&adaptive) == SCE_OK);
+    Require(scePthreadMutexUnlock(&adaptive) == SCE_OK);
+    Require(scePthreadMutexDestroy(&adaptive) == SCE_OK);
 
     PthreadCond cond = nullptr;
     Require(scePthreadCondInit(&cond, nullptr, "destroyed") == SCE_OK);

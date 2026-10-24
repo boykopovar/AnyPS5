@@ -60,10 +60,8 @@ int main() {
     Require(close_nid_postfix(sockets[0]) == 0);
     Require(close_nid_postfix(sockets[1]) == 0);
     Require(close_nid_postfix(file) == 0);
-#ifndef _WIN32
     RequireFailure(file, GuestEbadf);
     RequireFailure(-1, GuestEbadf);
-#endif
 
     std::filesystem::remove_all(root);
 }

@@ -37,6 +37,10 @@ int APS5_VABI sceAmprCommandBufferSetMarkerWithColor(Apr::CommandBufferObject*, 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char*, std::uint32_t);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounterOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion();
+void* APS5_VABI sceAmprCommandBufferGetBufferBaseAddress(const Apr::CommandBufferObject*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor(const char*, std::uint32_t);
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
@@ -582,6 +586,10 @@ void TestVersionedCounters() {
 
 void TestClearBuffer() {
     Recorder recorder;
+    Require(sceAmprMeasureCommandSizeWriteAddressOnCompletion() == sizeof(Apr::WriteAddressCommand));
+    Require(sceAmprMeasureCommandSizeWriteCounterOnCompletion() == sizeof(Apr::WriteCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion() == sizeof(Apr::WriteKernelEventQueueCommand));
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&recorder.buffer) == recorder.buffer.base);
     Require(sceAmprCommandBufferNop(&recorder.buffer, 1) == 0);
     Require(recorder.Offset() != 0 && recorder.Commands() == 1);
     Require(sceAmprCommandBufferClearBuffer(&recorder.buffer) == recorder.memory.data());

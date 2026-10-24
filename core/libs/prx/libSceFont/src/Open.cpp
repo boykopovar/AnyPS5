@@ -398,8 +398,6 @@ int APS5_VABI sceFontOpenFontInstance(FontHandle fontHandle, FontHandle setupFon
     ReleaseFontLock(source, sourceLock);
     FontState& targetState = ResetState(target);
     if (FontState* sourceState = TryGetState(fontHandle)) {
-        targetState.scaleW = sourceState->scaleW;
-        targetState.scaleH = sourceState->scaleH;
         if (sourceState->faceData && !sourceState->faceData->empty()) LoadStateFace(targetState, sourceState->faceData, subFontIndex);
         for (const FallbackFace& fallback : sourceState->fallbacks) AddStateFallbackFace(targetState, fallback.data, fallback.subFontIndex);
     }

@@ -61,6 +61,21 @@ class ReleasePackageTests(unittest.TestCase):
         with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/licenses/vgmstream.txt").read(), b"decoder license")
 
+    def test_vorbis_decoder_licenses_in_archives(self):
+        (self.source / "core/libs/prx/libSceVorbisDec").mkdir()
+        (self.build / "core/libs/libs/libSceVorbisDec.prx").write_bytes(b"vorbis")
+        for name in ("ogg", "vorbis"):
+            license_file = self.source / f"3rdparty/{name}/COPYING"
+            license_file.parent.mkdir(parents=True)
+            license_file.write_bytes(f"{name} license".encode())
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/licenses/ogg.txt"), b"ogg license")
+            self.assertEqual(archive.read("libs/licenses/vorbis.txt"), b"vorbis license")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/licenses/ogg.txt").read(), b"ogg license")
+            self.assertEqual(archive.extractfile("libs/licenses/vorbis.txt").read(), b"vorbis license")
+
     def test_windows_runtime_follows_the_configured_compiler_directory(self):
         runtime = self.root / "custom toolchain" / "bin"
         runtime.mkdir(parents=True)
@@ -82,6 +97,25 @@ class ReleasePackageTests(unittest.TestCase):
             for name in names + allocator:
                 self.assertEqual(archive.extractfile("libs/" + name).read(), name.encode())
         self.assertEqual((self.output / "relinker-v1.exe").read_bytes(), b"Windows executable")
+
+    def test_opus_library_archives_include_the_bundled_license(self):
+        (self.source / "core/libs/prx/libSceOpusDec").mkdir()
+        (self.library.parent / "libSceOpusDec.prx").write_bytes(b"Opus library bytes")
+        license_file = self.source / "3rdparty/opus/COPYING"
+        license_file.parent.mkdir(parents=True)
+        license_file.write_bytes(b"Opus redistribution notice\n")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/licenses/opus.txt"), license_file.read_bytes())
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/licenses/opus.txt").read(), license_file.read_bytes())
+
+    def test_opus_release_without_its_license_is_rejected(self):
+        (self.source / "core/libs/prx/libSceOpusCeltDec").mkdir()
+        (self.library.parent / "libSceOpusCeltDec.prx").write_bytes(b"CELT library bytes")
+        with self.assertRaisesRegex(RuntimeError, "COPYING"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertFalse(self.output.exists())
 
     def test_windows_package_without_configured_compiler_preserves_existing_output(self):
         (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:FILEPATH=compiler-NOTFOUND\n", encoding="utf-8")

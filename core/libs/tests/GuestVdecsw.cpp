@@ -9,6 +9,7 @@
 #include "prx/libc/include/General.hpp"
 #include "Vp9Fixture.hpp"
 #include "H264Fixture.hpp"
+#include "HevcFixture.hpp"
 
 struct ComputeMemoryInfo {
     std::uint64_t thisSize;
@@ -133,6 +134,51 @@ struct AvcPictureInfo {
     std::uint8_t vui[44];
 };
 
+struct HevcPictureInfo {
+    std::uint64_t thisSize;
+    bool isValid;
+    std::uint64_t ptsData;
+    std::uint64_t dtsData;
+    std::uint64_t attachedData;
+    std::uint32_t picWidthInLumaSamples;
+    std::uint32_t picHeightInLumaSamples;
+    std::uint8_t bitDepthLumaMinus8;
+    std::uint8_t bitDepthChromaMinus8;
+    std::uint8_t timingInfoPresentFlag;
+    std::uint32_t numUnitsInTick;
+    std::uint32_t timeScale;
+    std::uint32_t aspectRatioInfoPresentFlag;
+    std::uint8_t aspectRatioIdc;
+    std::uint16_t sarWidth;
+    std::uint16_t sarHeight;
+    std::uint8_t videoSignal[8];
+    std::uint32_t picStruct;
+    std::uint32_t sourceScanType;
+    std::uint32_t duplicateFlag;
+    std::uint32_t conformanceWindowFlag;
+    std::uint32_t confWinLeftOffset;
+    std::uint32_t confWinRightOffset;
+    std::uint32_t confWinTopOffset;
+    std::uint32_t confWinBottomOffset;
+    std::uint32_t defaultDisplayWindow[5];
+    std::uint8_t chromaLocation[4];
+    std::uint8_t presentFlags[11];
+    std::uint8_t idrPictureFlag;
+    std::uint8_t irapPictureFlag;
+    std::uint8_t generalProfileSpace;
+    std::uint8_t generalTierFlag;
+    std::uint8_t generalProfileIdc;
+    std::uint8_t generalSourceFlags[3];
+    std::uint8_t generalLevelIdc;
+    std::uint8_t subLayer[9];
+    std::uint8_t frameCroppingFlag;
+    std::uint32_t frameCropLeftOffset;
+    std::uint32_t frameCropRightOffset;
+    std::uint32_t frameCropTopOffset;
+    std::uint32_t frameCropBottomOffset;
+};
+
+static_assert(sizeof(HevcPictureInfo) == 0xb8 && offsetof(HevcPictureInfo, idrPictureFlag) == 0x93 && offsetof(HevcPictureInfo, frameCroppingFlag) == 0xa5);
 static_assert(sizeof(DecoderConfigInfo) == 0x50 && sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isLastFrame) == 9 && offsetof(OutputInfo, pictureCount) == 0xb && sizeof(AvcPictureInfo) == 0x78);
 
 extern "C" {
@@ -150,7 +196,7 @@ int APS5_VABI sceVdecswTrySyncDecodeOutput(std::uint64_t, OutputInfo*);
 int APS5_VABI sceVdecswSyncDecodeOutput(std::uint64_t, OutputInfo*);
 int APS5_VABI sceVdecswGetVp9PictureInfo(const OutputInfo*, Vp9PictureInfo*);
 int APS5_VABI sceVdecswGetAvcPictureInfo(const OutputInfo*, AvcPictureInfo*, AvcPictureInfo*);
-int APS5_VABI sceVdecswGetHevcPictureInfo(const OutputInfo*, void*);
+int APS5_VABI sceVdecswGetHevcPictureInfo(const OutputInfo*, HevcPictureInfo*);
 int APS5_VABI sceVdecswFinalizeDecodeSequence(std::uint64_t);
 int APS5_VABI sceVdecswResetDecoder(std::uint64_t);
 }
@@ -158,11 +204,15 @@ int APS5_VABI sceVdecswResetDecoder(std::uint64_t);
 namespace {
 
 using namespace H264Fixture;
+using namespace HevcFixture;
 using namespace Vp9Fixture;
 
 constexpr int OutputPending = static_cast<int>(0x81510115u);
 constexpr int InputQueueEmpty = static_cast<int>(0x81510116u);
+constexpr std::uint32_t CodecAvc = 1;
+constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
+constexpr std::array<std::size_t, 6> HevcDisplayOrderUnits{0, 3, 2, 1, 5, 4};
 
 void check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
@@ -173,12 +223,12 @@ struct Session {
     std::uint64_t decoder = 0;
     DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
 
-    Session() {
+    explicit Session(std::uint32_t codec = CodecAvc, std::uint32_t profile = 100, std::uint32_t level = 42) {
         ComputeMemoryInfo compute{sizeof(ComputeMemoryInfo)};
         check(sceVdecswQueryComputeMemoryInfo(&compute) == 0 && compute.cpuGpuMemorySize != 0, "compute memory query failed");
         const ComputeConfigInfo computeConfig{sizeof(ComputeConfigInfo), 3, 3, true};
         check(sceVdecswAllocateComputeQueue(&computeConfig, &compute, &queue) == 0, "compute queue allocation failed");
-        DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, 1, 100, 42, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3, queue, 0x3f, 0, true, {}};
+        DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, codec, profile, level, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 3, queue, 0x3f, 0, true, {}};
         check(sceVdecswQueryDecoderMemoryInfo(&config, &memory) == 0 && memory.maxFrameBufferSize != 0, "decoder memory query failed");
         check(sceVdecswCreateDecoder(&config, &memory, &decoder) == 0, "decoder creation failed");
     }
@@ -245,6 +295,76 @@ void testDecode() {
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a finalized decoder did not report an empty input queue");
 }
 
+void testHevc() {
+    Session session(CodecHevc, 1, 30);
+    const auto units = hevcUnits(HevcStream.data(), HevcStream.size());
+    check(units.size() == HevcHashes.size(), "unexpected HEVC access unit count");
+    std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
+    std::size_t pictures = 0;
+    bool ended = false;
+    const auto drain = [&] {
+        for (;;) {
+            const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+            check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "HEVC output buffer was rejected");
+            OutputInfo output{sizeof(OutputInfo)};
+            const auto status = sceVdecswTrySyncDecodeOutput(session.decoder, &output);
+            if (status == OutputPending) return;
+            check(status == 0, "HEVC output sync failed");
+            if (!output.isValid) {
+                ended = true;
+                return;
+            }
+            check(pictures < HevcHashes.size() && output.codecType == CodecHevc && output.pictureCount == 1 && output.frameWidth == Width && output.frameHeight == Height, "unexpected HEVC picture geometry");
+            HevcPictureInfo info{sizeof(HevcPictureInfo)};
+            check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "HEVC picture info missing");
+            const auto unit = HevcDisplayOrderUnits[pictures];
+            check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit, "HEVC pictures out of display order");
+            check(info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.irapPictureFlag == (pictures == 0 ? 1 : 0), "HEVC random access flags differ");
+            check(info.generalProfileIdc == 1 && info.generalLevelIdc == 30 && info.bitDepthLumaMinus8 == 0 && info.bitDepthChromaMinus8 == 0, "HEVC profile, level or bit depth differs");
+            check(info.picWidthInLumaSamples == Width && info.picHeightInLumaSamples == Height && info.conformanceWindowFlag == 0 && info.frameCroppingFlag == 0, "HEVC picture geometry in the picture info is wrong");
+            AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+            bool avcThrows = false;
+            try {
+                sceVdecswGetAvcPictureInfo(&output, &avc, nullptr);
+            } catch (const std::exception&) {
+                avcThrows = true;
+            }
+            check(avcThrows, "AVC picture info was returned for an HEVC picture");
+            check(hashNv12(buffer.data(), output.framePitch, output.frameHeight) == HevcHashes[pictures], "HEVC picture " + std::to_string(pictures) + " differs from the reference");
+            ++pictures;
+        }
+    };
+    for (std::size_t unit = 0; unit < units.size(); ++unit) {
+        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "HEVC decode input was rejected");
+        InputResult consumed{sizeof(InputResult)};
+        check(sceVdecswTrySyncDecodeInput(session.decoder, &consumed) == 0 && consumed.decodedAu == units[unit].data(), "an HEVC access unit was not consumed");
+        drain();
+    }
+    check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "HEVC finalize failed");
+    while (!ended) drain();
+    check(pictures == HevcHashes.size(), "missing HEVC pictures after finalizing the sequence");
+}
+
+void testHevcCrop() {
+    Session session(CodecHevc, 1, 30);
+    std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
+    const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+    check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "cropped HEVC output buffer was rejected");
+    const InputData input{sizeof(InputData), HevcCroppedStream.data(), HevcCroppedStream.size(), 1000, 0, 0xa0};
+    check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "cropped HEVC decode input was rejected");
+    InputResult consumed{sizeof(InputResult)};
+    check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "the cropped HEVC access unit was not consumed");
+    check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "cropped HEVC finalize failed");
+    OutputInfo output{sizeof(OutputInfo)};
+    check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.frameWidth == 64 && output.frameHeight == 40, "unexpected cropped HEVC picture geometry");
+    HevcPictureInfo info{sizeof(HevcPictureInfo)};
+    check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "cropped HEVC picture info missing");
+    check(info.picWidthInLumaSamples == 64 && info.picHeightInLumaSamples == 40, "cropped HEVC coded size differs");
+    check(info.conformanceWindowFlag == 1 && info.confWinLeftOffset == 0 && info.confWinRightOffset == 0 && info.confWinTopOffset == 0 && info.confWinBottomOffset == 2, "HEVC conformance window differs");
+    check(info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == 2, "HEVC frame cropping differs");
+}
+
 void testWithoutOutput() {
     Session session;
     const auto units = accessUnits(false);
@@ -278,13 +398,14 @@ void testSyncWrappers() {
     check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "finalize failed");
     OutputInfo output{sizeof(OutputInfo)};
     check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid && output.isLastFrame, "sync output did not return the finalized picture");
+    HevcPictureInfo hevc{sizeof(HevcPictureInfo)};
     bool hevcThrows = false;
     try {
-        sceVdecswGetHevcPictureInfo(&output, &result);
+        sceVdecswGetHevcPictureInfo(&output, &hevc);
     } catch (const std::exception&) {
         hevcThrows = true;
     }
-    check(hevcThrows, "GetHevcPictureInfo must still throw");
+    check(hevcThrows, "HEVC picture info was returned for an H.264 picture");
 }
 
 struct Vp9Session {
@@ -457,9 +578,29 @@ void testVp9PictureInfoOfAvcPicture() {
 
 }
 
+void testHevcMain10() {
+    Session session(CodecHevc, 2, 30);
+    std::vector<std::uint8_t> buffer(session.memory.maxFrameBufferSize);
+    const FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size()};
+    check(sceVdecswSetDecodeOutput(session.decoder, &frame) == 0, "Main 10 HEVC output buffer was rejected");
+    const InputData input{sizeof(InputData), HevcMain10Stream.data(), HevcMain10Stream.size(), 1000, 0, 0xa0};
+    check(sceVdecswSetDecodeInput(session.decoder, &input) == 0, "Main 10 HEVC decode input was rejected");
+    InputResult consumed{sizeof(InputResult)};
+    check(sceVdecswSyncDecodeInput(session.decoder, &consumed) == 0, "the Main 10 HEVC access unit was not consumed");
+    check(sceVdecswFinalizeDecodeSequence(session.decoder) == 0, "Main 10 HEVC finalize failed");
+    OutputInfo output{sizeof(OutputInfo)};
+    check(sceVdecswSyncDecodeOutput(session.decoder, &output) == 0 && output.isValid, "the Main 10 HEVC picture was not output");
+    HevcPictureInfo info{sizeof(HevcPictureInfo)};
+    check(sceVdecswGetHevcPictureInfo(&output, &info) == 0 && info.isValid, "Main 10 HEVC picture info missing");
+    check(info.generalProfileIdc == 2 && info.bitDepthLumaMinus8 == 2 && info.bitDepthChromaMinus8 == 2, "Main 10 HEVC profile or bit depth differs");
+}
+
 int main() {
     try {
         testDecode();
+        testHevc();
+        testHevcCrop();
+        testHevcMain10();
         testWithoutOutput();
         testSyncWrappers();
         testVp9PictureInfo();

@@ -18,6 +18,17 @@ struct HostImport;
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr);
+
+struct PixelFunctionLdsLayouts {
+    VkDescriptorSetLayout empty = VK_NULL_HANDLE;
+    VkDescriptorSetLayout buffer = VK_NULL_HANDLE;
+};
+
+PixelFunctionLdsLayouts PixelFunctionLdsSetLayouts(const Context& context);
+void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, std::uint32_t subgroupSize);
+void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
+void CheckPixelFunctionLds(const Context& context);
+void ReleasePixelFunctionLds(VkDevice device);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
@@ -94,6 +105,8 @@ bool DrawRecipes();
 enum class IndirectDrawPath : std::uint8_t { Gpu, NotFolded, FetchUnknown, NonVertexPath, IndxOffset, DrawIndex, VertexRange, FeatureGap, PendingImage, PendingLabelOrCopy, NotImported, Disabled, IndexRange, Count };
 void CountIndirectDraw(IndirectDrawPath path, double readMs, bool rewritten = false);
 std::array<std::uint64_t, static_cast<std::size_t>(IndirectDrawPath::Count)> IndirectDrawCounts();
+void CountEmptyIndirectDraw(double readMs);
+std::uint64_t EmptyIndirectDrawCount();
 
 struct DrawPassCounts {
     std::uint64_t draws = 0;
@@ -128,6 +141,9 @@ std::shared_ptr<std::vector<std::shared_ptr<ShaderResources>>> DrawCopiedWriters
 
 void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass);
 void RunDepthCopyPass(const Context& context, const DepthCopyPass& pass);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> PipelinedColorMetadataPassWrites(const ColorMetadataPass& pass);
+bool DrawPipelineEnabled();
+bool CommitTrims();
 
 }
 

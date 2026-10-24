@@ -74,18 +74,22 @@ int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*)
     auto* context = new (std::nothrow) ThreadAtexitContext{func, arg};
     if (context == nullptr)
         return -1;
-    const int result = __cxxabiv1::__cxa_thread_atexit(
-        [](void* opaque) {
-            auto* context = static_cast<ThreadAtexitContext*>(opaque);
-            const auto destructor = context->destructor;
-            void* object = context->object;
-            delete context;
-            destructor(object);
-        },
-        context, dso);
+    const auto run = [](void* opaque) {
+        auto* context = static_cast<ThreadAtexitContext*>(opaque);
+        const auto destructor = context->destructor;
+        void* object = context->object;
+        delete context;
+        destructor(object);
+    };
+#ifdef __APPLE__
+    __cxxabiv1::__cxa_thread_atexit(run, context, dso);
+    return 0;
+#else
+    const int result = __cxxabiv1::__cxa_thread_atexit(run, context, dso);
     if (result != 0)
         delete context;
     return result;
+#endif
 }
 
 int APS5_VABI __cxa_thread_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso) {

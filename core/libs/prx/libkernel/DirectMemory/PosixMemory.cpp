@@ -38,6 +38,7 @@ constexpr int GuestNoMemory = 12;
 constexpr int GuestBadDescriptor = 9;
 constexpr int GuestAccess = 13;
 constexpr int GuestFault = 14;
+constexpr int GuestBusy = 16;
 constexpr int GuestIoError = 5;
 constexpr int GuestNotSupported = 45;
 constexpr int GuestShared = 0x1;
@@ -171,7 +172,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #endif
         const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
         const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
-        void* mapped = fixedAnonymous ? address : nullptr;
+        void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
             const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
@@ -337,7 +338,7 @@ int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags) {
     if (end < start) return failed(GuestInvalid);
     if ((flags & (GuestSyncAsync | GuestSyncInvalidate)) == (GuestSyncAsync | GuestSyncInvalidate)) return failed(GuestInvalid);
     if (start == end ? !Mapped(start) : !GuestRangeMapped(start, end)) return failed(GuestNoMemory);
-    if ((flags & GuestSyncInvalidate) != 0) throw std::runtime_error("msync: MS_INVALIDATE is not implemented");
+    if ((flags & GuestSyncInvalidate) != 0) return failed(GuestBusy);
     return 0;
 }
 

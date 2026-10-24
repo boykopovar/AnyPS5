@@ -693,8 +693,12 @@ void testCorrupt(const std::filesystem::path& directory) {
 int main() {
     std::filesystem::path scratch;
     try {
+#ifdef _WIN32
+        const wchar_t* captured = _wgetenv(L"APS5_DUMP_SUBMITS");
+#else
         const char* captured = std::getenv("APS5_DUMP_SUBMITS");
-        check(captured != nullptr && *captured != '\0', "set APS5_DUMP_SUBMITS to the capture directory of this test");
+#endif
+        check(captured != nullptr && *captured != 0, "set APS5_DUMP_SUBMITS to the capture directory of this test");
         const std::filesystem::path directory = captured;
         std::filesystem::remove_all(directory);
         scratch = std::filesystem::temp_directory_path() / ("anyps5-pm4-replay-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

@@ -97,6 +97,10 @@ char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std
     return buffer;
 }
 
+char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size) {
+    return inet_ntoa_r_nid_postfix(address, buffer, size);
+}
+
 char* APS5_VABI inet_ntoa_nid_postfix(std::uint32_t address) {
     std::memcpy(g_ntoaBuffer, "[inet_ntoa error]", sizeof(g_ntoaBuffer));
     __inet_ntop_nid_postfix(AddressFamilyInet, &address, g_ntoaBuffer, sizeof(g_ntoaBuffer));

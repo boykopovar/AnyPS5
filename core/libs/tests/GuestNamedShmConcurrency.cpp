@@ -143,9 +143,13 @@ void Run() {
 
     if (fchmod_nid_postfix(descriptor, 0400) != 0)
         throw std::runtime_error("changing shared-object permissions to read-only failed");
-    *__error_nid_postfix() = 0;
-    if (unlinkObject(object.name.c_str()) != -1 || *__error_nid_postfix() != 13)
-        throw std::runtime_error("unlink of a read-only shared object did not return EACCES");
+    if (::geteuid() != 0) {
+        *__error_nid_postfix() = 0;
+        if (unlinkObject(object.name.c_str()) != -1 || *__error_nid_postfix() != 13)
+            throw std::runtime_error("unlink of a read-only shared object did not return EACCES");
+    } else {
+        std::fprintf(stderr, "running as root, which ignores file permissions: the read-only unlink case not tested\n");
+    }
     if (fchmod_nid_postfix(descriptor, 0600) != 0)
         throw std::runtime_error("restoring shared-object permissions failed");
     if (unlinkObject(object.name.c_str()) != 0)

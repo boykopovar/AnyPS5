@@ -18,6 +18,14 @@ void require(bool condition, const char* message) {
 
 std::filesystem::path root;
 
+void setConfigPath(const std::filesystem::path& path) {
+#ifdef _WIN32
+    require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", path.wstring().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
+#else
+    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
+#endif
+}
+
 void useConfig(const std::string& text) {
     const auto path = root / "anyps5-input.ini";
     {
@@ -25,11 +33,7 @@ void useConfig(const std::string& text) {
         file << text;
         require(file.good(), "write the input mapping");
     }
-#ifdef _WIN32
-    require(_putenv_s("ANYPS5_INPUT_CONFIG", path.string().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
-#else
-    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
-#endif
+    setConfigPath(path);
 }
 
 bool rejects(const std::string& text) {
@@ -138,14 +142,6 @@ void mouseLookReject() {
     require(rejects("MouseMaxSpeed = nan\n"), "a non-finite max speed is rejected");
     require(rejects("MouseVerticalScale = 11\n"), "a vertical scale above 10 is rejected");
     require(rejects("MouseDecayMs = 20\nmousedecayms = 30\n"), "a mouse setting given twice is rejected");
-}
-
-void setConfigPath(const std::filesystem::path& path) {
-#ifdef _WIN32
-    require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", path.wstring().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
-#else
-    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
-#endif
 }
 
 void nonAsciiPaths() {

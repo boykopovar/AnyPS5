@@ -50,8 +50,8 @@ int main() {
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(1) == 0);
     Require(sceSharePlayProhibitController(0) == 0);
-    Require(Throws([] { sceSharePlayProhibitController(2); }));
-    Require(Throws([] { sceSharePlayProhibitController(255); }));
+    Require(sceSharePlayProhibitController(2) == invalidArgument);
+    Require(sceSharePlayProhibitController(255) == invalidArgument);
     Require(sceSharePlayTerminate() == 0);
     std::memset(&info, 0x5a, sizeof(info));
     Require(sceSharePlayGetCurrentConnectionInfoA(&info) == notInitialized);

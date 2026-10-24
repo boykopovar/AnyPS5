@@ -28,6 +28,8 @@ constexpr std::uint8_t TRANSFER_TYPE_BULK = 2;
 constexpr std::uint8_t TRANSFER_TYPE_INTERRUPT = 3;
 constexpr std::int32_t CONTROL_SETUP_SIZE = 8;
 constexpr std::uint8_t SUPPORTED_TRANSFER_FLAGS = LIBUSB_TRANSFER_SHORT_NOT_OK | LIBUSB_TRANSFER_ADD_ZERO_PACKET;
+constexpr std::uint16_t STRING_DESCRIPTOR_SIZE = 255;
+constexpr std::uint32_t STRING_DESCRIPTOR_TIMEOUT = 1000;
 
 struct UsbdTimeval {
     std::int64_t seconds;
@@ -139,6 +141,13 @@ void LIBUSB_CALL CompleteTransfer(libusb_transfer* host) {
     }
     libusb_free_transfer(host);
     if (guest->callback != nullptr) guest->callback(guest);
+}
+
+bool RequestStringDescriptor(libusb_device_handle* handle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* descriptor) {
+    std::memset(descriptor, 0, STRING_DESCRIPTOR_SIZE);
+    const auto value = static_cast<std::uint16_t>(LIBUSB_DT_STRING << 8 | descriptorIndex);
+    const int result = libusb_control_transfer(handle, LIBUSB_ENDPOINT_IN, LIBUSB_REQUEST_GET_DESCRIPTOR, value, languageId, descriptor, STRING_DESCRIPTOR_SIZE, STRING_DESCRIPTOR_TIMEOUT);
+    return result >= 0 && descriptor[1] == LIBUSB_DT_STRING;
 }
 
 }
@@ -550,18 +559,31 @@ std::int32_t APS5_VABI sceUsbdEventHandlerActive() {
 }
 
 std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config) {
-    NotImplemented_nid_no_patch(__func__);
+    if (device == nullptr || config == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    libusb_config_descriptor* host = nullptr;
+    const int result = libusb_get_config_descriptor_by_value(KnownDevice(device, __func__), configurationValue, &host);
+    *config = nullptr;
+    if (result != 0) return ToGuestError(result);
+    auto& state = State();
+    std::lock_guard lock(state.mutex);
+    state.configs.insert(host);
+    *config = host;
     return 0;
 }
 
 std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (deviceHandle == nullptr || configuration == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    int host = 0;
+    const int result = libusb_get_configuration(KnownHandle(deviceHandle, __func__), &host);
+    if (result == 0) *configuration = host;
+    return ToGuestError(result);
 }
 
 std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
+    auto* handle = KnownHandle(deviceHandle, __func__);
+    if (length > 65535) length = 65535;
+    return ToGuestError(libusb_get_descriptor(handle, descriptorType, descriptorIndex, data, length));
 }
 
 void* APS5_VABI sceUsbdGetDevice(void* deviceHandle) {
@@ -585,8 +607,35 @@ std::int32_t APS5_VABI sceUsbdGetMaxPacketSize(void* device, std::uint8_t endpoi
 }
 
 std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
+    auto* handle = KnownHandle(deviceHandle, __func__);
+    if (length > 65535) length = 65535;
+    data[0] = 0;
+    std::uint8_t descriptor[STRING_DESCRIPTOR_SIZE];
+    if (!RequestStringDescriptor(handle, 0, 0, descriptor)) return SCE_USBD_ERROR_OTHER;
+    const auto languageId = static_cast<std::uint16_t>(descriptor[2] | descriptor[3] << 8);
+    if (!RequestStringDescriptor(handle, descriptorIndex, languageId, descriptor) || descriptor[0] < 2) return SCE_USBD_ERROR_OTHER;
+    std::int32_t units = descriptor[0] / 2 - 1;
+    if (units > length - 1) units = length - 1;
+    std::uint8_t byteOrder = 3;
+    std::int32_t written = 0;
+    for (std::int32_t unit = 0; unit < units; ++unit) {
+        const auto code = static_cast<std::uint16_t>(descriptor[2 * unit + 2] | descriptor[2 * unit + 3] << 8);
+        std::uint8_t character;
+        if ((code & 0xFF00) == 0 && (byteOrder & 1) != 0) {
+            character = static_cast<std::uint8_t>(code);
+            byteOrder = 1;
+        } else if ((code & 0x00FF) == 0 && (byteOrder & 2) != 0) {
+            character = static_cast<std::uint8_t>(code >> 8);
+            byteOrder = 2;
+        } else {
+            continue;
+        }
+        if (character < 0x20 || character > 0x7E || character == '<' || character == '>') continue;
+        data[written++] = character;
+    }
+    data[written] = 0;
+    return written;
 }
 
 std::int32_t APS5_VABI sceUsbdHandleEvents() {

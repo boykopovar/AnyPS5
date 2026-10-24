@@ -36,6 +36,7 @@ int APS5_VABI sceNetInit_nid_postfix(void);
 int APS5_VABI sceNetShowNetstatWithMemory(int);
 int APS5_VABI sceNetShowNetstat(void);
 int APS5_VABI sceNetShowIfconfig(void);
+int APS5_VABI sceNetShowPolicy(void);
 int APS5_VABI sceNetShowRoute(void);
 int APS5_VABI sceNetShowRoute6(void);
 int APS5_VABI sceNetSocket(const char*, int, int, int);
@@ -55,6 +56,7 @@ int APS5_VABI sceNetSocketAbort(int, int);
 int APS5_VABI sceNetShutdown(int, int);
 int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
 int APS5_VABI sceNetGetsockopt(int, int, int, void*, std::uint32_t*);
+int APS5_VABI sceNetIoctl(int, std::uint32_t, void*);
 int* APS5_VABI sceNetErrnoLoc(void);
 int APS5_VABI sceNetEtherNtostr(const NetEtherAddr*, char*, std::size_t);
 int APS5_VABI sceNetEtherStrton(const char*, NetEtherAddr*);
@@ -147,7 +149,10 @@ static void Require(bool condition) {
     if (!condition) std::abort();
 }
 
-static bool FailResolverLookup(const char*, int, std::vector<std::array<std::uint8_t, 16>>&) {
+static bool FailResolverLookup(const char* hostname, int family, std::vector<std::array<std::uint8_t, 16>>&) {
+    Require(hostname != nullptr && (std::strcmp(hostname, "guest-sce-net.invalid.") == 0 ||
+        std::strcmp(hostname, "guest-sce-net.invalid") == 0));
+    Require(family == AF_INET || family == AF_INET6);
     return false;
 }
 
@@ -266,6 +271,7 @@ static void CheckNetstat() {
         }
         Require(unsupported);
     }
+    Require(sceNetShowPolicy() == 0);
     Require(sceNetShowRoute() == 0);
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
@@ -812,6 +818,57 @@ static void CheckKernelTimeouts() {
     Require(sceNetSocketClose(descriptor) == 0);
 }
 
+static void CheckIoctl() {
+    const int socket = sceNetSocket("ioctl", 2, 2, 17);
+    Require(socket >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(socket, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(socket, address.data(), &size) == 0 && size == address.size());
+    for (const int enabled : {1, 0, 7}) {
+        int value = enabled;
+        Require(sceNetIoctl(socket, 0x8004667e, &value) == 0);
+        int nonblocking = -1;
+        std::uint32_t length = sizeof(nonblocking);
+        Require(sceNetGetsockopt(socket, 0xffff, 0x1200, &nonblocking, &length) == 0 && nonblocking == (enabled != 0 ? 1 : 0));
+        Require(fcntl_nid_postfix(socket, 3) == (enabled != 0 ? 2 | 4 : 2));
+    }
+    int disabled = 0;
+    int enabled = 1;
+    Require(sceNetIoctl(socket, 0x8004667e, &enabled) == 0);
+    char buffer[8]{};
+    Require(Failed(sceNetRecv(socket, buffer, sizeof(buffer), 0), 35));
+    int readable = -1;
+    Require(sceNetIoctl(socket, 0x4004667f, &readable) == 0 && readable == 0);
+    const char payload[5] = {'i', 'o', 'c', 't', 'l'};
+    Require(sceNetSendto(socket, payload, sizeof(payload), 0, address.data(), address.size()) == sizeof(payload));
+    GuestPollEntry entry{socket, 1, 0};
+    Require(poll_nid_postfix(&entry, 1, 1000) == 1 && entry.revents == 1);
+    Require(sceNetIoctl(socket, 0x4004667f, &readable) == 0 && readable == sizeof(payload));
+    Require(sceNetRecv(socket, buffer, sizeof(buffer), 0) == sizeof(payload));
+    Require(sceNetIoctl(socket, 0x4004667f, &readable) == 0 && readable == 0);
+    Require(Failed(sceNetIoctl(socket, 0x8004667e, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x4004667f, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
+    Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
+    Require(sceNetSocketClose(socket) == 0);
+    Require(Failed(sceNetIoctl(socket, 0x8004667e, &enabled), 9));
+    Require(Failed(sceNetIoctl(-1, 0x4004667f, &readable), 9));
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random >= 0);
+    Require(Failed(sceNetIoctl(random, 0x4004667f, &readable), 9));
+    Require(close_nid_postfix(random) == 0);
+
+    const int kernel = socket_nid_postfix(2, 2, 0);
+    Require(kernel >= 0);
+    std::array<std::uint8_t, 16> kernelAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(kernel, kernelAddress.data(), kernelAddress.size()) == 0);
+    Require(sceNetIoctl(kernel, 0x8004667e, &enabled) == 0 && fcntl_nid_postfix(kernel, 3) == (2 | 4));
+    Require(sceNetIoctl(kernel, 0x8004667e, &disabled) == 0 && fcntl_nid_postfix(kernel, 3) == 2);
+    Require(sceNetIoctl(kernel, 0x4004667f, &readable) == 0 && readable == 0);
+    Require(close_nid_postfix(kernel) == 0);
+}
+
 static void CheckKernelStatusFlags() {
     const int descriptor = sceNetSocket("kernel-status", 2, 1, 6);
     Require(descriptor >= 0);
@@ -871,9 +928,24 @@ static void CheckInetPtonWhitespace() {
     for (const char* text : {" 1.2.3.4", "1.2.3.4x", "1.2.3.4.", "1.2.3.4\x01", "1.2.3.4\xa0", "1.2. 3.4", "1.2.3", "1.2.3 ", "01.2.3.4", "256.0.0.1"}) {
         CheckInetPtonRejects(2, text);
     }
-    for (const char* text : {"::1 ", "::1\t", " ::1", "::1x"}) {
+    for (const char* text : {"::1 ", "::1\t", " ::1", "::1x", "::ffff:1.2.3.4x", "::ffff:1.2.3.4\x01", "::ffff:01.2.3.4", "::ffff:1.2.3",
+                             "::ffff:0x1.2.3.4", "::ffff ", "::ffff:1.2 .3.4"}) {
         CheckInetPtonRejects(28, text);
     }
+    for (const char* text : {"::ffff:1.2.3.4 x", "::ffff:1.2.3.4\t", "::ffff:1.2.3.4\nzz", "::ffff:1.2.3.4 "}) {
+        std::array<std::uint8_t, 16> address{};
+        *sceNetErrnoLoc() = 123;
+        Require(sceNetInetPton(28, text, address.data()) == 1 && *sceNetErrnoLoc() == 123);
+        Require(address[10] == 0xff && address[11] == 0xff && address[12] == 1 && address[15] == 4);
+    }
+    std::array<std::uint8_t, 16> full{};
+    Require(sceNetInetPton(28, "1:2:3:4:5:6:1.2.3.4 z", full.data()) == 1 && full[1] == 1 && full[11] == 6 && full[12] == 1 && full[15] == 4);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPton(2, "1.2.3.4", nullptr) == 1 && *sceNetErrnoLoc() == 123);
+    Require(sceNetInetPton(2, "abc", nullptr) == 0 && *sceNetErrnoLoc() == 123);
+    Require(sceNetInetPton(28, "::1", nullptr) < 0 && *sceNetErrnoLoc() == 22);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPton(28, nullptr, full.data()) < 0 && *sceNetErrnoLoc() == 22);
 }
 
 struct AtonCase {
@@ -929,7 +1001,9 @@ static void CheckInetPtonEx() {
     Require(sceNetInetPtonEx(2, "not an address", address.data(), 0) == 0);
     Require(Failed(sceNetInetPtonEx(99, "127.0.0.1", address.data(), 0), 47));
     Require(Failed(sceNetInetPtonEx(2, nullptr, address.data(), 0), 22));
-    Require(Failed(sceNetInetPtonEx(2, "127.0.0.1", nullptr, 0), 22));
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetPtonEx(2, "127.0.0.1", nullptr, 0) == 1 && *sceNetErrnoLoc() == 123);
+    Require(sceNetInetPtonEx(2, "abc", nullptr, 0) == 0 && *sceNetErrnoLoc() == 123);
     for (const int flags : {1, 0x100, -1}) {
         address.fill(0);
         Require(sceNetInetPtonEx(2, "1.2.3", address.data(), flags) == 1);
@@ -1662,6 +1736,7 @@ int main() {
     CheckKernelTimeouts();
     CheckSocketError();
     CheckKernelStatusFlags();
+    CheckIoctl();
 
     const int listener = sceNetSocket(nullptr, 2, 1, 6);
     Require(listener >= 0);
@@ -1854,10 +1929,7 @@ int main() {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     Require(sceNetResolverStartNtoa6(resolver, nullptr, resolved6.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
     const auto resolved6BeforeFailure = resolved6;
-    {
-        ScopedResolverLookupOverride lookupOverride(FailResolverLookup);
-        Require(sceNetResolverStartNtoa6(resolver, "127.0.0.1", resolved6.data(), 5000000, 1, 0) == static_cast<int>(0x804101E1));
-    }
+    Require(sceNetResolverStartNtoa6(resolver, "127.0.0.1", resolved6.data(), 5000000, 1, 0) == static_cast<int>(0x804101E1));
     Require(resolved6 == resolved6BeforeFailure);
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == static_cast<int>(0x804101E1));
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);

@@ -1,11 +1,16 @@
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registration", Path(__file__).with_name("check_test_registration.py"))
+REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
+REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
 FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
@@ -84,10 +89,42 @@ class Build:
                 leaves.add(name)
         return sorted(leaves)
 
+    def outputs(self, paths):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
+        return [path for path in paths if path in built]
+
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
                                             capture_output=True, text=True, check=True).stdout)
+        missing = {test["name"] for test in listing["tests"] if not test.get("command")}
+        if missing:
+            commands = self.test_commands(missing)
+            for test in listing["tests"]:
+                candidates = commands.get(test["name"], set())
+                if test["name"] in missing and len(candidates) == 1:
+                    command = next(iter(candidates))
+                    if command and os.path.isabs(command[0]):
+                        test["command"] = list(command)
         return listing, listing["tests"]
+
+    def test_commands(self, names):
+        found, visited, pending = collections.defaultdict(set), set(), [Path(self.path)]
+        while pending:
+            directory = pending.pop().resolve()
+            file = directory / "CTestTestfile.cmake"
+            if directory in visited or not file.is_file():
+                continue
+            visited.add(directory)
+            try:
+                commands = list(REGISTRATION.commands(file.read_text(encoding="utf-8-sig")))
+            except (OSError, UnicodeError, ValueError):
+                continue
+            for command, arguments in commands:
+                if command == "subdirs":
+                    pending.extend(directory / argument for argument in arguments)
+                elif command == "add_test" and arguments and arguments[0] in names:
+                    found[arguments[0]].add(tuple(arguments[1:]))
+        return found
 
     def output(self, path):
         absolute = self.absolute(path)
@@ -110,14 +147,24 @@ def relative(path, root):
     return path[root_len + 1:].replace(os.sep, "/")
 
 
+def paths(arguments):
+    for argument in arguments:
+        value = argument.partition("=")[2] if argument.startswith("-D") else argument
+        if os.path.isabs(value):
+            yield value
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
-        if batch and size + len(name) + 1 > BATCH:
+        length = len(name) + 1
+        if sys.platform == "win32":
+            length = len(subprocess.list2cmdline([name]).encode("utf-16-le", "surrogatepass")) // 2 + 1
+        if batch and size + length > BATCH:
             yield batch
             batch, size = [], 0
         batch.append(name)
-        size += len(name) + 1
+        size += length
     if batch:
         yield batch
 
@@ -157,7 +204,7 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in (test.get("command") or [])[1:] if os.path.isabs(a)} - {None})
+        arguments = sorted({build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None})
         tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
@@ -216,9 +263,12 @@ def plan(build, graph, picked):
     _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
     names = {t["name"] for t in selected}
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
-    keep = {build.output(a) for t in listed if t["name"] in names for a in t.get("command") or [] if os.path.isabs(a)}
+    if any(not t.get("command") for t in listed if t["name"] in names):
+        return run, build.leaves(), len(listed)
+    keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
-    return run, [t for t in build.leaves() if t not in skip], len(listed)
+    targets = [t for t in build.leaves() if t not in skip]
+    return run, targets + build.outputs(sorted(keep - set(targets) - {None})), len(listed)
 
 
 def escape(name):
@@ -228,7 +278,7 @@ def escape(name):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Select the tests whose build inputs a change touches")
     sub = parser.add_subparsers(dest="command", required=True)
     d = sub.add_parser("dump", help="write the test graph of a built tree")

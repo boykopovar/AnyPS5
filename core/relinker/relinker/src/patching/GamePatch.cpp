@@ -240,6 +240,15 @@ PatchEntry BuildEntry(const Table& table, const std::size_t headerLine, std::set
     return entry;
 }
 
+std::string Describe(const PatchEntry& entry) {
+    return "patch " + entry.Target + " va=" + HexValue(entry.VirtualAddress) + " (line " + std::to_string(entry.Line) + ")";
+}
+
+void ValidateWidth(const PatchEntry& entry) {
+    if (entry.Expected.empty() || entry.Expected.size() != entry.Value.size())
+        throw Domain::RelinkerException(Describe(entry) + ": expected and value must have the same nonzero width");
+}
+
 struct EntryRange {
     std::optional<PatchedRange> Range;
     std::string Reason;
@@ -275,12 +284,11 @@ std::vector<EntryRange> ResolveEach(const ElfReader& reader, const std::vector<P
     const auto segments = reader.ReadProgramHeaders();
     const auto header = reader.ReadHeader();
     std::vector<EntryRange> resolved;
-    for (const auto& entry : entries) resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
+    for (const auto& entry : entries) {
+        ValidateWidth(entry);
+        resolved.push_back(ResolveEntry(segments, reader.GetFileSize(), header, entry));
+    }
     return resolved;
-}
-
-std::string Describe(const PatchEntry& entry) {
-    return "patch " + entry.Target + " va=" + HexValue(entry.VirtualAddress) + " (line " + std::to_string(entry.Line) + ")";
 }
 
 bool Overlaps(const std::uint64_t firstOffset, const std::uint64_t firstLength, const std::uint64_t secondOffset, const std::uint64_t secondLength) {
@@ -431,7 +439,10 @@ std::vector<PatchedRange> ResolveRanges(const ElfReader& reader, const std::vect
 std::vector<AppliedPatch> ApplyPatches(std::vector<std::uint8_t>& bytes, const std::string& target, const std::vector<PatchEntry>& entries, const std::vector<PatchedRange>& ranges) {
     if (entries.size() != ranges.size()) throw Domain::RelinkerException("Patch ranges do not match patch entries");
     for (std::size_t index = 0; index < entries.size(); ++index) {
+        ValidateWidth(entries[index]);
         const auto& range = ranges[index];
+        if (range.Length != entries[index].Expected.size())
+            throw Domain::RelinkerException(Describe(entries[index]) + ": range length does not match the patch width", range.Offset);
         if (range.Offset > bytes.size() || range.Length > bytes.size() - range.Offset) throw Domain::RelinkerException(Describe(entries[index]) + ": range exceeds the image", range.Offset);
         const auto first = bytes.begin() + static_cast<std::ptrdiff_t>(range.Offset);
         if (!std::equal(entries[index].Expected.begin(), entries[index].Expected.end(), first))

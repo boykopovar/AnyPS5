@@ -8,6 +8,8 @@
 extern "C" {
 int APS5_VABI sceNpTusCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
 int APS5_VABI sceNpTusDeleteNpTitleCtx(int titleCtxId);
+int APS5_VABI sceNpTssCreateNpTitleCtx(std::uint32_t serviceLabel, const NpId* npId);
+int APS5_VABI sceNpTssCreateNpTitleCtxA(std::uint32_t serviceLabel, int userId);
 int APS5_VABI sceNpTusCreateRequest(int titleCtxId);
 int APS5_VABI sceNpTusDeleteRequest(int reqId);
 int APS5_VABI sceNpTusAbortRequest(int reqId);
@@ -49,6 +51,34 @@ static void Require(bool value) { if (!value) std::abort(); }
 static void RequireFinished(int reqId, int expected) {
     int result = 0;
     Require(sceNpTusPollAsync(reqId, &result) == 0 && result == expected);
+}
+
+static void CheckTssTitleContexts() {
+    const int shared = sceNpTssCreateNpTitleCtxA(0, 1);
+    Require(shared > 0);
+    const int request = sceNpTusCreateRequest(shared);
+    Require(request > 0);
+    Require(sceNpTusDeleteNpTitleCtx(shared) == 0);
+    Require(sceNpTusDeleteNpTitleCtx(shared) == INVALID_ID);
+    Require(sceNpTusDeleteRequest(request) == INVALID_ID);
+
+    const NpId npId{};
+    Require(sceNpTssCreateNpTitleCtx(0, nullptr) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTssCreateNpTitleCtx(0xFFFFFFFFu, nullptr) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTssCreateNpTitleCtx(0xFFFFFFFFu, &npId) == INVALID_ARGUMENT);
+
+    std::array<int, 32> contexts{};
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+        const std::size_t form = index % 3;
+        contexts[index] = form == 0 ? sceNpTusCreateNpTitleCtxA(0, 1) : form == 1 ? sceNpTssCreateNpTitleCtxA(0, 1) : sceNpTssCreateNpTitleCtx(0, &npId);
+        Require(contexts[index] > 0);
+    }
+    Require(sceNpTssCreateNpTitleCtxA(0, 1) == TOO_MANY_OBJECTS);
+    Require(sceNpTssCreateNpTitleCtx(0, &npId) == TOO_MANY_OBJECTS);
+    Require(sceNpTusCreateNpTitleCtxA(0, 1) == TOO_MANY_OBJECTS);
+    Require(sceNpTssCreateNpTitleCtx(0, nullptr) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTssCreateNpTitleCtx(0xFFFFFFFFu, &npId) == INVALID_ARGUMENT);
+    for (const int context : contexts) Require(sceNpTusDeleteNpTitleCtx(context) == 0);
 }
 
 static void CheckMultiSlotVariables() {
@@ -271,4 +301,5 @@ int main() {
     Require(sceNpTusCreateRequest(contexts[1]) > 0);
     for (const int child : children) Require(sceNpTusPollAsync(child, &result) == INVALID_ID);
     for (std::size_t index = 1; index < contexts.size(); ++index) Require(sceNpTusDeleteNpTitleCtx(contexts[index]) == 0);
+    CheckTssTitleContexts();
 }

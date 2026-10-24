@@ -88,7 +88,7 @@ class CheckCompileTests(unittest.TestCase):
         (self.build / "build.ninja").write_text(
             "rule cc\n  command = " + command + " @$out.rsp\n"
             "  rspfile = $out.rsp\n  rspfile_content = -DREQUIRED -c $in -o $out -MD -MF $out.d\n"
-            "build unit.o: cc ../unit.c\n", encoding="utf-8")
+            "build order: phony\nbuild unit.o: cc ../unit.c || order\n", encoding="utf-8")
         self.assertFalse((self.build / "unit.o.rsp").exists())
         result = self.tool("unit.c")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -514,6 +514,57 @@ class CheckCompileTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("arguments must be a nonempty list of strings with an executable", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_compilation_databases_are_rejected_without_a_traceback(self):
+        for database in ({}, {"file": "unit.cpp"}, None, 42, "commands"):
+            with self.subTest(database=database):
+                self.manifest(database)
+                result = self.tool("unit.cpp")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("compile_commands.json: expected an array of command objects", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_entries_are_rejected_before_any_compiler_runs(self):
+        source = self.source("unit.cpp")
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        valid = self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"')
+        cases = [(value, "expected a command object") for value in (None, [], 42, "command")]
+        for field in ("directory", "file"):
+            missing = dict(valid)
+            del missing[field]
+            cases.append((missing, f"missing {field}"))
+            cases.extend(({**valid, field: value}, f"{field} must be a nonempty string")
+                         for value in (None, [], 42, ""))
+        cases.append(({key: value for key, value in valid.items() if key != "command"},
+                      "expected arguments or command"))
+        cases.extend(({**valid, "command": value}, "command must be a nonempty string")
+                     for value in (None, [], 42, "", " \t"))
+        cases.append(({**valid, "arguments": []},
+                      "arguments must be a nonempty list of strings with an executable"))
+        for invalid, message in cases:
+            with self.subTest(invalid=invalid):
+                self.manifest([valid, invalid])
+                result = self.tool("--jobs", "2", "unit.cpp")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"compile_commands.json: entry 1: {message}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+
+    def test_invalid_ninja_databases_are_validated_before_compilation(self):
+        source = self.source("unit.cpp")
+        cases = (({}, "expected an array of command objects"),
+                 ([self.entry("unit.cpp", "compiler"), None], "entry 1: expected a command object"))
+        for database, message in cases:
+            with self.subTest(database=database), \
+                    patch.object(check_compile.shutil, "which", return_value="ninja"), \
+                    patch.object(check_compile, "ninja_encoding", return_value="utf-8"), \
+                    patch.object(check_compile, "capture", return_value=subprocess.CompletedProcess(
+                        [], 0, json.dumps(database), "")), \
+                    patch.object(check_compile.subprocess, "run") as compiler:
+                with self.assertRaisesRegex(ValueError, "ninja -t compdb: " + message):
+                    check_compile.check(self.root, self.build, [source])
+                compiler.assert_not_called()
 
     def test_parallel_checks_overlap_but_diagnostics_keep_source_order(self):
         barrier = self.root / "barrier"

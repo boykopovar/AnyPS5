@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 extern "C" void APS5_VABI sceAudio3dGetDefaultOpenParameters(Audio3dOpenParameters* parameters);
+extern "C" int APS5_VABI sceAudio3dInitialize(std::int64_t reserved);
 
 static_assert(sizeof(Audio3dOpenParameters) == 0x28);
 static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
@@ -74,4 +75,5 @@ int main() {
     CheckInvalidDestination();
     CheckShortBuffer();
     CheckExtendedBuffer();
+    Require(sceAudio3dInitialize(-1) == static_cast<int>(0x80EA0004), "non-zero reserved parameter rejected in sceAudio3dInitialize");
 }

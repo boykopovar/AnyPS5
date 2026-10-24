@@ -77,6 +77,7 @@ int APS5_VABI sceNetCtlApRegisterCallback(NetCtlApCallback func, void* arg, int*
             return 0;
         }
     }
+    *cid = -1;
     return NET_CTL_AP_ERROR_CALLBACK_MAX;
 }
 

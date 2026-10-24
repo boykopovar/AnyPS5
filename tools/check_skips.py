@@ -27,7 +27,10 @@ def high_refresh_limitation(output):
 
 
 def skips(path):
-    for case in ET.parse(path).getroot().iter("testcase"):
+    root = ET.parse(path).getroot()
+    if root.tag not in ("testsuite", "testsuites"):
+        raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
+    for case in root.iter("testcase"):
         if case.get("status") == "disabled":
             raise ValueError(f"{path}: testcase {case.get('name')!r} is disabled and was not run")
         skipped = case.find("skipped")
@@ -44,7 +47,7 @@ def skips(path):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test is skipped that the job's device is not expected to skip")
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")

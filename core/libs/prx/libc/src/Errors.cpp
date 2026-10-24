@@ -18,7 +18,7 @@ constexpr const char* messages[] = {
     "Is a directory", "Invalid argument", "Too many open files in system",
     "Too many open files", "Inappropriate ioctl for device", "Text file busy",
     "File too large", "No space left on device", "Illegal seek",
-    "Read-only file system", "Too many links", "Broken pipe",
+    "Read-only filesystem", "Too many links", "Broken pipe",
     "Numerical argument out of domain", "Result too large", "Resource temporarily unavailable",
     "Operation now in progress", "Operation already in progress", "Socket operation on non-socket",
     "Destination address required", "Message too long", "Protocol wrong type for socket",
@@ -44,15 +44,15 @@ constexpr const char* messages[] = {
 };
 static_assert(sizeof(messages) / sizeof(messages[0]) == 97);
 bool Known(int error) { return error >= 0 && error < 97; }
+bool NamedByStrerror(int error) { return error > 0 && error < 95; }
 }
 
 extern "C" {
 char* APS5_VABI strerror_nid_postfix(int error) {
     thread_local char buffer[128];
-    const int saved = *__error_nid_postfix();
-    if (Known(error)) std::snprintf(buffer, sizeof(buffer), "%s", messages[error]);
-    else std::snprintf(buffer, sizeof(buffer), "Unknown error: %d", error);
-    *__error_nid_postfix() = Known(error) ? saved : 22;
+    if (error == 0) std::snprintf(buffer, sizeof(buffer), "No error");
+    else if (NamedByStrerror(error)) std::snprintf(buffer, sizeof(buffer), "%s", messages[error]);
+    else std::snprintf(buffer, sizeof(buffer), "error_code=0x%08x", static_cast<unsigned>(error));
     return buffer;
 }
 

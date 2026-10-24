@@ -12,13 +12,14 @@ from test_macos_output import MachO
 ABSOLUTE = 0xFFF1
 COMMON = 0xFFF2
 VALUE = 0x1234
+SIZE = 0x10
 ADDEND = 0x10
 TARGET = 0x2320
 
 
-def module_with_section(section):
+def module_with_section(section, size=0):
     image = module_with_symbol(True)
-    struct.pack_into("<HQQ", image, 0x898 + 6, section, VALUE, 0)
+    struct.pack_into("<HQQ", image, 0x898 + 6, section, VALUE, size)
     struct.pack_into("<Q", image, 0x668, 24)
     struct.pack_into("<QQq", image, 0x900, TARGET, (1 << 32) | 1, ADDEND)
     return image
@@ -73,10 +74,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-absolute-") as directory:
         work = Path(directory)
 
-        def convert(name, system, section):
+        def convert(name, system, section, size=0):
             case = work / f"{name}-{system}"
             (case / "sce_module").mkdir(parents=True)
-            (case / "sce_module" / "module.prx").write_bytes(module_with_section(section))
+            (case / "sce_module" / "module.prx").write_bytes(module_with_section(section, size))
             source = case / "input.elf"
             source.write_bytes(main_fixture())
             output = case / ("output.exe" if system == "windows" else "output.elf")
@@ -86,15 +87,16 @@ def main():
             return result, case / "app0" / "sce_module" / "module.prx.guest.prx"
 
         for system in ("linux", "windows", "macos"):
-            result, artifact = convert("absolute", system, ABSOLUTE)
-            assert result.returncode == 0, (system, result.stdout, result.stderr)
-            data = artifact.read_bytes()
-            if system == "windows":
-                assert any(value == VALUE + ADDEND for _, value in pe_qwords(data)), "absolute relocation value missing"
-            elif system == "macos":
-                assert any(value == VALUE + ADDEND for _, value in macho_qwords(data)), "absolute relocation value missing"
-            else:
-                assert elf_relocation(data) == (1, ABSOLUTE, VALUE, ADDEND)
+            for size in (0, SIZE):
+                result, artifact = convert(f"absolute-{size}", system, ABSOLUTE, size)
+                assert result.returncode == 0, (system, size, result.stdout, result.stderr)
+                data = artifact.read_bytes()
+                if system == "windows":
+                    assert any(value == VALUE + ADDEND for _, value in pe_qwords(data)), "absolute relocation value missing"
+                elif system == "macos":
+                    assert any(value == VALUE + ADDEND for _, value in macho_qwords(data)), "absolute relocation value missing"
+                else:
+                    assert elf_relocation(data) == (1, ABSOLUTE, VALUE, ADDEND)
 
             result, artifact = convert("common", system, COMMON)
             assert result.returncode == 2 and "Unsupported special symbol section" in result.stderr, result.stderr

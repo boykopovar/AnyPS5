@@ -1,0 +1,9 @@
+# libSceNpSignaling technical debt
+
+### Unknown function info
+
+- [sceNpSignalingDeactivateConnection](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - imported by PS4 titles, which do not load without it, and added without an implementation: declared without parameters, every call throws
+
+### Functional
+
+- [libSceNpSignaling](../../../core/libs/prx/libSceNpSignaling/Export.cpp) (libSceNpSignaling) - offline only, not measured on a PS5: the checks, their order, context ids 1 to 8 and the NpId rule (`term` 0, 3 to 16 characters, the first an ASCII letter or digit, the rest ASCII letters, digits, `_` or `-`) follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/91e6afa69b0a64b0afaa0281b80f8fbb0cd88136/src/core/libraries/np/np_signaling/np_signaling.cpp#L118-L170) and its [state helpers](https://github.com/shadps4-emu/shadPS4/blob/91e6afa69b0a64b0afaa0281b80f8fbb0cd88136/src/core/libraries/np/np_signaling/np_signaling_state.cpp#L120-L170). `sceNpSignalingInitialize` reserves no heap and starts no thread, so its arguments are not checked, and callbacks are never called. `sceNpSignalingActivateConnection` returns `SCE_NP_ERROR_SIGNED_OUT` after shadPS4's checks up to `OWN_NP_ID`, without its rate limit, and creates no connection, so the connection calls answer `CONN_NOT_FOUND`

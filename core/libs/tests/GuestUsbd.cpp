@@ -43,6 +43,10 @@ std::int32_t APS5_VABI sceUsbdKernelDriverActive(void* deviceHandle, std::int32_
 std::int32_t APS5_VABI sceUsbdAttachKernelDriver(void* deviceHandle, std::int32_t interfaceNumber);
 std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint8_t* data, std::uint16_t length, std::uint32_t timeout);
 std::int32_t APS5_VABI sceUsbdGetStringDescriptor(void* deviceHandle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* data, std::int32_t length);
+std::int32_t APS5_VABI sceUsbdGetStringDescriptorAscii(void* deviceHandle, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length);
+std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length);
+std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t* configuration);
+std::int32_t APS5_VABI sceUsbdGetConfigDescriptorByValue(void* device, std::uint8_t configurationValue, void** config);
 std::int32_t APS5_VABI sceUsbdSubmitTransfer(void* transfer);
 void* APS5_VABI sceUsbdAllocTransfer(std::int32_t isoPackets);
 void APS5_VABI sceUsbdFreeTransfer(void* transfer);
@@ -50,6 +54,7 @@ void APS5_VABI sceUsbdFillInterruptTransfer(void* transfer, void* deviceHandle, 
 std::int32_t APS5_VABI sceUsbdCancelTransfer(void* transfer);
 std::int32_t APS5_VABI sceUsbdEventHandlingOk();
 void APS5_VABI sceUsbdFreeConfigDescriptor(void* config);
+void APS5_VABI sceUsbdFillControlSetup(std::uint8_t* buffer, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint16_t length);
 }
 
 namespace {
@@ -125,13 +130,20 @@ void Device() {
     const auto* raw = static_cast<const std::uint8_t*>(config);
     Require(raw[1] == 2 && raw[4] > 0, "active config descriptor is not a configuration with interfaces");
     const std::uint8_t interfaces = raw[4];
+    const std::uint8_t activeValue = raw[5];
     sceUsbdFreeConfigDescriptor(config);
     Require(Throws([&] { sceUsbdFreeConfigDescriptor(config); }), "a config descriptor was freed twice");
     Require(sceUsbdGetConfigDescriptor(device, 0, &config) == 0, "config descriptor 0 failed");
     sceUsbdFreeConfigDescriptor(config);
+    Require(sceUsbdGetConfigDescriptorByValue(device, activeValue, &config) == 0 && config != nullptr, "config descriptor by value failed");
+    Require(static_cast<const std::uint8_t*>(config)[5] == activeValue, "config descriptor by value has another configuration value");
+    sceUsbdFreeConfigDescriptor(config);
+    Require(sceUsbdGetConfigDescriptorByValue(device, 0, &config) == static_cast<std::int32_t>(0x80240005) && config == nullptr, "configuration value 0 was found");
     void* handle = nullptr;
     Require(sceUsbdOpen(device, &handle) == 0 && handle != nullptr, "opening the device failed");
     Require(sceUsbdCheckConnected(handle) == 0, "an open device was reported disconnected");
+    std::int32_t configuration = -1;
+    Require(sceUsbdGetConfiguration(handle, &configuration) == 0 && configuration == activeValue, "configuration differs from the active config descriptor");
     std::uint8_t text[256] = {};
     if (descriptor[15] != 0) {
         const std::int32_t length = sceUsbdGetStringDescriptor(handle, descriptor[15], 0x409, text, sizeof(text));
@@ -139,10 +151,31 @@ void Device() {
         std::string product_name;
         for (std::int32_t index = 2; index + 1 < length; index += 2) product_name += static_cast<char>(text[index]);
         std::printf("product \"%s\"\n", product_name.c_str());
+        char ascii[256] = {};
+        const std::int32_t asciiLength = sceUsbdGetStringDescriptorAscii(handle, descriptor[15], reinterpret_cast<std::uint8_t*>(ascii), sizeof(ascii));
+        Require(asciiLength >= 0 && std::strlen(ascii) == static_cast<std::size_t>(asciiLength), "ASCII product string length differs from its terminated length");
+        std::printf("ASCII product \"%s\"\n", ascii);
+        std::uint8_t languages[4] = {};
+        Require(sceUsbdGetStringDescriptor(handle, 0, 0, languages, sizeof(languages)) == 4, "language ID string descriptor failed");
+        std::uint8_t first[256] = {};
+        const std::int32_t firstLength = sceUsbdGetStringDescriptor(handle, descriptor[15], static_cast<std::uint16_t>(languages[2] | languages[3] << 8), first, sizeof(first));
+        Require(firstLength >= 2 && first[1] == 3, "product string descriptor in the first language failed");
+        const std::int32_t end = first[0] < firstLength ? first[0] : firstLength;
+        std::string printable;
+        for (std::int32_t index = 2; index + 1 < end; index += 2) {
+            if (first[index + 1] == 0 && first[index] >= 0x20 && first[index] <= 0x7E && first[index] != '<' && first[index] != '>') printable += static_cast<char>(first[index]);
+        }
+        Require(printable == ascii, "ASCII product string differs from the printable characters of the product string");
+        char shortAscii[4] = {'x', 'x', 'x', 'x'};
+        const std::int32_t shortLength = sceUsbdGetStringDescriptorAscii(handle, descriptor[15], reinterpret_cast<std::uint8_t*>(shortAscii), sizeof(shortAscii));
+        Require(shortLength >= 0 && shortLength <= 3 && shortAscii[shortLength] == 0 && std::strncmp(shortAscii, ascii, static_cast<std::size_t>(shortLength)) == 0, "a short ASCII buffer was not filled with a terminated prefix");
     }
     std::uint8_t again[18] = {};
     Require(sceUsbdControlTransfer(handle, 0x80, 6, 0x0100, 0, again, sizeof(again), 1000) == 18, "synchronous device descriptor request failed");
     Require(std::memcmp(again, descriptor, sizeof(again)) == 0, "device descriptor read over the wire differs from the cached one");
+    std::uint8_t wire[18] = {};
+    Require(sceUsbdGetDescriptor(handle, 1, 0, wire, sizeof(wire)) == 18, "device descriptor request through sceUsbdGetDescriptor failed");
+    Require(std::memcmp(wire, descriptor, sizeof(wire)) == 0, "device descriptor read through sceUsbdGetDescriptor differs from the cached one");
     for (std::int32_t interfaceNumber = 0; interfaceNumber < interfaces; ++interfaceNumber) {
         Require(sceUsbdClaimInterface(handle, interfaceNumber) == 0, "claiming an interface failed");
         Require(sceUsbdReleaseInterface(handle, interfaceNumber) == 0, "releasing an interface failed");
@@ -273,6 +306,20 @@ int main(int argc, char** argv) {
     Require(Throws([&] { sceUsbdControlTransfer(&foreign, 0x80, 6, 0x100, 0, descriptor, 18, 1000); }), "control transfer on a handle that was never opened did not throw");
     Require(sceUsbdGetStringDescriptor(nullptr, 1, 0x409, descriptor, 18) == invalidArgument, "null handle string descriptor accepted");
     Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, descriptor, 0) == invalidArgument, "empty string descriptor buffer accepted");
+    descriptor[0] = 0x55;
+    Require(sceUsbdGetStringDescriptorAscii(nullptr, 1, descriptor, 18) == invalidArgument, "null handle ASCII string descriptor accepted");
+    Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, nullptr, 18) == invalidArgument && sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 0) == invalidArgument, "missing ASCII string buffer accepted");
+    Require(descriptor[0] == 0x55, "a rejected ASCII string request wrote the buffer");
+    Require(Throws([&] { sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 18); }), "ASCII string request on a handle that was never opened did not throw");
+    Require(sceUsbdGetDescriptor(nullptr, 1, 0, descriptor, 18) == invalidArgument, "null handle descriptor request accepted");
+    Require(sceUsbdGetDescriptor(&foreign, 1, 0, nullptr, 18) == invalidArgument && sceUsbdGetDescriptor(&foreign, 1, 0, descriptor, 0) == invalidArgument, "missing descriptor buffer accepted");
+    Require(Throws([&] { sceUsbdGetDescriptor(&foreign, 1, 0, descriptor, 18); }), "descriptor request on a handle that was never opened did not throw");
+    std::int32_t configuration = -1;
+    Require(sceUsbdGetConfiguration(nullptr, &configuration) == invalidArgument && sceUsbdGetConfiguration(&foreign, nullptr) == invalidArgument, "null configuration query accepted");
+    Require(configuration == -1, "a rejected configuration query wrote the output");
+    Require(Throws([&] { sceUsbdGetConfiguration(&foreign, &configuration); }), "configuration of a handle that was never opened did not throw");
+    Require(sceUsbdGetConfigDescriptorByValue(nullptr, 1, &config) == invalidArgument && sceUsbdGetConfigDescriptorByValue(&foreign, 1, nullptr) == invalidArgument, "null config by value argument accepted");
+    Require(Throws([&] { sceUsbdGetConfigDescriptorByValue(&foreign, 1, &config); }), "config by value of a device that was never listed did not throw");
     Require(Throws([&] { sceUsbdClaimInterface(&foreign, 0); }), "claiming on a handle that was never opened did not throw");
     auto* transfer = static_cast<std::uint8_t*>(sceUsbdAllocTransfer(2));
     Require(transfer != nullptr, "transfer allocation failed");
@@ -293,6 +340,13 @@ int main(int argc, char** argv) {
     sceUsbdFreeTransfer(nullptr);
     Require(sceUsbdEventHandlingOk() == 1, "event handling not allowed");
     sceUsbdFreeConfigDescriptor(nullptr);
+    Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0x80, 6, 0x0100, 0, 18); }), "null control setup buffer accepted");
+    std::uint8_t setupBuffer[8] = {};
+    sceUsbdFillControlSetup(setupBuffer, 0x80, 6, 0x0100, 0x0409, 18);
+    Require(setupBuffer[0] == 0x80 && setupBuffer[1] == 6, "request type or request not filled");
+    Require(setupBuffer[2] == 0x00 && setupBuffer[3] == 0x01, "value not filled little-endian");
+    Require(setupBuffer[4] == 0x09 && setupBuffer[5] == 0x04, "index not filled little-endian");
+    Require(setupBuffer[6] == 18 && setupBuffer[7] == 0, "length not filled little-endian");
     if (argc == 2 && std::strcmp(argv[1], "device") == 0) Device();
     sceUsbdExit();
     std::puts("USBD tests passed");

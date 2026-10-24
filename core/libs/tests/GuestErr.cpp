@@ -17,9 +17,11 @@ extern "C" {
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
 void APS5_VABI warn_nid_postfix(const char* format, ...);
+void APS5_VABI _warn_nid_postfix(const char* format, ...);
 void APS5_VABI warnc_nid_postfix(int code, const char* format, ...);
 void APS5_VABI warnx_nid_postfix(const char* format, ...);
 [[noreturn]] void APS5_VABI err_nid_postfix(int status, const char* format, ...);
+[[noreturn]] void APS5_VABI _err_nid_postfix(int status, const char* format, ...);
 [[noreturn]] void APS5_VABI errc_nid_postfix(int status, int code, const char* format, ...);
 [[noreturn]] void APS5_VABI errx_nid_postfix(int status, const char* format, ...);
 void APS5_VABI vwarn_nid_postfix(const char* format, VaList* args);
@@ -148,6 +150,9 @@ int main() {
         *__error_nid_postfix() = 2;
         warn_nid_postfix(nullptr);
         Require(capture.Take() == "prog: " + noEntry + "\n", "warn without format");
+        *__error_nid_postfix() = 13;
+        _warn_nid_postfix("open %s", "b.txt");
+        Require(capture.Take() == "prog: open b.txt: " + denied + "\n", "_warn");
         warnc_nid_postfix(13, "%d-%s", 7, "x");
         Require(capture.Take() == "prog: 7-x: " + denied + "\n", "warnc");
         warnx_nid_postfix("plain %c", 'q');
@@ -163,6 +168,12 @@ int main() {
         *__error_nid_postfix() = 2;
         Require(ExitStatus([] { err_nid_postfix(5, "e"); }) == 5, "err status");
         Require(capture.Take() == "prog: e: " + noEntry + "\n", "err text");
+        *__error_nid_postfix() = 13;
+        Require(ExitStatus([] { _err_nid_postfix(7, "%s %d", "f", 8); }) == 7 && g_hookStatus == 7, "_err status");
+        Require(capture.Take() == "prog: f 8: " + denied + "\n", "_err text");
+        *__error_nid_postfix() = 2;
+        Require(ExitStatus([] { _warn_nid_postfix(nullptr); }) == -1 && g_hookStatus == 7, "_warn does not exit");
+        Require(capture.Take() == "prog: " + noEntry + "\n", "_warn without format");
 
         *__error_nid_postfix() = 2;
         CallVariant(Variant::Warn, 0, 0, "open %s", "a.txt");

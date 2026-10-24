@@ -67,7 +67,7 @@ void APS5_VABI RunThreadDestructors_nid_no_patch() {
 bool FindDsoModule(const void* dsoSymbol, KernelModule& handle) {
     ModuleInfoEx info{};
     info.st_size = sizeof(ModuleInfoEx);
-    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(dsoSymbol), 2, &info) != 0) {
+    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(dsoSymbol), 1, &info) != 0) {
         handle = 0;
         return false;
     }
@@ -107,6 +107,10 @@ int Need_sceLibcInternal_nid_postfix = 1;
 
 const char* APS5_VABI getprogname_nid_postfix() {
     return __progname_nid_postfix;
+}
+
+const char* APS5_VABI _getprogname_nid_postfix() {
+    return getprogname_nid_postfix();
 }
 
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {

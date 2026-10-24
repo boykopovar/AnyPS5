@@ -7,6 +7,7 @@
 #include <unistd.h>
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -39,6 +40,7 @@ int APS5_VABI unlink_nid_postfix(const char*);
 int APS5_VABI poll_nid_postfix(PollDescriptor*, std::uint32_t, int);
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI kqueue_nid_postfix();
+int APS5_VABI kevent_nid_postfix(int, const KernelEvent*, int, KernelEvent*, int, const KernelTimespec*);
 std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
 std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
 int APS5_VABI fcntl_nid_postfix(int, int, ...);
@@ -62,6 +64,46 @@ constexpr short Hup = 0x10;
 constexpr short Invalid = 0x20;
 constexpr short ReadNormal = 0x40;
 constexpr short WriteBand = 0x100;
+constexpr std::int16_t EvfiltUser = -11;
+constexpr std::uint16_t EvAdd = 0x0001;
+constexpr std::uint16_t EvClear = 0x0020;
+constexpr std::uint32_t NoteTrigger = 0x01000000;
+static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
+    KernelEvent change{};
+    change.ident = 7;
+    change.filter = EvfiltUser;
+    change.flags = flags;
+    change.fflags = fflags;
+    return change;
+}
+static void PollsKqueues(int socket) {
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    PollDescriptor kq{queue, static_cast<short>(In | ReadNormal | Out | Priority | ReadBand | WriteBand), -1};
+    Require(poll_nid_postfix(&kq, 1, 0) == 0 && kq.revents == 0);
+    const auto added = UserEvent(EvAdd | EvClear, 0);
+    Require(kevent_nid_postfix(queue, &added, 1, nullptr, 0, nullptr) == 0);
+    Require(poll_nid_postfix(&kq, 1, 0) == 0 && kq.revents == 0);
+    const auto start = std::chrono::steady_clock::now();
+    Require(poll_nid_postfix(&kq, 1, 30) == 0 && kq.revents == 0);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(25));
+    std::thread trigger([queue] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const auto triggered = UserEvent(0, NoteTrigger);
+        Require(kevent_nid_postfix(queue, &triggered, 1, nullptr, 0, nullptr) == 0);
+    });
+    PollDescriptor mixed[2]{{socket, In, -1}, {queue, static_cast<short>(In | Out), -1}};
+    Require(poll_nid_postfix(mixed, 2, -1) == 1);
+    trigger.join();
+    Require(mixed[0].revents == 0 && mixed[1].revents == In);
+    Require(poll_nid_postfix(&kq, 1, 0) == 1 && kq.revents == (In | ReadNormal));
+    KernelEvent events[1]{};
+    const KernelTimespec zero{0, 0};
+    Require(kevent_nid_postfix(queue, nullptr, 0, events, 1, &zero) == 1);
+    Require(poll_nid_postfix(&kq, 1, 0) == 0 && kq.revents == 0);
+    Require(close_nid_postfix(queue) == 0);
+    Require(poll_nid_postfix(&kq, 1, 0) == 1 && kq.revents == Invalid);
+}
 static void PollsFilesAndDirectories(int socket) {
     constexpr int ReadWrite = 0x0002, Create = 0x0200, DirectoryFlag = 0x00020000;
     const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -178,7 +220,7 @@ static void PollsUrgentData() {
     const int client = socket_nid_postfix(2, 1, 0);
     Require(client >= 0 && fcntl_nid_postfix(client, 4, 4) == 0);
     if (connect_nid_postfix(client, address.data(), address.size()) != 0)
-        Require(*__error_nid_postfix() == 35 || *__error_nid_postfix() == 36);
+        Require(*__error_nid_postfix() == 36);
     PollDescriptor connecting{client, Priority | Out, -1};
     Require(poll_nid_postfix(&connecting, 1, 1000) == 1 && connecting.revents == Out);
     const int server = accept_nid_postfix(listener, nullptr, nullptr);
@@ -309,16 +351,6 @@ int main() {
     const auto inputStart = std::chrono::steady_clock::now();
     Require(poll_nid_postfix(&input, 1, 30) == 0 && input.revents == 0);
     Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
-    const int queue = kqueue_nid_postfix();
-    Require(queue >= 0);
-    PollDescriptor unknown[2]{{listener, In, 0}, {queue, In, 0}};
-    bool unsupported = false;
-    try {
-        poll_nid_postfix(unknown, 2, 0);
-    } catch (const std::runtime_error&) {
-        unsupported = true;
-    }
-    Require(unsupported);
-    Require(close_nid_postfix(queue) == 0);
+    PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
 }

@@ -12,7 +12,9 @@ struct MinMaxPointers {
 extern "C" {
 const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void*, const void*, std::uint16_t);
 const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void*, std::uint8_t);
+const void* APS5_VABI __std_find_trivial_unsized_2_nid_postfix(const void*, std::uint16_t);
 const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void*, std::uint32_t);
+const void* APS5_VABI __std_find_trivial_unsized_8_nid_postfix(const void*, std::uint64_t);
 std::size_t APS5_VABI __std_count_trivial_8_nid_postfix(const void*, const void*, std::uint64_t);
 const void* APS5_VABI __std_min_element_1_nid_postfix(const void*, const void*, bool);
 const void* APS5_VABI __std_max_element_4_nid_postfix(const void*, const void*, bool);
@@ -48,6 +50,36 @@ static void CheckUnsizedRescan() {
     bytes[3] = 0;
     bytes[20] = 0;
     Require(__std_find_trivial_unsized_1_nid_postfix(bytes + 8, 'x') == bytes + 70);
+
+    alignas(32) std::uint16_t halves[32] = {};
+    halves[0] = 17;
+    halves[4] = 17;
+    halves[20] = 17;
+    Require(__std_find_trivial_unsized_2_nid_postfix(halves + 1, 17) == halves + 4);
+    halves[4] = 0;
+    Require(__std_find_trivial_unsized_2_nid_postfix(halves + 1, 17) == halves);
+    halves[0] = 0;
+    Require(__std_find_trivial_unsized_2_nid_postfix(halves + 1, 17) == halves + 20);
+
+    alignas(32) std::uint32_t quads[16] = {};
+    quads[0] = 42;
+    quads[5] = 42;
+    quads[12] = 42;
+    Require(__std_find_trivial_unsized_4_nid_postfix(quads + 1, 42) == quads + 5);
+    quads[5] = 0;
+    Require(__std_find_trivial_unsized_4_nid_postfix(quads + 1, 42) == quads);
+    quads[0] = 0;
+    Require(__std_find_trivial_unsized_4_nid_postfix(quads + 1, 42) == quads + 12);
+
+    alignas(32) std::uint64_t wides[8] = {};
+    wides[0] = 99;
+    wides[2] = 99;
+    wides[6] = 99;
+    Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides + 2);
+    wides[2] = 0;
+    Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides);
+    wides[0] = 0;
+    Require(__std_find_trivial_unsized_8_nid_postfix(wides + 1, 99) == wides + 6);
 }
 
 static void CheckMinMax() {

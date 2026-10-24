@@ -113,6 +113,7 @@ void SetHostImportDeferredSettles(bool enabled);
 // The larger of 6 GiB and half the physical memory, at most the largest host heap less the larger of 2 GiB and half
 // that heap: the other half stays for the buffers, mirrors and textures that share it.
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
+void SetHostImportMaxBytes(std::uint64_t bytes);
 std::uint64_t HostImportLiveBytes();
 std::uint64_t HostImportBudgetRemaining(const Context& context);
 struct HostImportSettleCounts {
@@ -248,6 +249,11 @@ struct MirrorStats {
 };
 MirrorStats MirrorCounters();
 std::uint64_t SnapshotMismatches();
+struct HeapMirrorHold {
+    std::uint64_t mirrors = 0;
+    std::uint64_t bytes = 0;
+};
+HeapMirrorHold HeapMirrorsWithin(std::uint64_t begin, std::uint64_t end);
 void ClearSnapshotCopies(VkDevice device);
 std::vector<std::uint64_t> AddressTableKey(std::span<const std::pair<std::uint64_t, std::uint64_t>> writes, std::span<const ShaderRecompiler::BdaAbi::Range> own);
 void ClearImageMirrors(VkDevice device);
@@ -285,6 +291,7 @@ public:
     // calls RecordCopyBacks (a dispatch), since a staged region's results reach guest memory by
     // that copy alone. Call before Upload.
     void AllowDeviceStaging() { stagingAllowed = true; }
+    void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
     // Records the copy-in of every staged region anew for another use of this upload (a resource
     // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
@@ -421,6 +428,7 @@ private:
         // The device refused the shadow (memory or allocations exhausted): the region takes the
         // path it would take without staging, in both upload stages.
         bool unstaged = false;
+        bool overlay = false;
     };
 
     // How [begin, end) lies against the space's base regions.
@@ -462,10 +470,12 @@ private:
     // APS5_GPU_COPY_MAX_KIB allows, and APS5_CPU_COPIES unset.
     bool gpuCopyEligible(const Region& region) const;
     // Whether a region inside a host import is staged in device memory instead of bound in place
-    // (see GuestBufferMemory.cpp): staging allowed, not address-based, a written element inside,
-    // and an atomic element or a size within the written-shadow window. Independent of the import,
-    // so UploadPrepare and UploadFinish decide alike.
+    // (see GuestBufferMemory.cpp): staging allowed, not address-based unless an overlay region, a
+    // written element inside, and an atomic element or a size within the written-shadow window.
+    // Independent of the import, so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
+    bool overlayCandidate(const Region& inside, bool readOnly) const;
+    void resolveOverlays();
     bool bindableInPlace(std::uint64_t offset, bool addressable) const;
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
@@ -473,6 +483,7 @@ private:
     void takeHeapReferences();
     Context context;
     bool stagingAllowed = false;
+    bool addressStaging = true;
     bool adjustedRegions = false;
     GuestAllocations::Lease lease;
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
@@ -491,11 +502,14 @@ private:
     bool regionsOverlap = false;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
+    std::vector<std::pair<std::uint64_t, std::shared_ptr<Buffer>>> heapReadbacks;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
     bool uploaded = false;
     bool committed = false;
+    mutable std::uint64_t directWritesGeneration = 0;
 };
 
 }

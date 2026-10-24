@@ -13,6 +13,9 @@ int APS5_VABI sceImeDialogGetStatus(void);
 int APS5_VABI sceImeDialogGetResult(Result*);
 int APS5_VABI sceImeDialogAbort(void);
 int APS5_VABI sceImeDialogTerm(void);
+int APS5_VABI sceImeDialogGetPanelPositionAndForm(PositionAndForm*);
+int APS5_VABI sceImeDialogGetPanelSize(const Param*, std::uint32_t*, std::uint32_t*);
+int APS5_VABI sceImeDialogGetPanelSizeExtended(const Param*, const ExtendedParam*, std::uint32_t*, std::uint32_t*);
 int APS5_VABI sceImeDialogForceClose(void);
 int APS5_VABI sceImeDialogGetCurrentStarState(std::int64_t);
 int APS5_VABI sceImeDialogInitInternal(const Param*, const ExtendedParam*);
@@ -181,6 +184,13 @@ int main() {
     Open(param);
     Close();
 
+    Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorNotOpened);
+    std::uint32_t panelWidth = 0;
+    std::uint32_t panelHeight = 0;
+    Require(sceImeDialogGetPanelSize(nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
+    panelWidth = 0;
+    panelHeight = 0;
+    Require(sceImeDialogGetPanelSizeExtended(nullptr, nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     const Param empty = DialogParam(buffer, 0);
     Require(sceImeDialogInit(&empty, nullptr) == ErrorInvalidMaxTextLength);

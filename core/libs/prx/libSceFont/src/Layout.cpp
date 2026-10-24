@@ -120,7 +120,8 @@ void FillImageMetrics(FontRenderOutput* result, const FontGlyphMetrics* metrics,
 
 int RenderGlyphIndexToSurface(FontObj& obj, std::uint32_t glyphIndex, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
     ClearRenderOutputs(metrics, result);
-    if (!surface->buffer || surface->width <= 0 || surface->height <= 0 || surface->widthByte <= 0 || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
+    const bool emptyExtent = surface->width == 0 || surface->height == 0;
+    if (!surface->buffer || surface->width < 0 || surface->height < 0 || surface->widthByte < 0 || (!emptyExtent && surface->widthByte == 0) || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
     const int bytesPerPixel = surface->pixelSizeByte;
     if (bytesPerPixel != 1 && bytesPerPixel != 4) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
     const auto face = static_cast<FT_Face>(obj.ft_face);
@@ -365,7 +366,7 @@ int Font::ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style,
     return SCE_FONT_OK;
 }
 
-int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle) {
+int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW, float* usedScaleH) {
     const auto clearMetrics = [&] {
         if (metrics) *metrics = {};
     };
@@ -434,6 +435,8 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
     metrics->Vertical.bearingX = static_cast<float>(vertBearingX) / 64.0f * ratioX;
     metrics->Vertical.bearingY = static_cast<float>(vertBearingY) / 64.0f * ratioY;
     metrics->Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f * ratioY;
+    if (usedScaleW) *usedScaleW = scaleW;
+    if (usedScaleH) *usedScaleH = scaleH;
     return finish(SCE_FONT_OK);
 }
 

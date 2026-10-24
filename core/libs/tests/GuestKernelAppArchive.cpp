@@ -146,7 +146,7 @@ void Reads() {
     KernelAioRwRequest request{65530, 20, buffer.data(), &result, fd};
     std::int32_t id = 0;
     std::int32_t state = 0;
-    Check(sceKernelAioSubmitReadCommands(&request, 1, 0, &id) == 0);
+    Check(sceKernelAioSubmitReadCommands(&request, 1, 1, &id) == 0);
     Check(sceKernelAioWaitRequest(id, &state, nullptr) == 0);
     Check(result.return_value == 20 && std::equal(buffer.begin(), buffer.begin() + 20, expected.begin() + 65530));
     std::int32_t removed = 0;

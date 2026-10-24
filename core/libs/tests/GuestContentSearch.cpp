@@ -15,11 +15,33 @@ int APS5_VABI sceContentSearchOpenMetadataByContentId(std::int64_t contentId, st
 int APS5_VABI sceContentSearchCloseMetadata(std::int32_t metadataId);
 int APS5_VABI sceContentSearchGetMetadataFieldInfo(std::int32_t metadataId, const char* field, std::int32_t* metadataType, std::int32_t* size);
 int APS5_VABI sceContentSearchGetMetadataValue(std::int32_t metadataId, const char* field, void* value);
+int APS5_VABI sceContentBinderEnd(void);
+int APS5_VABI sceContentBinderGetNumOfDifference(void);
+int APS5_VABI sceContentBinderInitialize(void);
+int APS5_VABI sceContentBinderIsUpdated(void);
+int APS5_VABI sceContentBinderReset(void);
+int APS5_VABI sceContentBinderSearchDifference(void);
+int APS5_VABI sceContentBinderStart(void);
+int APS5_VABI sceContentBinderTerminate(void);
+int APS5_VABI sceContentSearchGetApplicationLastUpdateId(void);
+int APS5_VABI sceContentSearchGetMyApplicationIndex(void);
+int APS5_VABI sceContentSearchGetNumOfApplication(void);
+int APS5_VABI sceContentSearchSearchApplication(void);
 }
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TAction>
+bool ThrowsRuntimeError(TAction action) {
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
 
 template <typename TAction>
 bool Throws(TAction action) {
@@ -136,4 +158,18 @@ int main() {
     Require(sceContentSearchTerm() == 0);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(updateId == -1);
+    constexpr int binderResult = static_cast<int>(0x809D000F);
+    Require(sceContentBinderInitialize() == binderResult);
+    Require(sceContentBinderStart() == binderResult);
+    Require(sceContentBinderReset() == binderResult);
+    Require(sceContentBinderIsUpdated() == binderResult);
+    Require(sceContentBinderGetNumOfDifference() == binderResult);
+    Require(sceContentBinderSearchDifference() == binderResult);
+    Require(sceContentBinderEnd() == binderResult);
+    Require(sceContentBinderTerminate() == binderResult);
+
+    Require(ThrowsRuntimeError([] { sceContentSearchGetApplicationLastUpdateId(); }));
+    Require(ThrowsRuntimeError([] { sceContentSearchGetMyApplicationIndex(); }));
+    Require(ThrowsRuntimeError([] { sceContentSearchGetNumOfApplication(); }));
+    Require(ThrowsRuntimeError([] { sceContentSearchSearchApplication(); }));
 }

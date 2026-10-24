@@ -62,7 +62,13 @@ int main() {
     }
     ResourceLimit processes{};
     Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1604 && processes.rlim_max == 1604);
-    Require(Throws(GUEST_RLIMIT_NPROC, processes));
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0);
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1443 && processes.rlim_max == 1443);
+    const ResourceLimit noProcesses{0, 0};
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &noProcesses) == 0);
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1 && processes.rlim_max == 1);
+    Require(setrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &infinity) == 0);
+    Require(getrlimit_nid_postfix(GUEST_RLIMIT_NPROC, &processes) == 0 && processes.rlim_cur == 1443 && processes.rlim_max == 1443);
     Require(Throws(GUEST_RLIMIT_STACK, ResourceLimit{0x100000, 0x200000}));
 
     ResourceLimit current{};

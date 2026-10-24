@@ -3,6 +3,7 @@
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -244,6 +245,48 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
         read.size = static_cast<std::uint32_t>(bytes.size());
     };
     if (reads != nullptr) reads->reserve(reads->size() + 2u * shader.num_input_semantics);
+    std::array<std::uint32_t, ShaderRecompiler::ShaderVertexStageInfo::MaxResources> attribWords{};
+    std::array<std::array<std::uint32_t, 4>, ShaderRecompiler::ShaderVertexStageInfo::MaxResources> sharpWords{};
+    if (!staticAbi) {
+        std::uint32_t firstSemantic = ~0u, lastSemantic = 0;
+        for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
+            firstSemantic = std::min<std::uint32_t>(firstSemantic, semantics[i].semantic);
+            lastSemantic = std::max<std::uint32_t>(lastSemantic, semantics[i].semantic);
+        }
+        const auto readWords = [](std::uint64_t base, std::uint32_t stride, std::uint32_t first, std::uint32_t last, std::vector<std::uint32_t>& words, auto&& wanted) {
+            const auto wordsPer = stride / 4u;
+            words.assign(static_cast<std::size_t>(last - first + 1u) * wordsPer, 0u);
+            const auto begin = base + static_cast<std::uint64_t>(first) * stride;
+            if (AgcDriver::GuestMemory::Accessible(reinterpret_cast<const void*>(begin), words.size() * 4u)) {
+                AgcDriver::GuestMemory::Read(begin, std::as_writable_bytes(std::span(words)), 4);
+                return;
+            }
+            for (std::uint32_t entry = first; entry <= last; ++entry) {
+                if (!wanted(entry)) continue;
+                AgcDriver::GuestMemory::Read(base + static_cast<std::uint64_t>(entry) * stride, std::as_writable_bytes(std::span(words).subspan(static_cast<std::size_t>(entry - first) * wordsPer, wordsPer)), 4);
+            }
+        };
+        struct TableStorage {};
+        auto& table = HostThreadLocal<std::vector<std::uint32_t>, TableStorage>();
+        readWords(attribTableAddr, 4u, firstSemantic, lastSemantic, table, [&](std::uint32_t semantic) { return std::any_of(semantics.begin(), semantics.begin() + shader.num_input_semantics, [&](const ShaderSemantic& candidate) { return candidate.semantic == semantic; }); });
+        std::uint32_t firstIndex = ~0u, lastIndex = 0;
+        for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
+            attribWords[i] = table[semantics[i].semantic - firstSemantic];
+            const auto index = attribWords[i] & 0x1fu;
+            if (index >= ShaderRecompiler::ShaderVertexStageInfo::MaxResources) throw std::runtime_error("AGC graphics: vertex buffer index exceeds the supported domain");
+            firstIndex = std::min(firstIndex, index);
+            lastIndex = std::max(lastIndex, index);
+        }
+        if (shader.num_input_semantics != 0) {
+            struct SharpsStorage {};
+            auto& sharps = HostThreadLocal<std::vector<std::uint32_t>, SharpsStorage>();
+            readWords(bufferTableAddr, 16u, firstIndex, lastIndex, sharps, [&](std::uint32_t index) { return std::any_of(attribWords.begin(), attribWords.begin() + shader.num_input_semantics, [&](std::uint32_t word) { return (word & 0x1fu) == index; }); });
+            for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
+                const auto index = attribWords[i] & 0x1fu;
+                std::copy_n(sharps.begin() + static_cast<std::ptrdiff_t>((index - firstIndex) * 4u), 4, sharpWords[i].begin());
+            }
+        }
+    }
     for (std::uint32_t i = 0; i < shader.num_input_semantics; ++i) {
         const auto& semantic = semantics[i];
         if (semantic.static_vb_index == 1 || semantic.static_attribute == 1) throw std::runtime_error("AGC graphics: statically bound vertex attributes are not implemented");
@@ -256,10 +299,9 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
         }
         std::array<std::byte, 4> attribWordBytes{};
         const auto attribWordAddress = attribTableAddr + static_cast<std::uint64_t>(semantic.semantic) * 4u;
-        AgcDriver::GuestMemory::Read(attribWordAddress, attribWordBytes, 4);
+        std::memcpy(attribWordBytes.data(), &attribWords[i], 4);
         record(attribWordAddress, attribWordBytes);
-        std::uint32_t attribWord;
-        std::memcpy(&attribWord, attribWordBytes.data(), 4);
+        const std::uint32_t attribWord = attribWords[i];
         const auto index = attribWord & 0x1fu;
         const auto format = (attribWord >> 5u) & 0x1ffu;
         const auto offset = (attribWord >> 14u) & 0xfffu;
@@ -267,7 +309,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
         if (index >= ShaderRecompiler::ShaderVertexStageInfo::MaxResources) throw std::runtime_error("AGC graphics: vertex buffer index exceeds the supported domain");
         std::array<std::byte, 16> sharpBytes{};
         const auto sharpAddress = bufferTableAddr + static_cast<std::uint64_t>(index) * 16u;
-        AgcDriver::GuestMemory::Read(sharpAddress, sharpBytes, 4);
+        std::memcpy(sharpBytes.data(), sharpWords[i].data(), 16);
         record(sharpAddress, sharpBytes);
         std::array<std::uint32_t, 4> sharp{};
         std::memcpy(sharp.data(), sharpBytes.data(), 16);

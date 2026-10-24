@@ -1,3 +1,4 @@
+#include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
@@ -6,6 +7,15 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+
+extern "C" {
+int APS5_VABI access_nid_postfix(const char*, int);
+int APS5_VABI clock_gettime_nid_postfix(int, KernelTimespec*);
+char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
+char* APS5_VABI getenv_nid_postfix(const char*);
+int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
+void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
+}
 
 namespace {
 
@@ -161,8 +171,8 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
         const char* candidate = text;
         const char* match = needle;
         while (*candidate != '\0' && *match != '\0' &&
-               std::tolower(static_cast<unsigned char>(*candidate)) ==
-               std::tolower(static_cast<unsigned char>(*match))) {
+               FoldCase(static_cast<unsigned char>(*candidate), FnmCasefold) ==
+               FoldCase(static_cast<unsigned char>(*match), FnmCasefold)) {
             ++candidate;
             ++match;
         }
@@ -181,14 +191,12 @@ std::uint32_t APS5_VABI arc4random_nid_postfix() {
     return value;
 }
 
-int APS5_VABI __wrap_access() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __wrap_access(const char* path, int mode) {
+    return access_nid_postfix(path, mode);
 }
 
-int APS5_VABI __wrap_clock_gettime() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __wrap_clock_gettime(int clockId, KernelTimespec* tp) {
+    return clock_gettime_nid_postfix(clockId, tp);
 }
 
 int APS5_VABI __wrap_fchown() {
@@ -196,14 +204,12 @@ int APS5_VABI __wrap_fchown() {
     return 0;
 }
 
-int APS5_VABI __wrap_getcwd() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI __wrap_getcwd(char* buffer, std::size_t size) {
+    return getcwd_nid_postfix(buffer, size);
 }
 
-int APS5_VABI __wrap_getenv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI __wrap_getenv(const char* name) {
+    return getenv_nid_postfix(name);
 }
 
 int APS5_VABI __wrap_link() {
@@ -211,14 +217,12 @@ int APS5_VABI __wrap_link() {
     return 0;
 }
 
-int APS5_VABI __wrap_lstat() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __wrap_lstat(const char* path, FileStat* sb) {
+    return lstat_nid_postfix(path, sb);
 }
 
-int APS5_VABI __wrap_mmap() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) {
+    return mmap_nid_postfix(address, length, protection, flags, descriptor, offset);
 }
 
 int APS5_VABI __wrap_readlink() {

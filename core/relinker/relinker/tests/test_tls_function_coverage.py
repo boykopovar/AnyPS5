@@ -58,6 +58,7 @@ def alu_check_body(opcode, register, base, value, result, flags_masked):
         emit(bytes.fromhex("0f 85 00 00 00 00"))
         jumps.append(len(code) - 4)
 
+    emit(b"\x53")
     emit(bytes.fromhex("64 c7 04 25 28 00 00 00") + struct.pack("<I", value & 0xffffffff))
     for target in (0, 1, 3):
         move_immediate(target, base)
@@ -74,8 +75,8 @@ def alu_check_body(opcode, register, base, value, result, flags_masked):
         fail_unless_equal()
     emit(bytes.fromhex("83 fa") + bytes([flags_masked]))
     fail_unless_equal()
-    emit(bytes.fromhex("b8 2a 00 00 00 c3 b8 01 00 00 00 c3"))
-    failure = len(code) - 6
+    emit(bytes.fromhex("b8 2a 00 00 00 5b c3 b8 01 00 00 00 5b c3"))
+    failure = len(code) - 7
     for position in jumps:
         struct.pack_into("<i", code, position, failure - position - 4)
     return bytes(code)
@@ -702,7 +703,7 @@ def main():
                         assert expected in stub, (case, expected.hex(), stub.hex())
         if args.group in ("all", "alu_execution"):
             for name, image in alu_execution_cases():
-                convert(name, image)
+                convert(name, image, tls_address=0x1241)
         if args.group in ("all", "register_address_loads"):
             for name, image, address, instruction, register, wide, moved in register_load_cases():
                 convert(name, image, tls_address=address)
@@ -719,14 +720,14 @@ def main():
                 head, tail = register_alu_stub(instruction, opcode, register, wide)
                 assert stub.startswith(head) and tail + moved in stub, (name, head.hex(), (tail + moved).hex(), stub.hex())
         if args.group in ("all", "moved_branch"):
-            prologue = bytes.fromhex("48 c7 c3 f0 ff ff ff 48 31 c0")
-            rel8_body = prologue + bytes.fromhex("64 48 33 03 75 06 31 c0 c3 90 90 90 b8 2a 00 00 00 c3")
-            rel32_body = prologue + bytes.fromhex("64 48 33 03 0f 85") + struct.pack("<i", 0x1259 - 0x1254) + bytes.fromhex("31 c0 c3 90 90 b8 2a 00 00 00 c3")
-            jmp_body = prologue + bytes.fromhex("64 48 33 03 eb 06 b8 01 00 00 00 c3 90 b8 2a 00 00 00 c3")
+            prologue = bytes.fromhex("53 48 c7 c3 f0 ff ff ff 48 31 c0")
+            rel8_body = prologue + bytes.fromhex("64 48 33 03 75 07 31 c0 5b c3 90 90 90 b8 2a 00 00 00 5b c3")
+            rel32_body = prologue + bytes.fromhex("64 48 33 03 0f 85") + struct.pack("<i", 0x125B - 0x1255) + bytes.fromhex("31 c0 5b c3 90 90 b8 2a 00 00 00 5b c3")
+            jmp_body = prologue + bytes.fromhex("64 48 33 03 eb 07 b8 01 00 00 00 5b c3 90 b8 2a 00 00 00 5b c3")
             for name, body, access, target, branch_opcode in (
-                ("moved-rel8-branch", rel8_body, 0x124A, 0x1256, "0f 85"),
-                ("moved-rel32-branch", rel32_body, 0x124A, 0x1259, "0f 85"),
-                ("moved-rel8-jump", jmp_body, 0x124A, 0x1256, "e9"),
+                ("moved-rel8-branch", rel8_body, 0x124B, 0x1258, "0f 85"),
+                ("moved-rel32-branch", rel32_body, 0x124B, 0x125B, "0f 85"),
+                ("moved-rel8-jump", jmp_body, 0x124B, 0x1258, "e9"),
             ):
                 image = make_image("register", "unwind", body=body)
                 convert(name, image, tls_address=access)

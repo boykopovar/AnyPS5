@@ -42,6 +42,7 @@ int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
 int APS5_VABI close_nid_postfix(int);
 int APS5_VABI pipe_nid_postfix(int*);
 int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
+int APS5_VABI kqueue_nid_postfix();
 int* APS5_VABI __error_nid_postfix();
 }
 
@@ -83,6 +84,19 @@ static void RequireVolume(int descriptor, const std::filesystem::path& path) {
     Require(fs.f_fstypename[0] == '\0' && fs.f_mntfromname[0] == '\0' && fs.f_mntonname[0] == '\0');
 }
 
+static void RequireDeviceFilesystem(int descriptor) {
+    GuestStatfs fs;
+    std::memset(&fs, 0x5a, sizeof(fs));
+    Require(_fstatfs_nid_postfix(descriptor, &fs) == 0);
+    GuestStatfs expected{};
+    expected.f_version = StatfsVersion;
+    expected.f_bsize = 512;
+    expected.f_iosize = 512;
+    expected.f_blocks = 2;
+    expected.f_namemax = 255;
+    Require(std::memcmp(&fs, &expected, sizeof(fs)) == 0);
+}
+
 int main() {
     const auto root = std::filesystem::temp_directory_path() /
         ("anyps5-fstatfs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -122,11 +136,19 @@ int main() {
     Require(close_nid_postfix(sockets[1]) == 0);
     RequireFailure(sockets[0], GuestEbadf);
 
+    const int random = sceKernelOpen("/dev/urandom", SCE_KERNEL_O_RDONLY, 0);
+    Require(random >= 0);
+    RequireDeviceFilesystem(random);
+    Require(close_nid_postfix(random) == 0);
+
+    const int kqueue = kqueue_nid_postfix();
+    Require(kqueue >= 0);
+    RequireFailure(kqueue, GuestEinval);
+    Require(close_nid_postfix(kqueue) == 0);
+
     RequireFailure(-1, GuestEbadf);
     Require(close_nid_postfix(file) == 0);
-#ifndef _WIN32
     RequireFailure(file, GuestEbadf);
-#endif
 
     std::filesystem::remove_all(root);
 }

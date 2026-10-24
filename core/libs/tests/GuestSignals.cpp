@@ -36,6 +36,7 @@ struct GuestSigaction {
     GuestSignalSet mask;
 };
 static_assert(sizeof(GuestSigaction) == 32);
+extern GuestSignalSet _sigintr_nid_postfix;
 static bool Same(const GuestSigaction& left, const GuestSigaction& right) {
     return left.handler == right.handler && left.flags == right.flags && std::memcmp(&left.mask, &right.mask, sizeof(left.mask)) == 0;
 }
@@ -398,4 +399,24 @@ int main() {
     Require(sigpending_nid_postfix(&pendingIgnored) == 0 && pendingIgnored.bits[0] == 0);
     Require(sigprocmask_nid_postfix(3, &noneBlocked, nullptr) == 0);
     Require(sigaction_nid_postfix(30, &restored, nullptr) == 0);
+    Require(_sigintr_nid_postfix.bits[0] == 0 && _sigintr_nid_postfix.bits[1] == 0 && _sigintr_nid_postfix.bits[2] == 0 &&
+        _sigintr_nid_postfix.bits[3] == 0);
+    GuestSigaction interruptible{};
+    Require(signal_nid_postfix(30, Callback) == nullptr);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    _sigintr_nid_postfix.bits[0] = 1u << 29;
+    Require(signal_nid_postfix(30, Callback) == Callback);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 &&
+        interruptible.handler == reinterpret_cast<std::uintptr_t>(Callback) && interruptible.flags == 0);
+    signal_nid_postfix(31, Callback);
+    Require(sigaction_nid_postfix(31, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    _sigintr_nid_postfix.bits[3] = 1u << 31;
+    Require(signal_nid_postfix(128, Callback) == nullptr);
+    Require(sigaction_nid_postfix(128, nullptr, &interruptible) == 0 && interruptible.flags == 0);
+    _sigintr_nid_postfix.bits[0] = 0;
+    _sigintr_nid_postfix.bits[3] = 0;
+    Require(signal_nid_postfix(30, Callback) == Callback);
+    Require(sigaction_nid_postfix(30, nullptr, &interruptible) == 0 && interruptible.flags == 0x2);
+    Require(signal_nid_postfix(30, nullptr) == Callback && signal_nid_postfix(31, nullptr) == Callback &&
+        signal_nid_postfix(128, nullptr) == Callback);
 }

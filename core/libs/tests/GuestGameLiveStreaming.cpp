@@ -25,6 +25,7 @@ int APS5_VABI sceGameLiveStreamingTerminate(void);
 int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* status);
 struct GameLiveStreamingProgramInfo;
 int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo*);
+int APS5_VABI sceGameLiveStreamingEnableLiveStreaming(bool isEnableLiveStreaming);
 }
 
 namespace {
@@ -32,6 +33,15 @@ namespace {
 void Require(bool value) { if (!value) std::abort(); }
 
 constexpr std::int32_t kInvalidUserId = -1;
+
+bool EnableThrowsNotInitialized(bool isEnableLiveStreaming) {
+    try {
+        sceGameLiveStreamingEnableLiveStreaming(isEnableLiveStreaming);
+    } catch (const std::logic_error&) {
+        return true;
+    }
+    return false;
+}
 
 }
 
@@ -41,8 +51,10 @@ int main() {
     constexpr int notInitialized = static_cast<int>(0x80A00004);
     Require(sceGameLiveStreamingTerminate() == notInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
+    Require(EnableThrowsNotInitialized(true));
     for (const std::size_t size : {0u, 1u, 0x3fffu, 0x4001u, 0x100000u}) Require(sceGameLiveStreamingInitialize(size) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == 0);
+    Require(sceGameLiveStreamingEnableLiveStreaming(true) == 0);
     Require(sceGameLiveStreamingInitialize(0) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == alreadyInitialized);
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == invalidArgument);
@@ -71,7 +83,9 @@ int main() {
         Require(programInfo[i] == (i < 0x134C ? 0 : 0x7f));
     }
 
+    Require(sceGameLiveStreamingEnableLiveStreaming(false) == 0);
     Require(sceGameLiveStreamingTerminate() == 0);
+    Require(EnableThrowsNotInitialized(false));
     std::memset(&status, 0x7f, sizeof(status));
     Require(sceGameLiveStreamingGetCurrentStatus2(&status) == notInitialized);
     for (const auto value : std::as_bytes(std::span(&status, 1))) Require(value == std::byte{0x7f});

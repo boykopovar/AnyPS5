@@ -113,11 +113,32 @@ static void CheckReleaseFlexibleMemory() {
     Require(sceKernelMapFlexibleMemory(&mapped, length, 3, 0) == 0 && mapped != nullptr);
     static_cast<volatile unsigned char*>(mapped)[length - 1] = 1;
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - length);
+    auto* bytes = static_cast<volatile unsigned char*>(mapped);
+    Require(sceKernelMprotect(mapped, 0x4000, 1) == 0);
     Require(sceKernelReleaseFlexibleMemory(mapped, length) == 0);
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(mapped, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    Require(sceKernelVirtualQuery(static_cast<unsigned char*>(mapped) + length - 1, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+    Require(bytes[length - 1] == 1);
+    bytes[length - 2] = 2;
+    Require(sceKernelReleaseFlexibleMemory(mapped, length) == 0);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 0) == 0);
+    Require(sceKernelReleaseFlexibleMemory(reinterpret_cast<void*>(std::uintptr_t{0x7ff000000000}), length) == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before);
+    Require(sceKernelReleaseFlexibleMemory(nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(static_cast<unsigned char*>(mapped) + 1, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(static_cast<unsigned char*>(mapped) + 0x1000, 0x4000) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(mapped, 0x6000) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelReleaseFlexibleMemory(reinterpret_cast<void*>(~std::uintptr_t{0x3fff}), 0x8000) == SCE_KERNEL_ERROR_EINVAL);
     void* again = mapped;
-    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == 0 && again == mapped);
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x90) == SCE_KERNEL_ERROR_ENOMEM);
+    Require(bytes[length - 1] == 1 && bytes[length - 2] == 2);
+    again = mapped;
+    Require(sceKernelMapFlexibleMemory(&again, length, 3, 0x10) == 0 && again == mapped);
     Require(static_cast<volatile unsigned char*>(again)[length - 1] == 0);
+    Require(sceKernelAvailableFlexibleMemorySize(&available) == 0 && available == before - length);
     Require(sceKernelMunmap(again, length) == 0);
 }
 
@@ -1441,7 +1462,13 @@ static void CheckFixedMappingsReachTheApplicationAreaEnd() {
         0;
 #endif
     constexpr std::uintptr_t applicationAreaEnd = 0xFC00000000ull + expectedOffset;
-    Require(base == 0x200000000ull + expectedOffset && base + size == applicationAreaEnd);
+    constexpr std::uintptr_t expectedBase =
+#ifdef __APPLE__
+        0x200000000ull + expectedOffset;
+#else
+        expectedOffset == 0 ? 0x10000ull : 0x200000000ull + expectedOffset;
+#endif
+    Require(base == expectedBase && base + size == applicationAreaEnd);
     std::int64_t phys = 0;
     Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
     void* const requested = reinterpret_cast<void*>(applicationAreaEnd - page * 2);
@@ -2461,7 +2488,7 @@ static void CheckReadsIntoSharedWriteTracking() {
     KernelAioRwRequest request{static_cast<std::int64_t>(page), page, bytes, &result, fd};
     std::int32_t id = 0;
     std::int32_t state = 0;
-    Require(sceKernelAioSubmitReadCommands(&request, 1, 0, &id) == 0);
+    Require(sceKernelAioSubmitReadCommands(&request, 1, 1, &id) == 0);
     Require(sceKernelAioWaitRequest(id, &state, nullptr) == 0);
     Require(result.state == 3 && result.return_value == static_cast<std::int64_t>(page));
     Require(std::memcmp(bytes, seed.data() + page, page) == 0);
@@ -2472,7 +2499,7 @@ static void CheckReadsIntoSharedWriteTracking() {
     Require(sceKernelPread(fd, mapped, page, 0) == static_cast<std::int64_t>(SCE_KERNEL_ERROR_EFAULT));
     KernelAioResult refusedResult{-1, 0};
     KernelAioRwRequest refusedRequest{0, page, bytes, &refusedResult, fd};
-    Require(sceKernelAioSubmitReadCommands(&refusedRequest, 1, 0, &id) == 0);
+    Require(sceKernelAioSubmitReadCommands(&refusedRequest, 1, 1, &id) == 0);
     Require(sceKernelAioWaitRequest(id, &state, nullptr) == 0);
     Require(refusedResult.return_value == static_cast<std::int64_t>(SCE_KERNEL_ERROR_EFAULT));
     Require(sceKernelAioDeleteRequest(id, &deleted) == 0);
@@ -3237,12 +3264,43 @@ static void CheckAvailableDirectMemoryIsLargestFreeBlock() {
     Require(start == top + 0x200000 && size == 0x400000);
     Require(sceKernelAvailableDirectMemorySize(top, top + window, 0x1000000, &start, &size) == 0);
     Require(start == top + 0x1000000 && size == static_cast<std::size_t>(window - 0x1000000));
-    Require(sceKernelAvailableDirectMemorySize(top, top + 0x200000, 0, &start, &size) == SCE_KERNEL_ERROR_ENOMEM);
-    Require(start == 0 && size == 0);
-    Require(sceKernelAvailableDirectMemorySize(top + window, top, 0, &start, &size) == SCE_KERNEL_ERROR_EAGAIN);
-    Require(sceKernelAvailableDirectMemorySize(-1, top + window, 0, &start, &size) == SCE_KERNEL_ERROR_EAGAIN);
-    Require(sceKernelAvailableDirectMemorySize(top, top + window, std::numeric_limits<std::size_t>::max(), &start, &size) == SCE_KERNEL_ERROR_EAGAIN);
-    Require(sceKernelAvailableDirectMemorySize(top, top + window, 0, nullptr, &size) == SCE_KERNEL_ERROR_EINVAL);
+    const std::int64_t run = top + 0x800000;
+    const auto untouched = [&](std::int64_t searchStart, std::int64_t searchEnd, std::size_t alignment, int expected) {
+        start = -7;
+        size = 7;
+        return sceKernelAvailableDirectMemorySize(searchStart, searchEnd, alignment, &start, &size) == expected && start == -7 && size == 7;
+    };
+    Require(untouched(top, top + 0x200000, 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(top + window, top, 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(run, run, 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(0, -1, 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(run + 0x1000, run + 0x3000, 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(static_cast<std::int64_t>(DIRECT_MEMORY_SIZE), std::numeric_limits<std::int64_t>::max(), 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(std::numeric_limits<std::int64_t>::max() - 0x3ffe, std::numeric_limits<std::int64_t>::max(), 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(std::numeric_limits<std::int64_t>::max(), run + 0x100000, 0, SCE_KERNEL_ERROR_ENOMEM));
+    Require(untouched(run, std::numeric_limits<std::int64_t>::max(), std::size_t{1} << 62, SCE_KERNEL_ERROR_ENOMEM));
+    for (const std::size_t alignment : {std::size_t{3}, std::size_t{0x6000}, std::size_t{0xc000}, std::size_t{0x14000}, ~std::size_t{0x3fff}, std::numeric_limits<std::size_t>::max()}) {
+        Require(untouched(top, top + window, alignment, SCE_KERNEL_ERROR_EINVAL));
+        Require(untouched(top + window, top, alignment, SCE_KERNEL_ERROR_EINVAL));
+    }
+    Require(sceKernelAvailableDirectMemorySize(top, top + window, 0, nullptr, &size) == 0 && size == static_cast<std::size_t>(window - 0x800000));
+    Require(sceKernelAvailableDirectMemorySize(top, top + window, 0, &start, nullptr) == 0 && start == run);
+    Require(sceKernelAvailableDirectMemorySize(top, top + window, 0, nullptr, nullptr) == 0);
+    Require(sceKernelAvailableDirectMemorySize(top, top + window, 3, nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelAvailableDirectMemorySize(-1, top + window, 0, &start, &size) == 0 && start >= 0 && static_cast<std::int64_t>(size) <= top + window - start);
+    Require(sceKernelAvailableDirectMemorySize(std::numeric_limits<std::int64_t>::min(), top + window, 0, &start, &size) == 0 && start >= 0);
+    Require(sceKernelAvailableDirectMemorySize(run, run + 0xfffff, 0, &start, &size) == 0 && start == run && size == 0xfffff);
+    Require(sceKernelAvailableDirectMemorySize(run, run + 0x3fff, 0, &start, &size) == 0 && start == run && size == 0x3fff);
+    Require(sceKernelAvailableDirectMemorySize(run + 1, run + 0x100000, 0, &start, &size) == 0 && start == run + 0x4000 && size == 0xfc000);
+    Require(sceKernelAvailableDirectMemorySize(run + 0x2000, run + 0x6000, 0, &start, &size) == 0 && start == run + 0x4000 && size == 0x2000);
+    Require(sceKernelAvailableDirectMemorySize(run + 0x2000, run + 0x10e000, 1, &start, &size) == 0 && start == run + 0x4000 && size == 0x10a000);
+    Require(sceKernelAvailableDirectMemorySize(run + 0x4000, run + 0x100000, 0x8000, &start, &size) == 0 && start == run + 0x8000 && size == 0xf8000);
+    Require(sceKernelAvailableDirectMemorySize(top, top + window, std::size_t{1} << 63, &start, &size) == 0);
+    Require(start == std::numeric_limits<std::int64_t>::min() && size == static_cast<std::size_t>(top + window) - (std::size_t{1} << 63));
+    std::int64_t divider = -1;
+    Require(sceKernelAllocateDirectMemory(run + 0x40000, run + 0x44000, 0x4000, 0, 0, &divider) == 0 && divider == run + 0x40000);
+    Require(sceKernelAvailableDirectMemorySize(run, run + 0x84000, 0, &start, &size) == 0 && start == run && size == 0x40000);
+    Require(sceKernelReleaseDirectMemory(divider, 0x4000) == 0);
 
     Require(sceKernelReleaseDirectMemory(first, 0x200000) == 0);
     Require(sceKernelReleaseDirectMemory(last, 0x200000) == 0);

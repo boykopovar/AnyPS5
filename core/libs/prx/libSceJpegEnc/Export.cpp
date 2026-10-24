@@ -204,7 +204,7 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
         outputInfo->size = static_cast<std::uint32_t>(jpeg.size());
         outputInfo->height = param->image_height;
     }
-    return 0;
+    return static_cast<std::int32_t>(jpeg.size());
 }
 
 int32_t APS5_VABI sceJpegEncQueryMemorySize(const JpegEncCreateParam* param) {

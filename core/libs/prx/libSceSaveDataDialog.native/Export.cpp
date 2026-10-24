@@ -44,7 +44,7 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  r->result = SAVE_DATA_DIALOG_RESULT_OK;
  r->button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
  r->user_data = g_user_data;
- if (r->dir_name != nullptr && g_dir_name[0] != '\0') {
+ if (r->dir_name != nullptr) {
   std::snprintf(static_cast<SaveDataDirName*>(r->dir_name)->data,
    sizeof(SaveDataDirName::data), "%s", g_dir_name);
  }
