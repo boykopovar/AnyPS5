@@ -8,10 +8,12 @@ if(BUILD_TESTING)
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/explicit")
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/failure")
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/best-effort")
+    file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/queue")
     file(MAKE_DIRECTORY "${agcCaptureTraceDirectory}/disabled")
     set(agcCaptureTraceExplicitPath "${agcCaptureTraceDirectory}/explicit/trace.log")
     set(agcCaptureTraceFailurePath "${agcCaptureTraceDirectory}/failure/missing-parent/trace.log")
     set(agcCaptureTraceBestEffortPath "${agcCaptureTraceDirectory}/best-effort/trace.log")
+    set(agcCaptureTraceQueuePath "${agcCaptureTraceDirectory}/queue/trace.log")
     add_test(NAME agc_capture_trace_path_default COMMAND agc_capture_trace_tests path-default)
     add_test(NAME agc_capture_trace_path_empty COMMAND agc_capture_trace_tests path-empty)
     set_tests_properties(agc_capture_trace_path_empty PROPERTIES ENVIRONMENT "APS5_CAPTURE_TRACE_PATH=")
@@ -25,12 +27,14 @@ if(BUILD_TESTING)
     set_tests_properties(agc_capture_trace_open_failure PROPERTIES ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceFailurePath}" WORKING_DIRECTORY "${agcCaptureTraceDirectory}/failure")
     add_test(NAME agc_capture_trace_best_effort_overflow COMMAND agc_capture_trace_tests best-effort-overflow)
     set_tests_properties(agc_capture_trace_best_effort_overflow PROPERTIES ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceBestEffortPath}" WORKING_DIRECTORY "${agcCaptureTraceDirectory}/best-effort")
+    add_test(NAME agc_capture_trace_queue_backpressure COMMAND agc_capture_trace_tests queue-backpressure)
+    set_tests_properties(agc_capture_trace_queue_backpressure PROPERTIES ENVIRONMENT "APS5_CAPTURE_TRACE=1;APS5_CAPTURE_TRACE_PATH=${agcCaptureTraceQueuePath}" WORKING_DIRECTORY "${agcCaptureTraceDirectory}/queue" TIMEOUT 15)
     add_test(NAME agc_capture_trace_disabled COMMAND agc_capture_trace_tests disabled)
     set_tests_properties(agc_capture_trace_disabled PROPERTIES WORKING_DIRECTORY "${agcCaptureTraceDirectory}/disabled")
     if(WIN32)
         set_tests_properties(agc_capture_trace_path_default agc_capture_trace_path_empty
                 agc_capture_trace_path_explicit agc_capture_trace_explicit_writes
-                agc_capture_trace_default_writes agc_capture_trace_open_failure agc_capture_trace_best_effort_overflow
+                agc_capture_trace_default_writes agc_capture_trace_open_failure agc_capture_trace_best_effort_overflow agc_capture_trace_queue_backpressure
                 agc_capture_trace_disabled PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
