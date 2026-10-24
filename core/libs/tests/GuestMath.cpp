@@ -712,6 +712,84 @@ static void CheckExpm1ConsoleBits() {
     }
 }
 
+static void CheckLog1pConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0}, {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x3c8fffffffffffffull, 0x3c8fffffffffffffull, 0}, {0x3c90000000000000ull, 0x3c90000000000000ull, 0},
+        {0x3e1fffffffffffffull, 0x3e1fffffff7fffffull, 0}, {0x3e20000000000000ull, 0x3e1fffffff800000ull, 0},
+        {0xbe20000000000000ull, 0xbe20000000400000ull, 0}, {0x3fda8279ffffffffull, 0x3fd62e43471c5d9dull, 0},
+        {0x3fda827a00000000ull, 0x3fd62e43471c5d9eull, 0}, {0xbfd2bec400000000ull, 0xbfd62e4420e1ff10ull, 0},
+        {0xbfd2bec3ffffffffull, 0xbfd62e4420e1ff0full, 0}, {0x3ff0000000000000ull, 0x3fe62e42fefa39efull, 0},
+        {0xbfe0000000000000ull, 0xbfe62e42fefa39efull, 0}, {0xbfefffffffffffffull, 0xc0425e4f7b2737faull, 0},
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0}, {0xbff0000000000001ull, 0xfff8000000000000ull, EDOM},
+        {0xc000000000000000ull, 0xfff8000000000000ull, EDOM}, {0x433fffffffffffffull, 0x40425e4f7b2737faull, 0},
+        {0x4340000000000000ull, 0x40425e4f7b2737faull, 0}, {0x7fefffffffffffffull, 0x40862e42fefa39efull, 0},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0}, {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3f0f5ab6d3865ccaull, 0x3f0f5a7962a0216cull, 0}, {0x3fe8683f0ace287cull, 0x3fe223b9ede79242ull, 0},
+        {0x3f5f8cd247124706ull, 0x3f5f850e039f6187ull, 0}, {0x40298faede87074bull, 0x4004fc71ddb00cc0ull, 0},
+        {0x404b621796f08648ull, 0x401015adbb851c70ull, 0}, {0x3f21ecf9339d7420ull, 0x3f21eca8e0601790ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(log1p_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+static void CheckLog1pDomainEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint64_t input;
+        std::uint64_t result;
+        unsigned sseRaised;
+        unsigned x87Raised;
+        bool domain;
+    } cases[] = {
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0, 0, false},
+        {0xbff0000000000001ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xc000000000000000ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xffefffffffffffffull, 0xfff8000000000000ull, 1, 1, true},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, 1, 1, true},
+        {0xfff8000000000001ull, 0xfff8000000000001ull, 1, 1, true},
+        {0xfff0000000000001ull, 0xfff8000000000001ull, 1, 1, true},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0, 0, false},
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull, 1, 0, false},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = log1p_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (unsigned sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    const int seedFlags = ((sticky & 1u) ? FE_INVALID : 0) | ((sticky & 4u) ? FE_DIVBYZERO : 0) | ((sticky & 32u) ? FE_INEXACT : 0);
+                    Require(std::feraiseexcept(seedFlags) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result || after.mxcsr != (control | sticky | item.sseRaised) || (after.status & 0x3fu) != ((before.status & 0x3fu) | item.x87Raised) || after.control != before.control || error != (item.domain ? EDOM : 1234)) {
+                        std::fprintf(stderr, "log1p domain: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -1669,6 +1747,8 @@ int main() {
     CheckLongDouble();
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
+    CheckLog1pConsoleBits();
+    CheckLog1pDomainEnvironment();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
