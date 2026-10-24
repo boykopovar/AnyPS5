@@ -417,6 +417,39 @@ void UnboundAllocationRollback() {
     Clean();
 }
 
+void BlockAlignmentFallback() {
+    ResetMock();
+    {
+        auto context = NewContext();
+        mock.deviceLimit = 32 * MiB;
+        std::array<ImageSpec, 32> images{};
+        std::array<ImageAllocation, 32> allocations{};
+        for (std::size_t index = 0; index < images.size(); ++index) {
+            images[index] = NewImage(64 * KiB, 4 * MiB);
+            allocations[index] = Take(context, images[index]);
+            Bind(images[index], allocations[index]);
+        }
+        Expect(mock.liveBytes == images.size() * 64 * KiB, "block-aligned images wasted a whole slab block per allocation");
+        Expect(context.bufferPool->ImageSlabBlocks() == 0, "one-image-per-block alignment entered the shared image arena");
+        for (std::size_t index = 0; index < images.size(); ++index) Drop(images[index], allocations[index]);
+    }
+    Clean();
+    ResetMock();
+    {
+        auto context = NewContext();
+        const auto first = NewImage(64 * KiB, 2 * MiB);
+        const auto second = NewImage(64 * KiB, 2 * MiB);
+        auto firstAllocation = Take(context, first);
+        auto secondAllocation = Take(context, second);
+        Bind(first, firstAllocation);
+        Bind(second, secondAllocation);
+        Expect(mock.allocations == 1 && MemoryOf(firstAllocation) == MemoryOf(secondAllocation), "two-image alignment unnecessarily bypassed suballocation");
+        Drop(first, firstAllocation);
+        Drop(second, secondAllocation);
+    }
+    Clean();
+}
+
 void TypeIsolation() {
     ResetMock();
     {
@@ -1003,6 +1036,7 @@ int main() {
         std::puts("image allocation: variable and boundary ranges");
         VariableRanges();
         BoundaryRanges();
+        BlockAlignmentFallback();
         UnboundAllocationRollback();
         std::puts("image allocation: types and dedicated requirements");
         TypeIsolation();

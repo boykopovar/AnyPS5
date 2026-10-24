@@ -67,7 +67,11 @@ BufferPool::~BufferPool() {
     for (const auto& [memory, block] : imageBlocks) freeMemory(device, memory, nullptr);
 }
 
-VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage, const std::function<bool(std::uint32_t)>& reuse) {
+VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage) {
+    return allocateMemoryWithReuse(allocation, operation, hostType, allocatedType, newImage, {});
+}
+
+VkDeviceMemory BufferPool::allocateMemoryWithReuse(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage, const std::function<bool(std::uint32_t)>& reuse) {
     if (allocatedType != nullptr) *allocatedType = allocation.memoryTypeIndex;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     auto result = allocateMemory(device, &allocation, nullptr, &memory);
@@ -730,7 +734,7 @@ ImageAllocation BufferPool::AllocateImage(const Context& context, VkImage image,
     Require(pool.get() == this, "an image allocation must use its context's buffer pool");
     const bool separate = dedicated.requiresDedicatedAllocation != VK_FALSE || dedicated.prefersDedicatedAllocation != VK_FALSE;
     static const bool disabled = std::getenv("APS5_NO_IMAGE_SLABS") != nullptr;
-    const bool eligible = !disabled && !separate && imageInfo.tiling == VK_IMAGE_TILING_OPTIMAL && imageInfo.pNext == nullptr && needed.size <= (VkDeviceSize{1} << 20u) && needed.alignment <= imageBlockBytes;
+    const bool eligible = !disabled && !separate && imageInfo.tiling == VK_IMAGE_TILING_OPTIMAL && imageInfo.pNext == nullptr && needed.size <= (VkDeviceSize{1} << 20u) && needed.alignment < imageBlockBytes;
     const auto preferredType = context.MemoryType(needed.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (eligible) {
         if (auto existing = takeImageRange(pool, preferredType, needed.size, needed.alignment)) return existing;
@@ -782,7 +786,7 @@ ImageAllocation BufferPool::AllocateImage(const Context& context, VkImage image,
         return static_cast<bool>(reused);
     };
     try {
-        block->memory = AllocateMemory(allocation, operation, std::nullopt, &block->memoryType, newImage, reuse);
+        block->memory = allocateMemoryWithReuse(allocation, operation, std::nullopt, &block->memoryType, newImage, reuse);
     } catch (const MemoryAllocationError& error) {
         if (error.result != VK_ERROR_OUT_OF_DEVICE_MEMORY && error.result != VK_ERROR_OUT_OF_HOST_MEMORY && error.result != VK_ERROR_TOO_MANY_OBJECTS) throw;
         return standalone();

@@ -68,7 +68,7 @@ public:
     // The size a buffer for `bytes` is created with: its size class, or `bytes` itself when large.
     static std::size_t Capacity(std::size_t bytes, VkMemoryPropertyFlags properties);
     static VkBufferUsageFlags Usage(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
-    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr, bool newImage = false, const std::function<bool(std::uint32_t)>& reuse = {});
+    VkDeviceMemory AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr, bool newImage = false);
     ImageAllocation AllocateImage(const Context& context, VkImage image, const VkImageCreateInfo& imageInfo, const char* operation, bool newImage, bool budgeted);
     std::size_t ImageSlabBlocks();
     static VkDeviceSize ImageBudget(VkDeviceSize deviceBudget);
@@ -86,6 +86,7 @@ public:
 
 private:
     friend class ImageAllocation;
+    VkDeviceMemory allocateMemoryWithReuse(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage, const std::function<bool(std::uint32_t)>& reuse);
     static constexpr VkDeviceSize imageUnitBytes = 256;
     static constexpr VkDeviceSize imageBlockBytes = VkDeviceSize{4} << 20u;
     static constexpr std::uint32_t imageBlockUnits = static_cast<std::uint32_t>(imageBlockBytes / imageUnitBytes);
