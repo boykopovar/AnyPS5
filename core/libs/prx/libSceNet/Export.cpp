@@ -278,6 +278,7 @@ constexpr int NET_SO_RCVTIMEO = 0x1006;
 constexpr int NET_SO_ERROR = 0x1007;
 constexpr int NET_SO_NBIO = 0x1200;
 constexpr int NET_SO_REUSEADDR = 0x4;
+constexpr int NET_SO_KEEPALIVE = 0x8;
 constexpr int NET_SO_BROADCAST = 0x20;
 constexpr int NET_SO_ONESBCAST = 0x10000;
 constexpr int NET_SO_SNDBUF = 0x1001;
@@ -402,6 +403,7 @@ struct Sock {
     int snd_buffer = 0;
     int rcv_buffer = 0;
     int onesbcast = 0;
+    int keepalive = 0;
 };
 
 #ifdef _WIN32
@@ -1530,6 +1532,11 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         const int native_option = optname == NET_SO_REUSEADDR ? SO_REUSEADDR : optname == NET_SO_BROADCAST ? SO_BROADCAST : optname == NET_SO_SNDBUF ? SO_SNDBUF : SO_RCVBUF;
         if (::setsockopt(socket.native->value, SOL_SOCKET, native_option, reinterpret_cast<const char*>(&value), sizeof(value)) != 0)
             return fail(native_error());
+    } else if (optname == NET_SO_KEEPALIVE) {
+        const int enabled = value != 0;
+        if (socket.type == NET_SOCK_STREAM &&
+            ::setsockopt(socket.native->value, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&enabled), sizeof(enabled)) != 0)
+            return fail(native_error());
     } else if (optname == NET_SO_ONESBCAST) {
     } else {
         return fail(NET_EOPNOTSUPP);
@@ -1543,6 +1550,7 @@ int APS5_VABI sceNetSetsockopt(int s, int level, int optname, const void* optval
         if (optname == NET_SO_SNDBUF) it->second.snd_buffer = value;
         if (optname == NET_SO_RCVBUF) it->second.rcv_buffer = value;
         if (optname == NET_SO_ONESBCAST) it->second.onesbcast = value;
+        if (optname == NET_SO_KEEPALIVE) it->second.keepalive = value != 0 ? NET_SO_KEEPALIVE : 0;
     }
     return 0;
 }
@@ -1561,6 +1569,18 @@ int APS5_VABI sceNetGetsockopt(int s, int level, int optname, void* optval, uint
         const KernelTimeval timeout{microseconds / 1000000, microseconds % 1000000};
         *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(timeout)));
         std::memcpy(optval, &timeout, *optlen);
+        return 0;
+    }
+    if (level == NET_SOL_SOCKET && optname == NET_SO_KEEPALIVE) {
+        int enabled = socket.keepalive;
+        if (socket.type == NET_SOCK_STREAM) {
+            NativeLength size = sizeof(enabled);
+            if (::getsockopt(socket.native->value, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<char*>(&enabled), &size) != 0)
+                return fail(native_error());
+        }
+        const int value = enabled != 0 ? NET_SO_KEEPALIVE : 0;
+        *optlen = std::min(*optlen, static_cast<std::uint32_t>(sizeof(value)));
+        std::memcpy(optval, &value, *optlen);
         return 0;
     }
     if (*optlen < sizeof(int)) return fail(NET_EINVAL);
