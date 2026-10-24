@@ -1,8 +1,10 @@
+#include "SceTypes.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <barrier>
 #include <cerrno>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -43,6 +45,7 @@ int APS5_VABI getc_unlocked_nid_postfix(FileStream* stream);
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream);
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream);
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...);
+int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args);
 }
 
 static void Require(bool condition, const char* message = "File stream check failed") {
@@ -124,6 +127,23 @@ static void CheckExclusiveCppOpen(const std::string& base) {
     }
 }
 
+static int APS5_VABI ScanList(FileStream* stream, const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    const int result = vfscanf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    return result;
+}
+
 static std::string ReadWhole(const std::string& path) {
     auto* stream = fopen_nid_postfix(path.c_str(), "rb");
     Require(stream != nullptr);
@@ -179,6 +199,11 @@ static void CheckUpdateStreamReadsAfterWrites(const std::string& base) {
         std::array<char, 4> buffer{};
         Require(fscanf_nid_postfix(stream, "%3s", buffer.data()) == 1, "fscanf after fwrite on an r+ stream");
         Require(std::strcmp(buffer.data(), "234") == 0, "fscanf after fwrite on an r+ stream read other bytes");
+    });
+    CheckReadAfterWrite(path, "r+b", overwritten, [](FileStream* stream) {
+        std::array<char, 4> buffer{};
+        Require(ScanList(stream, "%3s", buffer.data()) == 1, "vfscanf after fwrite on an r+ stream");
+        Require(std::strcmp(buffer.data(), "234") == 0, "vfscanf after fwrite on an r+ stream read other bytes");
     });
     CheckReadAfterWrite(path, "w+b", "AB", [](FileStream* stream) {
         std::array<char, 4> buffer{};
