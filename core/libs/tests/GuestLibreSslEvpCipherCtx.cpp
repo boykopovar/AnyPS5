@@ -28,6 +28,8 @@ static void InitializeHeap() {
 
 extern "C" {
 void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(void*);
+void* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
+void APS5_VABI free_nid_postfix(void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -50,7 +52,19 @@ static void TestInit() {
     RequireThrows([] { EVP_CIPHER_CTX_init_nid_postfix(nullptr); });
 }
 
+static void TestNew() {
+    for (int round = 0; round < 4; ++round) {
+        auto* context = static_cast<unsigned char*>(EVP_CIPHER_CTX_new_nid_postfix());
+        Require(context != nullptr);
+        for (std::size_t index = 0; index < ContextBytes; ++index) Require(context[index] == 0);
+        std::memset(context, 0x5A, ContextBytes);
+        free_nid_postfix(context);
+    }
+}
+
 int main() {
+    InitializeHeap();
     TestInit();
+    TestNew();
     return 0;
 }
