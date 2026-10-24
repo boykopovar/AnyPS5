@@ -130,6 +130,47 @@ constexpr std::uint32_t MixedTinyRows[Threads][Inputs] = {
     {0x80800001u, 0x3bff3bffu, 0x80000000u, 0x80008000u},
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 18> TranscendentalCode{
+    0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e144f04u, 0x7e166704u, 0x7e185d04u,
+    0x7e1a5504u, 0x7e1c4b05u, 0x7e1e4f05u, 0x7e206705u, 0x7e225505u, 0xe0781000u, 0x80010a02u, 0xe0781010u,
+    0x80010e02u, 0xbf810000u,
+};
+
+constexpr std::uint32_t TranscendentalRows[Threads][Inputs] = {
+    {0x40000000u, 0x3f800000u, 0x00000000u, 0x00000000u},
+    {0x3f000000u, 0xbf800000u, 0x00000000u, 0x00000000u},
+    {0x3f800000u, 0x3f000000u, 0x00000000u, 0x00000000u},
+    {0x40400000u, 0xbf000000u, 0x00000000u, 0x00000000u},
+    {0x41200000u, 0x41200000u, 0x00000000u, 0x00000000u},
+    {0x3dcccccdu, 0xc1200000u, 0x00000000u, 0x00000000u},
+    {0x0da24260u, 0x42480000u, 0x00000000u, 0x00000000u},
+    {0x7149f2cau, 0xc2480000u, 0x00000000u, 0x00000000u},
+    {0x3fc00000u, 0x42c80000u, 0x00000000u, 0x00000000u},
+    {0x40e00000u, 0xc2c80000u, 0x00000000u, 0x00000000u},
+    {0x3f400000u, 0x40000000u, 0x00000000u, 0x00000000u},
+    {0x42c80000u, 0x40400000u, 0x00000000u, 0x00000000u},
+    {0x2edbe6ffu, 0x3dcccccdu, 0x00000000u, 0x00000000u},
+    {0x501502f9u, 0xbdcccccdu, 0x00000000u, 0x00000000u},
+    {0x40490fdbu, 0x40e00000u, 0x00000000u, 0x00000000u},
+    {0x402df854u, 0xc0e00000u, 0x00000000u, 0x00000000u},
+    {0x3f800001u, 0x3a83126fu, 0x00000000u, 0x00000000u},
+    {0x3f7fffffu, 0x41a00000u, 0x00000000u, 0x00000000u},
+    {0x0d800000u, 0xc1a00000u, 0x00000000u, 0x00000000u},
+    {0x71800000u, 0x3fc00000u, 0x00000000u, 0x00000000u},
+    {0x3e99999au, 0xbfc00000u, 0x00000000u, 0x00000000u},
+    {0x40a00000u, 0x41f00000u, 0x00000000u, 0x00000000u},
+    {0x42800000u, 0xc1f00000u, 0x00000000u, 0x00000000u},
+    {0x3c800000u, 0x42800000u, 0x00000000u, 0x00000000u},
+    {0x3f8ccccdu, 0x3e800000u, 0x00000000u, 0x00000000u},
+    {0x3f666666u, 0x40800000u, 0x00000000u, 0x00000000u},
+    {0x60ad78ecu, 0x40a00000u, 0x00000000u, 0x00000000u},
+    {0x1e3ce508u, 0x40490fdbu, 0x00000000u, 0x00000000u},
+    {0x4640e6b7u, 0x402df854u, 0x00000000u, 0x00000000u},
+    {0x3a83126fu, 0x3e99999au, 0x00000000u, 0x00000000u},
+    {0x40800000u, 0x3f666666u, 0x00000000u, 0x00000000u},
+    {0x3e800000u, 0x3f8ccccdu, 0x00000000u, 0x00000000u}
+};
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -139,7 +180,7 @@ bool IsNan(std::uint32_t value) {
     return (value & 0x7fffffffu) > 0x7f800000u;
 }
 
-std::vector<std::uint32_t> Run(VulkanDevice& device, ShaderRecompiler::SpirvTarget target, bool hardwareFlush, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code, const std::uint32_t (*rows)[Inputs]) {
+std::vector<std::uint32_t> Run(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode, std::span<const std::uint32_t> code, const std::uint32_t (*rows)[Inputs]) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(rows[tid]), std::end(rows[tid]), &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
@@ -149,7 +190,6 @@ std::vector<std::uint32_t> Run(VulkanDevice& device, ShaderRecompiler::SpirvTarg
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
-    target.float32FlushToZero = hardwareFlush;
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
@@ -164,6 +204,13 @@ std::vector<std::uint32_t> Run(VulkanDevice& device, ShaderRecompiler::SpirvTarg
     return {Output.begin(), Output.end()};
 }
 
+void Compare(FloatFlushProbeResult& result, const std::vector<std::uint32_t>& expected, const std::vector<std::uint32_t>& actual) {
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        ++result.compared;
+        if (expected[index] != actual[index] && !(IsNan(expected[index]) && IsNan(actual[index]))) ++result.mismatches;
+    }
+}
+
 }
 
 FloatFlushProbeResult ProbeFloat32FlushToZero(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
@@ -172,14 +219,24 @@ FloatFlushProbeResult ProbeFloat32FlushToZero(VulkanDevice& device, const Shader
     const std::array<std::pair<std::span<const std::uint32_t>, const std::uint32_t (*)[Inputs]>, 3> programs{{{MixedCode, MixedRows}, {TinyCode, TinyRows}, {MixedTinyCode, MixedTinyRows}}};
     for (const auto& mode : modes) {
         for (const auto& [code, rows] : programs) {
-            const auto software = Run(device, target, false, mode, code, rows);
-            const auto hardware = Run(device, target, true, mode, code, rows);
-            for (std::size_t index = 0; index < software.size(); ++index) {
-                ++result.compared;
-                if (software[index] != hardware[index] && !(IsNan(software[index]) && IsNan(hardware[index]))) ++result.mismatches;
-            }
+            auto software = target;
+            software.float32FlushToZero = false;
+            auto hardware = target;
+            hardware.float32FlushToZero = true;
+            Compare(result, Run(device, software, mode, code, rows), Run(device, hardware, mode, code, rows));
         }
     }
+    return result;
+}
+
+FloatFlushProbeResult ProbeFloat32DenormPreserve(VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
+    FloatFlushProbeResult result;
+    auto preserved = target;
+    preserved.float32FlushToZero = false;
+    preserved.float32DenormPreserve = true;
+    auto unpreserved = preserved;
+    unpreserved.float32DenormPreserve = false;
+    Compare(result, Run(device, unpreserved, std::nullopt, TranscendentalCode, TranscendentalRows), Run(device, preserved, std::nullopt, TranscendentalCode, TranscendentalRows));
     return result;
 }
 
