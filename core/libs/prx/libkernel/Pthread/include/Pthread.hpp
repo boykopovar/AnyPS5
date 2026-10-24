@@ -76,6 +76,7 @@ struct PthreadCondattrPrivate {
 struct PthreadCondPrivate {
     std::shared_ptr<TimedWait::Condition> _cv = std::make_shared<TimedWait::Condition>();
     int _clockid = 0;
+    std::string _name;
 };
 
 struct PthreadSemPrivate {

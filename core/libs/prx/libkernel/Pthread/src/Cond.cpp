@@ -36,10 +36,9 @@ PthreadMutex adaptiveInitializer() {
     return reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
 }
 
-std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockId = nullptr) {
+PthreadCond resolveLocked(PthreadCond* cond) {
     if (!cond)
         throw std::invalid_argument("Condition variable pointer is null");
-    std::lock_guard lock(InitializationMutex());
     std::atomic_ref<PthreadCond> slot(*cond);
     auto current = slot.load(std::memory_order_acquire);
     if (current == destroyedCond())
@@ -48,6 +47,14 @@ std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockI
         current = new PthreadCondPrivate();
         slot.store(current, std::memory_order_release);
     }
+    return current;
+}
+
+std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockId = nullptr) {
+    std::lock_guard lock(InitializationMutex());
+    const auto current = resolveLocked(cond);
+    if (!current)
+        return nullptr;
     if (clockId) *clockId = current->_clockid;
     return current->_cv;
 }
@@ -134,6 +141,17 @@ int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, co
     if (!PosixThread::RelativeMicroseconds(clockId, abstime, &usec))
         throw std::invalid_argument("Invalid absolute condition variable timeout");
     return waitUntil(std::move(condition), mutex, TimedWait::DeadlineNanos(usec), __builtin_return_address(0));
+}
+
+int CondOperations::SetName(PthreadCond* cond, const char* name) {
+    if (!name)
+        throw std::invalid_argument("Condition variable name is null");
+    std::lock_guard lock(InitializationMutex());
+    const auto current = resolveLocked(cond);
+    if (!current)
+        return SCE_KERNEL_ERROR_EINVAL;
+    current->_name = name;
+    return 0;
 }
 
 extern "C" {

@@ -51,6 +51,10 @@ int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mut
     return toPosix(scePthreadCondWait(cond, mutex));
 }
 
+int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char* name) {
+    return toPosix(CondOperations::SetName(cond, name));
+}
+
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondattrDestroy(attr));
