@@ -141,6 +141,7 @@ struct State {
     } depthRemap;
     bool alphaToCoverage = false;
     bool ditheredAlphaToCoverage = false;
+    std::uint8_t ditheredAlphaSamples = 8;
     bool perSampleShading = false;
     bool mergedCoverage = false;
     bool truncatedCoverage = false;
