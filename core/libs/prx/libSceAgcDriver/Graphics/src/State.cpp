@@ -1525,7 +1525,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
     // SPI_SHADER_POS_FORMAT: POS0 must be a 4-component position; later vectors carry the misc/clip
     // exports that PA_CL_VS_OUT_CNTL validation above already limits to ignored layer/viewport data.
-    Require((read(cx, 0x1c3) & 0xfu) == 4, "additional position exports are unsupported");
+    const auto positionFormat = read(cx, 0x1c3) & 0xfu;
+    if (positionFormat == 0u) {
+        result.rasterizerDiscard = true;
+    } else {
+        Require(positionFormat == 4u, "position export format " + std::to_string(positionFormat) + " is unsupported");
+    }
     for (std::uint32_t index = 0; index < exportCount; ++index) {
         const auto slot = exportSlots[index];
         if (!written(slot)) continue;
