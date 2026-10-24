@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <future>
 #include <thread>
@@ -37,6 +38,7 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
 int APS5_VABI scePthreadKeyDelete(PthreadKey key);
 int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
 Pthread APS5_VABI scePthreadSelf();
+int* APS5_VABI __error_nid_postfix();
 }
 
 static constexpr int SCE_OK = 0;
@@ -52,6 +54,7 @@ static constexpr KernelCpumask CREATION_AFFINITY = 0x3;
 static constexpr KernelCpumask UPDATED_AFFINITY = 0x1000;
 static constexpr std::size_t STACK_SIZE = 2u << 20;
 static constexpr std::size_t MIN_STACK_SIZE = 16384;
+static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ENOTSUP = 45;
 static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
@@ -266,16 +269,25 @@ static void CheckThreadScope() {
     Require(scePthreadJoin(inheritedThread, nullptr) == SCE_OK);
 }
 
-static int QueryResult(Pthread thread) {
+static int QueryResult(Pthread thread, bool posix = false) {
     PthreadAttr attr = nullptr;
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrSetstacksize(&attr, STACK_SIZE) == SCE_OK);
-    const int result = scePthreadAttrGet(thread, &attr);
+    *__error_nid_postfix() = 12345;
+    const int result = posix ? pthread_attr_get_np_nid_postfix(thread, &attr) : scePthreadAttrGet(thread, &attr);
+    if (posix) Require(*__error_nid_postfix() == 12345);
     std::size_t stackSize = 0;
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK);
     Require(result == SCE_OK || stackSize == STACK_SIZE);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     return result;
+}
+
+static void CheckPosixQuery(Pthread thread, int expected) {
+    const int result = QueryResult(thread, true);
+    if (result == expected) return;
+    std::fprintf(stderr, "pthread_attr_get_np returned %d, expected %d\n", result, expected);
+    std::abort();
 }
 
 static bool ReportedEnded(Pthread thread) {
@@ -290,11 +302,13 @@ static bool ReportedEnded(Pthread thread) {
 struct ExitQuery {
     PthreadKey key = -1;
     int result = -1;
+    int posixResult = -1;
 };
 
 static void APS5_VABI QuerySelfAtExit(void* value) {
     auto* query = static_cast<ExitQuery*>(value);
     query->result = QueryResult(scePthreadSelf());
+    query->posixResult = QueryResult(scePthreadSelf(), true);
 }
 
 static void* APS5_VABI SetExitQuery(void* arg) {
@@ -309,22 +323,28 @@ static void* APS5_VABI Finish(void*) {
 
 static void CheckEndedThreads() {
     Require(QueryResult(scePthreadSelf()) == SCE_OK);
+    CheckPosixQuery(scePthreadSelf(), 0);
+    CheckPosixQuery(nullptr, GUEST_EINVAL);
 
     Pthread joined = nullptr;
     Require(scePthreadCreate(&joined, nullptr, Finish, nullptr, nullptr) == SCE_OK);
     Require(scePthreadJoin(joined, nullptr) == SCE_OK);
     Require(QueryResult(joined) == SCE_KERNEL_ERROR_ESRCH);
+    CheckPosixQuery(joined, GUEST_ESRCH);
     PthreadAttr unset = nullptr;
     Require(scePthreadAttrGet(joined, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGet(joined, &unset) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(joined, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(joined, &unset) == GUEST_EINVAL);
 
     ExitQuery exitQuery;
     Require(scePthreadKeyCreate(&exitQuery.key, reinterpret_cast<pthread_key_destructor_func_t>(QuerySelfAtExit)) == SCE_OK);
     Pthread finished = nullptr;
     Require(scePthreadCreate(&finished, nullptr, SetExitQuery, &exitQuery, nullptr) == SCE_OK);
     Require(ReportedEnded(finished));
+    CheckPosixQuery(finished, GUEST_ESRCH);
     Require(scePthreadJoin(finished, nullptr) == SCE_OK);
-    Require(exitQuery.result == SCE_OK);
+    Require(exitQuery.result == SCE_OK && exitQuery.posixResult == 0);
     Require(QueryResult(finished) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadKeyDelete(exitQuery.key) == SCE_OK);
 
@@ -335,6 +355,7 @@ static void CheckEndedThreads() {
         Pthread detached = nullptr;
         Require(scePthreadCreate(&detached, &detachedAttr, Finish, nullptr, nullptr) == SCE_OK);
         Require(ReportedEnded(detached));
+        CheckPosixQuery(detached, GUEST_ESRCH);
     }
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
 }
