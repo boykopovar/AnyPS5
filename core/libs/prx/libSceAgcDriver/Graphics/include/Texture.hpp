@@ -299,6 +299,15 @@ public:
     // (Texture::CanCopyFrom, ResidentPresentable).
     static std::shared_ptr<StorageTexture> FindPending(std::uint64_t address, std::uint64_t bytes);
     static std::shared_ptr<StorageTexture> FindPendingSlice(std::uint64_t address, std::uint64_t bytes);
+    struct WriteRecord {
+        std::uint32_t width;
+        std::uint32_t height;
+        TextureTileMode tileMode;
+        TextureDimension dimension;
+        std::uint32_t format;
+        std::uint64_t serial;
+    };
+    static std::optional<WriteRecord> LastWrite(std::uint64_t address);
     // How a buffer fill of [address, address + bytes) (Driver.cpp's fill HLE) meets the storage
     // images alive: none of them; a whole surface (Exact) or one array layer of a surface (Layer),
     // `image` and `layer` naming it, whatever other images lie over the range (`others`, of which
