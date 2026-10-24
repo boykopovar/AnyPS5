@@ -1,0 +1,14 @@
+add_library(libSceDiscId SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDiscId PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDiscId)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_disc_id_tests ${LIBS_INCLUDE_DIR}/tests/GuestDiscId.cpp)
+    target_include_directories(guest_disc_id_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_disc_id_tests PRIVATE libSceDiscId libc)
+    add_test(NAME guest_disc_id COMMAND guest_disc_id_tests)
+    if(WIN32)
+        set_tests_properties(guest_disc_id PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDiscId>")
+    endif()
+endif()
