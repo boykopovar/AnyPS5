@@ -83,6 +83,7 @@ float APS5_VABI asinf_nid_postfix(float);
 float APS5_VABI acosf_nid_postfix(float);
 double APS5_VABI asin_nid_postfix(double);
 float APS5_VABI atan2f_nid_postfix(float, float);
+float APS5_VABI atanf_nid_postfix(float);
 float APS5_VABI hypotf_nid_postfix(float, float);
 double APS5_VABI hypot_nid_postfix(double, double);
 double APS5_VABI fdim_nid_postfix(double, double);
@@ -96,7 +97,11 @@ float APS5_VABI remquof_nid_postfix(float, float, int*);
 float APS5_VABI fmaf_nid_postfix(float, float, float);
 long double APS5_VABI ceill_nid_postfix(long double);
 long double APS5_VABI floorl_nid_postfix(long double);
+float APS5_VABI cbrtf_nid_postfix(float);
 float APS5_VABI tanf_nid_postfix(float);
+float APS5_VABI sinf_nid_postfix(float);
+float APS5_VABI cosf_nid_postfix(float);
+void APS5_VABI sincosf_nid_postfix(float, float*, float*);
 int APS5_VABI rand_nid_postfix();
 void APS5_VABI srand_nid_postfix(unsigned int);
 int APS5_VABI rand_r_nid_postfix(unsigned int*);
@@ -125,6 +130,7 @@ float APS5_VABI nextafterf_nid_postfix(float, float);
 double APS5_VABI nextafter_nid_postfix(double, double);
 double APS5_VABI frexp_nid_postfix(double, int*);
 float APS5_VABI frexpf_nid_postfix(float, int*);
+float APS5_VABI logf_nid_postfix(float);
 std::int64_t APS5_VABI lround_nid_postfix(double);
 std::div_t APS5_VABI div_nid_postfix(int, int);
 double APS5_VABI sinh_nid_postfix(double);
@@ -437,8 +443,9 @@ static void CheckNanConversions() {
             std::fprintf(stderr, "atof(\"%s\")\n", test.text);
             correct = false;
         }
+        const std::uint32_t expectedSingle = (test.bits >> 63 != 0 ? 0x80000000u : 0) | 0x7fc00000u;
         const auto single = std::bit_cast<std::uint32_t>(strtof_nid_postfix(test.text, &end));
-        if (single != 0x7fc00000u || end != test.text + test.sequenceUsed) {
+        if (single != expectedSingle || end != test.text + test.sequenceUsed) {
             std::fprintf(stderr, "strtof(\"%s\") = 0x%08x\n", test.text, static_cast<unsigned>(single));
             correct = false;
         }
@@ -461,7 +468,7 @@ static void CheckNanConversions() {
         }
         if (test.wideOtherMeasured) {
             const auto wideSingle = std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wide, &wideEnd));
-            const bool singleOk = wideSingle == 0x7fc00000u && wideEnd == wide + test.sequenceUsed;
+            const bool singleOk = wideSingle == expectedSingle && wideEnd == wide + test.sequenceUsed;
             const long double wideExtended = wcstold_nid_postfix(wide, &wideEnd);
             if (!singleOk || !ExtendedBits(wideExtended, 0xc000000000000000ull, 0x7fff) || wideEnd != wide + test.sequenceUsed) {
                 std::fprintf(stderr, "wcstof/wcstold(\"%s\")\n", test.text);
@@ -487,7 +494,6 @@ static void CheckFloatUnderflowErrno() {
     errno = 7;
     Require(strtod_nid_postfix("1e-310", &end) == 1e-310 && errno == 7);
     Require(strtod_nid_postfix("-4.9406564584124654e-324", &end) == -0x1p-1074 && errno == 7);
-    Require(strtof_nid_postfix("1e-40", &end) == 1e-40f && errno == 7);
     Require(strtold_nid_postfix("1e-4940", &end) == 1e-4940L && errno == 7);
     Require(strtod_nid_postfix("1e-330", &end) == 0.0 && errno == ERANGE);
     errno = 0;
@@ -496,6 +502,49 @@ static void CheckFloatUnderflowErrno() {
     Require(strtod_nid_postfix("1e400", &end) == HUGE_VAL && errno == ERANGE);
     errno = 0;
     Require(strtod_nid_postfix("2.2250738585072014e-308", &end) == 0x1p-1022 && errno == 0);
+    Require(strtod_nid_postfix("0x1.8p-1075", &end) == 0x1p-1074 && errno == ERANGE);
+    errno = 0;
+    Require(strtod_nid_postfix("-0x1.000001p-1075", &end) == -0x1p-1074 && errno == ERANGE);
+    errno = 0;
+    Require(strtod_nid_postfix("0x1p-1074", &end) == 0x1p-1074 && strtod_nid_postfix("0x1.8p-1074", &end) == 0x1p-1073 && errno == 0);
+    Require(strtod_nid_postfix("0x1p-1076", &end) == 0.0 && errno == ERANGE);
+    errno = 0;
+    Require(strtod_nid_postfix("0x1p+1100", &end) == HUGE_VAL && errno == ERANGE);
+    errno = 7;
+    Require(strtold_nid_postfix("0x1p-16446", &end) == 0.0L && strtold_nid_postfix("0x1p+20000", &end) == HUGE_VALL && errno == 7);
+    Require(strtof_nid_postfix("0x1p-149", &end) == 0x1p-149f && strtof_nid_postfix("0x1.8p-149", &end) == 0x1p-148f && strtof_nid_postfix("0x1.000001p-149", &end) == 0x1p-149f && errno == 7);
+    Require(strtof_nid_postfix("1.40129846432481707092372958328991613128026194187651577175706828388979108268586060148663818836212158203125e-45", &end) == 0x1p-149f && strtof_nid_postfix("1.17549435e-38", &end) == 0x1p-126f && errno == 7);
+    Require(strtof_nid_postfix("0x1p-150", &end) == 0.0f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("0x1.8p-150", &end) == 0x1p-149f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("-0x0.0000018p-126", &end) == -0x1p-149f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("0x1.4p-149", &end) == 0x1p-149f && strtof_nid_postfix("0x1.cp-149", &end) == 0x1p-148f && errno == 7);
+    errno = 7;
+    Require(strtof_nid_postfix("0x1p+200", &end) == HUGE_VALF && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("1e-40", &end) == 1e-40f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("-1e-45", &end) == -0x1p-149f && errno == ERANGE);
+    errno = 7;
+    Require(strtof_nid_postfix("3e-45", &end) == 0x1p-148f && errno == ERANGE);
+    Require(strtof_nid_postfix("1e39", &end) == HUGE_VALF && errno == ERANGE);
+    errno = 0;
+}
+
+static void CheckAtanfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x3e80000bu, 0x3e7adbc5u}, {0x3e0007c9u, 0x3dfebd2au}, {0xbdccce4cu, 0xbdcc2090u},
+        {0x3ef00334u, 0x3ee07046u}, {0x3f40077eu, 0x3f24c148u}, {0x3fa009a5u, 0x3f656b6au},
+        {0x4080055cu, 0x3fa9b5a8u}, {0xbf12345eu, 0xbf04d718u}, {0x3f800000u, 0x3f490fdbu},
+        {0x4c800000u, 0x3fc90fdbu}, {0xcc800000u, 0xbfc90fdbu}, {0x7f800000u, 0x3fc90fdbu},
+        {0xff800000u, 0xbfc90fdbu}, {0x7fc00001u, 0x7fc00001u}, {0x80000000u, 0x80000000u},
+        {0x00000001u, 0x00000001u}, {0x39000000u, 0x39000000u},
+    };
+    for (const auto& [input, expected] : cases) {
+        Require(std::bit_cast<std::uint32_t>(atanf_nid_postfix(std::bit_cast<float>(input))) == expected);
+    }
 }
 
 static void CheckHypotSpecialValue() {
@@ -524,6 +573,13 @@ static void CheckPowfSpecialValue() {
     Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(1.0f, std::bit_cast<float>(0x7f800001u))) == 0x3f800000u);
 }
 
+struct RestoreFloatingPointState {
+    std::fenv_t environment;
+    int error = errno;
+    RestoreFloatingPointState() { Require(std::fegetenv(&environment) == 0); }
+    ~RestoreFloatingPointState() { Require(std::fesetenv(&environment) == 0); errno = error; }
+};
+
 static void CheckAcosfErrno() {
     errno = 0;
     Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(2.0f)) == 0xffc00000u);
@@ -532,6 +588,47 @@ static void CheckAcosfErrno() {
     Require(errno == 0);
     Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(0.5f)) == 0x3f860a92u);
     Require(errno == 0);
+}
+
+static void CheckFmodfErrno() {
+    const RestoreFloatingPointState saved;
+    const struct { std::uint32_t dividend; std::uint32_t divisor; std::uint32_t expected; bool invalid; bool nan; } cases[] = {
+        {0x3f800000u, 0x00000000u, 0u, true, true}, {0x3f800000u, 0x80000000u, 0u, true, true},
+        {0x7f800000u, 0x40000000u, 0u, true, true}, {0x7fc00000u, 0x40000000u, 0u, false, true},
+        {0x3f800000u, 0x7f800000u, 0x3f800000u, false, false}, {0xbf800000u, 0x7f800000u, 0xbf800000u, false, false},
+        {0x41280000u, 0x40000000u, 0x3f000000u, false, false}, {0xc1280000u, 0x40000000u, 0xbf000000u, false, false},
+        {0x41280000u, 0xc0000000u, 0x3f000000u, false, false}, {0xc1280000u, 0xc0000000u, 0xbf000000u, false, false},
+        {0x00000000u, 0x40000000u, 0x00000000u, false, false}, {0x80000000u, 0x40000000u, 0x80000000u, false, false},
+        {0x00000000u, 0x80000000u, 0u, true, true},
+        {0x3f800000u, 0x7fc00001u, 0u, false, true},
+        {0x00000000u, 0x7fc00001u, 0u, false, true},
+        {0x7f800001u, 0x40000000u, 0u, true, true},
+        {0x3f800000u, 0x7f800001u, 0u, true, true},
+        {0x00000003u, 0x00000002u, 0x00000001u, false, false},
+        {0x00800001u, 0x00800000u, 0x00000001u, false, false},
+        {0x80000001u, 0x3f800000u, 0x80000001u, false, false},
+    };
+    for (const auto& test : cases) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 73;
+        const float result = fmodf_nid_postfix(std::bit_cast<float>(test.dividend), std::bit_cast<float>(test.divisor));
+        const std::uint32_t bits = std::bit_cast<std::uint32_t>(result);
+        const int invalid = std::fetestexcept(FE_INVALID) != 0;
+        const bool nan = std::isnan(result);
+        if (nan != test.nan || (!nan && bits != test.expected) || invalid != test.invalid || *__error_nid_postfix() != 73) {
+            std::fprintf(stderr, "Guest fmodf failed for %08x and %08x: got %08x, invalid %d, errno %d\n",
+                test.dividend, test.divisor, bits, invalid, *__error_nid_postfix());
+            std::abort();
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    std::feraiseexcept(FE_DIVBYZERO);
+    *__error_nid_postfix() = 73;
+    (void)fmodf_nid_postfix(1.0f, 0.0f);
+    if (*__error_nid_postfix() != 73 || std::fetestexcept(FE_DIVBYZERO) == 0) {
+        std::fprintf(stderr, "Guest fmodf dropped the floating-point environment\n");
+        std::abort();
+    }
 }
 
 static void CheckLongDouble() {
@@ -589,6 +686,35 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckExpm1ConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0}, {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x3c8fffffffffffffull, 0x3c8fffffffffffffull, 0}, {0x3c90000000000000ull, 0x3c90000000000000ull, 0},
+        {0x3fd62e42fefa39efull, 0x3fda827999fcef32ull, 0}, {0x3fd62e4300000000ull, 0x3fda82799b6f2366ull, 0},
+        {0x3ff0a2b1ffffffffull, 0x3ffd413c1a24d411ull, 0}, {0x3ff0a2b200000000ull, 0x3ffd413c1a24d414ull, 0},
+        {0xbfd0000000000000ull, 0xbfcc5041854df7d4ull, 0}, {0xbfe0000000000000ull, 0xbfd92e9a0720d3ecull, 0},
+        {0x3ff0000000000000ull, 0x3ffb7e151628aed2ull, 0}, {0xbff0000000000000ull, 0xbfe43a54e4e98864ull, 0},
+        {0x4043687a00000000ull, 0x436fffd8395c0c41ull, 0}, {0xc043687a00000000ull, 0xbff0000000000000ull, 0},
+        {0x4049000000000000ull, 0x44719103e4080b45ull, 0}, {0x40862e42fefa39efull, 0x7fefffffffffff2aull, 0},
+        {0x40862e42fefa39f0ull, 0x7ff0000000000000ull, ERANGE}, {0xc08f400000000000ull, 0xbff0000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x7ff0000000000000ull, ERANGE}, {0xffefffffffffffffull, 0xbff0000000000000ull, 0},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0}, {0xfff0000000000000ull, 0xbff0000000000000ull, 0},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, 0},
+        {0x3fc78b9e474afed8ull, 0x3fc9d99e60806b35ull, 0}, {0xbf887a99bea50fb1ull, 0xbf88554c5b9d0cbbull, 0},
+        {0x3ff790fb0ae85390ull, 0x400ae5103402894bull, 0}, {0xbf840fe48e07e54dull, 0xbf83f6d1bcda4943ull, 0},
+        {0xbfbb1276066a31c7ull, 0xbfb9b098289dab68ull, 0}, {0x3fc07bc20a0c887eull, 0x3fc197828317c86cull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(expm1_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
         {0, 0x0000, 0, 0x0000}, {0, 0x8000, 0, 0x8000},
@@ -621,6 +747,21 @@ static void CheckAsinl() {
         Require(std::isnan(asinl_nid_postfix(input)) && *__error_nid_postfix() == EDOM && std::fetestexcept(FE_INVALID) != 0);
     }
     *__error_nid_postfix() = 0;
+}
+
+static void CheckCbrtfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x00000123u, 0x28059605u}, {0x00400327u, 0x2a4b334bu}, {0x3f000555u, 0x3f4b32c7u}, {0x3fc00778u, 0x3f9287e5u},
+        {0x42000999u, 0x404b3509u}, {0x7e000bbcu, 0x544b362au}, {0xbf400dddu, 0xbf689d01u}, {0x80201002u, 0xaa215ff8u},
+        {0x00000000u, 0x00000000u}, {0x80000000u, 0x80000000u}, {0x00000001u, 0x26a14518u}, {0x007fffffu, 0x2a7fffffu},
+        {0x00800000u, 0x2a800000u}, {0x3f800000u, 0x3f800000u}, {0x41000000u, 0x40000000u}, {0xc1000000u, 0xc0000000u},
+        {0x7f7fffffu, 0x54cb2ff5u}, {0x7f800000u, 0x7f800000u}, {0xff800000u, 0xff800000u}, {0x7fc00001u, 0x7fc00001u},
+        {0xffc00002u, 0xffc00002u},
+    };
+    for (const auto& [input, expected] : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(cbrtf_nid_postfix(std::bit_cast<float>(input))) == expected && errno == 1234);
+    }
 }
 
 static void CheckIntegerConversions() {
@@ -804,6 +945,42 @@ static void CheckAsin() {
     Require(!std::fetestexcept(FE_INVALID));
 }
 
+static void CheckTrigfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t sine;
+        std::uint32_t cosine;
+        std::uint32_t tangent;
+        int error;
+    } cases[] = {
+        {0x3e801d5au, 0x3e7d9057u, 0x3f780703u, 0x3e82db72u, 0}, {0x3fc00321u, 0x3f7f5c46u, 0x3d90acbbu, 0x4161edb0u, 0},
+        {0x40400556u, 0x3e102d3eu, 0xbf7d7328u, 0xbe11a09du, 0}, {0x40c00781u, 0xbe8e9c41u, 0x3f75de78u, 0xbe947c92u, 0},
+        {0x412009acu, 0xbf0bc6b7u, 0xbf56790du, 0x3f26d71eu, 0}, {0x47000bbbu, 0x3eb0df2fu, 0x3f703d5au, 0x3ebc799eu, 0},
+        {0x4e000de0u, 0xbf664722u, 0x3edfade4u, 0xc003c6abu, 0}, {0x5f001006u, 0xbe0ecf11u, 0x3f7d7f8cu, 0xbe1037deu, 0},
+        {0x7e001112u, 0x3eabd0cbu, 0x3f7127beu, 0x3eb6645du, 0}, {0xc0400556u, 0xbe102d3eu, 0xbf7d7328u, 0x3e11a09du, 0},
+        {0x00000000u, 0x00000000u, 0x3f800000u, 0x00000000u, 0}, {0x80000000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0},
+        {0x39000000u, 0x39000000u, 0x3f800000u, 0x39000000u, 0}, {0x3f490fdbu, 0x3f3504f3u, 0x3f3504f3u, 0x3f800000u, 0},
+        {0x40490fdbu, 0xb3bbbd2eu, 0xbf800000u, 0x33bbbd2fu, 0}, {0x4dc90fdbu, 0xbf3d5f98u, 0x3f2c42b6u, 0xbf8cb742u, 0},
+        {0x7f7fffffu, 0xbf0599b3u, 0x3f5a5f96u, 0xbf1c9ecau, 0}, {0xff7fffffu, 0x3f0599b3u, 0x3f5a5f96u, 0x3f1c9ecau, 0},
+        {0x7f800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM},
+        {0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0},
+    };
+    for (const auto& item : cases) {
+        const float x = std::bit_cast<float>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(sinf_nid_postfix(x)) == item.sine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(cosf_nid_postfix(x)) == item.cosine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(tanf_nid_postfix(x)) == item.tangent && errno == expected);
+        float sine = 0.0f;
+        float cosine = 0.0f;
+        sincosf_nid_postfix(x, &sine, &cosine);
+        Require(std::bit_cast<std::uint32_t>(sine) == item.sine && std::bit_cast<std::uint32_t>(cosine) == item.cosine);
+    }
+}
+
 static void CheckExtendedMath() {
     Require(ExtendedBits(atanl_nid_postfix(INFINITY), 0xc90fdaa22168c235ull, 0x3fff));
     Require(std::fabs(atanl_nid_postfix(1.0L) - 0.785398163397448309616L) < 1e-18L);
@@ -866,6 +1043,37 @@ static void CheckHyperbolic() {
     Require(std::isfinite(cosh_nid_postfix(710.4)) && std::isfinite(sinh_nid_postfix(-710.4)) && sinh_nid_postfix(-710.4) < 0.);
     Require(Near(asinh_nid_postfix(-1e300), -691.4686750787736, 1e-15));
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
+}
+
+static void CheckCoshfMsunBoundaries() {
+    static constexpr struct {
+        std::uint32_t input;
+        std::uint32_t output;
+    } cases[] = {
+        {0x00000000u, 0x3f800000u},
+        {0x80000000u, 0x3f800000u},
+        {0x00000001u, 0x3f800000u},
+        {0x397fffffu, 0x3f800000u},
+        {0x39800000u, 0x3f800000u},
+        {0x3eb17217u, 0x3f87c3b6u},
+        {0x3eb17218u, 0x3f87c3b6u},
+        {0x3f800000u, 0x3fc583aau},
+        {0xbf800000u, 0x3fc583aau},
+        {0x410fffffu, 0x457d389cu},
+        {0x41100000u, 0x457d38acu},
+        {0x42b17216u, 0x7effff04u},
+        {0x42b17217u, 0x7effff84u},
+        {0x42b17218u, 0x7f000002u},
+        {0x42b2d4fbu, 0x7f7fff6cu},
+        {0x42b2d4fcu, 0x7f7fffecu},
+        {0xc2b2d4fcu, 0x7f7fffecu},
+    };
+    for (const auto& test : cases)
+        Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(test.input))) == test.output);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x42b2d4fdu))) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(INFINITY)) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(-INFINITY)) == 0x7f800000u);
+    Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x7fc12345u))) == 0x7fc12345u);
 }
 
 static void CheckScaledHyperbolic() {
@@ -1058,6 +1266,26 @@ static void RequireBytes(const void* constant, std::initializer_list<unsigned ch
     while (index < 16) Require(bytes[index++] == 0);
 }
 
+static void CheckLogfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x00000983u, 0xc2bef664u, 0}, {0x3e003791u, 0xc004f9cfu, 0}, {0x3f7f0a10u, 0xbb76666fu, 0}, {0x3f81086bu, 0x3c03adacu, 0},
+        {0x40400de0u, 0x3f8ca894u, 0}, {0x5f00a041u, 0x422eb14eu, 0}, {0x3f800000u, 0x00000000u, 0}, {0x40000000u, 0x3f317218u, 0},
+        {0x00000001u, 0xc2ce8ed0u, 0}, {0x00800000u, 0xc2aeac50u, 0}, {0x7f7fffffu, 0x42b17218u, 0}, {0x7f800000u, 0x7f800000u, 0},
+        {0x3f800001u, 0x33ffffffu, 0}, {0x3f7fffffu, 0xb3800000u, 0}, {0x7fc00001u, 0x7fc00001u, 0},
+        {0x00000000u, 0xff800000u, ERANGE}, {0x80000000u, 0xff800000u, ERANGE}, {0x80000001u, 0xffc00000u, EDOM},
+        {0xbf800000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, EDOM}, {0xffc00002u, 0xffc00002u, EDOM},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(logf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckDinkumwareConstants() {
     RequireBytes(&_Inf_nid_postfix, {0, 0, 0, 0, 0, 0, 0xf0, 0x7f});
     RequireBytes(&_Denorm_nid_postfix, {1});
@@ -1236,17 +1464,31 @@ static void CheckLongDoubleRounding(long double value, std::int64_t expected, bo
     }
 }
 
-static void CheckNoConversionIsPositiveZero() {
-    for (const char* text : {"", " ", "-", "+", "-.", "+.", "-x", "-.e1", "-e5", "- 1", "  -."}) {
+static void CheckNoConversionZero() {
+    for (const char* text : {"", " ", "-", " -", "+", "-.", "+.", "-x", "-.e1", "-e5", "- 1", "  -."}) {
         char* end = nullptr;
         const double parsed = strtod_nid_postfix(text, &end);
         Require(parsed == 0. && !std::signbit(parsed) && end == text);
+        const bool negative = std::strchr(text, '-') != nullptr;
+        const bool loneSign = negative && text[std::strlen(text) - 1] == '-';
         const float parsedFloat = strtof_nid_postfix(text, &end);
-        Require(parsedFloat == 0.f && !std::signbit(parsedFloat) && end == text);
+        Require(parsedFloat == 0.f && std::signbit(parsedFloat) == (negative && !loneSign) && end == text);
         const long double parsedLong = strtold_nid_postfix(text, &end);
-        Require(parsedLong == 0.L && !std::signbit(parsedLong) && end == text);
+        Require(parsedLong == 0.L && std::signbit(parsedLong) == negative && end == text);
         Require(!std::signbit(atof_nid_postfix(text)));
     }
+    for (const char* text : {"-i", "-in", "-N", "-nax"}) {
+        char* end = nullptr;
+        const float parsedFloat = strtof_nid_postfix(text, &end);
+        Require(parsedFloat == 0.f && std::signbit(parsedFloat) && end == text);
+        Require(!std::signbit(strtold_nid_postfix(text, nullptr)));
+    }
+    for (const char* text : {"-nan", "-NAN", " -nan(5)"}) {
+        char* end = nullptr;
+        const float parsedFloat = strtof_nid_postfix(text, &end);
+        Require(std::bit_cast<std::uint32_t>(parsedFloat) == 0xffc00000u && end == text + std::strlen(text));
+    }
+    Require(std::bit_cast<std::uint32_t>(strtof_nid_postfix("nan", nullptr)) == 0x7fc00000u);
     char* end = nullptr;
     const char negativeZero[] = "-0.0x";
     const double parsed = strtod_nid_postfix(negativeZero, &end);
@@ -1271,9 +1513,9 @@ static void CheckNoConversionIsPositiveZero() {
     const double parsedWide = wcstod_nid_postfix(wide, &wideEnd);
     Require(parsedWide == 0. && !std::signbit(parsedWide) && wideEnd == wide);
     const float parsedWideFloat = wcstof_nid_postfix(wide, &wideEnd);
-    Require(parsedWideFloat == 0.f && !std::signbit(parsedWideFloat) && wideEnd == wide);
+    Require(parsedWideFloat == 0.f && std::signbit(parsedWideFloat) && wideEnd == wide);
     const long double parsedWideLong = wcstold_nid_postfix(wide, &wideEnd);
-    Require(parsedWideLong == 0.L && !std::signbit(parsedWideLong) && wideEnd == wide);
+    Require(parsedWideLong == 0.L && std::signbit(parsedWideLong) && wideEnd == wide);
 }
 
 template<typename TValue, std::size_t TBytes>
@@ -1305,11 +1547,13 @@ static void CheckDinkumwareFloatCharacteristics() {
 int main() {
     CheckFloatClassification();
     CheckDinkumwareConstants();
-    CheckNoConversionIsPositiveZero();
+    CheckNoConversionZero();
     CheckMissingClassificationExports();
     CheckFloatMathExports();
     CheckIntegerConversions();
+    CheckCbrtfConsoleBits();
     CheckExtendedMath();
+    CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
     const char input[] = "0x1.8p+2 remainder";
@@ -1464,6 +1708,7 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckExpm1ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
@@ -1586,12 +1831,16 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckCoshfMsunBoundaries();
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();
+    CheckLogfConsoleBits();
     CheckHypotSpecialValue();
+    CheckAtanfConsoleBits();
     CheckFloatUnderflowErrno();
     CheckFmodErrno();
+    CheckFmodfErrno();
     CheckDoubleClassification();
     CheckIntegerAbsAndDivision();
     CheckScaling();

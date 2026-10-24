@@ -193,6 +193,7 @@ constexpr std::size_t RedZone = 128;
 constexpr std::size_t HomeArea = 32;
 constexpr auto RetryLimit = std::chrono::seconds(1);
 constexpr auto HostCodeLimit = std::chrono::milliseconds(50);
+constexpr auto HostCodeResample = std::chrono::microseconds(20);
 constexpr std::size_t VectorBytes = 16 * 32;
 
 struct Delivery {
@@ -449,7 +450,12 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
             continue;
         }
         if (restoring && std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue or winpthreads for 1 s");
-        SwitchToThread();
+        if (running == CodeKind::Host) {
+            const auto resample = std::chrono::steady_clock::now() + HostCodeResample;
+            while (std::chrono::steady_clock::now() < resample) YieldProcessor();
+        } else {
+            SwitchToThread();
+        }
     }
     const DWORD64 slot = (delivery.context.Rsp - RedZone - sizeof(Delivery)) & ~static_cast<DWORD64>(15);
     if (!StackWritable(slot - HomeArea - 8, delivery.context.Rsp - RedZone)) {

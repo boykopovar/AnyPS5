@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -124,6 +125,70 @@ void ValidateProvokingVertex(const Context& context, const State& state, std::sp
         }
         return;
     }
+    struct Decorations {
+        std::unordered_map<std::uint64_t, std::uint32_t> builtIns;
+        std::vector<std::uint64_t> perVertexValues;
+        std::vector<std::uint64_t> perPrimitiveValues;
+    };
+    const auto readDecorations = [](const ShaderRecompiler::RecompileResult& program, Decorations& decorations) {
+        const auto words = program.spirv.Words();
+        if (words.size() < 5) return false;
+        constexpr std::uint32_t NoMember = 0xffffffffu;
+        const auto key = [](std::uint32_t target, std::uint32_t member) { return (static_cast<std::uint64_t>(target) << 32u) | member; };
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            if (count == 0 || count > words.size() - cursor) return false;
+            const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            const std::size_t decoration = op == spv::OpDecorate ? 2 : op == spv::OpMemberDecorate ? 3 : 0;
+            if (decoration != 0 && count > decoration) {
+                const auto target = key(words[cursor + 1], op == spv::OpMemberDecorate ? words[cursor + 2] : NoMember);
+                if (words[cursor + decoration] == spv::DecorationFlat || words[cursor + decoration] == spv::DecorationPerVertexKHR) decorations.perVertexValues.push_back(target);
+                if (words[cursor + decoration] == spv::DecorationPerPrimitiveEXT) decorations.perPrimitiveValues.push_back(target);
+                if (words[cursor + decoration] == spv::DecorationBuiltIn && count > decoration + 1) decorations.builtIns[target] = words[cursor + decoration + 1];
+            }
+            cursor += count;
+        }
+        return true;
+    };
+    const auto readsProvokingVertex = [&](const ShaderRecompiler::RecompileResult& program) {
+        if (std::any_of(program.fragmentParameters.begin(), program.fragmentParameters.end(), [](const ShaderRecompiler::FragmentParameter& parameter) {
+            return parameter.flat || parameter.perVertex || parameter.custom || parameter.flatP10;
+        })) return true;
+        Decorations decorations;
+        if (!readDecorations(program, decorations)) return true;
+        const auto& builtIns = decorations.builtIns;
+        return std::any_of(decorations.perVertexValues.begin(), decorations.perVertexValues.end(), [&](std::uint64_t target) {
+            const auto builtIn = builtIns.find(target);
+            if (builtIn == builtIns.end()) return true;
+            switch (builtIn->second) {
+            case spv::BuiltInFragCoord:
+            case spv::BuiltInPointCoord:
+            case spv::BuiltInFrontFacing:
+            case spv::BuiltInSampleId:
+            case spv::BuiltInSamplePosition:
+            case spv::BuiltInSampleMask:
+            case spv::BuiltInHelperInvocation:
+            case spv::BuiltInSubgroupSize:
+            case spv::BuiltInSubgroupLocalInvocationId:
+                return false;
+            default:
+                return true;
+            }
+        });
+    };
+    const auto writesProvokingVertexBuiltIn = [&](const ShaderRecompiler::RecompileResult& program) {
+        Decorations decorations;
+        if (!readDecorations(program, decorations)) return true;
+        return std::any_of(decorations.builtIns.begin(), decorations.builtIns.end(), [&](const auto& builtIn) {
+            return (builtIn.second == spv::BuiltInLayer || builtIn.second == spv::BuiltInViewportIndex) &&
+                   std::find(decorations.perPrimitiveValues.begin(), decorations.perPrimitiveValues.end(), builtIn.first) == decorations.perPrimitiveValues.end();
+        });
+    };
+    const bool observed = std::any_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
+        if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) return shader.program == nullptr || readsProvokingVertex(*shader.program);
+        return shader.program != nullptr && writesProvokingVertexBuiltIn(*shader.program);
+    });
+    if (!context.provokingVertexLast && !observed) return;
     Require(context.provokingVertexLast, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
     const bool meshPrimitives = state.stages.path == ShaderPath::Geometry && state.stages.mesh;
     Require(!state.stages.tessellation && (meshPrimitives || (state.stages.path == ShaderPath::Vertex && !state.stages.mesh)), "last provoking vertex is unsupported for generated primitive pipelines");
@@ -167,8 +232,10 @@ bool ShadersWriteMemory(std::span<const CompiledShader> shaders) {
                 if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage && any(binding.imageWritten, binding.count)) return true;
                 break;
             case ShaderRecompiler::DescriptorRole::Gds:
-            case ShaderRecompiler::DescriptorRole::BdaPagetable:
                 return true;
+            case ShaderRecompiler::DescriptorRole::BdaPagetable:
+                if (shader.program->bdaWrites) return true;
+                break;
             case ShaderRecompiler::DescriptorRole::GuestSamplers:
             case ShaderRecompiler::DescriptorRole::FaultBuffer:
             case ShaderRecompiler::DescriptorRole::FlattenedSrt:
@@ -213,7 +280,7 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
 
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state)) return false;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) return false;
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
@@ -288,6 +355,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     for (const auto& color : state.colors) {
         appendKey(keys.renderPass, color.format);
         appendKey(keys.renderPass, color.exportIndex);
+        appendKey(keys.renderPass, color.partialWriteMask != 0u);
     }
     appendKey(keys.renderPass, state.depth.has_value());
     if (state.depth) appendKey(keys.renderPass, state.depth->format);
@@ -330,6 +398,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
+    for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
+    if (state.depth) boundAttachments.push_back(true);
     sampleLocationsEnabled = ValidateSampleLocations(context, state);
     const auto host = HostSampleLocationsFor(context, state);
     sampleLocationGrid = host.grid;
@@ -339,7 +409,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     this->context.bufferPool.reset();
     Require(state.blends.size() == (state.colors.empty() ? 0u : state.colors.back().exportIndex + 1u) && state.colors.size() <= state.blends.size(), "blend states do not match decoded color state");
     Require(state.blends.size() <= context.limits.maxColorAttachments, "color targets exceed device attachment limits");
-    Require(state.hasColorTarget || (context.limits.framebufferNoAttachmentsSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support rendering without attachments at the draw's sample count");
+    const bool boundColor = std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask == 0u; });
+    Require((state.hasColorTarget && (boundColor || state.colors.empty() || state.depth.has_value())) || (context.limits.framebufferNoAttachmentsSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support rendering without attachments at the draw's sample count");
     Require(state.samples == 1 || !state.depth.has_value() || (context.limits.framebufferDepthSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support depth targets with the draw's sample count");
     Require(!depthBounds || context.depthBounds, "device does not support the depth bounds test");
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
@@ -397,12 +468,14 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         }
         // A descriptor set layout with the same bindings as this one is compatible with the pipeline
         // layout, so later draws bind their own ShaderResources' set under it.
-        const std::array<VkDescriptorSetLayout, 2> setLayouts{resources.main, resources.fragment};
+        const bool pixelLds = std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; });
+        const auto pixelLdsLayouts = pixelLds ? PixelFunctionLdsSetLayouts(context) : PixelFunctionLdsLayouts{};
+        const std::array<VkDescriptorSetLayout, 3> setLayouts{resources.main, pixelLds && !resources.split ? pixelLdsLayouts.empty : resources.fragment, pixelLdsLayouts.buffer};
         const VkPushConstantRange push{pushStages, 0, PipelinePushSlotBytes};
         const std::array<VkPushConstantRange, 2> slots{{{pushStagesOf(context), 0, PipelinePushSlotBytes}, {VK_SHADER_STAGE_FRAGMENT_BIT, PipelinePushSlotBytes, PipelinePushSlotBytes}}};
         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutInfo.flags = resources.split ? VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT : 0;
-        layoutInfo.setLayoutCount = resources.split ? 2u : 1u;
+        layoutInfo.flags = pixelLds || !resources.split ? 0 : VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT;
+        layoutInfo.setLayoutCount = pixelLds ? 3u : resources.split ? 2u : 1u;
         layoutInfo.pSetLayouts = setLayouts.data();
         layoutInfo.pushConstantRangeCount = dynamicRendering ? static_cast<std::uint32_t>(slots.size()) : pushStages != 0 ? 1 : 0;
         layoutInfo.pPushConstantRanges = dynamicRendering ? slots.data() : pushStages != 0 ? &push : nullptr;
@@ -410,6 +483,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<VkAttachmentDescription> colors;
         std::vector<VkAttachmentReference> references(state.blends.size(), VkAttachmentReference{VK_ATTACHMENT_UNUSED, attachmentLayout});
         for (std::uint32_t index = 0; index < state.colors.size(); ++index) {
+            if (state.colors[index].partialWriteMask != 0u) continue;
             VkAttachmentDescription color{};
             color.format = state.colors[index].format;
             color.samples = state.mergedCoverage || state.truncatedCoverage ? VK_SAMPLE_COUNT_1_BIT : static_cast<VkSampleCountFlagBits>(state.samples);
@@ -419,9 +493,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             color.initialLayout = attachmentLayout;
             color.finalLayout = attachmentLayout;
+            references.at(state.colors[index].exportIndex) = {static_cast<std::uint32_t>(colors.size()), attachmentLayout};
             colors.push_back(color);
-            references.at(state.colors[index].exportIndex) = {index, attachmentLayout};
         }
+        boundColorAttachments = static_cast<std::uint32_t>(colors.size());
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = static_cast<std::uint32_t>(references.size());
@@ -441,7 +516,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             subpass.pDepthStencilAttachment = &depthReference;
         }
         std::vector<VkFormat> renderingColors(state.blends.size(), VK_FORMAT_UNDEFINED);
-        for (const auto& color : state.colors) renderingColors.at(color.exportIndex) = color.format;
+        for (const auto& color : state.colors) {
+            if (color.partialWriteMask == 0u) renderingColors.at(color.exportIndex) = color.format;
+        }
         VkPipelineRenderingCreateInfoKHR rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
         rendering.colorAttachmentCount = static_cast<std::uint32_t>(renderingColors.size());
         rendering.pColorAttachmentFormats = renderingColors.empty() ? nullptr : renderingColors.data();
@@ -458,7 +535,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (dynamicRendering) {
             depthFormat = state.depth ? HostDepthFormat(context, state.depth->format) : VK_FORMAT_UNDEFINED;
             colorSlots.assign(state.blends.size(), ~0u);
-            for (std::uint32_t index = 0; index < state.colors.size(); ++index) colorSlots.at(state.colors[index].exportIndex) = index;
+            for (std::uint32_t index = 0; index < state.colors.size(); ++index) {
+                if (state.colors[index].partialWriteMask == 0u) colorSlots.at(state.colors[index].exportIndex) = index;
+            }
             this->attachmentLayout = attachmentLayout;
         }
         VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
@@ -704,7 +783,11 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
             return framebuffers.back().framebuffer;
         }
     }
-    auto framebuffer = std::make_shared<Framebuffer>(context, renderPass, targets, extent, layers);
+    std::vector<VkImageView> boundViews;
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        if (boundAttachments[i]) boundViews.push_back(targets[i]);
+    }
+    auto framebuffer = std::make_shared<Framebuffer>(context, renderPass, renderPass == VK_NULL_HANDLE ? targets : std::span<const VkImageView>(boundViews), extent, layers);
     if (!resident) return framebuffer;
     // Beyond the bound the least recently used unreferenced entry goes.
     constexpr std::size_t bound = 8;
@@ -762,7 +845,7 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     const auto locations = SampleLocations(state);
     const auto grid = sampleLocationGrid;
     const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(state.samples), grid, state.samples * grid.width * grid.height, locations.data()};
-    const VkAttachmentSampleLocationsEXT initial{static_cast<std::uint32_t>(state.colors.size()), info};
+    const VkAttachmentSampleLocationsEXT initial{boundColorAttachments, info};
     const VkSubpassSampleLocationsEXT post{0, info};
     VkRenderPassSampleLocationsBeginInfoEXT sampleLocations{VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT};
     sampleLocations.attachmentInitialSampleLocationsCount = state.depth ? 1 : 0;
@@ -913,6 +996,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     for (const auto& color : state.colors) {
         append(key, color.format);
         append(key, color.componentMapping);
+        append(key, color.partialWriteMask != 0u);
     }
     if (state.blends.size() != state.colors.size()) {
         for (const auto& color : state.colors) append(key, color.exportIndex);
@@ -1166,6 +1250,7 @@ void ClearCachedPipelines(VkDevice device) {
         it = store.entries.erase(it);
     }
     ClearPipelineLibraries(device);
+    ReleasePixelFunctionLds(device);
 }
 
 }

@@ -584,7 +584,11 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    throw std::logic_error("sceNetCtlGetResult: service event results are not implemented");
+    if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
+        throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
+    }
+    *result = 0;
+    return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {

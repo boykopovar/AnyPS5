@@ -347,6 +347,68 @@ class ImportAuditTests(unittest.TestCase):
         self.assertTrue(records["missing_function"]["weak"])
         self.assertIsNone(data["stops"][0]["nid"])
 
+    def test_nid_only_exports_do_not_resolve_literal_import_names(self):
+        work = self.work
+        name, nid = "strlen", nid_names.compute_nid("strlen")
+        registry, report = work.root / "sdk.registry.json", work.root / "audit.json"
+        for image in (exporting(nid), build_pe([nid])):
+            (work.libs / "libc.prx").write_bytes(image)
+            for stub in (False, True):
+                write_source(work.source, "libc", (STUB_SOURCE if stub else DONE_SOURCE).format(name=name))
+                for weak in (False, True):
+                    with self.subTest(pe=image.startswith(b"MZ"), stub=stub, weak=weak):
+                        write_registry(registry, [(name, "libc.prx", weak)])
+                        code, out, err = work.run(registry, "--json", str(report))
+                        self.assertEqual((code, err), (1, ""))
+                        data = json.loads(report.read_text(encoding="utf-8"))
+                        record, = data["imports"]
+                        self.assertEqual(record["class"], "stub" if stub else "implemented")
+                        self.assertEqual(record["providers"], ["libc.prx"])
+                        self.assertTrue(record["symbol_mismatch"])
+                        self.assertEqual(data["symbol_mismatch"], 1)
+                        self.assertEqual(data["stops"][0]["nid"], None if weak else name)
+                        self.assertIn("Qualified import names exported only as their NID", out)
+                        self.assertIn(f"-> {nid}", out)
+
+    def test_name_mismatch_requires_a_resolved_host_fallback(self):
+        name, library = "strlen", "libc.prx"
+        exports = {nid_names.compute_nid(name): [library]}
+        for providers, modules, kind, mismatch in (({}, set(), "absent", False),
+                                                   (exports, {library}, "module", False),
+                                                   (exports, set(), "implemented", True)):
+            with self.subTest(kind=kind):
+                records, _ = import_audit.audit([(name, library, False)], providers, {}, {library}, modules)
+                self.assertEqual(records[0]["class"], kind)
+                self.assertEqual(records[0]["symbol_mismatch"], mismatch)
+
+    def test_literal_exports_resolve_without_a_name_mismatch(self):
+        work = self.work
+        name, nid = "strlen", nid_names.compute_nid("strlen")
+        registry, report = work.root / "sdk.registry.json", work.root / "audit.json"
+        for image in (exporting(name, nid), build_pe(sorted([name, nid]))):
+            with self.subTest(pe=image.startswith(b"MZ")):
+                (work.libs / "libc.prx").write_bytes(image)
+                write_registry(registry, [(name, "libc.prx"), (nid, "libc.prx")])
+                code, out, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (0, ""))
+                data = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(data["symbol_mismatch"], 0)
+                self.assertTrue(all(not record["symbol_mismatch"] for record in data["imports"]))
+                self.assertIsNone(data["stops"][0]["nid"])
+                self.assertNotIn("Qualified import names exported only as their NID", out)
+
+    def test_unscoped_windows_imports_keep_the_loaders_nid_fallback(self):
+        work = self.work
+        name, nid = "strlen", nid_names.compute_nid("strlen")
+        registry, report = work.root / "sdk.registry.json", work.root / "audit.json"
+        write_registry(registry, [(name, "")])
+        (work.libs / "libc.prx").write_bytes(build_pe([nid]))
+        code, out, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (0, ""))
+        data = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(data["symbol_mismatch"], 0)
+        self.assertIsNone(data["stops"][0]["nid"])
+
     def test_named_nid_fallback_preserves_stub_and_library_classification(self):
         nid = nid_names.compute_nid(MESSAGE_NAME)
         imports = [(MESSAGE_NAME, "libSceOther.prx", False)]
@@ -366,7 +428,7 @@ class ImportAuditTests(unittest.TestCase):
         records, _ = import_audit.audit(imports, exports, stubs, set(exports), set())
         self.assertEqual(records[0]["class"], "stub")
         self.assertEqual(records[0]["providers"], ["literal.prx"])
-        module_imports = {"guest.so": (["strlen"], [])}
+        module_imports = {"guest.so": ([("strlen", False)], [])}
         records, _ = import_audit.audit([], {"j4ViWNHEgww": ["libc.prx"]}, {},
                                        {"libc.prx"}, set(module_imports), module_imports,
                                        {"strlen": ["other.so"]})
@@ -595,6 +657,28 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("[library not named]", out)
         self.assertIn("EEEEEEEEEEE  (imported by main.prx)", out)
 
+    def test_module_import_bindings_survive_the_audit(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        registry, result = work.root / "game.json", work.root / "audit.json"
+        write_registry(registry, [])
+        symbols = [("optional", 0, 0x22), ("required", 0, GLOBAL_FUNCTION),
+                   ("mixed#first", 0, 0x22), ("mixed#second", 0, GLOBAL_FUNCTION)]
+        images = [build_elf(symbols), build_sectionless_elf(symbols),
+                  build_sectionless_elf(symbols, gnu_hash=True)]
+        for index, image in enumerate(images):
+            with self.subTest(image=index):
+                (work.modules / "guest.so").write_bytes(image)
+                code, out, err = work.run(registry, "--json", str(result))
+                self.assertEqual((code, err), (1, ""))
+                data = json.loads(result.read_text())
+                records = {record["nid"]: record for record in data["imports"]}
+                self.assertTrue(records["optional"]["weak"])
+                self.assertFalse(records["required"]["weak"])
+                self.assertFalse(records["mixed"]["weak"])
+                self.assertEqual(data["references"], 3)
+                self.assertIn("optional  (weak import)", out)
+
     def test_module_sidecars_do_not_change_the_audit(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
@@ -661,6 +745,46 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((records[0]["class"], missing), ("module", {}))
         records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}))
         self.assertEqual((records[0]["class"], missing), ("absent", {"SDK-Shipping.debug_prx": 1}))
+
+    def test_windows_module_suffix_case_does_not_report_existing_modules_as_missing(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(build_pe([]))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        cases = (("sdk-shipping.prx", "SDK-Shipping.DEBUG_PRX"),
+                 ("SDK-SHIPPING.PRX", "sdk-shipping.sprx"),
+                 ("Sdk-Shipping.SuPrX", "SDK-SHIPPING.debug_prx"),
+                 ("SDK-SHIPPING.DEBUG_PRX", "sdk-shipping.PRX"))
+        for filename, needed in cases:
+            with self.subTest(filename=filename, needed=needed):
+                module = work.modules / filename
+                module.write_bytes(exporting("AAAAAAAAAAA"))
+                try:
+                    write_registry(registry, [("AAAAAAAAAAA", needed)])
+                    import_audit.needed_registry_path(registry).write_text(json.dumps([needed]), encoding="utf-8")
+                    code, _, err = work.run(registry, "--json", str(report), "--strict-providers")
+                    self.assertEqual((code, err), (0, ""))
+                    data = json.loads(report.read_text(encoding="utf-8"))
+                    self.assertEqual(data["missing_libraries"], {})
+                    self.assertEqual(data["unique_by_class"], {"implemented": 0, "stub": 0, "absent": 0, "module": 1})
+                    self.assertEqual(data["references"], 1)
+                    self.assertEqual(data["imports"][0]["library"], needed)
+                finally:
+                    module.unlink()
+
+    def test_elf_module_suffix_case_stays_significant(self):
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(exporting())
+        (work.modules / "sdk-shipping.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        for suffix in ("PRX", "SPRX", "SUPRX", "DEBUG_PRX"):
+            needed = "sdk-shipping." + suffix
+            with self.subTest(needed=needed):
+                write_registry(registry, [("AAAAAAAAAAA", needed)])
+                code, _, err = work.run(registry, "--json", str(report))
+                self.assertEqual((code, err), (1, ""))
+                data = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(data["missing_libraries"], {needed: 1})
+                self.assertEqual(data["unique_by_class"], {"implemented": 0, "stub": 0, "absent": 1, "module": 0})
 
     def test_converted_module_matches_imports_of_its_base_name(self):
         work = self.work
@@ -849,7 +973,7 @@ class ImportAuditTests(unittest.TestCase):
             ("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION)], ["libSceA.prx"])
         expected_imports = import_audit.elf_imports(path, image)
         expected_exports = import_audit.elf_exports(path, image)
-        self.assertEqual(expected_imports, ({"AAAAAAAAAAA"}, {"libSceA.prx"}))
+        self.assertEqual(expected_imports, ({"AAAAAAAAAAA": False}, {"libSceA.prx"}))
         self.assertEqual(expected_exports, {"BBBBBBBBBBB"})
         for section_offset in (len(image), len(image) + 64):
             for section_count in (1, 0):
@@ -914,7 +1038,7 @@ class ImportAuditTests(unittest.TestCase):
             ("AAAAAAAAAAA", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB", 1, GLOBAL_FUNCTION)],
             ["libSceA.prx"], gnu_hash=True)
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("module.prx"), image),
-                         ({"AAAAAAAAAAA"}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
+                         ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"}))
 
     def test_sectionless_hash_metadata_must_be_file_backed(self):
         for gnu_hash in (False, True):
@@ -1371,8 +1495,8 @@ class ImportAuditTests(unittest.TestCase):
     def test_elf_imports_reader(self):
         image = build_elf([("one", 1, GLOBAL_FUNCTION), ("two", 0, GLOBAL_FUNCTION), ("three", 0, 0x22)], ["libc.prx", "libSceZip.prx"])
         path = Path("mod.prx")
-        self.assertEqual(import_audit.elf_imports(path, image), ({"two", "three"}, {"libc.prx", "libSceZip.prx"}))
-        self.assertEqual(import_audit.elf_imports(path, exporting()), (set(), set()))
+        self.assertEqual(import_audit.elf_imports(path, image), ({"two": False, "three": True}, {"libc.prx", "libSceZip.prx"}))
+        self.assertEqual(import_audit.elf_imports(path, exporting()), ({}, set()))
         for cut in (10, 64, len(image) - 5):
             with self.assertRaisesRegex(import_audit.AuditError, "mod.prx"):
                 import_audit.elf_imports(path, image[:cut])
@@ -1799,6 +1923,44 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("input", err)
         self.assertEqual(registry.read_bytes(), before)
+
+    def test_json_output_preserves_shared_source_cmake_inputs(self):
+        work = self.work
+        name = "scePending"
+        nid = nid_names.compute_nid(name)
+        write_source(work.source, "libOwner", STUB_SOURCE.format(name=name))
+        shared = work.source / "libShared"
+        shared.mkdir()
+        cmake = shared / "CMakeLists.txt"
+        cmake.write_text('include(${CMAKE_CURRENT_SOURCE_DIR}/../libOwner/OwnerLibrary.cmake)\n', encoding="utf-8")
+        before = cmake.read_bytes()
+        (work.libs / "libShared.prx").write_bytes(exporting(nid))
+        registry = work.root / "game.json"
+        write_registry(registry, [(nid, "libShared.prx")])
+        outputs = [cmake]
+        for kind in ("symlink", "hardlink"):
+            alias = work.root / (kind + ".json")
+            try:
+                if kind == "symlink":
+                    alias.symlink_to(cmake)
+                else:
+                    os.link(cmake, alias)
+            except (OSError, NotImplementedError):
+                continue
+            outputs.append(alias)
+        for output in outputs:
+            with self.subTest(output=output):
+                code, out, err = work.run(registry, "--json", str(output))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("JSON output would overwrite an input file", err)
+                self.assertEqual(cmake.read_bytes(), before)
+                self.assertEqual(output.read_bytes(), before)
+        report = work.root / "audit.json"
+        code, _, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (0, ""))
+        record, = json.loads(report.read_text(encoding="utf-8"))["imports"]
+        self.assertEqual((record["class"], record["name"]), ("stub", name))
+        self.assertEqual(cmake.read_bytes(), before)
 
     def test_git_stamp_uses_selected_source_tree(self):
         completed = type("Completed", (), {"stdout": "abcdef\n"})()

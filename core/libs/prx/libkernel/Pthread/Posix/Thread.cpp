@@ -28,6 +28,19 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
 int APS5_VABI scePthreadKeyDelete(PthreadKey key);
 void* APS5_VABI scePthreadGetspecific(PthreadKey key);
 int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
+int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
+int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
+int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
+int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex);
+int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
+int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
+int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
+int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
+int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
+int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond);
 int APS5_VABI scePthreadCancel(Pthread thread);
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type);
@@ -265,6 +278,25 @@ struct RegisterPthreadOnLoad {
             scePthreadExit,
         };
         RegisterThreadForwards_nid_no_patch(&forwards);
+        static const PthreadSyncForwards_nid_no_patch sync{
+            reinterpret_cast<decltype(sync.mutexattrInit)>(scePthreadMutexattrInit),
+            reinterpret_cast<decltype(sync.mutexattrSettype)>(scePthreadMutexattrSettype),
+            reinterpret_cast<decltype(sync.mutexattrDestroy)>(scePthreadMutexattrDestroy),
+            reinterpret_cast<decltype(sync.mutexInit)>(scePthreadMutexInit),
+            reinterpret_cast<decltype(sync.mutexDestroy)>(scePthreadMutexDestroy),
+            reinterpret_cast<decltype(sync.mutexLock)>(scePthreadMutexLock),
+            reinterpret_cast<decltype(sync.mutexTrylock)>(scePthreadMutexTrylock),
+            reinterpret_cast<decltype(sync.mutexUnlock)>(scePthreadMutexUnlock),
+            reinterpret_cast<decltype(sync.condInit)>(scePthreadCondInit),
+            reinterpret_cast<decltype(sync.condDestroy)>(scePthreadCondDestroy),
+            reinterpret_cast<decltype(sync.condWait)>(scePthreadCondWait),
+            reinterpret_cast<decltype(sync.condSignal)>(scePthreadCondSignal),
+            reinterpret_cast<decltype(sync.condBroadcast)>(scePthreadCondBroadcast),
+            reinterpret_cast<decltype(sync.detach)>(scePthreadDetach),
+            reinterpret_cast<decltype(sync.join)>(scePthreadJoin),
+            scePthreadYield,
+        };
+        RegisterPthreadSyncForwards_nid_no_patch(&sync);
     }
 };
 const RegisterPthreadOnLoad gRegisterPthread;

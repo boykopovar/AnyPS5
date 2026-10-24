@@ -28,7 +28,7 @@ def quote(value):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Write the configure check results of a CMake cache as an initial cache file")
     parser.add_argument("cache", help="CMakeCache.txt of a configured tree")
     parser.add_argument("seed", help="file to pass to cmake -C")

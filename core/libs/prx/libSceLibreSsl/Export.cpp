@@ -1,3 +1,5 @@
+#include <cinttypes>
+#include <cstdio>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -16,46 +18,6 @@ constexpr std::size_t DesScheduleBytes = 128;
 extern "C" {
 
 APS5_DUMMY_FUN
-int APS5_VABI AES_cbc_encrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_cfb128_encrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_ctr128_encrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_decrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_ecb_encrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_encrypt_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_set_decrypt_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI AES_set_encrypt_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ASN1_INTEGER_get_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -281,16 +243,6 @@ int APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI CRYPTO_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI CRYPTO_malloc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -302,11 +254,6 @@ int APS5_VABI CRYPTO_set_add_lock_callback_nid_postfix(void) {
 }
 
 int APS5_VABI CRYPTO_set_locking_callback_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI CRYPTO_set_mem_functions_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1011,31 +958,6 @@ int APS5_VABI PKCS12_free_nid_postfix(void) {
 }
 
 int APS5_VABI PKCS12_parse_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_add_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_bytes_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_file_name_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_load_file_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RAND_status_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1820,9 +1742,69 @@ int APS5_VABI X509_verify_cert_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_verify_cert_error_string_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI X509_verify_cert_error_string_nid_postfix(std::int64_t error) {
+    static constexpr const char* messages[] {
+        "ok",
+        nullptr,
+        "unable to get issuer certificate",
+        "unable to get certificate CRL",
+        "unable to decrypt certificate's signature",
+        "unable to decrypt CRL's signature",
+        "unable to decode issuer public key",
+        "certificate signature failure",
+        "CRL signature failure",
+        "certificate is not yet valid",
+        "certificate has expired",
+        "CRL is not yet valid",
+        "CRL has expired",
+        "format error in certificate's notBefore field",
+        "format error in certificate's notAfter field",
+        "format error in CRL's lastUpdate field",
+        "format error in CRL's nextUpdate field",
+        "out of memory",
+        "self signed certificate",
+        "self signed certificate in certificate chain",
+        "unable to get local issuer certificate",
+        "unable to verify the first certificate",
+        "certificate chain too long",
+        "certificate revoked",
+        "invalid CA certificate",
+        "path length constraint exceeded",
+        "unsupported certificate purpose",
+        "certificate not trusted",
+        "certificate rejected",
+        "subject issuer mismatch",
+        "authority and subject key identifier mismatch",
+        "authority and issuer serial number mismatch",
+        "key usage does not include certificate signing",
+        "unable to get CRL issuer certificate",
+        "unhandled critical extension",
+        "key usage does not include CRL signing",
+        "unhandled critical CRL extension",
+        "invalid non-CA certificate (has CA markings)",
+        "proxy path length constraint exceeded",
+        "key usage does not include digital signature",
+        "proxy certificates not allowed, please set the appropriate flag",
+        "invalid or inconsistent certificate extension",
+        "invalid or inconsistent certificate policy extension",
+        "no explicit policy",
+        "Different CRL scope",
+        "Unsupported extension feature",
+        "RFC 3779 resource not subset of parent's resources",
+        "permitted subtree violation",
+        "excluded subtree violation",
+        "name constraints minimum and maximum not supported",
+        "application verification failure",
+        "unsupported name constraint type",
+        "unsupported or invalid name constraint syntax",
+        "unsupported or invalid name syntax",
+        "CRL path validation error",
+    };
+    const auto code = static_cast<std::uint32_t>(error);
+    if (code < sizeof(messages) / sizeof(messages[0]) && messages[code]) return messages[code];
+    static char unknown[100];
+    std::snprintf(unknown, sizeof(unknown), "error number %" PRId64, error);
+    return unknown;
 }
 
 int APS5_VABI d2i_OCSP_RESPONSE_nid_postfix(void) {

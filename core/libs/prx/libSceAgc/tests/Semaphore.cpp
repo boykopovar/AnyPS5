@@ -15,6 +15,8 @@
 extern "C" int APS5_VABI sceAgcSetAmmSemaphoreMemory(void* memory, std::uint64_t sizeInBytes);
 extern "C" int APS5_VABI sceAgcGetSemaphoreLabel(std::uint32_t index, void** label);
 extern "C" std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint32_t operation, std::uint32_t modifier, std::uint32_t value);
+extern "C" std::uint32_t* APS5_VABI sceAgcAcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation);
+extern "C" std::uint32_t* APS5_VABI sceAgcDcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation);
 
 namespace {
 
@@ -180,6 +182,40 @@ void testMemSemaphore() {
     expectFailure([&] { sceAgcCbMemSemaphore(nullptr, label, 0, 0, 0); });
 }
 
+using QueueMemSemaphore = std::uint32_t* APS5_VABI (*)(CommandBuffer*, const volatile void*, std::uint8_t, std::uint8_t, std::uint8_t);
+
+void testQueueMemSemaphore(QueueMemSemaphore write) {
+    const auto* semaphore = reinterpret_cast<const volatile void*>(0x102f221d98ull);
+
+    {
+        std::array<std::uint32_t, 16> words{};
+        words.fill(0xdeadbeefu);
+        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+        const auto* packet = write(&buffer, semaphore, 0, 1, 6);
+        check(packet == words.data(), "packet address mismatch");
+        check(packet[0] == 0xc0023900u, "MEM_SEMAPHORE header opcode mismatch");
+        check(packet[1] == 0x2f221d98u, "MEM_SEMAPHORE address low mismatch");
+        check(packet[2] == 0x10u, "MEM_SEMAPHORE address high mismatch");
+        check(packet[3] == 0xc0100000u, "MEM_SEMAPHORE signal control word mismatch");
+        check(buffer.cursor_up == words.data() + 4, "cursor did not advance by 4 words");
+        check(words[4] == 0xdeadbeefu, "words past packet modified");
+    }
+
+    {
+        std::array<std::uint32_t, 16> words{};
+        words.fill(0xdeadbeefu);
+        CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+        const auto* packet = write(&buffer, semaphore, 1, 0, 7);
+        check(packet[3] == 0xe0010000u, "MEM_SEMAPHORE wait control word mismatch");
+    }
+
+    std::array<std::uint32_t, 16> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    expectFailure([&] { write(&buffer, reinterpret_cast<const volatile void*>(1ull), 0, 1, 6); });
+    expectFailure([&] { write(&buffer, semaphore, 0, 1, 5); });
+    expectFailure([&] { write(&buffer, semaphore, 2, 0, 7); });
+}
+
 }
 
 int main() {
@@ -191,6 +227,8 @@ int main() {
         testRegistration();
         testLabels();
         testMemSemaphore();
+        testQueueMemSemaphore(sceAgcAcbMemSemaphore);
+        testQueueMemSemaphore(sceAgcDcbMemSemaphore);
         testLabelRejections();
         testRepeatedRegistration();
         storage.reset();

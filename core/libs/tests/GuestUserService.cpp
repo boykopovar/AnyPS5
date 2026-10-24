@@ -7,6 +7,8 @@
 #include <utility>
 
 extern "C" {
+int APS5_VABI sceUserServiceGetInitialUser(int* user_id);
+int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets);
 int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number);
 int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value);
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id);
@@ -154,6 +156,14 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    int initialUser = -1;
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK && initialUser == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    UserServiceGamePresets presets{};
+    presets.difficulty = 0x5a;
+    Require(sceUserServiceGetGamePresets(0, &presets) == USER_SERVICE_ERROR_INVALID_ARGUMENT && presets.difficulty == 0x5a);
+    Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
     bool threwKeyremap = false;
     try {
         sceUserServiceGetAccessibilityKeyremapEnable();

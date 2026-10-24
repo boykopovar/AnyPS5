@@ -19,6 +19,7 @@ union RackOptions {
     Ngs2ReverbRackOption reverb;
     Ngs2CustomSamplerRackOption customSampler;
     Ngs2CustomSubmixerRackOption customSubmixer;
+    Ngs2CustomMasteringRackOption customMastering;
 };
 
 static std::size_t RackOptionSize(std::uint32_t rackId) {
@@ -29,12 +30,13 @@ static std::size_t RackOptionSize(std::uint32_t rackId) {
         case SCE_NGS2_RACK_ID_REVERB: return sizeof(Ngs2ReverbRackOption);
         case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: return sizeof(Ngs2CustomSamplerRackOption);
         case SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER: return sizeof(Ngs2CustomSubmixerRackOption);
+        case SCE_NGS2_RACK_ID_CUSTOM_MASTERING: return sizeof(Ngs2CustomMasteringRackOption);
         default: throw std::runtime_error("NGS2: rack id " + Ngs2Hex(rackId) + " is not implemented");
     }
 }
 
 static RackOptions DefaultRackOption(std::uint32_t rackId) {
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER || rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER || rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
         throw std::runtime_error("NGS2: default custom rack options are not implemented");
     }
     RackOptions options{};
@@ -83,7 +85,7 @@ static std::uint32_t RackMaxChannels(std::uint32_t rackId, const RackOptions& op
     if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) return options.submixer.max_channels;
     if (rackId == SCE_NGS2_RACK_ID_MASTERING) return options.mastering.max_channels;
     if (rackId == SCE_NGS2_RACK_ID_REVERB) return options.reverb.max_channels;
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) return options.customSubmixer.max_channels;
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) return options.customSubmixer.max_channels;
     return NGS2_MAX_CHANNELS;
 }
 
@@ -97,17 +99,17 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
     options = {};
     std::memcpy(&options, option, size);
     const auto maxChannels = RackMaxChannels(rackId, options);
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && maxChannels > SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS) return SCE_NGS2_ERROR_INVALID_NUM_CHANNELS;
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && (options.customSubmixer.max_inputs == 0 || options.customSubmixer.max_inputs > SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS)) {
+    if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && maxChannels > SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS) return SCE_NGS2_ERROR_INVALID_NUM_CHANNELS;
+    if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && (options.customSubmixer.max_inputs == 0 || options.customSubmixer.max_inputs > SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS)) {
         throw std::runtime_error("NGS2: custom submixer racks with " + std::to_string(options.customSubmixer.max_inputs) + " inputs are not implemented");
     }
     if (options.common.max_voices == 0 || maxChannels == 0) throw std::invalid_argument("NGS2: invalid rack voice or channel count");
     int result = SCE_NGS2_OK;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) result = Ngs2CheckCustomRack(rackId, options.customSampler.custom_rack_option, 0);
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) result = Ngs2CheckCustomRack(rackId, options.customSubmixer.custom_rack_option, options.customSubmixer.max_inputs);
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) result = Ngs2CheckCustomRack(rackId, options.customSubmixer.custom_rack_option, options.customSubmixer.max_inputs);
     if (result != SCE_NGS2_OK) return result;
     if (maxChannels > NGS2_MAX_CHANNELS) {
-        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
             throw std::runtime_error("NGS2: custom submixer racks with " + std::to_string(maxChannels) + " channels are not implemented");
         }
         throw std::invalid_argument("NGS2: invalid rack voice or channel count");
@@ -129,7 +131,7 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     rack->maxChannels = RackMaxChannels(rackId, options);
     rack->maxFilters = rackId == SCE_NGS2_RACK_ID_SAMPLER ? options.sampler.max_filters
                       : rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER ? options.customSampler.custom_rack_option.num_modules
-                      : rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER ? options.customSubmixer.custom_rack_option.num_modules : 0;
+                      : (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) ? options.customSubmixer.custom_rack_option.num_modules : 0;
     rack->uid = nextUid++;
     std::memcpy(rack->name, options.common.name, sizeof(rack->name));
     rack->name[sizeof(rack->name) - 1] = '\0';
@@ -137,7 +139,7 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     if (rackId == SCE_NGS2_RACK_ID_SAMPLER) rack->maxChannelWorks = options.sampler.max_channel_works;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) rack->maxChannelWorks = options.customSampler.max_channel_works;
     if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) rack->maxInputs = options.submixer.max_inputs;
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) rack->maxInputs = options.customSubmixer.max_inputs;
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) rack->maxInputs = options.customSubmixer.max_inputs;
     rack->bufferInfo = bufferInfo;
     rack->allocator = allocator;
     rack->voices.resize(options.common.max_voices);
@@ -147,7 +149,7 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
         voice.matrices.resize(options.common.max_matrices);
     }
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) Ngs2SetupUserFx(*rack, options.customSampler.custom_rack_option);
-    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) Ngs2SetupUserFx(*rack, options.customSubmixer.custom_rack_option);
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) Ngs2SetupUserFx(*rack, options.customSubmixer.custom_rack_option);
     system->racks.push_back(rack);
     *handle = reinterpret_cast<Ngs2Handle>(rack);
     return SCE_NGS2_OK;
@@ -261,6 +263,17 @@ int APS5_VABI sceNgs2RackGetInfo(uintptr_t rack_handle, Ngs2RackInfo* info, size
     info->render_count = static_cast<std::uint64_t>(rack->system->renderCount);
     info->active_voice_count = static_cast<std::uint32_t>(std::count_if(rack->voices.begin(), rack->voices.end(),
                                                                         [](const Ngs2Voice& voice) { return voice.state != Ngs2PlayState::Empty; }));
+    return SCE_NGS2_OK;
+}
+
+int APS5_VABI sceNgs2CustomRackGetModuleInfo(uintptr_t rack_handle, uint32_t module_index, Ngs2CustomModuleInfo* info, size_t info_size) {
+    if (info == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+    const Ngs2Lock lock;
+    const auto* rack = Ngs2FindRack(rack_handle);
+    if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
+    if (module_index >= rack->customModules.size() || info_size < sizeof(Ngs2CustomModuleInfo)) APS5_INVALID_ARG_EX;
+    if (info_size != sizeof(Ngs2CustomModuleInfo)) throw std::runtime_error("NGS2: custom module info of " + std::to_string(info_size) + " bytes is not implemented");
+    *info = rack->customModules[module_index];
     return SCE_NGS2_OK;
 }
 
