@@ -30,6 +30,7 @@ extern "C" {
 void APS5_VABI SSL_CTX_set_info_callback_nid_postfix(TestCtx*, void*);
 void APS5_VABI SSL_CTX_sess_set_new_cb_nid_postfix(TestCtx*, void*);
 void APS5_VABI SSL_CTX_set_cert_verify_callback_nid_postfix(TestCtx*, void*, void*);
+void APS5_VABI SSL_CTX_set_client_cert_cb_nid_postfix(TestCtx*, void*);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -81,9 +82,22 @@ static void TestCertVerifyCallback() {
     Require(OnlySlots(callbacks, -1, nullptr, -1, nullptr));
 }
 
+static void TestClientCertCallback() {
+    TestCallbacks callbacks {};
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_set_client_cert_cb_nid_postfix(nullptr, &Marker[0]); });
+    RequireThrows([&] { SSL_CTX_set_client_cert_cb_nid_postfix(&ctx, &Marker[0]); });
+    ctx.internal = &callbacks;
+    SSL_CTX_set_client_cert_cb_nid_postfix(&ctx, &Marker[0]);
+    Require(OnlySlots(callbacks, 8, &Marker[0], -1, nullptr));
+    SSL_CTX_set_client_cert_cb_nid_postfix(&ctx, nullptr);
+    Require(OnlySlots(callbacks, -1, nullptr, -1, nullptr));
+}
+
 int main() {
     TestInfoCallback();
     TestNewSessionCallback();
     TestCertVerifyCallback();
+    TestClientCertCallback();
     return 0;
 }
