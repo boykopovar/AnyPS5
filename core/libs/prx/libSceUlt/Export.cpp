@@ -153,6 +153,7 @@ int APS5_VABI sceUltFinalize() {
             return ULT_ERROR_BUSY;
         }
         semaphores.reserve(gSemaphores.size());
+        mutexes.reserve(gMutexes.size());
         for (auto& entry : gSemaphores) {
             auto& state = entry.second;
             std::lock_guard<std::mutex> stateLock(state->_mutex);
@@ -160,7 +161,6 @@ int APS5_VABI sceUltFinalize() {
             semaphores.push_back(state);
         }
         gSemaphores.clear();
-        mutexes.reserve(gMutexes.size());
         for (auto& entry : gMutexes) {
             auto& state = entry.second;
             std::lock_guard<std::mutex> stateLock(state->_mutex);
