@@ -15,6 +15,11 @@ HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz",
 WINDOWS_PREFIX = "agc"
 
 
+def device_limitations(output, patterns):
+    reasons = [line.strip() for line in output.splitlines() if line.strip().lower().startswith("skipped,")]
+    return bool(reasons) and all(any(pattern.search(reason) for pattern in patterns) for reason in reasons)
+
+
 def high_refresh_limitation(output):
     reasons = []
     for line in output.splitlines():
@@ -63,10 +68,10 @@ def main(argv=None):
             print(f"{name}: {reason}")
         return 0
     if args.job == "windows":
-        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not NO_DISPLAY.search(output) and not NO_VULKAN_DEVICE.search(output) and not high_refresh_limitation(output)]
+        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE)) and not high_refresh_limitation(output)]
         expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device or a display without a 120 Hz mode"
     else:
-        unexpected = [name for name, output in found if not DEVICE_LIMITATION.search(output) and not high_refresh_limitation(output)]
+        unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
         expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window or a display without a 120 Hz mode"
     for name in unexpected:
         print(f"error: {name} skipped")

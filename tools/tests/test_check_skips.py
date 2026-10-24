@@ -37,6 +37,37 @@ OTHER = [
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_unexpected_skip_reason_cannot_hide_behind_a_device_limitation(self):
+        reports = (
+            ('<skipped message="flaky"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
+            ('<skipped message="flaky"/><system-err>skipped, no display</system-err>', "windows"),
+            ('<skipped>flaky</skipped><system-out>skipped, no usable Vulkan device</system-out>', "windows"),
+            ('<skipped/><system-out>skipped, flaky\nskipped, the device lacks geometryShader</system-out>', "linux"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, job in reports:
+                with self.subTest(job=job, report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("error: guest_probe skipped", result.stdout)
+
+    def test_multiple_allowed_skip_reasons_remain_expected(self):
+        reports = (
+            ('<skipped message="the device lacks geometryShader"/><system-out>skipped, no display</system-out>', "linux"),
+            ('<skipped message="no display"/><system-err>skipped, no usable Vulkan device</system-err>', "windows"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, job in reports:
+                with self.subTest(job=job, report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_non_junit_xml_fails_in_every_cli_mode(self):
         reports = ('<config/>', '<Site><Testing><Test Status="notrun"><Name>coverage</Name></Test></Testing></Site>')
         with tempfile.TemporaryDirectory() as directory:
