@@ -74,6 +74,7 @@ struct DrawOptions {
     std::uint32_t back = 0x00ffff25u;
     std::uint32_t shaderControl = 0x802u;
     std::uint32_t pixelInputs = 0;
+    std::uint32_t scissorRight = 64;
 };
 
 std::vector<std::uint32_t> Draw(std::span<const std::uint32_t> pixelCode = PixelCode, const DrawOptions& options = {}) {
@@ -91,7 +92,7 @@ std::vector<std::uint32_t> Draw(std::span<const std::uint32_t> pixelCode = Pixel
         {0x1c4, 9}, {0x1c5, 9}, {0x1c3, 4}, {0x31c, 0x28028},
         {0x31b, 0}, {0x31d, 0}, {0x3b0, (63u << 14u) | 3u},
         {0x3b8, 0x9000000}, {0x1e0, 0},
-        {0xc, 0}, {0xd, 0x40040},
+        {0xc, 0}, {0xd, 0x40000u | options.scissorRight},
         {0x81, 0x80000000}, {0x82, 0x40040},
         {0x90, 0x80000000}, {0x91, 0x40040},
         {0x94, 0x80000000}, {0x95, 0x40040},
@@ -192,6 +193,50 @@ void IndependentReference(bool invert) {
     CheckWhitePixels(coverage, [](auto, auto) { return true; }, "dropping an unused reference changed the stencil readback");
 }
 
+void StencilAttachmentExport(std::string_view name) {
+    const auto coverage = InitializeStencil();
+    alignas(256) constexpr std::array<std::uint32_t, 11> positionStencil{0x7e0e1100u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu, 0x340e0e88u, 0xf8001882u, 0x700u, 0xbf810000u};
+    alignas(256) constexpr std::array<std::uint32_t, 12> depthPositionStencil{0x7e0e1100u, 0xd7650001u, 0x000100c1u, 0x34020282u, 0xdacc0000u, 0x07000701u, 0xbf8cc07fu, 0x340e0e88u, 0x7e0002f0u, 0xf8001883u, 0x700u, 0xbf810000u};
+    DrawOptions options{.depth = true, .operations = 0x40040u, .shaderControl = 0x44u, .pixelInputs = 0x100u};
+    const bool depthFail = name == "attachment-depth-fail";
+    const bool scissor = name == "attachment-scissor";
+    const bool partial = name == "attachment-partial-mask";
+    if (depthFail) { options.depthControl = 0x717u; options.shaderControl = 0x45u; }
+    if (scissor) options.scissorRight = 32u;
+    if (partial) options.front = options.back = 0x007fff25u;
+    bool refused = false;
+    try { SubmitDraw(depthFail ? std::span<const std::uint32_t>(depthPositionStencil) : std::span<const std::uint32_t>(positionStencil), options); }
+    catch (const std::exception& error) {
+        if (!partial || std::string_view(error.what()).find("full-byte pass replacement") == std::string_view::npos) throw;
+        refused = true;
+    }
+    if (partial) {
+        Require(refused, "a partial stencil mask was admitted to attachment export");
+        Require(std::all_of(ColorMemory.begin(), ColorMemory.end(), [](auto value) { return value == Kept; }), "a refused attachment draw changed color");
+    } else if (depthFail) {
+        ProbeStencil(37u);
+        CheckWhitePixels(coverage, [](auto, auto) { return true; }, "a depth-failed attachment fragment changed stencil");
+    } else {
+        std::vector<std::uint32_t> covered;
+        for (std::uint32_t x = 0; x < 64u; ++x) {
+            for (std::uint32_t y = 0; y < 4u; ++y) {
+                if (coverage[(y * 64u + x) * 4u] != Kept) { covered.push_back(x); break; }
+            }
+        }
+        Require(covered.size() > 2u, "the dynamic stencil fixture covers too few values");
+        const std::array<std::uint32_t, 3> references = scissor ? std::array<std::uint32_t, 3>{0u, 20u, 37u} : std::array<std::uint32_t, 3>{covered.front(), covered[covered.size() / 2u], covered.back()};
+        for (const auto reference : references) {
+            ProbeStencil(reference);
+            CheckWhitePixels(coverage, [=](auto x, auto) { return scissor && x >= 32u ? reference == 37u : x == reference; }, "the dynamic stencil value or untouched stencil pixels differ");
+        }
+    }
+    try { AgcDriverShutdown_nid_postfix(); }
+    catch (const std::exception& error) {
+        if (!partial || std::string_view(error.what()).find("full-byte pass replacement") == std::string_view::npos) throw;
+    }
+    std::puts(partial ? "partial stencil masks retain an explicit refusal" : depthFail ? "depth-failed fragments preserve the original stencil readback" : scissor ? "dynamic stencil readback preserves pixels outside the scissor" : "dynamic stencil attachment readback passed");
+}
+
 void DependentReference(std::string_view name) {
     static_cast<void>(InitializeStencil());
     DrawOptions options{.depth = true};
@@ -227,6 +272,14 @@ int main(int argc, char** argv) {
         bool expectedRefusal = false;
         if (argc == 3 && std::string_view(argv[1]) == "--case") {
             const std::string_view name = argv[2];
+            if (name.starts_with("attachment")) {
+                if (nativeStencilExport) {
+                    std::puts("skipped: the stencil attachment fallback requires a device without native stencil export");
+                    return VulkanTestSkipped;
+                }
+                StencilAttachmentExport(name);
+                return 0;
+            }
             if (name == "keep" || name == "invert") IndependentReference(name == "invert");
             else {
                 if (nativeStencilExport) {

@@ -723,6 +723,11 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
     const auto attachments = std::max<std::size_t>(state.blends.size(), 1u);
     std::set<std::uint32_t> locations;
     for (const auto& [location, signature] : previous.outputs) {
+        if (location == 7u && shaders.back().program->stencilAttachmentExport) {
+            Require(signature == "vertex:u32", "the stencil attachment output must be an unsigned scalar");
+            locations.insert(location);
+            continue;
+        }
         if (location >= attachments) continue;
         const auto color = std::find_if(state.colors.begin(), state.colors.end(), [&](const ColorTarget& target) { return target.exportIndex == location; });
         const bool uintExport = color != state.colors.end() && color->uintExport;
