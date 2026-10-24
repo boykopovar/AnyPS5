@@ -27,6 +27,7 @@ using namespace FreeType;
 
 extern "C" {
 void APS5_VABI FT_Set_Transform_nid_postfix(GuestFaceRec*, const GuestMatrix*, const GuestVector*);
+int APS5_VABI FT_Outline_Decompose_nid_postfix(GuestOutline*, const GuestOutlineFuncs*, void*);
 int APS5_VABI FT_Init_FreeType_nid_postfix(void**);
 int APS5_VABI FT_Done_FreeType_nid_postfix(void*);
 int APS5_VABI FT_New_Face_nid_postfix(void*, const char*, std::int64_t, GuestFaceRec**);
@@ -294,6 +295,243 @@ static void SizeMatches(const GuestFaceRec* face, FT_Face host) {
     Require(actual.height == expected.height && actual.max_advance == expected.max_advance);
 }
 
+struct DecomposeEvents {
+    std::vector<std::array<std::int64_t, 7>> calls;
+    std::size_t stopAt = static_cast<std::size_t>(-1);
+    int result = 0;
+
+    int Add(int kind, GuestVector first, GuestVector second = {}, GuestVector third = {}) {
+        calls.push_back({kind, first.x, first.y, second.x, second.y, third.x, third.y});
+        return calls.size() - 1 == stopAt ? result : 0;
+    }
+};
+
+static GuestVector GuestPoint(const FT_Vector& point) { return {point.x, point.y}; }
+
+static int NativeMove(const FT_Vector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(1, GuestPoint(*to)); }
+static int NativeLine(const FT_Vector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(2, GuestPoint(*to)); }
+static int NativeConic(const FT_Vector* control, const FT_Vector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(3, GuestPoint(*control), GuestPoint(*to));
+}
+static int NativeCubic(const FT_Vector* first, const FT_Vector* second, const FT_Vector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(4, GuestPoint(*first), GuestPoint(*second), GuestPoint(*to));
+}
+
+static int APS5_VABI GuestMove(const GuestVector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(1, *to); }
+static int APS5_VABI GuestLine(const GuestVector* to, void* user) { return static_cast<DecomposeEvents*>(user)->Add(2, *to); }
+static int APS5_VABI GuestConic(const GuestVector* control, const GuestVector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(3, *control, *to);
+}
+static int APS5_VABI GuestCubic(const GuestVector* first, const GuestVector* second, const GuestVector* to, void* user) {
+    return static_cast<DecomposeEvents*>(user)->Add(4, *first, *second, *to);
+}
+
+static int APS5_VABI NullUserMove(const GuestVector*, void* user) {
+    Require(user == nullptr);
+    return -17;
+}
+
+static std::size_t CompareDecomposition(std::vector<GuestVector> points, std::vector<unsigned char> tags,
+                                        std::vector<unsigned short> contours, int shift, std::int64_t delta,
+                                        std::size_t stopAt = static_cast<std::size_t>(-1), int stopResult = 0) {
+    std::vector<FT_Vector> nativePoints;
+    for (const auto point : points) nativePoints.push_back({static_cast<FT_Pos>(point.x), static_cast<FT_Pos>(point.y)});
+    GuestOutline outline{static_cast<std::uint16_t>(contours.size()), static_cast<std::uint16_t>(points.size()), points.data(), tags.data(), contours.data(), 0};
+    FT_Outline native{outline.n_contours, outline.n_points, nativePoints.data(), tags.data(), contours.data(), 0};
+    DecomposeEvents actual;
+    DecomposeEvents expected;
+    actual.stopAt = expected.stopAt = stopAt;
+    actual.result = expected.result = stopResult;
+    const GuestOutlineFuncs functions{GuestMove, GuestLine, GuestConic, GuestCubic, shift, delta};
+    const FT_Outline_Funcs nativeFunctions{NativeMove, NativeLine, NativeConic, NativeCubic, shift, static_cast<FT_Pos>(delta)};
+    const int result = FT_Outline_Decompose_nid_postfix(&outline, &functions, &actual);
+    Require(result == FT_Outline_Decompose(&native, &nativeFunctions, &expected));
+    Require(actual.calls == expected.calls);
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        Require(points[index].x == nativePoints[index].x && points[index].y == nativePoints[index].y);
+    }
+    if (stopAt < expected.calls.size()) Require(result == stopResult && actual.calls.size() == stopAt + 1);
+    return actual.calls.size();
+}
+
+struct ChangingDecomposition {
+    DecomposeEvents events;
+    GuestOutlineFuncs guest{};
+    FT_Outline_Funcs native{};
+    GuestOutline* outline = nullptr;
+    FT_Outline* nativeOutline = nullptr;
+    GuestVector* replacement = nullptr;
+    FT_Vector* nativeReplacement = nullptr;
+};
+
+static int NativeChangedLine(const FT_Vector* to, void* user) {
+    return static_cast<ChangingDecomposition*>(user)->events.Add(5, GuestPoint(*to));
+}
+static int APS5_VABI GuestChangedLine(const GuestVector* to, void* user) {
+    return static_cast<ChangingDecomposition*>(user)->events.Add(5, *to);
+}
+static int NativeChangingMove(const FT_Vector* to, void* user) {
+    auto& state = *static_cast<ChangingDecomposition*>(user);
+    state.native.line_to = NativeChangedLine;
+    state.native.shift = 4;
+    state.native.delta = 999;
+    state.nativeOutline->points = state.nativeReplacement;
+    return state.events.Add(1, GuestPoint(*to));
+}
+static int APS5_VABI GuestChangingMove(const GuestVector* to, void* user) {
+    auto& state = *static_cast<ChangingDecomposition*>(user);
+    state.guest.line_to = GuestChangedLine;
+    state.guest.shift = 4;
+    state.guest.delta = 999;
+    state.outline->points = state.replacement;
+    GuestOutline empty{};
+    const GuestOutlineFuncs noCallbacks{};
+    Require(FT_Outline_Decompose_nid_postfix(&empty, &noCallbacks, nullptr) == 0);
+    return state.events.Add(1, *to);
+}
+
+static void OutlineDecomposition() {
+    GuestOutline empty{};
+    const GuestOutlineFuncs callbacks{GuestMove, GuestLine, GuestConic, GuestCubic, 0, 0};
+    const FT_Outline_Funcs nativeCallbacks{NativeMove, NativeLine, NativeConic, NativeCubic, 0, 0};
+    Require(FT_Outline_Decompose_nid_postfix(nullptr, nullptr, nullptr) == FT_Outline_Decompose(nullptr, nullptr, nullptr));
+    Require(FT_Outline_Decompose_nid_postfix(nullptr, &callbacks, nullptr) == FT_Outline_Decompose(nullptr, &nativeCallbacks, nullptr));
+    Require(FT_Outline_Decompose_nid_postfix(&empty, nullptr, nullptr) == FT_Err_Invalid_Argument);
+    const GuestOutlineFuncs unused{nullptr, nullptr, nullptr, nullptr, -1, INT64_MIN};
+    Require(FT_Outline_Decompose_nid_postfix(&empty, &unused, nullptr) == 0);
+    int scenarios = 0;
+    std::size_t calls = 0;
+    for (unsigned count = 1; count <= 6; ++count) {
+        std::vector<GuestVector> points;
+        for (unsigned point = 0; point < count; ++point) points.push_back({static_cast<std::int64_t>(point) * 13 - 37, static_cast<std::int64_t>(point) * -17 + 23});
+        const unsigned patterns = 1u << (2 * count);
+        for (unsigned pattern = 0; pattern < patterns; ++pattern) {
+            std::vector<unsigned char> tags;
+            for (unsigned point = 0; point < count; ++point) tags.push_back(static_cast<unsigned char>(((pattern >> (point * 2)) & 3) | 0xA4));
+            for (const int shift : {0, 1, 4}) {
+                for (const int delta : {-17, 0, 19}) {
+                    calls += CompareDecomposition(points, tags, {static_cast<unsigned short>(count - 1)}, shift, delta);
+                    ++scenarios;
+                }
+            }
+        }
+    }
+    const std::vector<GuestVector> curve{{-17, 3}, {7, -5}, {29, 31}, {43, -11}, {59, 37}, {73, -13}, {89, 41}, {101, -17}};
+    for (const auto& tags : std::vector<std::vector<unsigned char>>{{1, 0, 0, 1, 2, 2, 1, 0}, {1, 2, 2, 1, 0, 1, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0}}) {
+        for (const auto& contours : std::vector<std::vector<unsigned short>>{{7}, {2, 7}, {0, 3, 7}, {2, 1}}) {
+            const std::size_t events = CompareDecomposition(curve, tags, contours, 2, -3);
+            ++scenarios;
+            for (std::size_t stop = 0; stop < events; ++stop) {
+                for (const int error : {1, -17, 0x12345678, INT32_MIN}) {
+                    calls += CompareDecomposition(curve, tags, contours, 2, -3, stop, error);
+                    ++scenarios;
+                }
+            }
+        }
+    }
+    {
+        GuestVector points[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
+        FT_Vector nativePoints[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
+        GuestVector replacement[]{{107, 95}, {111, 113}, {117, 81}, {123, 129}};
+        FT_Vector nativeReplacement[]{{107, 95}, {111, 113}, {117, 81}, {123, 129}};
+        unsigned char tags[]{1, 1, 1, 1};
+        unsigned short contours[]{1, 3};
+        GuestOutline outline{2, 4, points, tags, contours, 0};
+        FT_Outline native{2, 4, nativePoints, tags, contours, 0};
+        ChangingDecomposition actual;
+        ChangingDecomposition expected;
+        actual.guest = {GuestChangingMove, nullptr, nullptr, nullptr, 1, -3};
+        expected.native = {NativeChangingMove, nullptr, nullptr, nullptr, 1, -3};
+        actual.outline = &outline;
+        actual.replacement = replacement;
+        expected.nativeOutline = &native;
+        expected.nativeReplacement = nativeReplacement;
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &actual.guest, &actual) == FT_Outline_Decompose(&native, &expected.native, &expected));
+        Require(actual.events.calls == expected.events.calls && actual.events.calls.size() == 6);
+    }
+    {
+        GuestVector point{7, -5};
+        unsigned char tag = 1;
+        unsigned short contour = 0;
+        GuestOutline outline{1, 1, &point, &tag, &contour, 0};
+        const GuestOutlineFuncs nullUser{NullUserMove, nullptr, nullptr, nullptr, 0, 0};
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &nullUser, nullptr) == -17);
+    }
+    {
+        GuestVector points[]{{0x10000000001ll, -0x10000000003ll}, {0x10000000005ll, -0x10000000007ll}, {0x10000000009ll, -0x1000000000Bll}};
+        unsigned char tags[]{1, 1, 1};
+        unsigned short contours[]{1};
+        GuestOutline outline{1, 2, points, tags, contours, 0};
+        auto functions = callbacks;
+        functions.shift = 2;
+        functions.delta = 0x100000000ll;
+        DecomposeEvents events;
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &functions, &events) == 0);
+        const std::vector<std::array<std::int64_t, 7>> expected{{1, 0x3FF00000004ll, -0x4010000000Cll, 0, 0, 0, 0},
+                                                            {2, 0x3FF00000014ll, -0x4010000001Cll, 0, 0, 0, 0},
+                                                            {2, 0x3FF00000004ll, -0x4010000000Cll, 0, 0, 0, 0}};
+        Require(events.calls == expected);
+        tags[0] = tags[1] = 0;
+        events.calls.clear();
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &functions, &events) == 0);
+        const std::vector<std::array<std::int64_t, 7>> conic{{1, 0x3FF0000000Cll, -0x40100000014ll, 0, 0, 0, 0},
+                                                         {3, 0x3FF00000004ll, -0x4010000000Cll, 0x3FF0000000Cll, -0x40100000014ll, 0, 0},
+                                                         {3, 0x3FF00000014ll, -0x4010000001Cll, 0x3FF0000000Cll, -0x40100000014ll, 0, 0}};
+        Require(events.calls == conic);
+        tags[0] = 1;
+        tags[1] = tags[2] = 2;
+        contours[0] = 2;
+        outline.n_points = 3;
+        events.calls.clear();
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &functions, &events) == 0);
+        const std::vector<std::array<std::int64_t, 7>> cubic{{1, 0x3FF00000004ll, -0x4010000000Cll, 0, 0, 0, 0},
+                                                         {4, 0x3FF00000014ll, -0x4010000001Cll, 0x3FF00000024ll, -0x4010000002Cll, 0x3FF00000004ll, -0x4010000000Cll}};
+        Require(events.calls == cubic);
+        contours[0] = 1;
+        outline.n_points = 2;
+        for (const int shift : {-1, 63, INT32_MAX}) {
+            functions.shift = shift;
+            Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: a shift"));
+        }
+        functions.shift = 62;
+        functions.delta = 0;
+        Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing coordinate scaling"));
+        functions.shift = 0;
+        functions.delta = INT64_MIN;
+        Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing coordinate translation"));
+        functions.delta = 0;
+        points[0] = {INT64_MAX, 0};
+        points[1] = {INT64_MAX, 0};
+        tags[0] = tags[1] = 0;
+        Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing midpoint"));
+    }
+    const auto font = SquareGlyphFont('A', 700);
+    void* library = nullptr;
+    FT_Library oracle = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Face native = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&oracle) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(oracle, font.data(), static_cast<FT_Long>(font.size()), 0, &native) == 0);
+    int rendered = 0;
+    for (const unsigned pixels : {8u, 16u, 31u, 100u}) {
+        Require(FT_Set_Pixel_Sizes_nid_postfix(face, 0, pixels) == FT_Set_Pixel_Sizes(native, 0, pixels));
+        for (const unsigned glyph : {0u, 1u}) {
+            Require(FT_Load_Glyph_nid_postfix(face, glyph, FT_LOAD_DEFAULT) == FT_Load_Glyph(native, glyph, FT_LOAD_DEFAULT));
+            DecomposeEvents actual;
+            DecomposeEvents expected;
+            Require(FT_Outline_Decompose_nid_postfix(&face->glyph->outline, &callbacks, &actual) == FT_Outline_Decompose(&native->glyph->outline, &nativeCallbacks, &expected));
+            Require(actual.calls == expected.calls);
+            SlotMatches(face->glyph, native->glyph);
+            Require(FT_Render_Glyph_nid_postfix(face->glyph, FT_RENDER_MODE_NORMAL) == FT_Render_Glyph(native->glyph, FT_RENDER_MODE_NORMAL));
+            SlotMatches(face->glyph, native->glyph);
+            ++rendered;
+        }
+    }
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(oracle) == 0);
+    std::printf("FreeType outline decomposition: %d native comparisons, %zu callbacks, %d rendered glyphs, wide coordinates and callback mutation\n", scenarios, calls, rendered);
+}
+
 struct Finalizers {
     std::vector<int> calls;
 };
@@ -437,6 +675,7 @@ int main() {
     const auto root = std::filesystem::temp_directory_path() / ("anyps5_guest_freetype-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root / "app0");
     CheckGasp();
+    OutlineDecomposition();
     const std::vector<unsigned char> font = SquareGlyphFont('A', 700);
     {
         std::ofstream file(root / "app0" / "font.ttf", std::ios::binary);

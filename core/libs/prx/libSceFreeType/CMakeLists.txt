@@ -5,6 +5,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/FaceInfo.cpp
         src/GuestObjects.cpp
         src/Names.cpp
+        src/OutlineDecompose.cpp
 )
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceFreeType PRIVATE freetype)
