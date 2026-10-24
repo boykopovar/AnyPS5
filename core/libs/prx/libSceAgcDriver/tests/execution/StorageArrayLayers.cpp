@@ -81,6 +81,12 @@ public:
 
     std::uint8_t* Data() { return block; }
 
+    void Reregister(std::size_t bytes) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+        mutation.Add(block, bytes, true, true, true);
+    }
+
 private:
     std::uint8_t* block = nullptr;
 };
@@ -146,7 +152,7 @@ std::uint32_t Initial(std::size_t word) {
     return static_cast<std::uint32_t>(word) * 0x01000193u + 0x5au;
 }
 
-void Check(const std::uint8_t* texels, std::uint32_t rounds) {
+void Check(const std::uint8_t* texels, std::uint32_t rounds, std::uint32_t layers) {
     const auto geometry = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(ArrayDescriptor(AddressOf(texels), 0u, Layers - 1u)));
     Require(geometry.guestBytes == SurfaceBytes, "storage array layers: the array does not span its four layers");
     const auto& mip = geometry.mips.at(0);
@@ -156,15 +162,16 @@ void Check(const std::uint8_t* texels, std::uint32_t rounds) {
                 const auto offset = geometry.GuestLayerOffset(layer) + mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u;
                 std::uint32_t actual = 0;
                 std::memcpy(&actual, texels + offset, 4u);
-                const auto expected = y == layer ? Value(rounds - 1u, layer, x) : Initial(offset / 4u);
+                const auto expected = y == layer && layer < layers ? Value(rounds - 1u, layer, x) : Initial(offset / 4u);
                 Require(actual == expected, "storage array layers: layer " + std::to_string(layer) + " texel (" + std::to_string(x) + ", " + std::to_string(y) + ") is " + Hex(actual) + ", expected " + Hex(expected));
             }
         }
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
+void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t layers) {
     const auto surface = AddressOf(texels);
+    const auto bytes = LayerBytes * layers;
     for (std::size_t word = 0; word < SurfaceBytes / 4u; ++word) {
         const auto value = Initial(word);
         std::memcpy(texels + word * 4u, &value, 4u);
@@ -172,20 +179,20 @@ void Run(AgcDriver::VulkanDevice& device, std::uint8_t* texels) {
     std::shared_ptr<StorageTexture> image;
     constexpr std::uint32_t Rounds = 3;
     for (std::uint32_t round = 0; round < Rounds; ++round) {
-        for (std::uint32_t layer = 0; layer < Layers; ++layer) {
+        for (std::uint32_t layer = 0; layer < layers; ++layer) {
             StoreLayer(device, surface, round, layer);
             if (round == 0) continue;
-            Require(StorageTexture::FindPending(surface, SurfaceBytes) == image, "storage array layers: a store to layer " + std::to_string(layer) + " in round " + std::to_string(round) + " did not reuse the array image the first round built");
+            Require(StorageTexture::FindPending(surface, bytes) == image, "storage array layers: a store to layer " + std::to_string(layer) + " in round " + std::to_string(round) + " did not reuse the array image the first round built");
         }
         if (round != 0) continue;
-        image = StorageTexture::FindPending(surface, SurfaceBytes);
+        image = StorageTexture::FindPending(surface, bytes);
         Require(image != nullptr, "storage array layers: per-layer stores left no pending image of the whole array");
-        Require(image->Descriptor().baseArray == 0 && image->Descriptor().depthOrLastArray == Layers - 1u, "storage array layers: the pending image does not hold every layer of the array");
+        Require(image->Descriptor().baseArray == 0 && image->Descriptor().depthOrLastArray == layers - 1u, "storage array layers: the pending image of the " + std::to_string(layers) + "-layer array holds layers 0.." + std::to_string(image->Descriptor().depthOrLastArray));
     }
     image.reset();
     StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test");
     device.WaitIdle();
-    Check(texels, Rounds);
+    Check(texels, Rounds, layers);
     AgcDriver::Graphics::ClearCachedTextures(device.Device());
 }
 
@@ -216,11 +223,13 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         GuestBlock block;
-        Run(*device, block.Data());
+        Run(*device, block.Data(), Layers);
+        block.Reregister(LayerBytes * 2u);
+        Run(*device, block.Data(), 2u);
         GuestBlock chain;
         ExtendMipChain(*device, chain.Data());
         GuestBlock extended;
-        Run(*device, extended.Data());
+        Run(*device, extended.Data(), Layers);
         std::puts("storage array layers tests passed");
         return 0;
     } catch (const std::exception& error) {

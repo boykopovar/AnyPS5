@@ -1118,11 +1118,16 @@ std::array<std::uint32_t, 8> SurfaceKey(const Context& context, const GuestTextu
     return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, (resource.depthOrLastArray << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(resource.dimension) << 20u), resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
 }
 
+struct WidestArray {
+    std::uint32_t last = 0;
+    std::uint64_t backing = 0;
+};
+
 struct ExtendedSurfaces {
     AgcDriver::Mutex mutex;
     std::map<std::array<std::uint32_t, 8>, std::uint32_t> levels;
     std::atomic<bool> any{false};
-    std::map<std::array<std::uint32_t, 8>, std::uint32_t> lastLayers;
+    std::map<std::array<std::uint32_t, 8>, WidestArray> lastLayers;
 };
 
 ExtendedSurfaces& ExtendedChains() {
@@ -1140,6 +1145,8 @@ bool ArrayWidens(const GuestTextureResource& surface) {
 
 GuestTextureResource StorageArraySurface(const Context& context, const GuestTextureResource& surface) {
     if (!ArrayWidens(surface)) return surface;
+    const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(surface.baseAddress, false);
+    if (range == nullptr) return surface;
     auto identity = surface;
     identity.baseArray = 0;
     identity.depthOrLastArray = 0;
@@ -1149,8 +1156,9 @@ GuestTextureResource StorageArraySurface(const Context& context, const GuestText
     {
         std::lock_guard lock(surfaces.mutex);
         auto& known = surfaces.lastLayers[key];
-        known = std::max(known, last);
-        last = known;
+        if (known.backing != range->backingSerial) known = {last, range->backingSerial};
+        else known.last = std::max(known.last, last);
+        last = known.last;
     }
     if (surface.baseArray == 0 && last == surface.depthOrLastArray) return surface;
     auto widened = surface;
@@ -1159,6 +1167,7 @@ GuestTextureResource StorageArraySurface(const Context& context, const GuestText
     const auto viewedGeometry = DescribeSurface(surface);
     const auto widenedGeometry = DescribeSurface(widened);
     if (viewedGeometry.thick || widenedGeometry.thick || widenedGeometry.layerBytes != viewedGeometry.layerBytes || widenedGeometry.GuestLayerOffset(surface.depthOrLastArray) != viewedGeometry.GuestLayerOffset(surface.depthOrLastArray)) return surface;
+    if (widenedGeometry.guestBytes > range->address + range->bytes - surface.baseAddress) return surface;
     return widened;
 }
 
