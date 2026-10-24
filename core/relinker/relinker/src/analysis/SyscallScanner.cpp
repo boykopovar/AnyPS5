@@ -107,6 +107,13 @@ static bool IsSdkMmanSyscallStub(const std::vector<std::uint8_t>& code, std::siz
     return MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MPROTECT_INLINE, 42, recent, codeOffset) || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MMAP_INLINE, 17, recent, codeOffset) || MatchesSdkInlineStub(code, syscallOffset, limit, SDK_MMAP_EXEC_INLINE, 23, recent, codeOffset);
 }
 
+static bool IsInterruptTableEntry(const std::vector<std::uint8_t>& code, std::size_t opcodeOffset, std::size_t limit, const RecentInstructions& recent, FileByteOffset codeOffset) {
+    constexpr std::array<std::uint8_t, 9> entries{INT80_BYTE0, 0x7F, 0xC3, INT80_BYTE0, INT80_BYTE1, 0xC3, INT80_BYTE0, 0x81, 0xC3};
+    if (opcodeOffset < 3 || opcodeOffset > limit || limit - opcodeOffset < 6) return false;
+    const auto start = opcodeOffset - 3;
+    return std::equal(entries.begin(), entries.end(), code.begin() + static_cast<std::ptrdiff_t>(start)) && recent.Contains(codeOffset + start);
+}
+
 static ForbiddenInstruction ClassifyForbiddenInstruction(const std::vector<std::uint8_t>& codeSection, const std::size_t opcodeOffset, const std::size_t limit) {
     if (opcodeOffset + 1 >= limit)
         return ForbiddenInstruction::None;
@@ -289,6 +296,14 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
 
         if (kind == ForbiddenInstruction::None)
             return;
+
+        if (kind == ForbiddenInstruction::Invocation && IsInterruptTableEntry(codeSection, opcode, limit, recent, codeSectionOffset)) {
+            trapped.push_back(opcode);
+            std::ostringstream message;
+            message << "Trapping int 0x80 in a software interrupt table at code offset 0x" << std::hex << match.Offset << '\n';
+            progress.Message(message.str());
+            return;
+        }
 
         if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
             (IsSdkSyscallStub(codeSection, opcode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
