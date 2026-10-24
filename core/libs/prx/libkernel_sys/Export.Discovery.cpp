@@ -291,10 +291,6 @@ int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -306,10 +302,6 @@ int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_attr_setstackaddr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI pthread_barrier_setname_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);

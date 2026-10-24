@@ -95,6 +95,12 @@ int APS5_VABI pthread_attr_getstackaddr_nid_postfix(const PthreadAttr* __restric
     return 0;
 }
 
+int APS5_VABI pthread_attr_setstackaddr_nid_postfix(PthreadAttr* attr, void* stack_addr) {
+    if (!Valid(attr)) return PosixThread::GUEST_EINVAL;
+    (*attr)->stackAddress = stack_addr;
+    return 0;
+}
+
 int APS5_VABI pthread_attr_getstacksize_nid_postfix(const PthreadAttr* attr, size_t* stack_size) {
     if (!Valid(attr) || !stack_size) return PosixThread::GUEST_EINVAL;
     *stack_size = (*attr)->_stacksize;
@@ -157,6 +163,12 @@ int APS5_VABI pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, size_t st
 int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* stack_addr, size_t stack_size) {
     if (!Valid(attr) || !stack_addr || stack_size < 16384) return PosixThread::GUEST_EINVAL;
     return PosixThread::ToErrno(scePthreadAttrSetstack(attr, stack_addr, stack_size));
+}
+
+int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(const PthreadAttr* attr, int* solosched) {
+    if (!Valid(attr) || !solosched) return PosixThread::GUEST_EINVAL;
+    *solosched = (*attr)->_solosched;
+    return 0;
 }
 
 int APS5_VABI pthread_attr_setsolosched_np_nid_postfix(PthreadAttr* attr, int solosched) {
