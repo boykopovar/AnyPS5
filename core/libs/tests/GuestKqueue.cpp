@@ -45,12 +45,18 @@ int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
 int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
 int APS5_VABI sceKernelAddFileEvent(KernelEqueue eq, int fd, int watch, void* udata);
 int APS5_VABI sceKernelDeleteFileEvent(KernelEqueue eq, int fd);
+std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
+int APS5_VABI fsync_nid_postfix(int);
+int APS5_VABI fdatasync_nid_postfix(int);
+int APS5_VABI flock_nid_postfix(int, int);
 int* APS5_VABI __error_nid_postfix();
 }
 
 static constexpr int GuestEnoent = 2;
 static constexpr int GuestEbadf = 9;
 static constexpr int GuestEinval = 22;
+static constexpr int GuestEspipe = 29;
+static constexpr int GuestEopnotsupp = 45;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
 static constexpr int SetStatusFlags = 4;
@@ -1180,10 +1186,24 @@ static void StandardInput() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void KqueueDescriptorOperations() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    char byte = 0;
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, &byte, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(lseek_nid_postfix(kq, 0, 0)), GuestEspipe);
+    RequireFailure(fsync_nid_postfix(kq), GuestEinval);
+    RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
+    RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 int main() {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    KqueueDescriptorOperations();
     Timers();
     PipeRead();
 #ifndef __APPLE__
