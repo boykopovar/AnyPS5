@@ -155,6 +155,34 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
+    def test_invalid_existing_timeline_can_be_replaced_after_sequence_exhaustion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            for body in ["", "0 100 16384\n", "0 100 16384\n99 100 64\n",
+                         "0 100 16384\n100 100 64\nextra\n"]:
+                with self.subTest(body=body):
+                    output.write_text(f"APS5_PAD_TIMELINE 1 {2**64 - 1} 2\n{body}", encoding="utf-8")
+                    with mock.patch.object(sys, "argv", ["pad_timeline.py", str(timeline), str(output)]), \
+                            mock.patch.object(pad_input.time, "monotonic_ns", return_value=1), \
+                            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        pad_timeline.main()
+                    self.assertEqual(output.read_text(encoding="utf-8"),
+                                     "APS5_PAD_TIMELINE 1 1 2\n200 100 18432\n500 200 64\n")
+
+    def test_valid_existing_timeline_sequence_exhaustion_preserves_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            original = pad_timeline.compile_timeline(self.document, 2**64 - 1)
+            output.write_text(original, encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("sequence is exhausted", result.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), original)
+
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
