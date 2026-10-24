@@ -322,7 +322,12 @@ private:
         const auto parts = split(value, divisor);
         if (!parts) return std::nullopt;
         if (parts->second.Scalar()) return Affine{0, 0, parts->second.constant & bits};
-        return bits == divisor - 1 ? std::optional(parts->second) : std::nullopt;
+        if (bits == divisor - 1) return parts->second;
+        const auto lowest = 1ll << std::countr_zero(static_cast<std::uint64_t>(bits));
+        if (bits != divisor - lowest) return std::nullopt;
+        const auto field = split(parts->second, lowest);
+        if (!field) return std::nullopt;
+        return field->first;
     }
 
     [[nodiscard]] std::optional<Affine> disjoint(const Affine& high, const Affine& low) const {
