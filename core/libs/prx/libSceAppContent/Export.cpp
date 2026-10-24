@@ -31,6 +31,10 @@ struct AppContentAddcontInfo {
     uint32_t status;
 };
 
+struct AppContentEntitlementKey {
+    char data[16];
+};
+
 namespace {
 
 std::atomic_bool initialized{false};
@@ -293,9 +297,12 @@ int APS5_VABI sceAppContentGetDownloadedStoreCountry(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetEntitlementKey(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentGetEntitlementKey(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentEntitlementKey* key) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)service_label;
+    if (!entitlement_label || !key) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlement_label, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
 int APS5_VABI sceAppContentGetPftFlag(void) {

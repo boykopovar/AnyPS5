@@ -24,6 +24,7 @@ int APS5_VABI access_nid_postfix(const char*, int);
 int* APS5_VABI __error_nid_postfix();
 int APS5_VABI sceAppContentGetAddcontInfo(uint32_t, const NpUnifiedEntitlementLabel*, void*);
 int APS5_VABI sceAppContentGetAddcontInfoList(uint32_t, void*, uint32_t, uint32_t*);
+int APS5_VABI sceAppContentGetEntitlementKey(uint32_t, const NpUnifiedEntitlementLabel*, void*);
 int APS5_VABI sceAppContentDownloadDataGetAvailableSpaceKb(const AppContentMountPoint*, size_t*);
 int APS5_VABI sceAppContentDownloadDataFormat(const AppContentMountPoint*);
 int APS5_VABI sceAppContentAppParamGetInt(uint32_t, int32_t*);
@@ -46,6 +47,7 @@ int main() {
     Require(sceAppContentAddcontUnmount(nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfo(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == notInitialized);
+    Require(sceAppContentGetEntitlementKey(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentAppParamGetInt(0, nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataUnmount(nullptr) == notInitialized);
@@ -211,6 +213,15 @@ int main() {
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
     Require(sceAppContentGetAddcontInfo(0, nullptr, info) == ErrorParameter);
     Require(sceAppContentGetAddcontInfo(0, &label, nullptr) == ErrorParameter);
+    unsigned char key[16];
+    std::memset(key, 0x5a, sizeof(key));
+    unsigned char untouchedKey[16];
+    std::memcpy(untouchedKey, key, sizeof(key));
+    Require(sceAppContentGetEntitlementKey(0, &label, key) == ErrorDrmNoEntitlement);
+    Require(sceAppContentGetEntitlementKey(7, &label, key) == ErrorDrmNoEntitlement);
+    Require(std::memcmp(key, untouchedKey, sizeof(key)) == 0);
+    Require(sceAppContentGetEntitlementKey(0, nullptr, key) == ErrorParameter);
+    Require(sceAppContentGetEntitlementKey(0, &label, nullptr) == ErrorParameter);
 
     for (const std::uint32_t version : {0x014fffffu, 0x01500000u, 0x034fffffu, 0x03500000u}) {
         std::memcpy(process.data() + 16, &version, sizeof(version));
@@ -221,6 +232,8 @@ int main() {
             const int lateError = version >= 0x03500000 ? ErrorParameter : ErrorNotFound;
             Require(sceAppContentAddcontMount(0, &label, &mountPoint) == earlyError);
             Require(sceAppContentGetAddcontInfo(0, &label, info) == infoError);
+            Require(sceAppContentGetEntitlementKey(0, &label, key) == infoError);
+            Require(std::memcmp(key, untouchedKey, sizeof(key)) == 0);
             Require(sceAppContentAddcontEnqueueDownload(0, &label) == earlyError);
             Require(sceAppContentAddcontDelete(0, &label) == lateError);
             Require(sceAppContentGetAddcontDownloadProgress(0, &label, progress) == lateError);
