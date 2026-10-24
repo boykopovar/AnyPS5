@@ -77,7 +77,7 @@ constexpr int Stream = 1;
 constexpr int Datagram = 2;
 constexpr int TcpLevel = 6;
 constexpr int TcpNoDelay = 1;
-constexpr int TcpMaximumSegment = 2;
+constexpr int UnknownTcpOption = 0x7777;
 constexpr int OutOfBand = 0x1;
 constexpr int Truncated = 0x10;
 constexpr int Interrupted = 4;
@@ -134,7 +134,7 @@ static void StreamSockets() {
     Require(_setsockopt_nid_postfix(client, TcpLevel, TcpNoDelay, &enabled, sizeof(enabled)) == 0);
     valueSize = sizeof(value);
     Require(_getsockopt_nid_postfix(client, TcpLevel, TcpNoDelay, &value, &valueSize) == 0 && value == 4 && valueSize == sizeof(value));
-    Require(Fails(_setsockopt_nid_postfix(client, TcpLevel, TcpMaximumSegment, &enabled, sizeof(enabled)), NoProtocolOption));
+    Require(Fails(_setsockopt_nid_postfix(client, TcpLevel, UnknownTcpOption, &enabled, sizeof(enabled)), NoProtocolOption));
 
     const char text[] = "underscore stream";
     Require(_sendto_nid_postfix(client, text, sizeof(text), 0, nullptr, 0) == sizeof(text));

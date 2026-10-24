@@ -104,6 +104,8 @@ static void BadDescriptors() {
 #ifdef _WIN32
     const auto previous = _set_invalid_parameter_handler(RecordInvalidParameter);
 #endif
+    Require(dup2_nid_postfix(pipe[0], closed) == closed);
+    Require(close_nid_postfix(closed) == 0);
     RequireFailure(close_nid_postfix(closed), GuestEbadf);
     RequireFailure(close_nid_postfix(-1), GuestEbadf);
 #ifdef _WIN32

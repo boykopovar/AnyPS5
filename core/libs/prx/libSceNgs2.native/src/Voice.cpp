@@ -56,6 +56,7 @@ void Ngs2Voice::ResetSetup() {
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
     channels = 0;
+    inputChannels = 0;
     sampleRate = 0;
     waveformType = 0;
     atrac9 = {};
@@ -357,9 +358,11 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             if (param.id == SCE_NGS2_REVERB_VOICE_PARAM_SETUP) {
                 const auto& setup = ParamAs<Ngs2ReverbVoiceSetupParam>(param);
                 if (setup.flags != 0) throw std::runtime_error("NGS2: reverb setup flags are not implemented");
-                if (setup.num_input_channels != setup.num_output_channels) throw std::runtime_error("NGS2: reverb channel conversion is not implemented");
-                if (setup.num_output_channels != 1 && setup.num_output_channels != 2 && setup.num_output_channels != 6 && setup.num_output_channels != 8) APS5_INVALID_ARG_EX;
+                for (const auto count : {setup.num_input_channels, setup.num_output_channels}) {
+                    if ((count != 1 && count != 2 && count != 6 && count != 8) || count > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+                }
                 SetupMixer(voice, setup.num_output_channels);
+                voice.inputChannels = setup.num_input_channels;
                 Ngs2SetupReverb(voice);
                 return;
             }

@@ -91,12 +91,13 @@ int main() {
     Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0);
     const int server = accept_nid_postfix(listener, nullptr, nullptr);
     Require(server >= 0);
-    Require(Set(listener, SocketLevel, NoSigpipe, 1) && Set(listener, TcpLevel, TcpNoDelay, 1));
+    Require(Set(listener, SocketLevel, NoSigpipe, 1) && Set(listener, TcpLevel, TcpNoDelay, 1) && Set(listener, TcpLevel, 0x100, 60));
     const int secondClient = socket_nid_postfix(2, 1, 0);
     Require(secondClient >= 0 && connect_nid_postfix(secondClient, address.data(), address.size()) == 0);
     const int inheriting = accept_nid_postfix(listener, nullptr, nullptr);
     Require(inheriting >= 0);
     Require(Get(inheriting, SocketLevel, NoSigpipe) == NoSigpipe && Get(inheriting, TcpLevel, TcpNoDelay) == 4);
+    Require(Get(inheriting, TcpLevel, 0x100) == 60 && Get(server, TcpLevel, 0x100) == 7200);
     Require(Get(server, SocketLevel, NoSigpipe) == 0 && Get(server, TcpLevel, TcpNoDelay) == 0);
     Require(close_nid_postfix(inheriting) == 0 && close_nid_postfix(secondClient) == 0);
     const int datagram = socket_nid_postfix(2, 2, 0);
@@ -114,7 +115,21 @@ int main() {
     int value = 0;
     Require(Set(client, TcpLevel, TcpNoDelay, 0) && Get(client, TcpLevel, TcpNoDelay) == 0);
     Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpNoDelay, &one, sizeof(one) - 1), Invalid));
-    Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpMaximumSegment, &one, sizeof(one)), NoProtocolOption));
+    Require(Fails(setsockopt_nid_postfix(client, TcpLevel, TcpMaximumSegment, &one, sizeof(one)), Invalid));
+    const int fresh = socket_nid_postfix(2, 1, 0);
+    Require(fresh >= 0 && Get(fresh, TcpLevel, TcpMaximumSegment) == 536);
+    for (const int segment : {1000, 175, 0, -1}) {
+        Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, TcpMaximumSegment, &segment, sizeof(segment)), Invalid));
+    }
+    Require(Set(fresh, TcpLevel, TcpMaximumSegment, 300) && Get(fresh, TcpLevel, TcpMaximumSegment) == 300);
+    Require(Get(fresh, TcpLevel, 0x100) == 7200 && Get(fresh, TcpLevel, 0x200) == 75 && Get(fresh, TcpLevel, 0x400) == 8);
+    Require(Set(fresh, TcpLevel, 0x100, 60) && Get(fresh, TcpLevel, 0x100) == 60);
+    Require(Set(fresh, TcpLevel, 0x100, 0) && Get(fresh, TcpLevel, 0x100) == 7200);
+    Require(Set(fresh, TcpLevel, 0x200, 10) && Get(fresh, TcpLevel, 0x200) == 10);
+    Require(Set(fresh, TcpLevel, 0x400, 3) && Get(fresh, TcpLevel, 0x400) == 3);
+    Require(Set(fresh, TcpLevel, 0x400, -1) && Get(fresh, TcpLevel, 0x400) == -1);
+    Require(Fails(setsockopt_nid_postfix(fresh, TcpLevel, 0x7777, &one, sizeof(one)), NoProtocolOption));
+    Require(close_nid_postfix(fresh) == 0);
     length = sizeof(value);
     Require(Fails(setsockopt_nid_postfix(datagram, TcpLevel, TcpNoDelay, &one, sizeof(one)), Invalid));
     Require(Fails(getsockopt_nid_postfix(datagram, TcpLevel, TcpNoDelay, &value, &length), Invalid));

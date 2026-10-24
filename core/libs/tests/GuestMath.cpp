@@ -99,6 +99,9 @@ long double APS5_VABI ceill_nid_postfix(long double);
 long double APS5_VABI floorl_nid_postfix(long double);
 float APS5_VABI cbrtf_nid_postfix(float);
 float APS5_VABI tanf_nid_postfix(float);
+float APS5_VABI sinf_nid_postfix(float);
+float APS5_VABI cosf_nid_postfix(float);
+void APS5_VABI sincosf_nid_postfix(float, float*, float*);
 int APS5_VABI rand_nid_postfix();
 void APS5_VABI srand_nid_postfix(unsigned int);
 int APS5_VABI rand_r_nid_postfix(unsigned int*);
@@ -942,6 +945,42 @@ static void CheckAsin() {
     Require(!std::fetestexcept(FE_INVALID));
 }
 
+static void CheckTrigfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t sine;
+        std::uint32_t cosine;
+        std::uint32_t tangent;
+        int error;
+    } cases[] = {
+        {0x3e801d5au, 0x3e7d9057u, 0x3f780703u, 0x3e82db72u, 0}, {0x3fc00321u, 0x3f7f5c46u, 0x3d90acbbu, 0x4161edb0u, 0},
+        {0x40400556u, 0x3e102d3eu, 0xbf7d7328u, 0xbe11a09du, 0}, {0x40c00781u, 0xbe8e9c41u, 0x3f75de78u, 0xbe947c92u, 0},
+        {0x412009acu, 0xbf0bc6b7u, 0xbf56790du, 0x3f26d71eu, 0}, {0x47000bbbu, 0x3eb0df2fu, 0x3f703d5au, 0x3ebc799eu, 0},
+        {0x4e000de0u, 0xbf664722u, 0x3edfade4u, 0xc003c6abu, 0}, {0x5f001006u, 0xbe0ecf11u, 0x3f7d7f8cu, 0xbe1037deu, 0},
+        {0x7e001112u, 0x3eabd0cbu, 0x3f7127beu, 0x3eb6645du, 0}, {0xc0400556u, 0xbe102d3eu, 0xbf7d7328u, 0x3e11a09du, 0},
+        {0x00000000u, 0x00000000u, 0x3f800000u, 0x00000000u, 0}, {0x80000000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0},
+        {0x39000000u, 0x39000000u, 0x3f800000u, 0x39000000u, 0}, {0x3f490fdbu, 0x3f3504f3u, 0x3f3504f3u, 0x3f800000u, 0},
+        {0x40490fdbu, 0xb3bbbd2eu, 0xbf800000u, 0x33bbbd2fu, 0}, {0x4dc90fdbu, 0xbf3d5f98u, 0x3f2c42b6u, 0xbf8cb742u, 0},
+        {0x7f7fffffu, 0xbf0599b3u, 0x3f5a5f96u, 0xbf1c9ecau, 0}, {0xff7fffffu, 0x3f0599b3u, 0x3f5a5f96u, 0x3f1c9ecau, 0},
+        {0x7f800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM},
+        {0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0},
+    };
+    for (const auto& item : cases) {
+        const float x = std::bit_cast<float>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(sinf_nid_postfix(x)) == item.sine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(cosf_nid_postfix(x)) == item.cosine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(tanf_nid_postfix(x)) == item.tangent && errno == expected);
+        float sine = 0.0f;
+        float cosine = 0.0f;
+        sincosf_nid_postfix(x, &sine, &cosine);
+        Require(std::bit_cast<std::uint32_t>(sine) == item.sine && std::bit_cast<std::uint32_t>(cosine) == item.cosine);
+    }
+}
+
 static void CheckExtendedMath() {
     Require(ExtendedBits(atanl_nid_postfix(INFINITY), 0xc90fdaa22168c235ull, 0x3fff));
     Require(std::fabs(atanl_nid_postfix(1.0L) - 0.785398163397448309616L) < 1e-18L);
@@ -1004,6 +1043,21 @@ static void CheckHyperbolic() {
     Require(std::isfinite(cosh_nid_postfix(710.4)) && std::isfinite(sinh_nid_postfix(-710.4)) && sinh_nid_postfix(-710.4) < 0.);
     Require(Near(asinh_nid_postfix(-1e300), -691.4686750787736, 1e-15));
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
+}
+
+static void CheckAcoshfMsunBoundaries() {
+    Require(acoshf_nid_postfix(1.0f) == 0.0f && !std::signbit(acoshf_nid_postfix(1.0f)));
+    errno = EINTR;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isnan(acoshf_nid_postfix(0.5f)) && errno == EINTR && (std::fetestexcept(FE_INVALID) & FE_INVALID) != 0);
+    for (const std::uint32_t bits : {0x3f800001u, 0x3fffffffu, 0x40000000u, 0x40000001u,
+                                     0x4d7fffffu, 0x4d800000u, 0x4d800001u, 0x7f7fffffu}) {
+        const float x = std::bit_cast<float>(bits);
+        Require(Near(acoshf_nid_postfix(x), std::acosh(static_cast<double>(x)), 1e-6));
+    }
+    Require(std::isinf(acoshf_nid_postfix(INFINITY)) && acoshf_nid_postfix(INFINITY) > 0.0f);
+    Require(std::isnan(acoshf_nid_postfix(-INFINITY)));
+    Require(std::isnan(acoshf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
 }
 
 static void CheckCoshfMsunBoundaries() {
@@ -1514,6 +1568,7 @@ int main() {
     CheckIntegerConversions();
     CheckCbrtfConsoleBits();
     CheckExtendedMath();
+    CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
     const char input[] = "0x1.8p+2 remainder";
@@ -1791,6 +1846,7 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();
     CheckScaledHyperbolic();
     CheckSinhf();

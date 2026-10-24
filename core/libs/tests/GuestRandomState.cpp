@@ -13,6 +13,7 @@
 extern "C" {
 std::int64_t APS5_VABI random_nid_postfix();
 void APS5_VABI srandom_nid_postfix(std::uint64_t);
+void APS5_VABI srandomdev_nid_postfix();
 char* APS5_VABI initstate_nid_postfix(std::uint64_t, char*, std::int64_t);
 char* APS5_VABI setstate_nid_postfix(char*);
 int* APS5_VABI __error_nid_postfix();
@@ -123,16 +124,16 @@ static void CheckRand48() {
 
 int main() {
     CheckRand48();
-    constexpr Sequence seedOne {1408992891, 1638182910, 83848093, 145962118, 627851256};
-    constexpr Sequence seed12345 {1052984060, 1639322404, 1971525204, 2097956667, 2012147915};
+    constexpr Sequence seedOne {1804289383, 846930886, 1681692777, 1714636915, 1957747793};
+    constexpr Sequence seed12345 {383100999, 858300821, 357768173, 455528251, 133005921};
     constexpr std::array<Sequence, 5> seed42ByType {{
-        {2060028338, 1164936638, 481681973, 1763071474, 962919018},
-        {660273387, 1356916325, 287587791, 1132382070, 1497594867},
-        {1015209508, 12952757, 1418769128, 2005808989, 1212998434},
-        {745791173, 418148062, 949332769, 1480536337, 177711995},
-        {996638292, 1209745284, 1148231710, 400392963, 1149215164},
+        {413993338, 139015486, 2118548913, 1172713531, 191403351},
+        {769798547, 2024571666, 1204852799, 931293870, 1762463907},
+        {2051258974, 339992574, 1379825892, 1298392284, 825292997},
+        {71876166, 708592740, 1483128881, 907283241, 442951012},
+        {472624893, 994493761, 100792968, 176611971, 1804504504},
     }};
-    constexpr std::array<std::int64_t, 6> seed7Type1 {1271472800, 27686551, 1252069488, 1609001632, 28873941, 508017694};
+    constexpr std::array<std::int64_t, 6> seed7Type1 {1380991591, 1769076016, 21842418, 334161865, 1367472909, 1249858043};
 
     Require(Draw() == seedOne, "unseeded random must match srandom(1)");
     srandom_nid_postfix(1);
@@ -167,7 +168,7 @@ int main() {
     }
     Require(defaultTable != nullptr && Word(defaultTable, 0) == 5 * 5 + 3, "default table must hold its rear position");
     Require(setstate_nid_postfix(defaultTable) == active, "setstate must return the previous state");
-    Require(random_nid_postfix() == 1533042628 && random_nid_postfix() == 1225903521,
+    Require(random_nid_postfix() == 116285904 && random_nid_postfix() == 591987137,
         "setstate on the default table must continue the srandom(12345) sequence");
 
     alignas(4) std::array<char, 32> small{};
@@ -231,6 +232,26 @@ int main() {
     std::sort(serial.begin(), serial.end());
     std::sort(concurrent.begin(), concurrent.end());
     Require(serial == concurrent, "concurrent calls must draw the serial sequence");
+
+    for (const std::int64_t size : {8, 32, 64, 128, 256}) {
+        std::array<char, 256> entropyState{};
+        char* previous = initstate_nid_postfix(42, entropyState.data(), size);
+        srandomdev_nid_postfix();
+        const std::size_t separation = size == 32 || size == 128 ? 3 : 1;
+        std::int64_t expected;
+        if (size == 8) {
+            std::int64_t x = static_cast<std::int32_t>(Word(entropyState.data(), 1));
+            if (x == 0) x = 123459876;
+            x = 16807 * (x % 127773) - 2836 * (x / 127773);
+            if (x < 0) x += 0x7fffffff;
+            expected = x;
+        } else {
+            const std::uint32_t sum = Word(entropyState.data(), 1) + Word(entropyState.data(), 1 + separation);
+            expected = sum >> 1;
+        }
+        Require(random_nid_postfix() == expected, "srandomdev seeds the shared library's active state from host entropy");
+        setstate_nid_postfix(previous);
+    }
 
     return failures == 0 ? 0 : 1;
 }

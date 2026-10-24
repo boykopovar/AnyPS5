@@ -422,6 +422,7 @@ struct VulkanDevice::State {
     bool depthBounds = false;
     bool depthBiasClamp = false;
     bool dualSrcBlend = false;
+    bool logicOp = false;
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
@@ -1775,6 +1776,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.depthBiasClamp = available.depthBiasClamp;
     state->depthBiasClamp = enabled.depthBiasClamp == VK_TRUE;
     enabled.dualSrcBlend = available.dualSrcBlend;
+    enabled.logicOp = available.logicOp;
+    state->logicOp = enabled.logicOp == VK_TRUE;
     state->dualSrcBlend = enabled.dualSrcBlend == VK_TRUE;
     enabled.occlusionQueryPrecise = available.occlusionQueryPrecise;
     state->occlusionQueryPrecise = enabled.occlusionQueryPrecise == VK_TRUE;
@@ -2375,6 +2378,14 @@ std::uint64_t VulkanDevice::SubmitAndEpoch() {
 
 void VulkanDevice::WaitRecorded(std::uint64_t serial) {
     if (state->recorder) state->recorder->WaitSerial(serial);
+}
+
+std::uint64_t VulkanDevice::SubmittedEpoch() const {
+    return state->recorder ? state->recorder->NewestSubmitted() : 0;
+}
+
+bool VulkanDevice::WaitRecordedFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
+    return state->recorder && state->recorder->WaitSerialFor(serial, timeoutNanos);
 }
 
 void VulkanDevice::ReapRecorded(std::uint64_t serial) {
@@ -3963,6 +3974,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.drawIndirectFirstInstance = state->drawIndirectFirstInstance;
     context.multiDrawIndirect = state->multiDrawIndirect;
     context.dualSrcBlend = state->dualSrcBlend;
+    context.logicOp = state->logicOp;
     context.depthBounds = state->depthBounds;
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;
@@ -4034,10 +4046,6 @@ std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::Stat
     return Graphics::KnownValidationFailure(graphicsContext(), shaders, graphics);
 }
 
-void VulkanDevice::DepthCopyPass(const Graphics::DepthCopyPass& pass) {
-    Graphics::RunDepthCopyPass(graphicsContext(), pass);
-}
-
 void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
 }
@@ -4080,7 +4088,7 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
 }
 
-void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe) {
+void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace) {
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -4088,11 +4096,11 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     }
     // Two stdout lines per draw cost ~1.3 ms per frame of the queue-0 worker (part of it under the
     // GPU mutex); APS5_TRACE_DRAWS=1 restores them.
-    static const bool trace = std::getenv("APS5_TRACE_DRAWS") != nullptr;
-    if (trace) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
+    static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
+    if (traceDraws) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
-    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe);
-    if (trace) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
+    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace);
+    if (traceDraws) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
 }
 
 bool VulkanDevice::DrawInputsInPlace() const {
@@ -4641,7 +4649,7 @@ void VulkanDevice::NoteDrawRecipeMiss(DrawRecipePrecheck miss) {
     counters.precheckMisses[miss == DrawRecipePrecheck::NoRecipe ? MissNoRecipe : MissDevice].fetch_add(1, std::memory_order_relaxed);
 }
 
-RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe) {
+RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const DrawTraceContext* trace) {
     PerformanceTimer timing("Vulkan.DrawFromRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& counters = Recipes().kinds[static_cast<std::size_t>(RecipeKind::Draw)];
@@ -4652,7 +4660,7 @@ RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, cons
         return RecipeOutcome::Rebuild;
     }
     const auto context = graphicsContext();
-    const auto outcome = Graphics::DrawWithRecipe(context, graphics, draw, shaders, snapshots, *recipe);
+    const auto outcome = Graphics::DrawWithRecipe(context, graphics, draw, shaders, snapshots, *recipe, trace);
     if (!outcome.recorded) {
         switch (outcome.miss) {
             case Graphics::DrawRecipeMiss::NotRecordable: counters.precheckMisses[MissNotRecordable].fetch_add(1, std::memory_order_relaxed); break;

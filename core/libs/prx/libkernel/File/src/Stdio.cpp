@@ -734,16 +734,18 @@ int APS5_VABI close_nid_postfix(int d) {
         return -1;
     }
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d);
+    EqueueDescriptorClosed(d);
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    EqueueDescriptorClosed(d);
     File::ForgetRandomDevice(d);
     File::ForgetDescriptor(d);
     ForgetJitSharedMemory(d);
 #ifdef _WIN32
     File::ForgetDirectoryDescriptor(d);
     File::ForgetFileLock(d);
+    const int shared = File::CloseSharedMemoryDescriptor_nid_no_patch(d);
+    if (shared != -2) return shared;
     return WithoutParameterHandler([d] { return ::_close(d); });
 #else
     return ::close(d);
@@ -784,6 +786,7 @@ int APS5_VABI dup_nid_postfix(int d) {
 #ifdef _WIN32
     const int duplicate = WithoutParameterHandler([d] { return ::_dup(d); });
     if (duplicate >= 0) File::DuplicateDirectoryDescriptor(d, duplicate);
+    if (duplicate >= 0) File::DuplicateSharedMemoryDescriptor_nid_no_patch(d, duplicate);
 #else
     const int duplicate = ::dup(d);
 #endif
@@ -816,8 +819,10 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     if (from == to) return to;
     if (to == 1) PreserveHostStandardOutput();
     if (to == 2) PreserveHostStandardError();
+    auto positioned = File::LockPositionedTransfer(to);
     auto* const standard = HostStandardHandle_nid_no_patch(to);
-    const int duplicated = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
+    int duplicated = File::ReplaceSharedMemoryDescriptor_nid_no_patch(from, to);
+    if (duplicated == -2) duplicated = WithoutParameterHandler([from, to] { return ::_dup2(from, to); });
     KeepStandardHandle_nid_no_patch(to, standard);
     if (duplicated != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
     EqueueDescriptorClosed(to);
@@ -826,7 +831,10 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
     File::DuplicateDirectoryDescriptor(from, to);
     File::ForgetFileLock(to);
     File::ForgetRandomDevice(to);
+    File::ForgetSharedMemoryDescriptor_nid_no_patch(to);
+    File::DuplicateSharedMemoryDescriptor_nid_no_patch(from, to);
     if (sourceIsRandom) File::RememberRandomDevice(to);
+    positioned.unlock();
     File::ShareDescriptor(from, to);
     DuplicateJitSharedMemory(from, to);
     return to;
@@ -1545,6 +1553,10 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
+#ifdef _WIN32
+    const int sharedMemoryResult = File::SetSharedMemoryMode_nid_no_patch(d, mode);
+    if (sharedMemoryResult != -2) return sharedMemoryResult == 0 ? 0 : SceErrorFromErrno(errno);
+#endif
     if (NativeFchmod(d, mode & 07777) != 0) return SceErrorFromErrno(errno);
     return 0;
 }

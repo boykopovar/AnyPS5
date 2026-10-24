@@ -3955,10 +3955,11 @@ void drawSnapshotTableSetTests(const Device& device, Recorder& recorder) {
     }
     constexpr std::uint32_t width = 4;
     constexpr std::uint32_t height = 4;
-    alignas(256) static std::array<float, width * height> texels{};
+    alignas(256) static std::array<float, width * height * 16u> texels{};
     texels.fill(1.0f);
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels.data()));
     const std::array<std::uint32_t, 8> texture{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (22u << 20u) | (((width - 1u) & 3u) << 30u), ((width - 1u) >> 2u) | ((height - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    Require(DescribeSurface(DecodeTextureResource(texture)).guestBytes <= sizeof(texels), "the draw snapshot table set test T# reads past its texels");
     constexpr auto bindingCount = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
     const auto addTable = [&](ShaderRecompiler::RecompileResult& program, ShaderRecompiler::RuntimeAbi::Stage stage, std::uint32_t set, std::uint32_t elements) {
         ShaderRecompiler::DescriptorBinding map{};
@@ -4550,6 +4551,46 @@ void drawSnapshotEvictionTests(const Device& device) {
     std::memset(block, 0x5a, 16);
     CollectWrites(address, 16);
     Require(cache.ReusableDrawSnapshot(address, 16) == nullptr && cache.ReusableDrawSnapshot(address, 16) == nullptr, "a snapshot outlived a CPU store");
+}
+
+void containingSnapshotTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t bytes = 131072;
+    void* block = WriteWatched() ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "write watching unavailable: containing draw snapshots not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const VkDeviceSize alignment = std::max<VkDeviceSize>(device.GetContext().limits.minStorageBufferOffsetAlignment, 4);
+    Recorder cache(device.GetContext());
+    const auto whole = std::make_shared<Buffer>(device.GetContext(), bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto exact = std::make_shared<Buffer>(device.GetContext(), 4096, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    const auto generation = CollectWrites(address, bytes);
+    Require(generation != 0, "the watched block has no generation");
+    cache.KeepDrawSnapshot(address, bytes, generation, registry, whole);
+    const auto inner = address + 65536 + 16 * alignment;
+    VkDeviceSize offset = 1;
+    Require(cache.ReusableDrawSnapshot(inner, 4096) == nullptr, "a lookup without an offset took a containing snapshot");
+    Require(cache.ReusableDrawSnapshot(inner, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == whole && offset == inner - address, "an unchanged range inside a kept snapshot was not taken from it at its offset");
+    Require(cache.ReusableDrawSnapshot(inner, address + bytes - inner + 4, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a range past the end of a kept snapshot was taken from it");
+    Require(cache.ReusableDrawSnapshot(inner + alignment / 2, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a misaligned range was taken from a kept snapshot");
+    Require(cache.ReusableDrawSnapshot(inner, 4096, Recorder::SnapshotUse::Vertex, nullptr, 0, &offset) == nullptr, "a vertex lookup took a storage snapshot");
+    cache.KeepDrawSnapshot(inner, 4096, generation, registry, exact);
+    offset = 1;
+    Require(cache.ReusableDrawSnapshot(inner, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == exact && offset == 0, "an exact snapshot lost to a containing one");
+    std::memset(block, 0x5a, 16);
+    CollectWrites(address, 16);
+    Require(cache.ReusableDrawSnapshot(inner + 4096, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == whole && offset == inner + 4096 - address, "a store outside the range stopped it from being taken from a containing snapshot");
+    Require(cache.ReusableDrawSnapshot(address, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a range over a CPU store was taken from a containing snapshot");
+    std::memset(reinterpret_cast<void*>(inner + 4096), 0x5a, 16);
+    CollectWrites(inner + 4096, 16);
+    Require(cache.ReusableDrawSnapshot(inner + 4096, 4096, Recorder::SnapshotUse::Storage, nullptr, 0, &offset) == nullptr, "a containing snapshot outlived a CPU store into the range");
 }
 
 void unwrittenSnapshotTests(const Device& device) {
@@ -8711,6 +8752,106 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     std::cout << "Multisampled target guest access tests passed\n";
 }
 
+void oneFragmentFmaskGuardTests(const Device& device) {
+    const auto& base = device.GetContext();
+    if (!device.NullDescriptors()) {
+        std::cout << "nullDescriptor unavailable: one-fragment FMASK guard not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 64;
+    constexpr std::size_t bytes = 3u * 65536u;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the one-fragment FMASK block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    context.nullDescriptors = true;
+    TextureCache cache(context);
+    context.textureCache = &cache;
+    const auto refused = [](const std::function<void()>& access, const std::string& what) {
+        std::string message;
+        try {
+            access();
+        } catch (const std::exception& error) {
+            message = error.what();
+        }
+        Require(message.find("FMASK") != std::string::npos && message.find("one-fragment color target") != std::string::npos, what + " of a host-drawn one-fragment target's FMASK did not throw: " + message);
+    };
+    ColorTarget target{};
+    target.extent = {128, 128};
+    target.samples = 1;
+    target.coverageSamples = 4;
+    target.fmaskAddress = address;
+    GuardOneFragmentFmask(context, target);
+    GuardOneFragmentFmask(context, target);
+    std::array<std::byte, 64> words{};
+    refused([&] { AgcDriver::GuestMemory::Read(address + 256u, words); }, "a CPU read");
+    refused([&] { RequireNoMultisampleTarget(address + 65535u, 1u, "a DMA copy"); }, "a DMA copy of the last guarded byte");
+    RequireNoMultisampleTarget(address + 65536u, 64u, "a DMA copy");
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageSamplers = {0};
+    binding.guestDescriptor = {
+        static_cast<std::uint32_t>(address >> 8u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (((side - 1u) & 3u) << 30u),
+        ((side - 1u) >> 2u) | ((side - 1u) << 14u),
+        0xfacu | (9u << 28u),
+        0u,
+        0u,
+        0u,
+        0u,
+    };
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    for (const char* what : {"a texture read", "a repeated texture read"}) {
+        refused([&] {
+            std::lock_guard gpu(GpuMutex());
+            ShaderResources resources(context, compute);
+        }, what);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Unmap(block, bytes, [](const void*, std::size_t, const void*, bool) {});
+        mutation.Add(block, bytes, true, true, true);
+    }
+    AgcDriver::GuestMemory::Read(address + 256u, words);
+    RequireNoMultisampleTarget(address, 65536u, "a DMA copy");
+    std::cout << "One-fragment FMASK guard tests passed\n";
+}
+
 void fmaskDecompressMsaaTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || base.hostImportAlignment == 0) {
@@ -9867,7 +10008,7 @@ int pipelineCacheFileTests(const Device& device) {
     } removeDirectory{directory};
 #ifdef _WIN32
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
-    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", directory.wstring().c_str());
 #else
     setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
     setenv("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str(), 1);
@@ -11165,6 +11306,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-only") {
             multisampleGuestAccessTests(device, recorder);
+            oneFragmentFmaskGuardTests(device);
             fmaskDecompressMsaaTests(device, recorder);
             return 0;
         }
@@ -11183,6 +11325,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
+            containingSnapshotTests(device);
             unwrittenSnapshotTests(device);
             drawSnapshotUploadTests(device, recorder);
             std::cout << "Draw snapshot cap tests passed\n";
@@ -11225,6 +11368,7 @@ int main(int argc, char** argv) {
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
+        oneFragmentFmaskGuardTests(device);
         tiledResolveTests(device, recorder);
         fmaskDecompressMsaaTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
@@ -11235,6 +11379,7 @@ int main(int argc, char** argv) {
         imageTableFirstLayerRevalidateTests(device, recorder);
         drawSnapshotCapTests(device, recorder);
         drawSnapshotEvictionTests(device);
+        containingSnapshotTests(device);
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
         drawInputReuseTests(device, recorder);

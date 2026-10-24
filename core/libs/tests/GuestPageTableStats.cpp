@@ -9,6 +9,7 @@
 
 extern "C" {
 int APS5_VABI sceKernelGetPageTableStats(int*, int*, int*, int*);
+int APS5_VABI sceKernelGetTraceMemoryStats(std::uint64_t*, std::uint64_t*);
 int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
 int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
 int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
@@ -111,8 +112,21 @@ static void CheckGpuDirectMapping() {
     RequireTaken(before, 0, 0);
 }
 
+static void CheckTraceMemoryStats() {
+    std::uint64_t first[2] = {0xaaaaaaaaaaaaaaaaull, 0xaaaaaaaaaaaaaaaaull};
+    std::uint64_t second[2] = {0xaaaaaaaaaaaaaaaaull, 0xaaaaaaaaaaaaaaaaull};
+    Require(sceKernelGetTraceMemoryStats(first, second) == 0);
+    Require(first[0] == 0 && first[1] == 0xaaaaaaaaaaaaaaaaull && second[0] == 0 && second[1] == 0xaaaaaaaaaaaaaaaaull);
+    first[0] = 1;
+    Require(sceKernelGetTraceMemoryStats(first, nullptr) == 0 && first[0] == 0);
+    second[0] = 1;
+    Require(sceKernelGetTraceMemoryStats(nullptr, second) == 0 && second[0] == 0);
+    Require(sceKernelGetTraceMemoryStats(nullptr, nullptr) == 0);
+}
+
 int main() {
     CheckRejectedArguments();
+    CheckTraceMemoryStats();
     CheckCpuGranules();
     CheckGpuEntries();
     CheckGpuDirectMapping();

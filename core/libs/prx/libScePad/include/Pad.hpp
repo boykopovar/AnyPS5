@@ -12,7 +12,10 @@ constexpr int PAD_PORT_TYPE_STANDARD = 0;
 constexpr int PAD_PORT_TYPE_SPECIAL = 2;
 constexpr int PAD_PORT_TYPE_REMOTE = 16;
 constexpr int PAD_USER_ID_SYSTEM = 0xff;
+constexpr int PAD_MAX_CONTROLLERS = 4;
+constexpr int PAD_HANDLE_BASE = 1;
 constexpr int PAD_HANDLE = 1;
+constexpr int PAD_REMOTE_HANDLE = 0x10;
 constexpr int PAD_SPECIAL_HANDLE = 0x20;
 constexpr int PAD_SPECIAL_HANDLE_COUNT = 16;
 
@@ -24,6 +27,8 @@ constexpr int PAD_DEVICE_TYPE_NAVIGATOR = 1;
 constexpr int PAD_DEVICE_TYPE_DUAL_SHOCK_4 = 2;
 constexpr int PAD_DEVICE_TYPE_DUAL_SENSE = 3;
 constexpr int PAD_DEVICE_TYPE_DUAL_SENSE_EDGE = 4;
+
+constexpr int PAD_CONTROLLER_TYPE_DUAL_SENSE = 2;
 
 constexpr int PAD_CONNECT_TYPE_UNREGISTERED = 0;
 constexpr int PAD_CONNECT_TYPE_USB = 1;

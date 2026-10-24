@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionProgress.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -22,6 +23,7 @@ struct Submission {
     std::uint64_t serial;
     std::uint32_t queue;
     std::vector<std::uint32_t> commands;
+    std::shared_ptr<SubmissionProgress> progress;
 
     std::shared_ptr<const ShaderRegistry> shaders;
     std::map<std::size_t, std::shared_ptr<IFlipRequest>> flips;

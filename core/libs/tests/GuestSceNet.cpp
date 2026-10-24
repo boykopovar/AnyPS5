@@ -34,8 +34,11 @@ extern const std::uint8_t in6addr_any_nid_postfix[16];
 extern const std::uint8_t in6addr_loopback_nid_postfix[16];
 int APS5_VABI sceNetInit_nid_postfix(void);
 int APS5_VABI sceNetShowNetstatWithMemory(int);
+int APS5_VABI sceNetShowRouteWithMemory(int);
 int APS5_VABI sceNetShowNetstat(void);
+int APS5_VABI sceNetShowNetstatEx(std::uint32_t);
 int APS5_VABI sceNetShowIfconfig(void);
+int APS5_VABI sceNetShowPolicy(void);
 int APS5_VABI sceNetShowRoute(void);
 int APS5_VABI sceNetShowRoute6(void);
 int APS5_VABI sceNetSocket(const char*, int, int, int);
@@ -44,6 +47,7 @@ int APS5_VABI sceNetListen(int, int);
 int APS5_VABI sceNetGetsockname(int, void*, std::uint32_t*);
 int APS5_VABI sceNetGetpeername(int, void*, std::uint32_t*);
 int APS5_VABI sceNetGetSockInfo(int, void*, int, int);
+int APS5_VABI sceNetGetSockInfo6(int, void*, int, int);
 int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
 int APS5_VABI sceNetAccept(int, void*, std::uint32_t*);
 std::int64_t APS5_VABI sceNetSend(int, const void*, std::size_t, int);
@@ -87,6 +91,10 @@ int APS5_VABI sceNetCtlRegisterCallback(NetCtlCallback, void*, int*);
 int APS5_VABI sceNetCtlUnregisterCallback(int);
 int APS5_VABI sceNetCtlRegisterCallbackV6(NetCtlCallback, void*, int*);
 int APS5_VABI sceNetCtlUnregisterCallbackV6(int);
+int APS5_VABI sceNetCtlCheckCallback(void);
+int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback, void*, int*);
+int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int);
+int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void);
 std::uint64_t NetCtlReadByteCounter_nid_no_patch(const char*);
 int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
 int APS5_VABI open_nid_postfix(const char*, int, int);
@@ -166,6 +174,19 @@ public:
 };
 
 static void APS5_VABI IgnoreNetCtlEvent(int, void*) {}
+
+struct NetCtlEventRecord {
+    int calls = 0;
+    int event = 0;
+    void* arg = nullptr;
+};
+
+static void APS5_VABI RecordNetCtlEvent(int event, void* arg) {
+    auto* record = static_cast<NetCtlEventRecord*>(arg);
+    ++record->calls;
+    record->event = event;
+    record->arg = arg;
+}
 
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;
@@ -270,11 +291,15 @@ static void CheckNetstat() {
         }
         Require(unsupported);
     }
+    Require(sceNetShowPolicy() == 0);
+    Require(sceNetShowNetstatEx(0) == 0);
     Require(sceNetShowRoute() == 0);
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
+    Require(Failed(sceNetShowRouteWithMemory(-1), 9));
     const int pool = sceNetPoolCreate("netstat", 4096, 0);
     Require(pool > 0);
+    Require(sceNetShowRouteWithMemory(pool) == 0);
     const auto empty = CaptureNetstat(pool);
     Require(empty.find("bytes=4096 sockets=0") != std::string::npos);
     const int socket = sceNetSocket("netstat", 2, 1, 0);
@@ -295,6 +320,7 @@ static void CheckNetstat() {
     Require(CaptureNetstat(pool).find("sockets=0") != std::string::npos);
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetShowNetstatWithMemory(pool), 9));
+    Require(Failed(sceNetShowRouteWithMemory(pool), 9));
 }
 
 static void CheckPoolStats() {
@@ -1623,6 +1649,185 @@ static void CheckSockInfo() {
     Require(RequireSockInfoList(0) == earlier);
 }
 
+static std::array<std::uint8_t, 0xa0> RequireSockInfo6(int socket, int type, bool ipv6, bool nonblock, const std::array<std::uint8_t, 28>& local,
+    const std::array<std::uint8_t, 28>& remote, int requestFlags) {
+    std::array<std::uint8_t, 0x140> records;
+    records.fill(0xa5);
+    Require(sceNetGetSockInfo6(socket, records.data(), 2, requestFlags) == 1);
+    std::array<std::uint8_t, 0xa0> expected{};
+    std::memcpy(expected.data() + 0x24, &socket, sizeof(socket));
+    expected[0x28] = static_cast<std::uint8_t>(type);
+    if (ipv6) {
+        std::memcpy(expected.data() + 0x6c, local.data() + 8, 16);
+        std::memcpy(expected.data() + 0x7c, remote.data() + 8, 16);
+    } else {
+        std::memcpy(expected.data() + 0x34, local.data() + 4, 4);
+        std::memcpy(expected.data() + 0x38, remote.data() + 4, 4);
+    }
+    std::memcpy(expected.data() + 0x3c, local.data() + 2, 2);
+    std::memcpy(expected.data() + 0x3e, remote.data() + 2, 2);
+    const int flags = 1 | (nonblock ? 0x200000 : 0) | (ipv6 ? 0x400000 : 0);
+    std::memcpy(expected.data() + 0x48, &flags, sizeof(flags));
+    for (const auto [offset, option] : {std::array{0x64, 0x1002}, std::array{0x68, 0x1001}}) {
+        int size = 0;
+        std::uint32_t length = sizeof(size);
+        Require(sceNetGetsockopt(socket, 0xffff, option, &size, &length) == 0 && size > 0);
+        std::memcpy(expected.data() + offset, &size, sizeof(size));
+    }
+    Require(std::equal(expected.begin(), expected.end(), records.begin()));
+    Require(std::all_of(records.begin() + 0xa0, records.end(), [](auto byte) { return byte == 0xa5; }));
+    return expected;
+}
+
+static std::vector<int> RequireSockInfo6List(int flags) {
+    const int count = sceNetGetSockInfo6(-1, nullptr, 0, flags);
+    Require(count >= 0);
+    std::vector<std::uint8_t> records(static_cast<std::size_t>(count + 1) * 0xa0, 0xa5);
+    Require(sceNetGetSockInfo6(-1, records.data(), count + 1, flags) == count);
+    Require(std::all_of(records.end() - 0xa0, records.end(), [](auto byte) { return byte == 0xa5; }));
+    std::vector<std::uint8_t> unbounded(records.size(), 0xa5);
+    Require(sceNetGetSockInfo6(-1, unbounded.data(), INT32_MAX, flags) == count && unbounded == records);
+    std::vector<int> sockets;
+    for (int index = 0; index < count; ++index) {
+        const auto listed = records.begin() + index * 0xa0;
+        int socket = 0;
+        int status = 0;
+        std::memcpy(&socket, &listed[0x24], sizeof(socket));
+        std::memcpy(&status, &listed[0x48], sizeof(status));
+        Require(sockets.empty() || socket > sockets.back());
+        Require((flags & 0x1000) != 0 || (status & 0x400000) != 0);
+        std::array<std::uint8_t, 0xa0> single;
+        Require(sceNetGetSockInfo6(socket, single.data(), 1, flags) == 1 && std::equal(single.begin(), single.end(), listed));
+        sockets.push_back(socket);
+    }
+    for (const int limit : {1, 2}) {
+        const int written = std::min(count, limit);
+        std::vector<std::uint8_t> limited(records.size(), 0xa5);
+        Require(sceNetGetSockInfo6(-1, limited.data(), limit, flags) == written);
+        Require(std::equal(limited.begin(), limited.begin() + written * 0xa0, records.begin()));
+        Require(std::all_of(limited.begin() + written * 0xa0, limited.end(), [](auto byte) { return byte == 0xa5; }));
+    }
+    return sockets;
+}
+
+static std::vector<int> WithSockets(std::vector<int> sockets, std::initializer_list<int> added) {
+    sockets.insert(sockets.end(), added);
+    std::sort(sockets.begin(), sockets.end());
+    return sockets;
+}
+
+static void CheckSockInfo6() {
+    const auto earlier = RequireSockInfo6List(0);
+    const auto earlierAll = RequireSockInfo6List(0x1000);
+    Require(RequireSockInfo6List(0x40) == earlier && RequireSockInfo6List(0x1040) == earlierAll);
+    Require(std::includes(earlierAll.begin(), earlierAll.end(), earlier.begin(), earlier.end()));
+
+    const std::array<std::uint8_t, 28> unnamed{};
+    const int datagram = sceNetSocket("sockinfo6-inet", 2, 2, 17);
+    Require(datagram >= 0);
+    std::array<std::uint8_t, 28> inetAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(datagram, inetAddress.data(), 16) == 0);
+    std::uint32_t size = 16;
+    Require(sceNetGetsockname(datagram, inetAddress.data(), &size) == 0 && size == 16);
+    const int nonblocking = 1;
+    Require(sceNetSetsockopt(datagram, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
+    RequireSockInfo6(datagram, 2, false, true, inetAddress, unnamed, 0x1000);
+    RequireSockInfo6(datagram, 2, false, true, inetAddress, unnamed, 0x1040);
+
+    std::array<std::uint8_t, 0xa0> record;
+    record.fill(0xa5);
+    const auto untouched = [&record] { return std::all_of(record.begin(), record.end(), [](auto byte) { return byte == 0xa5; }); };
+    Require(Failed(sceNetGetSockInfo6(datagram, nullptr, 1, 0x1000), 22));
+    Require(Failed(sceNetGetSockInfo6(datagram, record.data(), 0, 0x1000), 22));
+    Require(Failed(sceNetGetSockInfo6(datagram, record.data(), -1, 0x1000), 22));
+    Require(Failed(sceNetGetSockInfo6(-1, record.data(), 0, 0), 22));
+    Require(Failed(sceNetGetSockInfo6(-1, record.data(), -5, 0x1000), 22));
+    for (const int flags : {1, 0x41, 0x80, 0x1001, 0x2000, 0x400000, 0x1048}) {
+        Require(Failed(sceNetGetSockInfo6(datagram, record.data(), 1, flags), 22));
+        Require(Failed(sceNetGetSockInfo6(-1, nullptr, 0, flags), 22));
+        Require(Failed(sceNetGetSockInfo6(-1, record.data(), 1, flags), 22));
+    }
+    Require(Failed(sceNetGetSockInfo6(datagram, record.data(), 1, 0), 47));
+    Require(Failed(sceNetGetSockInfo6(datagram, record.data(), 1, 0x40), 47));
+    Require(untouched());
+    const int closed = sceNetSocket("sockinfo6-closed", 2, 2, 17);
+    Require(closed >= 0 && sceNetSocketClose(closed) == 0);
+    for (const int flags : {0, 0x40, 0x1000, 0x1040}) {
+        Require(Failed(sceNetGetSockInfo6(closed, record.data(), 1, flags), 9));
+        Require(Failed(sceNetGetSockInfo6(INT32_MAX, record.data(), 1, flags), 9));
+    }
+    Require(untouched());
+    Require(RequireSockInfo6List(0) == earlier);
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram}));
+
+    if (ipv6Unavailable) {
+        Require(sceNetSocketClose(datagram) == 0);
+        Require(Failed(sceNetGetSockInfo6(datagram, record.data(), 1, 0x1000), 9));
+        Require(RequireSockInfo6List(0x1000) == earlierAll);
+        return;
+    }
+
+    const int udp = sceNetSocket("sockinfo6-datagram", 28, 2, 17);
+    Require(udp >= 0);
+    RequireSockInfo6(udp, 2, true, false, unnamed, unnamed, 0);
+    std::array<std::uint8_t, 28> udpAddress{28, 28};
+    udpAddress[23] = 1;
+    Require(sceNetBind_nid_postfix(udp, udpAddress.data(), udpAddress.size()) == 0);
+    size = udpAddress.size();
+    Require(sceNetGetsockname(udp, udpAddress.data(), &size) == 0 && size == udpAddress.size());
+    Require(udpAddress[2] != 0 || udpAddress[3] != 0);
+    RequireSockInfo6(udp, 2, true, false, udpAddress, unnamed, 0);
+    RequireSockInfo6(udp, 2, true, false, udpAddress, unnamed, 0x40);
+    RequireSockInfo6(udp, 2, true, false, udpAddress, unnamed, 0x1000);
+    RequireSockInfo6(udp, 2, true, false, udpAddress, unnamed, 0x1040);
+
+    const int listener = sceNetSocket("sockinfo6-listener", 28, 1, 6);
+    std::array<std::uint8_t, 28> listening{28, 28};
+    listening[23] = 1;
+    Require(listener >= 0 && sceNetBind_nid_postfix(listener, listening.data(), listening.size()) == 0 && sceNetListen(listener, 1) == 0);
+    size = listening.size();
+    Require(sceNetGetsockname(listener, listening.data(), &size) == 0 && size == listening.size());
+    RequireSockInfo6(listener, 1, true, false, listening, unnamed, 0);
+    const int client = sceNetSocket("sockinfo6-client", 28, 1, 6);
+    Require(client >= 0 && sceNetConnect(client, listening.data(), listening.size()) == 0);
+    const int accepted = sceNetAccept(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    std::array<std::uint8_t, 28> clientAddress{};
+    size = clientAddress.size();
+    Require(sceNetGetsockname(client, clientAddress.data(), &size) == 0 && size == clientAddress.size());
+    Require(clientAddress[2] != 0 || clientAddress[3] != 0);
+    RequireSockInfo6(client, 1, true, false, clientAddress, listening, 0);
+    RequireSockInfo6(accepted, 1, true, false, listening, clientAddress, 0);
+
+    const int peer = sceNetSocket("sockinfo6-peer", 28, 2, 17);
+    std::array<std::uint8_t, 28> peerAddress{28, 28};
+    peerAddress[23] = 1;
+    Require(peer >= 0 && sceNetBind_nid_postfix(peer, peerAddress.data(), peerAddress.size()) == 0);
+    size = peerAddress.size();
+    Require(sceNetGetsockname(peer, peerAddress.data(), &size) == 0 && size == peerAddress.size());
+    Require(sceNetConnect(peer, udpAddress.data(), udpAddress.size()) == 0);
+    RequireSockInfo6(peer, 2, true, false, peerAddress, udpAddress, 0);
+    const std::array<int, 2> buffers{65536, 32768};
+    Require(sceNetSetsockopt(peer, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
+    Require(sceNetSetsockopt(peer, 0xffff, 0x1002, &buffers[0], sizeof(buffers[0])) == 0);
+    Require(sceNetSetsockopt(peer, 0xffff, 0x1001, &buffers[1], sizeof(buffers[1])) == 0);
+    const auto configured = RequireSockInfo6(peer, 2, true, true, peerAddress, udpAddress, 0);
+    Require(std::memcmp(configured.data() + 0x64, buffers.data(), sizeof(buffers)) == 0);
+    Require(std::all_of(configured.begin() + 0x34, configured.begin() + 0x3c, [](auto byte) { return byte == 0; }));
+    Require(sceNetGetSockInfo6(peer, record.data(), 1, 0x1040) == 1 && std::equal(configured.begin(), configured.end(), record.begin()));
+
+    Require(RequireSockInfo6List(0) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
+    Require(RequireSockInfo6List(0x40) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, udp, listener, client, accepted, peer}));
+    Require(Failed(sceNetGetSockInfo6(datagram, record.data(), 1, 0), 47));
+
+    for (const int descriptor : {peer, accepted, client, listener, udp}) Require(sceNetSocketClose(descriptor) == 0);
+    Require(Failed(sceNetGetSockInfo6(udp, record.data(), 1, 0), 9));
+    Require(RequireSockInfo6List(0) == earlier);
+    Require(sceNetSocketClose(datagram) == 0);
+    Require(RequireSockInfo6List(0x1000) == earlierAll);
+}
+
 static void CheckDatagramDisconnect() {
     const int peer = sceNetSocket("disconnect-peer", 2, 2, 17);
     const int other = sceNetSocket("disconnect-other", 2, 2, 17);
@@ -1722,6 +1927,7 @@ int main() {
     CheckDatagramDisconnect();
     CheckCloseKernelSocket();
     CheckSockInfo();
+    CheckSockInfo6();
 
     const int closed = sceNetSocket("closed-by-kernel", 2, 2, 17);
     Require(closed >= 0);
@@ -2210,6 +2416,46 @@ int main() {
             Require(sceNetCtlUnregisterCallback(i) == 0);
         }
         Require(sceNetCtlUnregisterCallbackV6(0) == 0);
+    }
+    {
+        int cid = -1;
+        Require(sceNetCtlRegisterCallbackForNpToolkit(nullptr, nullptr, &cid) == static_cast<int>(0x80412107));
+        Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, nullptr) == static_cast<int>(0x80412107));
+        int cids[8] = {};
+        for (int i = 0; i < 8; ++i) {
+            Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, &cids[i]) == 0);
+            Require(cids[i] == i);
+        }
+        Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, &cid) == static_cast<int>(0x80412103));
+        Require(sceNetCtlRegisterCallback(IgnoreNetCtlEvent, nullptr, &cid) == 0 && cid == 0);
+        Require(sceNetCtlUnregisterCallback(0) == 0);
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(-1) == static_cast<int>(0x80412105));
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(8) == static_cast<int>(0x80412105));
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(3) == 0);
+        Require(sceNetCtlRegisterCallbackForNpToolkit(IgnoreNetCtlEvent, nullptr, &cid) == 0);
+        Require(cid == 3);
+        for (int i = 0; i < 8; ++i) {
+            Require(sceNetCtlUnregisterCallbackForNpToolkit(i) == 0);
+        }
+
+        NetCtlEventRecord toolkit;
+        NetCtlEventRecord plain;
+        Require(sceNetCtlRegisterCallbackForNpToolkit(RecordNetCtlEvent, &toolkit, &cid) == 0 && cid == 0);
+        Require(sceNetCtlCheckCallback() == 0 && toolkit.calls == 0);
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0);
+        Require(toolkit.calls == 1 && toolkit.arg == &toolkit && (toolkit.event == 1 || toolkit.event == 3));
+        int current = -1;
+        Require(sceNetCtlGetState(&current) == 0 && toolkit.event == (current == 3 ? 3 : 1));
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && toolkit.calls == 1);
+        int plainCid = -1;
+        Require(sceNetCtlRegisterCallback(RecordNetCtlEvent, &plain, &plainCid) == 0);
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && plain.calls == 0);
+        Require(sceNetCtlCheckCallback() == 0 && plain.calls == 1 && toolkit.calls == 1);
+        Require(sceNetCtlUnregisterCallback(plainCid) == 0);
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(cid) == 0);
+        Require(sceNetCtlRegisterCallbackForNpToolkit(RecordNetCtlEvent, &toolkit, &cid) == 0);
+        Require(sceNetCtlCheckCallbackForNpToolkit() == 0 && toolkit.calls == 2);
+        Require(sceNetCtlUnregisterCallbackForNpToolkit(cid) == 0);
     }
     if (ipv6Unavailable) {
         std::puts("skipped the IPv6 socket checks, the host has no usable IPv6 loopback");

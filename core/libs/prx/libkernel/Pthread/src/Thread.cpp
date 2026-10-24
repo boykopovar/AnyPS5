@@ -110,14 +110,103 @@ struct RetiredStack {
     int hostTid;
 };
 
+struct FinishedStack {
+    void* address;
+    std::size_t bytes;
+};
+
 static std::mutex retiredStacksLock;
 static std::vector<RetiredStack> retiredStacks;
+static std::vector<FinishedStack> spareStacks;
+static std::size_t spareStackBytes = 0;
+
+static std::size_t SpareStackLimit() {
+    static const auto limit = [] {
+        const auto pages = sysconf(_SC_PHYS_PAGES);
+        const auto pageSize = sysconf(_SC_PAGESIZE);
+        if (pages <= 0 || pageSize <= 0) return std::size_t{4u << 20};
+        const auto total = static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
+        return std::clamp<std::size_t>(static_cast<std::size_t>(total / 1024), 4u << 20, 64u << 20);
+    }();
+    return limit;
+}
+
+static void ReleaseFinishedStack(const FinishedStack& stack) {
+    UnregisterGuestStackMapping(stack.address);
+    DoMunmap(stack.address, stack.bytes);
+}
+
+static bool DiscardFinishedStackPages(const FinishedStack& stack) {
+    auto* usable = static_cast<std::byte*>(stack.address) + GUEST_STACK_GUARD;
+    const auto bytes = stack.bytes - GUEST_STACK_GUARD;
+    return madvise(usable, bytes, MADV_DONTNEED) == 0;
+}
+
+static void CollectFinishedStack(void* address, std::size_t bytes) {
+    UnregisterGuestStackMapping(address);
+    const FinishedStack finished{address, bytes};
+    if (!DiscardFinishedStackPages(finished)) {
+        ReleaseFinishedStack(finished);
+        return;
+    }
+    std::vector<FinishedStack> release;
+    {
+        std::lock_guard lock(retiredStacksLock);
+        spareStacks.push_back({address, bytes});
+        spareStackBytes += bytes;
+        const auto limit = SpareStackLimit();
+        while (spareStackBytes > limit && !spareStacks.empty()) {
+            spareStackBytes -= spareStacks.front().bytes;
+            release.push_back(spareStacks.front());
+            spareStacks.erase(spareStacks.begin());
+        }
+    }
+    if (!release.empty()) {
+        static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+        if (!logged.test_and_set(std::memory_order_relaxed))
+            std::fprintf(stderr, "scePthread: spare stack cache reached its host-memory limit; releasing cached mappings\n");
+        for (const auto& stack : release) ReleaseFinishedStack(stack);
+    }
+}
+
+static bool TakeSpareStack(std::size_t bytes, FinishedStack* stack) {
+    std::lock_guard lock(retiredStacksLock);
+    const auto found = std::find_if(spareStacks.begin(), spareStacks.end(), [bytes](const FinishedStack& candidate) { return candidate.bytes == bytes; });
+    if (found == spareStacks.end()) return false;
+    *stack = *found;
+    spareStackBytes -= found->bytes;
+    spareStacks.erase(found);
+    return true;
+}
+
+static void ReleaseSpareStacks() {
+    std::vector<FinishedStack> release;
+    {
+        std::lock_guard lock(retiredStacksLock);
+        release.swap(spareStacks);
+        spareStackBytes = 0;
+    }
+    for (const auto& stack : release) ReleaseFinishedStack(stack);
+}
 
 static void AllocateGuestStack(PthreadPrivate* thread, std::size_t usableBytes) {
     const std::size_t bytes = (usableBytes + PS5_PAGE_SIZE - 1) / PS5_PAGE_SIZE * PS5_PAGE_SIZE + GUEST_STACK_GUARD;
+    FinishedStack spare{};
+    if (TakeSpareStack(bytes, &spare)) {
+        if (DoMprotect(spare.address, spare.bytes, 3) == 0 && DoMprotect(spare.address, GUEST_STACK_GUARD, 0) == 0) {
+            thread->guestStack = spare.address;
+            thread->guestStackBytes = spare.bytes;
+            return;
+        }
+        UnregisterGuestStackMapping(spare.address);
+        DoMunmap(spare.address, spare.bytes);
+    }
     void* stack = nullptr;
-    if (DoMapAnon(&stack, bytes, 3, 0) != 0)
-        throw std::runtime_error("scePthreadCreate: cannot map the guest thread stack");
+    if (DoMapAnon(&stack, bytes, 3, 0) != 0) {
+        ReleaseSpareStacks();
+        if (DoMapAnon(&stack, bytes, 3, 0) != 0)
+            throw std::runtime_error("scePthreadCreate: cannot map the guest thread stack");
+    }
     if (DoMprotect(stack, GUEST_STACK_GUARD, 0) != 0) {
         DoMunmap(stack, bytes);
         throw std::runtime_error("scePthreadCreate: cannot protect the guest thread stack guard");
@@ -128,9 +217,7 @@ static void AllocateGuestStack(PthreadPrivate* thread, std::size_t usableBytes) 
 
 static void FreeGuestStack(PthreadPrivate* thread) {
     if (thread->guestStack == nullptr) return;
-    void* const mapping = thread->guestStack;
-    UnregisterGuestStackMapping(mapping);
-    DoMunmap(thread->guestStack, thread->guestStackBytes);
+    CollectFinishedStack(thread->guestStack, thread->guestStackBytes);
     thread->guestStack = nullptr;
     thread->guestStackBytes = 0;
 }
@@ -155,10 +242,7 @@ static void ReapRetiredStacks() {
             }
         }
     }
-    for (const auto& stack : ready) {
-        UnregisterGuestStackMapping(stack.address);
-        DoMunmap(stack.address, stack.bytes);
-    }
+    for (const auto& stack : ready) CollectFinishedStack(stack.address, stack.bytes);
 }
 
 static void RetireGuestStack(PthreadPrivate* thread) {
@@ -460,6 +544,18 @@ bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& ma
     for (const auto& [id, thread] : registry.threads) {
         if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
         mask = thread->affinity.load(std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+bool GetLiveGuestThreadSched_nid_no_patch(std::int64_t tid, int& policy, int& priority) {
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread->tid != tid || thread->_finished.load(std::memory_order_acquire)) continue;
+        policy = thread->schedPolicy.load(std::memory_order_relaxed);
+        priority = thread->priority.load(std::memory_order_relaxed);
         return true;
     }
     return false;

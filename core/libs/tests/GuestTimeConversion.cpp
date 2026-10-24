@@ -302,13 +302,70 @@ static void CheckLocalRange() {
     Require(localtime_s_nid_postfix(&overflow, &scratch) == nullptr, "Unrepresentable negative local time was accepted");
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
+extern "C" long* __cdecl __dstbias(void);
+
+struct DaylightBiasFixture {
+    long saved = *__dstbias();
+    ~DaylightBiasFixture() { *__dstbias() = saved; }
+    void Apply() const { *__dstbias() = -3600; }
+};
+
+struct ZoneOffset {
+    const char* zone;
+    std::int64_t timer;
+    long offset;
+    int isdst;
+};
+
+static void CheckPosixFormZoneOffsets() {
+    DaylightBiasFixture bias;
+    constexpr std::array<ZoneOffset, 4> expectations{{
+        {"PST8PDT", 979560000, -28800, 0},
+        {"PST8PDT", 995198400, -25200, 1},
+        {"EST5EDT", 979560000, -18000, 0},
+        {"EST5EDT", 995198400, -14400, 1},
+    }};
+    for (const ZoneOffset& expected : expectations) {
+        Require(setenv_nid_postfix("TZ", expected.zone, 1) == 0, "Could not set the POSIX-form time zone");
+        tzset_nid_postfix();
+        bias.Apply();
+        GuestTm local{};
+        Require(localtime_s_nid_postfix(&expected.timer, &local) == &local, "Local conversion in a POSIX-form zone failed");
+        if (local.tm_gmtoff != expected.offset || local.tm_isdst != expected.isdst) {
+            long hostTimezone = -1;
+            long hostDstBias = -1;
+            _get_timezone(&hostTimezone);
+            _get_dstbias(&hostDstBias);
+            std::tm hostLocal{};
+            const __time64_t hostTimer = expected.timer;
+            _localtime64_s(&hostLocal, &hostTimer);
+            std::fprintf(stderr, "%s at %lld: offset %ld daylight %d, expected %ld daylight %d (host timezone %ld dstbias %ld daylight %d)\n", expected.zone, static_cast<long long>(expected.timer), static_cast<long>(local.tm_gmtoff), local.tm_isdst, expected.offset, expected.isdst, hostTimezone, hostDstBias, hostLocal.tm_isdst);
+            std::abort();
+        }
+    }
+    Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+}
+#endif
+
 static void CheckRegionZones() {
+#ifdef _WIN32
+    constexpr std::array<const char*, 2> zones{"PST8PDT", "EST5EDT"};
+    constexpr std::array<std::int64_t, 11> timers{-62135553600, -12609691200, -5016340800, -5000011200, -2732356800, -2209032000, -2208988800, -2208945600, -631108800, 979560000, 995198400};
+#else
     constexpr std::array<const char*, 4> zones{"America/Los_Angeles", "Europe/Berlin", "Asia/Kolkata", "America/Argentina/Buenos_Aires"};
     constexpr std::array<std::int64_t, 9> timers{-62135553600, -12609691200, -5016340800, -5000011200, -2732356800, -2209032000, -2208988800, -2208945600, -631108800};
+#endif
+#ifdef _WIN32
+    DaylightBiasFixture bias;
+#endif
     for (const char* zone : zones) {
         Require(setenv_nid_postfix("TZ", zone, 1) == 0, "Could not set the region time zone");
         tzset_nid_postfix();
+#ifdef _WIN32
+        bias.Apply();
+#endif
         for (const std::int64_t timer : timers) {
             GuestTm local{};
             Require(localtime_s_nid_postfix(&timer, &local) == &local, "Local conversion in a region zone failed");
@@ -327,7 +384,6 @@ static void CheckRegionZones() {
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not restore the guest time zone");
     tzset_nid_postfix();
 }
-#endif
 
 static void CheckGuestZone() {
     const std::int64_t moment = 172800;
@@ -512,8 +568,9 @@ int main() {
 
     CheckFreeBsdConversions();
     CheckLocalRange();
-#ifndef _WIN32
     CheckRegionZones();
+#ifdef _WIN32
+    CheckPosixFormZoneOffsets();
 #endif
     CheckLiteralConversions();
 

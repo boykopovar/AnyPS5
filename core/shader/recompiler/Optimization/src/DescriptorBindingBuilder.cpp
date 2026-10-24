@@ -138,6 +138,7 @@ void GuestBuffersDescriptor(std::vector<std::uint32_t>& result, const std::vecto
 
 void GuestSamplersDescriptor(std::vector<std::uint32_t>& result, const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
     result.clear();
+    result.reserve(resources.size() * 4u);
     std::uint32_t dwordCount = 0;
     for (std::size_t i = 0; i < resources.size(); i++) {
         const std::uint32_t r = resources[i];
@@ -565,6 +566,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     auto shaderData = needsShaderData ? ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState) : std::vector<std::uint32_t>{};
     allocation.shaderDataUserWords.clear();
     if (needsShaderData) {
+        allocation.shaderDataUserWords.reserve(layout.userDataRegisters.size());
         for (const auto reg : layout.userDataRegisters) allocation.shaderDataUserWords.push_back(reg - userDataBase);
     }
     auto bindings = std::move(allocation.bindings);

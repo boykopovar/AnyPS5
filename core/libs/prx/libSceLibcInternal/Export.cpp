@@ -67,7 +67,7 @@ void APS5_VABI RunThreadDestructors_nid_no_patch() {
 bool FindDsoModule(const void* dsoSymbol, KernelModule& handle) {
     ModuleInfoEx info{};
     info.st_size = sizeof(ModuleInfoEx);
-    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(dsoSymbol), 2, &info) != 0) {
+    if (sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(dsoSymbol), 1, &info) != 0) {
         handle = 0;
         return false;
     }
