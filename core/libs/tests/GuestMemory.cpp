@@ -19,7 +19,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <limits>
+#include <memory>
 #include <source_location>
 #include <stdexcept>
 #include <thread>
@@ -3006,6 +3008,61 @@ static void CheckRegularFileMapping() {
 }
 #endif
 
+static void CheckMappedLeasesPreserveReadableRuns() {
+    constexpr std::uintptr_t base = 0x7e0000000000ull;
+    constexpr std::size_t page = 0x4000;
+    const auto pointer = [&](std::size_t index) { return reinterpret_cast<void*>(base + index * page); };
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < 8; ++index) mutation.Add(pointer(index), page, index != 3, index != 3 && index != 4, index != 5);
+    }
+    const auto weak = [&](std::size_t index) { return std::weak_ptr<const GuestAllocations::Range>(GuestAllocations::GuestAllocationsLookup_nid_postfix(base + index * page, false)); };
+    const auto verify = [&](const GuestAllocations::Mapped& mapped, std::initializer_list<std::size_t> expected) {
+        const auto lease = GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(mapped);
+        Require(lease.size() == expected.size());
+        std::size_t position = 0;
+        for (const auto index : expected) Require(lease[position++]->address == base + index * page);
+    };
+    verify({}, {});
+    verify({weak(1)}, {0, 1, 2});
+    verify({weak(2), weak(0), weak(1), weak(1)}, {0, 1, 2});
+    verify({weak(3)}, {});
+    verify({weak(4)}, {4});
+    verify({weak(5)}, {5});
+    verify({weak(7), weak(1)}, {0, 1, 2, 6, 7});
+    auto stale = std::make_shared<const GuestAllocations::Range>(*GuestAllocations::GuestAllocationsLookup_nid_postfix(base + page, false));
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(pointer(1));
+        mutation.Add(pointer(1), page, true, true, true);
+    }
+    verify({stale}, {});
+    stale.reset();
+    verify({weak(1)}, {0, 1, 2});
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch({weak(1)});
+        auto neighbor = weak(0);
+        Require(neighbor.use_count() >= 2);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(pointer(10), page, true, true, true);
+        }
+        Require(lease.size() == 3 && neighbor.use_count() >= 2);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(pointer(1));
+    }
+    verify({weak(0)}, {0});
+    verify({weak(2)}, {2});
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < 8; ++index) if (index != 1) mutation.Remove(pointer(index));
+        mutation.Remove(pointer(10));
+    }
+    verify({weak(0)}, {});
+}
+
 static void CheckVirtualQuerySplitFlexibleRanges() {
     constexpr std::size_t page = 0x4000;
     void* mapped = nullptr;
@@ -3313,6 +3370,7 @@ int main(int argc, char** argv) {
     }
     Require(argc == 1);
     CheckAvailableDirectMemoryIsLargestFreeBlock();
+    CheckMappedLeasesPreserveReadableRuns();
     CheckVirtualQuerySplitFlexibleRanges();
     CheckVirtualQueryForNonReadableGuestRange();
     CheckReleaseFlexibleMemory();

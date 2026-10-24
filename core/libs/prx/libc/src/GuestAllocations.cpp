@@ -642,6 +642,42 @@ Lease GuestAllocationsAcquire_nid_postfix() {
     return Lease(std::move(ranges));
 }
 
+Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped) {
+    std::lock_guard lock(registry().mutex);
+    auto& registered = registry().ranges;
+    std::vector<decltype(registered.begin())> targets;
+    targets.reserve(mapped.size());
+    for (const auto& weak : mapped) {
+        const auto range = weak.lock();
+        if (range == nullptr || !range->readable || range->bytes == 0) continue;
+        const auto found = registered.find(range->address);
+        if (found != registered.end() && found->second == range) targets.push_back(found);
+    }
+    std::sort(targets.begin(), targets.end(), [](const auto& a, const auto& b) { return a->first < b->first; });
+    auto ranges = std::make_shared<Lease::Ranges>();
+    const auto continues = [](const Range& before, const Range& after) {
+        return before.address + before.bytes == after.address && before.readable && after.readable && before.writable == after.writable && before.gpu == after.gpu;
+    };
+    for (const auto target : targets) {
+        if (!ranges->empty() && target->first < ranges->back()->address + ranges->back()->bytes) continue;
+        auto first = target;
+        while (first != registered.begin()) {
+            auto previous = std::prev(first);
+            while (previous != registered.begin() && previous->second->bytes == 0) --previous;
+            if (previous->second->bytes == 0 || !continues(*previous->second, *first->second)) break;
+            first = previous;
+        }
+        for (auto current = first;;) {
+            ranges->push_back(current->second);
+            auto next = std::next(current);
+            while (next != registered.end() && next->second->bytes == 0) ++next;
+            if (next == registered.end() || !continues(*current->second, *next->second)) break;
+            current = next;
+        }
+    }
+    return Lease(std::move(ranges));
+}
+
 std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t address, bool next) {
     std::lock_guard lock(registry().mutex);
     const auto& ranges = registry().ranges;
