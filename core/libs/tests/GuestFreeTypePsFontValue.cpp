@@ -10,8 +10,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -28,6 +30,17 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
+
+template <typename TCall> static bool ThrowsWith(TCall call, const std::string& prefix) {
+    try {
+        call();
+    } catch (const std::exception& error) {
+        return std::string(error.what()).rfind(prefix, 0) == 0;
+    }
+    return false;
+}
+
+static constexpr const char* kLongRefusal = "FT_Get_PS_Font_Value: the LP64 value layouts need a 64-bit host FT_Long, which is not implemented";
 
 struct FacePair {
     std::vector<unsigned char> bytes;
@@ -53,44 +66,52 @@ struct FacePair {
 int main() {
     {
         FacePair pair(Type1Fixture::Font());
-        bool sized = false;
-        for (int key = 0; key < static_cast<int>(PS_DICT_MAX) + 3; ++key) {
-            for (const std::uint32_t index : {0u, 1u}) {
-                for (const std::int64_t length : {0LL, 1LL, 3LL, 64LL}) {
-                    std::array<unsigned char, 64> actual;
-                    std::array<unsigned char, 64> expected;
-                    actual.fill(0xA5);
-                    expected.fill(0xA5);
-                    const std::int64_t actualLength = FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, key, index, actual.data(), length);
-                    const FT_Long expectedLength = FT_Get_PS_Font_Value(pair.oracle, static_cast<PS_Dict_Keys>(key), index, expected.data(), static_cast<FT_Long>(length));
-                    Require(actualLength == expectedLength);
-                    Require(actual == expected);
-                    sized |= expectedLength > 0;
+        if constexpr (sizeof(FT_Long) != sizeof(std::int64_t)) {
+            Require(ThrowsWith([&] { FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, nullptr, 0); }, kLongRefusal));
+        } else {
+            bool sized = false;
+            for (int key = 0; key < static_cast<int>(PS_DICT_MAX) + 3; ++key) {
+                for (const std::uint32_t index : {0u, 1u}) {
+                    for (const std::int64_t length : {0LL, 1LL, 3LL, 64LL}) {
+                        std::array<unsigned char, 64> actual;
+                        std::array<unsigned char, 64> expected;
+                        actual.fill(0xA5);
+                        expected.fill(0xA5);
+                        const std::int64_t actualLength = FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, key, index, actual.data(), length);
+                        const FT_Long expectedLength = FT_Get_PS_Font_Value(pair.oracle, static_cast<PS_Dict_Keys>(key), index, expected.data(), static_cast<FT_Long>(length));
+                        Require(actualLength == expectedLength);
+                        Require(actual == expected);
+                        sized |= expectedLength > 0;
+                    }
+                    Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, key, index, nullptr, 0) == FT_Get_PS_Font_Value(pair.oracle, static_cast<PS_Dict_Keys>(key), index, nullptr, 0));
                 }
-                Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, key, index, nullptr, 0) == FT_Get_PS_Font_Value(pair.oracle, static_cast<PS_Dict_Keys>(key), index, nullptr, 0));
             }
-        }
-        Require(sized);
-        char name[32] = {};
-        Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, name, sizeof(name)) == 13);
-        Require(std::strcmp(name, "FixtureType1") == 0);
-        if constexpr (sizeof(FT_Long) == 8) {
-            std::array<unsigned char, 64> actual;
-            std::array<unsigned char, 64> expected;
-            actual.fill(0xA5);
-            expected.fill(0xA5);
-            const auto hugeLength = std::numeric_limits<std::int64_t>::max();
-            Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, actual.data(), hugeLength) ==
-                    FT_Get_PS_Font_Value(pair.oracle, PS_DICT_FONT_NAME, 0, expected.data(), static_cast<FT_Long>(hugeLength)));
-            Require(actual == expected);
+            Require(sized);
+            char name[32] = {};
+            Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, name, sizeof(name)) == 13);
+            Require(std::strcmp(name, "FixtureType1") == 0);
+            if constexpr (sizeof(FT_Long) == 8) {
+                std::array<unsigned char, 64> actual;
+                std::array<unsigned char, 64> expected;
+                actual.fill(0xA5);
+                expected.fill(0xA5);
+                const auto hugeLength = std::numeric_limits<std::int64_t>::max();
+                Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, actual.data(), hugeLength) ==
+                        FT_Get_PS_Font_Value(pair.oracle, PS_DICT_FONT_NAME, 0, expected.data(), static_cast<FT_Long>(hugeLength)));
+                Require(actual == expected);
+            }
         }
     }
     {
         FacePair pair(FontFixture::BuildFont(3, {}));
-        std::array<unsigned char, 16> actual{};
-        std::array<unsigned char, 16> expected{};
-        Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, actual.data(), 16) ==
-                FT_Get_PS_Font_Value(pair.oracle, PS_DICT_FONT_NAME, 0, expected.data(), 16));
+        if constexpr (sizeof(FT_Long) != sizeof(std::int64_t)) {
+            Require(ThrowsWith([&] { FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, nullptr, 0); }, kLongRefusal));
+        } else {
+            std::array<unsigned char, 16> actual{};
+            std::array<unsigned char, 16> expected{};
+            Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, actual.data(), 16) ==
+                    FT_Get_PS_Font_Value(pair.oracle, PS_DICT_FONT_NAME, 0, expected.data(), 16));
+        }
     }
     Require(FT_Get_PS_Font_Value_nid_postfix(nullptr, PS_DICT_FONT_NAME, 0, nullptr, 0) == FT_Get_PS_Font_Value(nullptr, PS_DICT_FONT_NAME, 0, nullptr, 0));
     std::array<unsigned char, 1> untouched{0xA5};
