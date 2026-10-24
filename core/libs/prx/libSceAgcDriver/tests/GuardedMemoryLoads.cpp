@@ -32,7 +32,7 @@ struct LoadCase {
     std::uint32_t components = 1;
 };
 
-std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust) {
+std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool valid = true) {
     IrProgram program;
     program.SetWaveSize(32);
     program.Resources().stage = IrShaderStage::Compute;
@@ -76,7 +76,8 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
         program.Metadata().bindings.pushDataStartDword = 0;
         program.Metadata().bindings.memoryOffsetCount = 1;
         auto& size = constant(records);
-        auto& handle = emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&zero, &zero, &size, &zero});
+        auto& base = constant(valid ? 0x100u : 0u);
+        auto& handle = emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&base, &zero, &size, &zero});
         emit(test.opcode, test.type, {&handle, &zero, &address, &zero, &enabled});
     } else {
         if (test.kind == ResourceKind::Gds) program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Gds, {0}});
@@ -104,8 +105,8 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
 
 class AccessTrace {
 public:
-    AccessTrace(const std::vector<std::uint32_t>& module, std::uint32_t misalignment = 0, bool valid = true)
-        : words(module), misalignment(misalignment), valid(valid) {
+    AccessTrace(const std::vector<std::uint32_t>& module, std::uint32_t misalignment = 0)
+        : words(module), misalignment(misalignment) {
         require(words.size() >= 5, "SPIR-V module header is missing");
         for (std::size_t offset = 5; offset < words.size();) {
             const auto count = words[offset] >> 16;
@@ -206,7 +207,6 @@ private:
             const auto spec = specializations.at(id);
             if (spec == PipelineSpecialization::BufferBase) return 0;
             if (spec == PipelineSpecialization::BufferBase + 1) return 0x30001000;
-            if (spec == PipelineSpecialization::BufferBase + 2) return valid;
             if (spec == PipelineSpecialization::BufferBase + 3) return misalignment;
             if (spec == PipelineSpecialization::PushDataOffset) return 0;
             throw std::runtime_error("unexpected specialization in access fixture");
@@ -250,7 +250,6 @@ private:
 
     const std::vector<std::uint32_t>& words;
     std::uint32_t misalignment;
-    bool valid;
     std::uint32_t entryFunction = 0;
     std::map<std::uint32_t, std::span<const std::uint32_t>> definitions;
     std::map<std::uint32_t, std::string> names;
@@ -281,8 +280,8 @@ std::uint32_t ldsLength(const std::vector<std::uint32_t>& words) {
 }
 
 void expectReads(const LoadCase& test, bool robust, bool active, std::uint32_t offset, std::vector<std::uint32_t> expected, std::uint32_t records = 64, std::uint32_t misalignment = 0, bool valid = true) {
-    const auto module = emitLoad(test, active, offset, records, robust);
-    const auto actual = AccessTrace(module, misalignment, valid).Run();
+    const auto module = emitLoad(test, active, offset, records, robust, valid);
+    const auto actual = AccessTrace(module, misalignment).Run();
     if (actual != expected) {
         std::string detail = std::string(robust ? "robust" : "plain") + " guest reads:";
         for (const auto index : actual) detail += " " + std::to_string(index);
