@@ -144,7 +144,7 @@ bool ExpectQsortS() {
         std::fprintf(stderr, "qsort_s of no elements failed\n");
         return false;
     }
-    unsigned char bytes[] = {3, 1, 2};
+    alignas(Element) unsigned char bytes[sizeof(Element)] = {3, 1, 2};
     if (qsort_s_nid_postfix(bytes, 3, 0, CompareKeysWithDirection, &direction) != 0 || bytes[0] != 3 || bytes[1] != 1 || bytes[2] != 2) {
         std::fprintf(stderr, "qsort_s with zero-size elements changed them\n");
         return false;
@@ -161,6 +161,51 @@ bool ExpectOrder(const char* name, const std::vector<int>& keys, const std::vect
             std::fprintf(stderr, "%s: element %zu has tag %d, expected %d\n", name, index, elements[index].tag, tags[index]);
             return false;
         }
+    }
+    return true;
+}
+
+bool ExpectOrderHash(const char* name, const std::vector<int>& keys, std::uint32_t expected) {
+    std::vector<Element> elements;
+    for (std::size_t index = 0; index < keys.size(); ++index) elements.push_back({keys[index], static_cast<int>(index)});
+    qsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), CompareKeys);
+    std::uint32_t hash = 2166136261u;
+    for (const auto& element : elements) hash = (hash ^ static_cast<std::uint32_t>(element.tag)) * 16777619u;
+    if (hash != expected) {
+        std::fprintf(stderr, "%s: tag order hashes to %08x, expected %08x\n", name, hash, expected);
+        return false;
+    }
+    return true;
+}
+
+int comparisons = 0;
+
+int APS5_VABI CountFirstByte(const void* left, const void* right) {
+    ++comparisons;
+    return CompareFirstByte(left, right);
+}
+
+bool ExpectConsoleEdges() {
+    unsigned char bytes[] = {3, 1, 2};
+    qsort_nid_postfix(nullptr, 5, 1, CountFirstByte);
+    qsort_nid_postfix(bytes, 3, 1, nullptr);
+    bool correct = comparisons == 0 && bytes[0] == 3 && bytes[1] == 1 && bytes[2] == 2;
+    qsort_nid_postfix(bytes, 3, 0, CountFirstByte);
+    correct &= comparisons == 4 && bytes[0] == 3 && bytes[1] == 1 && bytes[2] == 2;
+    if (!correct) std::fprintf(stderr, "qsort with a null base or comparator or zero-size elements: %d comparisons, bytes %d %d %d\n", comparisons, bytes[0], bytes[1], bytes[2]);
+    return correct;
+}
+
+bool ExpectShortArraysUntouched() {
+    int values[2] = {2, 1};
+    qsort_nid_postfix(values, 0, sizeof(int), nullptr);
+    qsort_nid_postfix(values, 1, sizeof(int), nullptr);
+    qsort_nid_postfix(values, 0, 0, CompareKeys);
+    qsort_nid_postfix(values, 1, 0, CompareKeys);
+    qsort_nid_postfix(nullptr, 0, 0, nullptr);
+    if (values[0] != 2 || values[1] != 1) {
+        std::fprintf(stderr, "qsort of zero or one element changed the array\n");
+        return false;
     }
     return true;
 }
@@ -221,16 +266,22 @@ bool CheckMergesort() {
 int main() {
     bool correct = true;
     correct &= ExpectOrder("insertion sort", {1, 0, 1, 0}, {1, 3, 0, 2});
-    correct &= ExpectOrder("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
+    correct &= ExpectOrder("insertion sort below 33 elements", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {3, 6, 8, 11, 1, 4, 7, 10, 0, 2, 5, 9});
     correct &= ExpectOrderS("insertion sort", {1, 0, 1, 0}, {1, 3, 0, 2});
-    correct &= ExpectOrderS("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
+    correct &= ExpectOrderS("insertion sort below 33 elements", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {3, 6, 8, 11, 1, 4, 7, 10, 0, 2, 5, 9});
     correct &= ExpectQsortS();
     correct &= ExpectQsortSConstraints();
     std::vector<int> keys;
     for (int index = 0; index < 48; ++index) keys.push_back((index * 7 + 3) % 5);
-    correct &= ExpectOrder("pseudomedian of nine", keys,
-        {21, 11, 36, 6, 1, 31, 16, 46, 41, 26, 29, 4, 24, 44, 9, 39, 34, 14, 19, 12, 2, 7, 17, 22,
-         27, 32, 37, 42, 47, 5, 40, 30, 15, 35, 25, 20, 0, 45, 10, 28, 33, 13, 38, 8, 3, 23, 43, 18});
+    const std::vector<int> partitioned{6, 1, 46, 21, 36, 11, 41, 31, 16, 26, 19, 4, 44, 29, 39, 9, 34, 14, 24, 2, 12, 7, 17, 22,
+        47, 27, 32, 37, 42, 20, 15, 0, 10, 25, 40, 30, 5, 45, 35, 18, 23, 33, 13, 38, 8, 28, 43, 3};
+    correct &= ExpectOrder("median of nine partition", keys, partitioned);
+    correct &= ExpectOrderS("median of nine partition", keys, partitioned);
+    std::vector<int> manyKeys;
+    for (int index = 0; index < 1000; ++index) manyKeys.push_back((index * 37 + 11) % 7);
+    correct &= ExpectOrderHash("nested partitions", manyKeys, 0xefee58d9u);
+    correct &= ExpectConsoleEdges();
+    correct &= ExpectShortArraysUntouched();
     for (const std::size_t size : {1, 3, 8, 24})
         for (const std::size_t count : {0, 1, 2, 6, 7, 8, 40, 41, 1000})
             correct &= ExpectSorted(size, count);
