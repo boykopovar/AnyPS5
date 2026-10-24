@@ -1,3 +1,4 @@
+#include "prx/libSceFont/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -199,14 +200,7 @@ int APS5_VABI sceFontGetTypographicDesign(FontHandle fontHandle, int typographic
 }
 
 int APS5_VABI sceFontSetScalePixel(FontHandle fontHandle, float w, float h) {
-    return UpdateFontStyle(fontHandle, [&](FontHandleNative* font) {
-        const int changed = StyleStateSetScalePixel(&font->style, w, h);
-        if (FontState* state = TryGetState(fontHandle)) {
-            state->scaleW = w;
-            state->scaleH = h;
-        }
-        return changed;
-    });
+    return UpdateFontStyle(fontHandle, [&](FontHandleNative* font) { return StyleStateSetScalePixel(&font->style, w, h); });
 }
 
 int APS5_VABI sceFontSetScalePoint(FontHandle fontHandle, float w, float h) {

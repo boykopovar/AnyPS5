@@ -3,13 +3,6 @@
 #include <cstdlib>
 #include <initializer_list>
 
-extern "C" {
-int APS5_VABI scePadInit_nid_postfix(void);
-int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param);
-int APS5_VABI scePadClose_nid_postfix(int handle);
-int APS5_VABI scePadSetVibrationMode(int handle, int mode);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {

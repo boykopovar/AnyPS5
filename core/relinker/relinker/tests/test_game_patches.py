@@ -66,6 +66,7 @@ def main():
         manifest = output.parent / "app.patches.toml"
         text = manifest.read_text()
         assert 'main_target = "eboot.bin"' in text and 'name = "flip_bit"' in text, text
+        assert 'main_target = "eboot.bin"\nlinux_base = 0x400000\n' in text, text
         assert f"Patch manifest: {manifest}\n" in result.stdout
         assert f'config = "{source.parent.as_posix()}/relinker-patches.toml"\n' in text, text
 

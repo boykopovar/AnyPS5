@@ -1,14 +1,12 @@
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
 
-extern "C" {
-char* APS5_VABI strerror_nid_postfix(int);
-int APS5_VABI strerror_r_nid_postfix(int, char*, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
 static void Require(bool value) { if (!value) std::abort(); }
 static const char* const freebsd[97] = {
     "No error: 0", "Operation not permitted", "No such file or directory",
@@ -21,7 +19,7 @@ static const char* const freebsd[97] = {
     "Is a directory", "Invalid argument", "Too many open files in system",
     "Too many open files", "Inappropriate ioctl for device", "Text file busy",
     "File too large", "No space left on device", "Illegal seek",
-    "Read-only file system", "Too many links", "Broken pipe",
+    "Read-only filesystem", "Too many links", "Broken pipe",
     "Numerical argument out of domain", "Result too large", "Resource temporarily unavailable",
     "Operation now in progress", "Operation already in progress", "Socket operation on non-socket",
     "Destination address required", "Message too long", "Protocol wrong type for socket",
@@ -62,7 +60,11 @@ int main() {
     for (int error = 0; error <= 96; ++error) {
         Require(strerror_r_nid_postfix(error, buffer, sizeof(buffer)) == 0);
         Require(std::strcmp(buffer, freebsd[error]) == 0);
-        Require(std::strcmp(strerror_nid_postfix(error), freebsd[error]) == 0);
+        char coded[32];
+        std::snprintf(coded, sizeof(coded), "error_code=0x%08x", static_cast<unsigned>(error));
+        const char* expected = error == 0 ? "No error" : error < 95 ? freebsd[error] : coded;
+        Require(std::strcmp(strerror_nid_postfix(error), expected) == 0);
+        Require(*__error_nid_postfix() == 13);
     }
     Require(strerror_r_nid_postfix(-1, buffer, sizeof(buffer)) == 22);
     Require(std::strcmp(buffer, "Unknown error: -1") == 0);
@@ -70,15 +72,18 @@ int main() {
     struct UnknownError {
         int error;
         const char* text;
+        const char* coded;
     };
-    for (const UnknownError& unknown : {UnknownError{97, "Unknown error: 97"}, UnknownError{INT_MAX, "Unknown error: 2147483647"},
-                                        UnknownError{INT_MIN, "Unknown error: -2147483648"}}) {
+    for (const UnknownError& unknown : {UnknownError{97, "Unknown error: 97", "error_code=0x00000061"},
+                                        UnknownError{9999, "Unknown error: 9999", "error_code=0x0000270f"},
+                                        UnknownError{INT_MAX, "Unknown error: 2147483647", "error_code=0x7fffffff"},
+                                        UnknownError{-1, "Unknown error: -1", "error_code=0xffffffff"},
+                                        UnknownError{INT_MIN, "Unknown error: -2147483648", "error_code=0x80000000"}}) {
         Require(strerror_r_nid_postfix(unknown.error, buffer, sizeof(buffer)) == 22);
         Require(std::strcmp(buffer, unknown.text) == 0);
         Require(*__error_nid_postfix() == 13);
-        Require(std::strcmp(strerror_nid_postfix(unknown.error), unknown.text) == 0);
-        Require(*__error_nid_postfix() == 22);
-        *__error_nid_postfix() = 13;
+        Require(std::strcmp(strerror_nid_postfix(unknown.error), unknown.coded) == 0);
+        Require(*__error_nid_postfix() == 13);
     }
     char sentinel[] = "xyz";
     Require(strerror_r_nid_postfix(22, sentinel, 1) == 34);

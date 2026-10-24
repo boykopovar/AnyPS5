@@ -1,3 +1,4 @@
+#include "prx/libSceNetCtl/include/NetCtl.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -35,16 +36,6 @@
 #include <vector>
 
 // Network-control state reflects host interface addressing, not PSN sign-in status.
-union NetCtlInfoV6;
-struct NetCtlConnectionConfiguration;
-struct NetCtlScanOptions;
-struct NetCtlScanBssidList;
-struct NetCtlScanInfo;
-struct NetCtlNatInfoInternal;
-struct NetCtlBandwidthInfo;
-struct NetCtlNetEvConfiguration;
-struct NetBweInfo;
-struct NetCtlWifiInfo;
 
 static constexpr int SCE_NET_CTL_ERROR_NOT_INITIALIZED = static_cast<int>(0x80412101);
 static constexpr int SCE_NET_CTL_ERROR_ID_NOT_FOUND = static_cast<int>(0x80412104);
@@ -95,10 +86,11 @@ struct CallbackSlot {
     int lastEvent = 0;
 };
 
-static std::atomic_bool g_initialized{false};
+static std::atomic_bool g_initialized{true};
 static std::mutex g_callbackLock;
 static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksNpToolkit[MAX_CALLBACKS] = {};
 
 static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
@@ -123,15 +115,15 @@ static int UnregisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], int cid)
     return 0;
 }
 
-static bool HasIpv4Callback() {
+static bool HasCallback(const CallbackSlot (&callbacks)[MAX_CALLBACKS]) {
     std::lock_guard lock(g_callbackLock);
-    for (const auto& slot : g_callbacks) {
+    for (const auto& slot : callbacks) {
         if (slot.func) return true;
     }
     return false;
 }
 
-static bool HostHasAddress(int family) {
+static bool QueryHostHasAddress(int family) {
 #ifdef _WIN32
     static const int socket_status = [] {
         WSADATA data{};
@@ -187,6 +179,74 @@ struct HostIpv4Interface {
     std::uint32_t mtu = 0;
     std::vector<in_addr> dns;
 };
+
+#ifdef _WIN32
+namespace {
+
+struct HostAddressCache {
+    std::mutex lock;
+    bool registered = false;
+    bool tried = false;
+    std::atomic<std::uint64_t> generation{1};
+    std::uint64_t seen[3]{};
+    bool value[3]{};
+    std::uint64_t interfaceSeen = 0;
+    bool interfaceFound = false;
+    HostIpv4Interface interfaceValue;
+};
+
+HostAddressCache& AddressCache() {
+    static HostAddressCache cache;
+    return cache;
+}
+
+void CALLBACK HostAddressChanged(PVOID, PMIB_UNICASTIPADDRESS_ROW, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CALLBACK HostInterfaceChanged(PVOID, PMIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CALLBACK HostRouteChanged(PVOID, PMIB_IPFORWARD_ROW2, MIB_NOTIFICATION_TYPE) {
+    AddressCache().generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void WatchHostAddresses(HostAddressCache& cache) {
+    if (cache.tried) return;
+    cache.tried = true;
+    HANDLE addresses = nullptr;
+    HANDLE interfaces = nullptr;
+    HANDLE routes = nullptr;
+    cache.registered = NotifyUnicastIpAddressChange(AF_UNSPEC, HostAddressChanged, nullptr, FALSE, &addresses) == NO_ERROR &&
+                       NotifyIpInterfaceChange(AF_UNSPEC, HostInterfaceChanged, nullptr, FALSE, &interfaces) == NO_ERROR &&
+                       NotifyRouteChange2(AF_UNSPEC, HostRouteChanged, nullptr, FALSE, &routes) == NO_ERROR;
+    if (!cache.registered) {
+        if (addresses != nullptr) CancelMibChangeNotify2(addresses);
+        if (interfaces != nullptr) CancelMibChangeNotify2(interfaces);
+        if (routes != nullptr) CancelMibChangeNotify2(routes);
+    }
+}
+
+}
+#endif
+
+static bool HostHasAddress(int family) {
+#ifdef _WIN32
+    auto& cache = AddressCache();
+    const int slot = family == AF_INET ? 0 : family == AF_INET6 ? 1 : 2;
+    std::lock_guard guard(cache.lock);
+    WatchHostAddresses(cache);
+    const auto generation = cache.generation.load(std::memory_order_acquire);
+    if (cache.registered && cache.seen[slot] == generation) return cache.value[slot];
+    const bool value = QueryHostHasAddress(family);
+    cache.value[slot] = value;
+    cache.seen[slot] = generation;
+    return value;
+#else
+    return QueryHostHasAddress(family);
+#endif
+}
 
 static bool UsableIpv4(in_addr address) {
     const auto host = ntohl(address.s_addr);
@@ -310,7 +370,7 @@ static std::vector<in_addr> HostDnsServers() {
 }
 #endif
 
-static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+static bool QueryHostIpv4Interface(HostIpv4Interface& found) {
 #ifdef _WIN32
     ULONG size = 0;
     const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_INCLUDE_GATEWAYS;
@@ -371,6 +431,25 @@ static bool FindHostIpv4Interface(HostIpv4Interface& found) {
 #endif
 }
 
+static bool FindHostIpv4Interface(HostIpv4Interface& found) {
+#ifdef _WIN32
+    auto& cache = AddressCache();
+    std::lock_guard guard(cache.lock);
+    WatchHostAddresses(cache);
+    const auto generation = cache.generation.load(std::memory_order_acquire);
+    if (!cache.registered || cache.interfaceSeen != generation) {
+        HostIpv4Interface value;
+        cache.interfaceFound = QueryHostIpv4Interface(value);
+        cache.interfaceValue = std::move(value);
+        cache.interfaceSeen = generation;
+    }
+    if (cache.interfaceFound) found = cache.interfaceValue;
+    return cache.interfaceFound;
+#else
+    return QueryHostIpv4Interface(found);
+#endif
+}
+
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity) {
     HostIpv4Interface host;
     if (!FindHostIpv4Interface(host)) return 0;
@@ -425,17 +504,15 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
 #endif
 }
 
-extern "C" {
-
-int APS5_VABI sceNetCtlCheckCallback(void) {
+static int CheckCallbacks(CallbackSlot (&callbacks)[MAX_CALLBACKS]) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
-    if (!HasIpv4Callback()) return 0;
+    if (!HasCallback(callbacks)) return 0;
     const int event = HostHasAddress(AF_UNSPEC) ? NET_CTL_EVENT_IPOBTAINED : NET_CTL_EVENT_DISCONNECTED;
     CallbackSlot due[MAX_CALLBACKS];
     int count = 0;
     {
         std::lock_guard lock(g_callbackLock);
-        for (auto& slot : g_callbacks) {
+        for (auto& slot : callbacks) {
             if (!slot.func || slot.lastEvent == event) continue;
             slot.lastEvent = event;
             due[count++] = slot;
@@ -443,6 +520,12 @@ int APS5_VABI sceNetCtlCheckCallback(void) {
     }
     for (int index = 0; index < count; ++index) due[index].func(event, due[index].arg);
     return 0;
+}
+
+extern "C" {
+
+int APS5_VABI sceNetCtlCheckCallback(void) {
+    return CheckCallbacks(g_callbacks);
 }
 
 int APS5_VABI sceNetCtlGetIfStat(NetCtlIfStat* stat) {
@@ -497,7 +580,11 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!result) return SCE_NET_CTL_ERROR_INVALID_ADDR;
-    throw std::logic_error("sceNetCtlGetResult: service event results are not implemented");
+    if (event < NET_CTL_EVENT_DISCONNECTED || event > NET_CTL_EVENT_IPOBTAINED) {
+        throw std::runtime_error("sceNetCtlGetResult: event type " + std::to_string(event) + " is not implemented");
+    }
+    *result = 0;
+    return 0;
 }
 
 int APS5_VABI sceNetCtlGetState(int* state) {
@@ -546,8 +633,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackV6(int cid) {
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackForNpToolkit(NetCtlCallback callback, void* argument, int* callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterCallback(g_callbacksNpToolkit, callback, argument, callbackId);
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback callback, void* argument, int* callbackId) {
@@ -561,8 +647,7 @@ int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback callback, voi
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterCallback(g_callbacksNpToolkit, callbackId);
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int callbackId) {
@@ -576,8 +661,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckCallbacks(g_callbacksNpToolkit);
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void) {

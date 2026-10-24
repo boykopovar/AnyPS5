@@ -1,3 +1,5 @@
+#include "prx/libSceFontFt/include/Api.hpp"
+#include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -16,31 +18,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceFontMemoryInit(FontMemory*, void*, std::uint32_t, const FontMemoryInterface*, void*, FontMemoryDestroyFunction, void*);
-int APS5_VABI sceFontCreateLibrary(const FontMemory*, const void*, FontLibrary*);
-int APS5_VABI sceFontDestroyLibrary(FontLibrary*);
-int APS5_VABI sceFontSupportSystemFonts(FontLibrary);
-int APS5_VABI sceFontSupportExternalFonts(FontLibrary, std::uint32_t, std::uint32_t);
-int APS5_VABI sceFontOpenFontSet(FontLibrary, std::uint32_t, std::uint32_t, const FontOpenDetail*, FontHandle*);
-int APS5_VABI sceFontOpenFontMemory(FontLibrary, const void*, std::uint32_t, const FontOpenDetail*, FontHandle*);
-int APS5_VABI sceFontOpenFontInstance(FontHandle, FontHandle, FontHandle*);
-int APS5_VABI sceFontCloseFont(FontHandle);
-int APS5_VABI sceFontSetScalePixel(FontHandle, float, float);
-int APS5_VABI sceFontGetCharGlyphMetrics(FontHandle, std::uint32_t, FontGlyphMetrics*);
-int APS5_VABI sceFontGetHorizontalLayout(FontHandle, FontHorizontalLayout*);
-int APS5_VABI sceFontGetKerning(FontHandle, std::uint32_t, std::uint32_t, FontKerning*);
-int APS5_VABI sceFontCreateRenderer(const FontMemory*, const void*, FontRenderer*);
-int APS5_VABI sceFontDestroyRenderer(FontRenderer*);
-int APS5_VABI sceFontBindRenderer(FontHandle, FontRenderer);
-int APS5_VABI sceFontUnbindRenderer(FontHandle);
-int APS5_VABI sceFontSetupRenderScalePixel(FontHandle, float, float);
-void APS5_VABI sceFontRenderSurfaceInit(FontRenderSurface*, void*, int, int, int, int);
-int APS5_VABI sceFontRenderCharGlyphImageHorizontal(FontHandle, std::uint32_t, FontRenderSurface*, float, float, FontGlyphMetrics*, FontRenderOutput*);
-const void* APS5_VABI sceFontSelectLibraryFt(int);
-const void* APS5_VABI sceFontSelectRendererFt(int);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -127,9 +104,9 @@ static void WriteFile(const std::filesystem::path& path, const std::vector<unsig
 
 static void SetFontDirectory(const std::filesystem::path& directory) {
 #ifdef _WIN32
-    Require(_putenv_s("ANYPS5_SYSTEM_FONTS", directory.string().c_str()) == 0);
+    Require(_wputenv_s(L"ANYPS5_SYSTEM_FONTS", directory.wstring().c_str()) == 0);
 #else
-    Require(::setenv("ANYPS5_SYSTEM_FONTS", directory.string().c_str(), 1) == 0);
+    Require(::setenv("ANYPS5_SYSTEM_FONTS", directory.c_str(), 1) == 0);
 #endif
 }
 
@@ -187,6 +164,7 @@ static int RenderedPixels(FontHandle font, std::uint32_t code, float& advance) {
     std::vector<std::uint8_t> pixels(128 * 128);
     FontRenderSurface surface{};
     sceFontRenderSurfaceInit(&surface, pixels.data(), 128, 1, 128, 128);
+
     FontGlyphMetrics metrics{};
     FontRenderOutput result{};
     const int rc = sceFontRenderCharGlyphImageHorizontal(font, code, &surface, 10.0f, 100.0f, &metrics, &result);
@@ -208,7 +186,7 @@ int main() {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("anyps5_guest_system_font-" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     const std::filesystem::path empty = root / "empty";
-    const std::filesystem::path fonts = root / "fonts";
+    const std::filesystem::path fonts = root / std::filesystem::path(u8"fonts-a\u00e7\u00e3o-\u65e5\u672c");
     std::filesystem::create_directories(empty);
     std::filesystem::create_directories(fonts);
     WriteFile(fonts / "SST-Bold.otf", SquareGlyphFont('A', 700));
@@ -239,6 +217,7 @@ int main() {
     bool threw = false;
     try {
         sceFontOpenFontSet(library, EuropeanBold, 1, nullptr, &font);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -338,6 +317,29 @@ int main() {
     Require(RenderedPixels(mixed, 0x4E00, advance) > 0 && advance == 63.0f);
     Require(RenderedPixels(mixed, 0x0627, advance) > 0 && advance == 66.0f);
     Require(RenderedPixels(mixed, 0xAC00, advance) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    std::vector<std::uint8_t> untouched(128 * 128);
+    FontRenderSurface measuring{};
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 0, 31);
+
+    FontGlyphMetrics measured{};
+    FontRenderOutput measuredResult{};
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK);
+    Require(measured.Horizontal.advance == 60.0f && measured.width > 0.0f && measuredResult.ImageMetrics.advance > 0.0f);
+    Require(measuredResult.UpdateRect.w == 0 && measuredResult.UpdateRect.h == 0);
+    for (const std::uint8_t pixel : untouched) Require(pixel == 0);
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 128, 1, 128, 0);
+
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_OK && measured.Horizontal.advance == 60.0f);
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 128, 1, 128, 128);
+
+    measuring.width = -1;
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    sceFontRenderSurfaceInit(&measuring, untouched.data(), 0, 1, 128, 128);
+
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
+    sceFontRenderSurfaceInit(&measuring, nullptr, 0, 1, 0, 31);
+
+    Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
     Require(sceFontUnbindRenderer(mixed) == SCE_FONT_OK);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK);
 

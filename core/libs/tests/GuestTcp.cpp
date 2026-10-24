@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -7,24 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI shutdown_nid_postfix(int, int);
-std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -277,11 +261,9 @@ int main() {
     Require(send_nid_postfix(client, request, sizeof(request), 0x20000) == -1 && *__error_nid_postfix() == 32);
 
     Require(close_nid_postfix(accepted) == 0);
-#ifndef _WIN32
     std::int64_t sent = 0;
     for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(client, request, sizeof(request), 0x20000);
     Require(sent == -1 && *__error_nid_postfix() == 32);
-#endif
     Require(close_nid_postfix(client) == 0);
     Require(close_nid_postfix(listener) == 0);
     Require(close_nid_postfix(listener) == -1 && *__error_nid_postfix() == 9);

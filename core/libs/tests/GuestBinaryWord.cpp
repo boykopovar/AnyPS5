@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -9,22 +10,6 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI getw_nid_postfix(FileStream*);
-int APS5_VABI putw_nid_postfix(int, FileStream*);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fseek_nid_postfix(FileStream*, std::int64_t, int);
-std::int64_t APS5_VABI ftell_nid_postfix(FileStream*);
-int APS5_VABI ungetc_nid_postfix(int, FileStream*);
-int APS5_VABI fgetc_nid_postfix(FileStream*);
-void APS5_VABI clearerr_nid_postfix(FileStream*);
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
-}
 
 namespace {
 
@@ -75,6 +60,7 @@ void CheckShortReads(const char* path) {
         Require((stream->GuestState().flags & 0x60) == 0x20, "short-read EOF flag");
         Require(ftell_nid_postfix(stream) == static_cast<std::int64_t>(length), "consume incomplete word bytes");
         clearerr_nid_postfix(stream);
+
         Require((stream->GuestState().flags & 0x60) == 0, "clear short-read status");
         Require(fclose_nid_postfix(stream) == 0, "close incomplete word");
     }
@@ -107,8 +93,10 @@ void CheckConcurrentWrites(const char* path) {
     auto* stream = fopen_nid_postfix(path, "w+b");
     Require(stream != nullptr, "open shared stream");
     flockfile_nid_postfix(stream);
+
     Require(putw_nid_postfix(0, stream) == 0, "putw accepts a lock held by its caller");
     funlockfile_nid_postfix(stream);
+
     const auto writer = [stream](int value) {
         for (int count = 0; count < 256; ++count)
             Require(putw_nid_postfix(value, stream) == 0, "concurrent word write");

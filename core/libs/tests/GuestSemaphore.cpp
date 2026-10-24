@@ -1,24 +1,12 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt);
-int APS5_VABI sceKernelDeleteSema(KernelSema sem);
-int APS5_VABI sceKernelPollSema(KernelSema sem, int need);
-int APS5_VABI sceKernelSignalSema(KernelSema sem, int count);
-int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time);
-int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_ECANCELED = static_cast<int>(0x80020055);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -35,7 +23,37 @@ static void* APS5_VABI Wait(void* arg) {
     return nullptr;
 }
 
+static void RequireInvalidArguments() {
+    KernelSema rejected = nullptr;
+    Require(sceKernelCreateSema(&rejected, "rejected", 0, 5, 3, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, "rejected", 0, -1, 3, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, nullptr, 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(rejected == nullptr);
+
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "limits", 0, 2, 3, nullptr) == SCE_OK);
+    Require(sceKernelPollSema(sem, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelPollSema(sem, -1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelPollSema(sem, 4) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelPollSema(sem, 100) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelPollSema(sem, 3) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelSignalSema(sem, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelPollSema(sem, 2) == SCE_OK);
+    Require(sceKernelSignalSema(sem, 3) == SCE_OK);
+    Require(sceKernelPollSema(sem, 3) == SCE_OK);
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
+}
+
 int main() {
+    KernelUseconds nullTimeout = 1000;
+    int nullWaiters = -1;
+    Require(sceKernelWaitSema(nullptr, 1, nullptr) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelWaitSema(nullptr, 1, &nullTimeout) == SCE_KERNEL_ERROR_ESRCH && nullTimeout == 1000);
+    Require(sceKernelPollSema(nullptr, 1) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelSignalSema(nullptr, 1) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelCancelSema(nullptr, 0, &nullWaiters) == SCE_KERNEL_ERROR_ESRCH && nullWaiters == -1);
+    Require(sceKernelDeleteSema(nullptr) == SCE_KERNEL_ERROR_ESRCH);
     KernelSema sem = nullptr;
     Require(sceKernelCreateSema(&sem, "cancel", 0, 1, 3, nullptr) == SCE_OK);
 
@@ -85,4 +103,6 @@ int main() {
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+
+    RequireInvalidArguments();
 }
