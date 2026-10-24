@@ -44,7 +44,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 9u;
+constexpr std::uint32_t FileFormat = 10u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -700,7 +700,7 @@ public:
 
     void RecordCompute(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
         if (!Enabled() || !bound.load(std::memory_order_acquire)) return;
-        const auto identity = shader.Identity();
+        const auto identity = DescribedPipelineIdentity(shader);
         if (identity.Empty()) return;
         Pending pending;
         pending.kind = ComputeRecord;
@@ -815,7 +815,7 @@ private:
                     bool decoded = !decode;
                     if (decode && !loaded.indexModules.contains(identity)) {
                         auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
-                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), *result, owner) && result->Identity() == identity;
+                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), *result, owner) && (static_cast<ShaderRecompiler::ShaderStage>(stage) == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(*result) : result->Identity()) == identity;
                         if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), std::move(result)});
                         else ++dropped;
                     }
