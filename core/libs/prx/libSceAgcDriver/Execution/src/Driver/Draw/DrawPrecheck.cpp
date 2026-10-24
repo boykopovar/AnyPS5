@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
@@ -8,12 +10,39 @@
 
 namespace AgcDriver::DriverDetail {
 
+namespace {
+
+QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass& copy) {
+    const bool multisampled = copy.source.samples != 1u;
+    const auto address = DepthCopyPixelProgramAddress(multisampled);
+    const auto words = Graphics::DepthCopySourceWords(copy.source);
+    QueueState draw = queue;
+    draw.context.insert_or_assign(0x000u, 0u);
+    draw.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(address >> 8u));
+    draw.shader.insert_or_assign(0x009u, static_cast<std::uint32_t>(address >> 40u));
+    draw.shader.insert_or_assign(0x00au, 0u);
+    draw.shader.insert_or_assign(0x00bu, DepthCopyPixelUserWords(multisampled) << 1u);
+    for (std::uint32_t index = 0; index < words.size(); ++index) draw.shader.insert_or_assign(0x00cu + index, words[index]);
+    if (multisampled) draw.shader.insert_or_assign(0x014u, copy.sample);
+    draw.context.insert_or_assign(0x1b3u, 0x8002u);
+    draw.context.insert_or_assign(0x1b4u, 0x8002u);
+    draw.context.insert_or_assign(0x1b6u, 0u);
+    draw.context.insert_or_assign(0x1c4u, 0u);
+    draw.context.insert_or_assign(0x1c5u, 1u);
+    draw.context.insert_or_assign(0x08fu, 1u);
+    draw.context.insert_or_assign(0x203u, 0u);
+    if (const auto alpha = draw.context.find(0x2dcu); alpha != draw.context.end()) draw.context.insert_or_assign(0x2dcu, alpha->second & ~1u);
+    return draw;
+}
+
+}
+
 bool Driver::drawPrecheck() {
     static const bool precheck = std::getenv("APS5_NO_DRAW_PRECHECK") == nullptr;
     return precheck;
 }
 
-std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
+std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
     if (const auto pass = Graphics::DecodeColorMetadataPass(queue)) {
         require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
@@ -47,14 +76,8 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     }
     if (const auto copy = Graphics::DecodeDepthCopyPass(queue)) {
         require(!drawParameters.indirect, "indirect DB depth copies are unsupported");
-        if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
-        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
-        std::lock_guard gpuLock(GuestMemory::GpuMutex());
-        if (device == nullptr) device = std::make_shared<VulkanDevice>();
-        const std::shared_ptr<VulkanDevice> localDevice = device;
-        recordLabelsForPacket(localDevice.get(), submission.queue);
-        localDevice->DepthCopyPass(*copy);
-        return DrawVerdict::Drawn;
+        auto copyDraw = DepthCopyDraw(queue, *copy);
+        return draw(copyDraw, packet, submission, packetOffset, rejected);
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);

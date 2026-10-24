@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -7,6 +8,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "AudioOut2Internal.hpp"
 
 namespace {
 
@@ -120,8 +122,13 @@ size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, ui
 }
 
 int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t flags) {
-    (void)flags;
-    if (!info) return static_cast<int>(0x80260502);
+    constexpr int ErrorInvalidParam = static_cast<int>(0x80268001);
+    constexpr int ErrorNotInitialized = static_cast<int>(0x80268006);
+    constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800C);
+    constexpr std::uint32_t MaxFlags = 1;
+    if (!AudioOut2IsInitialized_nid_no_patch()) return ErrorNotInitialized;
+    if (!info) return ErrorInvalidPointer;
+    if (flags > MaxFlags) return ErrorInvalidParam;
     constexpr std::uint8_t SpeakerTypeTelevision = 0;
     constexpr std::uint32_t FrontLeftAndRight = 0x3;
     constexpr AudioOut2SpeakerAngle NoSpeaker = {-360, -360};

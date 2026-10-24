@@ -20,12 +20,41 @@
 #include <cstdlib>
 #include <list>
 #include <mutex>
+#include <spirv/unified1/spirv.hpp>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
 
 namespace AgcDriver::Graphics {
+
+namespace {
+
+bool LogicOpFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_UNORM:
+        case VK_FORMAT_R8G8_UNORM:
+        case VK_FORMAT_R8G8B8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_R16G16B16A16_UNORM:
+        case VK_FORMAT_R8_UINT:
+        case VK_FORMAT_R8G8_UINT:
+        case VK_FORMAT_R8G8B8A8_UINT:
+        case VK_FORMAT_R16_UINT:
+        case VK_FORMAT_R16G16_UINT:
+        case VK_FORMAT_R16G16B16A16_UINT:
+        case VK_FORMAT_R32_UINT:
+        case VK_FORMAT_R32G32_UINT:
+        case VK_FORMAT_R32G32B32A32_UINT: return true;
+        default: return false;
+    }
+}
+
+}
 
 void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline) {
     if (!context.pipelineExecutableInfo) return;
@@ -103,6 +132,18 @@ void ValidateDepthBounds(const Context& context, const State& state) {
 
 bool BarycentricPatches(const State& state, std::span<const CompiledShader> shaders) {
     return !state.rectList && state.stages.path == ShaderPath::Vertex && std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::TessellationControl; });
+}
+
+bool FragmentInterlock(std::span<const CompiledShader> shaders) {
+    return std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) {
+        if (shader.stage != ShaderRecompiler::ShaderStage::Fragment || shader.program == nullptr) return false;
+        const auto words = shader.program->spirv.Words();
+        for (std::size_t cursor = 5; cursor + 1 < words.size() && (words[cursor] & 0xffffu) == spv::OpCapability && (words[cursor] >> 16u) == 2u; cursor += 2) {
+            const auto capability = words[cursor + 1];
+            if (capability == spv::CapabilityFragmentShaderPixelInterlockEXT || capability == spv::CapabilityFragmentShaderSampleInterlockEXT || capability == spv::CapabilityFragmentShaderShadingRateInterlockEXT) return true;
+        }
+        return false;
+    });
 }
 
 void ValidateProvokingVertex(const Context& context, const State& state, std::span<const CompiledShader> shaders) {
@@ -280,7 +321,7 @@ void appendKey(std::vector<std::byte>& key, const TValue& value) {
 
 bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State& state, const VertexInputLayout& input, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders) {
     using Stage = ShaderRecompiler::ShaderStage;
-    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) return false;
+    if (!context.graphicsPipelineLibrary || context.pipelineExecutableInfo || state.depthBiasPerFace || state.rectList || BarycentricPatches(state, shaders) || SplitsAlternateAlpha(state) || std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; }) || FragmentInterlock(shaders)) return false;
     keys = {};
     for (const auto& shader : shaders) {
         const auto identity = shader.program->Identity();
@@ -350,11 +391,13 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         }
     }
     for (const auto& blend : state.blends) appendKey(keys.fragmentOutput, blend);
+    appendKey(keys.fragmentOutput, state.colorRop);
     for (const auto value : state.blendConstants) appendKey(keys.fragmentOutput, value);
     appendKey(keys.renderPass, state.blends.size());
     for (const auto& color : state.colors) {
         appendKey(keys.renderPass, color.format);
         appendKey(keys.renderPass, color.exportIndex);
+        appendKey(keys.renderPass, color.partialWriteMask != 0u);
     }
     appendKey(keys.renderPass, state.depth.has_value());
     if (state.depth) appendKey(keys.renderPass, state.depth->format);
@@ -397,6 +440,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
 
 Pipeline::Pipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) : context(context), _modules(shaders.size()), attachments(state.colors.size() + (state.depth ? 1u : 0u)), colorAttachments(state.colors.size()), depthBounds(state.depth.has_value() && state.depthBoundsTest), depthBias(state.depth.has_value() && state.depthBias), dynamicRendering(context.graphicsPipelineLibrary) {
     PerformanceTimer timing("Vulkan.GraphicsPipeline");
+    for (const auto& color : state.colors) boundAttachments.push_back(color.partialWriteMask == 0u);
+    if (state.depth) boundAttachments.push_back(true);
     sampleLocationsEnabled = ValidateSampleLocations(context, state);
     const auto host = HostSampleLocationsFor(context, state);
     sampleLocationGrid = host.grid;
@@ -406,12 +451,15 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     this->context.bufferPool.reset();
     Require(state.blends.size() == (state.colors.empty() ? 0u : state.colors.back().exportIndex + 1u) && state.colors.size() <= state.blends.size(), "blend states do not match decoded color state");
     Require(state.blends.size() <= context.limits.maxColorAttachments, "color targets exceed device attachment limits");
-    Require(state.hasColorTarget || (context.limits.framebufferNoAttachmentsSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support rendering without attachments at the draw's sample count");
+    const bool boundColor = std::ranges::any_of(state.colors, [](const ColorTarget& color) { return color.partialWriteMask == 0u; });
+    Require((state.hasColorTarget && (boundColor || state.colors.empty() || state.depth.has_value())) || (context.limits.framebufferNoAttachmentsSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support rendering without attachments at the draw's sample count");
     Require(state.samples == 1 || !state.depth.has_value() || (context.limits.framebufferDepthSampleCounts & static_cast<VkSampleCountFlagBits>(state.samples)) != 0, "device does not support depth targets with the draw's sample count");
     Require(!depthBounds || context.depthBounds, "device does not support the depth bounds test");
     Require(!depthBias || state.depthBiasClamp == 0.0f || context.depthBiasClamp, "device does not support depth bias clamping");
     Require(!state.dualSourceBlend || (context.dualSrcBlend && state.blends.size() <= context.limits.maxFragmentDualSrcAttachments), "device does not support dual-source blending into this many attachments");
     Require(state.reversedBlend == 0 || (context.dualSrcBlend && state.blends.size() <= context.limits.maxFragmentDualSrcAttachments), "blending into a color target with a reversed component order through a second source color needs dual-source blending, which the device does not support");
+    Require(LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_COPY || context.logicOp, "device does not support color logic operations");
+    Require(LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_COPY || std::ranges::all_of(state.colors, [](const ColorTarget& color) { return LogicOpFormat(color.format); }), "color logic operations on a color target that is not a normalized or integer format are not implemented");
     Require(!state.negativeOneToOne || context.depthClipControl, "negative-one-to-one depth clipping requires VK_EXT_depth_clip_control with depthClipControl enabled");
     Require(!state.perSampleShading || context.sampleRateShading, "per-sample pixel shading requires the sampleRateShading device feature");
     Require(!state.mergedCoverage || (context.mergedCoverageSampleCounts & state.samples) != 0, "an overrasterized draw (a multisampled rasterizer into one-sample color targets) requires VK_NV_framebuffer_mixed_samples with merged coverage reduction");
@@ -479,6 +527,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<VkAttachmentDescription> colors;
         std::vector<VkAttachmentReference> references(state.blends.size(), VkAttachmentReference{VK_ATTACHMENT_UNUSED, attachmentLayout});
         for (std::uint32_t index = 0; index < state.colors.size(); ++index) {
+            if (state.colors[index].partialWriteMask != 0u) continue;
             VkAttachmentDescription color{};
             color.format = state.colors[index].format;
             color.samples = state.mergedCoverage || state.truncatedCoverage ? VK_SAMPLE_COUNT_1_BIT : static_cast<VkSampleCountFlagBits>(state.samples);
@@ -488,9 +537,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             color.initialLayout = attachmentLayout;
             color.finalLayout = attachmentLayout;
+            references.at(state.colors[index].exportIndex) = {static_cast<std::uint32_t>(colors.size()), attachmentLayout};
             colors.push_back(color);
-            references.at(state.colors[index].exportIndex) = {index, attachmentLayout};
         }
+        boundColorAttachments = static_cast<std::uint32_t>(colors.size());
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = static_cast<std::uint32_t>(references.size());
@@ -510,7 +560,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             subpass.pDepthStencilAttachment = &depthReference;
         }
         std::vector<VkFormat> renderingColors(state.blends.size(), VK_FORMAT_UNDEFINED);
-        for (const auto& color : state.colors) renderingColors.at(color.exportIndex) = color.format;
+        for (const auto& color : state.colors) {
+            if (color.partialWriteMask == 0u) renderingColors.at(color.exportIndex) = color.format;
+        }
         VkPipelineRenderingCreateInfoKHR rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR};
         rendering.colorAttachmentCount = static_cast<std::uint32_t>(renderingColors.size());
         rendering.pColorAttachmentFormats = renderingColors.empty() ? nullptr : renderingColors.data();
@@ -527,7 +579,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         if (dynamicRendering) {
             depthFormat = state.depth ? HostDepthFormat(context, state.depth->format) : VK_FORMAT_UNDEFINED;
             colorSlots.assign(state.blends.size(), ~0u);
-            for (std::uint32_t index = 0; index < state.colors.size(); ++index) colorSlots.at(state.colors[index].exportIndex) = index;
+            for (std::uint32_t index = 0; index < state.colors.size(); ++index) {
+                if (state.colors[index].partialWriteMask == 0u) colorSlots.at(state.colors[index].exportIndex) = index;
+            }
             this->attachmentLayout = attachmentLayout;
         }
         VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
@@ -628,6 +682,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
                 secondChannels[index].dstColorBlendFactor = state.blends[index].dstAlphaBlendFactor;
                 secondChannels[index].colorBlendOp = state.blends[index].alphaBlendOp;
             }
+        }
+        if (const auto logicOp = LogicOpFromRop(state.colorRop); logicOp != VK_LOGIC_OP_COPY) {
+            blend.logicOpEnable = VK_TRUE;
+            blend.logicOp = logicOp;
         }
         blend.attachmentCount = static_cast<std::uint32_t>(firstChannels.size());
         blend.pAttachments = firstChannels.empty() ? nullptr : firstChannels.data();
@@ -773,7 +831,11 @@ std::shared_ptr<Framebuffer> Pipeline::AcquireFramebuffer(std::span<const VkImag
             return framebuffers.back().framebuffer;
         }
     }
-    auto framebuffer = std::make_shared<Framebuffer>(context, renderPass, targets, extent, layers);
+    std::vector<VkImageView> boundViews;
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        if (boundAttachments[i]) boundViews.push_back(targets[i]);
+    }
+    auto framebuffer = std::make_shared<Framebuffer>(context, renderPass, renderPass == VK_NULL_HANDLE ? targets : std::span<const VkImageView>(boundViews), extent, layers);
     if (!resident) return framebuffer;
     // Beyond the bound the least recently used unreferenced entry goes.
     constexpr std::size_t bound = 8;
@@ -831,7 +893,7 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
     const auto locations = SampleLocations(state);
     const auto grid = sampleLocationGrid;
     const VkSampleLocationsInfoEXT info{VK_STRUCTURE_TYPE_SAMPLE_LOCATIONS_INFO_EXT, nullptr, static_cast<VkSampleCountFlagBits>(state.samples), grid, state.samples * grid.width * grid.height, locations.data()};
-    const VkAttachmentSampleLocationsEXT initial{static_cast<std::uint32_t>(state.colors.size()), info};
+    const VkAttachmentSampleLocationsEXT initial{boundColorAttachments, info};
     const VkSubpassSampleLocationsEXT post{0, info};
     VkRenderPassSampleLocationsBeginInfoEXT sampleLocations{VK_STRUCTURE_TYPE_RENDER_PASS_SAMPLE_LOCATIONS_BEGIN_INFO_EXT};
     sampleLocations.attachmentInitialSampleLocationsCount = state.depth ? 1 : 0;
@@ -968,6 +1030,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     append(key, state.conservativeRasterization);
     append(key, state.blends.size());
     for (const auto& blend : state.blends) append(key, blend);
+    append(key, state.colorRop);
     for (const auto value : state.blendConstants) append(key, value);
     append(key, state.samples);
     append(key, state.perSampleShading);
@@ -982,6 +1045,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
     for (const auto& color : state.colors) {
         append(key, color.format);
         append(key, color.componentMapping);
+        append(key, color.partialWriteMask != 0u);
     }
     if (state.blends.size() != state.colors.size()) {
         for (const auto& color : state.colors) append(key, color.exportIndex);

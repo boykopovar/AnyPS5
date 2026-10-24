@@ -1,33 +1,8 @@
+#include "prx/libSceContentSearch/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param);
-int APS5_VABI sceContentSearchTerm(void);
-int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchGetNumOfContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* numOfContent, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* size, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchSearchContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfContent, void* infos, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchOpenMetadata(const char* filePath, std::int32_t* metadataId);
-int APS5_VABI sceContentSearchOpenMetadataByContentId(std::int64_t contentId, std::int32_t* metadataId);
-int APS5_VABI sceContentSearchCloseMetadata(std::int32_t metadataId);
-int APS5_VABI sceContentSearchGetMetadataFieldInfo(std::int32_t metadataId, const char* field, std::int32_t* metadataType, std::int32_t* size);
-int APS5_VABI sceContentSearchGetMetadataValue(std::int32_t metadataId, const char* field, void* value);
-int APS5_VABI sceContentBinderEnd(void);
-int APS5_VABI sceContentBinderGetNumOfDifference(void);
-int APS5_VABI sceContentBinderInitialize(void);
-int APS5_VABI sceContentBinderIsUpdated(void);
-int APS5_VABI sceContentBinderReset(void);
-int APS5_VABI sceContentBinderSearchDifference(void);
-int APS5_VABI sceContentBinderStart(void);
-int APS5_VABI sceContentBinderTerminate(void);
-int APS5_VABI sceContentSearchGetApplicationLastUpdateId(void);
-int APS5_VABI sceContentSearchGetMyApplicationIndex(void);
-int APS5_VABI sceContentSearchGetNumOfApplication(void);
-int APS5_VABI sceContentSearchSearchApplication(void);
-}
 
 namespace {
 

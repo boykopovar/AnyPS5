@@ -156,6 +156,53 @@ class SelectTests(unittest.TestCase):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+    def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
+        cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            script.write_text('execute_process(COMMAND "${FIXTURE}" RESULT_VARIABLE result)\n'
+                              'if(NOT result STREQUAL "0")\n  message(FATAL_ERROR "fixture: ${result}")\nendif()\n',
+                              encoding="utf-8")
+            cmake.write_text(original + "add_test(NAME alpha_run COMMAND ${CMAKE_COMMAND} -DFIXTURE=$<TARGET_FILE:alpha_tests>"
+                                        " -P ${CMAKE_SOURCE_DIR}/data/run.cmake)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            graph = self.build / "run-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"alpha_run", "beta", "beta_setup", "script"})
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            output = self.tool("ctest", self.build, "-R", "alpha_run", "--output-on-failure")
+            self.assertIn("100% tests passed", output)
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            script.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
+    def test_script_test_builds_an_excluded_executable_it_gets_as_a_definition(self):
+        cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            script.write_text('execute_process(COMMAND "${TOOL}" RESULT_VARIABLE result)\n'
+                              'if(NOT result STREQUAL "0")\n  message(FATAL_ERROR "tool: ${result}")\nendif()\n',
+                              encoding="utf-8")
+            cmake.write_text(original + "add_executable(alpha_tool EXCLUDE_FROM_ALL main.c)\n"
+                                        "add_test(NAME alpha_run COMMAND ${CMAKE_COMMAND} -DTOOL=$<TARGET_FILE:alpha_tool>"
+                                        " -P ${CMAKE_SOURCE_DIR}/data/run.cmake)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
+            graph = self.build / "run-graph.json"
+            self.tool("dump", self.build, graph)
+            self.assertEqual(self.select("beta/main.c", graph=graph)[1], {"alpha_run", "beta", "beta_setup", "script"})
+            subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
+            output = self.tool("ctest", self.build, "-R", "alpha_run", "--output-on-failure")
+            self.assertIn("100% tests passed", output)
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            script.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
     def test_retargeted_test_does_not_prune_its_previous_executable(self):
         cmake = self.source / "alpha/CMakeLists.txt"
         original = cmake.read_text(encoding="utf-8")
@@ -339,6 +386,51 @@ class CaseInsensitivePathTests(unittest.TestCase):
             self.assertIsNone(build.repo(os.path.join(os.sep, "WORK", "SOURCE", "BUILD", "Generated.h")))
 
 
+class ChunkTests(unittest.TestCase):
+    def test_windows_batches_fit_the_serialized_utf16_budget(self):
+        cases = (
+            (20000, ["\U0001f600" * 50 + f"/{index}.obj" for index in range(400)]),
+            (64, ['space name\\', 'embedded"quote', "\t", "", 'both \\" slash\\'] * 20),
+            (64, ["\ud800" * 10, "\U0001f600" * 10] * 20),
+        )
+        for budget, names in cases:
+            with self.subTest(budget=budget, first=names[0]), mock.patch.object(select_tests.sys, "platform", "win32"), \
+                    mock.patch.object(select_tests, "BATCH", budget):
+                batches = list(select_tests.chunks(iter(names)))
+                self.assertEqual([name for batch in batches for name in batch], names)
+                self.assertGreater(len(batches), 1)
+                for batch in batches:
+                    self.assertTrue(batch)
+                    command = subprocess.list2cmdline(batch)
+                    self.assertLessEqual(len(command.encode("utf-16-le", "surrogatepass")) // 2 + 1, budget)
+
+    def test_windows_batch_keeps_an_exact_boundary(self):
+        with mock.patch.object(select_tests.sys, "platform", "win32"), mock.patch.object(select_tests, "BATCH", 8):
+            self.assertEqual(list(select_tests.chunks(["a b", "c", "d"])), [["a b", "c"], ["d"]])
+
+    def test_other_platforms_keep_the_existing_character_budget(self):
+        names = ["\U0001f600" * 3, "abc", "\udcff"]
+        for platform in ("linux", "darwin"):
+            with self.subTest(platform=platform), mock.patch.object(select_tests.sys, "platform", platform), \
+                    mock.patch.object(select_tests, "BATCH", 8):
+                self.assertEqual(list(select_tests.chunks(iter(names))), [names[:2], names[2:]])
+
+    def test_empty_input_and_an_oversized_single_argument_are_preserved(self):
+        for platform in ("win32", "linux"):
+            with self.subTest(platform=platform), mock.patch.object(select_tests.sys, "platform", platform), \
+                    mock.patch.object(select_tests, "BATCH", 4):
+                self.assertEqual(list(select_tests.chunks(iter([]))), [])
+                self.assertEqual(list(select_tests.chunks(["long target", "x"])), [["long target"], ["x"]])
+
+    @unittest.skipUnless(sys.platform == "win32", "needs the Windows command line limit")
+    def test_windows_batches_launch_without_losing_arguments(self):
+        names = ["\U0001f600" * 50 + f"/{index}.obj" for index in range(400)]
+        for batch in select_tests.chunks(names):
+            result = subprocess.run([sys.executable, "-I", "-c", "import json,sys; print(json.dumps(sys.argv[1:]))", *batch],
+                                    capture_output=True, text=True, check=True, timeout=5)
+            self.assertEqual(json.loads(result.stdout), batch)
+
+
 class PlanTests(unittest.TestCase):
     def test_unresolved_selected_command_keeps_unselected_build_targets(self):
         build = mock.Mock()
@@ -390,6 +482,34 @@ class MissingCommandTests(unittest.TestCase):
             commands = {test["name"]: test.get("command") for test in recovered}
             self.assertEqual(commands, {"absolute": [executable, helper], "relative": None, "path": None,
                                         "ambiguous": None, "existing": [helper], "stale": None})
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(select_tests.sys, "stdout", out), mock.patch.object(select_tests.sys, "stderr", err):
+            try:
+                select_tests.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

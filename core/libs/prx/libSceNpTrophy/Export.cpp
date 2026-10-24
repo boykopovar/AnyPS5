@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -30,87 +31,24 @@ constexpr int NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT = static_cast<int>(0x80551
 constexpr int NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED = static_cast<int>(0x8055161au);
 constexpr int NP_TROPHY_ERROR_TITLE_CONF_NOT_INSTALLED = static_cast<int>(0x80551626u);
 constexpr int NP_TROPHY_INVALID_ID = -1;
-constexpr int NP_TROPHY_NUM_MAX = 128;
+
 constexpr int NP_TROPHY_GRADE_UNKNOWN = 0;
 constexpr int NP_TROPHY_BASE_GAME_GROUP_ID = -1;
 constexpr std::uint32_t TrpMagic = 0xdca24d00u;
 constexpr std::size_t TrpHeaderBytes = 0x60;
 constexpr std::size_t TrpEntryBytes = 0x40;
 
-struct GameDetails {
-    std::uint64_t size;
-    std::uint32_t numGroups;
-    std::uint32_t numTrophies;
-    std::uint32_t numPlatinum;
-    std::uint32_t numGold;
-    std::uint32_t numSilver;
-    std::uint32_t numBronze;
-    char title[128];
-    char description[1024];
-};
 static_assert(sizeof(GameDetails) == 0x4a0);
 
-struct GameData {
-    std::uint64_t size;
-    std::uint32_t unlockedTrophies;
-    std::uint32_t unlockedPlatinum;
-    std::uint32_t unlockedGold;
-    std::uint32_t unlockedSilver;
-    std::uint32_t unlockedBronze;
-    std::uint32_t progressPercentage;
-};
 static_assert(sizeof(GameData) == 0x20);
 
-struct GroupDetails {
-    std::uint64_t size;
-    std::int32_t groupId;
-    std::uint32_t numTrophies;
-    std::uint32_t numPlatinum;
-    std::uint32_t numGold;
-    std::uint32_t numSilver;
-    std::uint32_t numBronze;
-    char title[128];
-    char description[1024];
-};
 static_assert(sizeof(GroupDetails) == 0x4a0);
 
-struct GroupData {
-    std::uint64_t size;
-    std::int32_t groupId;
-    std::uint32_t unlockedTrophies;
-    std::uint32_t unlockedPlatinum;
-    std::uint32_t unlockedGold;
-    std::uint32_t unlockedSilver;
-    std::uint32_t unlockedBronze;
-    std::uint32_t progressPercentage;
-    std::uint8_t reserved[4];
-};
 static_assert(sizeof(GroupData) == 0x28);
 
-struct TrophyDetails {
-    std::uint64_t size;
-    std::int32_t trophyId;
-    std::int32_t trophyGrade;
-    std::int32_t groupId;
-    bool hidden;
-    std::uint8_t reserved[3];
-    char name[128];
-    char description[1024];
-};
 static_assert(sizeof(TrophyDetails) == 0x498);
 
-struct TrophyData {
-    std::uint64_t size;
-    std::int32_t trophyId;
-    bool unlocked;
-    std::uint8_t reserved[3];
-    std::uint64_t timestamp;
-};
 static_assert(sizeof(TrophyData) == 0x18);
-
-struct TrophyFlagArray {
-    std::uint32_t bits[NP_TROPHY_NUM_MAX / 32];
-};
 
 struct TrpEntry {
     std::uint64_t offset;

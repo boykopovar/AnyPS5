@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <chrono>
@@ -9,11 +11,6 @@ struct GuestTimeval {
     std::int64_t seconds;
     std::int64_t microseconds;
 };
-
-extern "C" {
-int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {

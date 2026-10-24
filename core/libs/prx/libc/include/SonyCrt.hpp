@@ -15,15 +15,12 @@
 #include <stdexcept>
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-class FileStream;
-
 extern "C" {
 GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
-int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
-int APS5_VABI fputc_nid_postfix(int value, FileStream* stream);
 extern FileStream* __stderrp_nid_postfix;
 }
 

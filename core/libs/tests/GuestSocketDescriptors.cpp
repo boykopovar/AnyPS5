@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -24,32 +27,6 @@ struct GuestDescriptorSet {
         return ((words[descriptor / 64] >> (descriptor % 64)) & 1u) != 0;
     }
 };
-
-struct PollDescriptor {
-    int descriptor;
-    short events;
-    short revents;
-};
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-int APS5_VABI select_nid_postfix(int, void*, void*, void*, const void*);
-int APS5_VABI poll_nid_postfix(PollDescriptor*, std::uint32_t, int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -159,7 +136,7 @@ static void CloseReleasesNumber() {
     Require(files.back() == socket);
     unsigned char bytes[4]{};
     Require(read_nid_postfix(socket, bytes, sizeof(bytes)) == sizeof(bytes));
-    PollDescriptor entry{socket, In, 0};
+    GuestPollDescriptor entry{socket, In, 0};
     Require(poll_nid_postfix(&entry, 1, 0) == 1 && entry.revents == In);
     for (const int file : files) Require(close_nid_postfix(file) == 0);
     const int kernelClosed = Socket();

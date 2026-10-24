@@ -1,3 +1,4 @@
+#include "prx/libSceVorbisDec/include/Api.hpp"
 #include "prx/libSceVorbisDec/include/GuestVorbisFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -16,43 +17,6 @@
 #include <vector>
 
 using namespace VorbisDec;
-
-extern "C" {
-int APS5_VABI sceVorbisDecOpenCallbacks(void* datasource, void* vf, const char* initial, std::int64_t ibytes, GuestCallbacks callbacks);
-int APS5_VABI sceVorbisDecClear(void* vf);
-std::int64_t APS5_VABI sceVorbisDecBitrate(void* vf, int link);
-std::int64_t APS5_VABI sceVorbisDecBitrateInstant(void* vf);
-std::int64_t APS5_VABI sceVorbisDecStreams(void* vf);
-std::int64_t APS5_VABI sceVorbisDecSeekable(void* vf);
-std::int64_t APS5_VABI sceVorbisDecSerialNumber(void* vf, int link);
-std::int64_t APS5_VABI sceVorbisDecRawTotal(void* vf, int link);
-std::int64_t APS5_VABI sceVorbisDecPcmTotal(void* vf, int link);
-double APS5_VABI sceVorbisDecTimeTotal(void* vf, int link);
-int APS5_VABI sceVorbisDecRawSeek(void* vf, std::int64_t position);
-int APS5_VABI sceVorbisDecPcmSeek(void* vf, std::int64_t position);
-int APS5_VABI sceVorbisDecPcmSeekPage(void* vf, std::int64_t position);
-int APS5_VABI sceVorbisDecTimeSeek(void* vf, double position);
-int APS5_VABI sceVorbisDecTimeSeekPage(void* vf, double position);
-int APS5_VABI sceVorbisDecRawSeekLap(void* vf, std::int64_t position);
-int APS5_VABI sceVorbisDecPcmSeekLap(void* vf, std::int64_t position);
-int APS5_VABI sceVorbisDecPcmSeekPageLap(void* vf, std::int64_t position);
-int APS5_VABI sceVorbisDecTimeSeekLap(void* vf, double position);
-int APS5_VABI sceVorbisDecTimeSeekPageLap(void* vf, double position);
-std::int64_t APS5_VABI sceVorbisDecRawTell(void* vf);
-std::int64_t APS5_VABI sceVorbisDecPcmTell(void* vf);
-double APS5_VABI sceVorbisDecTimeTell(void* vf);
-GuestInfo* APS5_VABI sceVorbisDecInfo(void* vf, int link);
-GuestComment* APS5_VABI sceVorbisDecComment(void* vf, int link);
-std::int64_t APS5_VABI sceVorbisDecRead(void* vf, char* buffer, int length, int bigEndian, int word, int isSigned, int* bitstream);
-std::int64_t APS5_VABI sceVorbisDecReadFloat(void* vf, float*** pcmChannels, int samples, int* bitstream);
-std::int64_t APS5_VABI sceVorbisDecReadFilter(void* vf, char* buffer, int length, int bigEndian, int word, int isSigned, int* bitstream, GuestFilter filter, void* filterParam);
-int APS5_VABI sceVorbisDecCrossLap(void* first, void* second);
-int APS5_VABI sceVorbisDecHalfrate(void* vf, int flag);
-int APS5_VABI sceVorbisDecHalfrateP(void* vf);
-int APS5_VABI sceVorbisDecGetDecodePriority(void);
-int APS5_VABI sceVorbisDecSetDecodePriority(void);
-int APS5_VABI sceVorbisDecGetLastDecodeError(void);
-}
 
 namespace {
 

@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <atomic>
@@ -7,14 +8,6 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread*, const PthreadAttr*, PthreadEntry, void*, const char*);
-int APS5_VABI scePthreadJoin(Pthread, void**);
-int APS5_VABI sceKernelInstallExceptionHandler(int, void*);
-int APS5_VABI sceKernelRemoveExceptionHandler(int);
-int APS5_VABI sceKernelRaiseException(Pthread, int);
-}
 
 static constexpr int SigUsr1 = 30;
 static constexpr int Raises = 100;
