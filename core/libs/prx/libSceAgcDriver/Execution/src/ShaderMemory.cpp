@@ -179,6 +179,10 @@ ShaderMemory::~ShaderMemory() {
     }
 }
 
+std::size_t ShaderMemory::Bytes() const {
+    return sizeof(ShaderMemory) + initial.capacity() * sizeof(initial[0]) + pages.capacity() * sizeof(pages[0]) + pages.size() * sizeof(Page) + supplied.capacity() * sizeof(Supplied) + spilled.capacity() * sizeof(spilled[0]);
+}
+
 void ShaderMemory::WordMask::SetRun(std::size_t first, std::size_t count) {
     while (count != 0) {
         const auto shift = first % 64u;

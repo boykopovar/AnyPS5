@@ -65,6 +65,15 @@ std::size_t Driver::drawCacheEntries() {
     return entries;
 }
 
+std::uint64_t Driver::DrawCacheBytes() {
+    static const std::uint64_t bytes = [] {
+        const char* text = std::getenv("APS5_DRAW_CACHE_BYTES");
+        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+        return parsed != 0 ? static_cast<std::uint64_t>(parsed) : std::uint64_t{256} << 20u;
+    }();
+    return bytes;
+}
+
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;
@@ -180,7 +189,8 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
         found->second = std::move(replacement);
     }
-    while (drawCache.size() > drawCacheEntries()) {
+    while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
+        const bool overBytes = drawCache.size() <= drawCacheEntries();
         const auto last = drawCache.find(drawOrder.back());
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
@@ -191,6 +201,10 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawCache.erase(last);
         ++drawCacheEvictions;
         ++counters.evictions;
+        if (overBytes) {
+            ++drawCacheByteEvictions;
+            ++counters.byteEvictions;
+        }
     }
 }
 
