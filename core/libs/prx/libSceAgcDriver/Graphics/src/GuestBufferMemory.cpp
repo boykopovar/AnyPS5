@@ -4282,7 +4282,7 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
         const bool live = owner->writable || owner->hostBacked || owner->mirror != nullptr;
         // A live region over a unit shadow's fresh results reads the import's stale bytes here
         // (the publish happens when the region is bound, under the device lock): not compared.
-        if (live && (!checkLive || AnyShadowedOverlaps(snapshot.address, snapshot.bytes.size()))) {
+        if (live && (!checkLive || snapshot.compared || AnyShadowedOverlaps(snapshot.address, snapshot.bytes.size()))) {
             if (profile) Snapshots().skipped.fetch_add(1, std::memory_order_relaxed);
             return;
         }

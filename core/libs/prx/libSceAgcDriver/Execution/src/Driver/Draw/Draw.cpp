@@ -942,6 +942,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         for (std::size_t record = 0; record < records.size(); ++record) {
             if (drawable(records[record])) lastDrawable = record;
         }
+        bool recordedOne = false;
         for (std::uint32_t record = 0; record < records.size(); ++record) {
             const auto& arguments = records[record];
             if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
@@ -991,6 +992,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 return DrawVerdict::Rejected;
             }
             if (pipelined && pipelinedIndirect && record == lastDrawable && !gpuLock.owns_lock() && deferredLabels().labels.empty()) {
+                runCaptureCheckHook();
+                if (tail.queue != nullptr && capturedMemoryChanged(memory)) {
+                    const RecaptureScope recapture;
+                    return draw(*tail.queue, tail.packet, submission, rejected);
+                }
                 phaseTiming.Phase(DrawRowVectors);
                 auto writes = drawWriteRanges(graphics, stages);
                 const auto commitQueue = submission.queue;
@@ -1009,6 +1015,15 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             }
             drainBeforeInline();
             lockForDraw();
+            if (!recordedOne) {
+                runCaptureCheckHook();
+                if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
+                    gpuLock.unlock();
+                    const RecaptureScope recapture;
+                    return draw(*tail.queue, tail.packet, submission, rejected);
+                }
+            }
+            recordedOne = true;
             noteDrawWriters(stages, submission.queue);
             phaseTiming.Phase(DrawRowVectors);
             localDevice->Draw(graphics, direct, stages, snapshots);
@@ -1036,6 +1051,11 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         }
     }
     if (pipelined && !drawParameters.indirect && (tail.queue == nullptr || deferredLabels().labels.empty())) {
+        runCaptureCheckHook();
+        if (tail.queue != nullptr && capturedMemoryChanged(memory)) {
+            const RecaptureScope recapture;
+            return draw(*tail.queue, tail.packet, submission, rejected);
+        }
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
@@ -1055,6 +1075,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     }
     if (drawParameters.indirect) drainBeforeInline();
     lockForDraw();
+    runCaptureCheckHook();
+    if (tail.queue != nullptr && capturedMemoryChanged(memory, snapshots)) {
+        gpuLock.unlock();
+        const RecaptureScope recapture;
+        return draw(*tail.queue, tail.packet, submission, rejected);
+    }
     noteDrawWriters(stages, submission.queue);
     phaseTiming.Phase(DrawRowVectors);
     if (recipe != nullptr) {

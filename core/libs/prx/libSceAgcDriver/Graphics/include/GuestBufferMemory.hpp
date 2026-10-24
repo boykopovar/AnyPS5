@@ -23,6 +23,7 @@ void ShutdownGuestBufferWorkers();
 struct GuestMemorySnapshot {
     std::uint64_t address;
     std::span<const std::byte> bytes;
+    bool compared = false;
 };
 
 // A guest allocation imported with VK_EXT_external_memory_host, usable by the GPU in place.
