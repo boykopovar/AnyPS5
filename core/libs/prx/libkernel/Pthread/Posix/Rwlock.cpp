@@ -50,7 +50,10 @@ int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const Pthre
 }
 
 int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) {
-    return toPosix(scePthreadRwlockattrDestroy(attr));
+    if (attr && *attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("pthread_rwlockattr_destroy: destroyed attr");
+    const int result = toPosix(scePthreadRwlockattrDestroy(attr));
+    *attr = DESTROYED_RWLOCKATTR;
+    return result;
 }
 
 int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr) {

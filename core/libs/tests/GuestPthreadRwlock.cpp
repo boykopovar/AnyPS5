@@ -27,6 +27,7 @@ int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock
 int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
 int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
+int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr);
 int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock);
@@ -395,6 +396,11 @@ static void CheckAttrProcessSharing() {
     Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(nullptr, &pshared); }));
     Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(&unset, &pshared); }));
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    Require(attr != nullptr);
+    pshared = -1;
+    Require(pthread_rwlockattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Require(pthread_rwlockattr_setpshared_nid_postfix(&attr, PROCESS_PRIVATE) == 0);
+    Require(Throws([&] { scePthreadRwlockattrDestroy(&attr); }));
 }
 
 int main() {

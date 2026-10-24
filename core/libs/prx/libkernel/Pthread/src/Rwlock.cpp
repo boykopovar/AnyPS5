@@ -160,6 +160,7 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
 
 int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) {
     if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrDestroy: null attr");
+    if (*attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("scePthreadRwlockattrDestroy: destroyed attr");
     delete *attr;
     *attr = nullptr;
     return SCE_OK;

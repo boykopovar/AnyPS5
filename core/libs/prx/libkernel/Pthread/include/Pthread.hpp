@@ -60,6 +60,8 @@ struct PthreadRwlockattrPrivate {
     int type;
 };
 
+inline PthreadRwlockattr const DESTROYED_RWLOCKATTR = reinterpret_cast<PthreadRwlockattr>(std::uintptr_t{1});
+
 struct PthreadRwlockPrivate {
     std::mutex _state;
     TimedWait::Condition _changed;
