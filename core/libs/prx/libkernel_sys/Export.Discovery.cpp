@@ -451,9 +451,20 @@ int APS5_VABI reboot_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI revoke_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int* APS5_VABI __error_nid_postfix();
+int APS5_VABI stat_nid_postfix(const char* path, FileStat* status);
+
+int APS5_VABI revoke_nid_postfix(const char* path) {
+    constexpr std::uint16_t typeMask = 0170000;
+    constexpr std::uint16_t characterDevice = 0020000;
+    constexpr int guestEinval = 22;
+    FileStat status{};
+    if (stat_nid_postfix(path, &status) != 0) return -1;
+    if ((status.st_mode & typeMask) != characterDevice) {
+        *__error_nid_postfix() = guestEinval;
+        return -1;
+    }
+    NotImplemented_nid_no_patch("revoke of a character device");
 }
 
 int APS5_VABI rfork_thread_nid_postfix(void) {

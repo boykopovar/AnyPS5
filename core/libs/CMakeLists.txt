@@ -569,6 +569,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGameLiveStreaming>")
     endif()
 
+    add_test_executable(guest_kernel_sys_revoke_tests tests/GuestKernelSysRevoke.cpp)
+    target_include_directories(guest_kernel_sys_revoke_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_revoke_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_revoke_tests)
+    add_test(NAME guest_kernel_sys_revoke COMMAND guest_kernel_sys_revoke_tests)
+    set_tests_properties(guest_kernel_sys_revoke PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_revoke PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_netctl_ap_tests tests/GuestNetCtlAp.cpp)
     target_include_directories(guest_netctl_ap_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_netctl_ap_tests PRIVATE libSceNetCtlAp libc)
