@@ -8,8 +8,6 @@
 
 namespace Codegen {
 
-namespace {
-
 std::vector<Domain::CodeRange> MergeCodeRanges(std::vector<Domain::CodeRange> ranges) {
     std::erase_if(ranges, [](const Domain::CodeRange& range) { return range.End <= range.Begin; });
     std::sort(ranges.begin(), ranges.end(), [](const Domain::CodeRange& left, const Domain::CodeRange& right) { return left.Begin < right.Begin; });
@@ -21,8 +19,6 @@ std::vector<Domain::CodeRange> MergeCodeRanges(std::vector<Domain::CodeRange> ra
             merged.push_back(range);
     }
     return merged;
-}
-
 }
 
 class InstructionScanner : public IInstructionScanner {

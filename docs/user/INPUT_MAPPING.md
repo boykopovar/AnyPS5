@@ -42,6 +42,7 @@ Without an `anyps5-input.ini`, or for actions the file does not mention, these b
 | `Shake` | X (reports a swinging acceleration and angular velocity while held) |
 | `ToggleMouse` | Middle mouse button, F7 |
 | `ToggleFullscreen` | F11 |
+| `TogglePerformanceOverlay` | F10 |
 | `Screenshot` | F12 |
 
 For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, and keeps all other built-in bindings:
@@ -79,6 +80,22 @@ LeftStickDeadzone = 12
 RightStickDeadzone = 8
 MouseSensitivity = 2.5
 ```
+
+## Controller timelines
+
+Set `APS5_PAD_INPUT_FILE` as described in [Controller input for test runs](USAGE.md#controller-input-for-test-runs), then queue an entire button sequence after the application begins reading its controller. Save a JSON file such as `menu.json`:
+
+```json
+{"version":1,"events":[{"at_ms":200,"hold_ms":300,"buttons":["cross","r1"]},{"at_ms":1000,"hold_ms":300,"buttons":["down"]}]}
+```
+
+```sh
+python3 tools/pad_timeline.py menu.json /tmp/anyps5-pad --repeat 3 --gap-ms 500
+```
+
+Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition. The helper validates the entire sequence before atomically replacing the command file.
+
+The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
 ## Analog keyboard input
 

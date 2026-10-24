@@ -14,6 +14,9 @@ int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* inte
 int APS5_VABI sceNpGameIntentVshInitialize(void);
 int APS5_VABI sceNpGameIntentVshTerminate(void);
 int APS5_VABI sceNpGameIntentTerminate(void);
+int APS5_VABI sceNpAppLauncherInitialize(const void* initParam);
+int APS5_VABI sceNpAppLauncherLaunchApp(void);
+int APS5_VABI sceNpAppLauncherTerminate(void);
 }
 
 static void Require(bool value, const char* what) {
@@ -61,6 +64,16 @@ int main() {
     Require(sceNpGameIntentVshInitialize() == 0, "vsh init failed");
     Require(sceNpGameIntentVshTerminate() == 0, "vsh terminate failed");
     Require(sceNpGameIntentTerminate() == 0, "terminate failed");
+
+    unsigned char appLauncherParam[0x28]{};
+    *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x28;
+    Require(sceNpAppLauncherInitialize(appLauncherParam) == 0, "app launcher init failed");
+    Require(Throws<std::runtime_error>([] { sceNpAppLauncherLaunchApp(); }),
+            "app launcher launch must throw until implemented");
+    Require(sceNpAppLauncherTerminate() == 0, "app launcher terminate failed");
+    *reinterpret_cast<std::uint64_t*>(appLauncherParam) = 0x10;
+    Require(sceNpAppLauncherInitialize(appLauncherParam) == 0,
+            "app launcher init must accept any init parameter");
 
     std::puts("NpGameIntent tests passed");
     return 0;

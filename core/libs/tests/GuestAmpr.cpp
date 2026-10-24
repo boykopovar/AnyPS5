@@ -37,6 +37,10 @@ int APS5_VABI sceAmprCommandBufferSetMarkerWithColor(Apr::CommandBufferObject*, 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char*, std::uint32_t);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounterOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion();
+void* APS5_VABI sceAmprCommandBufferGetBufferBaseAddress(const Apr::CommandBufferObject*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarker(const char*);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor(const char*, std::uint32_t);
 int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
@@ -243,6 +247,16 @@ void TestRejectedArguments() {
     Require(sceAmprMeasureCommandSizePushMarkerWithColor(nullptr, color) == rejected);
     Require(sceAmprMeasureCommandSizeSetMarker(nullptr) == rejected);
     Require(sceAmprMeasureCommandSizeSetMarkerWithColor(nullptr, color) == rejected);
+
+    std::uint64_t gatherState = 0;
+    std::uint64_t scatterState = 0;
+    std::array<std::uint8_t, 64> memory{};
+    Require(sceAmprCommandBufferConstructor(nullptr) == invalidArgument);
+    Require(sceAmprAprCommandBufferConstructor(nullptr, &gatherState, &scatterState) == invalidArgument);
+    Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, nullptr, &scatterState) == invalidArgument);
+    Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
 }
 
 void TestFullBuffer() {
@@ -460,6 +474,10 @@ void TestNops() {
     RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNopWithData(4));
     Require(std::memcmp(recorder.memory.data() + offset + sizeof(Apr::CommandHeader), data, sizeof(data)) == 0);
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 0, nullptr) == 0);
+    const auto emptyPayloadOffset = recorder.Offset();
+    std::memset(recorder.memory.data() + emptyPayloadOffset, 0x5A, sceAmprMeasureCommandSizeNopWithData(4));
+    Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 3, nullptr) == 0);
+    for (std::size_t index = 0; index < 12; ++index) Require(recorder.memory[emptyPayloadOffset + sizeof(Apr::CommandHeader) + index] == 0x5A);
     Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
@@ -568,6 +586,10 @@ void TestVersionedCounters() {
 
 void TestClearBuffer() {
     Recorder recorder;
+    Require(sceAmprMeasureCommandSizeWriteAddressOnCompletion() == sizeof(Apr::WriteAddressCommand));
+    Require(sceAmprMeasureCommandSizeWriteCounterOnCompletion() == sizeof(Apr::WriteCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion() == sizeof(Apr::WriteKernelEventQueueCommand));
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&recorder.buffer) == recorder.buffer.base);
     Require(sceAmprCommandBufferNop(&recorder.buffer, 1) == 0);
     Require(recorder.Offset() != 0 && recorder.Commands() == 1);
     Require(sceAmprCommandBufferClearBuffer(&recorder.buffer) == recorder.memory.data());

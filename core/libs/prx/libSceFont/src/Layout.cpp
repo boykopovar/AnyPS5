@@ -120,7 +120,8 @@ void FillImageMetrics(FontRenderOutput* result, const FontGlyphMetrics* metrics,
 
 int RenderGlyphIndexToSurface(FontObj& obj, std::uint32_t glyphIndex, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result) {
     ClearRenderOutputs(metrics, result);
-    if (!surface->buffer || surface->width <= 0 || surface->height <= 0 || surface->widthByte <= 0 || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
+    const bool emptyExtent = surface->width == 0 || surface->height == 0;
+    if (!surface->buffer || surface->width < 0 || surface->height < 0 || surface->widthByte < 0 || (!emptyExtent && surface->widthByte == 0) || surface->pixelSizeByte <= 0) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
     const int bytesPerPixel = surface->pixelSizeByte;
     if (bytesPerPixel != 1 && bytesPerPixel != 4) return SCE_FONT_ERROR_NO_SUPPORT_SURFACE;
     const auto face = static_cast<FT_Face>(obj.ft_face);
@@ -365,7 +366,7 @@ int Font::ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style,
     return SCE_FONT_OK;
 }
 
-int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle) {
+int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW, float* usedScaleH) {
     const auto clearMetrics = [&] {
         if (metrics) *metrics = {};
     };
@@ -404,10 +405,10 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
     float scaleH = 0.0f;
     const int scaleRc = StyleStateGetScalePixel(style, &scaleW, &scaleH);
     if (scaleRc != SCE_FONT_OK) return finish(scaleRc);
-    const FT_Face face = state->face;
-    if (!face) return finish(SCE_FONT_ERROR_NO_SUPPORT_FUNCTION);
-    const FT_UInt glyphIndex = ResolveGlyphIndexWithFallback(face, code);
-    if (glyphIndex == 0) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    if (!state->face) return finish(SCE_FONT_ERROR_NO_SUPPORT_FUNCTION);
+    FT_UInt glyphIndex = 0;
+    const FT_Face face = FaceForCode(*state, code, &glyphIndex);
+    if (!face) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
     const auto charW = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(scaleW * 64.0f));
     const auto charH = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(scaleH * 64.0f));
     FT_F26Dot6 usedW = charW;
@@ -434,6 +435,8 @@ int Font::GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMe
     metrics->Vertical.bearingX = static_cast<float>(vertBearingX) / 64.0f * ratioX;
     metrics->Vertical.bearingY = static_cast<float>(vertBearingY) / 64.0f * ratioY;
     metrics->Vertical.advance = static_cast<float>(slot->metrics.vertAdvance) / 64.0f * ratioY;
+    if (usedScaleW) *usedScaleW = scaleW;
+    if (usedScaleH) *usedScaleH = scaleH;
     return finish(SCE_FONT_OK);
 }
 
@@ -475,19 +478,23 @@ int Font::RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRe
     obj->shift_units_y = 0;
     obj->layout_seed_pair = 0;
     StyleStateGetScalePixel(style, &obj->scale_x_0x50, &obj->scale_y_0x54);
-    float outScaleX = 0.0f;
-    float outScaleY = 0.0f;
-    int rc;
-    if (style->scale_unit == 0) {
-        rc = driver->set_char_default_dpi(obj, style->scale_w, style->scale_h, &outScaleX, &outScaleY);
-    } else {
-        rc = driver->set_char_with_dpi(obj, style->dpi_x ? style->dpi_x : 0x48, style->dpi_y ? style->dpi_y : 0x48, style->scale_w, style->scale_h, &outScaleX, &outScaleY);
-    }
-    if (rc != SCE_FONT_OK) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    const auto setCharSize = [&](FontObj* target) {
+        float outScaleX = 0.0f;
+        float outScaleY = 0.0f;
+        if (style->scale_unit == 0) return driver->set_char_default_dpi(target, style->scale_w, style->scale_h, &outScaleX, &outScaleY);
+        return driver->set_char_with_dpi(target, style->dpi_x ? style->dpi_x : 0x48, style->dpi_y ? style->dpi_y : 0x48, style->scale_w, style->scale_h, &outScaleX, &outScaleY);
+    };
+    if (setCharSize(obj) != SCE_FONT_OK) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
     std::uint32_t glyphIndex = 0;
-    rc = driver->glyph_index(obj, code, &glyphIndex);
-    if (rc != SCE_FONT_OK || glyphIndex == 0) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
-    return finish(RenderGlyphIndexToSurface(*obj, glyphIndex, surface, x, y, metrics, result));
+    if (driver->glyph_index(obj, code, &glyphIndex) == SCE_FONT_OK && glyphIndex != 0) return finish(RenderGlyphIndexToSurface(*obj, glyphIndex, surface, x, y, metrics, result));
+    const FontState* state = TryGetState(handle);
+    FT_UInt fallbackIndex = 0;
+    const FT_Face fallbackFace = state ? FallbackFaceForCode(*state, code, &fallbackIndex) : nullptr;
+    if (!fallbackFace) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    FontObj fallback = *obj;
+    fallback.ft_face = fallbackFace;
+    if (setCharSize(&fallback) != SCE_FONT_OK) return finish(SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
+    return finish(RenderGlyphIndexToSurface(fallback, fallbackIndex, surface, x, y, metrics, result));
 }
 
 bool Font::BuildTrueOutline(GeneratedGlyph& glyph) {
@@ -495,9 +502,9 @@ bool Font::BuildTrueOutline(GeneratedGlyph& glyph) {
     if (!state || !state->face) return false;
     const auto* font = GetNativeFont(glyph.owner);
     if (font->magic != HANDLE_MAGIC) return false;
-    const FT_Face face = state->face;
-    const FT_UInt glyphIndex = FT_Get_Char_Index(face, glyph.codepoint);
-    if (glyphIndex == 0) return false;
+    FT_UInt glyphIndex = 0;
+    const FT_Face face = FaceForCode(*state, glyph.codepoint, &glyphIndex);
+    if (!face) return false;
     const auto charW = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(glyph.glyph.scale_x * 64.0f));
     const auto charH = static_cast<FT_F26Dot6>(static_cast<std::int32_t>(glyph.glyph.base_scale * 64.0f));
     if (FT_Set_Char_Size(face, charW, charH, 72, 72) != 0) return false;

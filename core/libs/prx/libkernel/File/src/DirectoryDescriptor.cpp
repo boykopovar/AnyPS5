@@ -8,6 +8,7 @@
 
 #ifdef _WIN32
 
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
@@ -62,6 +63,19 @@ void Load(DirectoryState& state, int fd) {
         state.entries.emplace_back(entry.path().filename().string(), entry.is_directory(typeError) ? GuestDirectoryType : GuestRegularType);
     }
 }
+
+int OpenStreamDirectory(const wchar_t* path) {
+    return File::OpenDirectoryDescriptor(path);
+}
+
+struct StreamRegistration {
+    StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(&OpenStreamDirectory, &File::ForgetDirectoryDescriptor); }
+    ~StreamRegistration() { LibcRegisterDirectoryStreams_nid_no_patch(nullptr, nullptr); }
+    StreamRegistration(const StreamRegistration&) = delete;
+    StreamRegistration& operator=(const StreamRegistration&) = delete;
+};
+
+const StreamRegistration g_streamRegistration;
 
 }
 
@@ -153,12 +167,13 @@ std::optional<std::int64_t> SeekDirectoryDescriptor(int fd, std::int64_t offset,
     return target;
 }
 
-int ReadDirectoryDescriptor(int fd, char* buf, int nbytes) {
+int ReadDirectoryDescriptor(int fd, char* buf, int nbytes, std::int64_t* base) {
     const auto found = Find(fd);
     if (!found) return SCE_KERNEL_ERROR_ENOTDIR;
     auto& state = *found;
     std::lock_guard lock(state.mutex);
     Load(state, fd);
+    if (base != nullptr) *base = static_cast<std::int64_t>(state.cursor);
     std::size_t used = 0;
     while (state.cursor < state.entries.size()) {
         const auto& [name, type] = state.entries[state.cursor];

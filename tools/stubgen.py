@@ -211,6 +211,9 @@ def write_outputs(outputs):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace", newline="\n")
     ap = argparse.ArgumentParser(description="Generate AnyPS5 Export.cpp skeletons and TechnicalDebt lines")
     ap.add_argument("--module", required=True, help="target module name, e.g. libSceAmpr, used for UnknownNN prefix and default TechnicalDebt path core/libs/prx/MODULE/Export.cpp")
     ap.add_argument("--nids", required=True, help="path to missing-NIDs file, one 11-char NID per line")
@@ -221,9 +224,6 @@ def main(argv=None):
     ap.add_argument("--td-out", required=False, default=None, help="output file for TechnicalDebt lines, which go in docs/dev/debt/MODULE.md, default stderr when code uses stdout, otherwise stdout")
     ap.add_argument("--td-only", action="store_true", help="print only TechnicalDebt lines, no code")
     args = ap.parse_args(argv)
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", newline="\n")
     try:
         if not args.td_only and args.out and args.td_out and same_file(args.out, args.td_out):
             ap.error("--out and --td-out must name different files")

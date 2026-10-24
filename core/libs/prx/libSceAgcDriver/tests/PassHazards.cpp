@@ -34,8 +34,9 @@ struct Use {
     Images attachments;
     bool anyReads = false;
     bool anyWrites = false;
+    Ranges writeOnly;
 
-    PassAccess View() const { return {reads, writes, images, attachments, anyReads, anyWrites}; }
+    PassAccess View() const { return {reads, writes, images, attachments, anyReads, anyWrites, writeOnly}; }
 };
 
 void testRangeSet() {
@@ -184,12 +185,82 @@ void testAttachments() {
 
 }
 
+void testWriteOnly() {
+    PassHazards hazards;
+    hazards.BeginPass();
+    Use feedback;
+    feedback.writeOnly = {{0x1000, 0x8f80}};
+    hazards.Add(feedback.View());
+    Expect(hazards.Check(feedback.View(), true) == PassHazard::None, "draws only storing to the same buffer continue the pass");
+    Use reader;
+    reader.reads = {{0x2000, 0x2100}};
+    Expect(hazards.Check(reader.View(), true) == PassHazard::ReadAfterWrite, "a read of write-only stores of the pass");
+    Use writer;
+    writer.writes = {{0x8000, 0x9000}};
+    Expect(hazards.Check(writer.View(), true) == PassHazard::WriteAfterWrite, "a read-write use after write-only stores");
+    Use unknownReader;
+    unknownReader.anyReads = true;
+    Expect(hazards.Check(unknownReader.View(), true) == PassHazard::UnknownRead, "unknown reads after write-only stores");
+    Use elsewhere;
+    elsewhere.writeOnly = {{0x9000, 0xa000}};
+    elsewhere.reads = {{0xa000, 0xb000}};
+    Expect(hazards.Check(elsewhere.View(), true) == PassHazard::None, "write-only stores and reads elsewhere");
+    hazards.Clear();
+    hazards.BeginPass();
+    Use readWrite;
+    readWrite.reads = {{0x1000, 0x2000}};
+    readWrite.writes = {{0x1000, 0x2000}};
+    hazards.Add(readWrite.View());
+    Use storesOver;
+    storesOver.writeOnly = {{0x1800, 0x1900}};
+    Expect(hazards.Check(storesOver.View(), true) == PassHazard::WriteAfterWrite, "write-only stores after a read-write use");
+    hazards.Clear();
+    hazards.BeginPass();
+    Use readOnly;
+    readOnly.reads = {{0x1000, 0x2000}};
+    hazards.Add(readOnly.View());
+    Expect(hazards.Check(storesOver.View(), true) == PassHazard::WriteAfterRead, "write-only stores after a read");
+    hazards.Clear();
+    hazards.BeginPass();
+    Use unknownWriter;
+    unknownWriter.anyWrites = true;
+    unknownWriter.anyReads = true;
+    hazards.Add(feedback.View());
+    Expect(hazards.Check(unknownWriter.View(), true) == PassHazard::UnknownWrite, "unknown writes after write-only stores");
+    hazards.Clear();
+    hazards.Add(unknownWriter.View());
+    Expect(hazards.Check(feedback.View(), true) == PassHazard::UnknownWrite, "write-only stores after unknown writes");
+    hazards.Clear();
+    Use unknownRead;
+    unknownRead.anyReads = true;
+    hazards.Add(unknownRead.View());
+    Expect(hazards.Check(feedback.View(), true) == PassHazard::UnknownRead, "write-only stores after unknown reads");
+    hazards.Clear();
+    hazards.BeginPass();
+    hazards.Add(feedback.View());
+    hazards.SealWriteOnly();
+    Expect(hazards.Check(feedback.View(), true) == PassHazard::WriteAfterWrite, "write-only stores over stores sealed by a flush");
+    Use afterSeal;
+    afterSeal.writeOnly = {{0x9000, 0xa000}};
+    Expect(hazards.Check(afterSeal.View(), true) == PassHazard::None, "write-only stores elsewhere after a seal");
+    hazards.Add(afterSeal.View());
+    Expect(hazards.Check(afterSeal.View(), true) == PassHazard::None, "write-only stores after a seal continue the pass among themselves");
+    hazards.Clear();
+    Expect(hazards.Check(feedback.View(), true) == PassHazard::None, "a cleared seal");
+    hazards.Clear();
+    hazards.Add(feedback.View());
+    Expect(!hazards.Empty(), "write-only stores are tracked");
+    hazards.Clear();
+    Expect(hazards.Empty(), "cleared write-only stores");
+}
+
 int main() {
     testRangeSet();
     testRanges();
     testUnknown();
     testImages();
     testAttachments();
+    testWriteOnly();
     if (failures != 0) {
         std::fprintf(stderr, "%d pass hazard checks failed\n", failures);
         return 1;

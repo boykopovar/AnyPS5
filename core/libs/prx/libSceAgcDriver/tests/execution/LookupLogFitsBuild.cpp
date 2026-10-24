@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -195,6 +196,11 @@ void RunTests(const AgcDriver::VulkanDevice& device) {
 }
 
 int main() {
+#ifdef _WIN32
+    if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "0");
+#else
+    setenv("APS5_TEMPLATE_AUDIT_MS", "0", 0);
+#endif
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;

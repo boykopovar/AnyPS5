@@ -16,6 +16,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <fcntl.h>
 #include <poll.h>
@@ -28,11 +29,16 @@ namespace {
 
 constexpr std::uint32_t Width = 3840;
 constexpr std::uint32_t Height = 2160;
-constexpr std::uint32_t Scale = 4;
-constexpr std::uint32_t DumpWidth = Width / Scale;
-constexpr std::uint32_t DumpHeight = Height / Scale;
-constexpr std::size_t DumpBytes = 54 + static_cast<std::size_t>(DumpWidth) * DumpHeight * 4;
+std::uint32_t scaleFromEnvironment() {
+    const char* value = std::getenv("APS5_DUMP_SCALE");
+    return value != nullptr ? static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10)) : 4u;
+}
+const std::uint32_t Scale = scaleFromEnvironment();
+const std::uint32_t DumpWidth = Width / Scale;
+const std::uint32_t DumpHeight = Height / Scale;
+const std::size_t DumpBytes = 54 + static_cast<std::size_t>(DumpWidth) * DumpHeight * 4;
 constexpr int Frames = 4;
+bool WaitMode = false;
 
 void check(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(reason);
@@ -137,6 +143,13 @@ void testDumpQueue() {
     check(sceVideoOutRegisterBuffers2(handle, 1, 1, &linearBuffer, 1, &linearAttribute, 0, nullptr) == 0, "linear buffer registration failed");
     const HeldDump first(0);
     const HeldDump last(Frames - 1);
+    std::vector<char> firstDump;
+    std::thread reader;
+    const auto started = std::chrono::steady_clock::now();
+    if (WaitMode) reader = std::thread([&] {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        firstDump = first.Release();
+    });
     std::exception_ptr failure;
     try {
         for (int frame = 0; frame < Frames; ++frame) {
@@ -149,8 +162,10 @@ void testDumpQueue() {
     } catch (...) {
         failure = std::current_exception();
     }
-    const auto firstDump = first.Release();
+    if (WaitMode) reader.join();
+    else firstDump = first.Release();
     if (failure) std::rethrow_exception(failure);
+    if (WaitMode) check(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(1500), "the presenter did not wait for the writer");
     checkDump(firstDump, tiledPixels);
     const auto lastDump = last.Release();
     checkDump(lastDump, linearPixels);
@@ -164,11 +179,13 @@ void testDumpQueue() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    WaitMode = argc > 1 && std::strcmp(argv[1], "wait") == 0;
     VideoOutTestEnvironment environment;
     try {
+        if (WaitMode) check(Scale == 1, "the wait test needs APS5_DUMP_SCALE=1");
         testDumpQueue();
-        std::puts("VideoOut frame dump queue test passed");
+        std::puts(WaitMode ? "VideoOut frame dump wait test passed" : "VideoOut frame dump queue test passed");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

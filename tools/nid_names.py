@@ -43,6 +43,10 @@ def compute_nid(symbol):
     return "".join(out)
 
 
+def strip_nid_postfix(name):
+    return re.sub(r"_nid_disambig[0-9]+$", "", name.removesuffix(NID_POSTFIX))
+
+
 def load_db(path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,12 +130,10 @@ def collect_real_names():
         for match in source_definitions(text):
             name = match.group(1)
             names.add(name)
-            if name.endswith(NID_POSTFIX):
-                names.add(name[:-len(NID_POSTFIX)])
+            names.add(strip_nid_postfix(name))
         for name in source_assembly_definitions(text):
             names.add(name)
-            if name.endswith(NID_POSTFIX):
-                names.add(name[:-len(NID_POSTFIX)])
+            names.add(strip_nid_postfix(name))
     return names
 
 
@@ -179,10 +181,13 @@ def symbol_file(path):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="Suggest real names for Unknown NID stubs")
     parser.add_argument("--db", default=os.environ.get("ANYPS5_NID_DB"),
-                        help="NID database CSV (downloaded to a cache dir by default)")
+                        help="NID database CSV; defaults to $ANYPS5_NID_DB, then to a copy downloaded to a cache dir")
     parser.add_argument("--nid", action="append", default=None,
                         help="resolve only these NIDs instead of scanning the tree")
     parser.add_argument("--name", "--symbol", dest="name", action="append", default=None,
@@ -259,7 +264,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
     sys.exit(main())

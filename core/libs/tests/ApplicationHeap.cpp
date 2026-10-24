@@ -238,6 +238,18 @@ int main(int argc, char** argv) {
         require(frees == 3 && initializes == 1);
         return 0;
     }
+    if (argc > 1 && std::strcmp(argv[1], "sdk-default") == 0) {
+        require(argc == 3);
+        void* sdk = dlopen(argv[2], RTLD_NOW | RTLD_GLOBAL);
+        require(sdk != nullptr && initializes == 1);
+        std::memset(replacement.data() + 0x10, 0, replacement.size() - 0x10);
+        ApplicationHeapInitialize_nid_no_patch(process.data());
+        void* pointer = ApplicationHeapAllocate_nid_no_patch(24);
+        require(pointer != nullptr && pointer != storage.data() && lastSize == 0);
+        ApplicationHeapFree_nid_no_patch(pointer);
+        require(frees == 0 && dlclose(sdk) == 0 && finalizes == 1);
+        return 0;
+    }
 #endif
     if (argc > 1 && std::strcmp(argv[1], "lazy") == 0) {
         installProcessParameters();
@@ -291,7 +303,8 @@ int main(int argc, char** argv) {
         for (unsigned i = 0; i < 63; ++i) require(pointer[i] == 0x5a);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(pointer, 11));
         for (unsigned i = 0; i < 11; ++i) require(pointer[i] == 0x5a);
-        require(ApplicationHeapReallocate_nid_no_patch(pointer, 0) == nullptr);
+        require(ApplicationHeapReallocate_nid_no_patch(pointer, 0) == pointer && ApplicationHeapUsableSize_nid_no_patch(pointer) == 0);
+        ApplicationHeapFree_nid_no_patch(pointer);
         pointer = static_cast<unsigned char*>(ApplicationHeapReallocate_nid_no_patch(nullptr, 32));
         require(pointer != nullptr);
         ApplicationHeapFree_nid_no_patch(pointer);
@@ -305,14 +318,20 @@ int main(int argc, char** argv) {
         require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 9);
         for (unsigned i = 0; i < 9; ++i) require(pointer[i] == 0x3c);
         *__error_nid_postfix() = 0;
-        require(reallocf_nid_postfix(pointer, 0) == nullptr && *__error_nid_postfix() == 0);
+        require(reallocf_nid_postfix(pointer, 0) == pointer && *__error_nid_postfix() == 0 && ApplicationHeapUsableSize_nid_no_patch(pointer) == 0);
+        ApplicationHeapFree_nid_no_patch(pointer);
         reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
         pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 40));
         require(pointer != nullptr);
-        require(reallocf_nid_postfix(pointer, SIZE_MAX - 4096) == nullptr && *__error_nid_postfix() == 12);
+        *__error_nid_postfix() = 77;
+        require(reallocf_nid_postfix(pointer, SIZE_MAX - 4096) == nullptr && *__error_nid_postfix() == 77);
         reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
-        *__error_nid_postfix() = 0;
-        require(reallocf_nid_postfix(nullptr, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
+        pointer = static_cast<unsigned char*>(reallocf_nid_postfix(nullptr, 40));
+        require(pointer != nullptr);
+        require(reallocf_nid_postfix(pointer, SIZE_MAX - 0x1008f) == nullptr && *__error_nid_postfix() == 22);
+        reject([pointer] { ApplicationHeapUsableSize_nid_no_patch(pointer); });
+        *__error_nid_postfix() = 77;
+        require(reallocf_nid_postfix(nullptr, SIZE_MAX) == nullptr && *__error_nid_postfix() == 77);
         void* empty = ApplicationHeapAllocate_nid_no_patch(0);
         require(empty != nullptr);
         ApplicationHeapFree_nid_no_patch(empty);

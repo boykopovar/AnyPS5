@@ -219,4 +219,20 @@ const char* APS5_VABI __inet_ntop_nid_postfix(int family, const void* source,
     if (family == kGuestInet6) std::memset(destination + length + 1, 0, capacity - length - 1);
     return destination;
 }
+
+std::uint32_t APS5_VABI htonl_nid_postfix(std::uint32_t value) {
+    return __builtin_bswap32(value);
+}
+
+std::uint32_t APS5_VABI ntohl_nid_postfix(std::uint32_t value) {
+    return __builtin_bswap32(value);
+}
+
+std::uint16_t APS5_VABI htons_nid_postfix(std::uint16_t value) {
+    return __builtin_bswap16(value);
+}
+
+std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t value) {
+    return __builtin_bswap16(value);
+}
 }

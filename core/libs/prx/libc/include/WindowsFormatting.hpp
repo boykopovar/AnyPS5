@@ -279,8 +279,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         }
         if (const size_t position = ArgumentPosition(format)) args.Seek(position);
         std::string spec = "%";
-        for (; *format && std::strchr("-+ #0'", *format); ++format)
+        bool unsupportedUnknownFlag = false;
+        for (; *format && std::strchr("-+ #0'", *format); ++format) {
             if (*format != '\'') spec += *format;
+            if (*format != '-') unsupportedUnknownFlag = true;
+        }
         if (*format == '*') {
             ++format;
             const int width = star();
@@ -316,7 +319,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             if ((length == "h" && *format == 'h') || (length == "l" && *format == 'l'))
                 length += *format++;
         }
-        const char conversion = *format;
+        char conversion = *format;
         if (!conversion) throw std::invalid_argument("Incomplete format conversion");
         ++format;
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
@@ -404,6 +407,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (!std::strchr("diouxXaAeEfFgGcsSpnmCS", conversion)) {
+            if (secure || unsupportedUnknownFlag || spec.find_first_not_of("%-0123456789") != std::string::npos)
+                throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
+            const std::string text = conversion == '%' ? "%" : std::string("%") + conversion;
+            output.Value(spec + 's', text.c_str());
         } else {
             throw std::invalid_argument("Unsupported format conversion '" + spec + length + conversion + "' in \"" + std::string(formatStart).substr(0, 160) + "\"");
         }

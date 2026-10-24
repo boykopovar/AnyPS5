@@ -30,6 +30,8 @@ void APS5_VABI sceLibcPafMspaceFree_nid_postfix(void*, void*, const void*);
 void* APS5_VABI sceLibcPafMspaceCalloc_nid_postfix(void*, std::size_t, std::size_t, const void*);
 void* APS5_VABI sceLibcPafMspaceRealloc_nid_postfix(void*, void*, std::size_t, const void*);
 void* APS5_VABI sceLibcPafMspaceReallocalign_nid_postfix(void*, void*, std::size_t, std::size_t, const void*);
+void* APS5_VABI sceLibcPafMspaceMemalign_nid_postfix(void*, std::size_t, std::size_t, const void*);
+int APS5_VABI sceLibcPafMspacePosixMemalign_nid_postfix(void*, void**, std::size_t, std::size_t, const void*);
 int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void*, void*);
 int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void*, void*);
 }
@@ -64,6 +66,15 @@ static void CheckPaf() {
     Require(block != nullptr && block[0] == 0x5a && block[39] == 0x5a);
     block = static_cast<unsigned char*>(sceLibcPafMspaceReallocalign_nid_postfix(arena, block, 256, 64, &owner));
     Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 256 == 0 && block[39] == 0x5a);
+    auto* aligned = static_cast<unsigned char*>(sceLibcPafMspaceMemalign_nid_postfix(arena, 128, 50, &owner));
+    Require(aligned != nullptr && reinterpret_cast<std::uintptr_t>(aligned) % 128 == 0);
+    Require(sceLibcPafMspaceMemalign_nid_postfix(arena, 0, 50, &owner) == nullptr && *__error_nid_postfix() == 22);
+    Require(sceLibcPafMspaceMemalign_nid_postfix(arena, 15, 50, &owner) == nullptr && *__error_nid_postfix() == 22);
+    void* posixAligned = nullptr;
+    Require(sceLibcPafMspacePosixMemalign_nid_postfix(arena, &posixAligned, 256, 60, &owner) == 0);
+    Require(posixAligned != nullptr && reinterpret_cast<std::uintptr_t>(posixAligned) % 256 == 0);
+    Require(sceLibcPafMspacePosixMemalign_nid_postfix(arena, nullptr, 256, 60, &owner) == 22);
+    Require(sceLibcPafMspacePosixMemalign_nid_postfix(arena, &posixAligned, 15, 60, &owner) == 22);
     MallocManagedSize viaPaf{}, viaMspace{}, fastPaf{}, fastMspace{};
     viaPaf.size = viaMspace.size = fastPaf.size = fastMspace.size = sizeof(MallocManagedSize);
     viaPaf.version = viaMspace.version = fastPaf.version = fastMspace.version = 1;
@@ -73,6 +84,8 @@ static void CheckPaf() {
     Require(fastPaf.currentInuseSize == fastMspace.currentInuseSize);
     sceLibcPafMspaceFree_nid_postfix(arena, block, &owner);
     sceLibcPafMspaceFree_nid_postfix(arena, zeroed, arena);
+    sceLibcPafMspaceFree_nid_postfix(arena, aligned, &owner);
+    sceLibcPafMspaceFree_nid_postfix(arena, posixAligned, &owner);
     sceLibcPafMspaceFree_nid_postfix(arena, nullptr, &owner);
     Require(sceLibcPafMspaceDestroy_nid_postfix(arena) == 0);
     Require(sceLibcPafMspaceDestroy_nid_postfix(arena) == -1);

@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cfenv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -39,6 +40,12 @@ static void CheckMinAndMax(T (APS5_VABI *minimum)(T, T), T (APS5_VABI *maximum)(
     Require(maximum(nan, T(4.0)) == T(4.0));
     Require(maximum(T(4.0), nan) == T(4.0));
     Require(std::isnan(maximum(nan, nan)));
+
+    const auto signaling = std::numeric_limits<T>::signaling_NaN();
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(minimum(signaling, T(4.0)) == T(4.0) && minimum(T(4.0), signaling) == T(4.0));
+    Require(maximum(signaling, T(4.0)) == T(4.0) && maximum(T(4.0), signaling) == T(4.0));
+    Require(std::fetestexcept(FE_INVALID) == 0);
 
     Require(std::signbit(minimum(T(-0.0), T(+0.0))));
     Require(std::signbit(minimum(T(+0.0), T(-0.0))));

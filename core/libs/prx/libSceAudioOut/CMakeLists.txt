@@ -3,6 +3,7 @@ add_library(libSceAudioOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOutSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOutShutdown.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Context.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Low.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2PadMix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Port.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2SpeakerArray.cpp
@@ -42,6 +43,21 @@ if(BUILD_TESTING)
         set_tests_properties(${vibrationDeviceTest} PROPERTIES TIMEOUT 5)
         if(WIN32)
             set_tests_properties(${vibrationDeviceTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
+    add_test_executable(audio_out_buffer_size_tests tests/AudioOutBufferSize.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp)
+    target_compile_definitions(audio_out_buffer_size_tests PRIVATE SDL_MAIN_HANDLED)
+    target_include_directories(audio_out_buffer_size_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(audio_out_buffer_size_tests PRIVATE libc libkernel libScePad)
+    configure_windows_unwind(audio_out_buffer_size_tests)
+    foreach(bufferSizeMode IN ITEMS pass_through wrap mix threshold)
+        set(bufferSizeTest "audio_out_buffer_size_${bufferSizeMode}")
+        add_test(NAME ${bufferSizeTest} COMMAND audio_out_buffer_size_tests ${bufferSizeMode})
+        set_tests_properties(${bufferSizeTest} PROPERTIES TIMEOUT 5)
+        if(WIN32)
+            set_tests_properties(${bufferSizeTest} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
@@ -170,6 +186,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 
+    add_test_executable(audio_out_info_tests tests/AudioOutInfo.cpp)
+    target_include_directories(audio_out_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_info_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out_info_tests)
+    add_test(NAME audio_out_info COMMAND audio_out_info_tests)
+    if(WIN32)
+        set_tests_properties(audio_out_info PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(audio_out2_port_layouts_tests tests/AudioOut2PortLayouts.cpp)
     target_include_directories(audio_out2_port_layouts_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out2_port_layouts_tests PRIVATE libSceAudioOut libc)
@@ -217,6 +243,16 @@ if(BUILD_TESTING)
     set_tests_properties(audio_out2_shutdown audio_out2_waiting_push_shutdown audio_out2_advance_shutdown audio_out_shutdown PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(audio_out2_shutdown audio_out2_waiting_push_shutdown audio_out2_advance_shutdown audio_out_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
+    add_test_executable(audio_out_system_state_tests tests/AudioOutSystemState.cpp)
+    target_include_directories(audio_out_system_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_system_state_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out_system_state_tests)
+    add_test(NAME audio_out_system_state COMMAND audio_out_system_state_tests)
+    if(WIN32)
+        set_tests_properties(audio_out_system_state PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
 endif()

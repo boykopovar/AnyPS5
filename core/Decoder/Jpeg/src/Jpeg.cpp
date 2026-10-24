@@ -126,7 +126,33 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> jpeg) {
     int channels = 0;
     if (!stbi_info_from_memory(jpeg.data(), static_cast<int>(jpeg.size()), &width, &height, &channels)) return std::nullopt;
     if (width <= 0 || height <= 0 || channels <= 0) return std::nullopt;
-    return Header{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), static_cast<std::uint32_t>(channels)};
+    Header header{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), static_cast<std::uint32_t>(channels)};
+    std::size_t offset = 2;
+    while (offset < jpeg.size()) {
+        if (jpeg[offset++] != 0xFF) return std::nullopt;
+        while (offset < jpeg.size() && jpeg[offset] == 0xFF) ++offset;
+        if (offset == jpeg.size()) return std::nullopt;
+        const std::uint8_t marker = jpeg[offset++];
+        if (marker == 0xD9 || marker == 0xDA) return std::nullopt;
+        if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD8)) continue;
+        if (jpeg.size() - offset < 2) return std::nullopt;
+        const std::size_t length = (static_cast<std::size_t>(jpeg[offset]) << 8) | jpeg[offset + 1];
+        if (length < 2 || length > jpeg.size() - offset) return std::nullopt;
+        if (marker == 0xE0) header.app0BeforeFrame = true;
+        if (marker == 0xC0 || marker == 0xC1 || marker == 0xC2) {
+            if (length < 8) return std::nullopt;
+            header.channels = jpeg[offset + 7];
+            if (header.channels == 0 || header.channels > 4 || length != 8 + 3 * header.channels) return std::nullopt;
+            header.progressive = marker == 0xC2;
+            for (std::uint32_t i = 0; i < header.channels; ++i) {
+                header.componentIds[i] = jpeg[offset + 8 + 3 * i];
+                header.samplingFactors[i] = jpeg[offset + 9 + 3 * i];
+            }
+            return header;
+        }
+        offset += length;
+    }
+    return std::nullopt;
 }
 
 std::optional<Image> Decode(std::span<const std::uint8_t> jpeg) {

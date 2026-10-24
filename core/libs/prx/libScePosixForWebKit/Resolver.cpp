@@ -182,9 +182,17 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
         int hostError = 0;
         int error = 0;
         if (!numeric) {
+#ifdef __APPLE__
+            native = ::gethostbyname(name);
+            if (native == nullptr) {
+                hostError = h_errno;
+                error = hostError == TRY_AGAIN ? EAGAIN : 0;
+            }
+#else
             buffer.resize(1024);
             while ((error = ::gethostbyname_r(name, &nativeEntry, buffer.data(), buffer.size(), &native, &hostError)) == ERANGE)
                 buffer.resize(buffer.size() * 2);
+#endif
         }
         if (error != 0 || !native) {
             *sceNetErrnoLoc() = hostError != 0 ? hostError : 3;

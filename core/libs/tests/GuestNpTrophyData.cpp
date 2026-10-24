@@ -2,6 +2,7 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -36,6 +37,7 @@ int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int, int, uint32_t, uint32_t, NpTro
 }
 
 static constexpr int InitialUser = 0x10000000;
+static constexpr int InvalidTrophyId = static_cast<int>(0x8055390Au);
 
 static const char TropConf[] = R"({"defaultLanguage":"en-US","trophies":[
     {"id":"0","grade":"P"},
@@ -168,8 +170,18 @@ static void ReportTrophyData(int context) {
     Require(details.trophy_grade == 1 && std::strcmp(details.name, "All of them") == 0, "the platinum is not reported");
     const auto steps = Trophy(context, 5, &details);
     Require(details.target.type == 1 && details.target.value == 5 && !steps.unlocked && steps.progress.type == 1 && steps.progress.value == 0, "the progressive trophy does not report its target");
-    NpTrophy2Data unknown{};
-    Require(ThrowsInvalidArgument([context, &unknown] { sceNpTrophy2GetTrophyInfo(context, 1, 99, nullptr, &unknown); }), "a trophy that is not in the package was reported");
+    const auto untouched = [](const void* bytes, std::size_t size) {
+        const auto* first = static_cast<const unsigned char*>(bytes);
+        return std::all_of(first, first + size, [](unsigned char byte) { return byte == 0x5a; });
+    };
+    for (const int unknownId : {8, 99, -1}) {
+        NpTrophy2Details unknownDetails{};
+        NpTrophy2Data unknown{};
+        std::memset(&unknownDetails, 0x5a, sizeof(unknownDetails));
+        std::memset(&unknown, 0x5a, sizeof(unknown));
+        Require(sceNpTrophy2GetTrophyInfo(context, 1, unknownId, &unknownDetails, &unknown) == InvalidTrophyId, "a trophy that is not in the package did not return the invalid trophy id error");
+        Require(untouched(&unknownDetails, sizeof(unknownDetails)) && untouched(&unknown, sizeof(unknown)), "a trophy that is not in the package wrote its details or data");
+    }
 
     std::vector<NpTrophy2Details> list(10);
     std::vector<NpTrophy2Data> listed(10);

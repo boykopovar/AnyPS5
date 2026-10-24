@@ -21,6 +21,7 @@ constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80ED0001u);
 constexpr int kErrAlreadyInitialized = static_cast<int>(0x80ED0002u);
 constexpr int kErrParam = static_cast<int>(0x80ED0003u);
+constexpr int kErrUnexpectedFatal = static_cast<int>(0x80ED0004u);
 constexpr int kErrInvalidState = static_cast<int>(0x80ED0005u);
 
 constexpr std::size_t kParamSize = 16;
@@ -93,13 +94,11 @@ int APS5_VABI sceErrorDialogTerminate(void) {
 }
 
 int APS5_VABI sceErrorDialogOpenDetail() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return kErrUnexpectedFatal;
 }
 
 int APS5_VABI sceErrorDialogOpenWithReport() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return kErrUnexpectedFatal;
 }
 
 }

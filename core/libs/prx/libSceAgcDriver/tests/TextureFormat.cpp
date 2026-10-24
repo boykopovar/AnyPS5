@@ -63,6 +63,7 @@ void srgbTwinTests() {
     Require(SrgbTwinFormat(context, VK_FORMAT_R8_UNORM) == VK_FORMAT_UNDEFINED, "a device that decodes 8_SRGB in the shader must not give R8 an sRGB twin");
     Require(SrgbTwinFormat(context, VK_FORMAT_R8G8B8A8_UNORM) == VK_FORMAT_R8G8B8A8_SRGB && SrgbTwinFormat(context, VK_FORMAT_BC7_UNORM_BLOCK) == VK_FORMAT_BC7_SRGB_BLOCK, "formats without a shader decode must keep their sRGB twins");
     Require(SrgbTwinFormat(context, VK_FORMAT_R32_SFLOAT) == VK_FORMAT_UNDEFINED, "formats without an sRGB counterpart have no twin");
+    Require(SrgbTwinFormat(context, VK_FORMAT_R8G8B8A8_SNORM) == VK_FORMAT_R8G8B8A8_SRGB, "8_8_8_8 SNORM must read its bytes through the sRGB twin");
 }
 
 template<typename TAction>
@@ -143,6 +144,25 @@ void repackedFormatTests() {
     Require(TextureComponentChannel(guest, VK_COMPONENT_SWIZZLE_A) == VK_COMPONENT_SWIZZLE_A && TextureComponentChannel(guest, VK_COMPONENT_SWIZZLE_ZERO) == VK_COMPONENT_SWIZZLE_ZERO, "format 43 keeps alpha and constant selectors");
 }
 
+void gcnBufferFormatTests() {
+    using ShaderRecompiler::IrBufferFormat;
+    const auto& formats = ShaderRecompiler::GcnBufferFormats();
+    const auto gcn = [&](std::uint32_t data, std::uint32_t number) { return static_cast<IrBufferFormat>(formats[(data << 3u) | number]); };
+    std::array<std::uint32_t, 78> seen{};
+    for (const auto format : formats) ++seen[format];
+    for (std::uint32_t format = 1; format < seen.size(); ++format) Require(seen[format] == 1u, "unified buffer format " + std::to_string(format) + " must come from exactly one GCN format pair");
+    Require(gcn(0u, 4u) == IrBufferFormat::Invalid && gcn(15u, 7u) == IrBufferFormat::Invalid, "GCN DATA_FORMAT 0 and 15 have no buffer form");
+    Require(gcn(1u, 7u) == IrBufferFormat::Invalid && gcn(4u, 0u) == IrBufferFormat::Invalid, "8-bit float and 32-bit UNORM have no buffer form");
+    Require(gcn(1u, 0u) == IrBufferFormat::Format8UNorm && gcn(2u, 7u) == IrBufferFormat::Format16Float, "8 and 16-bit pairs must map");
+    Require(gcn(4u, 4u) == IrBufferFormat::Format32UInt && gcn(4u, 7u) == IrBufferFormat::Format32Float, "32-bit pairs must map");
+    Require(gcn(6u, 7u) == IrBufferFormat::Format11_11_10Float && gcn(7u, 7u) == IrBufferFormat::Format10_11_11Float, "GCN 10_11_11 and 11_11_10 must map by bit layout");
+    Require(gcn(8u, 0u) == IrBufferFormat::Format2_10_10_10UNorm && gcn(9u, 0u) == IrBufferFormat::Format10_10_10_2UNorm, "GCN 10_10_10_2 and 2_10_10_10 must map by bit layout");
+    Require(gcn(10u, 0u) == IrBufferFormat::Format8_8_8_8UNorm && gcn(14u, 7u) == IrBufferFormat::Format32_32_32_32Float, "four-channel pairs must map");
+    const std::uint32_t word3 = 0x00000facu | (7u << 12u) | (14u << 15u) | (7u << 27u);
+    Require(ShaderRecompiler::GcnBufferWord3(16u << 16u, word3) == (0x00000facu | (77u << 12u) | (1u << 28u)), "a strided GCN V# must check its index range");
+    Require(ShaderRecompiler::GcnBufferWord3(0u, word3) == (0x00000facu | (77u << 12u) | (3u << 28u)), "a GCN V# without a stride must check its byte range");
+}
+
 void convertedDccClearTests() {
     alignas(64) std::array<std::uint8_t, 16> keys{};
     GuestTextureResource resource{};
@@ -204,6 +224,22 @@ void packedFloatDccClearTests() {
     Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1111, "packed float texture discarded its white fast-clear keys");
 }
 
+void fillContractTests() {
+    std::array<std::uint32_t, 4> texels;
+    texels.fill(0xdeadbeefu);
+    auto span = std::as_writable_bytes(std::span(texels));
+    Require(!FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, DccKeys::ClearRegister, false, span), "a register clear encoded a texel");
+    for (const auto texel : texels) Require(texel == 0u, "a declined clear left its span untouched");
+    texels.fill(0xdeadbeefu);
+    Require(!FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, DccKeys::Uncompressed, false, span), "an uncompressed code encoded a texel");
+    for (const auto texel : texels) Require(texel == 0u, "a declined clear left its span untouched");
+    std::array<std::byte, 10> partial;
+    partial.fill(std::byte{0x5a});
+    Require(FillDccClear(VK_FORMAT_B10G11R11_UFLOAT_PACK32, DccKeys::Clear1111, false, partial), "packed float fast clear was not encoded");
+    const std::array<std::byte, 4> white{std::byte{0xc0}, std::byte{0x03}, std::byte{0x1e}, std::byte{0x78}};
+    for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
+}
+
 }
 
 void RunTextureFormatTests() {
@@ -263,7 +299,11 @@ void RunTextureFormatTests() {
     reject([] { IsBlockCompressed(200); }, "unsupported guest texture format");
     for (const std::uint32_t format : {128u, 129u, 130u, 170u, 172u, 174u, 182u}) Require(IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must be an sRGB texture format");
     for (const std::uint32_t format : {1u, 14u, 56u, 71u, 169u, 171u, 173u, 181u}) Require(!IsSrgbTextureFormat(format), "guest format " + std::to_string(format) + " must not be an sRGB texture format");
+    for (const std::uint32_t format : {7u, 13u, 22u, 36u, 50u, 77u, 132u, 133u, 175u, 179u}) Require(IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must sample the same through FORCE_DEGAMMA");
+    for (const std::uint32_t format : {1u, 2u, 14u, 15u, 56u, 57u, 128u, 130u, 169u, 171u, 173u, 181u}) Require(!IgnoresForcedDegamma(format), "guest format " + std::to_string(format) + " must not sample the same through FORCE_DEGAMMA");
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();
+    fillContractTests();
+    gcnBufferFormatTests();
 }

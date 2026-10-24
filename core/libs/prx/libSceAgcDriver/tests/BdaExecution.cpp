@@ -314,6 +314,9 @@ static void RunBdaAnchorTests(const Context& context) {
     for (std::uint32_t lane = 0; lane < 32u; ++lane) lows.push_back(lane * 0x24u);
     std::vector<std::uint32_t> strided;
     for (std::uint32_t lane = 0; lane < lanes; ++lane) strided.push_back(lane * 16u);
+    auto halfword = build({{{-1, 16, 1, 1}}, false, false, false, lanes});
+    compare(*halfword, {guest + 0x100}, {1u});
+    compare(*halfword, {guest + 0x100}, {0u, 1u});
     auto continuing = build({reads, false, false, false, lanes});
     compare(*continuing, anchors, lows);
     compare(*continuing, {guest + 0x400}, strided);

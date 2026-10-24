@@ -24,7 +24,7 @@ private:
         std::vector<std::uint8_t> Bytes;
     };
 
-    Block& findBlock(std::uint64_t offset);
+    Block& backBlock(std::uint64_t offset, std::uint64_t length);
 
     std::vector<Domain::ProgramHeader> segments;
     std::vector<Block> blocks;

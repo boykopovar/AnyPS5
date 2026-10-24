@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
+#include <stdexcept>
 #include <string_view>
 
 extern "C" {
@@ -28,18 +29,23 @@ long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, lo
     return value;
 }
 
-char* APS5_VABI basename_nid_postfix(const char* path) {
-    thread_local char buffer[1024];
+char* APS5_VABI basename_r_nid_postfix(const char* path, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("basename_r: null buffer");
     std::string_view name = path && *path ? path : ".";
     while (name.size() > 1 && name.back() == '/') name.remove_suffix(1);
     if (name != "/") {
         const auto separator = name.find_last_of('/');
         if (separator != std::string_view::npos) name.remove_prefix(separator + 1);
     }
-    if (name.size() >= sizeof(buffer)) { errno = 63; return nullptr; }
+    if (name.size() >= 1024) { errno = 63; return nullptr; }
     std::memcpy(buffer, name.data(), name.size());
     buffer[name.size()] = '\0';
     return buffer;
+}
+
+char* APS5_VABI basename_nid_postfix(const char* path) {
+    thread_local char buffer[1024];
+    return basename_r_nid_postfix(path, buffer);
 }
 
 char* APS5_VABI __inet_ntoa_nid_postfix(unsigned int address) {

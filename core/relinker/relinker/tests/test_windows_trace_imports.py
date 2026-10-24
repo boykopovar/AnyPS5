@@ -80,9 +80,6 @@ def main():
         assert result.returncode == 2 and '--trace-imports requires libc.prx' in result.stderr, (result.returncode, result.stderr)
         assert not (case / 'output.exe').exists()
 
-        result = subprocess.run([str(relinker), '--trace-imports', str(source), str(case / 'output.elf')],
-                                capture_output=True, text=True, timeout=30)
-        assert result.returncode != 0 and '--trace-imports requires --windows' in result.stderr, (result.returncode, result.stderr)
         result = relink(relinker, source, case / 'output.exe', '--trace-imports', '--lazy-binding')
         assert result.returncode != 0 and '--trace-imports conflicts with --lazy-binding' in result.stderr, (result.returncode, result.stderr)
 

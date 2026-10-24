@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 extern "C" {
 int APS5_VABI mkdir_nid_postfix(const char*, int);
@@ -16,15 +19,21 @@ int* APS5_VABI __error_nid_postfix();
 namespace {
 
 constexpr int ErrorNoEntry = 2;
+constexpr int ErrorNotDirectory = 20;
 constexpr int ErrorInvalid = 22;
+constexpr int ErrorLoop = 62;
 constexpr char Source[] = "anyps5_rename_dot_source";
 constexpr char Target[] = "anyps5_rename_dot_target";
 constexpr char Moved[] = "anyps5_rename_dot_moved";
+constexpr char PlainFile[] = "anyps5_rename_dot_file";
+constexpr char Loop[] = "anyps5_rename_dot_loop";
 
 void Cleanup() {
     rmdir_nid_postfix(Source);
     rmdir_nid_postfix(Target);
     rmdir_nid_postfix(Moved);
+    std::remove(PlainFile);
+    std::remove(Loop);
 }
 
 void Require(bool condition, const char* what) {
@@ -72,6 +81,21 @@ int main() {
     Require(sceKernelRename(dotted.c_str(), Moved) == static_cast<int>(0x80020016u), "sceKernelRename from dir/. must return EINVAL");
     Require(sceKernelRename(Source, intoTarget.c_str()) == static_cast<int>(0x80020016u), "sceKernelRename to dir/. must return EINVAL");
     Require(Exists(Source) && Exists(Target) && !Exists(Moved), "failed renames must change nothing");
+
+    {
+        std::FILE* file = std::fopen(PlainFile, "w");
+        Require(file != nullptr && std::fclose(file) == 0, "creating the plain file failed");
+    }
+    const std::string throughFile = std::string(PlainFile) + "/.";
+    Require(Fails(rename_nid_postfix(throughFile.c_str(), Moved), ErrorNotDirectory), "rename from file/. must fail with ENOTDIR (20)");
+    Require(Fails(rename_nid_postfix(Source, throughFile.c_str()), ErrorNotDirectory), "rename to file/. must fail with ENOTDIR (20)");
+    std::remove(PlainFile);
+#ifndef _WIN32
+    Require(::symlink(Loop, Loop) == 0, "creating the symbolic link loop failed");
+    const std::string throughLoop = std::string(Loop) + "/.";
+    Require(Fails(rename_nid_postfix(throughLoop.c_str(), Moved), ErrorLoop), "rename from loop/. must fail with ELOOP (62)");
+    std::remove(Loop);
+#endif
 
     Require(rename_nid_postfix(Source, Moved) == 0 && Exists(Moved) && !Exists(Source), "an ordinary rename must still work");
     Require(sceKernelRename(Moved, Source) == 0 && Exists(Source) && !Exists(Moved), "an ordinary sceKernelRename must still work");

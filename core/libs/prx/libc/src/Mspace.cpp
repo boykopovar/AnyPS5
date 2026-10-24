@@ -339,6 +339,11 @@ void* APS5_VABI sceLibcPafMspaceReallocalign_nid_postfix(void* handle, void* poi
     return sceLibcMspaceReallocalign_nid_postfix(handle, pointer, alignment, size);
 }
 
+int APS5_VABI sceLibcPafMspacePosixMemalign_nid_postfix(void* handle, void** result, std::size_t alignment, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspacePosixMemalign_nid_postfix(handle, result, alignment, size);
+}
+
 int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats) {
     return sceLibcMspaceMallocStats_nid_postfix(handle, stats);
 }

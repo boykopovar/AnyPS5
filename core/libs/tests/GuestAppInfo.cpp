@@ -12,6 +12,7 @@ extern "C" {
 int APS5_VABI sceKernelGetAppInfo(int pid, void* info);
 int APS5_VABI getpid_nid_postfix(void);
 int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid);
+int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid);
 }
 
 static constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001);
@@ -109,4 +110,11 @@ int main(int argc, char** argv) {
     Require(sceKernelUuidCreate(first) == 0 && sceKernelUuidCreate(second) == 0);
     for (const std::uint32_t* uuid : {first, second}) Require((uuid[1] >> 28) == 4u && (uuid[2] & 0xc0u) == 0x80u);
     Require(std::memcmp(first, second, sizeof(first)) != 0);
+
+    Require(sceKernelCreateUuidV4(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    std::uint8_t third[16]{};
+    std::uint8_t fourth[16]{};
+    Require(sceKernelCreateUuidV4(third) == 0 && sceKernelCreateUuidV4(fourth) == 0);
+    for (const std::uint8_t* uuid : {third, fourth}) Require((uuid[6] >> 4) == 4u && (uuid[8] & 0xc0u) == 0x80u);
+    Require(std::memcmp(third, fourth, sizeof(third)) != 0);
 }

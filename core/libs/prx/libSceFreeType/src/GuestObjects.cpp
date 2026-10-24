@@ -13,6 +13,7 @@ GuestFace* FaceOf(const GuestGlyphSlotRec* slot) {
 }
 
 void SyncFace(GuestFace& face) {
+    RegisterBitmap_nid_no_patch(face);
     const FT_Face host = face.host;
     auto& rec = face.rec;
     rec.num_faces = host->num_faces;
@@ -49,8 +50,8 @@ void SyncFace(GuestFace& face) {
     rec.max_advance_height = host->max_advance_height;
     rec.underline_position = host->underline_position;
     rec.underline_thickness = host->underline_thickness;
-    rec.glyph = &face.slot;
-    rec.size = &face.size;
+    rec.glyph = host->glyph ? &face.slot : nullptr;
+    rec.size = host->size ? &face.size : nullptr;
     rec.internal = &face;
     SyncSize(face);
     SyncSlot(face);

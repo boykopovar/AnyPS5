@@ -6,6 +6,28 @@
 
 // Capture and sharing are not emulated; policy and parameter calls are accepted.
 
+struct ShareScreenshotParamExtended {
+    std::uint64_t size;
+    std::uint32_t source;
+    std::uint32_t mode;
+    const char* text;
+};
+
+struct ShareVideoClipParamExtended {
+    std::uint64_t size;
+    std::uint64_t value8;
+    std::uint64_t value16;
+    std::uint32_t mode;
+    std::uint32_t reserved;
+    const char* text;
+};
+
+static_assert(sizeof(ShareScreenshotParamExtended) == 24);
+static_assert(offsetof(ShareScreenshotParamExtended, text) == 16);
+static_assert(sizeof(ShareVideoClipParamExtended) == 40);
+static_assert(offsetof(ShareVideoClipParamExtended, mode) == 24);
+static_assert(offsetof(ShareVideoClipParamExtended, text) == 32);
+
 namespace {
 
 constexpr std::int32_t ERROR_INVALID_PARAM = static_cast<std::int32_t>(0x81960002);
@@ -96,20 +118,16 @@ int APS5_VABI sceShareUnregisterContentEventCallback(void* callback) {
     return 0;
 }
 
-int APS5_VABI sceShareCaptureScreenshotExtended(const void* extended_param, int32_t* req_id) {
-    (void)extended_param;
-    if (req_id != nullptr) {
-        *req_id = REQUEST_ID_INVALID;
-    }
+int APS5_VABI sceShareCaptureScreenshotExtended(const ShareScreenshotParamExtended* param, std::int32_t* requestId) {
+    if (param == nullptr || param->size != sizeof(*param)) return ERROR_INVALID_PARAM;
+    if (requestId != nullptr) *requestId = REQUEST_ID_INVALID;
     return ERROR_NOT_SUPPORTED;
 }
 
-
-int APS5_VABI sceShareCaptureVideoClipExtended(const void* extended_param, int32_t* req_id) {
-    (void)extended_param;
-    if (req_id != nullptr) {
-        *req_id = REQUEST_ID_INVALID;
-    }
+int APS5_VABI sceShareCaptureVideoClipExtended(const ShareVideoClipParamExtended* param, std::int32_t* requestId) {
+    if (param == nullptr || param->size != sizeof(*param)) return ERROR_INVALID_PARAM;
+    if (requestId != nullptr) *requestId = REQUEST_ID_INVALID;
+    if (param->reserved != 0 || (param->mode == 0 && param->value16 != 0)) return ERROR_INVALID_PARAM;
     return ERROR_NOT_SUPPORTED;
 }
 
@@ -121,10 +139,11 @@ int APS5_VABI sceShareGetRunningStatus(uint32_t* status) {
     return 0;
 }
 
-int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* application_title) {
-    if (application_title == nullptr) {
-        return ERROR_INVALID_PARAM;
-    }
+int APS5_VABI sceShareSetContentParamForApplicationTitle(const char* applicationTitle) {
+    if (applicationTitle == nullptr) return ERROR_INVALID_PARAM;
+    std::size_t length = 0;
+    while (length < 5120 && applicationTitle[length] != 0) ++length;
+    if (length == 0 || length == 5120) return ERROR_INVALID_PARAM;
     return 0;
 }
 

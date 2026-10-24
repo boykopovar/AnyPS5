@@ -19,6 +19,10 @@ struct Header {
     std::uint32_t width;
     std::uint32_t height;
     std::uint32_t channels;
+    std::uint8_t componentIds[4]{};
+    std::uint8_t samplingFactors[4]{};
+    bool progressive = false;
+    bool app0BeforeFrame = false;
 };
 
 enum class Sampling {

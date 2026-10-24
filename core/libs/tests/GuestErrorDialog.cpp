@@ -9,6 +9,8 @@ int APS5_VABI sceErrorDialogUpdateStatus(void);
 int APS5_VABI sceErrorDialogGetStatus(void);
 int APS5_VABI sceErrorDialogClose(void);
 int APS5_VABI sceErrorDialogTerminate(void);
+int APS5_VABI sceErrorDialogOpenDetail(void);
+int APS5_VABI sceErrorDialogOpenWithReport(void);
 }
 
 namespace {
@@ -20,6 +22,7 @@ constexpr int kStatusFinished = 3;
 constexpr int kErrNotInitialized = static_cast<int>(0x80ED0001);
 constexpr int kErrAlreadyInitialized = static_cast<int>(0x80ED0002);
 constexpr int kErrParam = static_cast<int>(0x80ED0003);
+constexpr int kErrUnexpectedFatal = static_cast<int>(0x80ED0004);
 constexpr int kErrInvalidState = static_cast<int>(0x80ED0005);
 
 struct ErrorDialogParam {
@@ -68,4 +71,6 @@ int main() {
     Require(sceErrorDialogGetStatus() == 0);
     Require(sceErrorDialogUpdateStatus() == 0);
     Require(sceErrorDialogClose() == kErrInvalidState);
+    Require(sceErrorDialogOpenDetail() == kErrUnexpectedFatal);
+    Require(sceErrorDialogOpenWithReport() == kErrUnexpectedFatal);
 }

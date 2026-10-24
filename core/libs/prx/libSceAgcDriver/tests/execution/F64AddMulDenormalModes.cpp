@@ -167,15 +167,23 @@ void Run(AgcDriver::VulkanDevice& device, const Mode& mode) {
     device.WaitIdle();
 }
 
-void Check(const Mode& mode) {
+std::uint32_t Check(const Mode& mode, bool keepsDenormals) {
     constexpr const char* Names[2] = {"v_add_f64", "v_mul_f64"};
+    const std::array<std::uint32_t, 3> deviceFlushes{mode.field & 2u, mode.field & 1u, 0u};
+    std::uint32_t skipped = 0;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t form = 0; form < 2u; ++form) {
             const std::uint64_t actual = Output[tid * Results + form * 2u] | (static_cast<std::uint64_t>(Output[tid * Results + form * 2u + 1u]) << 32u);
             const std::uint64_t expected = Expected[mode.field][tid][form];
-            Require(actual == expected, std::string(Names[form]) + " " + mode.name + " of " + Hex(Pairs[tid][0]) + " and " + Hex(Pairs[tid][1]) + " is " + Hex(actual) + ", expected " + Hex(expected));
+            if (actual == expected) continue;
+            const std::string message = std::string(Names[form]) + " " + mode.name + " of " + Hex(Pairs[tid][0]) + " and " + Hex(Pairs[tid][1]) + " is " + Hex(actual) + ", expected " + Hex(expected);
+            const bool deviceDependent = std::any_of(deviceFlushes.begin(), deviceFlushes.end(), [&](std::uint32_t flushed) { return Expected[flushed][tid][form] != expected; });
+            Require(deviceDependent && !keepsDenormals, message);
+            std::printf("skipped %s, the device flushes f64 denormals without DenormPreserve support\n", message.c_str());
+            ++skipped;
         }
     }
+    return skipped;
 }
 
 }
@@ -184,6 +192,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
         const Mode modes[] = {
             {"without a known float mode", std::nullopt, 3u},
             {"f64 denormal mode 0, IEEE mode on", ShaderRecompiler::ShaderFloatMode{0x30u, true, true, false}, 0u},
@@ -195,21 +207,15 @@ int main() {
             {"f64 denormal mode 3, IEEE mode on", ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}, 3u},
             {"f64 denormal mode 3, IEEE mode off", ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false}, 3u},
         };
-        const bool canPreserveDenormals = device->Target().float64DenormPreserve;
+        bool keepsDenormals = device->Target().float64DenormPreserve;
+        std::uint32_t skipped = 0;
         for (const Mode& mode : modes) {
             Run(*device, mode);
-            const bool keepsDenormals = !mode.value.has_value() || ((mode.value->floatMode >> 6u) & 1u) != 0u;
-            if (!keepsDenormals || canPreserveDenormals) {
-                Check(mode);
-                continue;
-            }
-            try {
-                Check(mode);
-            } catch (const std::exception& error) {
-                std::printf("skipped %s, the device flushes f64 denormals without DenormPreserve support: %s\n", mode.name, error.what());
-            }
+            const std::uint32_t modeSkipped = Check(mode, keepsDenormals);
+            keepsDenormals = keepsDenormals || (!mode.value.has_value() && modeSkipped == 0u);
+            skipped += modeSkipped;
         }
-        std::puts("f64 add and mul denormal mode tests passed");
+        std::printf("f64 add and mul denormal mode tests passed, %u device-dependent results skipped\n", skipped);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

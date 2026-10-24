@@ -94,28 +94,41 @@ std::uint64_t Bits(double value) {
     return std::bit_cast<std::uint64_t>(value);
 }
 
-void Check(const Mode& mode) {
+std::array<std::uint64_t, 5> Expected(std::uint64_t source, std::uint32_t field) {
+    const double value = std::bit_cast<double>(Flush(source, (field & 1u) == 0u));
+    const double below = std::bit_cast<double>(0x3fefffffffffffffull);
+    int exponent = 0;
+    const double mantissa = std::frexp(value, &exponent);
+    return {
+        Bits(std::floor(value)),
+        Bits(std::ceil(value)),
+        Flush(Bits(std::min(value - std::floor(value), below)), (field & 2u) == 0u),
+        Bits(mantissa),
+        static_cast<std::uint32_t>(exponent),
+    };
+}
+
+std::uint32_t Check(const Mode& mode, bool keepsDenormals) {
     const std::uint32_t field = mode.value.has_value() ? mode.value->floatMode >> 6u : 3u;
+    const std::array<std::uint32_t, 3> deviceFlushes{field & 2u, field & 1u, 0u};
+    constexpr const char* Names[5] = {"v_floor_f64", "v_ceil_f64", "v_fract_f64", "v_frexp_mant_f64", "v_frexp_exp_i32_f64"};
+    std::uint32_t skipped = 0;
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint64_t source = ValueAt(tid);
-        const double value = std::bit_cast<double>(Flush(source, (field & 1u) == 0u));
-        const double below = std::bit_cast<double>(0x3fefffffffffffffull);
-        int exponent = 0;
-        const double mantissa = std::frexp(value, &exponent);
-        const std::array<std::uint64_t, 4> expected{
-            Bits(std::floor(value)),
-            Bits(std::ceil(value)),
-            Flush(Bits(std::min(value - std::floor(value), below)), (field & 2u) == 0u),
-            Bits(mantissa),
-        };
-        constexpr const char* Names[4] = {"v_floor_f64", "v_ceil_f64", "v_fract_f64", "v_frexp_mant_f64"};
+        const auto expected = Expected(source, field);
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t index = 0; index < expected.size(); ++index) {
-            const std::uint64_t actual = out[index * 2u] | (static_cast<std::uint64_t>(out[index * 2u + 1u]) << 32u);
-            Require(actual == expected[index], std::string(Names[index]) + " " + mode.name + " of " + Hex(source) + " is " + Hex(actual) + ", expected " + Hex(expected[index]));
+            const std::uint64_t actual = index < 4u ? out[index * 2u] | (static_cast<std::uint64_t>(out[index * 2u + 1u]) << 32u) : out[8];
+            if (actual == expected[index]) continue;
+            const auto text = [index](std::uint64_t bits) { return index < 4u ? Hex(bits) : std::to_string(static_cast<std::int32_t>(bits)); };
+            const std::string message = std::string(Names[index]) + " " + mode.name + " of " + Hex(source) + " is " + text(actual) + ", expected " + text(expected[index]);
+            const bool deviceDependent = std::any_of(deviceFlushes.begin(), deviceFlushes.end(), [&](std::uint32_t flushed) { return Expected(source, flushed)[index] != expected[index]; });
+            Require(deviceDependent && !keepsDenormals, message);
+            std::printf("skipped %s, the device flushes f64 denormals without DenormPreserve support\n", message.c_str());
+            ++skipped;
         }
-        Require(out[8] == static_cast<std::uint32_t>(exponent), std::string("v_frexp_exp_i32_f64 ") + mode.name + " of " + Hex(source) + " is " + std::to_string(static_cast<std::int32_t>(out[8])) + ", expected " + std::to_string(exponent));
     }
+    return skipped;
 }
 
 }
@@ -124,6 +137,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
         const Mode modes[] = {
             {"without a known float mode", std::nullopt},
             {"f64 denormal mode 0, IEEE mode on", ShaderRecompiler::ShaderFloatMode{0x30u, true, true, false}},
@@ -135,21 +152,15 @@ int main() {
             {"f64 denormal mode 3, IEEE mode on", ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}},
             {"f64 denormal mode 3, IEEE mode off", ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false}},
         };
-        const bool canPreserveDenormals = device->Target().float64DenormPreserve;
+        bool keepsDenormals = device->Target().float64DenormPreserve;
+        std::uint32_t skipped = 0;
         for (const Mode& mode : modes) {
             Run(*device, mode);
-            const bool keepsDenormals = !mode.value.has_value() || ((mode.value->floatMode >> 6u) & 1u) != 0u;
-            if (!keepsDenormals || canPreserveDenormals) {
-                Check(mode);
-                continue;
-            }
-            try {
-                Check(mode);
-            } catch (const std::exception& error) {
-                std::printf("skipped %s, the device flushes f64 denormals without DenormPreserve support: %s\n", mode.name, error.what());
-            }
+            const std::uint32_t modeSkipped = Check(mode, keepsDenormals);
+            keepsDenormals = keepsDenormals || (!mode.value.has_value() && modeSkipped == 0u);
+            skipped += modeSkipped;
         }
-        std::puts("f64 rounding denormal mode tests passed");
+        std::printf("f64 rounding denormal mode tests passed, %u device-dependent results skipped\n", skipped);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

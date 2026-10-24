@@ -6,25 +6,27 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-#include <string_view>
 
 extern "C" {
-int APS5_VABI sceHttpSetCookieEnabled(int, int);
+int APS5_VABI sceVideoRecordingGetInfo(std::int32_t info, void* data, std::size_t size);
+int APS5_VABI sceVideoRecordingSetInfo(std::int32_t info, const void* data, std::size_t size);
+int APS5_VABI sceNpEntitlementAccessAbortRequest(std::int64_t);
+int APS5_VABI sceNpEntitlementAccessDeleteRequest(std::int64_t);
 int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
 int APS5_VABI sceNpEntitlementAccessGetEntitlementKey(
     std::uint32_t, const NpUnifiedEntitlementLabel*, NpEntitlementAccessEntitlementKey*);
 int APS5_VABI sceNpEntitlementAccessGetGameTrialsFlag(std::uint32_t*);
 int APS5_VABI sceNpEntitlementAccessGetPftFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList();
-int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfoList();
-int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfoList();
-int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList();
-int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfo();
-int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfo();
-int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfo();
-int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfo();
+int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfoList(std::int32_t userId, std::uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabels, std::uint32_t labelCount, const NpEntitlementAccessListParameter* parameter, std::int64_t* requestId);
+int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfoList(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessUnifiedInfo* infos, std::uint32_t capacity, std::int32_t* firstResult, std::int32_t* secondResult, std::int32_t* thirdResult);
+int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfoList(std::int32_t userId, std::uint32_t serviceLabel, const NpServiceEntitlementLabel* entitlementLabels, std::uint32_t labelCount, const NpEntitlementAccessListParameter* parameter, std::int64_t* requestId);
+int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfoList(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceInfo* infos, std::uint32_t capacity, std::int32_t* firstResult, std::int32_t* secondResult, std::int32_t* thirdResult);
+int APS5_VABI sceNpEntitlementAccessRequestUnifiedEntitlementInfo(std::int32_t userId, std::uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, std::int64_t* requestId);
+int APS5_VABI sceNpEntitlementAccessPollUnifiedEntitlementInfo(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessUnifiedInfo* info);
+int APS5_VABI sceNpEntitlementAccessRequestServiceEntitlementInfo(std::int32_t userId, std::uint32_t serviceLabel, const NpServiceEntitlementLabel* entitlementLabel, std::int64_t* requestId);
+int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfo(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceInfo* info);
 int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpActivate();
+int APS5_VABI sceRudpActivate(std::int32_t, const void*, std::uint32_t);
 int APS5_VABI sceRudpGetStatus(void*, std::size_t);
 int APS5_VABI sceRudpEnd();
 }
@@ -32,20 +34,48 @@ int APS5_VABI sceRudpEnd();
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
-    constexpr int invalidValue = static_cast<int>(0x804311FE);
+    constexpr int recordingInvalid = static_cast<int>(0x80a80003);
+    constexpr int recordingNotOpen = static_cast<int>(0x80a80006);
+    constexpr int recordingUnavailable = static_cast<int>(0x80a80002);
+    std::uint32_t recordingOutput = 0x12345678;
+    for (std::int32_t selector = 0; selector <= 0x10000; ++selector) {
+        const bool query = selector == 0xa001 || selector == 0xa002 || selector == 0xa003 || selector == 0xa005 || selector == 0xa00a || selector == 0xa00b || selector == 0xa00c;
+        const bool control = selector == 0xa004 || selector == 0xa006;
+        Require(sceVideoRecordingGetInfo(selector, &recordingOutput, sizeof(recordingOutput)) == (query ? recordingNotOpen : recordingInvalid));
+        Require(recordingOutput == 0x12345678);
+        Require(sceVideoRecordingGetInfo(selector, nullptr, 0) == (query ? recordingNotOpen : recordingInvalid));
+        Require(sceVideoRecordingSetInfo(selector, nullptr, 0) == (control ? recordingNotOpen : recordingInvalid));
+    }
+    for (std::int32_t selector : {-1, INT32_MIN, INT32_MAX}) {
+        Require(sceVideoRecordingGetInfo(selector, nullptr, 0) == recordingInvalid);
+        Require(sceVideoRecordingSetInfo(selector, nullptr, 0) == recordingInvalid);
+    }
+    const float recordingVolume = 0.5f;
+    for (std::int32_t selector : {0x8002, 0x8003}) {
+        for (std::size_t size : {0u, 1u, 3u, 4u, 8u}) {
+            Require(sceVideoRecordingSetInfo(selector, nullptr, size) == recordingInvalid);
+            Require(sceVideoRecordingSetInfo(selector, &recordingVolume, size) == (size < sizeof(float) ? recordingInvalid : recordingUnavailable));
+        }
+    }
+
+    for (std::int64_t requestId : {std::int64_t{0}, std::int64_t{1}, INT64_MAX}) {
+        bool abortFailed = false;
+        bool deleteFailed = false;
+        try {
+            sceNpEntitlementAccessAbortRequest(requestId);
+        } catch (const std::logic_error&) {
+            abortFailed = true;
+        }
+        try {
+            sceNpEntitlementAccessDeleteRequest(requestId);
+        } catch (const std::logic_error&) {
+            deleteFailed = true;
+        }
+        Require(abortFailed && deleteFailed);
+    }
+
     constexpr int network = static_cast<int>(0x80431063);
-    Require(sceHttpSetCookieEnabled(1, 0) == 0);
     Require(sceHttpSendRequest(1, nullptr, 0) == network);
-    bool cookieUnsupported = false;
-    try {
-        sceHttpSetCookieEnabled(1, 1);
-    } catch (const std::runtime_error& error) {
-        cookieUnsupported = std::string_view(error.what()) == "sceHttpSetCookieEnabled not implemented";
-    }
-    Require(cookieUnsupported);
-    for (int enabled : {-1, 2, 0x100}) {
-        Require(sceHttpSetCookieEnabled(1, enabled) == invalidValue);
-    }
 
     constexpr int parameter = static_cast<int>(0x817D0002);
     constexpr int noEntitlement = static_cast<int>(0x817D0007);
@@ -79,16 +109,16 @@ int main() {
     Require(sceNpEntitlementAccessGetPftFlag(nullptr) == parameter);
 
     constexpr int signedOut = static_cast<int>(0x80550006);
-    Require(sceNpEntitlementAccessRequestUnifiedEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessPollUnifiedEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessRequestServiceEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessPollServiceEntitlementInfoList() == signedOut);
-    Require(sceNpEntitlementAccessRequestUnifiedEntitlementInfo() == signedOut);
-    Require(sceNpEntitlementAccessPollUnifiedEntitlementInfo() == signedOut);
-    Require(sceNpEntitlementAccessRequestServiceEntitlementInfo() == signedOut);
-    Require(sceNpEntitlementAccessPollServiceEntitlementInfo() == signedOut);
+    Require(sceNpEntitlementAccessRequestUnifiedEntitlementInfoList(0, 0, nullptr, 0, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessPollUnifiedEntitlementInfoList(0, nullptr, nullptr, 0, nullptr, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessRequestServiceEntitlementInfoList(0, 0, nullptr, 0, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessPollServiceEntitlementInfoList(0, nullptr, nullptr, 0, nullptr, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessRequestUnifiedEntitlementInfo(0, 0, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessPollUnifiedEntitlementInfo(0, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessRequestServiceEntitlementInfo(0, 0, nullptr, nullptr) == signedOut);
+    Require(sceNpEntitlementAccessPollServiceEntitlementInfo(0, nullptr, nullptr) == signedOut);
 
-    Require(sceRudpActivate() == 0);
+    Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770001));
     std::array<unsigned char, 248> status;
     status.fill(0x5a);
     const auto originalStatus = status;
@@ -97,7 +127,7 @@ int main() {
     Require(status == originalStatus);
     alignas(8) static unsigned char rudpPool[0xC58];
     Require(sceRudpInit_nid_postfix(rudpPool, sizeof(rudpPool)) == 0);
-    Require(sceRudpActivate() == 0);
+    Require(sceRudpActivate(-1, nullptr, 0) == static_cast<int>(0x80770004));
     Require(sceRudpGetStatus(status.data(), status.size()) == 0);
     for (unsigned char byte : status) Require(byte == 0);
     Require(sceRudpGetStatus(nullptr, 0) == static_cast<int>(0x80770004));

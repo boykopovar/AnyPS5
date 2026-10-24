@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -20,6 +21,10 @@ SUMMARY = {
     "top_phases_ms_per_frame": {"Driver.Packet": 12.0, "Driver.Present": 2.0},
     "trace_dropped": False, "trace": "aps5-trace-abc123-7.json.gz",
 }
+
+
+IDENTITY = {"cpu": 'CPU "X"', "cpu_threads": 16, "memory_mib": 32000,
+            "title_id": "PPSA00000", "title": "Example", "content_version": "01.002.000"}
 
 
 class PerformanceCompareTests(unittest.TestCase):
@@ -119,7 +124,9 @@ class PerformanceCompareTests(unittest.TestCase):
         notes = "\n".join(report["notes"])
         self.assertIn("state is unknown", notes)
         self.assertIn("missing configuration: gpu, driver", notes)
-        self.assertIn("do not record the CPU, title or scene", notes)
+        self.assertIn("cannot verify the physical machine or scene", notes)
+        self.assertIn("cpu", notes)
+        self.assertIn("title_id", notes)
 
     def test_invalid_metric_and_metadata_shapes_are_rejected_with_location(self):
         cases = [(("presents",), value) for value in (0, -1, True, 1.5, 10 ** 400)]
@@ -129,6 +136,10 @@ class PerformanceCompareTests(unittest.TestCase):
                   (("window", "first_present"), True), (("env",), []), (("env",), {"APS5_TRACE_FRAMES": 4}),
                   (("trace_dropped",), "false"), (("dirty",), 1), (("trace",), None),
                   (("top_phases_ms_per_frame",), []), (("top_phases_ms_per_frame",), {"phase": -1})]
+        cases += [((field,), value) for field in ("cpu", "title_id", "title", "content_version")
+                  for value in (None, True, 12, [])]
+        cases += [((field,), value) for field in ("cpu_threads", "memory_mib")
+                  for value in (None, True, -1, 1.5, "16")]
         for path, value in cases:
             with self.subTest(path=path, value=value):
                 invalid = copy.deepcopy(self.baseline)
@@ -201,6 +212,85 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["baseline"], self.baseline)
 
+    def test_matching_recorded_machine_and_title_context_is_accepted(self):
+        self.baseline.update(IDENTITY)
+        self.candidate.update(IDENTITY)
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["configuration_differences"], {})
+        self.assertEqual(report["baseline"], self.baseline)
+        self.assertEqual(report["candidate"], self.candidate)
+        self.assertNotIn("missing configuration", "\n".join(report["notes"]))
+        for key in ("cpu_threads", "memory_mib"):
+            with self.subTest(unknown=key):
+                self.baseline[key] = self.candidate[key] = 0
+                performance_compare.validate(self.baseline)
+                report = performance_compare.compare(self.baseline, self.candidate)
+                self.assertEqual(report["configuration_differences"], {})
+                self.assertIn(key, "\n".join(report["notes"]))
+
+    def test_recorded_identity_differences_are_reported_and_rejected_in_strict_mode(self):
+        self.baseline.update(IDENTITY)
+        self.write(self.before, self.baseline)
+        changes = {"cpu": "Other CPU", "cpu_threads": 8, "memory_mib": 16000,
+                   "title_id": "PPSA00001", "title": "Other title", "content_version": "01.003.000"}
+        for key, value in changes.items():
+            with self.subTest(key=key):
+                candidate = {**self.candidate, **IDENTITY, key: value}
+                expected = {key: {"baseline": IDENTITY[key], "candidate": value}}
+                self.assertEqual(performance_compare.compare(self.baseline, candidate)["configuration_differences"], expected)
+                self.write(self.after, candidate)
+                result = self.run_cli("--json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["configuration_differences"], expected)
+                self.assertEqual(report["metrics_ms"]["frame_ms.p50"]["change"], 0)
+                result = self.run_cli("--require-matching-context", "--json")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"recorded configuration differs: {key}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_missing_identity_is_distinct_from_known_identity_but_legacy_summaries_still_work(self):
+        for key in IDENTITY:
+            for label in ("baseline", "candidate"):
+                with self.subTest(key=key, missing=label):
+                    baseline = {**self.baseline, **IDENTITY}
+                    candidate = {**self.candidate, **IDENTITY}
+                    (baseline if label == "baseline" else candidate).pop(key)
+                    report = performance_compare.compare(baseline, candidate)
+                    self.assertEqual(report["configuration_differences"],
+                                     {key: {"baseline": baseline.get(key), "candidate": candidate.get(key)}})
+                    self.assertIn(f"{label}: missing configuration: {key}.", report["notes"])
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["configuration_differences"], {})
+        self.assertIn("cpu", "\n".join(report["notes"]))
+        self.assertIn("title_id", "\n".join(report["notes"]))
+        self.write(self.after, {**self.candidate, **IDENTITY})
+        result = self.run_cli("--require-matching-context")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, "")
+        for key in IDENTITY:
+            self.assertIn(key, result.stderr)
+
+    def test_recorded_identity_differences_are_escaped_in_markdown(self):
+        self.baseline.update(IDENTITY)
+        self.candidate.update(IDENTITY, cpu="CPU | <\u03a9>\nline", title="Other title", content_version="02.000.000")
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CPU &#124; &lt;\u03a9&gt; line", result.stdout)
+        self.assertIn("| title | Example | Other title |", result.stdout)
+        self.assertIn("| content_version | 01.002.000 | 02.000.000 |", result.stdout)
+
     def test_matching_context_can_be_required_without_a_timing_verdict(self):
         self.write(self.before, self.baseline)
         self.candidate["frame_ms"]["max"] = 100.0
@@ -226,6 +316,34 @@ class PerformanceCompareTests(unittest.TestCase):
                 self.write(self.after, candidate)
                 self.assertEqual(self.run_cli("--require-matching-context").returncode, 2)
 
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(performance_compare.sys, "stdout", out), patch.object(performance_compare.sys, "stderr", err):
+            try:
+                performance_compare.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

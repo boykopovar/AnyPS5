@@ -65,8 +65,10 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
     BasicEvaluator<TNode> cleanEvaluator(program, cleanRuntime);
     BasicEvaluator<TNode> evaluator(program, runtime, cleanFlatSlots, &cleanEvaluator);
     std::vector<std::uint8_t> active;
+    std::vector<std::uint8_t> activeFlat;
     if (evaluateFlat) {
         active.assign(program.descriptorSources.size() + program.info.images.size(), 1u);
+        activeFlat.assign(program.srtReads.size(), 1u);
     }
     if (evaluateFlat && !program.controlFlow.empty()) {
         for (const auto& block : program.controlFlow) {
@@ -76,6 +78,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             for (const auto image : block.images) {
                 active.at(program.descriptorSources.size() + image) = 0u;
             }
+            for (const auto slot : block.flatSlots) activeFlat.at(slot) = 0u;
         }
         std::vector<std::uint8_t> visited(program.controlFlow.size());
         std::vector<std::uint32_t> pending {0};
@@ -97,6 +100,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             for (const auto image : block.images) {
                 active[program.descriptorSources.size() + image] = 1u;
             }
+            for (const auto slot : block.flatSlots) activeFlat.at(slot) = 1u;
             std::uint32_t condition = 0;
             TNode conditionValue{};
             const auto nullRootsBefore = conditionNullRoots;
@@ -158,6 +162,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
         flattened.resize(program.srtReads.size());
         for (std::uint32_t slot = 0; slot < program.srtReads.size(); ++slot) {
             const auto& read = program.srtReads[slot];
+            if (read.flatOffset < activeFlat.size() && activeFlat[read.flatOffset] == 0u) continue;
             const bool clean = read.flatOffset < cleanFlatSlots.size() && cleanFlatSlots[read.flatOffset] != 0u;
             auto& selected = clean ? cleanEvaluator : evaluator;
             // A pure slot's raw read is reachable from no root, so it was not evaluated (nor

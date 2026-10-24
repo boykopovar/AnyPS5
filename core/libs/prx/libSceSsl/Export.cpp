@@ -6,6 +6,7 @@
 #endif
 
 #include "SslTypes.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 
@@ -205,9 +206,14 @@ struct Random {
     }
 };
 
+struct EncodedPrivateKey {
+    Block bytes;
+    std::size_t size;
+};
+
 struct Identity {
     std::shared_ptr<CertificateChain> chain;
-    PrivateKey key;
+    std::shared_ptr<EncodedPrivateKey> key;
 };
 
 struct Snapshot {
@@ -222,6 +228,9 @@ struct CertNameEntry {
 };
 
 struct CertName {
+    void* certificate = nullptr;
+    bool subject = false;
+    std::weak_ptr<CertificateChain> owner;
     std::vector<CertNameEntry> entries;
 };
 
@@ -293,6 +302,9 @@ struct Session {
     std::vector<std::string> alpnStrings;
     std::vector<const char*> alpnList;
     std::string alpnSelected;
+    Block peekBuffer;
+    std::size_t peekOffset = 0;
+    std::size_t peekSize = 0;
     bool handshaken = false;
     bool verifying = false;
     bool verified = false;
@@ -302,6 +314,7 @@ struct Session {
     int verifyResult = 0;
     unsigned int failedOptions = 0;
     Random random;
+    PrivateKey privateKey;
     mbedtls_x509_crt authorities;
     mbedtls_ssl_config config;
     mbedtls_ssl_context ssl;
@@ -332,8 +345,18 @@ struct Session {
         mbedtls_ssl_conf_min_tls_version(&config, MBEDTLS_SSL_VERSION_TLS1_2);
         mbedtls_ssl_conf_ca_chain(&config, &authorities, nullptr);
         mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random.drbg);
-        if (identity)
-            CheckBackend(mbedtls_ssl_conf_own_cert(&config, &identity->chain->root, &identity->key.key), "SSL client certificate setup failed");
+        if (identity) {
+            if (!identity->chain || !identity->key) throw std::logic_error("Incomplete SSL client identity is not supported");
+            const auto& encoded = *identity->key;
+            auto bytes = Allocate(Add(encoded.size, 1));
+            std::memcpy(bytes.get(), encoded.bytes.get(), encoded.size);
+            std::size_t first = 0;
+            while (first < encoded.size && (bytes.get()[first] == ' ' || bytes.get()[first] == '\r' || bytes.get()[first] == '\n' || bytes.get()[first] == '\t')) ++first;
+            const auto size = first < encoded.size && bytes.get()[first] == '-' ? Add(encoded.size, 1) : encoded.size;
+            CheckBackend(mbedtls_pk_parse_key(&privateKey.key, bytes.get(), size, nullptr, 0, mbedtls_ctr_drbg_random, &random.drbg), "Invalid SSL private key");
+            CheckBackend(mbedtls_pk_check_pair(&identity->chain->root.pk, &privateKey.key, mbedtls_ctr_drbg_random, &random.drbg), "SSL client certificate and private key do not match");
+            CheckBackend(mbedtls_ssl_conf_own_cert(&config, &identity->chain->root, &privateKey.key), "SSL client certificate setup failed");
+        }
         for (std::size_t start = 0; start <= alpn.size();) {
             const auto end = alpn.find(',', start);
             const auto protocol = alpn.substr(start, end == std::string::npos ? std::string::npos : end - start);
@@ -356,7 +379,10 @@ struct Session {
         const auto chunk = static_cast<int>(std::min<std::size_t>(length, INT_MAX));
         for (;;) {
 #ifdef _WIN32
-            const auto sent = ::send(static_cast<SOCKET>(session.socket), reinterpret_cast<const char*>(buffer), chunk, 0);
+            auto* owner = static_cast<KernelSocketPoll::NativeOwner*>(session.socketOwner.get());
+            const auto sent = owner && owner->transfer
+                ? owner->transfer(owner, true, const_cast<unsigned char*>(buffer), chunk)
+                : ::send(static_cast<SOCKET>(session.socket), reinterpret_cast<const char*>(buffer), chunk, 0);
 #else
             const auto sent = ::send(static_cast<int>(session.socket), buffer, static_cast<std::size_t>(chunk), MSG_NOSIGNAL);
 #endif
@@ -375,7 +401,10 @@ struct Session {
         const auto chunk = static_cast<int>(std::min<std::size_t>(length, INT_MAX));
         for (;;) {
 #ifdef _WIN32
-            const auto received = ::recv(static_cast<SOCKET>(session.socket), reinterpret_cast<char*>(buffer), chunk, 0);
+            auto* owner = static_cast<KernelSocketPoll::NativeOwner*>(session.socketOwner.get());
+            const auto received = owner && owner->transfer
+                ? owner->transfer(owner, false, buffer, chunk)
+                : ::recv(static_cast<SOCKET>(session.socket), reinterpret_cast<char*>(buffer), chunk, 0);
 #else
             const auto received = ::recv(static_cast<int>(session.socket), buffer, static_cast<std::size_t>(chunk), 0);
 #endif
@@ -576,10 +605,17 @@ const char* LongAttributeName(const char* shortName) {
 
 void* ExtractCertName(const char* function, int sslCtxId, void* sslCert, bool subject) {
     std::lock_guard lock(State().mutex);
+    if (!sslCert || !State().contexts.contains(sslCtxId)) return nullptr;
     auto& context = GetContext(sslCtxId);
     const auto* crt = RequireCertificate(function, sslCtxId, sslCert);
+    for (const auto& [handle, stored] : context.certNames) {
+        if (stored->certificate == sslCert && stored->subject == subject) return handle;
+    }
     const auto* name = subject ? &crt->subject : &crt->issuer;
     auto certName = std::make_unique<CertName>();
+    certName->certificate = sslCert;
+    certName->subject = subject;
+    certName->owner = static_cast<CertificateHandle*>(sslCert)->owner;
     for (const auto* node = name; node; node = node->next) {
         if (!node->oid.p || node->oid.len == 0) continue;
         std::string oid;
@@ -641,15 +677,15 @@ int APS5_VABI sceSslGetMemoryPoolStats(int sslCtxId, SceSsl::MemoryPoolStats* st
 }
 
 int APS5_VABI sceSslLoadCert(int sslCtxId, int caCertNum, SceSsl::Data** caList, SceSsl::Data* cert, SceSsl::Data* privateKey) {
-    if (caCertNum < 0 || (caCertNum && !caList) || (!!cert != !!privateKey))
-        throw std::invalid_argument("Invalid SSL certificate load arguments");
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    auto& context = GetContext(sslCtxId);
+    const auto found = state.contexts.find(sslCtxId);
+    if (found == state.contexts.end()) return ErrorInvalidId;
+    auto& context = *found->second;
     PoolScope scope(context.pool);
     std::vector<std::shared_ptr<CertificateChain>> authorities;
     std::vector<std::unique_ptr<CertificateHandle>> handles;
-    for (int index = 0; index < caCertNum; ++index) {
+    for (int index = 0; caList && index < caCertNum; ++index) {
         if (!caList[index]) throw std::invalid_argument("Missing SSL certificate descriptor");
         auto chain = ParseCertificate(*caList[index]);
         for (auto* entry = &chain->root; entry; entry = entry->next) {
@@ -659,40 +695,51 @@ int APS5_VABI sceSslLoadCert(int sslCtxId, int caCertNum, SceSsl::Data** caList,
         }
         authorities.push_back(std::move(chain));
     }
-    std::shared_ptr<Identity> identity;
-    if (cert) {
-        identity = std::make_shared<Identity>();
-        identity->chain = ParseCertificate(*cert);
-        const auto key = CopyInput(*privateKey);
-        Random random;
-        random.Seed();
-        CheckBackend(mbedtls_pk_parse_key(&identity->key.key, key.bytes.get(), key.size, nullptr, 0,
-            mbedtls_ctr_drbg_random, &random.drbg), "Invalid SSL private key");
-        CheckBackend(mbedtls_pk_check_pair(&identity->chain->root.pk, &identity->key.key, mbedtls_ctr_drbg_random, &random.drbg),
-            "SSL client certificate and private key do not match");
-    }
     context.authorities.reserve(Add(context.authorities.size(), authorities.size()));
     context.certificateHandles.reserve(Add(context.certificateHandles.size(), handles.size()));
     for (auto& chain : authorities) context.authorities.push_back(std::move(chain));
     for (auto& handle : handles) context.certificateHandles.push_back(std::move(handle));
-    if (identity) context.identity = std::move(identity);
+    if (cert) {
+        if (!cert->ptr) return static_cast<int>(0x80951771);
+        context.identity = std::make_shared<Identity>();
+        context.identity->chain = ParseCertificate(*cert);
+    }
+    if (privateKey) {
+        if (!privateKey->ptr) return static_cast<int>(0x80951771);
+        if (!context.identity) context.identity = std::make_shared<Identity>();
+        auto identity = std::make_shared<Identity>(*context.identity);
+        context.identity = identity;
+        identity->key.reset();
+        auto bytes = Allocate(privateKey->size);
+        std::memcpy(bytes.get(), privateKey->ptr, privateKey->size);
+        identity->key = std::make_shared<EncodedPrivateKey>(EncodedPrivateKey{std::move(bytes), privateKey->size});
+    }
     return 0;
 }
 
 int APS5_VABI sceSslUnloadCert(int sslCtxId) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    auto& context = GetContext(sslCtxId);
+    const auto found = state.contexts.find(sslCtxId);
+    if (found == state.contexts.end()) {
+        const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+        std::uint32_t sdkVersion;
+        std::memcpy(&sdkVersion, parameters + 16, sizeof(sdkVersion));
+        return sdkVersion < 0x07500000 ? 0 : ErrorInvalidId;
+    }
+    auto& context = *found->second;
     context.authorities.clear();
     context.identity.reset();
     return 0;
 }
 
 int APS5_VABI sceSslGetCaList(int sslCtxId, SceSsl::CaList* output) {
-    if (!output) return ErrorInvalidArg;
+    if (!output) return ErrorInvalidValue;
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    auto& context = GetContext(sslCtxId);
+    const auto found = state.contexts.find(sslCtxId);
+    if (found == state.contexts.end()) return ErrorInvalidId;
+    auto& context = *found->second;
     PoolScope scope(context.pool);
     const auto count = CertificateCount(context);
     if (!count) {
@@ -724,14 +771,11 @@ int APS5_VABI sceSslFreeCaList(int sslCtxId, SceSsl::CaList* list) {
 }
 
 int APS5_VABI sceSslGetCaCerts(int sslCtxId, SceSsl::CaCerts* output) {
-    if (!output) return ErrorInvalidArg;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     const auto found = state.contexts.find(sslCtxId);
-    if (found == state.contexts.end()) {
-        *output = {};
-        return ErrorNotFound;
-    }
+    if (found == state.contexts.end()) return ErrorInvalidId;
+    if (!output) return ErrorInvalidValue;
     auto& context = *found->second;
     PoolScope scope(context.pool);
     const auto count = CertificateCount(context);
@@ -899,6 +943,7 @@ int APS5_VABI sceSslConnect(int sslConnectionId) {
 }
 
 int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) {
+    if (static_cast<unsigned int>(flags) > 3) return ErrorInvalidValue;
     if (!buf && len) throw std::invalid_argument("sceSslRead: null buffer");
     std::shared_ptr<Session> session;
     if (const int code = Establish(__func__, sslConnectionId, session)) {
@@ -916,7 +961,28 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
     const auto total = std::min<std::size_t>(len, INT_MAX);
     std::size_t received = 0;
     while (received < total) {
-        const int result = mbedtls_ssl_read(&session->ssl, bytes + received, total - received);
+        if (session->peekOffset < session->peekSize) {
+            const auto count = std::min(total - received, session->peekSize - session->peekOffset);
+            std::memcpy(bytes + received, session->peekBuffer.get() + session->peekOffset, count);
+            received += count;
+            if (flags == 3) break;
+            session->peekOffset += count;
+            if (session->peekOffset == session->peekSize) {
+                session->peekOffset = 0;
+                session->peekSize = 0;
+                session->peekBuffer.reset();
+            }
+            if (flags != 0) break;
+            continue;
+        }
+        if (flags == 3 && !session->peekBuffer) session->peekBuffer = Allocate(MBEDTLS_SSL_IN_CONTENT_LEN);
+        const int result = flags == 3
+            ? mbedtls_ssl_read(&session->ssl, session->peekBuffer.get(), MBEDTLS_SSL_IN_CONTENT_LEN)
+            : mbedtls_ssl_read(&session->ssl, bytes + received, total - received);
+        if (result > 0 && flags == 3) {
+            session->peekSize = static_cast<std::size_t>(result);
+            continue;
+        }
         if (result > 0) {
             received += static_cast<std::size_t>(result);
             if (flags != 0) break;
@@ -985,31 +1051,24 @@ int APS5_VABI sceSslClose(int sslConnectionId) {
 }
 
 int APS5_VABI sceSslGetSerialNumber(int sslCtxId, void* sslCert, unsigned char* sboData, std::size_t* sboLen) {
-    if (!sboLen) return ErrorInvalidArg;
     std::lock_guard lock(State().mutex);
+    if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
+    if (!sslCert) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    const auto reqLen = crt->serial.len;
-    if (!sboData || *sboLen == 0) {
-        *sboLen = reqLen;
+    if (!sboData) {
+        if (sboLen) *sboLen = crt->serial.len;
         return 0;
     }
-    if (*sboLen < reqLen) {
-        *sboLen = reqLen;
-        return ErrorInvalidArg;
-    }
-    std::memcpy(sboData, crt->serial.p, reqLen);
+    if (!sboLen) throw std::invalid_argument("sceSslGetSerialNumber: output buffer requires a length pointer");
+    const auto copyLength = std::min(*sboLen, crt->serial.len);
+    if (copyLength != 0) std::memcpy(sboData, crt->serial.p, copyLength);
     return 0;
 }
 
 int APS5_VABI sceSslFreeSslCertName(int sslCtxId, void* certName) {
-    if (!certName) return ErrorInvalidArg;
-    auto& state = State();
-    std::lock_guard lock(state.mutex);
-    auto& context = GetContext(sslCtxId);
-    const auto found = context.certNames.find(certName);
-    if (found == context.certNames.end()) throw std::invalid_argument("sceSslFreeSslCertName: unknown cert name");
-    context.certNames.erase(found);
-    return 0;
+    std::lock_guard lock(State().mutex);
+    if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
+    return certName ? 0 : ErrorInvalidValue;
 }
 
 int APS5_VABI sceSslEnableVerifyOption(int sslConnectionId, std::uint32_t option) {
@@ -1034,7 +1093,9 @@ const char* APS5_VABI sceSslGetAlpnSelected(int sslConnectionId) {
     std::shared_ptr<Session> session;
     {
         std::lock_guard lock(State().mutex);
-        session = RequireConnection(__func__, sslConnectionId).session;
+        const auto* connection = FindConnection(sslConnectionId);
+        if (!connection) return nullptr;
+        session = connection->session;
     }
     if (!session) return nullptr;
     std::lock_guard sessionLock(session->mutex);
@@ -1043,12 +1104,24 @@ const char* APS5_VABI sceSslGetAlpnSelected(int sslConnectionId) {
 }
 
 int APS5_VABI sceSslSetAlpn(int sslConnectionId, const char* proto) {
-    if (!proto) throw std::invalid_argument("sceSslSetAlpn: null protocol list");
     std::lock_guard lock(State().mutex);
     auto* connection = FindConnection(sslConnectionId);
     if (!connection) return ErrorInvalidId;
-    if (!*proto) return ErrorBadLength;
-    connection->alpn = proto;
+    connection->alpn.clear();
+    if (!proto) return 0;
+    std::size_t length = 0;
+    while (length < 65535 && proto[length] != 0) ++length;
+    if (length >= 65535) return ErrorBadLength;
+    std::size_t tokenLength = 0;
+    for (std::size_t index = 0; index <= length; ++index) {
+        if (index == length || proto[index] == ',') {
+            if (tokenLength == 0 || tokenLength > 255) return ErrorBadLength;
+            tokenLength = 0;
+        } else {
+            ++tokenLength;
+        }
+    }
+    connection->alpn.assign(proto, length);
     return 0;
 }
 
@@ -1066,58 +1139,59 @@ void* APS5_VABI sceSslGetIssuerName(int sslCtxId, void* sslCert) {
 }
 
 int APS5_VABI sceSslGetNameEntryCount(int sslCtxId, void* certName) {
-    if (!certName) return ErrorInvalidArg;
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    if (!state.contexts.contains(sslCtxId)) return ErrorInvalidId;
+    if (!certName) return ErrorInvalidValue;
     auto& context = GetContext(sslCtxId);
     const auto found = context.certNames.find(certName);
-    if (found == context.certNames.end()) throw std::invalid_argument("sceSslGetNameEntryCount: unknown cert name");
+    if (found == context.certNames.end() || found->second->owner.expired()) throw std::invalid_argument("sceSslGetNameEntryCount: unknown or expired cert name");
     return static_cast<int>(found->second->entries.size());
 }
 
-int APS5_VABI sceSslGetNameEntryInfo(int sslCtxId, void* certName, int entryNum, char* oidname, std::size_t maxOidnameLen,
-    char* value, std::size_t maxValueLen, std::size_t* valueLen) {
-    if (!certName) return ErrorInvalidArg;
+int APS5_VABI sceSslGetNameEntryInfo(int sslCtxId, void* certName, int entryNum, char* oidname, std::size_t maxOidnameLen, char* value, std::size_t maxValueLen, std::size_t* valueLen) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
+    if (!state.contexts.contains(sslCtxId)) return ErrorInvalidId;
+    if (!certName || !oidname || !value || !valueLen) return ErrorInvalidValue;
     auto& context = GetContext(sslCtxId);
     const auto found = context.certNames.find(certName);
-    if (found == context.certNames.end()) throw std::invalid_argument("sceSslGetNameEntryInfo: unknown cert name");
+    if (found == context.certNames.end() || found->second->owner.expired()) throw std::invalid_argument("sceSslGetNameEntryInfo: unknown or expired cert name");
     const auto& entries = found->second->entries;
-    if (entryNum < 0 || static_cast<std::size_t>(entryNum) >= entries.size()) return ErrorInvalidArg;
+    if (entryNum < 0 || static_cast<std::size_t>(entryNum) >= entries.size()) return ErrorInvalidValue;
     const auto& entry = entries[static_cast<std::size_t>(entryNum)];
-    if (oidname && maxOidnameLen > 0) {
-        const auto copyLen = std::min<std::size_t>(entry.oid.size(), maxOidnameLen - 1);
-        std::memcpy(oidname, entry.oid.data(), copyLen);
-        oidname[copyLen] = '\0';
+    const auto copyLength = std::min(entry.value.size(), maxValueLen);
+    if (copyLength != 0) std::memcpy(value, entry.value.data(), copyLength);
+    *valueLen = copyLength;
+    if (maxOidnameLen != 0) {
+        std::memset(oidname, 0, maxOidnameLen);
+        std::memcpy(oidname, entry.oid.data(), std::min(entry.oid.size(), maxOidnameLen));
     }
-    if (value && maxValueLen > 0) {
-        const auto copyLen = std::min<std::size_t>(entry.value.size(), maxValueLen - 1);
-        std::memcpy(value, entry.value.data(), copyLen);
-        value[copyLen] = '\0';
-    }
-    if (valueLen) *valueLen = entry.value.size();
     return 0;
 }
 
 int APS5_VABI sceSslGetNotBefore(int sslCtxId, void* sslCert, SceSsl::RtcTick* begin) {
-    if (!begin) return ErrorInvalidArg;
     std::lock_guard lock(State().mutex);
+    if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
+    if (!sslCert || !begin) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
     begin->tick = TimeToTick(crt->valid_from);
     return 0;
 }
 
 int APS5_VABI sceSslGetNotAfter(int sslCtxId, void* sslCert, SceSsl::RtcTick* limit) {
-    if (!limit) return ErrorInvalidArg;
     std::lock_guard lock(State().mutex);
+    if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
+    if (!sslCert || !limit) return ErrorInvalidValue;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
     limit->tick = TimeToTick(crt->valid_to);
     return 0;
 }
 
 int APS5_VABI sceSslGetFingerprint(int sslCtxId, void* sslCert, int hashType, unsigned char* fingerprint) {
-    if (!fingerprint) return ErrorInvalidArg;
+    std::lock_guard lock(State().mutex);
+    if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
+    if (!sslCert || !fingerprint) return ErrorInvalidValue;
     mbedtls_md_type_t mdType;
     switch (hashType) {
     case 0: mdType = MBEDTLS_MD_MD5; break;
@@ -1130,37 +1204,154 @@ int APS5_VABI sceSslGetFingerprint(int sslCtxId, void* sslCert, int hashType, un
     }
     const auto* info = mbedtls_md_info_from_type(mdType);
     if (!info) return ErrorInvalidArg;
-    std::lock_guard lock(State().mutex);
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
     if (mbedtls_md(info, crt->raw.p, crt->raw.len, fingerprint) != 0) return ErrorInvalidArg;
     return 0;
 }
 
 int APS5_VABI sceSslGetPem(int sslCtxId, void* sslCert, char* buf, std::size_t* bufLen) {
-    if (!bufLen) return ErrorInvalidArg;
+    if (!sslCert || !bufLen) return ErrorInvalidValue;
     std::lock_guard lock(State().mutex);
-    auto& context = GetContext(sslCtxId);
+    if (!State().contexts.contains(sslCtxId)) return ErrorInvalidId;
     const auto* crt = RequireCertificate(__func__, sslCtxId, sslCert);
-    PoolScope scope(context.pool);
-    std::size_t required = 0;
-    const auto encode = [&](unsigned char* output, std::size_t capacity, std::size_t* written) {
-        return mbedtls_pem_write_buffer("-----BEGIN CERTIFICATE-----\n", "-----END CERTIFICATE-----\n", crt->raw.p, crt->raw.len, output, capacity, written);
-    };
-    const int sizing = encode(nullptr, 0, &required);
-    if (sizing != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) CheckBackend(sizing, "SSL PEM sizing failed");
-    if (!buf) {
-        *bufLen = required;
-        return 0;
+    const std::size_t encodedLength = Add(crt->raw.len, 2) / 3 * 4;
+    const std::size_t lineCount = Add(encodedLength, 63) / 64;
+    const std::size_t required = Add(57, Add(encodedLength, lineCount * 2));
+    const std::size_t capacity = *bufLen;
+    if (buf && capacity != 0) std::memset(buf, 0, capacity);
+    *bufLen = required;
+    if (!buf) return 0;
+    if (capacity < required) return static_cast<int>(0x8095f008);
+    constexpr char header[] = "-----BEGIN CERTIFICATE-----\r\n";
+    constexpr char footer[] = "-----END CERTIFICATE-----\r\n";
+    std::memcpy(buf, header, sizeof(header) - 1);
+    std::size_t offset = sizeof(header) - 1;
+    for (std::size_t position = 0; position < crt->raw.len; position += 48) {
+        std::size_t written = 0;
+        CheckBackend(mbedtls_base64_encode(reinterpret_cast<unsigned char*>(buf + offset), capacity - offset, &written, crt->raw.p + position, std::min<std::size_t>(48, crt->raw.len - position)), "SSL PEM encoding failed");
+        offset += written;
+        buf[offset++] = '\r';
+        buf[offset++] = '\n';
     }
-    if (*bufLen < required) throw std::length_error("SSL PEM buffer is too small");
-    std::size_t written = 0;
-    CheckBackend(encode(reinterpret_cast<unsigned char*>(buf), required, &written), "SSL PEM encoding failed");
-    *bufLen = written;
+    std::memcpy(buf + offset, footer, sizeof(footer));
     return 0;
 }
 
 void* APS5_VABI sceSslGetSubjectName(int sslCtxId, void* sslCert) {
     return ExtractCertName(__func__, sslCtxId, sslCert, true);
+}
+
+int APS5_VABI CA_MGMT_extractKeyBlobEx() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI CA_MGMT_extractPublicKeyInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI CA_MGMT_freeKeyBlob() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI CRYPTO_initAsymmetricKey() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI CRYPTO_uninitAsymmetricKey() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI RSA_verifySignature() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI VLONG_freeVlongQueue() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslCheckRecvPending() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslCreateSslConnection() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslDeleteSslConnection() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslDisableOption() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslDisableOptionInternal() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslDisableOptionInternalInsecure() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslEnableOption() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslEnableOptionInternal() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslGetNanoSSLModuleId() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslGetPeerCert() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslGetSslError() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslLoadRootCACert() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen) {
+    return sceSslRead(sslConnectionId, buf, fulllen, 0);
+}
+
+int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSslSend(int sslConnectionId, void* msg, std::size_t fulllen) {
+    return sceSslWrite(sslConnectionId, msg, fulllen, 0);
+}
+
+int APS5_VABI sceSslSetSslVersion() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

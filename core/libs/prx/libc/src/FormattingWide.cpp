@@ -167,6 +167,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
                 if (length == "h") value = static_cast<unsigned short>(value);
                 if (length == "hh") value = static_cast<unsigned char>(value);
             } else value = args.Next<unsigned long long>();
+            if (conversion == u'o' && value == 0 && precision == 0 && spec.find('#') != std::string::npos)
+                spec = spec.substr(0, spec.find('.')) + ".1";
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
             if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
@@ -397,7 +399,8 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
-    if (buffer == nullptr || stream == nullptr || size <= 0) {
+    if (size < 2) return nullptr;
+    if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();
         errno = 22;
         return nullptr;
@@ -405,14 +408,11 @@ char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* s
     int count = 0;
     while (count < size - 1) {
         const std::int32_t character = fgetwc_nid_postfix(stream);
-        if (character == -1) {
-            if (count == 0) return nullptr;
-            break;
-        }
+        if (character == -1) break;
         buffer[count++] = static_cast<char16_t>(character);
         if (character == static_cast<std::int32_t>(u'\n')) break;
     }
-    if (ferror_nid_postfix(stream) != 0) return nullptr;
+    if (count == 0) return nullptr;
     buffer[count] = 0;
     return buffer;
 }

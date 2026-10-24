@@ -51,7 +51,7 @@ std::string MachODependency(const std::string& name, const std::string& origin) 
     return "@rpath/" + name;
 }
 
-MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase) : fixedBase(fixedBase) {
+MacOsMachOPatcher::MacOsMachOPatcher(const std::optional<std::uint64_t> fixedBase, std::function<void(std::string_view)> message) : fixedBase(fixedBase), message(std::move(message)) {
     if (fixedBase && (*fixedBase < 0x20000 || *fixedBase > 0x7fffffff0000 || (*fixedBase & 0xffff) != 0))
         throw Domain::RelinkerException("Invalid fixed macOS guest image base");
 }
@@ -71,6 +71,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
     input.Source = &sourceElf;
     input.Headers = &originalHeaders;
     input.Image = &image;
+    input.Message = message;
     for (std::size_t offset = 24; offset < dynamicSection.DynSymData.size(); offset += 24) {
         const auto& symbols = dynamicSection.DynSymData;
         const auto section = Io::ReadU16(symbols, offset + 6);

@@ -86,6 +86,48 @@ void CheckCalls() {
     RequireOffsets(*indirect, {0, 2, 3});
 }
 
+void CheckCallsBeforeZeroPadding() {
+    const Pointers pointers;
+    Bytes padded(0x21, 0);
+    padded[0] = 0xe8;
+    SetDisplacement(padded, 1, 5, TextAddress + 0x20);
+    const Bytes next{0x75, 0x64, 0x55, 0x48, 0x89, 0xe5, 0xc3};
+    std::copy(next.begin(), next.end(), padded.begin() + 16);
+    padded[0x20] = 0xc3;
+    RequireOffsets(*BuildControlFlowGraph(padded, TextAddress, TextAddress, {}, pointers), {0, 0x20});
+    RequireOffsets(*BuildControlFlowGraph(padded, TextAddress, TextAddress, {TextAddress + 16}, pointers), {0, 16, 18, 19, 22, 0x20});
+
+    Bytes indirect(0x11, 0);
+    indirect[0] = 0xff;
+    indirect[1] = 0xd0;
+    indirect[16] = 0xc3;
+    RequireOffsets(*BuildControlFlowGraph(indirect, TextAddress, TextAddress, {}, pointers), {0});
+}
+
+void CheckCallsThatStillFallThrough() {
+    const Pointers pointers;
+    Bytes boundary(0x13, 0x90);
+    boundary[11] = 0xe8;
+    SetDisplacement(boundary, 12, 16, TextAddress + 0x12);
+    boundary[16] = 0;
+    boundary[17] = 0;
+    boundary[18] = 0xc3;
+    RequireOffsets(*BuildControlFlowGraph(boundary, TextAddress, TextAddress, {}, pointers), {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16, 18});
+
+    Bytes partial(0x11, 0x90);
+    partial[0] = 0xe8;
+    SetDisplacement(partial, 1, 5, TextAddress + 0x10);
+    partial[5] = 0;
+    partial[6] = 0;
+    partial[7] = 0xc3;
+    partial[0x10] = 0xc3;
+    RequireOffsets(*BuildControlFlowGraph(partial, TextAddress, TextAddress, {}, pointers), {0, 5, 7, 0x10});
+
+    Bytes truncated{0xe8, 0, 0, 0, 0, 0, 0xc3};
+    SetDisplacement(truncated, 1, 5, TextAddress + 6);
+    RequireOffsets(*BuildControlFlowGraph(truncated, TextAddress, TextAddress, {}, pointers), {0, 5, 6});
+}
+
 void CheckRelocatedTransfers() {
     constexpr auto slot = TextAddress + 0x1000;
     Bytes text{0xff, 0x15, 0, 0, 0, 0, 0x90, 0xc3, 0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90, 0xc3};
@@ -98,6 +140,26 @@ void CheckRelocatedTransfers() {
     const Pointers missing;
     const auto unresolved = BuildControlFlowGraph(text, TextAddress, TextAddress, {TextAddress + 8}, missing);
     RequireOffsets(*unresolved, {0, 6, 7, 8});
+}
+
+void CheckAddressSizeOverride() {
+    constexpr auto slot = TextAddress + 0x1000;
+    Bytes text{0x67, 0xff, 0x15, 0, 0, 0, 0, 0x90, 0xc3, 0x67, 0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90, 0xc3};
+    SetDisplacement(text, 3, 7, slot);
+    SetDisplacement(text, 12, 16, slot + 8);
+    Pointers pointers;
+    pointers.Slots = {{static_cast<std::uint32_t>(slot), TextAddress + 9}, {static_cast<std::uint32_t>(slot + 8), TextAddress + 18}};
+    RequireOffsets(*BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers), {0, 7, 8, 9, 18});
+    RequireOffsets(*BuildControlFlowGraph(text, TextAddress, TextAddress + 9, {}, pointers), {9, 18});
+
+    Bytes lea(17, 0x90);
+    const Bytes opcode{0x67, 0x48, 0x8d, 0x05};
+    std::copy(opcode.begin(), opcode.end(), lea.begin());
+    SetDisplacement(lea, 4, 8, TextAddress + 16);
+    lea[8] = lea[16] = 0xc3;
+    const Pointers missing;
+    RequireOffsets(*BuildControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, true), {0, 8});
+    RequireOffsets(*BuildAddressTakenControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, {}), {0, 8});
 }
 
 void CheckCodeAddresses() {
@@ -249,6 +311,57 @@ void CheckRelativeJumpTables() {
     nonPadding.back() = 0x55;
     Require(Relinker::FindTrailingRelativeJumpTable(nonPadding) == nonPadding.size(), "Table followed by non-padding bytes was accepted");
 
+    Bytes codeAfter = text;
+    codeAfter.resize(48, 0xcc);
+    codeAfter[32] = 0x55;
+    codeAfter[33] = 0x5d;
+    codeAfter[34] = 0xc3;
+    std::size_t tableEnd = 0;
+    Require(Relinker::FindTrailingRelativeJumpTable(codeAfter, TextAddress, &tableEnd) == tableOffset && tableEnd == 32, "Table padded to 16 bytes before more code was not found");
+    const std::vector<std::pair<VirtualAddress, VirtualAddress>> codeAfterFunctions{{TextAddress, TextAddress + 9}, {TextAddress + codeAfter.size(), TextAddress + codeAfter.size() + 8}};
+    const auto codeAfterTables = Relinker::FindRelativeJumpTables(codeAfter, TextAddress, codeAfterFunctions);
+    Require(codeAfterTables.size() == 1 && codeAfterTables[0].Begin == TextAddress + tableOffset && codeAfterTables[0].End == TextAddress + 32, "Table before more code did not end at its padding");
+
+    std::size_t shiftedEnd = 0;
+    Require(Relinker::FindTrailingRelativeJumpTable(nonPadding, TextAddress + 1, &shiftedEnd) == tableOffset && shiftedEnd == 31, "Table boundary ignored the code address");
+    const auto shifted = Relinker::FindRelativeJumpTables(nonPadding, TextAddress + 1, {{TextAddress + 1, TextAddress + 10}, {TextAddress + 33, TextAddress + 41}});
+    Require(shifted.size() == 1 && shifted[0].Begin == TextAddress + 17 && shifted[0].End == TextAddress + 32, "Function address was not passed to the table search");
+    Require(Relinker::FindTrailingRelativeJumpTable(nonPadding, TextAddress + 8) == tableOffset, "Table ending on a 16-byte boundary was rejected");
+
+    Bytes padded = text;
+    padded.resize(48, 0xcc);
+    const auto paddedTables = Relinker::FindRelativeJumpTables(padded, TextAddress, {{TextAddress, TextAddress + 9}, {TextAddress + 48, TextAddress + 56}});
+    Require(paddedTables.size() == 1 && paddedTables[0].End == TextAddress + 48, "Padding to the end of the range was cut at the boundary");
+
+    Bytes nopAtRangeEnd = text;
+    const std::uint8_t fourByteNop[]{0x0f, 0x1f, 0x40, 0x00};
+    std::memcpy(nopAtRangeEnd.data() + 28, fourByteNop, sizeof(fourByteNop));
+    const auto cut = std::span<const std::uint8_t>(nopAtRangeEnd).first(31);
+    Require(Relinker::FindTrailingRelativeJumpTable(cut) == cut.size(), "Padding check read past the inspected range");
+
+    Bytes longNops = text;
+    longNops.resize(48);
+    const std::uint8_t fifteenByteNop[]{0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00};
+    const std::uint8_t nineByteNop[]{0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00};
+    std::memcpy(longNops.data() + 24, fifteenByteNop, sizeof(fifteenByteNop));
+    std::memcpy(longNops.data() + 39, nineByteNop, sizeof(nineByteNop));
+    std::size_t longNopsEnd = 0;
+    Require(Relinker::FindTrailingRelativeJumpTable(longNops, TextAddress, &longNopsEnd) == tableOffset && longNopsEnd == 48, "Table followed by a NOP across the boundary was not found");
+    Bytes longNopsCodeAfter = longNops;
+    longNopsCodeAfter.resize(64, 0xcc);
+    longNopsCodeAfter[48] = 0x55;
+    longNopsCodeAfter[49] = 0x5d;
+    longNopsCodeAfter[50] = 0xc3;
+    Require(Relinker::FindTrailingRelativeJumpTable(longNopsCodeAfter, TextAddress) == longNopsCodeAfter.size(), "Table ending inside a NOP was accepted");
+
+    Bytes cutShort = text;
+    cutShort.resize(56, 0xcc);
+    const std::int32_t cutShortTargets[]{-16, -7, -6, -5, 0x20, 0x20};
+    std::memcpy(cutShort.data() + tableOffset, cutShortTargets, sizeof(cutShortTargets));
+    cutShort[48] = 0x55;
+    cutShort[49] = 0x5d;
+    cutShort[50] = 0xc3;
+    Require(Relinker::FindRelativeJumpTables(cutShort, TextAddress, {{TextAddress, TextAddress + cutShort.size()}}).empty(), "Table followed by more of its function was accepted");
 }
 
 }
@@ -258,7 +371,10 @@ int main() {
         CheckFallthrough();
         CheckBranches();
         CheckCalls();
+        CheckCallsBeforeZeroPadding();
+        CheckCallsThatStillFallThrough();
         CheckRelocatedTransfers();
+        CheckAddressSizeOverride();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
         CheckTrailingZeroRoots();

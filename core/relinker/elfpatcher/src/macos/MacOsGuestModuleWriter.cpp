@@ -21,7 +21,7 @@ std::string DynamicName(const Relinker::GuestImage& guest, const std::size_t ind
 
 }
 
-std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestImage& guest, const std::vector<std::string>& dependencies, const std::string& runPath) const {
+std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestImage& guest, const std::vector<std::string>& dependencies, const std::string& runPath, const std::function<void(std::string_view)>& message) const {
     using namespace MacOs;
     Windows::WindowsLoadImage image(guest.Bytes, guest.Headers, false);
     MacOsImageInput input;
@@ -30,6 +30,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
     input.Source = &guest.Bytes;
     input.Headers = &guest.Headers;
     input.Image = &image;
+    input.Message = message;
 
     const auto tls = std::find_if(guest.Headers.begin(), guest.Headers.end(), [](const auto& header) { return header.Type == 7; });
     std::map<std::uint64_t, std::uint64_t> targets;
@@ -109,7 +110,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
     input.RunPaths = MachORunPaths(runPath, "@loader_path");
     for (const auto slot : guest.InitArray) input.InitArrayRvas.push_back(image.GetRva(slot, 8));
     for (const auto slot : guest.FiniArray) input.FiniArrayRvas.push_back(image.GetRva(slot, 8));
-    input.InitRva = guest.Init == 0 ? 0 : image.GetRva(guest.Init);
+    input.InitRva = guest.HasInit ? image.GetRva(guest.Init) : 0;
     input.FiniRva = guest.Fini == 0 ? 0 : image.GetRva(guest.Fini);
     input.Trampolines = &guest.Trampolines;
     try {

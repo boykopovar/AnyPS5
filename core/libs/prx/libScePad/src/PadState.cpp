@@ -25,6 +25,7 @@ namespace {
     std::array<std::uint8_t, 2> audioHapticRumble{};
     PadAudioHapticQueue legacyHaptics;
     std::uint64_t timestamp = 0;
+    std::uint64_t injectedTimestamp = 0;
 
     struct QueuedInput {
         PadInputState input;
@@ -202,8 +203,8 @@ PadData BuildData(const PadInputState& state, std::uint64_t changeTime, std::uin
     if (touchNum == 0 && (state.touchLeft || state.touchRight || injected.touchLeft || injected.touchRight)) {
         data.buttons |= 0x100000;
         touchNum = 1;
-        data.touch_data_touch0_x = state.touchRight || injected.touchRight ? 1440 : 480;
-        data.touch_data_touch0_y = 471;
+        data.touch_data_touch0_x = state.touchRight || injected.touchRight ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
+        data.touch_data_touch0_y = kTouchPadHeight / 2;
         data.touch_data_touch0_id = 0;
     }
     data.touch_data_touch_num = touchNum;
@@ -224,6 +225,7 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
     if (injected != lastInjected) {
         lastInjected = injected;
         timestamp = now;
+        injectedTimestamp = now;
     }
     return injected;
 }
@@ -260,7 +262,7 @@ int Pad::Read(PadData* data, int num) {
     int count = 0;
     while (count < num && !queue.empty()) {
         const QueuedInput& entry = queue.front();
-        data[count++] = BuildData(entry.input, entry.timestamp, now, injected);
+        data[count++] = BuildData(entry.input, std::max(entry.timestamp, injectedTimestamp), now, injected);
         queue.pop_front();
     }
     return count;

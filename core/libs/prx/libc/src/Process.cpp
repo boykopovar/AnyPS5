@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <condition_variable>
 #include <exception>
+#include <future>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -100,6 +101,7 @@ extern "C" void LibcRunShutdown_nid_postfix() {
 namespace {
 
 std::atomic<void (*)()> endFlush{nullptr};
+std::atomic<void (*)()> exitDrain{nullptr};
 void (*previousAbortHandler)(int) = SIG_DFL;
 
 void FlushOnAbort(int number) {
@@ -129,6 +131,12 @@ extern "C" void LibcRunEndFlush_nid_no_patch() {
     if (const auto flush = endFlush.load(std::memory_order_acquire)) flush();
 }
 
+extern "C" void LibcSetExitDrain_nid_no_patch(void (*drain)()) {
+    if (drain == nullptr) throw std::runtime_error("libc: invalid exit drain registration");
+    void (*registered)() = nullptr;
+    if (!exitDrain.compare_exchange_strong(registered, drain) && registered != drain) throw std::runtime_error("libc: exit drain already registered");
+}
+
 namespace {
 
 void StartExit() {
@@ -154,6 +162,26 @@ extern "C" {
 }
 
 [[noreturn]] void LibcTerminate_nid_no_patch(int code) {
+    if (const auto drain = exitDrain.exchange(nullptr)) {
+        try {
+            auto completion = std::make_shared<std::promise<void>>();
+            auto finished = completion->get_future();
+            std::thread([completion, drain] {
+                try {
+                    drain();
+                    completion->set_value();
+                } catch (...) {
+                    completion->set_exception(std::current_exception());
+                }
+            }).detach();
+            if (finished.wait_for(std::chrono::seconds(8)) == std::future_status::ready) finished.get();
+            else std::fputs("[libc] host exit drain exceeded 8 seconds\n", stderr);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "[libc] host exit drain failed: %s\n", error.what());
+        } catch (...) {
+            std::fputs("[libc] host exit drain failed\n", stderr);
+        }
+    }
     LibcRunEndFlush_nid_no_patch();
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));

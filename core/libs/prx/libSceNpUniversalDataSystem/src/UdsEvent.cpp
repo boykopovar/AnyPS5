@@ -1,8 +1,10 @@
 #include "prx/libSceNpUniversalDataSystem/include/UdsEvent.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 
+#include <charconv>
 #include <cstdio>
 #include <optional>
+#include <stdexcept>
 #include <type_traits>
 
 namespace Uds {
@@ -34,6 +36,14 @@ void appendQuoted(std::string& out, std::string_view text) {
 
 void appendValue(std::string& out, const Value& value);
 
+template <typename T>
+void appendFormattedNumber(std::string& out, T value, int precision) {
+    char number[40];
+    const auto result = std::to_chars(number, number + sizeof(number), value, std::chars_format::general, precision);
+    if (result.ec != std::errc{}) throw std::runtime_error("event property number formatting failed");
+    out.append(number, static_cast<std::string::size_type>(result.ptr - number));
+}
+
 void appendObject(std::string& out, const NpUniversalDataSystemEventPropertyObject& object) {
     out += '{';
     bool first = true;
@@ -60,11 +70,9 @@ void appendValue(std::string& out, const Value& value) {
             std::snprintf(number, sizeof(number), "%llu", static_cast<unsigned long long>(held));
             out += number;
         } else if constexpr (std::is_same_v<Held, float>) {
-            std::snprintf(number, sizeof(number), "%.9g", static_cast<double>(held));
-            out += number;
+            appendFormattedNumber(out, held, 9);
         } else if constexpr (std::is_same_v<Held, double>) {
-            std::snprintf(number, sizeof(number), "%.17g", held);
-            out += number;
+            appendFormattedNumber(out, held, 17);
         } else if constexpr (std::is_same_v<Held, std::string>) {
             appendQuoted(out, held);
         } else if constexpr (std::is_same_v<Held, Binary>) {

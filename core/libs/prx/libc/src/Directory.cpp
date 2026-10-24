@@ -9,6 +9,12 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#ifdef _WIN32
+#include "prx/libc/include/WindowsDescriptor.hpp"
+#include <cstddef>
+#include <string_view>
+#endif
 
 namespace {
 int DirectoryError(int error) {
@@ -28,19 +34,102 @@ int DirectoryError(int error) {
     }
 }
 #ifdef _WIN32
-using NativeDirectory = _WDIR;
-NativeDirectory* OpenNative(const std::filesystem::path& path) { return ::_wopendir(path.c_str()); }
-int CloseNative(NativeDirectory* native) { return ::_wclosedir(native); }
-void RewindNative(NativeDirectory* native) { ::_wrewinddir(native); }
-long TellNative(NativeDirectory* native) { return ::_wtelldir(native); }
-void SeekNative(NativeDirectory* native, long location) { ::_wseekdir(native, location); }
+struct NativeDirectory {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    std::uint32_t seed = 0;
+    bool identifiers = true;
+    bool restart = true;
+    bool buffered = false;
+    std::size_t next = 0;
+    long position = 0;
+    alignas(8) std::byte buffer[65536];
+    ~NativeDirectory() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+};
+int NativeOpenError(DWORD error) {
+    if (error == ERROR_CANT_RESOLVE_FILENAME) return ELOOP;
+    if (error == ERROR_DIRECTORY) return ENOTDIR;
+    return WindowsOpenError_nid_no_patch(error);
+}
+NativeDirectory* OpenNative(const std::filesystem::path& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) { errno = NativeOpenError(GetLastError()); return nullptr; }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) { errno = ENOTDIR; return nullptr; }
+    auto native = std::make_unique_for_overwrite<NativeDirectory>();
+    native->handle = CreateFileW(path.c_str(), FILE_LIST_DIRECTORY | SYNCHRONIZE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (native->handle == INVALID_HANDLE_VALUE) { errno = NativeOpenError(GetLastError()); return nullptr; }
+    BY_HANDLE_FILE_INFORMATION identity{};
+    if (GetFileInformationByHandle(native->handle, &identity)) {
+        if ((identity.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) { errno = ENOTDIR; return nullptr; }
+        native->seed = WindowsFileNumber_nid_no_patch(identity);
+    }
+    return native.release();
+}
+int CloseNative(NativeDirectory* native) { delete native; return 0; }
+void RewindNative(NativeDirectory* native) {
+    native->restart = true;
+    native->buffered = false;
+    native->position = 0;
+}
+bool QueryNative(NativeDirectory* native) {
+    const auto query = [native](FILE_INFO_BY_HANDLE_CLASS restartClass, FILE_INFO_BY_HANDLE_CLASS nextClass) {
+        return GetFileInformationByHandleEx(native->handle, native->restart ? restartClass : nextClass, native->buffer, sizeof(native->buffer)) != 0;
+    };
+    bool filled = native->identifiers ? query(FileIdBothDirectoryRestartInfo, FileIdBothDirectoryInfo) : query(FileFullDirectoryRestartInfo, FileFullDirectoryInfo);
+    DWORD error = filled ? ERROR_SUCCESS : GetLastError();
+    if (!filled && native->restart && native->identifiers && (error == ERROR_INVALID_PARAMETER || error == ERROR_INVALID_FUNCTION ||
+        error == ERROR_INVALID_LEVEL || error == ERROR_NOT_SUPPORTED)) {
+        native->identifiers = false;
+        filled = query(FileFullDirectoryRestartInfo, FileFullDirectoryInfo);
+        error = filled ? ERROR_SUCCESS : GetLastError();
+    }
+    if (!filled) {
+        if (error != ERROR_NO_MORE_FILES && error != ERROR_FILE_NOT_FOUND) errno = EIO;
+        return false;
+    }
+    native->restart = false;
+    native->buffered = true;
+    native->next = 0;
+    return true;
+}
+const std::byte* NextRecord(NativeDirectory* native) {
+    if (!native->buffered && !QueryNative(native)) return nullptr;
+    const std::byte* record = native->buffer + native->next;
+    const DWORD offset = native->identifiers ? reinterpret_cast<const FILE_ID_BOTH_DIR_INFO*>(record)->NextEntryOffset
+                                             : reinterpret_cast<const FILE_FULL_DIR_INFO*>(record)->NextEntryOffset;
+    if (offset == 0) native->buffered = false;
+    native->next += offset;
+    ++native->position;
+    return record;
+}
+std::uint32_t StableFileNumber(std::uint32_t seed, std::wstring_view name) {
+    std::uint32_t hash = 2166136261u ^ seed;
+    for (const wchar_t character : name) hash = (hash ^ static_cast<std::uint16_t>(character)) * 16777619u;
+    return hash == 0 ? 1 : hash;
+}
+long TellNative(NativeDirectory* native) { return native->position; }
+void SeekNative(NativeDirectory* native, long location) {
+    if (location < 0) return;
+    RewindNative(native);
+    while (native->position < location && NextRecord(native)) {}
+}
 bool ReadNative(NativeDirectory* native, std::filesystem::path& component, std::string& name, std::uint64_t& inode) {
-    auto* entry = ::_wreaddir(native);
-    if (!entry) return false;
-    component = entry->d_name;
+    const std::byte* record = NextRecord(native);
+    if (!record) return false;
+    std::wstring_view fileName;
+    std::uint64_t fileId = 0;
+    if (native->identifiers) {
+        const auto* information = reinterpret_cast<const FILE_ID_BOTH_DIR_INFO*>(record);
+        fileName = std::wstring_view(information->FileName, information->FileNameLength / sizeof(WCHAR));
+        fileId = static_cast<std::uint64_t>(information->FileId.QuadPart);
+    } else {
+        const auto* information = reinterpret_cast<const FILE_FULL_DIR_INFO*>(record);
+        fileName = std::wstring_view(information->FileName, information->FileNameLength / sizeof(WCHAR));
+    }
+    component = fileName;
     const auto utf8 = component.u8string();
     name.assign(utf8.begin(), utf8.end());
-    inode = static_cast<std::uint64_t>(entry->d_ino);
+    inode = fileId != 0 ? WindowsFileNumber_nid_no_patch(fileId) : StableFileNumber(native->seed, fileName);
     return true;
 }
 #else
@@ -87,16 +176,17 @@ GuestDirectoryEntry* ReadEntry(Directory& directory) {
     std::filesystem::path component;
     std::string name;
     std::uint64_t inode = 0;
-    if (!ReadNative(directory.native, component, name, inode)) {
-        errno = errno ? DirectoryError(errno) : savedError;
-        return nullptr;
-    }
+    try {
+        if (!ReadNative(directory.native, component, name, inode)) {
+            errno = errno ? DirectoryError(errno) : savedError;
+            return nullptr;
+        }
+    } catch (const std::bad_alloc&) { errno = 12; return nullptr; }
     const auto length = name.size();
     if (length > 255) { errno = 63; return nullptr; }
     try {
         directory.entry = {};
-        // MinGW reports no inode identity (zero); do not fabricate one.
-        directory.entry.fileNumber = inode <= UINT32_MAX ? static_cast<std::uint32_t>(inode) : 0;
+        directory.entry.fileNumber = static_cast<std::uint32_t>(inode);
         directory.entry.recordLength = static_cast<std::uint16_t>(8 + ((length + 1 + 3) & ~3));
         directory.entry.nameLength = static_cast<std::uint8_t>(length);
         directory.entry.type = DirectoryType(directory.path / component);

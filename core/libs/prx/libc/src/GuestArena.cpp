@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <exception>
 #ifndef _WIN32
 #include <cerrno>
 #include <fstream>
@@ -45,7 +46,12 @@ void noteAccess(const void* pointer, std::size_t bytes) {
 }
 
 constexpr std::uintptr_t GuestArenaOffset = GuestArena::GuestAddressOffset;
-constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull + GuestArenaOffset;
+constexpr std::uintptr_t DefaultAllocationStart = 0x0000000200000000ull + GuestArenaOffset;
+#ifdef __APPLE__
+constexpr std::uintptr_t ArenaStart = DefaultAllocationStart;
+#else
+constexpr std::uintptr_t ArenaStart = GuestArenaOffset == 0 ? 0x10000ull : DefaultAllocationStart;
+#endif
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull + GuestArenaOffset;
 constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull + GuestArenaOffset;
 constexpr std::uintptr_t ApplicationAreaEnd = 0x000000FC00000000ull + GuestArenaOffset;
@@ -85,7 +91,7 @@ public:
         RequireAllocatable(alignment);
         std::lock_guard lock(_lock);
         auto candidate = hint < _end ? FindAtOrAbove(hint, bytes, alignment) : 0;
-        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(_base, bytes, alignment);
+        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(hint < DefaultAllocationStart ? _base : DefaultAllocationStart, bytes, alignment);
         return Claim(candidate, bytes);
     }
 
@@ -272,6 +278,10 @@ private:
             const int failed = ReserveNoReplace(cursor, end - cursor);
             if (failed == 0) continue;
             if (failed != EEXIST) {
+                if (cursor < DefaultAllocationStart && (failed == EACCES || failed == EPERM)) {
+                    occupied.emplace_back(cursor, end);
+                    continue;
+                }
                 char message[128];
                 std::snprintf(message, sizeof(message), "guest arena: cannot reserve 0x%llx+0x%llx",
                     static_cast<unsigned long long>(cursor), static_cast<unsigned long long>(end - cursor));
@@ -308,7 +318,7 @@ private:
     }
 
     std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) const {
-        std::uintptr_t candidate = alignUp(std::max(_base, hint), alignment);
+        std::uintptr_t candidate = alignUp(hint == 0 ? DefaultAllocationStart : std::max(_base, hint), alignment);
         auto it = _used.upper_bound(candidate);
         if (it != _used.begin() && std::prev(it)->second > candidate) --it;
         for (; it != _used.end(); ++it) {
@@ -472,7 +482,23 @@ void GuestArenaMap_nid_postfix(void* pointer, std::size_t bytes, void* section, 
 
 void GuestArenaMapDirect_nid_postfix(void* pointer, std::size_t bytes, void* section, std::uint64_t offset, std::uint32_t protection) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("direct memory mapping", pointer, bytes);
-    WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), true);
+    const auto generation = commitGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    std::vector<std::pair<std::uintptr_t, std::size_t>> created;
+    std::exception_ptr failure;
+    try {
+        WindowsMappings::Get().Map(pointer, bytes, section, offset, protection, Arena::Get().WriteWatched(), true, PAGE_EXECUTE_READWRITE, SIZE_MAX, &created);
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    try {
+        if (const auto callback = privateMappingObserver.load(std::memory_order_acquire)) {
+            for (const auto& [address, size] : created) callback(address, size, generation);
+        }
+    } catch (...) {
+        if (failure != nullptr) std::rethrow_exception(failure);
+        throw;
+    }
+    if (failure != nullptr) std::rethrow_exception(failure);
     noteAccess(pointer, bytes);
 }
 
@@ -495,6 +521,10 @@ bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t byte
 
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
+}
+
+bool GuestArenaForgetReusableSection_nid_no_patch(void* section) {
+    return WindowsMappings::Get().ForgetSection(section);
 }
 #endif
 
@@ -572,6 +602,16 @@ bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
     return true;
 #endif
 }
+
+#ifdef _WIN32
+bool GuestArenaBeginHostImport_nid_no_patch(void* pointer, std::size_t bytes) {
+    return WindowsMappings::Get().BeginHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes, false);
+}
+
+void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes) {
+    WindowsMappings::Get().EndHostWrite(reinterpret_cast<std::uintptr_t>(pointer), bytes, false);
+}
+#endif
 
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes) {
 #ifdef _WIN32

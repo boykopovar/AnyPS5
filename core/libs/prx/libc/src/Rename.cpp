@@ -71,6 +71,9 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         error.clear();
         sameFile = fs::equivalent(source, destination, error);
         if (error == std::errc::no_such_file_or_directory) error.clear();
+#ifdef __APPLE__
+        if (error == std::errc::not_supported) error.clear();
+#endif
         if (error) return FilesystemError(error);
         if (!sameFile && sourceIsDirectory && !destinationIsDirectory) return GuestEnotdir;
         if (!sameFile && !sourceIsDirectory && destinationIsDirectory) return GuestEisdir;
@@ -94,13 +97,26 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
     return error ? FilesystemError(error) : 0;
 }
 
+static int SourceLookupError_nid_no_patch(const std::filesystem::path& source) {
+    std::error_code status;
+    const auto sourceStatus = std::filesystem::symlink_status(source, status);
+    if (HasNonDirectoryPrefix_nid_no_patch(source)) return 20;
+    if (status && status != std::errc::no_such_file_or_directory) return FilesystemError(status);
+    return sourceStatus.type() == std::filesystem::file_type::not_found ? 2 : 0;
+}
+
 extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
-    if (!from || !to) { errno = 14; return -1; }
-    if (!*from || !*to) { errno = 2; return -1; }
+    if (!from) { errno = 14; return -1; }
+    if (!*from) { errno = 2; return -1; }
     if (const int dot = RenameDotError_nid_no_patch(from)) { errno = dot; return -1; }
-    if (const int dot = RenameDotError_nid_no_patch(to)) { errno = dot; return -1; }
+    const int destinationError = !to ? 14 : !*to ? 2 : RenameDotError_nid_no_patch(to);
     try {
         const auto source = ResolvePath_nid_no_patch(from);
+        if (destinationError) {
+            const int sourceError = SourceLookupError_nid_no_patch(source);
+            errno = sourceError ? sourceError : destinationError;
+            return -1;
+        }
         const auto destination = ResolvePath_nid_no_patch(to);
         int error = RenamePath_nid_no_patch(source, destination);
         if (error == 2) {

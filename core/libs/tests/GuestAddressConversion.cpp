@@ -11,6 +11,10 @@ const char* APS5_VABI __inet_ntop_nid_postfix(int, const void*, char*, std::uint
 int APS5_VABI inet_pton_nid_postfix(int, const char*, void*);
 const char* APS5_VABI inet_ntop_nid_postfix(int, const void*, char*, std::uint32_t);
 int* APS5_VABI __error_nid_postfix();
+std::uint32_t APS5_VABI htonl_nid_postfix(std::uint32_t);
+std::uint32_t APS5_VABI ntohl_nid_postfix(std::uint32_t);
+std::uint16_t APS5_VABI htons_nid_postfix(std::uint16_t);
+std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t);
 }
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -566,6 +570,12 @@ static void CheckErrnoKept() {
 }
 
 int main() {
+    Require(htonl_nid_postfix(0x11223344u) == 0x44332211u && ntohl_nid_postfix(0x44332211u) == 0x11223344u);
+    Require(htons_nid_postfix(0x1234) == 0x3412 && ntohs_nid_postfix(0x3412) == 0x1234);
+    const std::uint32_t loopback = htonl_nid_postfix(0x7f000001u);
+    unsigned char loopbackBytes[4];
+    std::memcpy(loopbackBytes, &loopback, sizeof(loopback));
+    Require(loopbackBytes[0] == 127 && loopbackBytes[3] == 1);
     for (int family : {2, 28}) {
         const char* input = family == 2 ? "192.0.2.17" : "2001:db8::17";
         std::array<unsigned char, 16> address{};

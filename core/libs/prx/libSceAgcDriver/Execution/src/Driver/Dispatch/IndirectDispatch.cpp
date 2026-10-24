@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <cstdio>
 #include <cstdlib>
 
@@ -30,7 +31,7 @@ const char* IndirectPathName(int path) {
 void Driver::countIndirect(int path, double readMs) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile || path < 0 || path >= IndirectPaths) return;
-    static std::mutex countsMutex;
+    static AgcDriver::Mutex countsMutex;
     static std::uint64_t counts[IndirectPaths] = {};
     static double readWaitedMs = 0;
     static auto lastReport = std::chrono::steady_clock::now();
@@ -48,7 +49,8 @@ void Driver::countIndirect(int path, double readMs) {
 int Driver::indirectArgumentsPath(std::span<const std::uint32_t> packet, std::uint64_t arguments) {
     static const bool gpuIndirect = std::getenv("APS5_NO_GPU_INDIRECT") == nullptr;
     if (!gpuIndirect) return IndirectDisabled;
-    if ((packet.back() & 0x20u) != 0) return IndirectThreadDimensions;
+    static const bool gpuThreadDimensions = std::getenv("APS5_NO_GPU_THREAD_DIMENSIONS") == nullptr;
+    if ((packet.back() & 0x20u) != 0 && !gpuThreadDimensions) return IndirectThreadDimensions;
     if (arguments % 4 != 0) return IndirectMisaligned;
     return IndirectGpu;
 }

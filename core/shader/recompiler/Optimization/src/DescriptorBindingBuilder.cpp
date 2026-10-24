@@ -1,10 +1,13 @@
 #include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <atomic>
+#include <bit>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -136,6 +139,7 @@ std::vector<std::uint32_t> GuestBuffersDescriptor(const std::vector<std::uint32_
 
 std::vector<std::uint32_t> GuestSamplersDescriptor(const std::vector<std::uint32_t>& resources, const ResourceSnapshot& snapshot) {
     std::vector<std::uint32_t> result;
+    result.reserve(resources.size() * 4u);
     std::uint32_t dwordCount = 0;
     for (std::size_t i = 0; i < resources.size(); i++) {
         const std::uint32_t r = resources[i];
@@ -353,9 +357,27 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     }
     for (std::uint32_t index = 0; index < info.images.size() && !registrationModules; ++index) {
         if (info.images[index].table != NoTable) continue;
+        const auto& modes = info.runtimeImageModes.at(index);
+        if (std::ranges::any_of(modes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; })) plan.specialization.push_back({PipelineSpecialization::FmaskFormatBase + index, modes.at(imageModes[index]).conversionFormat == FmaskExpansion ? (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu : 0u});
         const auto first = PipelineSpecialization::ImageBase + index * PipelineSpecialization::ImageWords;
         plan.specialization.push_back({first, imageModes[index]});
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({first + 1u + component, (snapshot.images.at(index).dwords[3] >> (component * 3u)) & 7u});
+        const auto& image = info.images[index];
+        if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;
+        const auto code = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;
+        const auto format = code >= 1u && code <= 77u ? GetFormatInfo(static_cast<IrBufferFormat>(code)) : SpirvBufferFormatInfo{};
+        const bool snorm = format.type == SpirvFormatComponentType::Snorm;
+        const auto bits = format.componentBits[0];
+        const bool uniform = format.componentCount != 0u && !format.packedBitfield && bits >= 2u && bits <= 16u && std::all_of(format.componentBits, format.componentBits + format.componentCount, [&](std::uint32_t width) { return width == bits; });
+        const bool quantized = uniform && (format.type == SpirvFormatComponentType::Unorm || snorm);
+        const auto scale = quantized ? static_cast<float>((1u << (snorm ? bits - 1u : bits)) - 1u) : 1.0f;
+        auto reciprocal = 1.0f / scale;
+        while (static_cast<double>(reciprocal) * static_cast<double>(scale) < 1.0) reciprocal = std::nextafter(reciprocal, 2.0f);
+        const auto quantize = PipelineSpecialization::StoreQuantizeBase + index * PipelineSpecialization::StoreQuantizeWords;
+        plan.specialization.push_back({quantize, quantized ? 1u : 0u});
+        plan.specialization.push_back({quantize + 1u, std::bit_cast<std::uint32_t>(scale)});
+        plan.specialization.push_back({quantize + 2u, std::bit_cast<std::uint32_t>(reciprocal)});
+        plan.specialization.push_back({quantize + 3u, quantized && snorm ? 1u : 0u});
     }
     for (std::uint32_t target = 0; target < exportMappings.size() && !registrationModules; ++target) {
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({PipelineSpecialization::ExportBase + target * 4u + component, (exportMappings[target] >> (component * 2u)) & 3u});
@@ -546,6 +568,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     auto shaderData = needsShaderData ? ShaderDataDwordsFor(layout, userDataBase, snapshot, partialThreads, plan.imageMetadata, plan.runtimeState) : std::vector<std::uint32_t>{};
     allocation.shaderDataUserWords.clear();
     if (needsShaderData) {
+        allocation.shaderDataUserWords.reserve(layout.userDataRegisters.size());
         for (const auto reg : layout.userDataRegisters) allocation.shaderDataUserWords.push_back(reg - userDataBase);
     }
     std::vector<DescriptorBinding> bindings;
@@ -592,7 +615,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageShapes.push_back(ImageShapeForResource(shape));
                 physical.imageDepthCompare.push_back(element.depthCompare);
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
-                physical.imageAtomic.push_back(false);
+                physical.imageAtomic.push_back(element.atomic);
                 std::uint32_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
                     if ((element.samplers & (1u << sampler)) != 0u) samplers |= entry.tableSamplerMasks[sampler];

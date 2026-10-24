@@ -31,10 +31,8 @@ def check_executable_hardlinks(relinker, work):
                     try:
                         result = subprocess.run([str(relinker), *command], cwd=case,
                                                 capture_output=True, text=True, timeout=20)
-                        assert result.returncode == 2 and (
-                            "output would overwrite" in result.stderr or
-                            readonly and "Cannot compare read-only output identities" in result.stderr
-                        ), (windows, output_name, input_name, readonly, result.stdout, result.stderr)
+                        assert result.returncode == 2 and "output would overwrite" in result.stderr, (
+                            windows, output_name, input_name, readonly, result.stdout, result.stderr)
                         for path, original in inputs.items():
                             assert path.read_bytes() == original, path
                         for path in outputs.values():
@@ -47,24 +45,33 @@ def check_executable_hardlinks(relinker, work):
                         if readonly:
                             protected.chmod(stat.S_IWRITE)
 
-    case = work / "distinct-input-hardlinks"
-    command, outputs, inputs = prepare_secondary(case, True)
-    links = case / "separate-links"
-    links.mkdir()
-    for index, path in enumerate(inputs):
-        os.link(path, links / f"input-{index}")
-    original = next(iter(inputs.values()))
-    for name, path in outputs.items():
-        path.write_bytes(original)
-        os.link(path, links / name)
-    result = subprocess.run([str(relinker), *command], cwd=case,
-                            capture_output=True, text=True, timeout=20)
-    assert result.returncode == 0, (result.stdout, result.stderr)
-    for name in ("executable", "secondary-one", "secondary-two"):
-        assert outputs[name].read_bytes().startswith(b"MZ")
-    for path, original in inputs.items():
-        assert path.read_bytes() == original and path.stat().st_nlink == 2, path
-    assert not list(case.rglob(".anyps5-output-identity-*"))
+    for readonly in ((False, True) if os.name == "nt" else (False,)):
+        case = work / f"distinct-input-hardlinks-{readonly}"
+        command, outputs, inputs = prepare_secondary(case, True)
+        links = case / "separate-links"
+        links.mkdir()
+        for index, path in enumerate(inputs):
+            os.link(path, links / f"input-{index}")
+        original = next(iter(inputs.values()))
+        for name, path in outputs.items():
+            path.write_bytes(original)
+            os.link(path, links / name)
+        if readonly:
+            for path in inputs:
+                path.chmod(stat.S_IREAD)
+        try:
+            result = subprocess.run([str(relinker), *command], cwd=case,
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 0, (readonly, result.stdout, result.stderr)
+            for name in ("executable", "secondary-one", "secondary-two"):
+                assert outputs[name].read_bytes().startswith(b"MZ")
+            for path, original in inputs.items():
+                assert path.read_bytes() == original and path.stat().st_nlink == 2, path
+            assert not list(case.rglob(".anyps5-output-identity-*"))
+        finally:
+            if readonly:
+                for path in inputs:
+                    path.chmod(stat.S_IWRITE)
 
 
 def check_diagnostic_inputs(relinker, work):

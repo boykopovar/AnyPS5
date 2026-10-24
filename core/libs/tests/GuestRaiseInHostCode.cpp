@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -54,8 +55,11 @@ int main() {
     Pthread writer = nullptr;
     Require(scePthreadCreate(&writer, nullptr, Writer, nullptr, "host writer") == 0);
     while (!started.load()) std::this_thread::yield();
+    auto longest = std::chrono::steady_clock::duration::zero();
     for (int raise = 1; raise <= Raises; ++raise) {
+        const auto raisedAt = std::chrono::steady_clock::now();
         Require(sceKernelRaiseException(writer, SigUsr1) == 0);
+        longest = std::max(longest, std::chrono::steady_clock::now() - raisedAt);
         while (deliveries.load() < raise) std::this_thread::yield();
         Require(std::fputc('y', shared) == 'y');
         released.store(raise);
@@ -64,6 +68,7 @@ int main() {
     Require(scePthreadJoin(writer, nullptr) == 0);
     Require(sceKernelRemoveExceptionHandler(SigUsr1) == 0);
     std::fclose(shared);
+    std::printf("longest raise: %.2f ms\n", std::chrono::duration<double, std::milli>(longest).count());
     done.store(true);
     watchdog.join();
 }

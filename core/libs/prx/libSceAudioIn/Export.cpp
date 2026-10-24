@@ -17,12 +17,12 @@ constexpr int AUDIO_IN_ERROR_INVALID_HANDLE = static_cast<int>(0x80260101);
 constexpr int AUDIO_IN_ERROR_INVALID_SIZE = static_cast<int>(0x80260102);
 constexpr int AUDIO_IN_ERROR_INVALID_FREQ = static_cast<int>(0x80260103);
 constexpr int AUDIO_IN_ERROR_INVALID_TYPE = static_cast<int>(0x80260104);
+constexpr int AUDIO_IN_ERROR_INVALID_POINTER = static_cast<int>(0x80260105);
 constexpr int AUDIO_IN_ERROR_INVALID_PARAM = static_cast<int>(0x80260106);
 constexpr int AUDIO_IN_ERROR_PORT_FULL = static_cast<int>(0x80260107);
 constexpr int AUDIO_IN_ERROR_BUSY = static_cast<int>(0x8026010A);
 constexpr int AUDIO_IN_SILENT_STATE_DEVICE_NONE = 1;
 constexpr std::uint32_t MAX_QUEUED_BLOCKS = 4;
-constexpr std::uint32_t MAX_ASYNC_LEN = 384;
 
 using Clock = std::chrono::steady_clock;
 
@@ -175,29 +175,29 @@ int32_t APS5_VABI sceAudioInClose(int32_t handle) {
     return 0;
 }
 
-int32_t APS5_VABI sceAudioInHqOpen(int32_t user_id, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
-    (void)user_id;
-    if (const int error = checkArguments(type, index, len, freq); error != 0) return error;
-    if (len != 128) return AUDIO_IN_ERROR_INVALID_SIZE;
+int32_t APS5_VABI sceAudioInHqOpen(int32_t userId, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
     if (freq != 48000) return AUDIO_IN_ERROR_INVALID_FREQ;
+    if (len != 128) return AUDIO_IN_ERROR_INVALID_SIZE;
+    if (param != 2) return AUDIO_IN_ERROR_INVALID_PARAM;
+    if (const int error = checkArguments(type, index, len, freq); error != 0) return error;
     return openPort(len, freq, param);
 }
 
-int32_t APS5_VABI sceAudioInAsyncOpen(int32_t user_id, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
-    (void)user_id;
-    if (const int error = checkArguments(type, index, len, freq); error != 0 && error != AUDIO_IN_ERROR_INVALID_SIZE) return error;
-    if (len != 128 && len != 256 && len != MAX_ASYNC_LEN) return AUDIO_IN_ERROR_INVALID_SIZE;
+int32_t APS5_VABI sceAudioInAsyncOpen(int32_t userId, uint32_t type, uint32_t index, uint32_t len, uint32_t freq, uint32_t param) {
+    if (freq != 48000) return AUDIO_IN_ERROR_INVALID_FREQ;
+    if (len != 128) return AUDIO_IN_ERROR_INVALID_SIZE;
+    if (const int error = checkArguments(type, index, len, freq); error != 0) return error;
     return openPort(len, freq, param);
 }
 
 int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::lock_guard lock(g_mutex);
+    if (!find(handle)) return AUDIO_IN_ERROR_INVALID_HANDLE;
+    return 0;
 }
 
 int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
-    if (!gain) throw std::runtime_error("sceAudioInGetGain: null gain");
+    if (!gain) return AUDIO_IN_ERROR_INVALID_POINTER;
     *gain = 1.0f;
     std::lock_guard lock(g_mutex);
     return find(handle) ? 0 : AUDIO_IN_ERROR_INVALID_HANDLE;
@@ -206,6 +206,164 @@ int32_t APS5_VABI sceAudioInGetGain(int32_t handle, float* gain) {
 int32_t APS5_VABI sceAudioInGetRerouteCount(int32_t handle) {
     std::lock_guard lock(g_mutex);
     return find(handle) ? 0 : AUDIO_IN_ERROR_INVALID_HANDLE;
+}
+
+int APS5_VABI sceAudioInDeviceIdOpen(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInDeviceIdAsyncOpen(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetUsbGain(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInIsSharedDevice(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInDeviceIdHqOpen(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInDeviceHqOpen(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetConnections(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetPortConnections(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetPortStatuses(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInGetHandleStatusInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInOpenEx(int user_id, uint32_t type, uint32_t index, uint32_t extra, uint32_t len, uint32_t freq, uint32_t param) {
+    (void)extra;
+    return sceAudioInOpen(user_id, type, index, len, freq, param);
+}
+
+int APS5_VABI sceAudioInHqOpenEx(int user_id, uint32_t type, uint32_t index, uint32_t extra, uint32_t len, uint32_t freq, uint32_t param) {
+    (void)extra;
+    return sceAudioInOpen(user_id, type, index, len, freq, param);
+}
+
+int APS5_VABI sceAudioInDeviceOpenEx(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInChangeAppModuleState(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetSparkParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetSparkSideTone(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetCompressorPreGain(void) {
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetNoiseGateThreshold(void) {
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetMicLevel(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetDeviceMuteStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetDevConnection(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInCountPorts(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetUserMute(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInVmicCreate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInVmicDestroy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInVmicWrite(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInVmicGetStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInVmicSetMute(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInSetMode2(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInExtCtrl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAudioInInputs(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 }

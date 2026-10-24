@@ -16,6 +16,11 @@ int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr);
 int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr);
 int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr* attr, int* pshared);
 int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr, int pshared);
+int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type);
+int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type);
+int APS5_VABI scePthreadRwlockattrGettype(const PthreadRwlockattr* attr, int* type);
+int APS5_VABI scePthreadRwlockattrSetpshared(PthreadRwlockattr* attr, int pshared);
+int APS5_VABI scePthreadRwlockattrGetpshared(const PthreadRwlockattr* attr, int* pshared);
 int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
@@ -23,6 +28,8 @@ int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_timedrdlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
 int APS5_VABI pthread_rwlock_timedwrlock_nid_postfix(PthreadRwlock* rwlock, const KernelTimespec* abstime);
+int APS5_VABI pthread_rwlock_reltimedrdlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
+int APS5_VABI pthread_rwlock_reltimedwrlock_np_nid_postfix(PthreadRwlock* rwlock, KernelUseconds usec);
 int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
 int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock);
@@ -312,6 +319,52 @@ static void CheckWaitingWriterHoldsBackNewReaders() {
     Require(pthread_rwlock_destroy_nid_postfix(&recursive) == 0);
 }
 
+using RelativeLock = int (APS5_VABI *)(PthreadRwlock*, KernelUseconds);
+
+static void ExpectRelativeTimeout(RelativeLock lock, PthreadRwlock* rwlock) {
+    const auto start = std::chrono::steady_clock::now();
+    Require(lock(rwlock, 20000) == GUEST_ETIMEDOUT);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+    Require(lock(rwlock, 0) == GUEST_ETIMEDOUT);
+}
+
+static void CheckRelativeTimeouts() {
+    PthreadRwlock fresh[2] = {};
+    Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(&fresh[0], 0) == 0);
+    Require(pthread_rwlock_reltimedwrlock_np_nid_postfix(&fresh[1], 0) == 0);
+    for (auto& lock : fresh) {
+        Require(lock != nullptr && lock != DestroyedRwlock);
+        Require(pthread_rwlock_unlock_nid_postfix(&lock) == 0);
+        Require(pthread_rwlock_destroy_nid_postfix(&lock) == 0);
+        Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(&lock, 0) == GUEST_EINVAL);
+        Require(pthread_rwlock_reltimedwrlock_np_nid_postfix(&lock, 0) == GUEST_EINVAL);
+    }
+
+    PthreadRwlock rwlock = nullptr;
+    Require(pthread_rwlock_reltimedwrlock_np_nid_postfix(&rwlock, 5000000) == 0);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+
+    Holder reader{&rwlock, false};
+    Start(reader);
+    Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(&rwlock, 0) == 0);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+    ExpectRelativeTimeout(pthread_rwlock_reltimedwrlock_np_nid_postfix, &rwlock);
+    reader.release.store(true);
+    Require(pthread_rwlock_reltimedwrlock_np_nid_postfix(&rwlock, 5000000) == 0);
+    Require(scePthreadJoin(reader.thread, nullptr) == SCE_OK);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+
+    Holder writer{&rwlock, true};
+    Start(writer);
+    ExpectRelativeTimeout(pthread_rwlock_reltimedrdlock_np_nid_postfix, &rwlock);
+    ExpectRelativeTimeout(pthread_rwlock_reltimedwrlock_np_nid_postfix, &rwlock);
+    writer.release.store(true);
+    Require(pthread_rwlock_reltimedrdlock_np_nid_postfix(&rwlock, 5000000) == 0);
+    Require(scePthreadJoin(writer.thread, nullptr) == SCE_OK);
+    Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
+    Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
+}
+
 template <typename Call>
 static bool Throws(Call call) {
     try {
@@ -349,11 +402,36 @@ static void CheckAttrProcessSharing() {
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
 }
 
+static void CheckAttrType() {
+    PthreadRwlockattr attr = nullptr;
+    Require(pthread_rwlockattr_init_nid_postfix(&attr) == 0);
+    int type = -1;
+    Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type) == 0 && type == 0);
+    Require(scePthreadRwlockattrGettype(&attr, &type) == SCE_OK && type == 0);
+    for (const int set : {1, 2, 0}) {
+        Require(scePthreadRwlockattrSettype(&attr, set) == SCE_OK);
+        Require(pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type) == 0 && type == set);
+        Require(scePthreadRwlockattrGettype(&attr, &type) == SCE_OK && type == set);
+    }
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&attr, nullptr); }));
+    int pshared = -1;
+    Require(scePthreadRwlockattrGetpshared(&attr, &pshared) == SCE_OK && pshared == PROCESS_PRIVATE);
+    Require(scePthreadRwlockattrSetpshared(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRwlockattrSetpshared(&attr, PROCESS_PRIVATE) == SCE_OK);
+    Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    PthreadRwlockattr unset = nullptr;
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(nullptr, &type); }));
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&unset, &type); }));
+    Require(Throws([&] { scePthreadRwlockattrGettype(&unset, &type); }));
+}
+
 int main() {
     CheckAttrProcessSharing();
+    CheckAttrType();
     CheckWaitingWriterHoldsBackNewReaders();
     CheckConcurrentFirstWrlockExcludes();
     CheckDeadlinesBeyondTheClockRange();
+    CheckRelativeTimeouts();
     const KernelTimespec invalid{0, NANOS_PER_SECOND};
     PthreadRwlock fresh[4] = {};
     Require(pthread_rwlock_tryrdlock_nid_postfix(&fresh[0]) == 0);

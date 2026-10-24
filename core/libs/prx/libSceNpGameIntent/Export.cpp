@@ -12,6 +12,7 @@ constexpr int NpGameIntentErrorIntentNotFound = -2141898746;
 constexpr int NpGameIntentErrorValueNotFound = -2141898745;
 constexpr int NpGameIntentUserIdInvalid = -1;
 
+
 }
 
 extern "C" {
@@ -73,8 +74,8 @@ int APS5_VABI sceNpGameIntentVshTerminate(void) {
     return 0;
 }
 
-int APS5_VABI sceNpAppLauncherInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpAppLauncherInitialize(const void* initParam) {
+    (void)initParam;
     return 0;
 }
 
@@ -84,7 +85,6 @@ int APS5_VABI sceNpAppLauncherLaunchApp() {
 }
 
 int APS5_VABI sceNpAppLauncherTerminate() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

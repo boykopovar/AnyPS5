@@ -35,6 +35,7 @@ std::uintptr_t CurrentWaker();
 void Wake(std::uintptr_t waker);
 bool WaitAny(const std::vector<Interest>& interests, std::uint64_t deadlineNanos);
 bool PipeReadState(int descriptor, std::int64_t* data, bool* eof);
+bool PipeWriteState(int descriptor, std::int64_t* data, bool* eof, bool* writable);
 std::int64_t Readv(int descriptor, const Iovec* iov, int iovcnt);
 std::int64_t Writev(int descriptor, const Iovec* iov, int iovcnt);
 }

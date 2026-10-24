@@ -54,6 +54,11 @@ std::uint64_t Driver::DispatchCacheBytes() {
     return bytes;
 }
 
+EntryCounters Driver::DispatchCacheCounters() {
+    std::lock_guard lock(dispatchCacheMutex);
+    return entryCounters;
+}
+
 Driver::DispatchCacheFootprint Driver::DispatchCacheSize() {
     std::lock_guard lock(dispatchCacheMutex);
     return {dispatchCache.size(), dispatchCacheVariantBytes};

@@ -5,7 +5,9 @@
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Elfpatcher::MacOs {
@@ -59,6 +61,7 @@ struct MacOsImageInput {
     std::vector<MacOsTlsImport> TlsImports;
     std::vector<MacOsTlsExport> TlsExports;
     const std::vector<Codegen::TrampolineSite>* Trampolines = nullptr;
+    std::function<void(std::string_view)> Message;
 };
 
 std::uint64_t GuestTlsBlockSize(const Domain::ProgramHeader& tls);

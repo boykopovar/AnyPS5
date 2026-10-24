@@ -34,6 +34,8 @@ int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
 void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info);
 void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute);
+void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*), void* argument);
+void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute);
 }
 
 static constexpr int SCE_OK = 0;
@@ -60,7 +62,7 @@ struct Shared {
     std::atomic<bool> returned{false};
     std::atomic<bool> survived{false};
     std::atomic<int> cleanups{0};
-    int order[2] = {0, 0};
+    int order[3] = {0, 0, 0};
 };
 
 static Shared shared;
@@ -189,6 +191,18 @@ static void* APS5_VABI Handlers(void*) {
     return nullptr;
 }
 
+static void* APS5_VABI HeapHandlers(void*) {
+    std::uintptr_t first[8];
+    __pthread_cleanup_push_imp_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{1}), first);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{2}));
+    pthread_cleanup_pop_nid_postfix(0);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{3}));
+    __pthread_cleanup_pop_imp_nid_postfix(1);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{4}));
+    scePthreadExit(reinterpret_cast<void*>(std::intptr_t{8}));
+    return nullptr;
+}
+
 static Pthread Start(PthreadEntry entry) {
     shared.ready.store(false);
     shared.release.store(false);
@@ -274,6 +288,12 @@ int main() {
     Require(scePthreadJoin(thread, &result) == SCE_OK);
     Require(reinterpret_cast<std::intptr_t>(result) == 7);
     Require(shared.cleanups.load() == 2 && shared.order[0] == 3 && shared.order[1] == 1);
+
+    shared.cleanups.store(0);
+    Require(scePthreadCreate(&thread, nullptr, HeapHandlers, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    Require(reinterpret_cast<std::intptr_t>(result) == 8);
+    Require(shared.cleanups.load() == 3 && shared.order[0] == 3 && shared.order[1] == 4 && shared.order[2] == 1);
 
     Require(sem_destroy_nid_postfix(&shared.posixSem) == 0);
     Require(scePthreadSemDestroy(&shared.sem) == SCE_OK);

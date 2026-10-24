@@ -10,6 +10,7 @@ class ElfReader : public IElfReader {
 public:
     explicit ElfReader(std::vector<std::uint8_t> fileBuffer);
 
+    void ValidateMagic() const;
     ElfHeader ReadHeader() const override;
     std::vector<ProgramHeader> ReadProgramHeaders() const override;
     std::vector<SectionHeader> ReadSectionHeaders() const override;

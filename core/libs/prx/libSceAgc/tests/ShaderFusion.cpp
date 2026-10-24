@@ -147,7 +147,7 @@ void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
     const auto* frontLo = find(fused, 0x0C8u);
     check(backLo != nullptr && backLo->value == static_cast<std::uint32_t>((base + 256) >> 8u), "back program address was not patched");
     check(frontLo != nullptr && frontLo->value == static_cast<std::uint32_t>(base >> 8u), "fused program address was not patched");
-    check(find(fused, 0x08Au)->value == ((1u << 24u) | (2u << 6u) | 5u), "RSRC1 register counts were not merged");
+    check(find(fused, 0x08Au)->value == ((1u << 24u) | (1u << 6u) | 5u), "RSRC1 register counts were not merged");
     check(find(fused, 0x08Bu)->value == ((6u << 1u) | (1u << 7u) | (1u << 15u)), "RSRC2 user SGPRs were not taken from the front half");
     check(find(fused, 0x0B2u) != nullptr && find(fused, 0x0B2u)->value == 0x55u, "front-only SH register was lost");
     check(find(fused, 0x080u) == nullptr, "front program checksum was kept");
@@ -208,7 +208,7 @@ void testOffchipLdsEnable() {
             Shader fused{};
             check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, aligned(storage, 256)) == 0, "offchip LDS enable rejected by fusion");
             const auto* resource = find(fused, 0x08bu);
-            check(resource != nullptr && resource->value == ((6u << 1u) | (1u << 7u) | (1u << 15u) | frontEnable | backEnable), "fusion lost offchip LDS enable or changed the back-half state or front user SGPRs");
+            check(resource != nullptr && resource->value == ((6u << 1u) | (1u << 7u) | (1u << 15u) | frontEnable), "fusion did not take offchip LDS enable and user SGPRs from the front half");
         }
     }
     Halves reported;
@@ -220,6 +220,38 @@ void testOffchipLdsEnable() {
     Shader fused{};
     check(sceAgcFuseShaderHalves_0200(&fused, &reported.front, &reported.back, aligned(storage, 256)) == 0, "reported shader resources rejected by fusion");
     check(find(fused, 0x08bu)->value == 0x00af0004u, "reported shader resources did not retain the front offchip LDS enable");
+}
+
+void testResourceMerging() {
+    struct Case {
+        std::uint32_t front1;
+        std::uint32_t front2;
+        std::uint32_t back1;
+        std::uint32_t back2;
+        std::uint32_t expected1;
+        std::uint32_t expected2;
+    };
+    const Case cases[] = {
+        {0u, 0x80000000u, 0u, 0u, 0u, 0x10000000u},
+        {1u, 0xf0000000u, 3u, 0u, 3u, 0x10000000u},
+        {0u, 0xf0000000u, 0u, 0xf0000000u, 0u, 0u},
+        {0x400003c1u, 0x0006000cu, 0x61000043u, 0x00018001u, 0x61000043u, 0x0006800du},
+        {0x60000007u, 0x00010000u, 0x21000041u, 0x00020000u, 0x61000047u, 0x00020000u}
+    };
+    for (const auto& entry : cases) {
+        Halves halves;
+        halves.frontSh[1].value = entry.front1;
+        halves.frontSh[2].value = entry.front2;
+        halves.backSh[2].value = entry.back1;
+        halves.backSh[3].value = entry.back2;
+        SizeAlign size{};
+        check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "resource merge size query failed");
+        std::vector<std::uint8_t> scratch(size.m_size);
+        Shader fused{};
+        check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch.data()) == 0, "resource merge failed");
+        check(find(fused, 0x08au)->value == entry.expected1, "resource register 1 merge mismatch");
+        check(find(fused, 0x08bu)->value == entry.expected2, "resource register 2 merge mismatch");
+    }
 }
 
 void testRejections() {
@@ -248,11 +280,6 @@ void testRejections() {
         Halves noTrailer;
         noTrailer.frontCode[5] = 0;
         expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &noTrailer.front, &noTrailer.back); });
-    }
-    {
-        Halves hardware;
-        hardware.frontSh[2].value |= 1u << 16u;
-        expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &hardware.front, &hardware.back); });
     }
     {
         Halves constants;
@@ -305,6 +332,7 @@ int main() {
         testFusion(0, SSwappcNullS6);
         testScratchReuse();
         testOffchipLdsEnable();
+        testResourceMerging();
         testRejections();
         testHullHalves();
         LibcRunShutdown_nid_postfix();
