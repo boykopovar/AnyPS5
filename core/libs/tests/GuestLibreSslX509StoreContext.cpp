@@ -9,6 +9,7 @@
 
 extern "C" {
 int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void*);
+void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void*, int);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -57,7 +58,21 @@ static void TestGetError() {
     RequireThrows([] { X509_STORE_CTX_get_error_nid_postfix(nullptr); });
 }
 
+static void TestSetError() {
+    TestContext context;
+    X509_STORE_CTX_set_error_nid_postfix(&context, 10);
+    Require(context.Read<std::int32_t>(ErrorOffset) == 10);
+    Require(X509_STORE_CTX_get_error_nid_postfix(&context) == 10);
+    X509_STORE_CTX_set_error_nid_postfix(&context, -1);
+    Require(context.Read<std::int32_t>(ErrorOffset) == -1);
+    X509_STORE_CTX_set_error_nid_postfix(&context, 0);
+    Require(context.Read<std::int32_t>(ErrorOffset) == 0);
+    Require(OnlyChanged(context, ErrorOffset, 4));
+    RequireThrows([] { X509_STORE_CTX_set_error_nid_postfix(nullptr, 1); });
+}
+
 int main() {
     TestGetError();
+    TestSetError();
     std::puts("libSceLibreSsl X509_STORE_CTX tests passed");
 }

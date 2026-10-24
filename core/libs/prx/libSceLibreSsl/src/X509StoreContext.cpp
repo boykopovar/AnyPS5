@@ -50,4 +50,8 @@ int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(LibreSslX509StoreContext* con
     return Context(context, __func__)->error;
 }
 
+void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error) {
+    Context(context, __func__)->error = error;
+}
+
 }
