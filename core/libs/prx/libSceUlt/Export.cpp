@@ -939,6 +939,31 @@ int APS5_VABI _sceUltMutexOptParamInitialize(UltMutexOptParam* optParam, std::ui
     return sceUltMutexOptParamInitialize(optParam, buildVersion);
 }
 
+int APS5_VABI _sceUltSemaphoreOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltSemaphoreOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltQueueOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltQueueOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltQueueDataResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltQueueDataResourcePoolOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltWaitingQueueResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltWaitingQueueResourcePoolOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltUlthreadOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltUlthreadOptParamInitialize(optParam, buildVersion);
+}
+
+int APS5_VABI _sceUltReaderWriterLockCreate(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI _sceUltMutexCreate(void* mutex, const char* name, void* waitingQueueResourcePool, const UltMutexOptParam* optParam) {
     if (mutex == nullptr || name == nullptr || waitingQueueResourcePool == nullptr) {
         return ULT_ERROR_NULL;

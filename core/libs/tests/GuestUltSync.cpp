@@ -27,6 +27,12 @@ int APS5_VABI sceUltWaitingQueueResourcePoolDestroy(void*);
 int APS5_VABI sceUltReaderWriterLockOptParamInitialize(void*, std::uint32_t);
 int APS5_VABI sceUltConditionVariableOptParamInitialize(void*, std::uint32_t);
 int APS5_VABI _sceUltConditionVariableOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltSemaphoreOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltQueueOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltQueueDataResourcePoolOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltWaitingQueueResourcePoolOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltUlthreadOptParamInitialize(void*, std::uint32_t);
+int APS5_VABI _sceUltReaderWriterLockOptParamInitialize(void*, std::uint32_t);
 int APS5_VABI sceUltReaderWriterLockCreate(void*, const char*, void*, const void*, std::uint32_t);
 int APS5_VABI sceUltReaderWriterLockDestroy(void*);
 int APS5_VABI sceUltReaderWriterLockLockRead(void*);
@@ -101,7 +107,9 @@ void OptParams() {
     using Initializer = int (APS5_VABI *)(void*, std::uint32_t);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
                                          sceUltWaitingQueueResourcePoolOptParamInitialize, sceUltUlthreadOptParamInitialize, sceUltReaderWriterLockOptParamInitialize,
-                                         sceUltConditionVariableOptParamInitialize, _sceUltConditionVariableOptParamInitialize}) {
+                                         sceUltConditionVariableOptParamInitialize, _sceUltConditionVariableOptParamInitialize,
+                                         _sceUltSemaphoreOptParamInitialize, _sceUltQueueOptParamInitialize, _sceUltQueueDataResourcePoolOptParamInitialize,
+                                         _sceUltWaitingQueueResourcePoolOptParamInitialize, _sceUltUlthreadOptParamInitialize, _sceUltReaderWriterLockOptParamInitialize}) {
         std::uint8_t bytes[136];
         std::memset(bytes, 0xa5, sizeof(bytes));
         CHECK(initialize(nullptr, 0) == Null);

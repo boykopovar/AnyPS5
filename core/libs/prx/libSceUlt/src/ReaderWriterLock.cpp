@@ -77,6 +77,10 @@ int APS5_VABI sceUltReaderWriterLockOptParamInitialize(UltOptParam* optParam, st
     return InitializeOptParam(optParam);
 }
 
+int APS5_VABI _sceUltReaderWriterLockOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltReaderWriterLockOptParamInitialize(optParam, buildVersion);
+}
+
 int APS5_VABI sceUltReaderWriterLockCreate(void* rwlock, const char* name, void* waitingQueueResourcePool, const UltOptParam* optParam, std::uint32_t buildVersion) {
     (void)name;
     (void)optParam;
