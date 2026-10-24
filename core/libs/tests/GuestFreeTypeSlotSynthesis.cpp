@@ -1,3 +1,4 @@
+#include "FontFixture.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -15,6 +17,8 @@ using namespace FreeType;
 
 extern "C" {
 void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(GuestGlyphSlotRec*);
+void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(GuestGlyphSlotRec*);
+int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32_t);
 }
 
 static void Check(bool value, int line) {
@@ -61,6 +65,32 @@ struct SlotPair {
     }
 };
 
+static void EmboldenBitmapGlyph(GuestLibrary& library, FT_Library nativeLibrary) {
+    const std::vector<unsigned char> bytes = FontFixture::BitmapFont();
+    GuestFace guest;
+    guest.library = &library;
+    FT_Face oracle = nullptr;
+    Require(FT_New_Memory_Face(library.host, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &guest.host) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, bytes.data(), static_cast<FT_Long>(bytes.size()), 0, &oracle) == 0);
+    SyncFace(guest);
+    const std::uint32_t glyph = FT_Get_Char_Index(oracle, 65);
+    Require(glyph != 0);
+    Require(FT_Load_Glyph_nid_postfix(&guest.rec, glyph, FT_LOAD_DEFAULT) == FT_Load_Glyph(oracle, glyph, FT_LOAD_DEFAULT));
+    Require(guest.host->glyph->format == FT_GLYPH_FORMAT_BITMAP);
+    const FT_Bitmap before = oracle->glyph->bitmap;
+    FT_GlyphSlot_Embolden_nid_postfix(&guest.slot);
+    FT_GlyphSlot_Embolden(oracle->glyph);
+    const GuestBitmap& actual = guest.slot.bitmap;
+    const FT_Bitmap& expected = oracle->glyph->bitmap;
+    Require(expected.width != before.width || expected.rows != before.rows);
+    Require(actual.rows == expected.rows && actual.width == expected.width && actual.pitch == expected.pitch);
+    Require(actual.pixel_mode == expected.pixel_mode && actual.buffer && expected.buffer);
+    Require(std::memcmp(actual.buffer, expected.buffer, static_cast<std::size_t>(expected.pitch) * expected.rows) == 0);
+    Require(guest.slot.bitmap_left == oracle->glyph->bitmap_left && guest.slot.bitmap_top == oracle->glyph->bitmap_top);
+    Require(guest.slot.advance.x == oracle->glyph->advance.x && guest.slot.metrics.width == oracle->glyph->metrics.width);
+    Require(FT_Done_Face(guest.host) == 0 && FT_Done_Face(oracle) == 0);
+}
+
 int main() {
     GuestLibrary library{};
     FT_Library nativeLibrary = nullptr;
@@ -82,8 +112,27 @@ int main() {
         FT_GlyphSlot_Oblique(pair.oracle->glyph);
         pair.Matches();
     }
+    {
+        SlotPair pair(library, nativeLibrary, SquareGlyphFont('A', 700));
+        const FT_Outline& outline = pair.oracle->glyph->outline;
+        std::vector<FT_Vector> initial(outline.points, outline.points + outline.n_points);
+        FT_GlyphSlot_Embolden_nid_postfix(&pair.guest.slot);
+        FT_GlyphSlot_Embolden(pair.oracle->glyph);
+        pair.Matches();
+        bool changed = false;
+        for (std::size_t index = 0; index < initial.size(); ++index) changed |= initial[index].x != outline.points[index].x || initial[index].y != outline.points[index].y;
+        Require(changed);
+        pair.guest.slot.outline.points[0].x += 32;
+        pair.oracle->glyph->outline.points[0].x += 32;
+        FT_GlyphSlot_Embolden_nid_postfix(&pair.guest.slot);
+        FT_GlyphSlot_Embolden(pair.oracle->glyph);
+        pair.Matches();
+    }
+    EmboldenBitmapGlyph(library, nativeLibrary);
+    FT_GlyphSlot_Embolden_nid_postfix(nullptr);
     FT_GlyphSlot_Oblique_nid_postfix(nullptr);
     GuestGlyphSlotRec unregistered{};
     FT_GlyphSlot_Oblique_nid_postfix(&unregistered);
+    FT_GlyphSlot_Embolden_nid_postfix(&unregistered);
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
 }
