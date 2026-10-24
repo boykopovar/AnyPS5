@@ -35,6 +35,7 @@ extern "C" {
 int APS5_VABI socket_nid_postfix(int, int, int);
 int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
 int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
+int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
 int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
@@ -64,6 +65,8 @@ constexpr int DuplicateCommand = 0;
 constexpr int DuplicateCloseOnExec = 17;
 constexpr int Inet = 2;
 constexpr int Datagram = 2;
+constexpr int ErrorBadDescriptor = 9;
+constexpr int ErrorFault = 14;
 constexpr short In = 0x1;
 constexpr int KernelBadDescriptor = static_cast<int>(0x80020009u);
 
@@ -224,8 +227,28 @@ static void SocketTypeErrors() {
     Require(socket_nid_postfix(99, 1, 0) == -1 && *__error_nid_postfix() == FamilyError);
 }
 
+static void AddressQueryErrors() {
+    std::array<unsigned char, 16> address{};
+    std::uint32_t size = address.size();
+    const int descriptor = Socket();
+    *__error_nid_postfix() = 0;
+    Require(getsockname_nid_postfix(descriptor, address.data(), nullptr) == -1 && *__error_nid_postfix() == ErrorFault);
+    *__error_nid_postfix() = 0;
+    Require(getpeername_nid_postfix(descriptor, address.data(), nullptr) == -1 && *__error_nid_postfix() == ErrorFault);
+    *__error_nid_postfix() = 0;
+    Require(getsockname_nid_postfix(-1, address.data(), nullptr) == -1 && *__error_nid_postfix() == ErrorFault);
+    *__error_nid_postfix() = 0;
+    Require(getpeername_nid_postfix(-1, address.data(), nullptr) == -1 && *__error_nid_postfix() == ErrorFault);
+    *__error_nid_postfix() = 0;
+    Require(getsockname_nid_postfix(-1, address.data(), &size) == -1 && *__error_nid_postfix() == ErrorBadDescriptor);
+    *__error_nid_postfix() = 0;
+    Require(getpeername_nid_postfix(-1, address.data(), &size) == -1 && *__error_nid_postfix() == ErrorBadDescriptor);
+    Require(close_nid_postfix(descriptor) == 0);
+}
+
 int main() {
     SocketTypeErrors();
+    AddressQueryErrors();
     SelectSocketAndFile();
     CloseReleasesNumber();
     DuplicateKeepsSocket();
