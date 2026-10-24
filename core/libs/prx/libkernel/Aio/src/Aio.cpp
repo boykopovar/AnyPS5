@@ -89,7 +89,12 @@ std::int64_t NativePwrite(std::int32_t fd, const void* buf, std::size_t nbyte, s
     return NativePositioned_nid_no_patch(fd, const_cast<void*>(buf), nbyte, offset, true);
 #else
     const auto result = File::PwriteSharedMemory_nid_no_patch(fd, buf, nbyte, offset);
-    return result == -2 ? static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset))) : result;
+    if (result != -2) return result;
+#ifdef __APPLE__
+    const iovec whole{const_cast<void*>(buf), nbyte};
+    if (const auto appended = File::WritevAtEnd(fd, &whole, 1); appended != -2) return appended;
+#endif
+    return static_cast<std::int64_t>(::pwrite(fd, buf, nbyte, static_cast<off_t>(offset)));
 #endif
 }
 
