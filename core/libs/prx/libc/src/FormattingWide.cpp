@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
@@ -169,6 +170,8 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             } else value = args.Next<unsigned long long>();
             if (conversion == u'o' && value == 0 && precision == 0 && spec.find('#') != std::string::npos)
                 spec = spec.substr(0, spec.find('.')) + ".1";
+            const auto flags = spec.begin() + static_cast<std::ptrdiff_t>(std::min(spec.find_first_not_of("-+ #0", 1), spec.size()));
+            spec.erase(std::remove_if(spec.begin() + 1, flags, [](char flag) { return flag == ' ' || flag == '+'; }), flags);
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
             if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());
