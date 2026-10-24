@@ -189,6 +189,8 @@ struct Ngs2System {
 };
 
 std::string Ngs2Hex(std::uint32_t value);
+std::size_t Ngs2PcmSampleBytes(std::uint32_t waveformType);
+void Ngs2ReadPcmFrame(std::uint32_t waveformType, std::uint32_t channels, const std::uint8_t* frame, float* output);
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block);
 std::recursive_mutex& Ngs2Mutex();
 
