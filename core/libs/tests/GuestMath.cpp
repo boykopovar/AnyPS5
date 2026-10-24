@@ -111,6 +111,7 @@ double APS5_VABI log1p_nid_postfix(double);
 float APS5_VABI log1pf_nid_postfix(float);
 double APS5_VABI expm1_nid_postfix(double);
 float APS5_VABI expm1f_nid_postfix(float);
+float APS5_VABI tanhf_nid_postfix(float);
 float APS5_VABI erff_nid_postfix(float);
 double APS5_VABI erf_nid_postfix(double);
 double APS5_VABI erfc_nid_postfix(double);
@@ -684,6 +685,21 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     long double value = 0;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
+}
+
+static void CheckTanhfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x3c00012cu, 0x3c000082u}, {0x3e000327u, 0x3dfeb2ffu}, {0x3f000555u, 0x3eeca303u}, {0x3fc007c2u, 0x3f67ba9au},
+        {0x40801412u, 0x3f7fd443u}, {0xbf400dddu, 0xbf22a163u}, {0xc0101094u, 0xbf7a62ccu}, {0x3a000c01u, 0x3a000c01u},
+        {0x00000000u, 0x00000000u}, {0x80000000u, 0x80000000u}, {0x00000001u, 0x00000001u}, {0x39000000u, 0x39000000u},
+        {0x3f800000u, 0x3f42f7d6u}, {0xbf800000u, 0xbf42f7d6u}, {0x41100000u, 0x3f800000u}, {0x410fffffu, 0x3f7fffffu},
+        {0xc1100000u, 0xbf800000u}, {0x7f7fffffu, 0x3f800000u}, {0x7f800000u, 0x3f800000u}, {0xff800000u, 0xbf800000u},
+        {0x7fc00001u, 0x7fc00001u}, {0xffc00002u, 0xffc00002u},
+    };
+    for (const auto& [input, expected] : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(tanhf_nid_postfix(std::bit_cast<float>(input))) == expected && errno == 1234);
+    }
 }
 
 static void CheckExpm1ConsoleBits() {
@@ -1710,6 +1726,7 @@ int main() {
     CheckNearbyintl();
     CheckExpm1ConsoleBits();
     CheckAsinl();
+    CheckTanhfConsoleBits();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
     Require(nextafterf_nid_postfix(1.f, 2.f) == 0x1.000002p0f && nextafterf_nid_postfix(1.f, 0.f) == 0x1.fffffep-1f);
