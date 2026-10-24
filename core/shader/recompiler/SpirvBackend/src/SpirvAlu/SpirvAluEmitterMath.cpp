@@ -187,7 +187,7 @@ std::uint32_t EmitDppWriteCondition(SpirvValueEmitContext& ctx, const IrValue& i
         state.module.AddFunction(spv::OpLogicalAnd, TypeBool(state), bounded, writable, target.valid);
         writable = bounded;
         if (!flags.fetchInactive && (flags.control & DppMoveFlags::Lanes8) == 0u) {
-            const auto sourceActive = EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(2)), target.lane);
+            const auto sourceActive = DppQuadRead(state, flags.control) ? EmitDppQuadRead(state, TypeBool(state), ctx.Arg(inst, 2), flags.control) : EmitBallotLaneActiveBool(state, ctx.Ballot(inst.Argument(2)), target.lane);
             writable = Binary(state, spv::OpLogicalAnd, TypeBool(state), writable, sourceActive);
         }
     }
@@ -1089,6 +1089,11 @@ std::uint32_t EmitUndefU1(SpirvEmitterState& state, const IrValue& inst) {
 std::uint32_t EmitDppMoveU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<DppMoveFlags>();
+    if (DppQuadRead(state, flags.control)) {
+        const auto read = EmitDppQuadRead(state, TypeU32(state), ctx.Arg(inst, 0), flags.control);
+        if (flags.fetchInactive) return read;
+        return EmitNative<spv::OpSelect, IrType::U32>(state, EmitDppQuadRead(state, TypeBool(state), ctx.Arg(inst, 1), flags.control), read, ConstantU32(state, 0u));
+    }
     const auto target = EmitDppTargetLane(state, flags.control);
     const auto shuffled = ctx.ShuffleInHalf(inst, 0, target.lane);
     if (flags.fetchInactive) {
