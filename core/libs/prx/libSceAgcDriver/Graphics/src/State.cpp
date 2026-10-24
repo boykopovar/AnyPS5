@@ -1240,6 +1240,16 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
+std::optional<DepthRenderControl> DecodeDepthRenderControl(const QueueState& queue) {
+    const auto& cx = queue.context;
+    const auto control = find(cx, 0x000);
+    const auto zInfo = find(cx, 0x010);
+    if (control == cx.end() || (control->second & 0x63u) == 0u || zInfo == cx.end() || (zInfo->second & 3u) == 0u) return std::nullopt;
+    const auto high = find(cx, 0x01a);
+    const auto address = (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x012)) << 8u);
+    return DepthRenderControl{address & ~std::uint64_t{65535u}, 1u << ((zInfo->second >> 2u) & 3u), control->second};
+}
+
 ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne) {
     const auto refuse = [&](const char* reason) {
         char text[320];
