@@ -264,6 +264,7 @@ float ScaledHyperbolic(float x, float y, bool sine) {
 }
 
 extern "C" {
+void APS5_VABI _Feraise_nid_postfix(int exceptions);
 
 std::lldiv_t APS5_VABI lldiv_nid_postfix(long long numerator, long long denominator) {
     return std::lldiv(numerator, denominator);
@@ -909,7 +910,11 @@ float APS5_VABI acoshf_nid_postfix(float x) {
     constexpr float ln2 = 6.9314718246e-01f;
     const std::uint32_t bits = std::bit_cast<std::uint32_t>(x);
     const std::uint32_t magnitude = bits & 0x7fffffffu;
-    if ((bits & 0x80000000u) != 0 || magnitude < 0x3f800000u) return (x - x) / (x - x);
+    if ((bits & 0x80000000u) != 0 || magnitude < 0x3f800000u) {
+        _Feraise_nid_postfix(0x01);
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
     if (magnitude >= 0x7f800000u) return x + x;
     if (magnitude == 0x3f800000u) return 0.0f;
     if (magnitude >= 0x4d800000u) return std::log(x) + ln2;

@@ -23,6 +23,7 @@ struct GuestFloatingPointEnvironment {
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
 extern "C" {
 int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment*);
+int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t*, int);
 double APS5_VABI atof_nid_postfix(const char*);
 double APS5_VABI strtod_nid_postfix(const char*, char**);
 double APS5_VABI wcstod_nid_postfix(const char16_t*, char16_t**);
@@ -1045,11 +1046,62 @@ static void CheckHyperbolic() {
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
 }
 
+static void CheckAcoshfDomainEnvironment() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint32_t input;
+        std::uint32_t result;
+        unsigned raised;
+        unsigned x87Raised;
+        int error;
+    } cases[] = {
+        {0x00000000u, 0xffc00000u, 1u, 1u, EDOM},
+        {0x80000000u, 0xffc00000u, 1u, 1u, EDOM},
+        {0x3f000000u, 0xffc00000u, 1u, 1u, EDOM},
+        {0x3f7fffffu, 0xffc00000u, 1u, 1u, EDOM},
+        {0xbf800000u, 0xffc00000u, 1u, 1u, EDOM},
+        {0xff800000u, 0xffc00000u, 1u, 1u, EDOM},
+        {0xffc00001u, 0xffc00001u, 1u, 1u, EDOM},
+        {0xff800001u, 0xffc00001u, 1u, 1u, EDOM},
+        {0x3f800000u, 0x00000000u, 0u, 0u, 1234},
+        {0x7f800000u, 0x7f800000u, 0u, 0u, 1234},
+        {0x7fc00001u, 0x7fc00001u, 0u, 0u, 1234},
+        {0x7f800001u, 0x7fc00001u, 1u, 0u, 1234},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    float (APS5_VABI * volatile call)(float) = acoshf_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (std::uint16_t sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    Require(fesetexceptflag_nid_postfix(&sticky, 0x3f) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0 && (before.status & 0x3fu) == sticky);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint32_t>(call(std::bit_cast<float>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result || after.mxcsr != (control | sticky | item.raised) || (after.status & 0x3fu) != (sticky | item.x87Raised) || after.control != before.control || error != item.error) {
+                        std::fprintf(stderr, "acoshf domain: input=%08llx mode=%u denorm=%u sticky=%u bits=%08llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
+}
+
 static void CheckAcoshfMsunBoundaries() {
     Require(acoshf_nid_postfix(1.0f) == 0.0f && !std::signbit(acoshf_nid_postfix(1.0f)));
     errno = EINTR;
     std::feclearexcept(FE_ALL_EXCEPT);
-    Require(std::isnan(acoshf_nid_postfix(0.5f)) && errno == EINTR && (std::fetestexcept(FE_INVALID) & FE_INVALID) != 0);
+    Require(std::isnan(acoshf_nid_postfix(0.5f)) && errno == EDOM && (std::fetestexcept(FE_INVALID) & FE_INVALID) != 0);
     for (const std::uint32_t bits : {0x3f800001u, 0x3fffffffu, 0x40000000u, 0x40000001u,
                                      0x4d7fffffu, 0x4d800000u, 0x4d800001u, 0x7f7fffffu}) {
         const float x = std::bit_cast<float>(bits);
@@ -1846,6 +1898,7 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckAcoshfDomainEnvironment();
     CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();
     CheckScaledHyperbolic();
