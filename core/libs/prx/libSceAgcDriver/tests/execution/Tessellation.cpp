@@ -419,6 +419,21 @@ alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullReadLane{
     0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 89> MergedHullRingReadBack{
+    0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf88001c,
+    0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
+    0x7e080d04, 0x7e0a0d05, 0x7e0c0d06, 0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666,
+    0x3e1008ff, 0x3e800000, 0xd54b0009, 0x03c5e105, 0x161406a0, 0xd9340000, 0x0000080a, 0xd8340008,
+    0x0000070a, 0xd8340010, 0x0000070a, 0xbf8cc07f, 0xbefe04c1, 0xbf8cc07f, 0xd7650000, 0x000100c1,
+    0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xbf88002a, 0xd5480014, 0x02151101,
+    0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000, 0x02000015,
+    0x162c2890, 0xd5430016, 0x045a24ff, 0x00000030, 0xbf8cc07f, 0xe0781000, 0x02020216, 0x7da82881,
+    0xbf880017, 0xbe94047e, 0xb06a0030, 0x162602f9, 0x0086066a, 0xe0301028, 0x02020613, 0xe0341010,
+    0x02020713, 0xbf8c3f70, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414,
+    0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b,
+    0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
     0xc8020002, 0xc8060102, 0xc80a0202, 0xc80e0302, 0xf800180f, 0x03020100, 0xbf810000,
 };
@@ -432,6 +447,16 @@ constexpr std::array<std::uint32_t, 3> PatchLevels{1u, 0u, 5u};
 constexpr std::uint16_t Corner(std::uint32_t patch, std::uint32_t x, std::uint32_t y) {
     return static_cast<std::uint16_t>((PatchLevels[patch] << 8u) | (patch << 4u) | (x << 2u) | y);
 }
+
+constexpr std::uint16_t LevelCorner(std::uint32_t level, std::uint32_t patch, std::uint32_t x, std::uint32_t y) {
+    return static_cast<std::uint16_t>((level << 8u) | (patch << 4u) | (x << 2u) | y);
+}
+
+alignas(256) constexpr std::array<std::uint16_t, 9> LastPointLevelIndices{
+    LevelCorner(5u, 0u, 0u, 0u), LevelCorner(5u, 0u, 2u, 0u), Corner(0, 1, 2),
+    LevelCorner(1u, 1u, 0u, 0u), LevelCorner(1u, 1u, 2u, 0u), Corner(1, 1, 2),
+    LevelCorner(0u, 2u, 0u, 0u), LevelCorner(0u, 2u, 2u, 0u), Corner(2, 1, 2),
+};
 
 alignas(256) constexpr std::array<std::uint16_t, 9> Indices{
     Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
@@ -474,6 +499,7 @@ alignas(256) constexpr std::array<std::uint16_t, 12> NextInputIndices{
 const PatchDraw Triangles{Patches, Indices};
 const PatchDraw NextInputTriangles{{4u, 3u, 1u, 2u, 2u}, NextInputIndices};
 const PatchDraw MergedTriangles{MergedPatches, Indices};
+const PatchDraw MergedLastPointLevels{MergedPatches, LastPointLevelIndices};
 
 struct Stages {
     ShaderRecompiler::RecompileResult local;
@@ -947,6 +973,32 @@ void RequireMergedHullWithoutSubgroups(const ShaderRecompiler::SpirvTarget& targ
     }
 }
 
+void RequireBarrierBeforeRingReadBack(const ShaderRecompiler::SpirvTarget& target) {
+    std::uint32_t cursor = 0;
+    const auto hull = Compile(target, ShaderStage::TessellationControl, MergedHullRingReadBack, cursor, MergedLastPointLevels);
+    const auto words = hull.spirv.Words();
+    std::vector<std::uint32_t> outputs;
+    std::vector<std::size_t> barriers;
+    std::vector<std::size_t> stores;
+    std::size_t lastLoad = 0;
+    for (std::size_t at = 5; at < words.size(); at += words[at] >> 16u) {
+        const auto count = words[at] >> 16u;
+        Require(count != 0u && at + count <= words.size(), "the merged hull program compiled to a malformed SPIR-V instruction");
+        const auto opcode = words[at] & 0xffffu;
+        const auto output = [&](std::uint32_t id) { return std::find(outputs.begin(), outputs.end(), id) != outputs.end(); };
+        if (opcode == spv::OpVariable && words[at + 3u] == spv::StorageClassOutput) outputs.push_back(words[at + 2u]);
+        if (opcode == spv::OpAccessChain && output(words[at + 3u])) outputs.push_back(words[at + 2u]);
+        if (opcode == spv::OpStore && output(words[at + 1u])) stores.push_back(at);
+        if (opcode == spv::OpLoad && output(words[at + 3u])) lastLoad = at;
+        if (opcode == spv::OpControlBarrier) barriers.push_back(at);
+    }
+    const auto before = std::lower_bound(barriers.begin(), barriers.end(), lastLoad);
+    Require(lastLoad != 0u && before - barriers.begin() >= 2, "the merged hull program reading control point 2's output back has no barrier besides its s_barrier before the read");
+    const auto first = *(before - 2);
+    const auto second = *(before - 1);
+    Require(std::any_of(stores.begin(), stores.end(), [&](std::size_t store) { return store > first && store < second; }), "the merged hull program reading control point 2's output back waits at no barrier after its control-point writes");
+}
+
 void RequireMergedHullConstantIndices(const ShaderRecompiler::SpirvTarget& target) {
     std::uint32_t cursor = 0;
     const auto hull = Compile(target, ShaderStage::TessellationControl, MergedHullCode, cursor, MergedTriangles);
@@ -1029,6 +1081,8 @@ int main() {
         RequireMergedHullConstantIndices(target);
         RequirePatches(*device, target, MergedHullCode, "merged hull program", MergedTriangles, MergedHullCode);
         RequirePatches(*device, target, MergedHullRegisters, "merged hull program storing its local part's registers", MergedTriangles, MergedHullRegisters);
+        RequireBarrierBeforeRingReadBack(target);
+        RequirePatches(*device, target, MergedHullRingReadBack, "merged hull program reading control point 2's level back from the off-chip ring", MergedLastPointLevels, MergedHullRingReadBack);
         RequireCounterClockwise(*device, target);
         RequireLevelClamps(*device, target);
         RequireIntegerPartitioning(*device, target);

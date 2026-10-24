@@ -907,8 +907,9 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
     const bool local = kind == TessellationAttribute::LocalOutput || kind == TessellationAttribute::ControlInput;
     const auto stride = local ? state.program.Metadata().tessellationLocalStride : kind == TessellationAttribute::ControlShared ? state.program.Metadata().tessellationSharedStride : state.program.Metadata().tessellationControlStride;
     const auto type = TypePointer(state, storage, TypeU32(state));
+    const bool controlRead = kind == TessellationAttribute::ControlOutput && inst.Opcode() == IrOpcode::GetTessellationAttribute;
     const auto inPatch = [&](std::uint32_t vertex) {
-        if (kind != TessellationAttribute::ControlInput && kind != TessellationAttribute::EvaluationInput) return vertex;
+        if (kind != TessellationAttribute::ControlInput && kind != TessellationAttribute::EvaluationInput && !controlRead) return vertex;
         const auto& tess = state.inputInfo.vertex->tess;
         const auto clamped = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, vertex, ConstantU32(state, (kind == TessellationAttribute::ControlInput ? tess.inputControlPoints : tess.outputControlPoints) - 1u));
@@ -917,7 +918,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
     const bool sharedRead = kind == TessellationAttribute::ControlShared && inst.Opcode() == IrOpcode::GetTessellationAttribute;
     const auto* sum = inst.Argument(1);
     const auto* scaled = sum->Opcode() == IrOpcode::IAdd32 ? sum->Argument(0) : nullptr;
-    if ((kind == TessellationAttribute::ControlInput || sharedRead) && scaled != nullptr && sum->Argument(1)->HasImmediate() && scaled->Opcode() == IrOpcode::IMul32 && scaled->Argument(1)->HasImmediate() && scaled->Argument(1)->ImmediateU32() == stride) {
+    if ((kind == TessellationAttribute::ControlInput || sharedRead || controlRead) && scaled != nullptr && sum->Argument(1)->HasImmediate() && scaled->Opcode() == IrOpcode::IMul32 && scaled->Argument(1)->HasImmediate() && scaled->Argument(1)->ImmediateU32() == stride) {
         const auto constant = sum->Argument(1)->ImmediateU32();
         const auto vertex = inPatch(EmitBinaryU32(state, spv::OpIAdd, ctx.Arg(*scaled, 0), ConstantU32(state, constant / stride)));
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, vertex, ConstantU32(state, constant % stride / 16u), ConstantU32(state, constant % stride % 16u / 4u));
@@ -932,8 +933,8 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
             state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, attribute, component);
             return pointer;
         }
-        const bool own = kind == TessellationAttribute::ControlOutput || (kind == TessellationAttribute::ControlShared && !sharedRead);
-        const auto controlPoint = kind == TessellationAttribute::ControlInput ? std::min(value / stride, state.inputInfo.vertex->tess.inputControlPoints - 1u) : kind == TessellationAttribute::EvaluationInput ? std::min(value / stride, state.inputInfo.vertex->tess.outputControlPoints - 1u) : value / stride;
+        const bool own = (kind == TessellationAttribute::ControlOutput && !controlRead) || (kind == TessellationAttribute::ControlShared && !sharedRead);
+        const auto controlPoint = kind == TessellationAttribute::ControlInput ? std::min(value / stride, state.inputInfo.vertex->tess.inputControlPoints - 1u) : kind == TessellationAttribute::EvaluationInput || controlRead ? std::min(value / stride, state.inputInfo.vertex->tess.outputControlPoints - 1u) : value / stride;
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, own ? EmitLaneId(state) : ConstantU32(state, controlPoint), attribute, component);
         return pointer;
     }
@@ -943,7 +944,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
     if (kind == TessellationAttribute::LocalOutput || patch) {
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, attribute, component);
     } else {
-        const bool own = kind == TessellationAttribute::ControlOutput || (kind == TessellationAttribute::ControlShared && !sharedRead);
+        const bool own = (kind == TessellationAttribute::ControlOutput && !controlRead) || (kind == TessellationAttribute::ControlShared && !sharedRead);
         const auto vertex = own ? EmitLaneId(state) : inPatch(EmitBinaryU32(state, spv::OpUDiv, address, ConstantU32(state, stride)));
         state.module.AddFunction(spv::OpAccessChain, type, pointer, variable, vertex, attribute, component);
     }
