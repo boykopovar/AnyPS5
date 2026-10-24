@@ -438,6 +438,9 @@ private:
         value = value->Resolve();
         if (sameValue(value, other)) return true;
         if ((value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::SelectF32 || value->Opcode() == IrOpcode::SelectU1) && value->ArgumentCount() == 3u && (value->Argument(0)->Resolve() == predicate->Resolve() || GuardImplies(program, value->Argument(0), predicate))) return inactiveEquals(value->Argument(2), other, predicate, depth + 1u);
+        if (value->IsPhi() && region.contains(value->Parent()) && value->ArgumentCount() != 0u && value->ArgumentCount() == value->PhiBlockCount()) {
+            return std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return inactiveEquals(argument, other, predicate, depth + 1u); });
+        }
         return false;
     }
 
@@ -482,26 +485,43 @@ private:
     }
 
     bool optionalBody(const IrBlock* branch, const IrBlock* body, const IrBlock* merge, const IrValue* predicate) {
-        const auto& bodyInfo = program.Metadata().blockInfo[blockIndices.at(body)];
-        if (bodyInfo.terminator.kind != TerminatorKind::Branch || indices.at(bodyInfo.terminator.trueBlock) != blockIndices.at(merge)) return false;
+        region.clear();
+        if (body == merge) return false;
+        std::vector<const IrBlock*> pending{body};
+        while (!pending.empty()) {
+            const IrBlock* block = pending.back();
+            pending.pop_back();
+            if (block == merge || !region.insert(block).second) continue;
+            if (block == branch || region.size() > 64u || program.Metadata().blockInfo[blockIndices.at(block)].terminator.kind == TerminatorKind::Return) return false;
+            for (const auto* successor : block->Successors()) pending.push_back(successor);
+        }
+        for (const auto* block : region) {
+            for (const auto* predecessor : block->Predecessors()) {
+                if (block == body ? predecessor != branch : !region.contains(predecessor)) return false;
+            }
+        }
         std::set<const IrValue*> merged;
         for (const auto* instruction : merge->Instructions()) {
             if (!instruction->IsPhi()) continue;
-            if (instruction->ArgumentCount() != 2u || instruction->PhiBlockCount() != 2u) return false;
+            if (instruction->ArgumentCount() < 2u || instruction->ArgumentCount() != instruction->PhiBlockCount()) return false;
             const IrValue* skipped = nullptr;
-            const IrValue* taken = nullptr;
-            for (std::size_t index = 0; index < 2u; ++index) {
+            std::vector<const IrValue*> taken;
+            for (std::size_t index = 0; index < instruction->PhiBlockCount(); ++index) {
                 if (instruction->PhiBlock(index) == branch) skipped = instruction->Argument(index)->Resolve();
-                if (instruction->PhiBlock(index) == body) taken = instruction->Argument(index)->Resolve();
+                else if (region.contains(instruction->PhiBlock(index))) taken.push_back(instruction->Argument(index)->Resolve());
+                else return false;
             }
-            if (!skipped || !taken || !inactiveEquals(taken, skipped, predicate) || quadObserved(instruction)) return false;
+            if (!skipped || taken.empty() || quadObserved(instruction)) return false;
+            for (const auto* value : taken) if (!inactiveEquals(value, skipped, predicate)) return false;
             merged.insert(instruction);
         }
-        for (const auto* instruction : body->Instructions()) {
-            if (instruction->Opcode() == IrOpcode::SetAttribute || instruction->Opcode() == IrOpcode::Discard) return false;
-            for (const auto& use : instruction->OperandUses()) {
-                if (use.user->Parent() == body || merged.contains(use.user) || use.user->Opcode() == IrOpcode::Reference || use.user->Opcode() == IrOpcode::ReferenceU32) continue;
-                return false;
+        for (const auto* block : region) {
+            for (const auto* instruction : block->Instructions()) {
+                if (instruction->Opcode() == IrOpcode::SetAttribute || instruction->Opcode() == IrOpcode::Discard) return false;
+                for (const auto& use : instruction->OperandUses()) {
+                    if (region.contains(use.user->Parent()) || merged.contains(use.user) || use.user->Opcode() == IrOpcode::Reference || use.user->Opcode() == IrOpcode::ReferenceU32) continue;
+                    return false;
+                }
             }
         }
         return !merged.empty();
@@ -553,6 +573,7 @@ private:
     std::map<std::uint32_t, std::size_t> indices;
     std::map<const IrBlock*, std::size_t> blockIndices;
     std::vector<std::vector<const IrBlock*>> allPaths;
+    std::set<const IrBlock*> region;
 };
 
 std::optional<std::set<std::uint32_t>> Values(const IrProgram& program, const IrValue* value, std::set<const IrValue*>& visiting, unsigned depth, std::optional<unsigned> component = {}, const IrValue* active = nullptr) {

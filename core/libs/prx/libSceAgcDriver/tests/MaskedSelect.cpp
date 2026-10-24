@@ -1192,6 +1192,61 @@ int main() {
     passed &= run("an optional wave body cannot change helper coordinates for later implicit samples", [&] { return !optionalPixelBody(true); });
     passed &= run("an optional wave body cannot change helper coordinates for LOD queries", [&] { return !optionalPixelBody(true, IrOpcode::ImageQueryLod); });
 
+    const auto optionalPixelRegion = [&](bool unmaskedArm) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& zero = b.constant(0u);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& left = b.newBlock();
+        auto& right = b.newBlock();
+        auto& join = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&left);
+        body.AddBranch(&right);
+        left.AddBranch(&join);
+        right.AddBranch(&join);
+        join.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        b.block = &body;
+        auto& uniformBit = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&b.emit(IrOpcode::GetUserData, IrType::U32, {}), &zero});
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        bodyInfo.terminator.condition = BranchCondition::SccNonZero;
+        bodyInfo.terminator.trueBlock = left.Id();
+        bodyInfo.terminator.falseBlock = right.Id();
+        bodyInfo.condition = &uniformBit;
+        for (const unsigned index : {2u, 3u, 4u}) {
+            b.program.Metadata().blockInfo[index].terminator.kind = TerminatorKind::Branch;
+            b.program.Metadata().blockInfo[index].terminator.trueBlock = index == 4u ? merge.Id() : join.Id();
+        }
+        b.block = &left;
+        auto& leftValue = b.select(predicate, b.constant(42u), zero);
+        b.block = &right;
+        auto& rightValue = unmaskedArm ? b.constant(7u) : b.select(predicate, b.constant(43u), zero);
+        b.block = &join;
+        auto& joined = b.phi(IrType::U32, left, leftValue);
+        joined.AddPhiOperand(&right, &rightValue);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::U32, entry, zero);
+        merged.AddPhiOperand(&join, &joined);
+        b.keep(merged);
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body spanning several blocks preserves inactive values through its own phis", [&] { return optionalPixelRegion(false); });
+    passed &= run("an optional wave body spanning several blocks cannot write an inactive lane on any of its paths", [&] { return !optionalPixelRegion(true); });
+
     passed &= run("varying attribute sources cannot be treated as uniform any-active predicates", [&] {
         for (const auto opcode : {IrOpcode::GetAttribute, IrOpcode::GetInterpolationParameter, IrOpcode::GetInterpolationParameterF16, IrOpcode::GetTessellationAttribute}) {
             Builder b;
