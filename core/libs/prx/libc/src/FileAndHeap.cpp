@@ -510,6 +510,7 @@ size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, File
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetStreamHandle(stream);
     if (size == 0 || count == 0) return 0;
+    stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fread: null buffer");
     const auto bytes = size * count;
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fread: buffer address overflow");
@@ -531,6 +532,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetNativeStream(stream);
     if (size == 0 || count == 0) return 0;
+    stream->Orientation(-1);
     if (!buffer) throw std::runtime_error("fwrite: null buffer");
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
     const auto bytes = size * count;
@@ -600,7 +602,9 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputs(str, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    stream->Orientation(-1);
+    const int result = std::fputs(str, native);
     stream->SyncStatus();
     return result;
 }

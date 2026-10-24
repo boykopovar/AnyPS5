@@ -77,6 +77,7 @@ void APS5_VABI perror_nid_postfix(const char* prefix) {
     const int saved = *__error_nid_postfix();
     char message[128];
     strerror_r_nid_postfix(saved, message, sizeof(message));
+    _Stderr_nid_postfix.Orientation(-1);
     auto* stream = GetNativeStream(&_Stderr_nid_postfix);
     if (prefix && *prefix) std::fprintf(stream, "%s: %s\n", prefix, message);
     else std::fprintf(stream, "%s\n", message);
