@@ -4215,6 +4215,8 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
 }
 
 void StorageTexture::FlushAllPending(const char* reason) {
+    std::optional<PublishOnCpuScope> onCpu;
+    if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
     static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason));
 }
 
@@ -5608,6 +5610,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     if (const auto* import = HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) segments.push_back({import, descriptor.baseAddress, descriptor.baseAddress + guestBytes});
     else segments = importSegments();
+    if (flushReason != nullptr && std::strcmp(flushReason, "idle") == 0 && GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored))) segments.clear();
     if (!segments.empty()) {
         Require(!unsavedOutsideWatch, "storing storage image results pending over memory outside the write watch without the guest bytes saved before them is not implemented");
         // Outside the write watch the stored bytes are what the next store compares with.

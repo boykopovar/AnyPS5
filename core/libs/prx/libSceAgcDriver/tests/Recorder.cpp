@@ -7025,6 +7025,164 @@ void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     std::cout << "unchanged CPU stamps: ok\n";
 }
 
+std::uint64_t publishRaceAddress = 0;
+
+void writeDuringPublish(std::uint64_t begin, std::uint64_t end) {
+    if (publishRaceAddress != 0) return;
+    publishRaceAddress = begin;
+    const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(end - begin, 256));
+    std::memset(reinterpret_cast<void*>(begin), 0x6e, bytes);
+    AgcDriver::GuestMemory::CollectWritesUncached(begin, bytes);
+}
+
+void idleWriteBackRaceTests(const Device& device, Recorder& recorder) {
+    Require(AgcDriver::GuestMemory::WriteWatched(), "(v) kept-unit settle tests require host write watching");
+    const auto& base = device.GetContext();
+    constexpr std::uint32_t width = 60;
+    constexpr std::uint32_t height = 34;
+    constexpr std::uint32_t depth = 26;
+    constexpr std::size_t surfaceBytes = std::size_t{depth} * 65536;
+    constexpr std::size_t unitBytes = 65536;
+    constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    constexpr std::array<std::uint8_t, 4> blue{0, 0, 255, 255};
+    for (const bool direct : {false, true}) {
+        const std::string what = direct ? "GPU-mapped direct memory" : "watched memory";
+        if (direct && base.hostImportAlignment == 0) {
+            std::cout << "host imports unavailable: idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        struct Backing {
+            Recorder& recorder;
+            bool direct;
+            void* block = nullptr;
+            std::int64_t physical = -1;
+            ~Backing() {
+                try {
+                    recorder.Sync();
+                } catch (const std::exception& error) {
+                    std::cerr << "(v) the recorded work did not finish, the test memory stays mapped: " << error.what() << '\n';
+                    return;
+                }
+                if (direct) {
+                    if (block != nullptr) sceKernelMunmap(block, surfaceBytes);
+                    if (physical >= 0) sceKernelReleaseDirectMemory(physical, surfaceBytes);
+                    return;
+                }
+                if (block == nullptr) return;
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                ReleaseWatched(block, surfaceBytes);
+            }
+        } backing{recorder, direct};
+        if (direct) {
+            Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, surfaceBytes, unitBytes, 0, &backing.physical) == 0, "(v) allocate the direct memory");
+            Require(sceKernelMapDirectMemory(&backing.block, surfaceBytes, 0x33, 0, backing.physical, unitBytes) == 0, "(v) map the direct memory for the GPU");
+        } else {
+            backing.block = AllocateWatched(surfaceBytes, unitBytes);
+            Require(backing.block != nullptr, "(v) no watched block although write watching is on");
+            GuestAllocations::Mutation mutation;
+            mutation.Add(backing.block, surfaceBytes, true, true, true);
+        }
+        auto* memory = static_cast<std::uint8_t*>(backing.block);
+        std::memset(memory, 0x5a, surfaceBytes);
+        const auto address = reinterpret_cast<std::uint64_t>(backing.block);
+        AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+        TextureDetiler detiler(base);
+        auto context = base;
+        if (!direct) context.hostImportAlignment = 0;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = width;
+        resource.height = height;
+        resource.mipCount = 1;
+        resource.depthOrLastArray = depth - 1;
+        resource.tileMode = static_cast<TextureTileMode>(7);
+        resource.dimension = TextureDimension::k3D;
+        resource.format = 36;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(v) unexpected surface size");
+        if (direct && !AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+            std::cout << "GPU-mapped direct memory is not write-watched here: idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        Require(AgcDriver::GuestMemory::Watched(address, surfaceBytes), "(v) " + what + " is not watched");
+        if (direct && HostImportFor(context, address, surfaceBytes) == nullptr) {
+            std::cout << "host import of the direct memory refused: idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        if (direct && !AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+            std::cout << "the host import of the direct memory took it out of the write watch (its imports are compared): idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        Require(direct || HostImportFor(context, address, surfaceBytes) == nullptr, "(v) watched memory was imported although host imports are off for it");
+        std::string failures;
+        for (const char* scenario : {"idle", "publish:idle", "publish:idle-race"}) {
+            const bool publish = std::strncmp(scenario, "publish:", 8) == 0;
+            const bool race = std::strcmp(scenario, "publish:idle-race") == 0;
+            if (race && !direct) continue;
+            std::memset(memory, 0x11, surfaceBytes);
+            AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            {
+                const auto commands = recorder.Commands();
+                recorder.Keep(image);
+                const VkClearColorValue value{{0.0f, 1.0f, 0.0f, 1.0f}};
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                image->MarkDirty();
+            }
+            std::memset(memory, 0x3c, 19 * unitBytes);
+            if (publish) {
+                StorageTexture::FlushPending(address + 19 * unitBytes, 7 * unitBytes, nullptr, "storage refresh", PublishScope::None);
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+                publishRaceAddress = 0;
+                if (race) SetPublishSelectedHook(writeDuringPublish);
+                StorageTexture::FlushAllPending("idle");
+                SetPublishSelectedHook(nullptr);
+            } else {
+                StorageTexture::FlushAllPending("idle");
+            }
+            if (!race) std::memset(memory + 19 * unitBytes, 0x4d, 5 * unitBytes);
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            if (race) {
+                Require(publishRaceAddress != 0, "(v) " + what + " " + scenario + ": the idle store published no shadow units on the CPU");
+                std::vector<std::byte> written(256);
+                AgcDriver::GuestMemory::Read(publishRaceAddress, written);
+                std::size_t lost = 0;
+                for (const auto byte : written) lost += std::to_integer<std::uint8_t>(byte) != 0x6e;
+                std::cout << "(v) " << what << " " << scenario << ": " << (lost == 0 ? "ok" : "CPU bytes lost " + std::to_string(lost)) << "\n";
+                if (lost != 0) failures += std::string(" ") + scenario;
+                continue;
+            }
+            std::vector<std::byte> read(5 * unitBytes);
+            AgcDriver::GuestMemory::Read(address + 19 * unitBytes, read);
+            std::size_t lost = 0;
+            for (const auto byte : read) lost += std::to_integer<std::uint8_t>(byte) != 0x4d;
+            {
+                std::vector<std::byte> stored(unitBytes);
+                AgcDriver::GuestMemory::Read(address + 24 * unitBytes, stored);
+                Require(std::any_of(stored.begin(), stored.end(), [](std::byte value) { return std::to_integer<std::uint8_t>(value) != 0x11; }), "(v) " + what + " " + scenario + ": the GPU results of slice 24, which the CPU never wrote, were not stored");
+            }
+            std::cout << "(v) " << what << " " << scenario << ": " << (lost == 0 ? "ok" : "CPU bytes lost " + std::to_string(lost)) << "\n";
+            if (lost != 0) failures += std::string(" ") + scenario;
+        }
+        Require(failures.empty(), "(v) " + what + ": a CPU store made while results were in flight was overwritten by them:" + failures);
+        std::cout << "idle store of a dead 3D image over memory the CPU refilled in " << what << ": ok\n";
+    }
+}
+
 void keptUnitSettleTests(const Device& device, Recorder& recorder) {
     Require(AgcDriver::GuestMemory::WriteWatched(), "(k) kept-unit settle tests require host write watching");
     const auto& base = device.GetContext();
@@ -10972,6 +11130,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unchanged-cpu-stamps-only") {
             unchangedCpuStampTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--idle-writeback-race-only") {
+            idleWriteBackRaceTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--kept-unit-settle-only") {
