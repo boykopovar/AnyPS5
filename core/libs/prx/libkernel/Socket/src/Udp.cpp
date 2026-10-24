@@ -272,11 +272,14 @@ int AddressLengthError(const void* input, std::uint32_t length) {
     if (length < 2) return 22;
     return input ? 0 : 14;
 }
-bool Address(const void* input, std::uint32_t length, sockaddr_storage& native, socklen_t& size) {
+bool Address(int family, const void* input, std::uint32_t length, sockaddr_storage& native, socklen_t& size, bool lengthFirst = false) {
     if (const int error = AddressLengthError(input, length)) { Fail(error); return false; }
     const auto* bytes = static_cast<const unsigned char*>(input);
-    if ((bytes[1] == 2 && length < 16) || (bytes[1] == 28 && length < 28)) { Fail(22); return false; }
-    if (bytes[1] == 2 && length >= 16) {
+    const bool wrongLength = (family == 2 && length != 16) || (family == 28 && length != 28);
+    if (lengthFirst && wrongLength) { Fail(22); return false; }
+    if (family == 2 && bytes[1] != 2) { Fail(47); return false; }
+    if (wrongLength) { Fail(22); return false; }
+    if (family == 2) {
         auto& v4 = reinterpret_cast<sockaddr_in&>(native);
         v4.sin_family = AF_INET;
         std::memcpy(&v4.sin_port, bytes + 2, 2);
@@ -284,7 +287,7 @@ bool Address(const void* input, std::uint32_t length, sockaddr_storage& native, 
         size = sizeof(v4);
         return true;
     }
-    if (bytes[1] == 28 && length >= 28) {
+    if (family == 28 && bytes[1] == 28) {
         auto& v6 = reinterpret_cast<sockaddr_in6&>(native);
         v6.sin6_family = AF_INET6;
         std::memcpy(&v6.sin6_port, bytes + 2, 2);
@@ -297,14 +300,15 @@ bool Address(const void* input, std::uint32_t length, sockaddr_storage& native, 
     Fail(47);
     return false;
 }
-int LongAddressError(const Socket& socket, const void* address, std::uint32_t length) {
-    if ((socket.family != 2 && socket.family != 28) || length <= (socket.family == 2 ? 16u : 28u)) return 0;
+int LongMappedDualStack(const Socket& socket, const void* address, std::uint32_t length) {
+    if (socket.family != 28 || socket.type != 2 || address == nullptr || length <= 28 || length > 255) return 0;
+    const auto* bytes = static_cast<const unsigned char*>(address);
     constexpr unsigned char mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
-    if (socket.family != 28 || socket.type != 2 || std::memcmp(static_cast<const unsigned char*>(address) + 8, mapped, sizeof(mapped)) != 0) return 22;
+    if (bytes[1] != 28 || std::memcmp(bytes + 8, mapped, sizeof(mapped)) != 0) return 0;
     int ipv6Only = 0;
     socklen_t size = sizeof(ipv6Only);
-    if (::getsockopt(socket.value, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&ipv6Only), &size)) return NativeError();
-    return ipv6Only ? 22 : 0;
+    if (::getsockopt(socket.value, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<char*>(&ipv6Only), &size)) return Fail(NativeError());
+    return ipv6Only ? 0 : 1;
 }
 std::uint16_t& PortOf(sockaddr_storage& address) {
     return address.ss_family == AF_INET ? reinterpret_cast<sockaddr_in&>(address).sin_port : reinterpret_cast<sockaddr_in6&>(address).sin6_port;
@@ -312,6 +316,11 @@ std::uint16_t& PortOf(sockaddr_storage& address) {
 bool Listening(const Socket& socket) {
     bool listening = false;
     return GuestSockets::NativeListening(static_cast<std::uintptr_t>(socket.value), listening) && listening;
+}
+bool PeerConnected(const Socket& socket) {
+    sockaddr_storage peer{};
+    socklen_t size = sizeof(peer);
+    return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0;
 }
 constexpr std::int64_t NotAnswered = -2;
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
@@ -1173,7 +1182,7 @@ int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     if (family != 2 && family != 28) return Fail(47);
     const int nativeType = plainType == 1 ? SOCK_STREAM : plainType == 2 ? SOCK_DGRAM : -1;
     const int expectedProtocol = plainType == 1 ? 6 : 17;
-    const bool inetKnowsType = plainType == 3 || plainType == 5;
+    const bool inetKnowsType = plainType == 3;
     if (nativeType == -1) return Fail(protocol == 0 && plainType != 0 && !inetKnowsType ? 41 : 43);
     if (protocol != 0 && protocol != expectedProtocol) return Fail(43);
 #ifdef _WIN32
@@ -1255,16 +1264,16 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->family != GuestUnix && socket->type == 2 && address && length >= 2 && static_cast<const unsigned char*>(address)[1] == 0
         && Disconnect(*socket) != 0)
         return -1;
+    if (socket->type == 1 && Listening(*socket)) return Fail(45);
+    const int mapped = LongMappedDualStack(*socket, address, length);
+    if (mapped < 0) return -1;
     sockaddr_storage native{};
     socklen_t size;
-    if (!Address(address, length, native, size)) return -1;
+    if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
 #ifdef _WIN32
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
-    if (socket->type == 1 && Listening(*socket)) return Fail(45);
-    if (const int error = LongAddressError(*socket, address, length)) return Fail(error);
     if (ZeroPortConnect(*socket, address, length)) return -1;
-    if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
     {
         std::lock_guard lock(socket->modeMutex);
         socket->options.reportedError = 0;
@@ -1346,8 +1355,9 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     if (!socket) return -1;
     sockaddr_storage native{};
     socklen_t size;
-    if (!Address(address, length, native, size)) return -1;
-    if (const int error = LongAddressError(*socket, address, length)) return Fail(error);
+    const int mapped = LongMappedDualStack(*socket, address, length);
+    if (mapped < 0) return -1;
+    if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
     return ::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size) ? Fail(NativeError()) : 0;
 }
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
@@ -1427,15 +1437,13 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if (!buffer && length) return Fail(14);
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     int result;
-    if (!address) {
-        if (addressLength != 0) return Fail(22);
+    if (!address || (socket->type == 1 && PeerConnected(*socket))) {
+        if (!address && addressLength != 0) return Fail(22);
         result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     } else {
         sockaddr_storage native{};
         socklen_t size;
-        if (!Address(address, addressLength, native, size)) return -1;
-        if (socket->family == 28 && socket->type == 2 && addressLength > 28) return Fail(22);
-        if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
+        if (!Address(socket->family, address, addressLength, native, size, true)) return -1;
         if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered) return answered;
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
             reinterpret_cast<sockaddr*>(&native), size));
