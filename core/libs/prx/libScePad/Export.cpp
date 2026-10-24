@@ -109,6 +109,9 @@ constexpr int PAD_ERROR_DEVICE_NOT_CONNECTED = static_cast<int>(0x80920007);
 constexpr int PAD_ERROR_DEVICE_NO_HANDLE = static_cast<int>(0x80920008);
 constexpr int PAD_ERROR_ALREADY_OPENED = static_cast<int>(0x80920004);
 constexpr int PAD_ERROR_UNKNOWN_USER = static_cast<int>(0x809b0081);
+constexpr int PAD_ERROR_INVALID_USER_ID = static_cast<int>(0x809b0001);
+constexpr int PAD_ERROR_INVALID_PORT_INDEX = static_cast<int>(0x809b0003);
+constexpr int PAD_USER_ID_INVALID = -1;
 
 bool g_opened = false;
 std::array<int, PAD_SPECIAL_HANDLE_COUNT> g_specialUsers{};
@@ -295,9 +298,11 @@ int APS5_VABI scePadInit_nid_postfix(void) {
 
 int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param) {
  (void)param;
- if (!ValidPort(userId, type, index)) {
-  return PAD_ERROR_INVALID_ARG;
- }
+ const bool unknownType = type == 3 || type == 4;
+ if (!unknownType && !ValidPort(userId, type, 0)) return PAD_ERROR_INVALID_ARG;
+ if (userId == PAD_USER_ID_INVALID) return PAD_ERROR_INVALID_USER_ID;
+ if (unknownType) NotImplemented_nid_no_patch(__func__);
+ if (index != 0) return PAD_ERROR_INVALID_PORT_INDEX;
  if (type == PAD_PORT_TYPE_SPECIAL) {
   if (SpecialHandleOf(userId) != PAD_ERROR_DEVICE_NO_HANDLE) return PAD_ERROR_ALREADY_OPENED;
   for (int slot = 0; slot < PAD_SPECIAL_HANDLE_COUNT; ++slot) {
