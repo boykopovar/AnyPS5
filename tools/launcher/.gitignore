@@ -1,0 +1,4 @@
+cache/
+env.txt
+config.json
+__pycache__/
