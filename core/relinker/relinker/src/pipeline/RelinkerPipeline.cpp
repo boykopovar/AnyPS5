@@ -103,10 +103,11 @@ RelinkResult RelinkerPipeline::Relink() {
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_DYNAMIC)
             continue;
+        if (hasDynamicSegment)
+            throw RelinkerException("Multiple PT_DYNAMIC segments", ph.Offset);
 
         hasDynamicSegment = true;
         dynTags = elfReader->ReadDynamicTags(ph);
-        break;
     }
 
     if (!hasDynamicSegment)

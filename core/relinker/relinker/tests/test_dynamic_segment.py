@@ -22,10 +22,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-dynamic-segment-") as directory:
         work = Path(directory)
 
-        def convert(name, image, error=None):
+        def convert(name, image, error=None, modes=([], ["--windows"])):
             source = work / (name + ".elf")
             source.write_bytes(image)
-            for mode in ([], ["--windows"]):
+            for mode in modes:
                 output = work / (name + (".exe" if mode else ".out"))
                 result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
@@ -71,6 +71,10 @@ def main():
         empty = fixture()
         struct.pack_into("<QQ", empty, 120 + 32, 0, 0)
         convert("empty", empty, "Unterminated dynamic segment")
+
+        duplicate = fixture()
+        duplicate[64 + 2 * 56:64 + 3 * 56] = duplicate[120:176]
+        convert("duplicate", duplicate, "Multiple PT_DYNAMIC segments", ([], ["--windows"], ["--macos"]))
 
     if failures:
         raise AssertionError(failures)
