@@ -13,6 +13,8 @@ extern "C" {
 int APS5_VABI sceNpTrophyCreateContext(int* context, int userId, std::uint32_t serviceLabel, std::uint64_t options);
 int APS5_VABI sceNpTrophyDestroyContext(int context);
 int APS5_VABI sceNpTrophyCreateHandle(int* handle);
+int APS5_VABI sceNpTrophyGetGameIcon(int contextId, int handle, void* buffer, std::uint64_t* size);
+int APS5_VABI sceNpTrophyGetGroupIcon(int contextId, int handle, int groupId, void* buffer, std::uint64_t* size);
 int APS5_VABI sceNpTrophyDestroyHandle(int handle);
 int APS5_VABI sceNpTrophyRegisterContext(int context, int handle, std::uint64_t options);
 int APS5_VABI sceNpTrophyGetTrophyUnlockState(int context, int handle, std::uint32_t* flags, std::uint32_t* count);
@@ -108,6 +110,12 @@ int main() {
 
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
+    Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
+    Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context creation");
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    Require(sceNpTrophyDestroyHandle(-1) == InvalidHandle, "invalid handle destruction");
     Require(sceNpTrophyDestroyContext(missing) == 0, "destroy the second context");
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");
