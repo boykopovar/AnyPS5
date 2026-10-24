@@ -46,4 +46,11 @@ LibreSslEvpCipherCtx* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void) {
     return static_cast<LibreSslEvpCipherCtx*>(calloc_nid_postfix(1, sizeof(LibreSslEvpCipherCtx)));
 }
 
+int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(LibreSslEvpCipherCtx* ctx, int pad) {
+    if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
+    if (pad) ctx->flags &= ~CipherFlagNoPadding;
+    else ctx->flags |= CipherFlagNoPadding;
+    return 1;
+}
+
 }

@@ -30,6 +30,7 @@ extern "C" {
 void APS5_VABI EVP_CIPHER_CTX_init_nid_postfix(void*);
 void* APS5_VABI EVP_CIPHER_CTX_new_nid_postfix(void);
 void APS5_VABI free_nid_postfix(void*);
+int APS5_VABI EVP_CIPHER_CTX_set_padding_nid_postfix(void*, int);
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
@@ -62,9 +63,29 @@ static void TestNew() {
     }
 }
 
+static void TestSetPadding() {
+    unsigned char context[ContextBytes] {};
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 0) == 1);
+    Require(Flags(context) == 0x100);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 0) == 1);
+    Require(Flags(context) == 0x100);
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 1) == 1);
+    Require(Flags(context) == 0);
+    SetFlags(context, UINT64_C(0xFFFFFFFF000000FF));
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, 0) == 1);
+    Require(Flags(context) == UINT64_C(0xFFFFFFFF000001FF));
+    Require(EVP_CIPHER_CTX_set_padding_nid_postfix(context, -5) == 1);
+    Require(Flags(context) == UINT64_C(0xFFFFFFFF000000FF));
+    for (std::size_t index = 0; index < ContextBytes; ++index) {
+        if (index < FlagsOffset || index >= FlagsOffset + 8) Require(context[index] == 0);
+    }
+    RequireThrows([] { EVP_CIPHER_CTX_set_padding_nid_postfix(nullptr, 0); });
+}
+
 int main() {
     InitializeHeap();
     TestInit();
     TestNew();
+    TestSetPadding();
     return 0;
 }
