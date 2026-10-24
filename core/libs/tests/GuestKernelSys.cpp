@@ -46,6 +46,7 @@ int APS5_VABI fchdir_nid_postfix(int);
 int APS5_VABI chdir_nid_postfix(const char*);
 int APS5_VABI chroot_nid_postfix(const char*);
 char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
+int APS5_VABI __getcwd_nid_postfix(char*, std::size_t);
 int APS5_VABI getpid_nid_postfix();
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const void*, std::int32_t, std::int32_t*);
 int APS5_VABI sceKernelGetProcessType(int);
@@ -259,6 +260,22 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
 }
 
+void CheckRawGetcwd() {
+    std::array<char, 4096> expected{};
+    Require(getcwd_nid_postfix(expected.data(), expected.size()) == expected.data());
+    std::array<char, 4096> buffer;
+    buffer.fill('#');
+    Require(__getcwd_nid_postfix(buffer.data(), buffer.size()) == 0);
+    Require(std::strcmp(buffer.data(), expected.data()) == 0);
+    Require(buffer[std::strlen(expected.data()) + 1] == '#');
+
+    std::array<char, 1> shortBuffer{'#'};
+    Require(__getcwd_nid_postfix(shortBuffer.data(), shortBuffer.size()) == -1 && Error() == 34);
+    Require(shortBuffer[0] == '#');
+    Require(__getcwd_nid_postfix(buffer.data(), 0) == -1 && Error() == 22);
+    Require(__getcwd_nid_postfix(nullptr, buffer.size()) == -1 && Error() == 14);
+}
+
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     const auto directory = root.generic_string();
     for (const auto& path : {file, directory}) {
@@ -447,6 +464,7 @@ int main() {
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
     CheckProcessQueries();
+    CheckRawGetcwd();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);

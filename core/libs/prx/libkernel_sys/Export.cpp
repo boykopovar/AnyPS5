@@ -45,6 +45,7 @@ extern "C" int APS5_VABI getpid_nid_postfix(void);
 
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" int APS5_VABI getpid_nid_postfix();
+extern "C" char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
 
 namespace {
 #ifdef _WIN32
@@ -553,6 +554,11 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
+}
+
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
+    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
+    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
 }
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
