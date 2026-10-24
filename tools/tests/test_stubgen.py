@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
@@ -198,6 +199,38 @@ class ReadOnlyOutputTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), original)
             self.assertFalse(output.stat().st_mode & stat.S_IWRITE)
             self.assertEqual(sorted(path.name for path in root.iterdir()), ["Export.cpp", "nids.txt"])
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+                self.newline = None
+
+            def reconfigure(self, encoding=None, errors=None, newline=None):
+                self.encoding = encoding
+                self.errors = errors
+                self.newline = newline
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(stubgen.sys, "stdout", out), patch.object(stubgen.sys, "stderr", err):
+            try:
+                stubgen.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(out.newline, "\n")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+        self.assertEqual(err.newline, "\n")
 
 
 if __name__ == "__main__":

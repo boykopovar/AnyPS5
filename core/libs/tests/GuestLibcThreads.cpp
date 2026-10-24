@@ -55,6 +55,7 @@ int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second);
 void* APS5_VABI _Thrd_current_nid_postfix(void);
 int APS5_VABI _Mtx_current_owns_nid_postfix(void** handle);
 void* APS5_VABI scePthreadSelf();
+int APS5_VABI _Thrd_yield_nid_postfix();
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -374,6 +375,14 @@ static void ForwardedCalls() {
     RequireThrows<std::runtime_error>([] { _Tss_get_nid_postfix(0); });
 }
 
+static void ThreadHelpers() {
+    Require(_Thrd_yield_nid_postfix() == success);
+    std::thread other([&] {
+        Require(_Thrd_yield_nid_postfix() == success);
+    });
+    other.join();
+}
+
 int main() {
     KernelKeys();
     ForwardedCalls();
@@ -384,4 +393,5 @@ int main() {
     ConditionSignal();
     PadLaunchAndJoin();
     PadDetach();
+    ThreadHelpers();
 }

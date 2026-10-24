@@ -154,6 +154,23 @@ int ReadState(std::int32_t handle, KeyboardData* data) {
     return KEYBOARD_OK;
 }
 
+int GetConnection(std::int32_t handle, bool* isConnected) {
+    std::lock_guard lock(keyboardMutex);
+    if (!initialized) return KEYBOARD_ERROR_NOT_INITIALIZED;
+    if (handle != KEYBOARD_HANDLE || !opened) return KEYBOARD_ERROR_INVALID_HANDLE;
+    if (isConnected == nullptr) return KEYBOARD_ERROR_INVALID_ARG;
+    *isConnected = connected;
+    return KEYBOARD_OK;
+}
+
+int DisconnectAll() {
+    KeyboardInputEvent event{};
+    event.connectionChange = true;
+    event.connected = false;
+    Publish(event);
+    return KEYBOARD_OK;
+}
+
 int GetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint32_t ledState, std::uint32_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData) {
     {
         std::lock_guard lock(keyboardMutex);

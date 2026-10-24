@@ -68,7 +68,7 @@ int APS5_VABI sceCoredumpAttachMemoryRegionAsUserFile(std::uint32_t userValue, c
 }
 
 int APS5_VABI sceCoredumpSetUserDataType(std::int32_t type) {
-    NotImplemented_nid_no_patch("Uxqkdta7wEg");
+    (void)type;
     return 0;
 }
 

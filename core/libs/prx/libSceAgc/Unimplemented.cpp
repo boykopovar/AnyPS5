@@ -40,14 +40,4 @@ std::uint32_t* APS5_VABI sceAgcCbMemsetExclusive(CommandBuffer* buffer, void* de
  return 0;
 }
 
-int APS5_VABI sceAgcSetShaderInstrumentation(std::uint32_t flags) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceAgcGetShaderInstrumentation() {
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
 }

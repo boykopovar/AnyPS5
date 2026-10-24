@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "configure_seed.py"
@@ -61,6 +62,14 @@ class ConfigureSeedPathTests(unittest.TestCase):
         result = self.run_seed(seed)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("HAVE_FEATURE", seed.read_text(encoding="utf-8"))
+
+    def test_unwritable_seed_is_reported_without_a_traceback(self):
+        seed_dir = self.root / "seed_dir"
+        seed_dir.mkdir()
+        result = self.run_seed(seed_dir)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(str(seed_dir), result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_same_path_preserves_cache(self):
         self.assert_rejected(self.cache)
@@ -220,6 +229,33 @@ class ChecksParsingTests(unittest.TestCase):
             cache.write_bytes(b"\xef\xbb\xbf//Test FIRST_CHECK\nFIRST_CHECK:INTERNAL=1\n")
             found = configure_seed.checks(cache)
             self.assertEqual(found, {"FIRST_CHECK": ("1", "Test FIRST_CHECK")})
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(configure_seed.sys, "stdout", out), mock.patch.object(configure_seed.sys, "stderr", err):
+            try:
+                configure_seed.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

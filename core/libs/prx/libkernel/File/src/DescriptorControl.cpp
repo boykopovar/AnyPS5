@@ -3,6 +3,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/FileLock.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -114,6 +115,7 @@ enum class Kind { File, Directory, Pipe, Socket, Device, RandomDevice, ArchivedF
 struct Entry {
     bool closeOnExec = false;
     std::shared_ptr<int> status;
+    bool pipe = false;
 };
 
 std::mutex g_mutex;
@@ -361,6 +363,12 @@ int CurrentStatus(int fd) {
     return *Materialize(fd).status;
 }
 
+bool CreatedByPipe(int fd) {
+    std::lock_guard lock(g_mutex);
+    const auto found = g_entries.find(fd);
+    return found != g_entries.end() && found->second.pipe;
+}
+
 void SetCloseOnExec(int fd, bool value) {
     std::lock_guard lock(g_mutex);
     Materialize(fd).closeOnExec = value;
@@ -481,7 +489,7 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
             return 0;
         case GetStatusFlags: {
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int access = AccessMode(fd, "fcntl");
+            const int access = CreatedByPipe(fd) ? ReadWrite : AccessMode(fd, "fcntl");
             return access | CurrentStatus(fd);
         }
         case SetStatusFlags: {
@@ -560,11 +568,17 @@ void RememberDescriptor(int fd, int openFlags) {
 #endif
 }
 
+void RememberPipe(int fd) {
+    RememberDescriptor(fd, 0);
+    std::lock_guard lock(g_mutex);
+    g_entries[fd].pipe = true;
+}
+
 void ShareDescriptor(int from, int to) {
     File::ShareArchivedFile(from, to);
     std::lock_guard lock(g_mutex);
-    auto status = Materialize(from).status;
-    g_entries[to] = Entry{false, std::move(status)};
+    const auto& source = Materialize(from);
+    g_entries[to] = Entry{false, source.status, source.pipe};
 #ifdef _WIN32
     File::SharePositionedTransfer(from, to);
     GuestFileLockShare_nid_no_patch(from, to);
@@ -583,6 +597,16 @@ bool Appends(int fd) {
     return found != g_entries.end() && found->second.status && (*found->second.status & Append) != 0;
 }
 
+bool IsCharacterDevice(int fd) {
+    if (fd < 0) return false;
+#ifdef _WIN32
+    return DescriptorIsOpen_nid_no_patch(fd) && !GuestSockets::IsOpen(fd) && !File::DirectoryDescriptorPath(fd) && ::GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_CHAR;
+#else
+    struct stat status{};
+    return ::fstat(fd, &status) == 0 && S_ISCHR(status.st_mode);
+#endif
+}
+
 bool IsVnode(int fd) {
     if (fd < 0 || File::IsRandomDevice(fd)) return false;
     if (File::IsArchivedFile(fd)) return true;
@@ -595,4 +619,8 @@ bool IsVnode(int fd) {
 #endif
 }
 
+}
+
+extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
+    return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
 }

@@ -39,6 +39,8 @@ int APS5_VABI sceAvPlayerChangeStream(AvPlayerInternal*, std::uint32_t, std::uin
 int APS5_VABI sceAvPlayerSetAvailableBandwidth(AvPlayerInternal*, std::uint32_t, std::uint32_t, std::uint32_t);
 int APS5_VABI sceAvPlayerStart(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerStartEx(AvPlayerInternal*, const AvPlayer::StartInfo*);
+int APS5_VABI sceAvPlayerAddSourceEx(AvPlayerInternal*, std::uint32_t, const void*);
+int APS5_VABI sceAvPlayerDisableStream(AvPlayerInternal*, std::uint32_t);
 int APS5_VABI sceAvPlayerStop(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerPause(AvPlayerInternal*);
 int APS5_VABI sceAvPlayerResume(AvPlayerInternal*);
@@ -1090,6 +1092,8 @@ void TestExtendedExports() {
     Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after extended restart");
     Check(frame.timestamp <= 67, "zero-position start did not restart playback");
     Check(sceAvPlayerClose(player) == 0, "close failed");
+    Check(sceAvPlayerAddSourceEx(nullptr, 0, nullptr) == InvalidParams, "null player add source rejected");
+    Check(sceAvPlayerDisableStream(nullptr, 0) == InvalidParams, "null player disable stream rejected");
 }
 
 void TestWithoutAllocators() {

@@ -212,27 +212,29 @@ public:
         _guest.descriptor = descriptor >= 0 && descriptor <= 32767 ? static_cast<std::int16_t>(descriptor) : -1;
         return true;
     }
+    void PublishStatus(bool endOfFile, bool error) {
+        __atomic_store_n(&_guest.readRemaining, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&_guest.writeRemaining, 0, __ATOMIC_RELAXED);
+        auto old = __atomic_load_n(&_guest.flags, __ATOMIC_RELAXED);
+        std::int16_t next;
+        do next = static_cast<std::int16_t>((old & ~0x60) | (endOfFile ? 0x20 : 0) | (error ? 0x40 : 0));
+        while (!__atomic_compare_exchange_n(&_guest.flags, &old, next, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    }
     void SyncStatus() {
         if (!_handle) return;
-        _guest.readRemaining = 0;
-        _guest.writeRemaining = 0;
-        _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) |
-            (std::feof(GetHandle()) ? 0x20 : 0) | (std::ferror(GetHandle()) || guestError ? 0x40 : 0));
+        PublishStatus(std::feof(GetHandle()) != 0, std::ferror(GetHandle()) != 0 || guestError);
     }
 
     void SyncUnlockedStatus() {
         if (!_handle) return;
-        _guest.readRemaining = 0;
-        _guest.writeRemaining = 0;
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
         const bool error = std::ferror(GetHandle()) != 0;
 #else
-        const bool endOfFile = ::feof_unlocked(GetHandle()) != 0;
-        const bool error = ::ferror_unlocked(GetHandle()) != 0;
+        const bool endOfFile = feof_unlocked(GetHandle()) != 0;
+        const bool error = ferror_unlocked(GetHandle()) != 0;
 #endif
-        _guest.flags = static_cast<std::int16_t>((_guest.flags & ~0x60) |
-            (endOfFile ? 0x20 : 0) | (error || guestError ? 0x40 : 0));
+        PublishStatus(endOfFile, error || guestError);
     }
 
     bool SwitchToReading() {

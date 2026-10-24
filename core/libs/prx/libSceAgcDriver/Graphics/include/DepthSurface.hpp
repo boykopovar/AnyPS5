@@ -29,6 +29,7 @@ struct DepthPlaneStoreStatistics {
     std::uint64_t bytes = 0;
 };
 DepthPlaneStoreStatistics DepthPlaneStoreCounts();
+void NoteDepthSurfaceWrite(const Context& context, const DepthTarget& target);
 bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std::uint32_t samples);
 std::uint64_t DepthSurfacesSerial();
 std::uint64_t DepthSurfacesReleased();
@@ -54,7 +55,10 @@ bool DepthSurfaceOverlaps(VkDevice device, std::uint64_t address, std::uint64_t 
 bool DepthSurfaceAt(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource);
 std::uint64_t HtileDepthClearAddress(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 3>& numThreads);
 std::size_t HtileDepthClearBytes_nid_no_patch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments);
-void NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes = 0u);
+bool NoteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes, std::size_t nativeBytes = 0u);
+void ArmHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
+void QueueHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
+void CompleteHtileDepthClear(std::uint64_t htileAddress, std::size_t bytes);
 struct MemoryValueFill {
     std::uint64_t address;
     std::size_t bytes;

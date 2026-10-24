@@ -4,10 +4,13 @@
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <domain/ImportModule.hpp>
 #include <io/BufferUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -190,6 +193,46 @@ std::vector<TracedImport> TracedImports(const Domain::SysVDynamicSection& dynSec
     return imports;
 }
 
+Domain::SysVDynamicSection ImportsByNid(Domain::SysVDynamicSection dynSection) {
+    RequireWholeEntries(dynSection.DynamicSegmentData, kDynEntrySize, "Executable dependency table");
+    for (std::size_t entry = 0; entry < dynSection.DynamicSegmentData.size(); entry += kDynEntrySize) {
+        if (static_cast<std::int64_t>(Io::ReadU64(dynSection.DynamicSegmentData, entry)) != DT_NEEDED)
+            continue;
+        const auto offset = Io::ReadU64(dynSection.DynamicSegmentData, entry + 8);
+        if (offset >= dynSection.DynStrData.size())
+            throw Domain::RelinkerException("DT_NEEDED string offset is out of bounds", offset);
+        const auto name = ReadDynamicString(dynSection.DynStrData, static_cast<std::uint32_t>(offset));
+        const auto library = Domain::NeededLibraryName(name);
+        if (library == name)
+            continue;
+        Io::WriteU64(dynSection.DynamicSegmentData, entry + 8, dynSection.DynStrData.size());
+        Io::AppendString(dynSection.DynStrData, library);
+    }
+    for (auto& library : dynSection.NeededLibraries)
+        library = Domain::NeededLibraryName(library);
+
+    std::set<std::uint64_t> symbols;
+    for (const auto* table : {&dynSection.RelaData, &dynSection.RelaPltData}) {
+        RequireWholeEntries(*table, kRelaEntrySize, "Relocation table");
+        for (std::size_t entry = 0; entry < table->size(); entry += kRelaEntrySize)
+            if (dynSection.NamedImports.contains(Io::ReadU64(*table, entry)))
+                symbols.insert(Io::ReadU64(*table, entry + 8) >> 32);
+    }
+    for (const auto symbol : symbols) {
+        if (symbol >= dynSection.DynSymData.size() / kSymEntrySize)
+            throw Domain::RelinkerException("Invalid import symbol index", symbol);
+        const auto symbolOffset = static_cast<std::size_t>(symbol * kSymEntrySize);
+        const auto name = ReadDynamicString(dynSection.DynStrData, Io::ReadU32(dynSection.DynSymData, symbolOffset));
+        if (name.empty() || name.find('#') != std::string::npos)
+            continue;
+        if (dynSection.DynStrData.size() > std::numeric_limits<std::uint32_t>::max())
+            throw Domain::RelinkerException("Dynamic string table too large");
+        Io::WriteU32(dynSection.DynSymData, symbolOffset, static_cast<std::uint32_t>(dynSection.DynStrData.size()));
+        Io::AppendString(dynSection.DynStrData, Nid::ComputeNid(name, ""));
+    }
+    return dynSection;
+}
+
 std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::uint64_t table, const std::uint64_t tableEnd, const std::uint64_t function) {
     std::vector<std::uint8_t> code = {0x52, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
     const auto rip = [&](std::initializer_list<std::uint8_t> opcode, const std::uint64_t target) {
@@ -297,13 +340,14 @@ void LinuxElfPatcher::_appendTrampoline(
 std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     std::vector<std::uint8_t> sourceElf,
     const std::vector<Domain::ProgramHeader>& originalHeaders,
-    const Domain::SysVDynamicSection& dynSection,
+    const Domain::SysVDynamicSection& sourceDynSection,
     const std::uint64_t originalPltGotVaddr,
     const std::string& runPath,
     const bool lazyBinding,
     const bool dependencyDiagnostics,
     const std::vector<Codegen::TrampolineSite>& trampolines)
 {
+    const auto dynSection = ImportsByNid(sourceDynSection);
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("Linux target does not support --windows-diagnostics");
     if (_fixedBase && lazyBinding)

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <span>
+#include <cstddef>
 #include "SceTypes.hpp"
 #include "SceShaders.hpp"
 
@@ -12,6 +13,7 @@ void Submit(const Packet* packet, std::uint32_t queue);
 
 }
 
+extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes);
 extern "C" void AgcDriverWaitIdle_nid_postfix();
 extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords);
 extern "C" void AgcDriverUseGcnShaders_nid_postfix();

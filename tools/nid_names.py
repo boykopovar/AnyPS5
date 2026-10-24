@@ -184,7 +184,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Suggest real names for Unknown NID stubs")
     parser.add_argument("--db", default=os.environ.get("ANYPS5_NID_DB"),
-                        help="NID database CSV (downloaded to a cache dir by default)")
+                        help="NID database CSV; defaults to $ANYPS5_NID_DB, then to a copy downloaded to a cache dir")
     parser.add_argument("--nid", action="append", default=None,
                         help="resolve only these NIDs instead of scanning the tree")
     parser.add_argument("--name", "--symbol", dest="name", action="append", default=None,

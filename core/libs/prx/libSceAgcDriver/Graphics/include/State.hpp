@@ -69,6 +69,9 @@ struct ColorTarget {
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
     std::uint32_t dccControl = 0;
+    std::uint64_t fmaskAddress = 0;
+    std::uint32_t fmaskPipeBankXor = 0;
+    std::uint16_t partialWriteMask = 0;
 };
 
 struct DepthTarget {
@@ -141,6 +144,7 @@ struct State {
     bool ditheredAlphaToCoverage = false;
     bool perSampleShading = false;
     bool mergedCoverage = false;
+    bool truncatedCoverage = false;
     VkConservativeRasterizationModeEXT conservativeRasterization = VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
     VkRect2D scissor;
     VkCullModeFlags cullMode;
@@ -154,8 +158,13 @@ struct State {
     bool customSampleLocations = false;
     bool sampleLocationGrid = false;
     std::uint32_t paClVsOutCntl = 0;
+    bool vertexPoints = false;
+    float pointSize = 1.0f;
+    float pointSizeMin = 0.0f;
+    float pointSizeMax = 0.0f;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool pixelEarlyZ = false;
+    bool pixelKill = false;
 };
 
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
@@ -163,6 +172,7 @@ struct State {
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
 
 ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = false);
+void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
@@ -179,6 +189,11 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
 std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
+std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+bool DepthStencilWrites(const State& state);
+bool DepthStencilTests(const State& state);
+ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
 bool PartialSampleMask(const State& state);
 bool UniformSampleMask(const State& state);

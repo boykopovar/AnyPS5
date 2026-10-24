@@ -277,11 +277,9 @@ int main() {
     Require(send_nid_postfix(client, request, sizeof(request), 0x20000) == -1 && *__error_nid_postfix() == 32);
 
     Require(close_nid_postfix(accepted) == 0);
-#ifndef _WIN32
     std::int64_t sent = 0;
     for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(client, request, sizeof(request), 0x20000);
     Require(sent == -1 && *__error_nid_postfix() == 32);
-#endif
     Require(close_nid_postfix(client) == 0);
     Require(close_nid_postfix(listener) == 0);
     Require(close_nid_postfix(listener) == -1 && *__error_nid_postfix() == 9);

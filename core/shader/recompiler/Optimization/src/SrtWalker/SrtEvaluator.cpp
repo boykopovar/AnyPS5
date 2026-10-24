@@ -289,6 +289,8 @@ std::optional<std::size_t> evaluatedArguments(IrOpcode opcode) {
         case IrOpcode::FPMul32:
         case IrOpcode::FPOrdLessThanEqual32:
         case IrOpcode::FPOrdGreaterThanEqual32:
+        case IrOpcode::FPUnordLessThanEqual32:
+        case IrOpcode::FPUnordGreaterThanEqual32:
         case IrOpcode::BitwiseAnd32:
         case IrOpcode::BitwiseAnd64:
         case IrOpcode::BitwiseOr32:
@@ -448,7 +450,50 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 }
 
 template<typename TNode>
+bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value) {
+    if (value == nullptr) return false;
+    if (MayEvaluate(program, value)) return true;
+    value = value->Resolve();
+    const auto decides = [&program, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index)); };
+    switch (value->Opcode()) {
+        case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
+        case IrOpcode::LogicalAnd:
+        case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+        default: return false;
+    }
+}
+
+template<typename TNode>
+EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const IrValue& value) {
+    if (value.IsIdentity()) {
+        return EvaluatorReads::Arguments;
+    }
+    if (value.HasImmediate()) {
+        return EvaluatorReads::Nothing;
+    }
+    switch (value.Opcode()) {
+        case IrOpcode::LoadAddressU32:
+        case IrOpcode::ReadConstBuffer: return IsRawRead(program, value) ? EvaluatorReads::Closure : EvaluatorReads::Nothing;
+        case IrOpcode::CompositeConstructU32x2:
+        case IrOpcode::IAddCarry32:
+        case IrOpcode::GetUserData:
+        case IrOpcode::GetShaderBase:
+        case IrOpcode::Phi:
+        case IrOpcode::ReadFirstLane:
+        case IrOpcode::BitCastU32F32:
+        case IrOpcode::BitCastF32U32:
+        case IrOpcode::CompositeExtractU64:
+        case IrOpcode::CompositeExtractU32x2:
+        case IrOpcode::ReadConst: return EvaluatorReads::Arguments;
+        default: return evaluatedArguments(value.Opcode()) ? EvaluatorReads::Arguments : EvaluatorReads::Nothing;
+    }
+}
+
+template<typename TNode>
 bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& result) {
+    if (Reads(_program, *inst.Value()) == EvaluatorReads::Nothing) {
+        return false;
+    }
     std::uint64_t a = 0;
     std::uint64_t b = 0;
     std::uint64_t c = 0;
@@ -596,6 +641,18 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
         case IrOpcode::FPOrdGreaterThanEqual32:
             if (binary()) {
                 result = Float32(a) >= Float32(b) ? 1u : 0u;
+                return true;
+            }
+            return false;
+        case IrOpcode::FPUnordLessThanEqual32:
+            if (binary()) {
+                result = !(Float32(a) > Float32(b)) ? 1u : 0u;
+                return true;
+            }
+            return false;
+        case IrOpcode::FPUnordGreaterThanEqual32:
+            if (binary()) {
+                result = !(Float32(a) < Float32(b)) ? 1u : 0u;
                 return true;
             }
             return false;
@@ -774,17 +831,22 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             }
             return false;
         case IrOpcode::LogicalAnd:
-            if (binary()) {
-                result = (a != 0u) && (b != 0u) ? 1u : 0u;
+        case IrOpcode::LogicalOr: {
+            const bool decisive = inst.Opcode() == IrOpcode::LogicalOr;
+            const bool first = Arg(inst, 0, a);
+            if (first && (a != 0u) == decisive) {
+                result = decisive ? 1u : 0u;
                 return true;
             }
-            return false;
-        case IrOpcode::LogicalOr:
-            if (binary()) {
-                result = (a != 0u) || (b != 0u) ? 1u : 0u;
+            const bool second = Arg(inst, 1, b);
+            if (second && (b != 0u) == decisive) {
+                result = decisive ? 1u : 0u;
                 return true;
             }
-            return false;
+            if (!first || !second) return false;
+            result = decisive ? 0u : 1u;
+            return true;
+        }
         case IrOpcode::LogicalXor:
             if (binary()) {
                 result = (a != 0u) != (b != 0u) ? 1u : 0u;

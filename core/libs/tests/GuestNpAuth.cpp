@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 
 extern "C" {
 int APS5_VABI sceNpAuthAbortRequest(int req_id);
@@ -26,7 +27,43 @@ static void Require(bool condition) {
     }
 }
 
+static void RequireUnstarted(int request) {
+    constexpr int invalidId = static_cast<int>(0x80550307);
+    constexpr int sentinel = 0x13579bdf;
+    for (int attempt = 0; attempt != 3; ++attempt) {
+        int result = sentinel;
+        Require(sceNpAuthPollAsync(request, &result) == invalidId);
+        Require(result == sentinel);
+        Require(sceNpAuthWaitAsync(request, &result) == invalidId);
+        Require(result == sentinel);
+    }
+}
+
+static void CheckUnstartedAborts() {
+    constexpr int aborted = static_cast<int>(0x80550304);
+    alignas(8) char parameter[16]{};
+    alignas(8) char output[16]{};
+    for (const bool async : {false, true}) {
+        const int request = async ? sceNpAuthCreateAsyncRequest(nullptr) : sceNpAuthCreateRequest();
+        Require(request > 0);
+        RequireUnstarted(request);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        Require(sceNpAuthAbortRequest(request) == 0);
+        RequireUnstarted(request);
+        for (auto getter : {sceNpAuthGetIdToken, sceNpAuthGetIdTokenV3, sceNpAuthGetAuthorizationCode}) {
+            Require(getter(request, parameter, output) == aborted);
+            RequireUnstarted(request);
+        }
+        int issuer = 0x2468ace;
+        Require(sceNpAuthGetAuthorizationCodeV3(request, parameter, output, &issuer) == aborted);
+        Require(issuer == 0x2468ace);
+        RequireUnstarted(request);
+        Require(sceNpAuthDeleteRequest(request) == 0);
+    }
+}
+
 int main() {
+    CheckUnstartedAborts();
     constexpr int invalidArgument = static_cast<int>(0x80550301);
     constexpr int signedOut = static_cast<int>(0x80550006);
     constexpr int aborted = static_cast<int>(0x80550304);
@@ -130,8 +167,8 @@ int main() {
     Require(sceNpAuthGetIdTokenV3(abortedReq, param, token) == aborted);
     Require(sceNpAuthGetAuthorizationCodeV3(abortedReq, param, authCode, &issuerId) == aborted);
     int abortedWait = 0;
-    Require(sceNpAuthWaitAsync(abortedReq, &abortedWait) == 0);
-    Require(abortedWait == aborted);
+    Require(sceNpAuthWaitAsync(abortedReq, &abortedWait) == invalidId);
+    Require(abortedWait == 0);
 
     const int syncReqA = sceNpAuthCreateRequest();
     Require(sceNpAuthGetIdTokenA(syncReqA, nullptr, token) == invalidArgument);

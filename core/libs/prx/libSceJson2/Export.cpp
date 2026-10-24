@@ -1,14 +1,17 @@
 #include <algorithm>
 #include <bit>
 #include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <list>
+#include <locale>
 #include <mutex>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include "SceTypes.hpp"
@@ -299,8 +302,9 @@ void AppendEscaped(std::string& out, const std::string& text) {
 std::string RealText(double value) {
     if (!std::isfinite(value)) throw std::runtime_error("sce::Json: cannot serialize a non-finite number");
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%.17g", value);
-    return buffer;
+    const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general, 17);
+    if (result.ec != std::errc{}) throw std::runtime_error("sce::Json: real number formatting failed");
+    return std::string(buffer, result.ptr);
 }
 
 void Serialize(std::string& out, const Node& n) {
@@ -510,8 +514,16 @@ private:
                 }
             }
         }
-        const double real = std::strtod(text.c_str(), nullptr);
-        if (!std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
+        double real = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), real);
+        bool converted = parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+        if (parsed.ec == std::errc::result_out_of_range) {
+            std::istringstream stream(text);
+            stream.imbue(std::locale::classic());
+            stream >> real;
+            converted = !stream.fail() && stream.eof();
+        }
+        if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
         out.type = TypeReal;
         out.real = real;
         return true;
@@ -725,6 +737,14 @@ int APS5_VABI _ZNK3sce4Json6String7compareERKS1_(const String* self, const Strin
 void APS5_VABI _ZN3sce4Json5ArrayC1Ev(Array* self) { Construct(*self); }
 void APS5_VABI _ZN3sce4Json5ArrayC1ERKS1_(Array* self, const Array* other) { CopyArray(*self, *other); }
 void APS5_VABI _ZN3sce4Json5ArrayD1Ev(Array* self) { Destroy(*self); }
+Array* APS5_VABI _ZN3sce4Json5ArrayaSERKS1_(Array* self, const Array* other) {
+    if (self == other) return self;
+    Array copy{};
+    CopyArray(copy, *other);
+    Destroy(*self);
+    *self = copy;
+    return self;
+}
 void APS5_VABI _ZN3sce4Json5Array9push_backERKNS0_5ValueE(Array* self, const Value* value) {
     Value copy{};
     CopyInto(copy, *value);
@@ -750,6 +770,11 @@ const Value* APS5_VABI _ZNK3sce4Json5Array5frontEv(const Array* self) {
 const Value* APS5_VABI _ZNK3sce4Json5Array4backEv(const Array* self) {
     if (self->items->empty()) throw std::out_of_range("sce::Json::Array::back: empty array");
     return &self->items->back();
+}
+void APS5_VABI _ZN3sce4Json5Array9pop_frontEv(Array* self) {
+    if (self->items->empty()) throw std::out_of_range("sce::Json::Array::pop_front: empty array");
+    Destroy(self->items->front());
+    self->items->pop_front();
 }
 void APS5_VABI _ZN3sce4Json5Array8iteratorD1Ev(ArrayIterator* self) { delete self->state; self->state = nullptr; }
 ArrayIterator* APS5_VABI _ZN3sce4Json5Array8iteratorppEv(ArrayIterator* self) {

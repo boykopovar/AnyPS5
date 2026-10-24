@@ -1,7 +1,12 @@
 #include "Hmd.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cstddef>
+#include <cstring>
+#include <initializer_list>
+#include <string>
 
 struct HmdDistortionCommandParameter;
 struct HmdWideNearDistortionCommandParameter;
@@ -62,6 +67,36 @@ std::int32_t Initialize(const Hmd::InitializeParam* param) {
     if (!param) return Hmd::ParameterNull;
     if (param->reserved0) return Hmd::UnsupportedFeature;
     return initialized.exchange(true) ? Hmd::AlreadyInitialized : 0;
+}
+
+std::uint32_t CompiledSdkVersion() {
+    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, processParameters + 0x10, sizeof(version));
+    return version;
+}
+
+std::int32_t CommandQueryHandle(std::int32_t handle, const char* query) {
+    if (handle != 0) return Hmd::InvalidHandle;
+    if (initialized.load()) NotImplemented_nid_no_patch((std::string(query) + " with handle 0 after sceHmdInitialize").c_str());
+    if (CompiledSdkVersion() >= Hmd::StartupStateSdkVersion) NotImplemented_nid_no_patch((std::string(query) + " with handle 0 before sceHmdInitialize from SDK 4.50").c_str());
+    return Hmd::NotInitialized;
+}
+
+template <typename T>
+T ParameterWord(const Hmd2dVrCommandParameter* parameter, std::size_t offset) {
+    T value;
+    std::memcpy(&value, reinterpret_cast<const unsigned char*>(parameter) + offset, sizeof(value));
+    return value;
+}
+
+std::int32_t Vr2dCommandArguments(const Hmd2dVrCommandParameter* parameter, const HmdCommandBuffer* commandBuffer) {
+    if (!parameter || !commandBuffer) return Hmd::ParameterNull;
+    for (const std::size_t offset : {0x00u, 0x08u, 0x20u}) {
+        if (ParameterWord<std::uint64_t>(parameter, offset) == 0) return Hmd::ParameterNull;
+    }
+    if (ParameterWord<std::uint32_t>(parameter, 0x34) != 0 || ParameterWord<std::uint64_t>(parameter, 0x38) != 0) return Hmd::ParameterInvalid;
+    return 0;
 }
 
 }
@@ -428,8 +463,7 @@ int APS5_VABI sceHmdReprojectionStopCapture(HmdCaptureInfo* info) {
 }
 
 bool APS5_VABI sceHmdInternalIsCommonDlgMiniAppVr2d(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return false;
 }
 
 int APS5_VABI sceHmdInternalMmapGetSensorCalibrationData(void* buffer, std::uint32_t size) {
@@ -438,8 +472,9 @@ int APS5_VABI sceHmdInternalMmapGetSensorCalibrationData(void* buffer, std::uint
 }
 
 int APS5_VABI sceHmdDistortionGetCorrectionCommand(std::int32_t handle, const HmdDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)commandBuffer;
+    return CommandQueryHandle(handle, __func__);
 }
 
 int APS5_VABI sceHmdReprojectionQueryOnionBuffAlign(void) {
@@ -452,13 +487,11 @@ int APS5_VABI sceHmdInternalGetDebugMode(std::uint8_t* mode) {
 }
 
 bool APS5_VABI sceHmdInternalIsMiniAppVr2d(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return false;
 }
 
 bool APS5_VABI sceHmdInternalIsCommonDlgVr2d(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return false;
 }
 
 int APS5_VABI sceHmdReprojectionSetOutputMinColor(float red, float green, float blue) {
@@ -572,8 +605,9 @@ int APS5_VABI sceHmdInternalGetHmuSerialNumber(std::uint8_t* serialNumber) {
 }
 
 int APS5_VABI sceHmdDistortionGetWideNearCorrectionCommand(std::int32_t handle, const HmdWideNearDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)commandBuffer;
+    return CommandQueryHandle(handle, __func__);
 }
 
 int APS5_VABI sceHmdInternalCheckS3dPassModeAvailable(bool* available) {
@@ -597,8 +631,7 @@ int APS5_VABI sceHmdReprojectionStartLiveCapture(const HmdLiveCaptureParameter* 
 }
 
 bool APS5_VABI sceHmdInternalIsGameVr2d(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return false;
 }
 
 int APS5_VABI sceHmdGetAssyError(HmdAssemblyError* data) {
@@ -727,8 +760,8 @@ int APS5_VABI sceHmdInternalMmapGetModeId(std::uint32_t* modeId) {
 }
 
 int APS5_VABI sceHmdDistortionGet2dVrCommand(std::int32_t handle, const Hmd2dVrCommandParameter* parameter, HmdCommandBuffer* commandBuffer) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (const auto result = Vr2dCommandArguments(parameter, commandBuffer); result != 0) return result;
+    return CommandQueryHandle(handle, __func__);
 }
 
 int APS5_VABI sceHmdInternalDfuSendSize(std::int32_t size) {
@@ -737,8 +770,9 @@ int APS5_VABI sceHmdInternalDfuSendSize(std::int32_t size) {
 }
 
 int APS5_VABI sceHmdGetWideNearDistortionCorrectionCommand(std::int32_t handle, const HmdWideNearDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)commandBuffer;
+    return CommandQueryHandle(handle, __func__);
 }
 
 int APS5_VABI sceHmdReprojectionStartMultilayer2(const HmdReprojectionMultilayerParameter* layers, std::uint32_t layerCount, const HmdReprojectionSubmissionParameter* submission, std::uint64_t flipArg, const void* reserved) {
@@ -747,8 +781,9 @@ int APS5_VABI sceHmdReprojectionStartMultilayer2(const HmdReprojectionMultilayer
 }
 
 int APS5_VABI sceHmdGetDistortionCorrectionCommand(std::int32_t handle, const HmdDistortionCommandParameter* parameter, HmdCommandBuffer* commandBuffer) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)parameter;
+    (void)commandBuffer;
+    return CommandQueryHandle(handle, __func__);
 }
 
 int APS5_VABI sceHmdInternalSetDeviceConnection(std::uint64_t connection) {
@@ -962,8 +997,8 @@ int APS5_VABI sceHmdReprojectionQueryGarlicBuffSize(void) {
 }
 
 int APS5_VABI sceHmdGet2dVrCommand(std::int32_t handle, const Hmd2dVrCommandParameter* parameter, HmdCommandBuffer* commandBuffer) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (const auto result = Vr2dCommandArguments(parameter, commandBuffer); result != 0) return result;
+    return CommandQueryHandle(handle, __func__);
 }
 
 }

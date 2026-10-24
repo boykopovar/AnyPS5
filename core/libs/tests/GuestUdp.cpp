@@ -99,6 +99,31 @@ static void CheckAddressLengths(int family) {
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
 }
 
+static void CheckSendToPortZero() {
+    const int receiver = socket_nid_postfix(2, 2, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    std::array<unsigned char, 16> portZero{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sendto_nid_postfix(sender, "x", 1, 0, portZero.data(), portZero.size()) == -1 && *__error_nid_postfix() == 49);
+    char buffer[4];
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    Require(sendto_nid_postfix(sender, "x", 1, 0, address.data(), address.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0) == 1);
+    const int bound = socket_nid_postfix(2, 2, 0);
+    Require(bound >= 0);
+    std::array<unsigned char, 16> bindAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(bound, bindAddress.data(), bindAddress.size()) == 0);
+    Require(sendto_nid_postfix(bound, "x", 1, 0, portZero.data(), portZero.size()) == 1);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x80) == -1 && *__error_nid_postfix() == 35);
+    std::array<unsigned char, 16> anyDestination{16, 2, 0, 0, 0, 0, 0, 0};
+    Require(sendto_nid_postfix(bound, "x", 1, 0, anyDestination.data(), anyDestination.size()) == -1 && *__error_nid_postfix() == 49);
+    Require(close_nid_postfix(bound) == 0 && close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
+}
+
 static void CheckDontWait() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 0);
@@ -136,6 +161,7 @@ int main() {
     CheckAddressLengths(2);
     CheckAddressLengths(28);
     CheckDontWait();
+    CheckSendToPortZero();
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 17);
     Require(receiver >= 0 && sender >= 0 && receiver != sender);

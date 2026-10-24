@@ -236,6 +236,15 @@ int APS5_VABI sceUltUlthreadOptParamInitialize(UltOptParam* optParam, std::uint3
     return InitializeOptParam(optParam);
 }
 
+int APS5_VABI sceUltConditionVariableOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    (void)buildVersion;
+    return InitializeOptParam(optParam);
+}
+
+int APS5_VABI _sceUltConditionVariableOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltConditionVariableOptParamInitialize(optParam, buildVersion);
+}
+
 int APS5_VABI sceUltMutexCreate(void* mutex, const char* name, void* waitingQueueResourcePool, const UltMutexOptParam* optParam, std::uint32_t buildVersion) {
     (void)name;
     (void)buildVersion;
@@ -369,7 +378,9 @@ int APS5_VABI sceUltMutexUnlock(void* mutex) {
     return ULT_OK;
 }
 
-int APS5_VABI _sceUltConditionVariableCreate(void* condition, const char*, void* mutex, const void* optParam, std::uint32_t) {
+int APS5_VABI sceUltConditionVariableCreate(void* condition, const char* name, void* mutex, const void* optParam, std::uint32_t buildVersion) {
+    (void)name;
+    (void)buildVersion;
     if (condition == nullptr || mutex == nullptr) return ULT_ERROR_NULL;
     if (optParam != nullptr) throw std::runtime_error("ULT condition variable options are not implemented");
     std::lock_guard lock(gMutex);
@@ -383,6 +394,10 @@ int APS5_VABI _sceUltConditionVariableCreate(void* condition, const char*, void*
     gConditions.emplace(condition, state);
     ++state->_mutex->_conditions;
     return ULT_OK;
+}
+
+int APS5_VABI _sceUltConditionVariableCreate(void* condition, const char* name, void* mutex, const void* optParam, std::uint32_t buildVersion) {
+    return sceUltConditionVariableCreate(condition, name, mutex, optParam, buildVersion);
 }
 
 int APS5_VABI sceUltConditionVariableDestroy(void* condition) {
@@ -1081,20 +1096,5 @@ int APS5_VABI sceUltUlthreadFactoryInitialize() {
     return 0;
 }
 
-int APS5_VABI sceUltConditionVariableCreate() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceUltConditionVariableOptParamInitialize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-
-int APS5_VABI _sceUltConditionVariableOptParamInitialize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 }

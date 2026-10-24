@@ -10,6 +10,8 @@ the tool, but differs from gfx1013 in more places. Say which GPU you measured on
 
 ## Requirements
 
+### Linux
+
 - Linux with the `amdgpu` driver and read/write access to `/dev/kfd` (usually the `render` group). Root is not needed.
 - The ROCm HSA runtime with its headers: `libhsa-runtime-dev` (Debian, Ubuntu), `rocm-runtime-devel` (Fedora),
   `hsa-rocr` (Arch), or AMD's ROCm packages. A runtime under `ROCM_PATH` or `/opt/rocm` is used first. The rest of ROCm
@@ -19,6 +21,17 @@ the tool, but differs from gfx1013 in more places. Say which GPU you measured on
 
 The first run builds `oracle.c` into `~/.cache/anyps5-hw-oracle/` (`HW_ORACLE_CACHE` overrides it). The target is read
 from the GPU (`HW_ORACLE_TARGET` overrides it).
+
+### Windows
+
+- AMD's Windows driver, which installs the HIP runtime (`amdhip64_6.dll`) and the code object manager (`amd_comgr_2.dll`)
+  in `System32`. ROCm, a C compiler, `clang` and `ld.lld` are not needed.
+- Python 3 from python.org or the Microsoft Store.
+
+On Windows `oracle_hip.py` replaces `oracle.c`: comgr assembles and links the kernel, and HIP runs it. The CLI, the Python
+interface and the results are the same as on Linux. `HW_ORACLE_RUNTIME` picks the runtime (`hip` on Windows, `hsa`
+elsewhere). `HW_ORACLE_HIP` and `HW_ORACLE_COMGR` name other DLLs. `ROCR_VISIBLE_DEVICES` selects the GPU, through
+`HIP_VISIBLE_DEVICES`, unless that variable is already set.
 
 ## Kernel
 

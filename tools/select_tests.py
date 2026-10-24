@@ -1,11 +1,16 @@
 import argparse
 import collections
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registration", Path(__file__).with_name("check_test_registration.py"))
+REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
+REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
 FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
@@ -16,7 +21,7 @@ BATCH = 20000
 class Build:
     def __init__(self, path):
         cache = {}
-        for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8").splitlines():
+        for line in (Path(path) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
             name, _, value = line.partition("=")
             cache[name.partition(":")[0]] = value
         self.path = os.path.normpath(cache["CMAKE_CACHEFILE_DIR"])
@@ -87,7 +92,35 @@ class Build:
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
                                             capture_output=True, text=True, check=True).stdout)
+        missing = {test["name"] for test in listing["tests"] if not test.get("command")}
+        if missing:
+            commands = self.test_commands(missing)
+            for test in listing["tests"]:
+                candidates = commands.get(test["name"], set())
+                if test["name"] in missing and len(candidates) == 1:
+                    command = next(iter(candidates))
+                    if command and os.path.isabs(command[0]):
+                        test["command"] = list(command)
         return listing, listing["tests"]
+
+    def test_commands(self, names):
+        found, visited, pending = collections.defaultdict(set), set(), [Path(self.path)]
+        while pending:
+            directory = pending.pop().resolve()
+            file = directory / "CTestTestfile.cmake"
+            if directory in visited or not file.is_file():
+                continue
+            visited.add(directory)
+            try:
+                commands = list(REGISTRATION.commands(file.read_text(encoding="utf-8-sig")))
+            except (OSError, UnicodeError, ValueError):
+                continue
+            for command, arguments in commands:
+                if command == "subdirs":
+                    pending.extend(directory / argument for argument in arguments)
+                elif command == "add_test" and arguments and arguments[0] in names:
+                    found[arguments[0]].add(tuple(arguments[1:]))
+        return found
 
     def output(self, path):
         absolute = self.absolute(path)
@@ -113,11 +146,14 @@ def relative(path, root):
 def chunks(names):
     batch, size = [], 0
     for name in names:
-        if batch and size + len(name) + 1 > BATCH:
+        length = len(name) + 1
+        if sys.platform == "win32":
+            length = len(subprocess.list2cmdline([name]).encode("utf-16-le", "surrogatepass")) // 2 + 1
+        if batch and size + length > BATCH:
             yield batch
             batch, size = [], 0
         batch.append(name)
-        size += len(name) + 1
+        size += length
     if batch:
         yield batch
 
@@ -216,6 +252,8 @@ def plan(build, graph, picked):
     _, selected = build.tests("-I", "0,0,0," + ",".join(map(str, run)))
     names = {t["name"] for t in selected}
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
+    if any(not t.get("command") for t in listed if t["name"] in names):
+        return run, build.leaves(), len(listed)
     keep = {build.output(a) for t in listed if t["name"] in names for a in t.get("command") or [] if os.path.isabs(a)}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
     return run, [t for t in build.leaves() if t not in skip], len(listed)
@@ -225,7 +263,10 @@ def escape(name):
     return name.replace("$", "$$").replace(":", "$:").replace(" ", "$ ")
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Select the tests whose build inputs a change touches")
     sub = parser.add_subparsers(dest="command", required=True)
     d = sub.add_parser("dump", help="write the test graph of a built tree")
@@ -241,15 +282,15 @@ def main():
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        extra = ["-I", selected.read_text(encoding="utf-8").strip()] if selected.exists() else []
+        extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:
-            graph = json.loads(args.graph.read_text(encoding="utf-8"))
-            changed = [line.strip() for line in args.changed.read_text(encoding="utf-8").splitlines() if line.strip()]
+            graph = json.loads(args.graph.read_text(encoding="utf-8-sig"))
+            changed = [line.strip() for line in args.changed.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
             reasons = {}
             picked, full = select(graph, changed, reasons)
         except (OSError, ValueError) as error:
@@ -270,7 +311,7 @@ def main():
     if not os.path.exists(args.graph):
         print("full run: no test graph")
         return 0
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8"))
+    graph = json.loads(Path(args.graph).read_text(encoding="utf-8-sig"))
     changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     picked, full = select(graph, changed)
     if picked is None:

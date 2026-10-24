@@ -3,6 +3,7 @@
 #include <array>
 #include <barrier>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -221,6 +222,11 @@ int main(int argc, char** argv) {
     Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == 0);
     ExpectException([&] { fputs_nid_postfix(nullptr, stream); });
     ExpectException([&] { fwrite_nid_postfix(nullptr, 1, sizeof(payload), stream); });
+    errno = 0;
+    Require(fread_nid_postfix(buffer.data(), 2, SIZE_MAX / 2 + 1, stream) == 0 && errno == EINVAL && ferror_nid_postfix(stream) == 0);
+    errno = 0;
+    Require(fread_nid_postfix(buffer.data(), 2, SIZE_MAX / 2 + 1, nullptr) == 0 && errno == EINVAL);
+    ExpectException([&] { fwrite_nid_postfix(buffer.data(), SIZE_MAX / 2 + 1, 2, stream); });
     errno = 0;
     Require(fseek_nid_postfix(stream, 0, -1) == -1);
     Require(errno == EINVAL);

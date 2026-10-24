@@ -141,6 +141,10 @@ struct ShaderVertexInputInfo {
     std::uint32_t scratchSizeDwords = 0;
     std::uint32_t hostSubgroupSize = 64;
     std::uint32_t paClVsOutCntl = 0;
+    bool pointList = false;
+    float pointSize = 1.0f;
+    float pointSizeMin = 0.0f;
+    float pointSizeMax = 0.0f;
     ShaderClipSpaceTransform clipSpace;
     ShaderDepthRemap depthRemap;
     ShaderMeshInputInfo mesh;
@@ -195,6 +199,11 @@ struct ShaderPixelInputInfo {
     bool psIteratesSamples = false;
     PixelPositionLocation psPositionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
+    std::uint8_t mergeTarget = 0;
+    std::uint16_t mergeMask = 0;
+    std::uint8_t mergeSamples = 1;
+    bool mergeDepthStencilWrites = false;
+    bool mergeDepthStencilTests = false;
     std::array<std::uint32_t, 4> sampleOrder{};
     ShaderStageRuntime stage;
 
