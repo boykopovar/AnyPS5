@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
 #include <cerrno>
@@ -13,50 +14,10 @@
 #include <limits>
 #include <initializer_list>
 #include <xmmintrin.h>
-struct GuestFloatingPointEnvironment {
-    std::uint32_t control;
-    std::uint32_t status;
-    std::uint32_t tag;
-    unsigned char other[16];
-    std::uint32_t mxcsr;
-};
+
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
 extern "C" {
-int APS5_VABI fegetenv_nid_postfix(GuestFloatingPointEnvironment*);
-double APS5_VABI atof_nid_postfix(const char*);
-double APS5_VABI strtod_nid_postfix(const char*, char**);
-double APS5_VABI wcstod_nid_postfix(const char16_t*, char16_t**);
-float APS5_VABI wcstof_nid_postfix(const char16_t*, char16_t**);
-long double APS5_VABI wcstold_nid_postfix(const char16_t*, char16_t**);
-float APS5_VABI strtof_nid_postfix(const char*, char**);
-long double APS5_VABI strtold_nid_postfix(const char*, char**);
-std::int64_t APS5_VABI strtol_nid_postfix(const char*, char**, int);
-std::uint64_t APS5_VABI strtoul_nid_postfix(const char*, char**, int);
-std::intmax_t APS5_VABI strtoimax_nid_postfix(const char*, char**, int);
-long long APS5_VABI strtoll_nid_postfix(const char*, char**, int);
-unsigned long long APS5_VABI strtoull_nid_postfix(const char*, char**, int);
-std::uintmax_t APS5_VABI strtoumax_nid_postfix(const char*, char**, int);
-unsigned long long APS5_VABI _Stoull_nid_postfix(const char*, char**, int);
-std::uint64_t APS5_VABI _Stoul_nid_postfix(const char*, char**, int);
-int APS5_VABI atoi_nid_postfix(const char*);
-std::int64_t APS5_VABI atol_nid_postfix(const char*);
-long long APS5_VABI atoll_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-double APS5_VABI sqrt_nid_postfix(double);
-float APS5_VABI sqrtf_nid_postfix(float);
-double APS5_VABI fabs_nid_postfix(double);
-int APS5_VABI abs_nid_postfix(int);
-double APS5_VABI trunc_nid_postfix(double);
-double APS5_VABI ceil_nid_postfix(double);
-double APS5_VABI floor_nid_postfix(double);
-float APS5_VABI truncf_nid_postfix(float);
-float APS5_VABI ceilf_nid_postfix(float);
-float APS5_VABI floorf_nid_postfix(float);
-double APS5_VABI nearbyint_nid_postfix(double);
-double APS5_VABI fma_nid_postfix(double, double, double);
-long double APS5_VABI acosl_nid_postfix(long double);
-long double APS5_VABI asinl_nid_postfix(long double);
-long double APS5_VABI frexpl_nid_postfix(long double, int*);
+
 struct LibcFloatConstant { std::uint32_t bits[4]; };
 extern LibcFloatConstant _FInf_nid_postfix;
 extern LibcFloatConstant _FNan_nid_postfix;
@@ -72,140 +33,9 @@ extern SonyDconst _LDenorm_nid_postfix;
 extern SonyDconst _LInf_nid_postfix;
 extern SonyDconst _LNan_nid_postfix;
 extern SonyDconst _LSnan_nid_postfix;
-short APS5_VABI _FDtest_nid_postfix(const float*);
-short APS5_VABI _Dtest_nid_postfix(const double*);
-int APS5_VABI __fpclassifyf_nid_postfix(float);
-int APS5_VABI isnanf_nid_postfix(float);
-int APS5_VABI __signbitl_nid_postfix(long double);
-float APS5_VABI fmodf_nid_postfix(float, float);
-double APS5_VABI fmod_nid_postfix(double, double);
-float APS5_VABI asinf_nid_postfix(float);
-float APS5_VABI acosf_nid_postfix(float);
-double APS5_VABI asin_nid_postfix(double);
-float APS5_VABI atan2f_nid_postfix(float, float);
-float APS5_VABI atanf_nid_postfix(float);
-float APS5_VABI hypotf_nid_postfix(float, float);
-double APS5_VABI hypot_nid_postfix(double, double);
-double APS5_VABI fdim_nid_postfix(double, double);
-float APS5_VABI fdimf_nid_postfix(float, float);
-float APS5_VABI fabsf_nid_postfix(float);
-long double APS5_VABI fabsl_nid_postfix(long double);
-double APS5_VABI copysign_nid_postfix(double, double);
-float APS5_VABI copysignf_nid_postfix(float, float);
-double APS5_VABI remquo_nid_postfix(double, double, int*);
-float APS5_VABI remquof_nid_postfix(float, float, int*);
-float APS5_VABI fmaf_nid_postfix(float, float, float);
-long double APS5_VABI ceill_nid_postfix(long double);
-long double APS5_VABI floorl_nid_postfix(long double);
-float APS5_VABI cbrtf_nid_postfix(float);
-float APS5_VABI tanf_nid_postfix(float);
-int APS5_VABI rand_nid_postfix();
-void APS5_VABI srand_nid_postfix(unsigned int);
-int APS5_VABI rand_r_nid_postfix(unsigned int*);
-float APS5_VABI log10f_nid_postfix(float);
-float APS5_VABI powf_nid_postfix(float, float);
-double APS5_VABI log1p_nid_postfix(double);
-float APS5_VABI log1pf_nid_postfix(float);
-double APS5_VABI expm1_nid_postfix(double);
-float APS5_VABI expm1f_nid_postfix(float);
-float APS5_VABI erff_nid_postfix(float);
-double APS5_VABI erf_nid_postfix(double);
-double APS5_VABI erfc_nid_postfix(double);
-float APS5_VABI erfcf_nid_postfix(float);
-double APS5_VABI lgamma_nid_postfix(double);
+
 extern int signgam_nid_postfix;
-float APS5_VABI logbf_nid_postfix(float);
-int APS5_VABI ilogb_nid_postfix(double);
-int APS5_VABI ilogbf_nid_postfix(float);
-double APS5_VABI exp2_nid_postfix(double);
-float APS5_VABI __powisf2_nid_postfix(float, int);
-double APS5_VABI __powidf2_nid_postfix(double, int);
-double APS5_VABI ldexp_nid_postfix(double, int);
-double APS5_VABI scalbn_nid_postfix(double, int);
-float APS5_VABI scalbnf_nid_postfix(float, int);
-float APS5_VABI nextafterf_nid_postfix(float, float);
-double APS5_VABI nextafter_nid_postfix(double, double);
-double APS5_VABI frexp_nid_postfix(double, int*);
-float APS5_VABI frexpf_nid_postfix(float, int*);
-float APS5_VABI logf_nid_postfix(float);
-std::int64_t APS5_VABI lround_nid_postfix(double);
-std::div_t APS5_VABI div_nid_postfix(int, int);
-double APS5_VABI sinh_nid_postfix(double);
-double APS5_VABI cosh_nid_postfix(double);
-double APS5_VABI _Cosh_nid_postfix(double, double);
-float APS5_VABI coshf_nid_postfix(float);
-float APS5_VABI sinhf_nid_postfix(float);
-float APS5_VABI _FSinh_nid_postfix(float, float);
-float APS5_VABI _FCosh_nid_postfix(float, float);
-double APS5_VABI asinh_nid_postfix(double);
-float APS5_VABI asinhf_nid_postfix(float);
-double APS5_VABI acosh_nid_postfix(double);
-float APS5_VABI acoshf_nid_postfix(float);
-double APS5_VABI atanh_nid_postfix(double);
-float APS5_VABI atanhf_nid_postfix(float);
-std::int64_t APS5_VABI lroundf_nid_postfix(float);
-std::int64_t APS5_VABI llround_nid_postfix(double);
-std::int64_t APS5_VABI llroundf_nid_postfix(float);
-std::int64_t APS5_VABI llroundl_nid_postfix(long double);
-int APS5_VABI __isfinitef_nid_postfix(float);
-int APS5_VABI __isfinitel_nid_postfix(long double);
-int APS5_VABI __isnormal_nid_postfix(double);
-int APS5_VABI __isnormalf_nid_postfix(float);
-int APS5_VABI __isinff_nid_postfix(float);
-int APS5_VABI __isinf_nid_postfix(double);
-int APS5_VABI isnan_nid_postfix(double);
-int APS5_VABI isinf_nid_postfix(double);
-std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
-std::lldiv_t APS5_VABI imaxdiv_nid_postfix(std::int64_t, std::int64_t);
-std::int64_t APS5_VABI labs_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI llabs_nid_postfix(std::int64_t);
-std::int64_t APS5_VABI imaxabs_nid_postfix(std::int64_t);
-long double APS5_VABI scalbnl_nid_postfix(long double, int);
-float APS5_VABI significandf_nid_postfix(float);
-double APS5_VABI significand_nid_postfix(double);
-long double APS5_VABI acoshl_nid_postfix(long double);
-long double APS5_VABI asinhl_nid_postfix(long double);
-long double APS5_VABI atanhl_nid_postfix(long double);
-long double APS5_VABI atan2l_nid_postfix(long double, long double);
-long double APS5_VABI cbrtl_nid_postfix(long double);
-long double APS5_VABI erfl_nid_postfix(long double);
-long double APS5_VABI erfcl_nid_postfix(long double);
-long double APS5_VABI expm1l_nid_postfix(long double);
-long double APS5_VABI log1pl_nid_postfix(long double);
-long double APS5_VABI log2l_nid_postfix(long double);
-long double APS5_VABI lgammal_nid_postfix(long double);
-long double APS5_VABI tgammal_nid_postfix(long double);
-float APS5_VABI tgammaf_nid_postfix(float);
-long double APS5_VABI hypotl_nid_postfix(long double, long double);
-float APS5_VABI hypot3f_nid_postfix(float, float, float);
-double APS5_VABI hypot3_nid_postfix(double, double, double);
-long double APS5_VABI hypot3l_nid_postfix(long double, long double, long double);
-float APS5_VABI j0f_nid_postfix(float);
-float APS5_VABI j1f_nid_postfix(float);
-float APS5_VABI jnf_nid_postfix(int, float);
-float APS5_VABI y0f_nid_postfix(float);
-float APS5_VABI y1f_nid_postfix(float);
-float APS5_VABI ynf_nid_postfix(int, float);
-std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t, std::int64_t);
-float APS5_VABI nanf_nid_postfix(const char*);
-double APS5_VABI nan_nid_postfix(const char*);
-long double APS5_VABI atanl_nid_postfix(long double);
-long double APS5_VABI sinl_nid_postfix(long double);
-long double APS5_VABI cosl_nid_postfix(long double);
-long double APS5_VABI tanl_nid_postfix(long double);
-long double APS5_VABI sinhl_nid_postfix(long double);
-long double APS5_VABI coshl_nid_postfix(long double);
-long double APS5_VABI tanhl_nid_postfix(long double);
-long double APS5_VABI expl_nid_postfix(long double);
-long double APS5_VABI exp2l_nid_postfix(long double);
-long double APS5_VABI logl_nid_postfix(long double);
-long double APS5_VABI log10l_nid_postfix(long double);
-long double APS5_VABI powl_nid_postfix(long double, long double);
-long double APS5_VABI ldexpl_nid_postfix(long double, int);
-long double APS5_VABI truncl_nid_postfix(long double);
-long double APS5_VABI nearbyintl_nid_postfix(long double);
-double APS5_VABI logb_nid_postfix(double);
-double APS5_VABI remainder_nid_postfix(double, double);
+
 struct DinkumwareFloatCharacteristics {
     int digits;
     int mantissaDigits;
@@ -935,11 +765,50 @@ static void CheckAsin() {
     std::feclearexcept(FE_ALL_EXCEPT);
     errno = 0;
     asin_nid_postfix(2.0);
+
     Require(std::fetestexcept(FE_INVALID));
     Require(errno == 0);
     std::feclearexcept(FE_ALL_EXCEPT);
     asin_nid_postfix(nan);
+
     Require(!std::fetestexcept(FE_INVALID));
+}
+
+static void CheckTrigfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t sine;
+        std::uint32_t cosine;
+        std::uint32_t tangent;
+        int error;
+    } cases[] = {
+        {0x3e801d5au, 0x3e7d9057u, 0x3f780703u, 0x3e82db72u, 0}, {0x3fc00321u, 0x3f7f5c46u, 0x3d90acbbu, 0x4161edb0u, 0},
+        {0x40400556u, 0x3e102d3eu, 0xbf7d7328u, 0xbe11a09du, 0}, {0x40c00781u, 0xbe8e9c41u, 0x3f75de78u, 0xbe947c92u, 0},
+        {0x412009acu, 0xbf0bc6b7u, 0xbf56790du, 0x3f26d71eu, 0}, {0x47000bbbu, 0x3eb0df2fu, 0x3f703d5au, 0x3ebc799eu, 0},
+        {0x4e000de0u, 0xbf664722u, 0x3edfade4u, 0xc003c6abu, 0}, {0x5f001006u, 0xbe0ecf11u, 0x3f7d7f8cu, 0xbe1037deu, 0},
+        {0x7e001112u, 0x3eabd0cbu, 0x3f7127beu, 0x3eb6645du, 0}, {0xc0400556u, 0xbe102d3eu, 0xbf7d7328u, 0x3e11a09du, 0},
+        {0x00000000u, 0x00000000u, 0x3f800000u, 0x00000000u, 0}, {0x80000000u, 0x80000000u, 0x3f800000u, 0x80000000u, 0},
+        {0x39000000u, 0x39000000u, 0x3f800000u, 0x39000000u, 0}, {0x3f490fdbu, 0x3f3504f3u, 0x3f3504f3u, 0x3f800000u, 0},
+        {0x40490fdbu, 0xb3bbbd2eu, 0xbf800000u, 0x33bbbd2fu, 0}, {0x4dc90fdbu, 0xbf3d5f98u, 0x3f2c42b6u, 0xbf8cb742u, 0},
+        {0x7f7fffffu, 0xbf0599b3u, 0x3f5a5f96u, 0xbf1c9ecau, 0}, {0xff7fffffu, 0x3f0599b3u, 0x3f5a5f96u, 0x3f1c9ecau, 0},
+        {0x7f800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM}, {0xff800000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, EDOM},
+        {0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0x7fc00001u, 0},
+    };
+    for (const auto& item : cases) {
+        const float x = std::bit_cast<float>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(sinf_nid_postfix(x)) == item.sine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(cosf_nid_postfix(x)) == item.cosine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(tanf_nid_postfix(x)) == item.tangent && errno == expected);
+        float sine = 0.0f;
+        float cosine = 0.0f;
+        sincosf_nid_postfix(x, &sine, &cosine);
+
+        Require(std::bit_cast<std::uint32_t>(sine) == item.sine && std::bit_cast<std::uint32_t>(cosine) == item.cosine);
+    }
 }
 
 static void CheckExtendedMath() {
@@ -1004,6 +873,21 @@ static void CheckHyperbolic() {
     Require(std::isfinite(cosh_nid_postfix(710.4)) && std::isfinite(sinh_nid_postfix(-710.4)) && sinh_nid_postfix(-710.4) < 0.);
     Require(Near(asinh_nid_postfix(-1e300), -691.4686750787736, 1e-15));
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
+}
+
+static void CheckAcoshfMsunBoundaries() {
+    Require(acoshf_nid_postfix(1.0f) == 0.0f && !std::signbit(acoshf_nid_postfix(1.0f)));
+    errno = EINTR;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::isnan(acoshf_nid_postfix(0.5f)) && errno == EINTR && (std::fetestexcept(FE_INVALID) & FE_INVALID) != 0);
+    for (const std::uint32_t bits : {0x3f800001u, 0x3fffffffu, 0x40000000u, 0x40000001u,
+                                     0x4d7fffffu, 0x4d800000u, 0x4d800001u, 0x7f7fffffu}) {
+        const float x = std::bit_cast<float>(bits);
+        Require(Near(acoshf_nid_postfix(x), std::acosh(static_cast<double>(x)), 1e-6));
+    }
+    Require(std::isinf(acoshf_nid_postfix(INFINITY)) && acoshf_nid_postfix(INFINITY) > 0.0f);
+    Require(std::isnan(acoshf_nid_postfix(-INFINITY)));
+    Require(std::isnan(acoshf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
 }
 
 static void CheckCoshfMsunBoundaries() {
@@ -1514,6 +1398,7 @@ int main() {
     CheckIntegerConversions();
     CheckCbrtfConsoleBits();
     CheckExtendedMath();
+    CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
     const char input[] = "0x1.8p+2 remainder";
@@ -1553,6 +1438,7 @@ int main() {
     Require(rand_r_nid_postfix(&randomState) == 16806 && randomState == 16806u);
     for (const unsigned int seed : {0u, 1u, 12345u, 0x7ffffffeu, 0xffffffffu}) {
         srand_nid_postfix(seed);
+
         randomState = seed;
         for (int step = 0; step < 8; ++step) Require(rand_r_nid_postfix(&randomState) == rand_nid_postfix());
     }
@@ -1619,6 +1505,7 @@ int main() {
     const auto gammaSign = [](double x) {
         signgam_nid_postfix = 7;
         lgamma_nid_postfix(x);
+
         return signgam_nid_postfix;
     };
     Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == -1);
@@ -1791,6 +1678,7 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();
     CheckScaledHyperbolic();
     CheckSinhf();

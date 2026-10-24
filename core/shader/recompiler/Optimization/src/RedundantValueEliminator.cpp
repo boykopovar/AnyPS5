@@ -328,6 +328,9 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
         replaced(info.indirectTarget);
     }
     for (auto*& read : program.Metadata().dynamicReads) replaced(read);
+    for (auto& descriptor : program.Resources().descriptorSources) {
+        for (auto*& dword : descriptor.dwords) replaced(dword);
+    }
     return stats;
 }
 

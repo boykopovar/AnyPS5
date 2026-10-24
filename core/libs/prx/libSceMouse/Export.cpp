@@ -1,3 +1,4 @@
+#include "prx/libSceMouse/include/Api.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libc/include/General.hpp"
 

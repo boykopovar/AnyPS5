@@ -1,21 +1,9 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-void APS5_VABI sceImeParamInit(Param* param);
-int APS5_VABI sceImeGetPanelSize(const Param* param, uint32_t* width, uint32_t* height);
-int APS5_VABI sceImeClose_nid_postfix(void);
-int APS5_VABI sceImeGetPanelPositionAndForm(PositionAndForm* form);
-int APS5_VABI sceImeSetCaret(const Caret* caret);
-int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length);
-int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geometry);
-int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param);
-int APS5_VABI sceImeKeyboardClose(int32_t user_id);
-int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArray* resource_ids);
-}
 
 static_assert(sizeof(Param) == 96);
 static_assert(offsetof(Param, option) == 32);
@@ -36,6 +24,7 @@ static void CheckInitialization() {
     std::memset(&guarded, 0xa5, sizeof(guarded));
     sceImeParamInit(nullptr);
     sceImeParamInit(&guarded.param);
+
     Require(guarded.param.user_id == -1, "initial user must be invalid");
     const auto* bytes = reinterpret_cast<const unsigned char*>(&guarded.param);
     for (size_t i = sizeof(guarded.param.user_id); i < sizeof(Param); ++i) {
@@ -47,6 +36,7 @@ static void CheckInitialization() {
     guarded.param.option = 0x4000;
     guarded.param.max_text_length = 32;
     sceImeParamInit(&guarded.param);
+
     Require(guarded.param.user_id == -1 && guarded.param.type == 0 &&
             guarded.param.option == 0 && guarded.param.max_text_length == 0,
             "reinitialization must reset previous values");

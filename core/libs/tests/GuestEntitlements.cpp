@@ -1,3 +1,4 @@
+#include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
@@ -10,15 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(std::uint32_t, const NpUnifiedEntitlementLabel*, NpEntitlementAccessAddcontEntitlementInfo*);
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoList(std::uint32_t, NpEntitlementAccessAddcontEntitlementInfo*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetSkuFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetPftFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetGameTrialsFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGenerateTransactionId(void*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -50,6 +42,7 @@ int main(int argc, char** argv) {
         bool rejected = false;
         try {
             sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, nullptr, 0, &hits);
+
         } catch (const std::runtime_error& error) {
             rejected = std::string_view(error.what()).starts_with("NpEntitlementAccess: cannot read ");
         }

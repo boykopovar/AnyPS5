@@ -8,6 +8,8 @@
 
 namespace FreeType {
 
+struct GuestLibrary;
+
 struct GuestGeneric {
     void* data;
     void (APS5_VABI *finalizer)(void*);

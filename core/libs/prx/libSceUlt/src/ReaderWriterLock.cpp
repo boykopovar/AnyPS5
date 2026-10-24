@@ -1,3 +1,4 @@
+#include "prx/libSceUlt/include/Api.hpp"
 #include "prx/libSceUlt/src/ReaderWriterLock.hpp"
 #include "prx/libSceUlt/SceUltTypes.hpp"
 #include <condition_variable>

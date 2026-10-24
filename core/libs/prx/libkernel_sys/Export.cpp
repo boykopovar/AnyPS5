@@ -1,3 +1,6 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdint>
@@ -29,7 +32,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
-extern "C" int APS5_VABI getpid_nid_postfix(void);
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -42,9 +45,6 @@ extern "C" int APS5_VABI getpid_nid_postfix(void);
 #define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
 #endif
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI getpid_nid_postfix();
 
 namespace {
 #ifdef _WIN32
@@ -331,14 +331,11 @@ std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
 
-int APS5_VABI _fstatfs_nid_postfix(int d, void* buf);
-
-int APS5_VABI fstatfs_nid_postfix(int d, void* buf) {
+int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     return _fstatfs_nid_postfix(d, buf);
 }
 
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info);
-int APS5_VABI sceKernelGetModuleList(KernelModule* handles, std::size_t count, std::size_t* actual);
 
 int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* info) {
     return GetModuleInfoExByHandle_nid_no_patch(handle, info);
@@ -347,8 +344,6 @@ int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* 
 int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t count, std::size_t* actual) {
     return sceKernelGetModuleList(handles, count, actual);
 }
-
-std::int64_t APS5_VABI _fstat_nid_postfix(int d, FileStat* sb);
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
     return static_cast<int>(_fstat_nid_postfix(d, sb));
@@ -555,8 +550,6 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
     return 0;
 }
 
-int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
-
 int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
     int mode = 0;
     if (flags & SCE_KERNEL_O_CREAT) {
@@ -581,7 +574,24 @@ int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {
     return result;
 }
 
-int APS5_VABI mkdir_nid_postfix(const char* path, std::uint16_t mode);
+int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...) {
+    int mode = 0;
+    if (flags & SCE_KERNEL_O_CREAT) {
+#ifdef _WIN32
+        __builtin_sysv_va_list arguments;
+        __builtin_sysv_va_start(arguments, flags);
+        mode = __builtin_va_arg(arguments, int);
+        __builtin_sysv_va_end(arguments);
+#else
+        std::va_list arguments;
+        va_start(arguments, flags);
+        mode = va_arg(arguments, int);
+        va_end(arguments);
+#endif
+    }
+    return openat_nid_postfix(fd, path, flags, mode);
+}
+
 
 int APS5_VABI mkdirat_nid_postfix(int fd, const char* path, std::uint16_t mode) {
     if (path == nullptr) return static_cast<int>(Fail(GuestEfault));
@@ -699,10 +709,6 @@ int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interva
     return 0;
 }
 
-int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb);
-int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int flag);
-
 int APS5_VABI chown_nid_postfix(const char* path, std::uint32_t uid, std::uint32_t gid) {
     FileStat status{};
     if (stat_nid_postfix(path, &status) != 0) return -1;
@@ -734,9 +740,6 @@ int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int fl
     if (result < 0) return static_cast<int>(Fail(result & 0xffff));
     return 0;
 }
-
-int APS5_VABI unlink_nid_postfix(const char* path);
-int APS5_VABI rmdir_nid_postfix(const char* path);
 
 int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (flag & ~GuestAtRemovedir) return static_cast<int>(Fail(GuestEinval));
@@ -874,9 +877,7 @@ int APS5_VABI renameat_nid_postfix(int oldfd, const char* from, int newfd, const
     return 0;
 }
 
-
 bool SetDefaultStackSize_nid_no_patch(std::size_t size);
-void APS5_VABI pthread_set_name_np_nid_postfix(void* thread, const char* name);
 
 int APS5_VABI pthread_set_defaultstacksize_np_nid_postfix(std::size_t size) {
     return SetDefaultStackSize_nid_no_patch(size) ? 0 : GuestEinval;
@@ -886,15 +887,10 @@ int APS5_VABI scePthreadSetDefaultstacksize(std::size_t size) {
     return SetDefaultStackSize_nid_no_patch(size) ? 0 : SceKernelError(GuestEinval);
 }
 
-void APS5_VABI scePthreadSetName(void* thread, const char* name) {
+void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
     pthread_set_name_np_nid_postfix(thread, name);
-}
 
-struct KernelTitleWorkaround {
-    std::int32_t version;
-    std::int32_t align;
-    std::uint64_t ids[2];
-};
+}
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);

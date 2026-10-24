@@ -1,45 +1,8 @@
+#include "prx/libSceHttpCache/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct HttpCacheHeader {
-    const char* name;
-    const char* value;
-};
-
-struct HttpCacheRequest {
-    std::uint32_t method;
-    std::uint32_t reserved;
-    const char* url;
-    std::size_t headerCount;
-    const HttpCacheHeader* headers;
-};
-
-struct HttpCacheResponseHeader {
-    std::uint32_t statusCode;
-    std::uint32_t reserved;
-    std::size_t headerCount;
-    const HttpCacheHeader* headers;
-};
-
-struct HttpCacheResponse {
-    std::uint32_t statusCode;
-    std::uint32_t reserved;
-    std::size_t headerCount;
-    const HttpCacheHeader* headers;
-    std::uint64_t contentLength;
-};
-
-struct HttpCacheQuotaEntry {
-    const char* name;
-    std::uint64_t size;
-};
-
-struct HttpCacheQuota {
-    std::size_t count;
-    const HttpCacheQuotaEntry* entries;
-};
 
 static_assert(sizeof(HttpCacheHeader) == 16);
 static_assert(sizeof(HttpCacheRequest) == 32);
@@ -161,7 +124,6 @@ int APS5_VABI sceHttpCacheTerm(std::int32_t cacheId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
 
 int APS5_VABI sceHttpCacheClearAllUserTags() {
     NotImplemented_nid_no_patch(__func__);

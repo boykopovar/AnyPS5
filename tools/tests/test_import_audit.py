@@ -1603,6 +1603,58 @@ class ImportAuditTests(unittest.TestCase):
         struct.pack_into("<H", image, 0x200 + 56 + 2, 0)
         self.assertEqual(import_audit.pe_exports(Path("lib.prx"), image), {"alpha", "beta"})
 
+    def test_elf_dynamic_tables_require_dt_null(self):
+        sectionless = bytearray(build_sectionless_elf(
+            [("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"]))
+        phoff = struct.unpack_from("<Q", sectionless, 32)[0]
+        phnum = struct.unpack_from("<H", sectionless, 56)[0]
+        dynamic = next(struct.unpack_from("<IIQQQQQQ", sectionless, phoff + index * 56)
+                       for index in range(phnum)
+                       if struct.unpack_from("<IIQQQQQQ", sectionless, phoff + index * 56)[0] == 2)
+        struct.pack_into("<qQ", sectionless, dynamic[2] + dynamic[5] - 16, 0x70000000, 0)
+        with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
+            import_audit.elf_program_dynamic_symbols(Path("sectionless.prx"), sectionless)
+
+        work = self.work
+        (work.libs / "libc.prx").write_bytes(build_elf([("alpha", 1, GLOBAL_FUNCTION)]))
+        (work.modules / "module.prx").write_bytes(sectionless)
+        registry = work.root / "malformed.registry.json"
+        report = work.root / "malformed.json"
+        write_registry(registry, [])
+        code, _, error = work.run(registry, "--json", str(report))
+        self.assertEqual(code, 2)
+        self.assertIn("not terminated by DT_NULL", error)
+        self.assertFalse(report.exists())
+
+        sectioned = bytearray(build_elf(
+            [("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"]))
+        shoff = struct.unpack_from("<Q", sectioned, 40)[0]
+        shnum = struct.unpack_from("<H", sectioned, 60)[0]
+        dynamic = next(struct.unpack_from("<IIQQQQIIQQ", sectioned, shoff + index * 64)
+                       for index in range(shnum)
+                       if struct.unpack_from("<IIQQQQIIQQ", sectioned, shoff + index * 64)[1] == 6)
+        struct.pack_into("<qQ", sectioned, dynamic[4] + dynamic[5] - 16, 0x70000000, 0)
+        with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
+            import_audit.elf_imports(Path("sectioned.prx"), sectioned)
+
+    def test_sectionless_dynamic_padding_after_dt_null_is_ignored(self):
+        image = bytearray(build_sectionless_elf(
+            [("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"]))
+        phoff = struct.unpack_from("<Q", image, 32)[0]
+        phnum = struct.unpack_from("<H", image, 56)[0]
+        headers = [struct.unpack_from("<IIQQQQQQ", image, phoff + index * 56)
+                   for index in range(phnum)]
+        dynamic = next(header for header in headers if header[0] == 2)
+        image.extend(struct.pack("<qQ", 1, 0xFFFFFFFF))
+        for index, header in enumerate(headers):
+            if header[0] == 2 or header[0] == 1:
+                updated = list(header)
+                updated[5] += 16
+                updated[6] += 16
+                struct.pack_into("<IIQQQQQQ", image, phoff + index * 56, *updated)
+        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("padded.prx"), image),
+                         ({"alpha": False}, set(), {"libc.prx"}))
+
     def test_module_dependencies_stop_at_dynamic_terminator(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
@@ -1923,6 +1975,44 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("input", err)
         self.assertEqual(registry.read_bytes(), before)
+
+    def test_json_output_preserves_shared_source_cmake_inputs(self):
+        work = self.work
+        name = "scePending"
+        nid = nid_names.compute_nid(name)
+        write_source(work.source, "libOwner", STUB_SOURCE.format(name=name))
+        shared = work.source / "libShared"
+        shared.mkdir()
+        cmake = shared / "CMakeLists.txt"
+        cmake.write_text('include(${CMAKE_CURRENT_SOURCE_DIR}/../libOwner/OwnerLibrary.cmake)\n', encoding="utf-8")
+        before = cmake.read_bytes()
+        (work.libs / "libShared.prx").write_bytes(exporting(nid))
+        registry = work.root / "game.json"
+        write_registry(registry, [(nid, "libShared.prx")])
+        outputs = [cmake]
+        for kind in ("symlink", "hardlink"):
+            alias = work.root / (kind + ".json")
+            try:
+                if kind == "symlink":
+                    alias.symlink_to(cmake)
+                else:
+                    os.link(cmake, alias)
+            except (OSError, NotImplementedError):
+                continue
+            outputs.append(alias)
+        for output in outputs:
+            with self.subTest(output=output):
+                code, out, err = work.run(registry, "--json", str(output))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("JSON output would overwrite an input file", err)
+                self.assertEqual(cmake.read_bytes(), before)
+                self.assertEqual(output.read_bytes(), before)
+        report = work.root / "audit.json"
+        code, _, err = work.run(registry, "--json", str(report))
+        self.assertEqual((code, err), (0, ""))
+        record, = json.loads(report.read_text(encoding="utf-8"))["imports"]
+        self.assertEqual((record["class"], record["name"]), ("stub", name))
+        self.assertEqual(cmake.read_bytes(), before)
 
     def test_git_stamp_uses_selected_source_tree(self):
         completed = type("Completed", (), {"stdout": "abcdef\n"})()

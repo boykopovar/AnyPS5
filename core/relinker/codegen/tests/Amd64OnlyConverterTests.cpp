@@ -690,8 +690,8 @@ void rosettaSubstitutions() {
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
-    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}})
-        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB or RDTSCP was converted for an Intel host");
+    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}, Bytes{0x0F, 0xAE, 0x37}})
+        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB, RDTSCP or XSAVEOPT was converted for an Intel host");
     const auto rdseed = match(rosetta, {0x48, 0x0F, 0xC7, 0xF9});
     require(rdseed && rdseed->Lowering == Amd64OnlyLowering::InPlace && rdseed->ReplacementBytes == Bytes{0x48, 0x0F, 0xC7, 0xF1} && rdseed->InstructionName == "RDSEED", "RDSEED was not rewritten to RDRAND");
     const auto rdseed16 = match(rosetta, {0x66, 0x41, 0x0F, 0xC7, 0xFA});
@@ -701,6 +701,18 @@ void rosettaSubstitutions() {
     require(clwb && clwb->Lowering == Amd64OnlyLowering::InPlace && clwb->ReplacementBytes == Bytes{0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00} && clwb->InstructionName == "CLWB", "CLWB was not replaced by a NOP");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0xF1}).has_value(), "TPAUSE (the register form of 66 0F AE /6) was taken for CLWB");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0x38}).has_value(), "CLFLUSHOPT was taken for CLWB");
+    const auto xsaveopt = match(rosetta, {0x0F, 0xAE, 0x37});
+    require(xsaveopt && xsaveopt->Lowering == Amd64OnlyLowering::InPlace && xsaveopt->ReplacementBytes == Bytes{0x0F, 0xAE, 0x27} && xsaveopt->InstructionName == "XSAVEOPT", "XSAVEOPT was not rewritten to XSAVE");
+    const auto xsaveopt64 = match(rosetta, {0x48, 0x0F, 0xAE, 0x74, 0x24, 0x40});
+    require(xsaveopt64 && xsaveopt64->ReplacementBytes == Bytes{0x48, 0x0F, 0xAE, 0x64, 0x24, 0x40}, "XSAVEOPT64 with an RSP-relative operand was not rewritten to XSAVE64");
+    const auto xsaveoptR12 = match(rosetta, {0x41, 0x0F, 0xAE, 0x34, 0x24});
+    require(xsaveoptR12 && xsaveoptR12->ReplacementBytes == Bytes{0x41, 0x0F, 0xAE, 0x24, 0x24}, "XSAVEOPT with an extended base register was not rewritten to XSAVE");
+    const auto xsaveoptRip = match(rosetta, {0x0F, 0xAE, 0x35, 0x00, 0x01, 0x00, 0x00});
+    require(xsaveoptRip && xsaveoptRip->ReplacementBytes == Bytes{0x0F, 0xAE, 0x25, 0x00, 0x01, 0x00, 0x00}, "RIP-relative XSAVEOPT was not rewritten to XSAVE with the same displacement");
+    const auto xsaveoptFs = match(rosetta, {0x64, 0x0F, 0xAE, 0x34, 0x25, 0x40, 0x00, 0x00, 0x00});
+    require(xsaveoptFs && xsaveoptFs->ReplacementBytes == Bytes{0x64, 0x0F, 0xAE, 0x24, 0x25, 0x40, 0x00, 0x00, 0x00}, "FS-relative XSAVEOPT was not rewritten to XSAVE");
+    for (const auto& other : {Bytes{0x0F, 0xAE, 0x27}, Bytes{0x0F, 0xAE, 0x2F}, Bytes{0x0F, 0xAE, 0x3F}, Bytes{0x0F, 0xAE, 0xF0}, Bytes{0xF3, 0x0F, 0xAE, 0xF0}, Bytes{0xF2, 0x0F, 0xAE, 0xF1}, Bytes{0xF3, 0x0F, 0xAE, 0x37}})
+        require(!match(rosetta, other).has_value(), "XSAVE, XRSTOR, CLFLUSH, MFENCE, UMONITOR, UMWAIT or a prefixed 0F AE /6 was taken for XSAVEOPT");
     const auto rdpid = match(rosetta, {0xF3, 0x41, 0x0F, 0xC7, 0xFB});
     require(rdpid && rdpid->Lowering == Amd64OnlyLowering::Trampoline && rdpid->Optional && rdpid->InstructionName == "RDPID", "RDPID was not lowered through an optional stub");
     require(rdpid->ReturnBranchOffset == 6 && Bytes(rdpid->StubBody.begin(), rdpid->StubBody.begin() + 7) == Bytes{0x41, 0xBB, 0, 0, 0, 0, 0xE9}, "RDPID r11 stub does not load 0 before returning");
@@ -2008,6 +2020,45 @@ void wideStoreExecution() {
     munmap(pages, 8192);
     munmap(code, 4096);
 }
+
+void xsaveoptExecution() {
+    const Bytes site = {0x48, 0x0F, 0xAE, 0x37};
+    const auto match = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta)->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "XSAVEOPT64 was not rewritten in place");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the XSAVEOPT replacement");
+    std::memcpy(code, body.data(), body.size());
+    alignas(64) std::uint8_t area[1024] = {};
+    alignas(32) std::uint8_t pattern[32];
+    alignas(32) std::uint8_t restored[32] = {};
+    for (std::size_t i = 0; i < sizeof(pattern); ++i)
+        pattern[i] = static_cast<std::uint8_t>(0xA0 + i);
+    asm volatile(
+        "vmovdqu (%[pattern]), %%ymm3\n\t"
+        "mov %[area], %%rdi\n\t"
+        "mov $7, %%eax\n\t"
+        "xor %%edx, %%edx\n\t"
+        "sub $128, %%rsp\n\t"
+        "call *%[code]\n\t"
+        "add $128, %%rsp\n\t"
+        "vpxor %%ymm3, %%ymm3, %%ymm3\n\t"
+        "mov $7, %%eax\n\t"
+        "xor %%edx, %%edx\n\t"
+        "xrstor64 (%%rdi)\n\t"
+        "vmovdqu %%ymm3, (%[restored])\n\t"
+        "vzeroupper\n\t"
+        :
+        : [pattern] "r"(pattern), [area] "r"(area), [code] "r"(code), [restored] "r"(restored)
+        : "rax", "rdx", "rdi", "xmm3", "memory");
+    munmap(code, 4096);
+    std::uint64_t components = 0;
+    std::memcpy(&components, area + 512, sizeof(components));
+    require((components & 6) == 6, "XSAVE did not mark the SSE and AVX state as saved");
+    require(std::memcmp(area + 160 + 3 * 16, pattern, 16) == 0 && std::memcmp(area + 576 + 3 * 16, pattern + 16, 16) == 0, "XSAVE did not store YMM3 in the standard format");
+    require(std::memcmp(restored, pattern, sizeof(pattern)) == 0, "XRSTOR did not restore YMM3 from the area XSAVE wrote");
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -2018,6 +2069,7 @@ void immediateFormExecution() {}
 void ripRelativeExecution() {}
 void rdpruExecution() {}
 void mcommitExecution() {}
+void xsaveoptExecution() {}
 #endif
 
 #if defined(__x86_64__) && (defined(__linux__) || defined(__APPLE__))
@@ -2106,6 +2158,7 @@ int main() {
         converterInPlaceFollower();
         converterClzero();
         rosettaSubstitutions();
+        xsaveoptExecution();
         converterRosetta();
         rosettaScalarCompares();
         converterRosettaScalarCompare();

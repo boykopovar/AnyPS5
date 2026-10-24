@@ -1,3 +1,4 @@
+#include "prx/libSceVorbisDec/include/Api.hpp"
 #include "prx/libSceVorbisDec/include/GuestVorbisFile.hpp"
 #include "prx/libc/include/General.hpp"
 

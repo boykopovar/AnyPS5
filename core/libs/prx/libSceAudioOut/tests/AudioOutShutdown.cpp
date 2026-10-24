@@ -1,3 +1,5 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -10,17 +12,6 @@
 #include <cstring>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-}
 
 namespace {
 

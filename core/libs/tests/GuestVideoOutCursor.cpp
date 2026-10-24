@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -5,13 +6,6 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceVideoOutCursorEnable(std::int32_t handle, std::int32_t index, const void* address);
-int APS5_VABI sceVideoOutCursorDisable(std::int32_t handle, std::int32_t index);
-int APS5_VABI sceVideoOutCursorSetImageAddress(std::int32_t handle, std::int32_t index, const void* address);
-int APS5_VABI sceVideoOutCursorSetPosition(std::int32_t handle, std::int32_t index, std::uint32_t x, std::uint32_t y);
-}
 
 static bool ReportsNotImplemented(const std::string& name, const std::function<int()>& call) {
     try {

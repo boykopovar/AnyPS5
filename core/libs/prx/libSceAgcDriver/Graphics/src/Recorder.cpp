@@ -32,6 +32,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
@@ -2134,6 +2135,22 @@ void Recorder::NoteSampledDraw(VkCommandBuffer commands) {
     if (open->sampleActive) open->samplesDrawn = true;
 }
 
+void Recorder::NoteDrawTraceToken(std::uint64_t token) noexcept {
+    if (token == 0 || open == nullptr) return;
+    try {
+        auto inserted = open->drawTraceTokenSet.insert(token);
+        if (!inserted.second) return;
+        try {
+            open->drawTraceTokens.push_back(token);
+        } catch (...) {
+            open->drawTraceTokenSet.erase(inserted.first);
+            throw;
+        }
+    } catch (...) {
+        AgcDriver::CaptureTrace::Log("draw-token-note-failed token=%llu", static_cast<unsigned long long>(token));
+    }
+}
+
 bool Recorder::gpuSampleCounter() {
     if (sampleCounterState != 0) return sampleCounterState > 0;
     sampleCounterState = -1;
@@ -2794,9 +2811,13 @@ void Recorder::NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t byte
     unwrittenBytes += bytes;
 }
 
-std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation) {
+std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived, std::uint64_t generation, VkDeviceSize* offset) {
     auto found = use == SnapshotUse::Vertex ? drawSnapshots.lower_bound({address, use, bytes}) : drawSnapshots.find({address, use, bytes});
-    if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) return {};
+    if (found == drawSnapshots.end() || std::get<0>(found->first) != address || std::get<1>(found->first) != use) {
+        if (use != SnapshotUse::Storage || offset == nullptr) return {};
+        return containingDrawSnapshot(address, bytes, offset);
+    }
+    if (offset != nullptr) *offset = 0;
     const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (!sameRegistry || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
         if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
@@ -2809,6 +2830,23 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
     recency.splice(recency.end(), recency, found->second.recent);
     if (derived != nullptr) *derived = found->second.derived;
     return found->second.buffer;
+}
+
+std::shared_ptr<Buffer> Recorder::containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset) {
+    const VkDeviceSize alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
+    const auto registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    auto entry = drawSnapshots.upper_bound({address, SnapshotUse::Storage, std::numeric_limits<std::size_t>::max()});
+    for (std::size_t probe = 0; probe < ContainingSnapshotProbes && entry != drawSnapshots.begin(); ++probe) {
+        --entry;
+        const auto& [start, use, held] = entry->first;
+        if (use != SnapshotUse::Storage || start + held < address + bytes || (address - start) % alignment != 0) continue;
+        if (entry->second.registryGeneration != registry || !GuestMemory::UnchangedSince(address, bytes, entry->second.generation)) continue;
+        auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
+        recency.splice(recency.end(), recency, entry->second.recent);
+        *offset = address - start;
+        return entry->second.buffer;
+    }
+    return {};
 }
 
 bool Recorder::refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes) {
@@ -3596,7 +3634,13 @@ void Recorder::Submit() {
     submission.pCommandBuffers = &batch->commands;
     // The timeline reaches this batch's serial when it completes (see WaitSerial).
     const std::uint64_t serial = submissions + 1;
-    CaptureTrace::Log("submit batch=%llu reads=%zu writes=%zu", static_cast<unsigned long long>(serial), batch->reads.size(), batch->writes.size());
+    std::string tokensStr = "[";
+    for (std::size_t i = 0; i < batch->drawTraceTokens.size(); ++i) {
+        if (i > 0) tokensStr += ",";
+        tokensStr += std::to_string(batch->drawTraceTokens[i]);
+    }
+    tokensStr += "]";
+    CaptureTrace::Log("submit batch=%llu tokens=%s", static_cast<unsigned long long>(serial), tokensStr.c_str());
     VkTimelineSemaphoreSubmitInfoKHR timelineInfo{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
     const VkSemaphore hold = std::exchange(submitHold, VK_NULL_HANDLE);
     const std::uint64_t holdValue = submitHoldValue;
@@ -3625,6 +3669,7 @@ void Recorder::Submit() {
     batch->submitted = true;
     batch->serial = ++submissions;
     batch->submittedAt = std::chrono::steady_clock::now();
+    CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(batch->serial), tokensStr.c_str());
     if (DrawProfiled()) {
         const auto us = std::chrono::duration<double, std::micro>(batch->submittedAt - submitStart).count();
         ++submitCount;
@@ -3652,6 +3697,10 @@ void Recorder::Submit() {
 std::uint64_t Recorder::SubmitAndEpoch() {
     Submit();
     return inFlight.empty() ? 0 : submissions;
+}
+
+std::uint64_t Recorder::OpenBatchSerial() {
+    return open != nullptr ? submissions + 1 : 0;
 }
 
 namespace {
@@ -3705,6 +3754,20 @@ void Recorder::WaitSerial(std::uint64_t serial) {
         unlockedWaitedUs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
     }
     Check(result, "vkWaitSemaphoresKHR recorder");
+}
+
+bool Recorder::WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
+    PerformanceTimer frameTiming("Recorder.WaitSerialFor");
+    if (timeline == VK_NULL_HANDLE || serial == 0) return false;
+    const UnlockedWaiter waiter{id};
+    VkSemaphoreWaitInfoKHR wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
+    wait.semaphoreCount = 1;
+    wait.pSemaphores = &timeline;
+    wait.pValues = &serial;
+    const auto result = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR")(context.device, &wait, timeoutNanos);
+    if (result == VK_TIMEOUT) return false;
+    Check(result, "vkWaitSemaphoresKHR submission progress");
+    return true;
 }
 
 void Recorder::FinishUpTo(std::uint64_t serial) {

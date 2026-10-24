@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
