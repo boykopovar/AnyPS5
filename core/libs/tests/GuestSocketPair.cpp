@@ -30,6 +30,8 @@ struct Msghdr {
 
 extern "C" {
 int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
+int APS5_VABI socket_nid_postfix(int, int, int);
+int APS5_VABI dup_nid_postfix(int);
 std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
 std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
 std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
@@ -230,6 +232,19 @@ int main(int argc, char** argv) {
     FileStat status{};
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == 0);
     Require(status.st_mode == 0140666 && status.st_size == 0 && status.st_blksize != 0 && status.st_nlink == 0);
+    Require(status.st_dev == 0xFFFFFFFFu && status.st_ino != 0);
+    const auto firstInode = status.st_ino;
+    Require(sceKernelFstat(pair[0], &status) == 0 && status.st_dev == 0xFFFFFFFFu && status.st_ino == firstInode);
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_dev == 0xFFFFFFFFu);
+    Require(status.st_ino != 0 && status.st_ino != firstInode);
+    const auto secondInode = status.st_ino;
+    const int duplicate = dup_nid_postfix(pair[1]);
+    Require(duplicate >= 0 && fstat_nid_disambig1_nid_postfix(duplicate, &status) == 0 && status.st_ino == secondInode);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_ino == secondInode);
+    const int inet = socket_nid_postfix(2, Stream, 0);
+    Require(inet >= 0 && fstat_nid_disambig1_nid_postfix(inet, &status) == 0 && status.st_dev == 0 && status.st_ino == 0);
+    Require(close_nid_postfix(inet) == 0);
     Require(send_nid_postfix(pair[0], "hello", 5, 0) == 5 && Readable(pair[1]));
     Require(sceKernelFstat(pair[1], &status) == 0 && status.st_mode == 0140666 && status.st_size == 5);
     Require(shutdown_nid_postfix(pair[0], 1) == 0);
