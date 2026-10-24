@@ -1926,8 +1926,35 @@ void TuningFieldTests() {
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "DISABLE_DUAL_QUAD was rejected");
     Require(state.hasColorTarget && state.blend.colorWriteMask == baseline.blend.colorWriteMask, "DISABLE_DUAL_QUAD changed color output");
     queue.context[0x202] = 0xcc0013;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "copy ROP");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5b0010;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5a0010;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "an XOR ROP was rejected");
+    Require(state.hasColorTarget && state.colorRop == 0x5a && AgcDriver::Graphics::LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_XOR, "an XOR ROP did not decode");
     queue.context[0x202] = 0xcc0010;
+    Require(AgcDriver::Graphics::DecodeState(queue).colorRop == AgcDriver::Graphics::CopyRop, "the copy ROP did not decode as the copy operation");
+    const std::array<std::pair<std::uint8_t, VkLogicOp>, 14> ropOperations{{
+        {0x0f, VK_LOGIC_OP_COPY_INVERTED}, {0xa0, VK_LOGIC_OP_AND}, {0xf0, VK_LOGIC_OP_COPY}, {0xfa, VK_LOGIC_OP_OR},
+        {0x00, VK_LOGIC_OP_CLEAR}, {0x11, VK_LOGIC_OP_NOR}, {0x33, VK_LOGIC_OP_COPY_INVERTED}, {0x55, VK_LOGIC_OP_INVERT}, {0x66, VK_LOGIC_OP_XOR},
+        {0x88, VK_LOGIC_OP_AND}, {0xaa, VK_LOGIC_OP_NO_OP}, {0xcc, VK_LOGIC_OP_COPY}, {0xee, VK_LOGIC_OP_OR}, {0xff, VK_LOGIC_OP_SET}}};
+    for (const auto& [rop, operation] : ropOperations) Require(AgcDriver::Graphics::LogicOpFromRop(rop) == operation, "a ROP3 code mapped to the wrong logic operation");
+    std::uint32_t documentedRops = 0;
+    for (std::uint32_t rop = 0; rop < 256u; ++rop) {
+        try {
+            static_cast<void>(AgcDriver::Graphics::LogicOpFromRop(static_cast<std::uint8_t>(rop)));
+            ++documentedRops;
+        } catch (const std::runtime_error&) {
+        }
+    }
+    Require(documentedRops == 28u, "a ROP3 code outside the source and brush forms was accepted, or one inside them was refused");
+    auto blendedLogic = queue;
+    blendedLogic.context[0x202] = 0x5a0010;
+    blendedLogic.context[0x1e0] = 0x40000101u;
+    for (std::uint32_t index = 0; index < 4u; ++index) blendedLogic.context[0x105 + index] = 0u;
+    blendedLogic.context[0x31c] |= 0x8000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(blendedLogic); }, "logic operation together with blending");
     for (const auto groups : {1u, 2u, 15u}) {
         queue.context[0x2d5] = 0x2000u | (groups << 15u);
         state = AgcDriver::Graphics::DecodeState(queue);

@@ -713,15 +713,19 @@ void rasterizeSampleZero(State& state) {
     state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
 }
 
+bool documentedRop(std::uint32_t rop) {
+    return (rop >> 4u) == (rop & 0xfu) || ((rop >> 2u) & 0x33u) == (rop & 0x33u);
+}
+
 bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
     colorControl &= ~1u;
-    return colorControl == 0xcc0010u || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
+    return ((colorControl & ~0xff0000u) == 0x10u && documentedRop((colorControl >> 16u) & 0xffu)) || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
 }
 
 std::string colorControlMessage(std::uint32_t colorControl) {
     static constexpr const char* modes[8] = {"disable", "normal", "eliminate fast clear", "resolve", "decompress", "FMASK decompress", "DCC decompress", "reserved"};
     char text[160];
-    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with copy ROP is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
+    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with a ROP3 code of the source or brush form is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
     return text;
 }
 
@@ -1093,6 +1097,21 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrd
     if (!SampleMaskFollowsOrder(state, order)) return QuadSampleMasks(state);
     const auto mask = static_cast<std::uint16_t>(state.quadSampleMask[0] & ((1u << state.samples) - 1u));
     return {mask, mask, mask, mask};
+}
+
+VkLogicOp LogicOpFromRop(std::uint8_t rop) {
+    if (!documentedRop(rop)) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "AGC graphics: ROP3 code 0x%02x combines source and brush, which is not implemented", rop);
+        throw std::runtime_error(text);
+    }
+    static constexpr std::array<VkLogicOp, 16> operations{
+        VK_LOGIC_OP_CLEAR, VK_LOGIC_OP_NOR, VK_LOGIC_OP_AND_INVERTED, VK_LOGIC_OP_COPY_INVERTED,
+        VK_LOGIC_OP_AND_REVERSE, VK_LOGIC_OP_INVERT, VK_LOGIC_OP_XOR, VK_LOGIC_OP_NAND,
+        VK_LOGIC_OP_AND, VK_LOGIC_OP_EQUIVALENT, VK_LOGIC_OP_NO_OP, VK_LOGIC_OP_OR_INVERTED,
+        VK_LOGIC_OP_COPY, VK_LOGIC_OP_OR_REVERSE, VK_LOGIC_OP_OR, VK_LOGIC_OP_SET};
+    const std::uint32_t index = (rop & 3u) | ((rop >> 4u) & 4u) | ((rop >> 4u) & 8u);
+    return operations[index];
 }
 
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state) {
@@ -1475,6 +1494,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
 
     // CB_COLOR_CONTROL mode 0 disables color writes, which only matters when a target is written.
     if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget)) throw std::runtime_error(colorControlMessage(colorControl));
+    if (const auto colorControl = read(cx, 0x202); ((colorControl >> 4u) & 7u) == 1u) result.colorRop = static_cast<std::uint8_t>(colorControl >> 16u);
     zero(cx, 0x1c4, zFormatSupported(read(cx, 0x1c4)) ? 0u : ~0u, "depth or sample-mask export");
     const auto exportFormat = result.hasColorTarget ? read(cx, 0x1c5) : 0u;
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
@@ -1690,6 +1710,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (!result.colors.empty()) {
         result.color = result.colors.front();
         result.blend = result.blends[result.colors.front().exportIndex];
+    }
+    if (LogicOpFromRop(result.colorRop) != VK_LOGIC_OP_COPY) {
+        for (const auto& blend : result.blends) Require(blend.blendEnable == VK_FALSE, "a color logic operation together with blending is not implemented");
     }
     Require(result.reversedBlend == 0 || (exportSlots.size() == 1 && exportCount == 1), "blending into a color target with a reversed component order through a second source color needs that target to be the shader's only color export");
     if (result.dualSourceBlend) {

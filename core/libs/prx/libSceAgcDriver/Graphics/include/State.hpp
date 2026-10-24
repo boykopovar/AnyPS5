@@ -152,6 +152,7 @@ struct State {
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
     std::array<float, 4> blendConstants;
+    std::uint8_t colorRop = 0xccu;
     std::uint32_t samples = 1;
     std::array<std::uint8_t, 32> sampleLocations{};
     bool customSampleLocations = false;
@@ -169,6 +170,9 @@ struct State {
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
 // distance vectors); a vertex program that exports pos1..pos3 depends on them.
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
+
+inline constexpr std::uint8_t CopyRop = 0xccu;
+VkLogicOp LogicOpFromRop(std::uint8_t rop);
 
 ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
