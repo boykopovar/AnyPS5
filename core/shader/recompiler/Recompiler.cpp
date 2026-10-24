@@ -14,6 +14,7 @@
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "ShaderDiskCache.hpp"
+#include "ThreadOwned.hpp"
 #include <list>
 #include <functional>
 #include <map>
@@ -1577,6 +1578,38 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
 // The memo'd result of `source`'s variant for the snapshot (design13 R5): a hit returns the shared
 // object, a miss materializes outside the source mutex and inserts (a concurrent miss's object is
 // as good). `memoHit` reports the hit.
+bool RecycleResults() {
+    static const bool enabled = std::getenv("APS5_NO_RESULT_RECYCLE") == nullptr;
+    return enabled;
+}
+
+constexpr std::size_t RecycledResultsKept = 8;
+std::atomic<std::uint64_t> resultsRecycled{0};
+
+std::vector<std::shared_ptr<RecompileResult>>& recycledResults() {
+    static thread_local std::vector<std::shared_ptr<RecompileResult>>* slot = nullptr;
+    return ThreadOwned(slot);
+}
+
+void recycleResult(std::shared_ptr<const RecompileResult>& result) {
+    if (!RecycleResults() || result == nullptr || result.use_count() != 1) return;
+    auto& kept = recycledResults();
+    if (kept.size() >= RecycledResultsKept) return;
+    std::atomic_thread_fence(std::memory_order_acquire);
+    kept.push_back(std::const_pointer_cast<RecompileResult>(std::move(result)));
+}
+
+std::shared_ptr<RecompileResult> copyResult(const RecompileResult& donor) {
+    if (!RecycleResults()) return std::make_shared<RecompileResult>(donor);
+    auto& kept = recycledResults();
+    if (kept.empty()) return std::make_shared<RecompileResult>(donor);
+    auto result = std::move(kept.back());
+    kept.pop_back();
+    *result = donor;
+    resultsRecycled.fetch_add(1, std::memory_order_relaxed);
+    return result;
+}
+
 std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
@@ -1619,7 +1652,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     std::shared_ptr<RecompileResult> result;
     std::shared_ptr<MemoPatch> patch;
     if (donor != nullptr) {
-        result = std::make_shared<RecompileResult>(*donor);
+        result = copyResult(*donor);
         applyMemoPatch(*result, *donorPatch, snapshot);
         if (VerifyMaskedResultMemo()) verifyPatchedResult(*result, materializeResult(*variant, request, snapshot), variantId);
         if (profile) counters.patchNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
@@ -1645,6 +1678,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             if (entry.used < victim->used) victim = &entry;
         }
         if (count && victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+        recycleResult(victim->result);
         *victim = {variantId, key, shared, ++source.memoClock, std::move(recipe)};
         return shared;
     };
@@ -1878,6 +1912,10 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
 
 RecompileResult Recompile(const RecompileRequest& request) {
     return recompileReporting(request, [&] { return RecompileImpl(request); });
+}
+
+std::uint64_t RecycledResults() {
+    return resultsRecycled.load(std::memory_order_relaxed);
 }
 
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {

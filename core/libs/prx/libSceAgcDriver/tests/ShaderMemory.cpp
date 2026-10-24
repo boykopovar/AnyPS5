@@ -2020,6 +2020,18 @@ void verifyTableSnapshotReuse() {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(paged), PagedBytes);
     const auto pagedRemapped = capture(pagedRequest, paged, PagedBytes, nullptr);
     require(pagedRemapped.reuse.unwritten == 0u && pagedRemapped.reuse.shared == 0u && pagedRemapped.reuse.columns == 1u && !sharesColumn(pagedRemapped, pagedFresh) && heldRecords(pagedRemapped, paged, PagedRecords), "table snapshot reuse: a table mapped again with new contents was not read again");
+    const auto recycledBefore = RecycledResults();
+    static std::array<std::array<std::uint32_t, 4>, 640> recycledOutputs{};
+    for (auto& recycledOutput : recycledOutputs) {
+        const auto recycledV = TableV(recycledOutput.data(), 0u, static_cast<std::uint32_t>(sizeof(recycledOutput)));
+        std::copy(recycledV.begin(), recycledV.end(), guest.srt.begin() + 12);
+        const auto recycledResult = CompileTable(request);
+        const auto* recycledBuffers = TableBinding(*recycledResult.result, DescriptorRole::GuestBuffers);
+        require(recycledBuffers != nullptr && std::search(recycledBuffers->guestDescriptor.begin(), recycledBuffers->guestDescriptor.end(), recycledV.begin(), recycledV.end()) != recycledBuffers->guestDescriptor.end(), "table snapshot reuse: a patched result in recycled storage holds another buffer's descriptor");
+    }
+    std::copy(outputV.begin(), outputV.end(), guest.srt.begin() + 12);
+    const bool recycles = std::getenv("APS5_NO_MASKED_RESULT_MEMO") == nullptr && std::getenv("APS5_NO_RESULT_RECYCLE") == nullptr;
+    require((RecycledResults() > recycledBefore) == recycles, recycles ? "table snapshot reuse: no evicted result was recycled into a patched one" : "table snapshot reuse: a result was recycled with recycling off");
     std::cout << "table snapshot reuse " << (watched ? "with" : "without") << " write watching passed\n";
 }
 
