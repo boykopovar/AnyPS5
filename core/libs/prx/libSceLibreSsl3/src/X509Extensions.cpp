@@ -49,4 +49,11 @@ int APS5_VABI X509_get_ext_count_nid_postfix(const LibreSsl3ExtensionsX509* cert
     return extensions ? extensions->num : 0;
 }
 
+void* APS5_VABI X509_get_ext_nid_postfix(const LibreSsl3ExtensionsX509* certificate, int loc) {
+    const LibreSsl3Stack* extensions = Extensions(certificate, __func__);
+    if (!extensions || loc < 0 || loc >= extensions->num) return nullptr;
+    if (!extensions->data) throw std::invalid_argument(std::string(__func__) + ": null extension array");
+    return extensions->data[loc];
+}
+
 }
