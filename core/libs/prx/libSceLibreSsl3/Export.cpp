@@ -42,11 +42,6 @@ int APS5_VABI CRYPTO_memcmp_nid_postfix(const void* first, const void* second, s
     return static_cast<int>(difference);
 }
 
-int APS5_VABI DSA_get0_key_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI ERR_load_crypto_strings_nid_postfix() {
 }
 
