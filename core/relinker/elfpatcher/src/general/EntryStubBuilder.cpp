@@ -23,6 +23,13 @@ std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     _appendBytes(s, kStubOpPushZero, sizeof(kStubOpPushZero));
     _appendBytes(s, kStubOpMovRbpRsp, sizeof(kStubOpMovRbpRsp));
     _appendBytes(s, kStubOpXorRsiRsi, sizeof(kStubOpXorRsiRsi));
+    constexpr std::uint8_t mxcsr[] = {
+        0x48, 0x83, 0xec, 0x10,
+        0x0f, 0xae, 0x1c, 0x24,
+        0xc7, 0x44, 0x24, 0x04, 0xc0, 0x9f, 0x00, 0x00,
+        0x0f, 0xae, 0x54, 0x24, 0x04
+    };
+    _appendBytes(s, mxcsr, sizeof(mxcsr));
     const std::uint64_t callInsnVaddr = stubVaddr + s.size();
     const std::uint64_t callNextVaddr = callInsnVaddr + kStubCallInstructionSize;
     const auto displacement = static_cast<std::int64_t>(realEntryVaddr - callNextVaddr);
@@ -34,6 +41,11 @@ std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     s.push_back(static_cast<std::uint8_t>((rel32 >> 8) & 0xff));
     s.push_back(static_cast<std::uint8_t>((rel32 >> 16) & 0xff));
     s.push_back(static_cast<std::uint8_t>((rel32 >> 24) & 0xff));
+    constexpr std::uint8_t restoreMxcsr[] = {
+        0x0f, 0xae, 0x14, 0x24,
+        0x48, 0x83, 0xc4, 0x10
+    };
+    _appendBytes(s, restoreMxcsr, sizeof(restoreMxcsr));
     _appendBytes(s, kStubOpUd2, sizeof(kStubOpUd2));
     return s;
 }
