@@ -25,6 +25,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_font_writing_line PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
     endif()
+    add_test_executable(guest_font_graphics_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontGraphics.cpp)
+    target_include_directories(guest_font_graphics_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_graphics_tests PRIVATE libSceFont libc)
+    configure_windows_unwind(guest_font_graphics_tests)
+    add_test(NAME guest_font_graphics COMMAND guest_font_graphics_tests)
+    if(WIN32)
+        set_tests_properties(guest_font_graphics PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
+    endif()
     add_test_executable(font_face_lifetime_tests ${LIBS_INCLUDE_DIR}/tests/FontFaceLifetime.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/src/State.cpp)
     target_include_directories(font_face_lifetime_tests PRIVATE ${LIBS_INCLUDE_DIR})
