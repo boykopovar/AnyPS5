@@ -1,3 +1,4 @@
+#include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -25,6 +26,10 @@ std::size_t APS5_VABI sceJemspaceMallocUsableSize(const void*);
 void APS5_VABI sceJemspaceGetStats(const void*, void*);
 int APS5_VABI sceJemspacePurge(void*);
 void APS5_VABI sceJemspacePrintStats(void(APS5_VABI*)(void*, const char*), void*, const char*);
+int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
+int APS5_VABI sceKernelMapNamedFlexibleMemory(void**, std::size_t, int, int, const char*);
+int APS5_VABI sceKernelMunmap(std::uint64_t, std::size_t);
+int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
 }
 
 namespace {
@@ -184,6 +189,43 @@ void CheckReporting() {
     Require(sceJemspaceDestroy(space) == 0, "Destroy after purge");
 }
 
+void CheckCoalescedUnmap() {
+    constexpr std::size_t page = 0x4000;
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 3, 0, page) == 0 && reserved,
+            "Reserve adjacent extent and guard addresses");
+    auto* base = static_cast<unsigned char*>(reserved);
+    for (unsigned index = 0; index < 3; ++index) {
+        void* mapping = base + index * page;
+        Require(sceKernelMapNamedFlexibleMemory(&mapping, page, 3, 0x10, "jemspace coalesce") == 0 &&
+                    mapping == base + index * page,
+                "Create independent adjacent mappings for a coalesced extent and guard");
+        std::memset(mapping, 0x31 + index, page);
+    }
+    CheckBytes(base, page, 0x31);
+    CheckBytes(base + page, page, 0x32);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(base, 0, &info, sizeof(info)) == 0 &&
+                sceKernelVirtualQuery(base + page, 0, &info, sizeof(info)) == 0,
+            "Both original mappings must be queryable before combined unmap");
+    Require(sceKernelMunmap(reinterpret_cast<std::uintptr_t>(base), page * 2) == 0,
+            "A coalesced extent must unmap across both adjacent guest mappings");
+    Require(sceKernelVirtualQuery(base, 0, &info, sizeof(info)) != 0 &&
+                sceKernelVirtualQuery(base + page, 0, &info, sizeof(info)) != 0,
+            "Combined unmap must release both original mappings");
+    CheckBytes(base + page * 2, page, 0x33);
+    Require(sceKernelVirtualQuery(base + page * 2, 0, &info, sizeof(info)) == 0,
+            "Combined unmap must preserve the neighbouring mapping's registration");
+    void* replacement = base;
+    Require(sceKernelMapNamedFlexibleMemory(&replacement, page * 2, 3, 0x10, "jemspace reused") == 0 &&
+                replacement == base,
+            "The released combined range must accept a fresh extent");
+    CheckBytes(base, page * 2, 0);
+    CheckBytes(base + page * 2, page, 0x33);
+    Require(sceKernelMunmap(reinterpret_cast<std::uintptr_t>(base), page * 3) == 0,
+            "Release the replacement extent and unaffected guard mapping");
+}
+
 void CheckThreads() {
     void* space = sceJemspaceCreate("shared", 0, 0);
     Require(space != nullptr, "A shared arena must be creatable");
@@ -230,5 +272,6 @@ int main() {
     Require(sceJemspaceDestroy(space) == 0, "Destroy the replacement arena");
     CheckLimitIsolation();
     CheckThreads();
+    CheckCoalescedUnmap();
     CheckReporting();
 }

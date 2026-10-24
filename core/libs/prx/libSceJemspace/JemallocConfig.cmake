@@ -69,6 +69,14 @@ if(JEMSPACE_HAVE_MALLOC_H)
 endif()
 set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
 set(CMAKE_REQUIRED_LIBRARIES Threads::Threads ${CMAKE_DL_LIBS})
+set(jemspaceRequiredFlags "${CMAKE_REQUIRED_FLAGS}")
+string(APPEND CMAKE_REQUIRED_FLAGS " -Werror")
+check_c_source_compiles("#include <string.h>\nint main(void) { char b[1]; char *r = strerror_r(0, b, sizeof(b)); return r == 0; }" JEMSPACE_GNU_STRERROR_R)
+set(CMAKE_REQUIRED_FLAGS "${jemspaceRequiredFlags}")
+unset(jemspaceRequiredFlags)
+if(JEMSPACE_GNU_STRERROR_R)
+    set(JEMALLOC_STRERROR_R_RETURNS_CHAR_WITH_GNU_SOURCE 1)
+endif()
 foreach(entry
     "issetugid|unistd.h|JEMALLOC_HAVE_ISSETUGID"
     "secure_getenv|stdlib.h|JEMALLOC_HAVE_SECURE_GETENV"
