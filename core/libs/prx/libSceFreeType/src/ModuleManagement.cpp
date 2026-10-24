@@ -18,4 +18,8 @@ void* APS5_VABI FT_Get_Renderer_nid_postfix(GuestLibrary* library, std::uint32_t
     return FT_Get_Renderer(library ? library->host : nullptr, static_cast<FT_Glyph_Format>(format));
 }
 
+int APS5_VABI FT_Remove_Module_nid_postfix(GuestLibrary* library, void* module) {
+    return FT_Remove_Module(library ? library->host : nullptr, static_cast<FT_Module>(module));
+}
+
 }
