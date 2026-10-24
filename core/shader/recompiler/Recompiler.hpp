@@ -393,6 +393,11 @@ inline constexpr std::uint32_t MeshArgumentBytes = 20;
 inline constexpr std::uint32_t MeshIndexRestartTable = 0x100;
 inline constexpr std::uint32_t MeshRestartLengthDword = MeshArgumentBytes / 4;
 inline constexpr std::uint32_t MeshRestartTableDword = MeshRestartLengthDword + 1;
+inline constexpr std::uint32_t MeshCapturedCounterDword = MeshArgumentBytes / 4;
+inline constexpr std::uint32_t MeshCapturedCapacityDword = MeshCapturedCounterDword + 1;
+inline constexpr std::uint32_t MeshCapturedHeaderBytes = 4 * (MeshCapturedCapacityDword + 1);
+inline constexpr std::uint32_t MeshCapturedItemAddressDword = 0;
+inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
 
@@ -831,6 +836,7 @@ struct GeometryStageLimits {
 };
 
 [[nodiscard]] RecompileResult BuildBarycentricGeometryShader(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits);
+[[nodiscard]] RecompileResult BuildTessellationCaptureGeometryShader(const MeshConfiguration& geometry, const SpirvTarget& target, const std::optional<GeometryStageLimits>& limits);
 
 struct BarycentricTessellationShaders {
     RecompileResult control;

@@ -227,6 +227,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
             target.mergedHull = tessellation->mergedHull;
+            target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }
         if (stage == ShaderStageKind::Mesh) {
             _validateMesh(mesh);
@@ -246,6 +247,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
             if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
+            target.capturedInput = tessellation != nullptr;
         }
         ShaderStageInputInfo result;
         result.vertex = &vertexStorage;
