@@ -1378,6 +1378,9 @@ void verifyBindingPlanSelection() {
     expected.guestDescriptor[0] += 0x10000u;
     expected.guestDescriptor[6] = 128u;
     require(sameBinding(expected, populated.bindings[0]) && sameBinding(full.bindings[3], populated.bindings[1]), "selected plan changed binding order or reused stale buffer data");
+    BindingAllocationResult reused = full;
+    builder.Populate(reused, compiled, selected, 0u, snapshot, {});
+    require(sameBindings(reused.bindings, populated.bindings) && reused.pushConstants.empty(), "a reused allocation kept bindings or metadata of its previous plan");
     bool rejected = false;
     try { static_cast<void>(builder.Select(plan, std::array{UINT32_MAX})); }
     catch (const std::runtime_error&) { rejected = true; }
