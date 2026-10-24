@@ -402,6 +402,7 @@ struct Sock {
     int snd_buffer = 0;
     int rcv_buffer = 0;
     int onesbcast = 0;
+    std::string name;
 };
 
 #ifdef _WIN32
@@ -458,6 +459,7 @@ HostMutex g_mutex;
 HostCondition g_cv;
 std::map<int, Sock> g_socks;
 std::set<int> g_epolls;
+std::map<int, std::string> g_epoll_names;
 using EpollRegistrations = std::map<int, std::shared_ptr<const NetEpollEvent>>;
 std::map<int, EpollRegistrations> g_epoll_socks;
 std::set<int> g_epoll_aborted;
@@ -490,6 +492,8 @@ int* errno_slot() {
 
 extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity);
+extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu);
+extern "C" int APS5_VABI getpid_nid_postfix(void);
 
 void set_errno(int err) {
     *errno_slot() = err;
@@ -814,12 +818,6 @@ int* APS5_VABI sceNetErrnoLoc(void) {
     return errno_slot();
 }
 
-int APS5_VABI sceNetShowNetstat(void) {
-    std::lock_guard lock(g_mutex);
-    if (!g_net_inited) return fail(NET_ENOTINIT);
-    throw std::runtime_error(__func__);
-}
-
 int PollSockets(KernelSocketPoll::Entry* entries, int count, int timeoutMilliseconds) {
     std::vector<std::shared_ptr<NativeSocketHandle>> natives(static_cast<std::size_t>(count));
     {
@@ -986,7 +984,6 @@ int APS5_VABI sceNetPoolDestroy(int memid) {
 }
 
 int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol) {
-    (void)name;
     if (family != NET_AF_INET && family != NET_AF_INET6) {
         return fail(NET_EAFNOSUPPORT);
     }
@@ -1025,6 +1022,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     s.family = family;
     s.type = type;
     s.native = std::move(handle);
+    if (name != nullptr) s.name = std::string(name).substr(0, 31);
     g_socks[fd] = s;
     return fd;
 }
@@ -1767,13 +1765,72 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
 }
 
 int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
-    (void)name;
     (void)flags;
     std::lock_guard lk(g_mutex);
     const int id = g_next_epoll++;
     g_epolls.insert(id);
+    g_epoll_names[id] = name != nullptr ? std::string(name).substr(0, 31) : std::string();
     g_epoll_socks.emplace(id, EpollRegistrations{});
     return id;
+}
+
+static std::string endpoint_text(const sockaddr_storage& address) {
+    char text[INET6_ADDRSTRLEN] = {};
+    std::uint16_t port = 0;
+    std::string host;
+    if (address.ss_family == AF_INET6) {
+        const auto& v6 = reinterpret_cast<const sockaddr_in6&>(address);
+        static constexpr in6_addr any{};
+        host = std::memcmp(&v6.sin6_addr, &any, sizeof(any)) == 0 || inet_ntop(AF_INET6, &v6.sin6_addr, text, sizeof(text)) == nullptr ? "[*]" : std::string("[") + text + "]";
+        port = ntohs(v6.sin6_port);
+    } else {
+        const auto& v4 = reinterpret_cast<const sockaddr_in&>(address);
+        host = address.ss_family != AF_INET || v4.sin_addr.s_addr == 0 || inet_ntop(AF_INET, &v4.sin_addr, text, sizeof(text)) == nullptr ? "*" : std::string(text);
+        port = address.ss_family == AF_INET ? ntohs(v4.sin_port) : 0;
+    }
+    return host + ":" + (port == 0 ? std::string("*") : std::to_string(port));
+}
+
+int APS5_VABI sceNetShowNetstat(void) {
+    std::vector<std::pair<int, Sock>> sockets;
+    std::vector<std::pair<int, std::string>> epolls;
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_net_inited) return fail(NET_ENOTINIT);
+        sockets.assign(g_socks.begin(), g_socks.end());
+        epolls.assign(g_epoll_names.begin(), g_epoll_names.end());
+    }
+    const int pid = getpid_nid_postfix();
+    std::printf("--- ID, type, [self/R/S/RE/SE//NB], ... ---\n");
+    for (const int type : {NET_SOCK_DGRAM, NET_SOCK_STREAM, NET_SOCK_RAW}) {
+        for (auto it = sockets.rbegin(); it != sockets.rend(); ++it) {
+            const auto& [id, socket] = *it;
+            if (socket.type != type) continue;
+            sockaddr_storage local{};
+            sockaddr_storage remote{};
+            NativeLength length = sizeof(local);
+            if (::getsockname(socket.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) local = {};
+            length = sizeof(remote);
+            const bool connected = ::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) == 0;
+            if (!connected) remote = {};
+            local.ss_family = remote.ss_family = socket.family == NET_AF_INET6 ? AF_INET6 : AF_INET;
+            std::int32_t send = 0;
+            std::int32_t receive = 0;
+            if (sock_buffer_size(socket, true, send) != 0) send = 0;
+            if (sock_buffer_size(socket, false, receive) != 0) receive = 0;
+            const char* kind = type == NET_SOCK_STREAM ? "tcp" : type == NET_SOCK_DGRAM ? "udp" : "raw";
+            const char* state = type != NET_SOCK_STREAM ? "OPENED" : socket.listening ? "LISTEN" : connected ? "ESTABLISHED" : "CLOSED";
+            std::printf("ID: %4d (%5s,  0) *....-%c %s pid=0x%08x %s\n", id, kind, socket.native->nonblock ? '*' : '.', state, static_cast<unsigned>(pid), socket.name.c_str());
+            std::printf("  Local : %s%28s\n", endpoint_text(local).c_str(), "");
+            std::printf("  Remote: %s%28s\n", endpoint_text(remote).c_str(), "");
+            std::printf("  Send-Q: 0/%d TX: 0bps/0bps, dropped 0 (0) \n", send);
+            std::printf("  Recv-Q: 0/%d RX: 0bps/0bps, dropped 0\n", receive);
+        }
+    }
+    for (auto it = epolls.rbegin(); it != epolls.rend(); ++it)
+        std::printf("ID: %4d (epoll)        *....-. OPENED pid=0x%08x %s\n", it->first, static_cast<unsigned>(pid), it->second.c_str());
+    std::fflush(stdout);
+    return 0;
 }
 
 int APS5_VABI sceNetShowNetstatWithMemory(int memid) {
@@ -1813,6 +1870,7 @@ int APS5_VABI sceNetEpollDestroy(int eid) {
     if (g_epolls.erase(eid) == 0) {
         return fail(NET_EBADF);
     }
+    g_epoll_names.erase(eid);
     g_epoll_socks.erase(eid);
     g_epoll_aborted.erase(eid);
     g_cv.NotifyAll();
@@ -2256,9 +2314,38 @@ int APS5_VABI sceNetResolverAbort(int rid, int flags) {
 }
 
 int APS5_VABI sceNetShowIfconfig() {
-    std::lock_guard lock(g_mutex);
-    if (!g_net_inited) return fail(NET_ENOTINIT);
-    throw std::runtime_error(__func__);
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_net_inited) return fail(NET_ENOTINIT);
+    }
+    const auto dotted = [](std::uint32_t address) {
+        char text[INET_ADDRSTRLEN] = {};
+        in_addr value{};
+        value.s_addr = address;
+        return std::string(inet_ntop(AF_INET, &value, text, sizeof(text)) != nullptr ? text : "0.0.0.0");
+    };
+    std::uint32_t address = 0;
+    std::uint32_t netmask = 0;
+    std::uint32_t mtu = 0;
+    if (NetCtlHostIpv4Address_nid_no_patch(&address, &netmask, &mtu)) {
+        NetEtherAddr mac{};
+        sceNetGetMacAddress(&mac, 0);
+        std::printf("eth0 (index=1)\n");
+        std::printf("   Type:Ethernet HWaddr:%02x:%02x:%02x:%02x:%02x:%02x\n", mac.data[0], mac.data[1], mac.data[2], mac.data[3], mac.data[4], mac.data[5]);
+        std::printf("   inet:%s/%s Bcast:%s\n", dotted(address).c_str(), dotted(netmask).c_str(), dotted(address | ~netmask).c_str());
+        std::printf("   UP BROADCAST MULTICAST INTERNET CONNECTED MTU:%u(max:%u) \n", mtu, mtu);
+    }
+    std::printf("lo0 (index=2)\n");
+    std::printf("   inet:127.0.0.1/255.0.0.0\n");
+    std::printf("   inet6:::1/128\n");
+    std::printf("   UP MULTICAST CONNECTED MTU:16384(max:16384) \n");
+    std::array<std::uint32_t, 2> servers{};
+    NetCtlHostDnsServers_nid_no_patch(servers.data(), servers.size());
+    std::printf("dns addresses\n");
+    std::printf("   %s, %s\n", dotted(servers[0]).c_str(), dotted(servers[1]).c_str());
+    std::printf("   ::, ::\n");
+    std::fflush(stdout);
+    return 0;
 }
 
 extern const std::uint8_t in6addr_any_nid_postfix[16] = {};

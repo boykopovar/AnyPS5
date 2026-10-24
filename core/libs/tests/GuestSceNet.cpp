@@ -38,6 +38,7 @@ int APS5_VABI sceNetShowNetstat(void);
 int APS5_VABI sceNetShowIfconfig(void);
 int APS5_VABI sceNetShowRoute(void);
 int APS5_VABI sceNetShowRoute6(void);
+int APS5_VABI getpid_nid_postfix(void);
 int APS5_VABI sceNetSocket(const char*, int, int, int);
 int APS5_VABI sceNetBind_nid_postfix(int, const void*, std::uint32_t);
 int APS5_VABI sceNetListen(int, int);
@@ -232,7 +233,8 @@ static void CheckStreamSender(int family) {
     for (const int descriptor : {client, accepted, listener}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
-static std::string CaptureNetstat(int pool) {
+template <typename Diagnostic>
+static std::string CaptureDiagnostic(Diagnostic diagnostic) {
     auto* file = std::tmpfile();
     Require(file != nullptr);
     Require(std::fflush(stdout) == 0);
@@ -245,7 +247,7 @@ static std::string CaptureNetstat(int pool) {
     const int saved = dup(output);
     Require(saved >= 0 && dup2(fileno(file), output) == output);
 #endif
-    const int result = sceNetShowNetstatWithMemory(pool);
+    const int result = diagnostic();
     Require(std::fflush(stdout) == 0);
 #ifdef _WIN32
     Require(_dup2(saved, output) == 0 && _close(saved) == 0);
@@ -260,16 +262,50 @@ static std::string CaptureNetstat(int pool) {
     return text;
 }
 
+static std::string CaptureNetstat(int pool) {
+    return CaptureDiagnostic([pool] { return sceNetShowNetstatWithMemory(pool); });
+}
+
+static std::string NetstatEntry(int id, const char* kind, char nonblocking, const char* state, const std::string& name) {
+    std::array<char, 160> line{};
+    std::snprintf(line.data(), line.size(), "ID: %4d (%5s,  0) *....-%c %s pid=0x%08x ", id, kind, nonblocking, state, static_cast<unsigned>(getpid_nid_postfix()));
+    return line.data() + name + "\n";
+}
+
+static void CheckDiagnostics() {
+    const auto ifconfig = CaptureDiagnostic(sceNetShowIfconfig);
+    Require(ifconfig.find("lo0 (index=2)\n   inet:127.0.0.1/255.0.0.0\n   inet6:::1/128\n   UP MULTICAST CONNECTED MTU:16384(max:16384) \n") != std::string::npos);
+    Require(ifconfig.find("\ndns addresses\n   ") != std::string::npos && ifconfig.ends_with("\n   ::, ::\n"));
+    Require(ifconfig.starts_with("lo0 (index=2)\n") || ifconfig.starts_with("eth0 (index=1)\n   Type:Ethernet HWaddr:02:50:53:35:00:01\n   inet:"));
+    const std::string padding(28, ' ');
+    const std::string longName(40, 'x');
+    const int udp = sceNetSocket(longName.c_str(), 2, 2, 0);
+    const int tcp = sceNetSocket("netstat-tcp", 2, 1, 0);
+    const int epoll = sceNetEpollCreate("netstat-epoll", 0);
+    Require(udp >= 0 && tcp >= 0 && epoll >= 0);
+    const int nonblocking = 1;
+    Require(sceNetSetsockopt(tcp, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(tcp, address.data(), address.size()) == 0 && sceNetListen(tcp, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(tcp, address.data(), &size) == 0);
+    const auto port = std::to_string((address[2] << 8) | address[3]);
+    const auto netstat = CaptureDiagnostic(sceNetShowNetstat);
+    Require(netstat.starts_with("--- ID, type, [self/R/S/RE/SE//NB], ... ---\n"));
+    const auto udpAt = netstat.find(NetstatEntry(udp, "udp", '.', "OPENED", longName.substr(0, 31)) + "  Local : *:*" + padding + "\n  Remote: *:*" + padding + "\n  Send-Q: 0/");
+    const auto tcpAt = netstat.find(NetstatEntry(tcp, "tcp", '*', "LISTEN", "netstat-tcp") + "  Local : 127.0.0.1:" + port + padding + "\n  Remote: *:*" + padding + "\n  Send-Q: 0/");
+    std::array<char, 96> epollLine{};
+    std::snprintf(epollLine.data(), epollLine.size(), "ID: %4d (epoll)        *....-. OPENED pid=0x%08x netstat-epoll\n", epoll, static_cast<unsigned>(getpid_nid_postfix()));
+    const auto epollAt = netstat.find(epollLine.data());
+    Require(udpAt != std::string::npos && tcpAt != std::string::npos && epollAt != std::string::npos && udpAt < tcpAt && tcpAt < epollAt);
+    Require(netstat.find(longName.substr(0, 32)) == std::string::npos);
+    Require(sceNetSocketClose(udp) == 0 && sceNetSocketClose(tcp) == 0 && sceNetEpollDestroy(epoll) == 0);
+    const auto closed = CaptureDiagnostic(sceNetShowNetstat);
+    Require(closed.find("netstat-tcp") == std::string::npos && closed.find("netstat-epoll") == std::string::npos && closed.find(longName.substr(0, 31)) == std::string::npos);
+}
+
 static void CheckNetstat() {
-    for (const auto diagnostic : {sceNetShowNetstat, sceNetShowIfconfig}) {
-        bool unsupported = false;
-        try {
-            diagnostic();
-        } catch (const std::runtime_error&) {
-            unsupported = true;
-        }
-        Require(unsupported);
-    }
+    CheckDiagnostics();
     Require(sceNetShowRoute() == 0);
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));

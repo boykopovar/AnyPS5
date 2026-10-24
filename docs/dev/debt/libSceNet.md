@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceNetShowIfconfig, sceNetShowNetstat](../../../core/libs/prx/libSceNet/Export.cpp) return the native not-initialized error and set errno before initialization. Initialized calls throw because native diagnostic collection and formatting are not implemented.
+- [sceNetShowIfconfig, sceNetShowNetstat](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) print the console's layout (a PS5 on firmware 13.40, measured 2026-10-19) with what the emulator knows. Ifconfig prints `eth0` from the host interface `sceNetCtlGetInfo` reports, without its IPv6 address, `UP6`, link status, traffic counters or times, then `lo0` as the console does and the two IPv4 DNS servers, with `::, ::` for IPv6. It leaves out the wireless interfaces and the pool and statistics sections. Netstat lists only the title's sockets and epolls; the console lists every process's. The self and non-blocking flags, addresses, buffer sizes and names are filled; the R, S, RE and SE flags, the field after the type, queue lengths, rates and drops print as for an idle socket, TCP states are only `LISTEN`, `ESTABLISHED` and `CLOSED`, and the self flag on epolls is inferred. Before initialization both return the not-initialized error.
 - [sceNetShowRoute, sceNetShowRoute6](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - return success without printing anything: the `()` signatures and the success return follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/network/net.cpp), which stubs each the same way. PPSA01530 fails to load without the `sceNetShowIfconfig` export (#3177); PPSA11386 imports `sceNetShowNetstat` but does not call it during start-up. What the console prints and where is unverified
 
 ### Unknown function info
