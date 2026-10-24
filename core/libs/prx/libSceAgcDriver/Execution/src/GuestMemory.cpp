@@ -23,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -1738,7 +1739,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
 #endif
 }
 
-bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched) {
+bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched, bool importMayWriteGuest) {
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return import();
     if (!staysWatched) {
         constexpr std::uint64_t page = 4096;
@@ -1758,7 +1759,11 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     const bool covered = tracker.covers(first, static_cast<std::size_t>(stop - first));
     const auto runImport = [&] {
 #ifdef __APPLE__
-        const GuestArena::HostWrite open(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
+        std::optional<GuestArena::HostWrite> open;
+        if (importMayWriteGuest) open.emplace(reinterpret_cast<void*>(first), static_cast<std::size_t>(stop - first));
+#endif
+#ifndef __APPLE__
+        static_cast<void>(importMayWriteGuest);
 #endif
         return import();
     };

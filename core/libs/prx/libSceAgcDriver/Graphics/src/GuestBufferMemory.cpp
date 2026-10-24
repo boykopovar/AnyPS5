@@ -1839,7 +1839,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         GuestMemory::ImportWatched(base, bytes, [&] {
             step = createBackingImport(context, entry, backing, result);
             return step == nullptr;
-        }, watchedDmaBuf);
+        }, watchedDmaBuf, false);
     }
     if (step == nullptr && entry.dmaBuf && bytes >= settleFloorBytes && context.settleQueue != VK_NULL_HANDLE && context.settleQueueMutex != nullptr) {
         static const bool traceSettle = std::getenv("APS5_TRACE_HOST_IMPORT") != nullptr;
