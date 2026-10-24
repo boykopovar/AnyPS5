@@ -1157,6 +1157,39 @@ static void CheckEpollIdent() {
     Require(sceNetSocketClose(sender) == 0 && sceNetSocketClose(receiver) == 0);
 }
 
+static void CheckEpollClosedStream() {
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    const int listener = sceNetSocket("closed-stream-listener", 2, 1, 6);
+    Require(listener >= 0);
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+    const int client = sceNetSocket("closed-stream-client", 2, 1, 6);
+    Require(client >= 0 && sceNetConnect(client, address.data(), address.size()) == 0);
+    const int accepted = sceNetAccept(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    const int epoll = sceNetEpollCreate("epoll-closed-stream", 0);
+    Require(epoll >= 0);
+    NetEpollEvent registration{};
+    registration.events = 1;
+    registration.ident = static_cast<std::uint64_t>(accepted);
+    Require(sceNetEpollControl(epoll, 1, accepted, &registration) == 0);
+    Require(sceNetSocketClose(client) == 0);
+    NetEpollEvent ready{};
+    Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1 && ready.events == 1);
+    char byte = 0;
+    Require(sceNetRecv(accepted, &byte, 1, 0) == 0);
+    registration.events = 3;
+    Require(sceNetEpollControl(epoll, 2, accepted, &registration) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == 3);
+    Require(sceNetShutdown(accepted, 1) == 0);
+    registration.events = 1;
+    Require(sceNetEpollControl(epoll, 2, accepted, &registration) == 0);
+    Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1 && ready.events == (1 | 16));
+    Require(sceNetEpollDestroy(epoll) == 0);
+    Require(sceNetSocketClose(accepted) == 0 && sceNetSocketClose(listener) == 0);
+}
+
 static void CheckTcpNoDelay() {
     const int stream = sceNetSocket("tcp-nodelay", 2, 1, 6);
     const int datagram = sceNetSocket("tcp-nodelay-udp", 2, 2, 17);
@@ -1705,6 +1738,7 @@ int main() {
     CheckUsleep();
     CheckSystemTime();
     CheckEpollIdent();
+    CheckEpollClosedStream();
     CheckTcpNoDelay();
     CheckLinkLocalAllNodesIpv6();
     CheckUnboundSocketName();
