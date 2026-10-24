@@ -54,6 +54,12 @@ std::int64_t X64InstructionRewriter::AdjustedDelta(
     std::int64_t sliceSize,
     std::int64_t delta
 ) {
+    const bool targetInsideCut = targetPosition > cutStart && targetPosition < cutEnd;
+
+    if (targetInsideCut) {
+        throw CodegenException("Branch target inside rewritten instruction", static_cast<Domain::FileByteOffset>(instrPosition));
+    }
+
     const bool instrShifts = instrPosition >= cutEnd && instrPosition < sliceSize;
     const bool targetShifts = targetPosition >= cutEnd && targetPosition < sliceSize;
 
