@@ -95,4 +95,8 @@ int APS5_VABI SSL_get_shutdown_nid_postfix(const LibreSsl* ssl) {
     return Internal(ssl, __func__).shutdown;
 }
 
+int APS5_VABI SSL_want_nid_postfix(const LibreSsl* ssl) {
+    return Internal(ssl, __func__).rwstate;
+}
+
 }
