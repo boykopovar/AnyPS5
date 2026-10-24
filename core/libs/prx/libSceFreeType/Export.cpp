@@ -120,6 +120,12 @@ int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
     return error;
 }
 
+int APS5_VABI FT_Reference_Library_nid_postfix(GuestLibrary* library) {
+    const FT_Error error = FT_Reference_Library(library ? library->host : nullptr);
+    if (error == 0) ++library->references;
+    return error;
+}
+
 int APS5_VABI FT_Done_Library_nid_postfix(GuestLibrary* library) {
     const FT_Error error = FT_Done_Library(library ? library->host : nullptr);
     if (error == 0 && --library->references == 0) delete library;
