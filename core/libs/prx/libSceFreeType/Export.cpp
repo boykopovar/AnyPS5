@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include FT_OUTLINE_H
+#include FT_SYNTHESIS_H
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -255,6 +256,20 @@ int APS5_VABI FT_Render_Glyph_nid_postfix(GuestGlyphSlotRec* slot, std::int32_t 
     const FT_Error error = FT_Render_Glyph(owner ? owner->host->glyph : nullptr, static_cast<FT_Render_Mode>(render_mode));
     if (owner) SyncSlot(*owner);
     return error;
+}
+
+void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(GuestGlyphSlotRec* slot) {
+    GuestFace* owner = FaceOf(slot);
+    if (owner) WriteBackOutline(*owner);
+    FT_GlyphSlot_Oblique(owner ? owner->host->glyph : nullptr);
+    if (owner) SyncSlot(*owner);
+}
+
+void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(GuestGlyphSlotRec* slot) {
+    GuestFace* owner = FaceOf(slot);
+    if (owner) WriteBackOutline(*owner);
+    FT_GlyphSlot_Embolden(owner ? owner->host->glyph : nullptr);
+    if (owner) SyncSlot(*owner);
 }
 
 int APS5_VABI FT_Select_Charmap_nid_postfix(GuestFaceRec* face, std::int32_t encoding) {
