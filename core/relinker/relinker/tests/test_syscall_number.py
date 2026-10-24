@@ -15,6 +15,14 @@ SYSRET = bytes.fromhex("48c7c009000000") + b"\x0f\x07\xc3"
 CLOBBERED = bytes.fromhex("48c7c009000000") + bytes.fromhex("4883c001") + b"\x0f\x05\xc3"
 PREFIXED_CONSTANT = bytes.fromhex("6648c7c009000000") + bytes.fromhex("f24989ca") + bytes.fromhex("f30f05") + b"\xc3"
 PREFIXED_CLOBBERED = bytes.fromhex("6648c7c009000000") + bytes.fromhex("664883c001") + bytes.fromhex("f30f05") + b"\xc3"
+SIGN_EXTENDED = bytes.fromhex("48c7c0ffffffff") + bytes.fromhex("4989ca") + b"\x0f\x05\xc3"
+IMM64 = bytes.fromhex("48b80900000000000000") + bytes.fromhex("4989ca") + b"\x0f\x05\xc3"
+IMM64_NEGATIVE = bytes.fromhex("48b8ffffffffffffffff") + bytes.fromhex("4989ca") + b"\x0f\x05\xc3"
+ZEROED = bytes.fromhex("31c0") + b"\x0f\x05\xc3"
+WIDE_ZEROED = bytes.fromhex("4831c0") + b"\x0f\x05\xc3"
+WORD_ZEROED = bytes.fromhex("6631c0") + b"\x0f\x05\xc3"
+EXTENDED_REGISTER_ZEROED = bytes.fromhex("4531c0") + b"\x0f\x05\xc3"
+EXTENDED_SOURCE_XOR = bytes.fromhex("4431c0") + b"\x0f\x05\xc3"
 
 
 def fixture(code):
@@ -53,13 +61,21 @@ def main():
         for name, code, expected in (("constant", CONSTANT, "syscall number 9"),
                                      ("unsigned", UNSIGNED, "syscall number 57"),
                                      ("int80", INT80, "syscall number 11"),
-                                     ("prefixed-constant", PREFIXED_CONSTANT, "syscall number 9")):
+                                     ("prefixed-constant", PREFIXED_CONSTANT, "syscall number 9"),
+                                     ("sign-extended", SIGN_EXTENDED, "syscall number 18446744073709551615"),
+                                     ("imm64", IMM64, "syscall number 9"),
+                                     ("imm64-negative", IMM64_NEGATIVE, "syscall number 18446744073709551615"),
+                                     ("zeroed", ZEROED, "syscall number 0"),
+                                     ("wide-zeroed", WIDE_ZEROED, "syscall number 0")):
             if expected not in reject(name, code):
                 raise AssertionError((name, "did not report " + expected))
 
         for name, code in (("register", REGISTER), ("sysenter", SYSENTER),
                            ("sysret", SYSRET), ("clobbered", CLOBBERED),
-                           ("prefixed-clobbered", PREFIXED_CLOBBERED)):
+                           ("prefixed-clobbered", PREFIXED_CLOBBERED),
+                           ("word-zeroed", WORD_ZEROED),
+                           ("extended-register-zeroed", EXTENDED_REGISTER_ZEROED),
+                           ("extended-source-xor", EXTENDED_SOURCE_XOR)):
             stderr = reject(name, code)
             if "syscall number" in stderr:
                 raise AssertionError((name, "reported a number it cannot establish", stderr))
