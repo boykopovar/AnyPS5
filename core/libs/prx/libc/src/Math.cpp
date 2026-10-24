@@ -1246,27 +1246,28 @@ DinkumwareFloatCharacteristics _Ldbl_nid_postfix {18, 64, 4932, 16384, -4931, -1
     {0, 0, 0, 0x8000, 0x3fc0}, {0xffff, 0xffff, 0xffff, 0xffff, 0x7ffe}, {0, 0, 0, 0x8000, 0x0001}};
 
 static std::mutex g_randLock;
-static std::uint32_t g_randState = 1;
+static std::uint64_t g_randState = 1;
 
-static int NextRand_nid_no_patch(std::uint32_t& state) {
-    const std::int64_t x = static_cast<std::int64_t>(state % 0x7ffffffeu) + 1;
-    std::int64_t next = 16807 * (x % 127773) - 2836 * (x / 127773);
-    if (next < 0) next += 0x7fffffff;
-    state = static_cast<std::uint32_t>(next - 1);
-    return static_cast<int>(next - 1);
+static std::uint32_t MinimalStandardNext(std::int32_t state) {
+    if (state == 0) return 0x2ae1b767u;
+    const auto product = static_cast<std::uint64_t>(static_cast<std::int64_t>(state)) * 16807u;
+    const auto high = static_cast<std::uint32_t>(product >> 31u);
+    const auto sum = (static_cast<std::uint32_t>(product) & 0x7fffffffu) + high;
+    if (sum < 0x7fffffffu) return sum;
+    if (sum == 0x7fffffffu) return 0;
+    return static_cast<std::int32_t>(high) <= 0 ? (sum & 0x7fffffffu) - 1u : (sum & 0x7fffffffu) + 1u;
 }
 
 int APS5_VABI rand_nid_postfix() {
     std::lock_guard lock(g_randLock);
-    return NextRand_nid_no_patch(g_randState);
+    g_randState = g_randState * 0x5851f42d4c957f2dull + 1u;
+    return static_cast<int>((g_randState >> 32u) & 0x3fffffffu);
 }
 
 int APS5_VABI rand_r_nid_postfix(unsigned int* state) {
     if (state == nullptr) throw std::invalid_argument("rand_r: null state");
-    std::uint32_t value = *state;
-    const int result = NextRand_nid_no_patch(value);
-    *state = value;
-    return result;
+    *state = MinimalStandardNext(static_cast<std::int32_t>(*state));
+    return static_cast<int>(*state);
 }
 
 void APS5_VABI srand_nid_postfix(unsigned int seed) {

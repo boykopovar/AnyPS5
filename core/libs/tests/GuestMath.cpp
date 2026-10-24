@@ -1603,14 +1603,23 @@ int main() {
     Require(std::abs(atan2f_nid_postfix(1.f, -1.f) - 2.3561945f) < 0.000001f);
     Require(tanf_nid_postfix(0.f) == 0.f);
     unsigned int randomState = 1;
-    Require(rand_r_nid_postfix(&randomState) == 33613 && randomState == 33613u);
+    Require(rand_r_nid_postfix(&randomState) == 16807 && randomState == 16807u);
+    Require(rand_r_nid_postfix(&randomState) == 282475249 && rand_r_nid_postfix(&randomState) == 1622650073);
     randomState = 0;
-    Require(rand_r_nid_postfix(&randomState) == 16806 && randomState == 16806u);
-    for (const unsigned int seed : {0u, 1u, 12345u, 0x7ffffffeu, 0xffffffffu}) {
-        srand_nid_postfix(seed);
-        randomState = seed;
-        for (int step = 0; step < 8; ++step) Require(rand_r_nid_postfix(&randomState) == rand_nid_postfix());
-    }
+    Require(rand_r_nid_postfix(&randomState) == 0x2ae1b767 && randomState == 0x2ae1b767u);
+    randomState = 0x7fffffffu;
+    Require(rand_r_nid_postfix(&randomState) == 0 && randomState == 0u);
+    randomState = 0x7ffffffeu;
+    Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    randomState = 0xffffffffu;
+    Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    srand_nid_postfix(1);
+    Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
+    srand_nid_postfix(0);
+    Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
+    srand_nid_postfix(0xffffffffu);
+    Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
+    for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);
     bool threw = false;
     try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
     Require(threw);
