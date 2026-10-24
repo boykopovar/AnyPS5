@@ -20,6 +20,7 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
+#include "SpirvBackend/SpirvEmitter.hpp"
 #include "SavedExecMaskLoop.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -8347,6 +8348,145 @@ void verifySrgbDepthCompareModes() {
     }
 }
 
+void verifyRuntimeImageSwitchDeduplication() {
+    using namespace ShaderRecompiler;
+    const auto emitImageSwitch = [](IrOpcode opcode, bool packed) {
+        const bool read = opcode == IrOpcode::ImageRead;
+        IrProgram program;
+        program.SetWaveSize(32u);
+        program.Resources().stage = IrShaderStage::Compute;
+        program.Resources().srtPlanComplete = true;
+        program.Resources().resourceTrackingComplete = true;
+        program.Metadata().shaderInfoComplete = true;
+        program.Metadata().bindingLayoutComplete = true;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        program.Metadata().blockInfo.emplace_back();
+        auto& zero = program.CreateValue(IrOpcode::Void, IrType::U32);
+        zero.SetImmediateU32(0u);
+        auto& enabled = program.CreateValue(IrOpcode::Void, IrType::Bool);
+        enabled.SetImmediateBool(true);
+        auto& handle = program.CreateValue(IrOpcode::GetImageResource, IrType::ImageResource, 0u);
+        for (std::uint32_t i = 0u; i < 8u; ++i) handle.AddArgument(&zero);
+        block.AppendInstruction(&handle);
+        auto& address = program.CreateValue(IrOpcode::MakeImageAddress, IrType::ImageAddress);
+        for (std::uint32_t i = 0u; i < 13u; ++i) address.AddArgument(&zero);
+        block.AppendInstruction(&address);
+        MemoryInfo memory{};
+        memory.kind = ResourceKind::Image;
+        memory.resource = 0u;
+        memory.imageDimension = packed ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
+        memory.imageAddressComponents = packed ? 3u : 2u;
+        memory.imagePacked = packed;
+        memory.dmask = 0xfu;
+        memory.dataBits = 32u;
+        memory.dataDwords = 4u;
+        memory.componentCount = 4u;
+        program.Resources().memoryInfo.push_back(memory);
+        ImageResource image{};
+        image.resourceClass = read ? ImageResourceClass::Sampled : ImageResourceClass::Storage;
+        image.numericClass = IrTextureNumericClass::Uint;
+        image.dimension = memory.imageDimension;
+        image.packed = packed;
+        image.read = read;
+        image.written = !read;
+        std::vector<ImageResource> modes;
+        if (packed) {
+            modes = ResourceMaterializer::RuntimeImageModes(image);
+            for (const auto& mode : modes) {
+                const auto kind = DescriptorBindingForImage(mode);
+                auto& descriptors = program.Metadata().bindings.descriptors;
+                if (std::ranges::none_of(descriptors, [&](const IrDescriptorBinding& entry) { return entry.kind == kind; })) {
+                    descriptors.push_back({kind, {0u}});
+                }
+            }
+        } else {
+            image.table = 0u;
+            DescriptorSource source{};
+            source.dwordCount = 8u;
+            TableColumn column{};
+            column.stride = 32u;
+            source.tableColumn = column;
+            program.Resources().descriptorSources.push_back(source);
+            modes = {image, image};
+            modes[1].mipMode = static_cast<ImageMipMode>(2);
+            program.Metadata().bindings.descriptors = {
+                {DescriptorBindingKind::FaultBuffer, {}},
+                {DescriptorBindingKind::ImageTableMap, {}},
+                {DescriptorBindingKind::ImageStorageTable, {}},
+            };
+        }
+        program.Info().images.push_back(image);
+        program.Info().runtimeImageModes.push_back(modes);
+        if (read) {
+            auto& op = program.CreateValue(IrOpcode::ImageRead, IrType::U32x4);
+            op.AddArgument(&handle);
+            op.AddArgument(&address);
+            op.AddArgument(&enabled);
+            block.AppendInstruction(&op);
+        } else {
+            auto& texel = program.CreateValue(IrOpcode::CompositeConstructU32x4, IrType::U32x4);
+            for (std::uint32_t i = 0u; i < 4u; ++i) texel.AddArgument(&zero);
+            block.AppendInstruction(&texel);
+            auto& op = program.CreateValue(IrOpcode::ImageWrite, IrType::Void);
+            op.AddArgument(&handle);
+            op.AddArgument(&address);
+            op.AddArgument(&texel);
+            op.AddArgument(&enabled);
+            block.AppendInstruction(&op);
+        }
+        ShaderComputeInputInfo compute{};
+        compute.threadsNum[0] = 32u;
+        compute.threadsNum[1] = 1u;
+        compute.threadsNum[2] = 1u;
+        compute.hostSubgroupSize = 32u;
+        compute.waveSize = 32u;
+        ShaderStageInputInfo inputs{};
+        inputs.compute = &compute;
+        CompiledBindingLayout bindings{};
+        bindings.layout = program.Metadata().bindings;
+        SpirvTargetOptions target{};
+        target.vulkanVersion = 0x00401000u;
+        target.spirvVersion = 0x00010300u;
+        target.subgroupSize = 32u;
+        const auto words = SpirvEmitter().Emit(program, inputs, bindings, target);
+        std::map<std::uint32_t, std::uint32_t> targets;
+        for (std::size_t cursor = 5u; cursor < words.size(); cursor += words[cursor] >> 16u) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0u && count <= words.size() - cursor, "runtime image switch deduplication: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == spv::OpSwitch) {
+                for (std::size_t at = cursor + 3u; at + 1u < cursor + count; at += 2u) {
+                    targets.emplace(words[at], words[at + 1u]);
+                }
+            }
+        }
+        require(targets.size() == modes.size(), "runtime image switch deduplication: OpSwitch did not cover every runtime image mode");
+        return std::pair{modes, targets};
+    };
+    for (const auto opcode : {IrOpcode::ImageRead, IrOpcode::ImageWrite}) {
+        const auto [modes, targets] = emitImageSwitch(opcode, true);
+        bool deduplicatedCube = false;
+        bool separatedFormats = false;
+        for (std::uint32_t i = 0u; i < modes.size(); ++i) {
+            for (std::uint32_t j = i + 1u; j < modes.size(); ++j) {
+                if (modes[i].dimension == modes[j].dimension && modes[i].numericClass == modes[j].numericClass) {
+                    if (modes[i].packedFormat == modes[j].packedFormat) {
+                        require(targets.at(i) == targets.at(j), "runtime image switch deduplication: packed cube and array modes with identical format were not merged");
+                        deduplicatedCube = true;
+                    } else {
+                        require(targets.at(i) != targets.at(j), "runtime image switch deduplication: distinct packed formats shared an OpSwitch target");
+                        separatedFormats = true;
+                    }
+                }
+            }
+        }
+        require(deduplicatedCube && separatedFormats, "runtime image switch deduplication: packed modes did not exercise both merged and distinct OpSwitch targets");
+    }
+    const auto [mipModes, mipTargets] = emitImageSwitch(IrOpcode::ImageWrite, false);
+    require(mipTargets.at(0u) != mipTargets.at(1u), "runtime image switch deduplication: storage image modes with different mip modes shared an OpSwitch target");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -8521,6 +8661,7 @@ int main(int argc, char** argv) {
         verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
         verifySrgbDepthCompareModes();
+        verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
         verifyCoherentGds();
 #if ANYPS5_ENABLE_SPIRV_TOOLS
