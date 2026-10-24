@@ -211,9 +211,17 @@ int APS5_VABI scePlayGoGetSupportedOptionalChunk(int handle, std::uint32_t type,
 
 int APS5_VABI scePlayGoGetToDoList(int handle, PlayGoToDo* out_todo_list, uint32_t number_of_entries, uint32_t* out_entries) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
-    (void)out_todo_list;
-    (void)number_of_entries;
     if (!out_entries) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    
+    // If the caller is just querying the count with a null buffer
+    if (!out_todo_list) {
+        *out_entries = 0;
+        return 0;
+    }
+    
+    // If a buffer is provided, size cannot be 0
+    if (number_of_entries == 0) return SCE_PLAYGO_ERROR_BAD_SIZE;
+    
     *out_entries = 0;
     return 0;
 }
