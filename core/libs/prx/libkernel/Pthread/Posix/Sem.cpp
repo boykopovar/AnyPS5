@@ -166,11 +166,9 @@ int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec) {
 int APS5_VABI sem_post_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore) return Fail(PosixThread::GUEST_EINVAL);
-    {
-        std::lock_guard lock(semaphore->lock);
-        if (semaphore->count == GUEST_SEM_VALUE_MAX) return Fail(GUEST_EOVERFLOW);
-        ++semaphore->count;
-    }
+    std::lock_guard lock(semaphore->lock);
+    if (semaphore->count == GUEST_SEM_VALUE_MAX) return Fail(GUEST_EOVERFLOW);
+    ++semaphore->count;
     semaphore->available.NotifyOne();
     return 0;
 }
