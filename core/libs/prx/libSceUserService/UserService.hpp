@@ -3,6 +3,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 
 struct UserServiceInitParam {
  std::int32_t priority;
@@ -24,5 +28,16 @@ constexpr int USER_SERVICE_ERROR_BUFFER_TOO_SHORT = -2137653238;
 constexpr int USER_SERVICE_ERROR_UNKNOWN_USER = static_cast<int>(0x80960105u);
 constexpr std::size_t USER_SERVICE_MAX_USER_NAME_LENGTH = 16;
 constexpr const char* USER_SERVICE_INITIAL_USER_NAME = "Player";
+
+inline std::string_view UserServiceUserName(std::string_view caller) {
+    const char* configured = std::getenv("ANYPS5_USER_NAME");
+    if (configured == nullptr || configured[0] == '\0') return USER_SERVICE_INITIAL_USER_NAME;
+    const std::string_view name(configured);
+    if (name.size() > USER_SERVICE_MAX_USER_NAME_LENGTH) {
+        throw std::runtime_error(std::string(caller) + ": ANYPS5_USER_NAME must be at most " + std::to_string(USER_SERVICE_MAX_USER_NAME_LENGTH) +
+            " bytes, not " + std::to_string(name.size()));
+    }
+    return name;
+}
 
 #endif

@@ -529,6 +529,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/Export.cpp` | 1 | console language number returned by sceSystemServiceParamGetInt, defaulting to English US |
 
+### libSceUserService
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `ANYPS5_USER_NAME` | string | `core/libs/prx/libSceUserService/UserService.hpp` | Player | user name returned by sceUserServiceGetUserName, at most 16 bytes |
+
 ### libSceVideoOut
 
 | Name | Kind | Source | Default | Description |

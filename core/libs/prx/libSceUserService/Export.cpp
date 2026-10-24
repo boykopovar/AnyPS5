@@ -170,7 +170,9 @@ int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size) {
   std::memset(name, 0, size);
   return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
  }
- std::strncpy(name, USER_SERVICE_INITIAL_USER_NAME, size);
+ const auto configured = UserServiceUserName(__func__);
+ std::memset(name, 0, size);
+ std::memcpy(name, configured.data(), configured.size());
  return USER_SERVICE_OK;
 }
 
