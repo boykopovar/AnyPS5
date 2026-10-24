@@ -1734,6 +1734,13 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     record.local_port = local.sin_port;
     record.remote_port = remote.sin_port;
     record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+#ifdef _WIN32
+    u_long pending = 0;
+    if (::ioctlsocket(socket.native->value, FIONREAD, &pending) == 0) record.recv_queue_length = static_cast<std::int32_t>(pending);
+#else
+    int pending = 0;
+    if (::ioctl(socket.native->value, FIONREAD, &pending) == 0) record.recv_queue_length = pending;
+#endif
     return 0;
 }
 
