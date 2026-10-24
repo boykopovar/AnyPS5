@@ -276,7 +276,9 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     const auto bytes = DecodeVertexFormat(attribute).bytes;
     const auto select = VertexBufferOutOfBoundsSelect(attribute);
     const auto recordsUnchecked = stride == 0 ? select != 1u : select <= 1u;
-    Require(recordsUnchecked || index < records, "vertex fetch exceeds descriptor record count");
+    if (!recordsUnchecked && index >= records) {
+        Require(false, "vertex fetch exceeds descriptor record count: OOB_SELECT " + std::to_string(select) + ", stride " + std::to_string(stride) + ", NUM_RECORDS " + std::to_string(records) + (attribute.fetchIndex == 0 ? ", vertex index " : ", instance index ") + std::to_string(index));
+    }
     const auto required = static_cast<std::uint64_t>(stride) * index + bytes;
     Require(stride != 0 || required <= ZeroStrideAvailableBytes(attribute), "vertex fetch exceeds descriptor byte range");
     Require(required <= std::numeric_limits<std::size_t>::max(), "vertex fetch exceeds addressable byte range");
