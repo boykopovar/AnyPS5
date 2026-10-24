@@ -1,7 +1,15 @@
+#include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+
+struct GuestSigaction {
+    std::uintptr_t handler;
+    int flags;
+    GuestSignalSet mask;
+};
+static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
 extern "C" {
 
@@ -87,6 +95,24 @@ void APS5_VABI psignal_nid_postfix(unsigned int signal, const char* prefix) {
     }
     _write_nid_postfix(2, message, std::strlen(message));
     _write_nid_postfix(2, "\n", 1);
+}
+
+extern GuestSignalSet _sigintr_nid_postfix;
+int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous);
+
+int APS5_VABI siginterrupt_nid_postfix(int guest, int flag) {
+    constexpr int SaRestart = 0x2;
+    GuestSigaction action{};
+    if (_sigaction_nid_postfix(guest, nullptr, &action) != 0) return -1;
+    const auto index = static_cast<std::uint32_t>(guest - 1);
+    if (flag) {
+        _sigintr_nid_postfix.bits[index >> 5] |= 1u << (index & 31);
+        action.flags &= ~SaRestart;
+    } else {
+        _sigintr_nid_postfix.bits[index >> 5] &= ~(1u << (index & 31));
+        action.flags |= SaRestart;
+    }
+    return _sigaction_nid_postfix(guest, &action, nullptr);
 }
 
 }
